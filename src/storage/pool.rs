@@ -455,6 +455,7 @@ fn is_retryable(e: &ErrorCode) -> bool {
             || msg.contains("broken pipe")
             || msg.contains("reset by peer")
             || msg.contains("temporarily unavailable")
+            || msg.contains("unknown database")
     }
 }
 
