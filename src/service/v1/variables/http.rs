@@ -93,7 +93,11 @@ fn to_response(r: crate::storage::dal::variable::VariableRecord) -> VariableResp
     VariableResponse {
         id: r.id,
         key: r.key,
-        value: if r.secret { "****".to_string() } else { r.value },
+        value: if r.secret {
+            "****".to_string()
+        } else {
+            r.value
+        },
         secret: r.secret,
         created_at: r.created_at,
         updated_at: r.updated_at,

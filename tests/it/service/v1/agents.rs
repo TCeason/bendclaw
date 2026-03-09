@@ -6,16 +6,18 @@ use axum::http::Request;
 use axum::http::StatusCode;
 use tower::ServiceExt;
 
-use crate::common::setup::TestContext;
 use crate::common::setup::json_body;
 use crate::common::setup::setup_agent;
 use crate::common::setup::uid;
+use crate::common::setup::TestContext;
 use crate::mocks::llm::MockLLMProvider;
 
 #[tokio::test]
 async fn list_agents_empty() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let user = uid("user");
     let resp = app
         .oneshot(
@@ -35,7 +37,9 @@ async fn list_agents_empty() -> Result<()> {
 #[tokio::test]
 async fn get_agent_not_found() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let user = uid("user");
     let resp = app
         .oneshot(
@@ -53,7 +57,9 @@ async fn get_agent_not_found() -> Result<()> {
 #[tokio::test]
 async fn setup_and_get_agent() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("ag-get");
     let user = uid("user");
 
@@ -78,7 +84,9 @@ async fn setup_and_get_agent() -> Result<()> {
 #[tokio::test]
 async fn list_agents_includes_setup_agent() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("ag-list");
     let user = uid("user");
 
@@ -104,7 +112,9 @@ async fn list_agents_includes_setup_agent() -> Result<()> {
 #[tokio::test]
 async fn delete_agent() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("ag-del");
     let user = uid("user");
 

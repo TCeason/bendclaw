@@ -6,16 +6,18 @@ use axum::http::Request;
 use axum::http::StatusCode;
 use tower::ServiceExt;
 
-use crate::common::setup::TestContext;
 use crate::common::setup::json_body;
 use crate::common::setup::setup_agent;
 use crate::common::setup::uid;
+use crate::common::setup::TestContext;
 use crate::mocks::llm::MockLLMProvider;
 
 #[tokio::test]
 async fn list_skills_empty() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("sk-empty");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -39,7 +41,9 @@ async fn list_skills_empty() -> Result<()> {
 #[tokio::test]
 async fn create_and_get_skill() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("sk-cg");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -85,7 +89,9 @@ async fn create_and_get_skill() -> Result<()> {
 #[tokio::test]
 async fn delete_skill() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("sk-del");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -127,7 +133,9 @@ async fn delete_skill() -> Result<()> {
 #[tokio::test]
 async fn get_skill_not_found() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("sk-nf");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;

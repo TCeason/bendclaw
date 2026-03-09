@@ -7,18 +7,20 @@ use axum::http::Request;
 use axum::http::StatusCode;
 use tower::ServiceExt;
 
-use crate::common::setup::TestContext;
 use crate::common::setup::chat;
 use crate::common::setup::json_body;
 use crate::common::setup::setup_agent;
 use crate::common::setup::uid;
+use crate::common::setup::TestContext;
 use crate::mocks::llm::MockLLMProvider;
 use crate::mocks::llm::MockTurn;
 
 #[tokio::test]
 async fn list_runs_empty() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("run-empty");
     let user = uid("user");
     let session_id = uid("session");
@@ -43,7 +45,9 @@ async fn list_runs_empty() -> Result<()> {
 #[tokio::test]
 async fn run_created_after_chat() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("run reply"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("run reply")))
+        .await?;
     let agent_id = uid("run-chat");
     let user = uid("user");
     let session_id = uid("session");
@@ -70,7 +74,9 @@ async fn run_created_after_chat() -> Result<()> {
 #[tokio::test]
 async fn get_run_by_id() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("run-get");
     let user = uid("user");
     let session_id = uid("session");
@@ -110,7 +116,9 @@ async fn get_run_by_id() -> Result<()> {
 #[tokio::test]
 async fn cancel_non_running_run_returns_ok() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("run-cancel");
     let user = uid("user");
     let session_id = uid("session");
@@ -185,7 +193,9 @@ async fn run_with_tool_call_has_iterations() -> Result<()> {
 #[tokio::test]
 async fn create_run_non_stream_returns_run_response() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok from run"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok from run")))
+        .await?;
     let agent_id = uid("run-create-json");
     let user = uid("user");
     let session_id = uid("session");
@@ -220,7 +230,9 @@ async fn create_run_non_stream_returns_run_response() -> Result<()> {
 #[tokio::test]
 async fn create_run_stream_returns_agno_style_sse() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("streamed reply"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("streamed reply")))
+        .await?;
     let agent_id = uid("run-create-sse");
     let user = uid("user");
     let session_id = uid("session");
@@ -257,7 +269,9 @@ async fn create_run_stream_returns_agno_style_sse() -> Result<()> {
 #[tokio::test]
 async fn list_runs_via_agno_style_endpoint() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("run-list-new");
     let user = uid("user");
     let session_id = uid("session");
@@ -285,7 +299,9 @@ async fn list_runs_via_agno_style_endpoint() -> Result<()> {
 #[tokio::test]
 async fn continue_non_paused_run_returns_conflict() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("run-continue");
     let user = uid("user");
     let session_id = uid("session");

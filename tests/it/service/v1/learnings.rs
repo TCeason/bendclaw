@@ -6,16 +6,18 @@ use axum::http::Request;
 use axum::http::StatusCode;
 use tower::ServiceExt;
 
-use crate::common::setup::TestContext;
 use crate::common::setup::json_body;
 use crate::common::setup::setup_agent;
 use crate::common::setup::uid;
+use crate::common::setup::TestContext;
 use crate::mocks::llm::MockLLMProvider;
 
 #[tokio::test]
 async fn create_and_list_learnings() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("lrn-cl");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -61,7 +63,9 @@ async fn create_and_list_learnings() -> Result<()> {
 #[tokio::test]
 async fn delete_learning() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("lrn-del");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -101,7 +105,9 @@ async fn delete_learning() -> Result<()> {
 #[tokio::test]
 async fn search_learnings() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("lrn-srch");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;

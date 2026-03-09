@@ -6,16 +6,18 @@ use axum::http::Request;
 use axum::http::StatusCode;
 use tower::ServiceExt;
 
-use crate::common::setup::TestContext;
 use crate::common::setup::json_body;
 use crate::common::setup::setup_agent;
 use crate::common::setup::uid;
+use crate::common::setup::TestContext;
 use crate::mocks::llm::MockLLMProvider;
 
 #[tokio::test]
 async fn create_and_list_memories() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("mem-cl");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -57,7 +59,9 @@ async fn create_and_list_memories() -> Result<()> {
 #[tokio::test]
 async fn get_memory_by_id() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("mem-get");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -97,7 +101,9 @@ async fn get_memory_by_id() -> Result<()> {
 #[tokio::test]
 async fn delete_memory() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("mem-del");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -137,7 +143,9 @@ async fn delete_memory() -> Result<()> {
 #[tokio::test]
 async fn search_memories() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("mem-srch");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;

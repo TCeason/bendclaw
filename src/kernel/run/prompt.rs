@@ -162,13 +162,14 @@ impl PromptBuilder {
 
         // 1. Identity
         tracing::debug!("prompt step 1/8: loading identity layer");
-        let identity = self
-            .identity
-            .as_deref()
-            .or_else(|| {
-                let c = config.as_ref()?;
-                if c.identity.is_empty() { None } else { Some(c.identity.as_str()) }
-            });
+        let identity = self.identity.as_deref().or_else(|| {
+            let c = config.as_ref()?;
+            if c.identity.is_empty() {
+                None
+            } else {
+                Some(c.identity.as_str())
+            }
+        });
         if let Some(s) = identity.filter(|s| !s.is_empty()) {
             let src = if self.identity.is_some() {
                 "injected"
@@ -184,13 +185,14 @@ impl PromptBuilder {
 
         // 2. Soul
         tracing::debug!("prompt step 2/8: loading soul layer");
-        let soul = self
-            .soul
-            .as_deref()
-            .or_else(|| {
-                let c = config.as_ref()?;
-                if c.soul.is_empty() { None } else { Some(c.soul.as_str()) }
-            });
+        let soul = self.soul.as_deref().or_else(|| {
+            let c = config.as_ref()?;
+            if c.soul.is_empty() {
+                None
+            } else {
+                Some(c.soul.as_str())
+            }
+        });
         if let Some(s) = soul.filter(|s| !s.is_empty()) {
             let src = if self.soul.is_some() {
                 "injected"

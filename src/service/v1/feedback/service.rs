@@ -16,11 +16,7 @@ pub(super) async fn list_feedback(
     let repo = FeedbackRepo::new(pool.clone());
     let limit = q.limit();
     let records = repo.list(limit).await?;
-    let total = count_u64(
-        &pool,
-        "SELECT COUNT(*) FROM feedback",
-    )
-    .await;
+    let total = count_u64(&pool, "SELECT COUNT(*) FROM feedback").await;
     Ok((records, total))
 }
 

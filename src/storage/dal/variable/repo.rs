@@ -71,44 +71,22 @@ impl VariableRepo {
     }
 
     pub async fn list(&self, limit: u32) -> Result<Vec<VariableRecord>> {
-        let result = self
-            .table
-            .list(&[], "created_at DESC", limit as u64)
-            .await;
+        let result = self.table.list(&[], "created_at DESC", limit as u64).await;
         if let Err(error) = &result {
-            repo_error(
-                REPO,
-                "list",
-                serde_json::json!({"limit": limit}),
-                error,
-            );
+            repo_error(REPO, "list", serde_json::json!({"limit": limit}), error);
         }
         result
     }
 
     pub async fn get(&self, id: &str) -> Result<Option<VariableRecord>> {
-        let result = self
-            .table
-            .get(&[Where("id", SqlVal::Str(id))])
-            .await;
+        let result = self.table.get(&[Where("id", SqlVal::Str(id))]).await;
         if let Err(error) = &result {
-            repo_error(
-                REPO,
-                "get",
-                serde_json::json!({"variable_id": id}),
-                error,
-            );
+            repo_error(REPO, "get", serde_json::json!({"variable_id": id}), error);
         }
         result
     }
 
-    pub async fn update(
-        &self,
-        id: &str,
-        key: &str,
-        value: &str,
-        secret: bool,
-    ) -> Result<()> {
+    pub async fn update(&self, id: &str, key: &str, value: &str, secret: bool) -> Result<()> {
         let key_e = sql::escape(key);
         let value_e = sql::escape(value);
         let id_e = sql::escape(id);
@@ -129,10 +107,7 @@ impl VariableRepo {
     }
 
     pub async fn delete(&self, id: &str) -> Result<()> {
-        let sql = format!(
-            "DELETE FROM variables WHERE id = '{}'",
-            sql::escape(id)
-        );
+        let sql = format!("DELETE FROM variables WHERE id = '{}'", sql::escape(id));
         let result = self.table.pool().exec(&sql).await;
         if let Err(error) = &result {
             repo_error(

@@ -24,8 +24,11 @@ fn make_skill(name: &str) -> Skill {
 }
 
 fn make_catalog(dir: &std::path::Path) -> Result<SkillCatalogImpl, Box<dyn std::error::Error>> {
-    let pool =
-        bendclaw::storage::pool::Pool::new("https://api.databend.com/v1", "dummy-token", "default")?;
+    let pool = bendclaw::storage::pool::Pool::new(
+        "https://api.databend.com/v1",
+        "dummy-token",
+        "default",
+    )?;
     let databases = std::sync::Arc::new(bendclaw::storage::AgentDatabases::new(
         pool,
         "test_mirror_",

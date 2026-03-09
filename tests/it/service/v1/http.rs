@@ -5,9 +5,9 @@ use axum::http::Request;
 use axum::http::StatusCode;
 use tower::ServiceExt;
 
-use crate::common::setup::TestContext;
 use crate::common::setup::json_body;
 use crate::common::setup::uid;
+use crate::common::setup::TestContext;
 
 #[tokio::test]
 async fn health_check_returns_ok() -> Result<()> {

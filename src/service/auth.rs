@@ -1,9 +1,10 @@
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::Request;
-use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
 use axum::http::StatusCode;
+use axum::middleware::Next;
+use axum::response::IntoResponse;
+use axum::response::Response;
 use axum::Json;
 
 use super::state::AppState;
@@ -20,8 +21,7 @@ pub async fn auth_middleware(
         return next.run(req).await;
     }
 
-    let token = extract_bearer(req.headers())
-        .or_else(|| extract_query_param(req.uri(), "api_key"));
+    let token = extract_bearer(req.headers()).or_else(|| extract_query_param(req.uri(), "api_key"));
 
     match token {
         Some(t) if t == *expected => next.run(req).await,
@@ -60,7 +60,10 @@ mod tests {
     #[test]
     fn extract_bearer_valid() {
         let mut headers = axum::http::HeaderMap::new();
-        headers.insert(axum::http::header::AUTHORIZATION, "Bearer mykey".parse().unwrap());
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer mykey".parse().unwrap(),
+        );
         assert_eq!(extract_bearer(&headers), Some("mykey".to_string()));
     }
 
@@ -73,14 +76,20 @@ mod tests {
     #[test]
     fn extract_bearer_wrong_scheme() {
         let mut headers = axum::http::HeaderMap::new();
-        headers.insert(axum::http::header::AUTHORIZATION, "Basic abc".parse().unwrap());
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Basic abc".parse().unwrap(),
+        );
         assert_eq!(extract_bearer(&headers), None);
     }
 
     #[test]
     fn extract_query_param_present() {
         let uri: axum::http::Uri = "/health?api_key=secret123".parse().unwrap();
-        assert_eq!(extract_query_param(&uri, "api_key"), Some("secret123".to_string()));
+        assert_eq!(
+            extract_query_param(&uri, "api_key"),
+            Some("secret123".to_string())
+        );
     }
 
     #[test]

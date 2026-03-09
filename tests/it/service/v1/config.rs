@@ -6,16 +6,18 @@ use axum::http::Request;
 use axum::http::StatusCode;
 use tower::ServiceExt;
 
-use crate::common::setup::TestContext;
 use crate::common::setup::json_body;
 use crate::common::setup::setup_agent;
 use crate::common::setup::uid;
+use crate::common::setup::TestContext;
 use crate::mocks::llm::MockLLMProvider;
 
 #[tokio::test]
 async fn get_config_default() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("cfg-get");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -39,7 +41,9 @@ async fn get_config_default() -> Result<()> {
 #[tokio::test]
 async fn update_and_get_config() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("cfg-upd");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -84,7 +88,9 @@ async fn update_and_get_config() -> Result<()> {
 #[tokio::test]
 async fn list_config_versions() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("cfg-ver");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -122,7 +128,9 @@ async fn list_config_versions() -> Result<()> {
 #[tokio::test]
 async fn get_specific_version() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("cfg-sv");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -159,7 +167,9 @@ async fn get_specific_version() -> Result<()> {
 #[tokio::test]
 async fn rollback_config() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("cfg-rb");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;

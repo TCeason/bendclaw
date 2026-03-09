@@ -316,7 +316,10 @@ pub fn api_router(state: AppState, _log_level: &str, auth: &AuthConfig) -> Route
             delete(v1::feedback::delete_feedback),
         )
         .layer(build_cors(auth))
-        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
         .layer(middleware::from_fn(log_http_request))
         .layer(TraceLayer::new_for_http())
         .with_state(state)

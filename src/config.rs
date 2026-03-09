@@ -69,7 +69,12 @@ impl WorkspaceConfig {
     }
 
     /// Per-session workspace directory: {root_dir}/{user_id}/{agent_id}/{session_id}
-    pub fn session_dir(&self, user_id: &str, agent_id: &str, session_id: &str) -> std::path::PathBuf {
+    pub fn session_dir(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        session_id: &str,
+    ) -> std::path::PathBuf {
         std::path::PathBuf::from(&self.root_dir)
             .join(user_id)
             .join(agent_id)

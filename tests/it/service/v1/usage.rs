@@ -6,17 +6,19 @@ use axum::http::Request;
 use axum::http::StatusCode;
 use tower::ServiceExt;
 
-use crate::common::setup::TestContext;
 use crate::common::setup::chat;
 use crate::common::setup::json_body;
 use crate::common::setup::setup_agent;
 use crate::common::setup::uid;
+use crate::common::setup::TestContext;
 use crate::mocks::llm::MockLLMProvider;
 
 #[tokio::test]
 async fn usage_summary_zero_for_new_agent() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("usg-zero");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -40,7 +42,9 @@ async fn usage_summary_zero_for_new_agent() -> Result<()> {
 #[tokio::test]
 async fn usage_summary_after_chat() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("usg-chat");
     let user = uid("user");
     let session_id = uid("session");
@@ -66,7 +70,9 @@ async fn usage_summary_after_chat() -> Result<()> {
 #[tokio::test]
 async fn usage_daily_returns_array() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("usg-daily");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -90,7 +96,9 @@ async fn usage_daily_returns_array() -> Result<()> {
 #[tokio::test]
 async fn global_usage_summary() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let user = uid("user");
 
     let resp = app

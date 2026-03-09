@@ -244,7 +244,10 @@ fn open_resolver_absolute_path() {
     let dir = tempfile::tempdir().unwrap();
     let ws = test_ws_open(dir.path().to_path_buf());
     let resolved = ws.resolve_safe_path("/tmp/some_file.txt");
-    assert_eq!(resolved, Some(std::path::PathBuf::from("/tmp/some_file.txt")));
+    assert_eq!(
+        resolved,
+        Some(std::path::PathBuf::from("/tmp/some_file.txt"))
+    );
 }
 
 #[test]

@@ -17,11 +17,7 @@ pub(super) async fn list_tasks(
     let repo = TaskRepo::new(pool.clone());
     let limit = q.limit();
     let records = repo.list(limit).await?;
-    let total = count_u64(
-        &pool,
-        "SELECT COUNT(*) FROM tasks",
-    )
-    .await;
+    let total = count_u64(&pool, "SELECT COUNT(*) FROM tasks").await;
     Ok((records, total))
 }
 
@@ -68,11 +64,7 @@ pub(super) async fn update_task(
     Ok(())
 }
 
-pub(super) async fn delete_task(
-    state: &AppState,
-    agent_id: &str,
-    task_id: &str,
-) -> Result<String> {
+pub(super) async fn delete_task(state: &AppState, agent_id: &str, task_id: &str) -> Result<String> {
     let pool = state.runtime.databases().agent_pool(agent_id)?;
     let repo = TaskRepo::new(pool);
     repo.delete(task_id).await?;

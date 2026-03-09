@@ -158,7 +158,8 @@ mod action {
 // ── Impact classification ────────────────────────────────────────────────────
 
 fn dummy_tool() -> Result<DatabendTool, Box<dyn std::error::Error>> {
-    let pool = bendclaw::storage::Pool::new("https://api.databend.com/v1", "test-token", "default")?;
+    let pool =
+        bendclaw::storage::Pool::new("https://api.databend.com/v1", "test-token", "default")?;
     Ok(DatabendTool::new(pool))
 }
 

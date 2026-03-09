@@ -13,8 +13,8 @@ pub use tools::OpType;
 pub use tools::OperationMeta;
 pub use tools::OperationTracker;
 
-pub use crate::base::new_id;
 pub use crate::base::new_agent_id;
+pub use crate::base::new_id;
 pub use crate::base::new_os_id;
 pub use crate::base::new_run_id;
 pub use crate::base::new_session_id;

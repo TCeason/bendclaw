@@ -6,17 +6,19 @@ use axum::http::Request;
 use axum::http::StatusCode;
 use tower::ServiceExt;
 
-use crate::common::setup::TestContext;
 use crate::common::setup::chat;
 use crate::common::setup::json_body;
 use crate::common::setup::setup_agent;
 use crate::common::setup::uid;
+use crate::common::setup::TestContext;
 use crate::mocks::llm::MockLLMProvider;
 
 #[tokio::test]
 async fn list_sessions_empty() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("ses-empty");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -40,7 +42,9 @@ async fn list_sessions_empty() -> Result<()> {
 #[tokio::test]
 async fn create_and_get_session() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("ses-cg");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -81,7 +85,9 @@ async fn create_and_get_session() -> Result<()> {
 #[tokio::test]
 async fn update_session_title() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("ses-upd");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -123,7 +129,9 @@ async fn update_session_title() -> Result<()> {
 #[tokio::test]
 async fn delete_session() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("ses-del");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -163,7 +171,9 @@ async fn delete_session() -> Result<()> {
 #[tokio::test]
 async fn list_sessions_search() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("ses-srch");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;

@@ -70,17 +70,9 @@ impl FeedbackRepo {
     }
 
     pub async fn list(&self, limit: u32) -> Result<Vec<FeedbackRecord>> {
-        let result = self
-            .table
-            .list(&[], "created_at DESC", limit as u64)
-            .await;
+        let result = self.table.list(&[], "created_at DESC", limit as u64).await;
         if let Err(error) = &result {
-            repo_error(
-                REPO,
-                "list",
-                serde_json::json!({"limit": limit}),
-                error,
-            );
+            repo_error(REPO, "list", serde_json::json!({"limit": limit}), error);
         }
         result
     }

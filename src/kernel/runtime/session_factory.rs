@@ -55,7 +55,10 @@ impl Runtime {
 
         let pool = self.databases.agent_pool(agent_id)?;
 
-        let workspace_dir = self.config.workspace.session_dir(user_id, agent_id, session_id);
+        let workspace_dir = self
+            .config
+            .workspace
+            .session_dir(user_id, agent_id, session_id);
         if let Err(e) = std::fs::create_dir_all(&workspace_dir) {
             return Err(ErrorCode::internal(format!(
                 "failed to create session workspace: {e}"

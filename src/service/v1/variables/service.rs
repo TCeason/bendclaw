@@ -18,11 +18,7 @@ pub(super) async fn list_variables(
     let repo = VariableRepo::new(pool.clone());
     let limit = q.limit();
     let records = repo.list(limit).await?;
-    let total = count_u64(
-        &pool,
-        "SELECT COUNT(*) FROM variables",
-    )
-    .await;
+    let total = count_u64(&pool, "SELECT COUNT(*) FROM variables").await;
     Ok((records, total))
 }
 
@@ -76,11 +72,7 @@ pub(super) async fn update_variable(
     Ok(())
 }
 
-pub(super) async fn delete_variable(
-    state: &AppState,
-    agent_id: &str,
-    var_id: &str,
-) -> Result<()> {
+pub(super) async fn delete_variable(state: &AppState, agent_id: &str, var_id: &str) -> Result<()> {
     let pool = state.runtime.databases().agent_pool(agent_id)?;
     let repo = VariableRepo::new(pool);
     repo.delete(var_id).await?;

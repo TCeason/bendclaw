@@ -33,8 +33,11 @@ fn make_catalog(
     dir: &std::path::Path,
 ) -> Result<bendclaw::kernel::skills::catalog::SkillCatalogImpl, Box<dyn std::error::Error>> {
     // Use a dummy AgentDatabases that won't be called (no sync in these tests).
-    let pool =
-        bendclaw::storage::pool::Pool::new("https://api.databend.com/v1", "dummy-token", "default")?;
+    let pool = bendclaw::storage::pool::Pool::new(
+        "https://api.databend.com/v1",
+        "dummy-token",
+        "default",
+    )?;
     let databases = std::sync::Arc::new(bendclaw::storage::AgentDatabases::new(
         pool,
         "test_catalog_",

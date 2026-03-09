@@ -6,18 +6,20 @@ use axum::http::Request;
 use axum::http::StatusCode;
 use tower::ServiceExt;
 
-use crate::common::setup::TestContext;
 use crate::common::setup::chat;
 use crate::common::setup::json_body;
 use crate::common::setup::setup_agent;
 use crate::common::setup::uid;
+use crate::common::setup::TestContext;
 use crate::mocks::llm::MockLLMProvider;
 use crate::mocks::llm::MockTurn;
 
 #[tokio::test]
 async fn list_traces_empty() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("tr-empty");
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
@@ -41,7 +43,9 @@ async fn list_traces_empty() -> Result<()> {
 #[tokio::test]
 async fn traces_created_after_chat() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("traced reply"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("traced reply")))
+        .await?;
     let agent_id = uid("tr-chat");
     let user = uid("user");
     let session_id = uid("session");
@@ -68,7 +72,9 @@ async fn traces_created_after_chat() -> Result<()> {
 #[tokio::test]
 async fn traces_summary() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("tr-sum");
     let user = uid("user");
     let session_id = uid("session");
@@ -142,7 +148,9 @@ async fn get_trace_by_id() -> Result<()> {
 #[tokio::test]
 async fn traces_filter_by_session() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::with_text("ok"))).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
     let agent_id = uid("tr-flt");
     let user = uid("user");
     let session_a = uid("ses-a");

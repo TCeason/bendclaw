@@ -81,33 +81,17 @@ impl TaskRepo {
     }
 
     pub async fn list(&self, limit: u32) -> Result<Vec<TaskRecord>> {
-        let result = self
-            .table
-            .list(&[], "created_at DESC", limit as u64)
-            .await;
+        let result = self.table.list(&[], "created_at DESC", limit as u64).await;
         if let Err(error) = &result {
-            repo_error(
-                REPO,
-                "list",
-                serde_json::json!({"limit": limit}),
-                error,
-            );
+            repo_error(REPO, "list", serde_json::json!({"limit": limit}), error);
         }
         result
     }
 
     pub async fn get(&self, task_id: &str) -> Result<Option<TaskRecord>> {
-        let result = self
-            .table
-            .get(&[Where("id", SqlVal::Str(task_id))])
-            .await;
+        let result = self.table.get(&[Where("id", SqlVal::Str(task_id))]).await;
         if let Err(error) = &result {
-            repo_error(
-                REPO,
-                "get",
-                serde_json::json!({"task_id": task_id}),
-                error,
-            );
+            repo_error(REPO, "get", serde_json::json!({"task_id": task_id}), error);
         }
         result
     }
@@ -146,10 +130,7 @@ impl TaskRepo {
     }
 
     pub async fn delete(&self, task_id: &str) -> Result<()> {
-        let sql_str = format!(
-            "DELETE FROM tasks WHERE id = '{}'",
-            sql::escape(task_id)
-        );
+        let sql_str = format!("DELETE FROM tasks WHERE id = '{}'", sql::escape(task_id));
         let result = self.table.pool().exec(&sql_str).await;
         if let Err(error) = &result {
             repo_error(
