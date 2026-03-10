@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use crate::base::Result;
 use crate::kernel::channel::registry::ChannelRegistry;
 use crate::kernel::channel::supervisor::ChannelSupervisor;
 use crate::kernel::runtime::agent_config::AgentConfig;
@@ -87,10 +86,6 @@ impl Runtime {
 
     pub fn database(&self) -> &Pool {
         self.databases.root_pool()
-    }
-
-    pub fn try_database(&self) -> Result<&Pool> {
-        Ok(self.databases.root_pool())
     }
 
     pub fn databases(&self) -> &Arc<crate::storage::AgentDatabases> {
