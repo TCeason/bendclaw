@@ -63,7 +63,7 @@ impl ChannelIngressService {
             }
         };
 
-        // Challenge handshake (e.g. Feishu url_verification).
+        // Challenge handshake (e.g. GitHub webhook ping).
         if let Some(challenge) = wh.challenge_response(body) {
             return Ok(Some(challenge));
         }

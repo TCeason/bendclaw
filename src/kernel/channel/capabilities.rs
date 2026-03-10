@@ -14,7 +14,7 @@ pub enum ChannelKind {
 pub enum InboundMode {
     /// Synchronous request-response (HTTP API).
     HttpRequest,
-    /// Async webhook callbacks (Telegram, Feishu, GitHub).
+    /// Async webhook callbacks (GitHub).
     Webhook,
     /// Long polling.
     Polling,

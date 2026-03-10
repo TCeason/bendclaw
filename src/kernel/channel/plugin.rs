@@ -92,7 +92,7 @@ pub trait WebhookHandler: Send + Sync {
     fn verify(&self, external_account_id: &str, headers: &HeaderMap, body: &[u8]) -> Result<()>;
     fn parse(&self, external_account_id: &str, body: &[u8]) -> Result<Vec<InboundEvent>>;
 
-    /// Return a challenge response for webhook verification handshakes (e.g. Feishu url_verification).
+    /// Return a challenge response for webhook verification handshakes.
     fn challenge_response(&self, _body: &[u8]) -> Option<serde_json::Value> {
         None
     }
