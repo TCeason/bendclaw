@@ -72,6 +72,7 @@ pub async fn test_session(llm: Arc<dyn LLMProvider>) -> Result<Session> {
         Arc::new(MockSkillStoreFactory),
         pool.clone(),
         channels,
+        "test_instance".to_string(),
     ));
 
     let tools = Arc::new(tool_registry.tool_schemas());

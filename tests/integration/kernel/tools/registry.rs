@@ -19,7 +19,14 @@ fn make_registry() -> ToolRegistry {
         llm,
     ));
     let channels = Arc::new(bendclaw::kernel::channel::registry::ChannelRegistry::new());
-    create_session_tools(storage, Arc::new(NoopSkillCatalog), factory, pool, channels)
+    create_session_tools(
+        storage,
+        Arc::new(NoopSkillCatalog),
+        factory,
+        pool,
+        channels,
+        "test_instance".to_string(),
+    )
 }
 
 struct FixedStoreFactory;
