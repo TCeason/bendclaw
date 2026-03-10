@@ -72,22 +72,27 @@ jobs:
 
           if [ "${IS_BETA}" = "true" ]; then
             # Find highest beta number for today
-            BETA_NUM=1
-            while gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${BASE}-beta.${BETA_NUM}" >/dev/null 2>&1; do
-              BETA_NUM=$((BETA_NUM + 1))
+            SUFFIX=1
+            while gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${BASE}-beta.${SUFFIX}" >/dev/null 2>&1; do
+              SUFFIX=$((SUFFIX + 1))
             done
-            NEXT_TAG="v${BASE}-beta.${BETA_NUM}"
-            NEXT_VERSION="${BASE}-beta.${BETA_NUM}"
-            RELEASE_NAME="bendclaw ${BASE}-beta.${BETA_NUM}"
+            NEXT_TAG="v${BASE}-beta.${SUFFIX}"
+            NEXT_VERSION="${BASE}-beta.${SUFFIX}"
+            RELEASE_NAME="bendclaw ${BASE}-beta.${SUFFIX}"
           else
-            # Check if today's date tag already exists
-            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${BASE}" >/dev/null 2>&1; then
-              echo "Tag v${BASE} already exists. Use beta prerelease or wait for next day." >&2
-              exit 1
+            # Auto-increment: v2026.3.10, v2026.3.10.2, v2026.3.10.3, ...
+            if ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${BASE}" >/dev/null 2>&1; then
+              NEXT_TAG="v${BASE}"
+              NEXT_VERSION="${BASE}"
+            else
+              SUFFIX=2
+              while gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${BASE}.${SUFFIX}" >/dev/null 2>&1; do
+                SUFFIX=$((SUFFIX + 1))
+              done
+              NEXT_TAG="v${BASE}.${SUFFIX}"
+              NEXT_VERSION="${BASE}.${SUFFIX}"
             fi
-            NEXT_TAG="v${BASE}"
-            NEXT_VERSION="${BASE}"
-            RELEASE_NAME="bendclaw ${BASE}"
+            RELEASE_NAME="bendclaw ${NEXT_VERSION}"
           fi
 
           echo "previous=${PREV}" >> "${GITHUB_OUTPUT}"
