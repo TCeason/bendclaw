@@ -53,9 +53,10 @@ impl Runtime {
         api_token: &str,
         warehouse: &str,
         db_prefix: &str,
+        instance_id: &str,
         llm: Arc<dyn LLMProvider>,
     ) -> super::runtime_builder::Builder {
-        super::runtime_builder::Builder::new(api_base_url, api_token, warehouse, db_prefix, llm)
+        super::runtime_builder::Builder::new(api_base_url, api_token, warehouse, db_prefix, instance_id, llm)
     }
 
     pub(crate) fn from_parts(parts: RuntimeParts) -> Self {

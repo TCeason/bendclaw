@@ -5,7 +5,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::executor;
-use crate::storage::AgentDatabases;
+use crate::kernel::runtime::Runtime;
 
 const DEFAULT_POLL_INTERVAL_SECS: u64 = 15;
 
@@ -15,7 +15,7 @@ impl TaskScheduler {
     /// Spawn the background polling loop. Returns a JoinHandle that resolves
     /// when the loop exits (via cancellation or error).
     pub fn spawn(
-        databases: Arc<AgentDatabases>,
+        runtime: Arc<Runtime>,
         cancel: CancellationToken,
         http_client: reqwest::Client,
     ) -> JoinHandle<()> {
@@ -31,7 +31,7 @@ impl TaskScheduler {
                     _ = tokio::time::sleep(interval) => {}
                 }
 
-                if let Err(e) = poll_once(&databases, &http_client).await {
+                if let Err(e) = poll_once(&runtime, &http_client).await {
                     tracing::warn!(error = %e, "task scheduler poll error");
                 }
             }
@@ -40,12 +40,13 @@ impl TaskScheduler {
 }
 
 async fn poll_once(
-    databases: &AgentDatabases,
+    runtime: &Arc<Runtime>,
     http_client: &reqwest::Client,
 ) -> crate::base::Result<()> {
-    let agent_ids = databases.list_agent_ids().await?;
+    let instance_id = runtime.config().instance_id.clone();
+    let agent_ids = runtime.databases().list_agent_ids().await?;
     for agent_id in &agent_ids {
-        let pool = match databases.agent_pool(agent_id) {
+        let pool = match runtime.databases().agent_pool(agent_id) {
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!(agent_id, error = %e, "failed to get agent pool");
@@ -54,7 +55,7 @@ async fn poll_once(
         };
 
         let task_repo = crate::storage::dal::task::TaskRepo::new(pool.clone());
-        let due_tasks = match task_repo.list_due().await {
+        let due_tasks = match task_repo.list_due(&instance_id).await {
             Ok(tasks) => tasks,
             Err(e) => {
                 tracing::warn!(agent_id, error = %e, "failed to list due tasks");
@@ -63,11 +64,11 @@ async fn poll_once(
         };
 
         for task in due_tasks {
-            let pool = pool.clone();
+            let runtime = runtime.clone();
             let client = http_client.clone();
             let agent_id = agent_id.clone();
             tokio::spawn(async move {
-                if let Err(e) = executor::execute_task(&pool, &agent_id, &task, &client).await {
+                if let Err(e) = executor::execute_task(&runtime, &agent_id, &task, &client).await {
                     tracing::error!(
                         agent_id,
                         task_id = task.id,

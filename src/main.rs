@@ -104,6 +104,7 @@ async fn cmd_run(
         &config.storage.databend_api_token,
         &config.storage.databend_warehouse,
         &config.storage.db_prefix,
+        &config.instance_id,
         llm,
     )
     .with_skills_dir(&config.workspace.skills_dir().to_string_lossy())

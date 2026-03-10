@@ -130,17 +130,18 @@ impl TaskRepo {
     }
 
     /// List tasks that are due for execution (enabled and next_run_at <= NOW()).
-    pub async fn list_due(&self) -> Result<Vec<TaskRecord>> {
+    /// Only returns tasks whose agentos_id matches the given instance.
+    pub async fn list_due(&self, agentos_id: &str) -> Result<Vec<TaskRecord>> {
+        let condition = format!(
+            "enabled = true AND status != 'running' AND next_run_at <= NOW() AND agentos_id = '{}'",
+            crate::storage::sql::escape(agentos_id)
+        );
         let result = self
             .table
-            .list_where(
-                "enabled = true AND status != 'running' AND next_run_at <= NOW()",
-                "next_run_at ASC",
-                100,
-            )
+            .list_where(&condition, "next_run_at ASC", 100)
             .await;
         if let Err(error) = &result {
-            repo_error(REPO, "list_due", serde_json::json!({}), error);
+            repo_error(REPO, "list_due", serde_json::json!({"agentos_id": agentos_id}), error);
         }
         result
     }

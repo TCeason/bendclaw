@@ -14,6 +14,7 @@
 //! | `BENDCLAW_WORKSPACE_SANDBOX` | `workspace.sandbox`    | `false`        |
 //! | `BENDCLAW_AUTH_KEY`          | `auth.api_key`         | *(empty)*      |
 //! | `BENDCLAW_AUTH_CORS_ORIGINS` | `auth.cors_origins`    | *(default whitelist)* |
+//! | `BENDCLAW_INSTANCE_ID`       | `instance_id`          | **required**   |
 
 use std::fs;
 
@@ -85,6 +86,10 @@ impl WorkspaceConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BendClawConfig {
+    /// Unique identifier for this bendclaw instance. Must match the AgentOS ID
+    /// assigned by the console. Used to filter tasks that belong to this instance.
+    /// Required when running alongside other bendclaw instances sharing the same DB.
+    pub instance_id: String,
     pub server: ServerConfig,
     pub storage: StorageConfig,
     pub log: LogConfig,
@@ -250,6 +255,7 @@ impl BendClawConfig {
         override_str(&mut self.log.dir, "BENDCLAW_LOG_DIR");
         override_str(&mut self.workspace.root_dir, "BENDCLAW_WORKSPACE_ROOT_DIR");
         override_bool(&mut self.workspace.sandbox, "BENDCLAW_WORKSPACE_SANDBOX");
+        override_str(&mut self.instance_id, "BENDCLAW_INSTANCE_ID");
         override_str(&mut self.auth.api_key, "BENDCLAW_AUTH_KEY");
         if let Ok(v) = std::env::var("BENDCLAW_AUTH_CORS_ORIGINS") {
             if !v.is_empty() {
@@ -297,6 +303,13 @@ impl BendClawConfig {
                 "missing required configuration:\n  \
                  storage.databend_api_token  →  set BENDCLAW_STORAGE_DATABEND_API_TOKEN \
                  or [storage] databend_api_token in config file"
+            );
+        }
+        if self.instance_id.is_empty() {
+            anyhow::bail!(
+                "missing required configuration:\n  \
+                 instance_id  →  set BENDCLAW_INSTANCE_ID \
+                 or instance_id in config file"
             );
         }
         Ok(())

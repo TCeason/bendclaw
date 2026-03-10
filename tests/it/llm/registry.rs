@@ -35,7 +35,7 @@ fn registry_unknown_provider_returns_llm_request_error() {
     let ep = test_endpoint("test-unknown", "deepseek", 100);
     let result = registry.create(&ep);
     assert!(result.is_err());
-    let err = result.unwrap_err();
+    let err = result.err().unwrap();
     assert_eq!(err.code, bendclaw::base::ErrorCode::LLM_REQUEST);
 }
 

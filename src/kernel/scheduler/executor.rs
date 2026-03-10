@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -6,22 +7,23 @@ use chrono::Utc;
 use cron::Schedule;
 
 use crate::base::new_id;
+use crate::kernel::runtime::Runtime;
 use crate::storage::dal::task::TaskRecord;
 use crate::storage::dal::task::TaskRepo;
 use crate::storage::dal::task_history::TaskHistoryRecord;
 use crate::storage::dal::task_history::TaskHistoryRepo;
-use crate::storage::pool::Pool;
 
 const WEBHOOK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Execute a single due task: mark running, run prompt, write history,
 /// call webhook, update task state, and optionally delete if one-shot.
 pub async fn execute_task(
-    pool: &Pool,
+    runtime: &Arc<Runtime>,
     agent_id: &str,
     task: &TaskRecord,
     http_client: &reqwest::Client,
 ) -> crate::base::Result<()> {
+    let pool = runtime.databases().agent_pool(agent_id)?;
     let task_repo = TaskRepo::new(pool.clone());
     let history_repo = TaskHistoryRepo::new(pool.clone());
 
@@ -30,7 +32,7 @@ pub async fn execute_task(
 
     // 2. Execute the task prompt
     let started = Instant::now();
-    let (status, output, error) = run_task_prompt(agent_id, task).await;
+    let (status, run_id, output, error) = run_task_prompt(runtime, agent_id, task).await;
     let duration_ms = started.elapsed().as_millis() as i32;
 
     // 3. Webhook delivery
@@ -52,7 +54,7 @@ pub async fn execute_task(
     let history = TaskHistoryRecord {
         id: new_id(),
         task_id: task.id.clone(),
-        run_id: None,
+        run_id,
         task_name: task.name.clone(),
         schedule_kind: task.schedule_kind.clone(),
         cron_expr: if task.cron_expr.is_empty() {
@@ -98,14 +100,47 @@ pub async fn execute_task(
     Ok(())
 }
 
-/// Placeholder for actual prompt execution. In the future this will create
-/// a run via the kernel engine. For now it returns a successful no-op.
 async fn run_task_prompt(
-    _agent_id: &str,
-    _task: &TaskRecord,
-) -> (String, Option<String>, Option<String>) {
-    // TODO: integrate with kernel run engine to actually execute the prompt
-    ("ok".to_string(), None, None)
+    runtime: &Arc<Runtime>,
+    agent_id: &str,
+    task: &TaskRecord,
+) -> (String, Option<String>, Option<String>, Option<String>) {
+    let session_id = format!("task_{}", task.id);
+    let session = match runtime
+        .get_or_create_session(agent_id, &session_id, "system")
+        .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            return (
+                "error".to_string(),
+                None,
+                None,
+                Some(format!("failed to create session: {e}")),
+            )
+        }
+    };
+    let stream = match session.run(&task.prompt, &task.id, None).await {
+        Ok(s) => s,
+        Err(e) => {
+            return (
+                "error".to_string(),
+                None,
+                None,
+                Some(format!("failed to start run: {e}")),
+            )
+        }
+    };
+    let run_id = stream.run_id().to_string();
+    match stream.finish().await {
+        Ok(output) => ("ok".to_string(), Some(run_id), Some(output), None),
+        Err(e) => (
+            "error".to_string(),
+            Some(run_id),
+            None,
+            Some(e.to_string()),
+        ),
+    }
 }
 
 async fn deliver_webhook(

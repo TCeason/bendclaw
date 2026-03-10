@@ -11,7 +11,7 @@ async fn runtime_initial_status_ready() -> Result<()> {
     let (base_url, token, warehouse) = require_api_config()?;
     let llm = std::sync::Arc::new(MockLLMProvider::with_text("ok"));
     let prefix = format!("it_rt_{}_", uid("r"));
-    let runtime = bendclaw::kernel::Runtime::new(&base_url, &token, &warehouse, &prefix, llm)
+    let runtime = bendclaw::kernel::Runtime::new(&base_url, &token, &warehouse, &prefix, "test_instance", llm)
         .build()
         .await?;
 
@@ -25,7 +25,7 @@ async fn runtime_shutdown_transitions_to_stopped() -> Result<()> {
     let (base_url, token, warehouse) = require_api_config()?;
     let llm = std::sync::Arc::new(MockLLMProvider::with_text("ok"));
     let prefix = format!("it_rt_{}_", uid("r"));
-    let runtime = bendclaw::kernel::Runtime::new(&base_url, &token, &warehouse, &prefix, llm)
+    let runtime = bendclaw::kernel::Runtime::new(&base_url, &token, &warehouse, &prefix, "test_instance", llm)
         .build()
         .await?;
 
@@ -40,7 +40,7 @@ async fn runtime_rejects_session_creation_after_shutdown() -> Result<()> {
     let (base_url, token, warehouse) = require_api_config()?;
     let llm = std::sync::Arc::new(MockLLMProvider::with_text("ok"));
     let prefix = format!("it_rt_{}_", uid("r"));
-    let runtime = bendclaw::kernel::Runtime::new(&base_url, &token, &warehouse, &prefix, llm)
+    let runtime = bendclaw::kernel::Runtime::new(&base_url, &token, &warehouse, &prefix, "test_instance", llm)
         .build()
         .await?;
 
@@ -64,7 +64,7 @@ async fn runtime_setup_agent_is_idempotent() -> Result<()> {
     let (base_url, token, warehouse) = require_api_config()?;
     let llm = std::sync::Arc::new(MockLLMProvider::with_text("ok"));
     let prefix = format!("it_rt_{}_", uid("r"));
-    let runtime = bendclaw::kernel::Runtime::new(&base_url, &token, &warehouse, &prefix, llm)
+    let runtime = bendclaw::kernel::Runtime::new(&base_url, &token, &warehouse, &prefix, "test_instance", llm)
         .build()
         .await?;
 

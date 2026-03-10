@@ -25,6 +25,7 @@ pub struct Builder {
     api_token: String,
     warehouse: String,
     db_prefix: String,
+    instance_id: String,
     llm: Arc<dyn LLMProvider>,
     skills_dir: String,
     skills_sync_interval_secs: u64,
@@ -40,6 +41,7 @@ impl Builder {
         api_token: &str,
         warehouse: &str,
         db_prefix: &str,
+        instance_id: &str,
         llm: Arc<dyn LLMProvider>,
     ) -> Self {
         Self {
@@ -47,6 +49,7 @@ impl Builder {
             api_token: api_token.to_string(),
             warehouse: warehouse.to_string(),
             db_prefix: db_prefix.to_string(),
+            instance_id: instance_id.to_string(),
             llm,
             skills_dir: "./skills".to_string(),
             skills_sync_interval_secs: 30,
@@ -95,6 +98,7 @@ impl Builder {
 
     pub async fn build(self) -> Result<Arc<Runtime>> {
         let config = AgentConfig {
+            instance_id: self.instance_id,
             databend_api_base_url: self.api_base_url,
             databend_api_token: self.api_token,
             databend_warehouse: self.warehouse,
@@ -154,12 +158,6 @@ async fn construct(
     let sessions = Arc::new(SessionManager::new());
     let channels = Arc::new(build_channel_registry());
 
-    let scheduler_handle = crate::kernel::scheduler::TaskScheduler::spawn(
-        databases.clone(),
-        sync_cancel.clone(),
-        reqwest::Client::new(),
-    );
-
     // Use Arc::new_cyclic so the supervisor's event_handler can capture a Weak<Runtime>.
     let runtime = Arc::new_cyclic(|weak: &std::sync::Weak<Runtime>| {
         let weak = weak.clone();
@@ -182,11 +180,18 @@ async fn construct(
             llm: RwLock::new(llm),
             skills,
             status: RwLock::new(RuntimeStatus::Ready),
-            sync_cancel,
+            sync_cancel: sync_cancel.clone(),
             sync_handle: RwLock::new(Some(sync_handle)),
-            scheduler_handle: RwLock::new(Some(scheduler_handle)),
+            scheduler_handle: RwLock::new(None),
         })
     });
+
+    let scheduler_handle = crate::kernel::scheduler::TaskScheduler::spawn(
+        runtime.clone(),
+        sync_cancel,
+        reqwest::Client::new(),
+    );
+    *runtime.scheduler_handle.write() = Some(scheduler_handle);
 
     Ok(runtime)
 }

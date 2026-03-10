@@ -67,7 +67,7 @@ impl TestContext {
         std::fs::create_dir_all(&skills_dir)?;
 
         let runtime =
-            bendclaw::kernel::Runtime::new(&base_url, &token, &warehouse, &self.prefix, llm)
+            bendclaw::kernel::Runtime::new(&base_url, &token, &warehouse, &self.prefix, "test_instance", llm)
                 .with_skills_dir(&skills_dir.to_string_lossy())
                 .build()
                 .await?;
