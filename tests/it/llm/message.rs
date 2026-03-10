@@ -1,4 +1,3 @@
-use anyhow::Context as _;
 use anyhow::Result;
 use bendclaw::llm::message::CacheControl;
 use bendclaw::llm::message::ChatMessage;

@@ -27,7 +27,9 @@ fn base_skill() -> Skill {
 fn no_parameters_produces_empty_schema() -> Result<()> {
     let schema = base_skill().to_json_schema();
     assert_eq!(schema["type"], "object");
-    let props = schema["properties"].as_object().context("expected object")?;
+    let props = schema["properties"]
+        .as_object()
+        .context("expected object")?;
     assert!(props.is_empty());
     let required = schema["required"].as_array().context("expected array")?;
     assert!(required.is_empty());
@@ -55,7 +57,9 @@ fn parameters_appear_in_properties() -> Result<()> {
     ];
 
     let schema = skill.to_json_schema();
-    let props = schema["properties"].as_object().context("expected object")?;
+    let props = schema["properties"]
+        .as_object()
+        .context("expected object")?;
     assert_eq!(props.len(), 2);
     assert_eq!(props["pattern"]["type"], "string");
     assert_eq!(props["pattern"]["description"], "regex pattern");

@@ -1,3 +1,5 @@
+use super::http::ChannelAccountView;
+use super::http::CreateChannelAccountRequest;
 use crate::base::new_id;
 use crate::kernel::channel::account::ChannelAccount;
 use crate::kernel::channel::plugin::InboundKind;
@@ -6,9 +8,6 @@ use crate::service::error::ServiceError;
 use crate::service::state::AppState;
 use crate::storage::dal::channel_account::record::ChannelAccountRecord;
 use crate::storage::dal::channel_account::repo::ChannelAccountRepo;
-
-use super::http::ChannelAccountView;
-use super::http::CreateChannelAccountRequest;
 
 pub struct ChannelAccountService {
     state: AppState,
@@ -27,9 +26,9 @@ impl ChannelAccountService {
         req: CreateChannelAccountRequest,
     ) -> Result<ChannelAccountView> {
         let registry = self.state.runtime.channels();
-        let entry = registry
-            .get(&req.channel_type)
-            .ok_or_else(|| ServiceError::BadRequest(format!("unknown channel type: {}", req.channel_type)))?;
+        let entry = registry.get(&req.channel_type).ok_or_else(|| {
+            ServiceError::BadRequest(format!("unknown channel type: {}", req.channel_type))
+        })?;
         entry
             .plugin
             .validate_config(&req.config)
@@ -80,20 +79,22 @@ impl ChannelAccountService {
         let pool = self.state.runtime.databases().agent_pool(agent_id)?;
         let repo = ChannelAccountRepo::new(pool);
         let records = repo.list_by_agent(agent_id).await?;
-        Ok(records.into_iter().map(|r| domain_to_view(record_to_domain(&r))).collect())
+        Ok(records
+            .into_iter()
+            .map(|r| domain_to_view(record_to_domain(&r)))
+            .collect())
     }
 
-    pub async fn get(&self, agent_id: &str, channel_account_id: &str) -> Result<ChannelAccountView> {
+    pub async fn get(
+        &self,
+        agent_id: &str,
+        channel_account_id: &str,
+    ) -> Result<ChannelAccountView> {
         let pool = self.state.runtime.databases().agent_pool(agent_id)?;
         let repo = ChannelAccountRepo::new(pool);
-        let record = repo
-            .load(channel_account_id)
-            .await?
-            .ok_or_else(|| {
-                ServiceError::AgentNotFound(format!(
-                    "channel account '{channel_account_id}' not found"
-                ))
-            })?;
+        let record = repo.load(channel_account_id).await?.ok_or_else(|| {
+            ServiceError::AgentNotFound(format!("channel account '{channel_account_id}' not found"))
+        })?;
         Ok(domain_to_view(record_to_domain(&record)))
     }
 

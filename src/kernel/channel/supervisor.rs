@@ -50,12 +50,9 @@ impl ChannelSupervisor {
         self.stop(&account.channel_account_id).await;
 
         let cancel = CancellationToken::new();
-        let (event_tx, mut event_rx) =
-            tokio::sync::mpsc::unbounded_channel::<InboundEvent>();
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<InboundEvent>();
 
-        let handle = factory
-            .spawn(account, event_tx, cancel.clone())
-            .await?;
+        let handle = factory.spawn(account, event_tx, cancel.clone()).await?;
 
         // Spawn consumer that dispatches events to the handler.
         let handler = self.event_handler.clone();
@@ -68,21 +65,19 @@ impl ChannelSupervisor {
             }
         });
 
-        self.receivers.lock().await.insert(
-            account.channel_account_id.clone(),
-            ReceiverSlot { cancel, handle },
-        );
+        self.receivers
+            .lock()
+            .await
+            .insert(account.channel_account_id.clone(), ReceiverSlot {
+                cancel,
+                handle,
+            });
 
         Ok(())
     }
 
     pub async fn stop(&self, channel_account_id: &str) {
-        if let Some(slot) = self
-            .receivers
-            .lock()
-            .await
-            .remove(channel_account_id)
-        {
+        if let Some(slot) = self.receivers.lock().await.remove(channel_account_id) {
             slot.cancel.cancel();
             slot.handle.abort();
         }
@@ -97,9 +92,6 @@ impl ChannelSupervisor {
     }
 
     pub async fn is_running(&self, channel_account_id: &str) -> bool {
-        self.receivers
-            .lock()
-            .await
-            .contains_key(channel_account_id)
+        self.receivers.lock().await.contains_key(channel_account_id)
     }
 }

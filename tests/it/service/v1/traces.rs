@@ -124,7 +124,10 @@ async fn get_trace_by_id() -> Result<()> {
     let body = json_body(resp).await?;
     let traces = body["data"].as_array().context("expected data array")?;
     assert!(!traces.is_empty());
-    let trace_id = traces[0]["trace_id"].as_str().context("missing trace_id")?.to_string();
+    let trace_id = traces[0]["trace_id"]
+        .as_str()
+        .context("missing trace_id")?
+        .to_string();
 
     let resp2 = app
         .clone()
@@ -289,6 +292,9 @@ fn trace_detail_response_serializes() -> anyhow::Result<()> {
     let v = serde_json::to_value(&detail)?;
     assert_eq!(v["trace"]["trace_id"], "tr-3");
     assert_eq!(v["trace"]["status"], "completed");
-    assert!(v["spans"].as_array().context("expected spans array")?.is_empty());
+    assert!(v["spans"]
+        .as_array()
+        .context("expected spans array")?
+        .is_empty());
     Ok(())
 }

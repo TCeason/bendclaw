@@ -1,8 +1,9 @@
-use anyhow::Context as _;
-use anyhow::Result;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
+
+use anyhow::Context as _;
+use anyhow::Result;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -30,8 +31,7 @@ fn visit_rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
 }
 
 fn read(path: &Path) -> Result<String> {
-    fs::read_to_string(path)
-        .with_context(|| format!("failed to read {}", path.display()))
+    fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))
 }
 
 fn rel(path: &Path) -> String {

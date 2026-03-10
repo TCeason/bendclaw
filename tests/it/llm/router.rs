@@ -127,7 +127,9 @@ fn router_pricing_by_model() -> Result<()> {
     assert!((input - 30.0).abs() < f64::EPSILON);
     assert!((output - 60.0).abs() < f64::EPSILON);
 
-    let (input, output) = router.pricing("gpt-3.5").context("expected gpt-3.5 pricing")?;
+    let (input, output) = router
+        .pricing("gpt-3.5")
+        .context("expected gpt-3.5 pricing")?;
     assert!((input - 0.5).abs() < f64::EPSILON);
     assert!((output - 1.5).abs() < f64::EPSILON);
     Ok(())

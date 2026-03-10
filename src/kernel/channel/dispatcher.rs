@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
-use crate::kernel::session::session_manager::SessionManager;
-
 use super::message::InboundEvent;
 use super::message::ReplyContext;
 use super::registry::ChannelRegistry;
+use crate::kernel::session::session_manager::SessionManager;
 
 /// Result of dispatching an inbound event.
 pub struct DispatchResult {
@@ -22,14 +21,8 @@ pub struct ChannelDispatcher {
 }
 
 impl ChannelDispatcher {
-    pub fn new(
-        registry: Arc<ChannelRegistry>,
-        sessions: Arc<SessionManager>,
-    ) -> Self {
-        Self {
-            registry,
-            sessions,
-        }
+    pub fn new(registry: Arc<ChannelRegistry>, sessions: Arc<SessionManager>) -> Self {
+        Self { registry, sessions }
     }
 
     pub fn registry(&self) -> &Arc<ChannelRegistry> {
@@ -60,9 +53,7 @@ impl ChannelDispatcher {
                 let summary = payload
                     .as_str()
                     .map(|s| s.to_string())
-                    .unwrap_or_else(|| {
-                        serde_json::to_string(payload).unwrap_or_default()
-                    });
+                    .unwrap_or_else(|| serde_json::to_string(payload).unwrap_or_default());
                 let input = format!("[{event_type}] {summary}");
                 (input, reply_context.clone())
             }

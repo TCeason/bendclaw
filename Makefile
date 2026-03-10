@@ -17,9 +17,11 @@ setup:
 		echo "==> preparing boxlite runtime..."; \
 		BOXLITE_DEPS_STUB=2 cargo test --test it --no-run 2>/dev/null; \
 	fi
-	@echo "==> installing pre-push hook..."
+	@echo "==> installing git hooks..."
 	@mkdir -p .git/hooks
-	@echo '#!/bin/sh\nmake check' > .git/hooks/pre-push
+	@printf '#!/bin/sh\nexport PATH="$$HOME/.cargo/bin:$$PATH"\ncargo fmt --all\ngit diff --name-only --diff-filter=M | xargs git add\n' > .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@printf '#!/bin/sh\nexport PATH="$$HOME/.cargo/bin:$$PATH"\nmake check\n' > .git/hooks/pre-push
 	@chmod +x .git/hooks/pre-push
 	@echo "==> setup complete"
 

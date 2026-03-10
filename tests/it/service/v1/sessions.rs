@@ -35,7 +35,10 @@ async fn list_sessions_empty() -> Result<()> {
         .await?;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = json_body(resp).await?;
-    assert!(body["data"].as_array().context("expected data array")?.is_empty());
+    assert!(body["data"]
+        .as_array()
+        .context("expected data array")?
+        .is_empty());
     Ok(())
 }
 
@@ -261,14 +264,16 @@ fn create_session_request_all_fields() -> anyhow::Result<()> {
     let r: bendclaw::service::v1::sessions::CreateSessionRequest =
         serde_json::from_str(r#"{"title": "My Session", "session_state": {"k": 1}}"#)?;
     assert_eq!(r.title.as_deref(), Some("My Session"));
-    assert_eq!(r.session_state.as_ref().context("missing session_state")?["k"], 1);
+    assert_eq!(
+        r.session_state.as_ref().context("missing session_state")?["k"],
+        1
+    );
     Ok(())
 }
 
 #[test]
 fn create_session_request_empty() -> anyhow::Result<()> {
-    let r: bendclaw::service::v1::sessions::CreateSessionRequest =
-        serde_json::from_str(r#"{}"#)?;
+    let r: bendclaw::service::v1::sessions::CreateSessionRequest = serde_json::from_str(r#"{}"#)?;
     assert!(r.title.is_none());
     assert!(r.session_state.is_none());
     Ok(())
@@ -290,14 +295,16 @@ fn update_session_request_state_only() -> anyhow::Result<()> {
     let r: bendclaw::service::v1::sessions::UpdateSessionRequest =
         serde_json::from_str(r#"{"session_state": {"mode": "active"}}"#)?;
     assert!(r.title.is_none());
-    assert_eq!(r.session_state.as_ref().context("missing session_state")?["mode"], "active");
+    assert_eq!(
+        r.session_state.as_ref().context("missing session_state")?["mode"],
+        "active"
+    );
     Ok(())
 }
 
 #[test]
 fn update_session_request_empty() -> anyhow::Result<()> {
-    let r: bendclaw::service::v1::sessions::UpdateSessionRequest =
-        serde_json::from_str(r#"{}"#)?;
+    let r: bendclaw::service::v1::sessions::UpdateSessionRequest = serde_json::from_str(r#"{}"#)?;
     assert!(r.title.is_none());
     assert!(r.session_state.is_none());
     Ok(())

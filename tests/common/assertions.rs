@@ -12,7 +12,9 @@ pub fn run_output(run: &Value) -> Result<&str> {
     if run["ok"] != true {
         bail!("expected run ok=true, got: {run}");
     }
-    run["message"].as_str().context("run.message is not a string")
+    run["message"]
+        .as_str()
+        .context("run.message is not a string")
 }
 
 /// Assert run output equals expected string.
@@ -43,8 +45,12 @@ pub fn assert_runs_count(runs: &[Value], count: usize) -> Result<()> {
 
 /// Assert a specific run (by index) has the given input.
 pub fn assert_run_input(runs: &[Value], idx: usize, expected: &str) -> Result<()> {
-    let run = runs.get(idx).with_context(|| format!("no run at index {idx}"))?;
-    let input = run["input"].as_str().with_context(|| format!("run[{idx}].input is not a string"))?;
+    let run = runs
+        .get(idx)
+        .with_context(|| format!("no run at index {idx}"))?;
+    let input = run["input"]
+        .as_str()
+        .with_context(|| format!("run[{idx}].input is not a string"))?;
     if input != expected {
         bail!("run[{idx}].input mismatch: expected {expected:?}, got {input:?}");
     }
@@ -72,8 +78,7 @@ pub fn assert_events_present(events: &[Value], names: &[&str]) -> Result<()> {
 /// Assert that a tool was called (ToolStart event with matching name).
 pub fn assert_tool_called(events: &[Value], tool_name: &str) -> Result<()> {
     let found = events.iter().any(|e| {
-        e["event"] == "ToolStart"
-            && e["payload"]["data"]["name"].as_str() == Some(tool_name)
+        e["event"] == "ToolStart" && e["payload"]["data"]["name"].as_str() == Some(tool_name)
     });
     if !found {
         bail!("expected ToolStart for tool {tool_name:?}");
@@ -94,7 +99,10 @@ pub fn assert_tool_call_count(events: &[Value], count: usize) -> Result<()> {
 
 /// Assert a session with the given ID exists in the list.
 pub fn assert_session_exists(sessions: &[Value], session_id: &str) -> Result<()> {
-    if !sessions.iter().any(|s| s["id"].as_str() == Some(session_id)) {
+    if !sessions
+        .iter()
+        .any(|s| s["id"].as_str() == Some(session_id))
+    {
         bail!("session {session_id:?} not found in list");
     }
     Ok(())
@@ -102,7 +110,10 @@ pub fn assert_session_exists(sessions: &[Value], session_id: &str) -> Result<()>
 
 /// Assert a session with the given ID does NOT exist in the list.
 pub fn assert_session_not_exists(sessions: &[Value], session_id: &str) -> Result<()> {
-    if sessions.iter().any(|s| s["id"].as_str() == Some(session_id)) {
+    if sessions
+        .iter()
+        .any(|s| s["id"].as_str() == Some(session_id))
+    {
         bail!("session {session_id:?} should not be in list");
     }
     Ok(())

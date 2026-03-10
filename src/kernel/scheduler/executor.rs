@@ -134,12 +134,7 @@ async fn run_task_prompt(
     let run_id = stream.run_id().to_string();
     match stream.finish().await {
         Ok(output) => ("ok".to_string(), Some(run_id), Some(output), None),
-        Err(e) => (
-            "error".to_string(),
-            Some(run_id),
-            None,
-            Some(e.to_string()),
-        ),
+        Err(e) => ("error".to_string(), Some(run_id), None, Some(e.to_string())),
     }
 }
 

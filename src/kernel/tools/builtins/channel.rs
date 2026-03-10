@@ -35,7 +35,10 @@ impl OperationClassifier for ChannelSendTool {
     }
 
     fn summarize(&self, args: &serde_json::Value) -> String {
-        let channel_type = args.get("channel_type").and_then(|v| v.as_str()).unwrap_or("?");
+        let channel_type = args
+            .get("channel_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
         let chat_id = args.get("chat_id").and_then(|v| v.as_str()).unwrap_or("?");
         format!("send to {channel_type}:{chat_id}")
     }
@@ -92,7 +95,11 @@ impl Tool for ChannelSendTool {
 
         let entry = match self.channels.get(channel_type) {
             Some(e) => e,
-            None => return Ok(ToolResult::error(format!("Unknown channel type: {channel_type}"))),
+            None => {
+                return Ok(ToolResult::error(format!(
+                    "Unknown channel type: {channel_type}"
+                )))
+            }
         };
 
         // Find the first enabled account of this channel type for the agent.

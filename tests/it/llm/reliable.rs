@@ -128,7 +128,10 @@ async fn reliable_retries_on_rate_limit_then_succeeds() -> Result<()> {
         .chat("model", &[ChatMessage::user("hi")], &[], 0.7)
         .await;
     let resp = result?;
-    assert_eq!(resp.content.ok_or_else(|| anyhow::anyhow!("no content"))?, "success");
+    assert_eq!(
+        resp.content.ok_or_else(|| anyhow::anyhow!("no content"))?,
+        "success"
+    );
     Ok(())
 }
 
@@ -222,7 +225,10 @@ async fn reliable_no_retry_on_success() -> Result<()> {
     let resp = reliable
         .chat("model", &[ChatMessage::user("hi")], &[], 0.7)
         .await?;
-    assert_eq!(resp.content.ok_or_else(|| anyhow::anyhow!("no content"))?, "success");
+    assert_eq!(
+        resp.content.ok_or_else(|| anyhow::anyhow!("no content"))?,
+        "success"
+    );
     Ok(())
 }
 

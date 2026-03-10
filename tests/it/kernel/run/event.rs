@@ -122,7 +122,8 @@ fn usage_cache_hit_rate_zero_prompt() {
 #[test]
 fn delta_from_content_delta() -> Result<()> {
     let event = StreamEvent::ContentDelta("hello".into());
-    let delta = Delta::from_stream_event(&event).ok_or_else(|| anyhow::anyhow!("expected Some delta"))?;
+    let delta =
+        Delta::from_stream_event(&event).ok_or_else(|| anyhow::anyhow!("expected Some delta"))?;
     match delta {
         Delta::Text { content } => assert_eq!(content, "hello"),
         _ => bail!("expected Text delta"),
@@ -133,7 +134,8 @@ fn delta_from_content_delta() -> Result<()> {
 #[test]
 fn delta_from_thinking_delta() -> Result<()> {
     let event = StreamEvent::ThinkingDelta("step 1".into());
-    let delta = Delta::from_stream_event(&event).ok_or_else(|| anyhow::anyhow!("expected Some delta"))?;
+    let delta =
+        Delta::from_stream_event(&event).ok_or_else(|| anyhow::anyhow!("expected Some delta"))?;
     match delta {
         Delta::Thinking { content } => assert_eq!(content, "step 1"),
         _ => bail!("expected Thinking delta"),
@@ -148,7 +150,8 @@ fn delta_from_tool_call_start() -> Result<()> {
         id: "tc_001".into(),
         name: "shell".into(),
     };
-    let delta = Delta::from_stream_event(&event).ok_or_else(|| anyhow::anyhow!("expected Some delta"))?;
+    let delta =
+        Delta::from_stream_event(&event).ok_or_else(|| anyhow::anyhow!("expected Some delta"))?;
     match delta {
         Delta::ToolCallStart { index, id, name } => {
             assert_eq!(index, 0);
@@ -166,7 +169,8 @@ fn delta_from_tool_call_delta() -> Result<()> {
         index: 0,
         json_chunk: r#"{"cmd"#.into(),
     };
-    let delta = Delta::from_stream_event(&event).ok_or_else(|| anyhow::anyhow!("expected Some delta"))?;
+    let delta =
+        Delta::from_stream_event(&event).ok_or_else(|| anyhow::anyhow!("expected Some delta"))?;
     match delta {
         Delta::ToolCallDelta { index, json_chunk } => {
             assert_eq!(index, 0);
@@ -185,7 +189,8 @@ fn delta_from_tool_call_end() -> Result<()> {
         name: "shell".into(),
         arguments: r#"{"command":"ls"}"#.into(),
     };
-    let delta = Delta::from_stream_event(&event).ok_or_else(|| anyhow::anyhow!("expected Some delta"))?;
+    let delta =
+        Delta::from_stream_event(&event).ok_or_else(|| anyhow::anyhow!("expected Some delta"))?;
     match delta {
         Delta::ToolCallEnd {
             index,
@@ -206,7 +211,8 @@ fn delta_from_tool_call_end() -> Result<()> {
 #[test]
 fn delta_from_usage() -> Result<()> {
     let event = StreamEvent::Usage(TokenUsage::new(100, 50));
-    let delta = Delta::from_stream_event(&event).ok_or_else(|| anyhow::anyhow!("expected Some delta"))?;
+    let delta =
+        Delta::from_stream_event(&event).ok_or_else(|| anyhow::anyhow!("expected Some delta"))?;
     match delta {
         Delta::Usage(u) => {
             assert_eq!(u.prompt_tokens, 100);
@@ -224,7 +230,8 @@ fn delta_from_done_contains_provider_and_model() -> Result<()> {
         provider: Some("openai".into()),
         model: Some("gpt-4.1-mini".into()),
     };
-    let delta = Delta::from_stream_event(&event).ok_or_else(|| anyhow::anyhow!("expected Some delta"))?;
+    let delta =
+        Delta::from_stream_event(&event).ok_or_else(|| anyhow::anyhow!("expected Some delta"))?;
     match delta {
         Delta::Done {
             finish_reason,

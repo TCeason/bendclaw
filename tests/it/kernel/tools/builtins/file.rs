@@ -45,10 +45,10 @@ async fn file_read_not_found() -> Result<(), Box<dyn std::error::Error>> {
         .execute_with_context(json!({"path": "nonexistent.rs"}), &ctx)
         .await?;
     assert!(!result.success);
-    assert!(
-        result.error.as_deref().map_or(false, |e| e.contains("Failed to read")
-            || e.contains("Path escapes"))
-    );
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("Failed to read") || e.contains("Path escapes")));
     Ok(())
 }
 
@@ -60,7 +60,10 @@ async fn file_read_missing_path() -> Result<(), Box<dyn std::error::Error>> {
 
     let result = tool.execute_with_context(json!({}), &ctx).await?;
     assert!(!result.success);
-    assert!(result.error.as_deref().map_or(false, |e| e.contains("Missing")));
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("Missing")));
     Ok(())
 }
 
@@ -93,7 +96,10 @@ async fn file_write_missing_content() -> Result<(), Box<dyn std::error::Error>> 
         .execute_with_context(json!({"path": "out.txt"}), &ctx)
         .await?;
     assert!(!result.success);
-    assert!(result.error.as_deref().map_or(false, |e| e.contains("Missing")));
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("Missing")));
     Ok(())
 }
 
@@ -107,7 +113,10 @@ async fn file_write_missing_path() -> Result<(), Box<dyn std::error::Error>> {
         .execute_with_context(json!({"content": "data"}), &ctx)
         .await?;
     assert!(!result.success);
-    assert!(result.error.as_deref().map_or(false, |e| e.contains("Missing")));
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("Missing")));
     Ok(())
 }
 
@@ -148,7 +157,10 @@ async fn file_edit_old_string_not_found() -> Result<(), Box<dyn std::error::Erro
         )
         .await?;
     assert!(!result.success);
-    assert!(result.error.as_deref().map_or(false, |e| e.contains("not found")));
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("not found")));
     Ok(())
 }
 
@@ -166,7 +178,10 @@ async fn file_edit_ambiguous_match() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
     assert!(!result.success);
-    assert!(result.error.as_deref().map_or(false, |e| e.contains("2 times")));
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("2 times")));
     Ok(())
 }
 

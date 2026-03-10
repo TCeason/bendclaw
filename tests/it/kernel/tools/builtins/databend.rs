@@ -286,7 +286,9 @@ fn tool_op_type() -> Result<(), Box<dyn std::error::Error>> {
 fn tool_schema_has_required_action() -> Result<(), Box<dyn std::error::Error>> {
     let tool = dummy_tool()?;
     let schema = tool.parameters_schema();
-    let props = schema.get("properties").ok_or_else(|| anyhow::anyhow!("missing properties"))?;
+    let props = schema
+        .get("properties")
+        .ok_or_else(|| anyhow::anyhow!("missing properties"))?;
     assert!(props.get("action").is_some());
     assert!(props.get("sql").is_some());
     assert!(props.get("table").is_some());

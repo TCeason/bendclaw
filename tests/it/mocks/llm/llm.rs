@@ -79,8 +79,8 @@ impl MockLLMProvider {
             .join(format!("{name}.json"));
         let raw = std::fs::read_to_string(&path)
             .with_context(|| format!("fixture {name}.json not found at {}", path.display()))?;
-        let doc: serde_json::Value =
-            serde_json::from_str(&raw).with_context(|| format!("fixture {name}.json invalid JSON"))?;
+        let doc: serde_json::Value = serde_json::from_str(&raw)
+            .with_context(|| format!("fixture {name}.json invalid JSON"))?;
         let turns = doc["turns"]
             .as_array()
             .with_context(|| format!("fixture {name}.json missing 'turns' array"))?
@@ -230,9 +230,9 @@ fn parse_fixture_turn(t: &serde_json::Value, fixture_name: &str) -> anyhow::Resu
             let name = t["name"]
                 .as_str()
                 .with_context(|| format!("fixture {fixture_name}: tool_call missing 'name'"))?;
-            let arguments = t["arguments"]
-                .as_str()
-                .with_context(|| format!("fixture {fixture_name}: tool_call missing 'arguments'"))?;
+            let arguments = t["arguments"].as_str().with_context(|| {
+                format!("fixture {fixture_name}: tool_call missing 'arguments'")
+            })?;
             Ok(MockTurn::ToolCall {
                 name: name.to_string(),
                 arguments: arguments.to_string(),
@@ -247,9 +247,9 @@ fn parse_fixture_turn(t: &serde_json::Value, fixture_name: &str) -> anyhow::Resu
                     let name = c["name"]
                         .as_str()
                         .with_context(|| format!("fixture {fixture_name}: call missing 'name'"))?;
-                    let arguments = c["arguments"]
-                        .as_str()
-                        .with_context(|| format!("fixture {fixture_name}: call missing 'arguments'"))?;
+                    let arguments = c["arguments"].as_str().with_context(|| {
+                        format!("fixture {fixture_name}: call missing 'arguments'")
+                    })?;
                     Ok((name.to_string(), arguments.to_string()))
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;

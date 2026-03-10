@@ -1,4 +1,3 @@
-use anyhow::Result;
 use bendclaw::storage::time::now;
 
 #[test]

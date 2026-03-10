@@ -338,11 +338,10 @@ pub fn api_router(state: AppState, _log_level: &str, auth: &AuthConfig) -> Route
         ));
 
     // Webhook routes — no auth (external platforms can't authenticate).
-    let webhook_routes = Router::new()
-        .route(
-            "/v1/agents/{agent_id}/channels/webhook/{account_id}",
-            post(v1::channels::webhook),
-        );
+    let webhook_routes = Router::new().route(
+        "/v1/agents/{agent_id}/channels/webhook/{account_id}",
+        post(v1::channels::webhook),
+    );
 
     authenticated_routes
         .merge(webhook_routes)

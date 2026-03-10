@@ -184,7 +184,10 @@ fn parse_calls_marks_tool_vs_skill_and_handles_bad_json() {
     assert!(matches!(parsed[1].kind, DispatchKind::Skill));
     assert_eq!(parsed[0].arguments["key"], "k");
     assert!(parsed[1].arguments.is_object());
-    assert!(parsed[1].arguments.as_object().map_or(false, |o| o.is_empty()));
+    assert!(parsed[1]
+        .arguments
+        .as_object()
+        .is_some_and(|o| o.is_empty()));
 }
 
 #[test]
@@ -230,7 +233,10 @@ fn parse_calls_classifies_tool_vs_skill_and_parses_arguments() {
     assert_eq!(parsed[0].arguments["a"], 1);
     assert!(matches!(parsed[1].kind, DispatchKind::Skill));
     assert!(parsed[1].arguments.is_object());
-    assert!(parsed[1].arguments.as_object().map_or(false, |o| o.is_empty()));
+    assert!(parsed[1]
+        .arguments
+        .as_object()
+        .is_some_and(|o| o.is_empty()));
 }
 
 #[tokio::test]

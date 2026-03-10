@@ -1,9 +1,9 @@
+use bendclaw::kernel::channel::plugins::telegram::TelegramChannel;
+use bendclaw::kernel::channel::plugins::telegram::TELEGRAM_CHANNEL_TYPE;
 use bendclaw::kernel::channel::ChannelKind;
 use bendclaw::kernel::channel::ChannelPlugin;
 use bendclaw::kernel::channel::InboundKind;
 use bendclaw::kernel::channel::InboundMode;
-use bendclaw::kernel::channel::plugins::telegram::TelegramChannel;
-use bendclaw::kernel::channel::plugins::telegram::TELEGRAM_CHANNEL_TYPE;
 
 #[test]
 fn channel_type() {
@@ -42,8 +42,12 @@ fn inbound_is_receiver() {
 async fn validate_config_rejects_empty_token() {
     let ch = TelegramChannel::new();
     assert!(ch.validate_config(&serde_json::json!({})).is_err());
-    assert!(ch.validate_config(&serde_json::json!({"token": ""})).is_err());
-    assert!(ch.validate_config(&serde_json::json!({"token": "123:ABC"})).is_ok());
+    assert!(ch
+        .validate_config(&serde_json::json!({"token": ""}))
+        .is_err());
+    assert!(ch
+        .validate_config(&serde_json::json!({"token": "123:ABC"}))
+        .is_ok());
 }
 
 #[tokio::test]

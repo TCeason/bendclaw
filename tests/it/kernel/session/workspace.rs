@@ -1,9 +1,9 @@
-use anyhow::Context as _;
-use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context as _;
+use anyhow::Result;
 use bendclaw::kernel::session::workspace::OpenResolver;
 use bendclaw::kernel::session::workspace::SandboxResolver;
 use bendclaw::kernel::session::workspace::Workspace;
@@ -36,7 +36,9 @@ fn resolve_safe_path_absolute_inside() -> Result<()> {
     let file = dir.path().join("hello.txt");
     std::fs::write(&file, "hi")?;
     let ws = test_ws(dir.path().to_path_buf());
-    assert!(ws.resolve_safe_path(file.to_str().context("non-UTF8 path")?).is_some());
+    assert!(ws
+        .resolve_safe_path(file.to_str().context("non-UTF8 path")?)
+        .is_some());
     Ok(())
 }
 
@@ -139,7 +141,10 @@ fn command_sets_current_dir() -> Result<()> {
     let ws = test_ws(dir.path().to_path_buf());
     let cmd = ws.command("echo");
     let std_cmd = cmd.as_std();
-    assert_eq!(std_cmd.get_current_dir().context("no current dir")?, dir.path());
+    assert_eq!(
+        std_cmd.get_current_dir().context("no current dir")?,
+        dir.path()
+    );
     Ok(())
 }
 

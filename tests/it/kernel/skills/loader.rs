@@ -1,6 +1,7 @@
 //! Tests for the filesystem skill loader (`loader.rs`).
 
-use anyhow::{Context as _, Result};
+use anyhow::Context as _;
+use anyhow::Result;
 use bendclaw::kernel::skills::fs::load_skill_from_dir;
 use bendclaw::kernel::skills::fs::load_skills;
 use bendclaw::kernel::skills::fs::parse_frontmatter;
@@ -112,8 +113,8 @@ fn load_skill_from_dir_detects_executable() -> Result<()> {
     write_skill_md(&skill_dir, "---\nname: sk\n---\nbody")?;
     std::fs::write(skill_dir.join("scripts/run.py"), "print('hi')")?;
 
-    let loaded = load_skill_from_dir(&skill_dir, "sk")
-        .ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
+    let loaded =
+        load_skill_from_dir(&skill_dir, "sk").ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
     assert!(loaded.skill.executable);
     Ok(())
 }
@@ -210,8 +211,8 @@ fn read_doc_empty_path_returns_content() -> Result<()> {
     std::fs::create_dir(&skill_dir)?;
     write_skill_md(&skill_dir, "---\nname: sk\n---\n# My Content")?;
 
-    let loaded = load_skill_from_dir(&skill_dir, "sk")
-        .ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
+    let loaded =
+        load_skill_from_dir(&skill_dir, "sk").ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
     let doc = loaded
         .read_doc("")
         .ok_or_else(|| anyhow::anyhow!("read_doc returned None"))?;
@@ -227,8 +228,8 @@ fn read_doc_reads_subpath_file() -> Result<()> {
     write_skill_md(&skill_dir, "---\nname: sk\n---\nbody")?;
     std::fs::write(skill_dir.join("references/guide.md"), "# Guide")?;
 
-    let loaded = load_skill_from_dir(&skill_dir, "sk")
-        .ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
+    let loaded =
+        load_skill_from_dir(&skill_dir, "sk").ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
     let doc = loaded
         .read_doc("references/guide.md")
         .ok_or_else(|| anyhow::anyhow!("read_doc returned None"))?;
@@ -247,8 +248,8 @@ fn read_doc_lists_md_files_in_directory() -> Result<()> {
     std::fs::write(refs.join("b.md"), "B")?;
     std::fs::write(refs.join("c.txt"), "not md")?;
 
-    let loaded = load_skill_from_dir(&skill_dir, "sk")
-        .ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
+    let loaded =
+        load_skill_from_dir(&skill_dir, "sk").ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
     let listing = loaded
         .read_doc("references")
         .ok_or_else(|| anyhow::anyhow!("read_doc returned None"))?;
@@ -265,8 +266,8 @@ fn read_doc_returns_none_for_nonexistent_path() -> Result<()> {
     std::fs::create_dir(&skill_dir)?;
     write_skill_md(&skill_dir, "---\nname: sk\n---\nbody")?;
 
-    let loaded = load_skill_from_dir(&skill_dir, "sk")
-        .ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
+    let loaded =
+        load_skill_from_dir(&skill_dir, "sk").ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
     assert!(loaded.read_doc("nonexistent.md").is_none());
     Ok(())
 }
@@ -283,8 +284,8 @@ fn requires_parsed_from_frontmatter() -> Result<()> {
         "---\nname: sk\nversion: 2.0.0\ndescription: with deps\ntimeout: 60\nrequires:\n  bins:\n    - curl\n    - jq\n  env:\n    - DATABEND_DSN\n---\nbody",
     )?;
 
-    let loaded = load_skill_from_dir(&skill_dir, "sk")
-        .ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
+    let loaded =
+        load_skill_from_dir(&skill_dir, "sk").ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
     let req = loaded.skill.requires.context("requires must be parsed")?;
     assert_eq!(req.bins, vec!["curl", "jq"]);
     assert_eq!(req.env, vec!["DATABEND_DSN"]);
@@ -302,8 +303,8 @@ fn no_requires_returns_none() -> Result<()> {
     std::fs::create_dir(&skill_dir)?;
     write_skill_md(&skill_dir, "---\nname: sk\n---\nbody")?;
 
-    let loaded = load_skill_from_dir(&skill_dir, "sk")
-        .ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
+    let loaded =
+        load_skill_from_dir(&skill_dir, "sk").ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
     assert!(loaded.skill.requires.is_none());
     Ok(())
 }
@@ -318,8 +319,8 @@ fn requires_bins_only() -> Result<()> {
         "---\nname: sk\nrequires:\n  bins:\n    - python3\n---\nbody",
     )?;
 
-    let loaded = load_skill_from_dir(&skill_dir, "sk")
-        .ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
+    let loaded =
+        load_skill_from_dir(&skill_dir, "sk").ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
     let req = loaded.skill.requires.context("requires missing")?;
     assert_eq!(req.bins, vec!["python3"]);
     assert!(req.env.is_empty());
@@ -336,8 +337,8 @@ fn requires_env_only() -> Result<()> {
         "---\nname: sk\nrequires:\n  env:\n    - API_KEY\n---\nbody",
     )?;
 
-    let loaded = load_skill_from_dir(&skill_dir, "sk")
-        .ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
+    let loaded =
+        load_skill_from_dir(&skill_dir, "sk").ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
     let req = loaded.skill.requires.context("requires missing")?;
     assert!(req.bins.is_empty());
     assert_eq!(req.env, vec!["API_KEY"]);
@@ -354,8 +355,8 @@ fn requires_empty_arrays() -> Result<()> {
         "---\nname: sk\nrequires:\n  bins: []\n  env: []\n---\nbody",
     )?;
 
-    let loaded = load_skill_from_dir(&skill_dir, "sk")
-        .ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
+    let loaded =
+        load_skill_from_dir(&skill_dir, "sk").ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
     let req = loaded.skill.requires.context("requires missing")?;
     assert!(req.bins.is_empty());
     assert!(req.env.is_empty());
@@ -369,8 +370,8 @@ fn frontmatter_boolean_and_numeric_values_preserved() -> Result<()> {
     std::fs::create_dir(&skill_dir)?;
     write_skill_md(&skill_dir, "---\nname: sk\ntimeout: 120\n---\nbody")?;
 
-    let loaded = load_skill_from_dir(&skill_dir, "sk")
-        .ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
+    let loaded =
+        load_skill_from_dir(&skill_dir, "sk").ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
     assert_eq!(loaded.skill.timeout, 120);
     Ok(())
 }
@@ -383,8 +384,8 @@ fn script_path_returns_some_when_script_exists() -> Result<()> {
     write_skill_md(&skill_dir, "---\nname: sk\n---\nbody")?;
     std::fs::write(skill_dir.join("scripts/run.py"), "pass")?;
 
-    let loaded = load_skill_from_dir(&skill_dir, "sk")
-        .ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
+    let loaded =
+        load_skill_from_dir(&skill_dir, "sk").ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
     let sp = loaded
         .script_path()
         .ok_or_else(|| anyhow::anyhow!("script_path missing"))?;
@@ -399,8 +400,8 @@ fn script_path_returns_none_without_scripts_dir() -> Result<()> {
     std::fs::create_dir(&skill_dir)?;
     write_skill_md(&skill_dir, "---\nname: sk\n---\nbody")?;
 
-    let loaded = load_skill_from_dir(&skill_dir, "sk")
-        .ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
+    let loaded =
+        load_skill_from_dir(&skill_dir, "sk").ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
     assert!(loaded.script_path().is_none());
     Ok(())
 }

@@ -1,3 +1,4 @@
+use super::record::ChannelMessageRecord;
 use crate::base::Result;
 use crate::storage::pool::Pool;
 use crate::storage::sql;
@@ -5,8 +6,6 @@ use crate::storage::sql::SqlVal;
 use crate::storage::table::DatabendTable;
 use crate::storage::table::RowMapper;
 use crate::storage::table::Where;
-
-use super::record::ChannelMessageRecord;
 
 #[derive(Clone)]
 struct Mapper;
@@ -59,7 +58,10 @@ impl ChannelMessageRepo {
                 ("direction", SqlVal::Str(&record.direction)),
                 ("sender_id", SqlVal::Str(&record.sender_id)),
                 ("text", SqlVal::Str(&record.text)),
-                ("platform_message_id", SqlVal::Str(&record.platform_message_id)),
+                (
+                    "platform_message_id",
+                    SqlVal::Str(&record.platform_message_id),
+                ),
                 ("run_id", SqlVal::Str(&record.run_id)),
                 ("attachments", SqlVal::Str(&record.attachments)),
                 ("created_at", SqlVal::Raw("NOW()")),

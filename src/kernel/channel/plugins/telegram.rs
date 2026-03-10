@@ -334,7 +334,9 @@ async fn poll_updates(
 
     if !json["ok"].as_bool().unwrap_or(false) {
         let desc = json["description"].as_str().unwrap_or("unknown error");
-        return Err(ErrorCode::internal(format!("telegram getUpdates failed: {desc}")));
+        return Err(ErrorCode::internal(format!(
+            "telegram getUpdates failed: {desc}"
+        )));
     }
 
     let updates: Vec<TelegramUpdate> =
@@ -355,7 +357,10 @@ async fn poll_updates(
                 username: None,
             });
             if !is_allowed(&config.allow_from, &user) {
-                tracing::warn!(sender_id = user.id, "telegram: sender not in allow_from, denied");
+                tracing::warn!(
+                    sender_id = user.id,
+                    "telegram: sender not in allow_from, denied"
+                );
                 continue;
             }
             let event = InboundEvent::Message(InboundMessage {

@@ -1,12 +1,11 @@
 use axum::http::HeaderMap;
 
+use super::account_service::record_to_domain;
 use crate::kernel::channel::plugin::InboundKind;
 use crate::service::error::Result;
 use crate::service::error::ServiceError;
 use crate::service::state::AppState;
 use crate::storage::dal::channel_account::repo::ChannelAccountRepo;
-
-use super::account_service::record_to_domain;
 
 pub struct ChannelIngressService {
     state: AppState,
@@ -30,28 +29,20 @@ impl ChannelIngressService {
         let pool = self.state.runtime.databases().agent_pool(agent_id)?;
         let repo = ChannelAccountRepo::new(pool.clone());
 
-        let record = repo
-            .load(channel_account_id)
-            .await?
-            .ok_or_else(|| {
-                ServiceError::AgentNotFound(format!(
-                    "channel account '{channel_account_id}' not found"
-                ))
-            })?;
+        let record = repo.load(channel_account_id).await?.ok_or_else(|| {
+            ServiceError::AgentNotFound(format!("channel account '{channel_account_id}' not found"))
+        })?;
 
         if !record.enabled {
-            return Err(ServiceError::BadRequest("channel account is disabled".into()));
+            return Err(ServiceError::BadRequest(
+                "channel account is disabled".into(),
+            ));
         }
 
         let registry = self.state.runtime.channels();
-        let entry = registry
-            .get(&record.channel_type)
-            .ok_or_else(|| {
-                ServiceError::BadRequest(format!(
-                    "unknown channel type: {}",
-                    record.channel_type
-                ))
-            })?;
+        let entry = registry.get(&record.channel_type).ok_or_else(|| {
+            ServiceError::BadRequest(format!("unknown channel type: {}", record.channel_type))
+        })?;
 
         let wh = match &entry.inbound {
             InboundKind::Webhook(wh) => wh.clone(),

@@ -1,10 +1,8 @@
-use anyhow::bail;
-use anyhow::Context as _;
-use anyhow::Result;
 use std::sync::Arc;
 
+use anyhow::Context as _;
+use anyhow::Result;
 use async_trait::async_trait;
-
 use bendclaw::base::Result as BaseResult;
 use bendclaw::kernel::channel::ChannelCapabilities;
 use bendclaw::kernel::channel::ChannelKind;

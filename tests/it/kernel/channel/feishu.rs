@@ -1,9 +1,9 @@
+use bendclaw::kernel::channel::plugins::feishu::FeishuChannel;
+use bendclaw::kernel::channel::plugins::feishu::FEISHU_CHANNEL_TYPE;
 use bendclaw::kernel::channel::ChannelKind;
 use bendclaw::kernel::channel::ChannelPlugin;
 use bendclaw::kernel::channel::InboundKind;
 use bendclaw::kernel::channel::InboundMode;
-use bendclaw::kernel::channel::plugins::feishu::FeishuChannel;
-use bendclaw::kernel::channel::plugins::feishu::FEISHU_CHANNEL_TYPE;
 
 #[test]
 fn channel_type() {
@@ -42,9 +42,15 @@ fn inbound_is_receiver() {
 async fn validate_config_rejects_empty_fields() {
     let ch = FeishuChannel::new();
     assert!(ch.validate_config(&serde_json::json!({})).is_err());
-    assert!(ch.validate_config(&serde_json::json!({"app_id": "", "app_secret": "s"})).is_err());
-    assert!(ch.validate_config(&serde_json::json!({"app_id": "id", "app_secret": ""})).is_err());
-    assert!(ch.validate_config(&serde_json::json!({"app_id": "id", "app_secret": "s"})).is_ok());
+    assert!(ch
+        .validate_config(&serde_json::json!({"app_id": "", "app_secret": "s"}))
+        .is_err());
+    assert!(ch
+        .validate_config(&serde_json::json!({"app_id": "id", "app_secret": ""}))
+        .is_err());
+    assert!(ch
+        .validate_config(&serde_json::json!({"app_id": "id", "app_secret": "s"}))
+        .is_ok());
 }
 
 #[tokio::test]

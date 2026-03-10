@@ -196,8 +196,7 @@ fn learning_response_empty_tags() -> anyhow::Result<()> {
 fn create_learning_request_default_source() -> anyhow::Result<()> {
     use bendclaw::service::v1::learnings::CreateLearningRequest;
 
-    let req: CreateLearningRequest =
-        serde_json::from_str(r#"{"title":"t","content":"c"}"#)?;
+    let req: CreateLearningRequest = serde_json::from_str(r#"{"title":"t","content":"c"}"#)?;
     assert_eq!(req.source, "manual");
     assert!(req.tags.is_empty());
     assert!(req.session_id.is_empty());

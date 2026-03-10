@@ -9,6 +9,10 @@ pub mod time;
 
 pub use agent_config::AgentConfigRecord;
 pub use agent_config::AgentConfigStore;
+pub use channel_account::ChannelAccountRecord;
+pub use channel_account::ChannelAccountRepo;
+pub use channel_message::ChannelMessageRecord;
+pub use channel_message::ChannelMessageRepo;
 pub use config_version::ConfigVersionRecord;
 pub use dal::agent_config;
 pub use dal::channel_account;
@@ -54,7 +58,3 @@ pub use usage::UsageRepo;
 pub use usage::UsageStore;
 pub use variable::VariableRecord;
 pub use variable::VariableRepo;
-pub use channel_account::ChannelAccountRecord;
-pub use channel_account::ChannelAccountRepo;
-pub use channel_message::ChannelMessageRecord;
-pub use channel_message::ChannelMessageRepo;

@@ -6,15 +6,19 @@ use crate::base::new_id;
 use crate::kernel::channel::account::ChannelAccount;
 use crate::kernel::channel::dispatcher::ChannelDispatcher;
 use crate::kernel::channel::message::InboundEvent;
-use crate::kernel::runtime::Runtime;
 use crate::kernel::run::event::Delta;
 use crate::kernel::run::event::Event;
+use crate::kernel::runtime::Runtime;
 use crate::storage::dal::channel_message::record::ChannelMessageRecord;
 use crate::storage::dal::channel_message::repo::ChannelMessageRepo;
 
 /// Dispatch a single inbound event through the full conversation pipeline.
 /// Kernel-layer function — no service-layer dependencies.
-pub async fn dispatch_inbound(runtime: &Arc<Runtime>, account: ChannelAccount, event: InboundEvent) {
+pub async fn dispatch_inbound(
+    runtime: &Arc<Runtime>,
+    account: ChannelAccount,
+    event: InboundEvent,
+) {
     if let Err(e) = try_dispatch_inbound(runtime, &account, &event).await {
         tracing::error!(
             agent_id = %account.agent_id,
@@ -32,10 +36,7 @@ async fn try_dispatch_inbound(
     event: &InboundEvent,
 ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (input, reply_ctx) = ChannelDispatcher::extract_input(event);
-    let chat_id = reply_ctx
-        .as_ref()
-        .map(|r| r.chat_id.as_str())
-        .unwrap_or("");
+    let chat_id = reply_ctx.as_ref().map(|r| r.chat_id.as_str()).unwrap_or("");
 
     if input.trim().is_empty() {
         return Ok(());

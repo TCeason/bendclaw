@@ -269,10 +269,7 @@ async fn get_tenant_token(
         .ok_or_else(|| ErrorCode::internal("feishu: missing tenant_access_token"))
 }
 
-async fn get_ws_endpoint(
-    client: &reqwest::Client,
-    token: &str,
-) -> Result<(String, u64)> {
+async fn get_ws_endpoint(client: &reqwest::Client, token: &str) -> Result<(String, u64)> {
     let url = format!("{FEISHU_API}/callback/ws/endpoint");
     let resp = client
         .post(&url)

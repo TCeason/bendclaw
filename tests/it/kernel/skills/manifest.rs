@@ -87,7 +87,9 @@ fn test_requires_serde_roundtrip() -> Result<()> {
     };
     let json = serde_json::to_string(&skill)?;
     let decoded: Skill = serde_json::from_str(&json)?;
-    let req = decoded.requires.context("requires must survive roundtrip")?;
+    let req = decoded
+        .requires
+        .context("requires must survive roundtrip")?;
     assert_eq!(req.bins, vec!["bendsql", "jq"]);
     assert_eq!(req.env, vec!["DATABEND_DSN"]);
     Ok(())

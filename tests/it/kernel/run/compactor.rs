@@ -1,6 +1,6 @@
-use anyhow::Result;
 use std::sync::Arc;
 
+use anyhow::Result;
 use bendclaw::kernel::run::compactor::Compactor;
 use bendclaw::kernel::runtime::agent_config::CheckpointConfig;
 use bendclaw::kernel::Message;

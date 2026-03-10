@@ -111,7 +111,10 @@ async fn remove_rejects_path_traversal_name() -> Result<()> {
         .execute_with_context(json!({"name": "../evil"}), &ctx)
         .await?;
     assert!(!result.success);
-    assert!(result.error.as_deref().map_or(false, |e| e.contains("skill name")));
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("skill name")));
     Ok(())
 }
 
@@ -119,9 +122,7 @@ async fn remove_rejects_path_traversal_name() -> Result<()> {
 async fn remove_rejects_empty_name() -> Result<()> {
     let (tool, _) = make_tool();
     let ctx = test_tool_context();
-    let result = tool
-        .execute_with_context(json!({"name": ""}), &ctx)
-        .await?;
+    let result = tool.execute_with_context(json!({"name": ""}), &ctx).await?;
     assert!(!result.success);
     Ok(())
 }
@@ -184,7 +185,10 @@ async fn remove_returns_error_when_factory_fails() -> Result<()> {
         .execute_with_context(json!({"name": "my-skill"}), &ctx)
         .await?;
     assert!(!result.success);
-    assert!(result.error.as_deref().map_or(false, |e| e.contains("failed to access agent store")));
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("failed to access agent store")));
     Ok(())
 }
 
@@ -241,7 +245,10 @@ async fn remove_returns_error_when_store_remove_fails() -> Result<()> {
         .execute_with_context(json!({"name": "my-skill"}), &ctx)
         .await?;
     assert!(!result.success);
-    assert!(result.error.as_deref().map_or(false, |e| e.contains("failed to remove skill")));
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("failed to remove skill")));
     Ok(())
 }
 

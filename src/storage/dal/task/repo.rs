@@ -141,7 +141,12 @@ impl TaskRepo {
             .list_where(&condition, "next_run_at ASC", 100)
             .await;
         if let Err(error) = &result {
-            repo_error(REPO, "list_due", serde_json::json!({"agentos_id": agentos_id}), error);
+            repo_error(
+                REPO,
+                "list_due",
+                serde_json::json!({"agentos_id": agentos_id}),
+                error,
+            );
         }
         result
     }

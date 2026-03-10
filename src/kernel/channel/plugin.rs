@@ -4,11 +4,10 @@ use async_trait::async_trait;
 use axum::http::HeaderMap;
 use tokio_util::sync::CancellationToken;
 
-use crate::base::Result;
-
 use super::account::ChannelAccount;
 use super::capabilities::ChannelCapabilities;
 use super::message::InboundEvent;
+use crate::base::Result;
 
 /// Sender for pushing inbound events from long-lived connections (WebSocket, polling).
 pub type InboundEventSender = tokio::sync::mpsc::UnboundedSender<InboundEvent>;
@@ -64,11 +63,7 @@ pub trait ChannelOutbound: Send + Sync {
         text: &str,
     ) -> Result<String>;
 
-    async fn send_typing(
-        &self,
-        config: &serde_json::Value,
-        chat_id: &str,
-    ) -> Result<()>;
+    async fn send_typing(&self, config: &serde_json::Value, chat_id: &str) -> Result<()>;
 
     async fn edit_message(
         &self,

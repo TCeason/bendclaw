@@ -1,3 +1,4 @@
+use super::record::ChannelAccountRecord;
 use crate::base::Result;
 use crate::storage::pool::Pool;
 use crate::storage::sql;
@@ -5,8 +6,6 @@ use crate::storage::sql::SqlVal;
 use crate::storage::table::DatabendTable;
 use crate::storage::table::RowMapper;
 use crate::storage::table::Where;
-
-use super::record::ChannelAccountRecord;
 
 #[derive(Clone)]
 struct Mapper;
@@ -49,8 +48,7 @@ impl ChannelAccountRepo {
 
     pub async fn insert(&self, record: &ChannelAccountRecord) -> Result<()> {
         let enabled_str = if record.enabled { "1" } else { "0" };
-        let config_str =
-            serde_json::to_string(&record.config).unwrap_or_else(|_| "{}".to_string());
+        let config_str = serde_json::to_string(&record.config).unwrap_or_else(|_| "{}".to_string());
         self.table
             .insert(&[
                 ("id", SqlVal::Str(&record.id)),
@@ -58,7 +56,13 @@ impl ChannelAccountRepo {
                 ("account_id", SqlVal::Str(&record.account_id)),
                 ("agent_id", SqlVal::Str(&record.agent_id)),
                 ("user_id", SqlVal::Str(&record.user_id)),
-                ("config", SqlVal::Raw(&format!("PARSE_JSON('{}')", crate::storage::sql::escape(&config_str)))),
+                (
+                    "config",
+                    SqlVal::Raw(&format!(
+                        "PARSE_JSON('{}')",
+                        crate::storage::sql::escape(&config_str)
+                    )),
+                ),
                 ("enabled", SqlVal::Raw(enabled_str)),
                 ("created_at", SqlVal::Raw("NOW()")),
                 ("updated_at", SqlVal::Raw("NOW()")),
@@ -93,10 +97,7 @@ impl ChannelAccountRepo {
             .await
     }
 
-    pub async fn list_by_type(
-        &self,
-        channel_type: &str,
-    ) -> Result<Vec<ChannelAccountRecord>> {
+    pub async fn list_by_type(&self, channel_type: &str) -> Result<Vec<ChannelAccountRecord>> {
         self.table
             .list(
                 &[Where("channel_type", SqlVal::Str(channel_type))],

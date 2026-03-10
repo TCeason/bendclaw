@@ -103,7 +103,9 @@ async fn update_config(app: &axum::Router, agent_id: &str, user: &str, body: Val
 #[tokio::test]
 async fn e2e_tool_call_persists_full_message_chain() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::from_fixture("tool_call_single")?)).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::from_fixture("tool_call_single")?))
+        .await?;
     let agent_id = uid("e2e-tc");
     let user = uid("user");
     let session_id = uid("session");
@@ -127,7 +129,9 @@ async fn e2e_tool_call_persists_full_message_chain() -> Result<()> {
 #[tokio::test]
 async fn e2e_multi_turn_accumulates_history() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::from_fixture("text_only")?)).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::from_fixture("text_only")?))
+        .await?;
     let agent_id = uid("e2e-mt");
     let user = uid("user");
     let session_id = uid("session");
@@ -154,7 +158,9 @@ async fn e2e_multi_turn_accumulates_history() -> Result<()> {
 #[tokio::test]
 async fn e2e_audit_trail_records_all_messages() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::from_fixture("tool_call_single")?)).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::from_fixture("tool_call_single")?))
+        .await?;
     let agent_id = uid("e2e-audit");
     let user = uid("user");
     let session_id = uid("session");
@@ -167,7 +173,11 @@ async fn e2e_audit_trail_records_all_messages() -> Result<()> {
     let detail = get_run_detail(&app, &agent_id, run_id, &user).await?;
     let events = detail["events"].as_array().context("events missing")?;
 
-    assert!(events.len() >= 6, "expected enough events, got {}", events.len());
+    assert!(
+        events.len() >= 6,
+        "expected enough events, got {}",
+        events.len()
+    );
     assert_event_present(events, "ReasonStart")?;
     assert_event_present(events, "ToolEnd")?;
     Ok(())
@@ -176,7 +186,9 @@ async fn e2e_audit_trail_records_all_messages() -> Result<()> {
 #[tokio::test]
 async fn e2e_phase1_audit_events_are_persisted() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::from_fixture("audit_trail")?)).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::from_fixture("audit_trail")?))
+        .await?;
     let agent_id = uid("e2e-phase1");
     let user = uid("user");
     let session_id = uid("session");
@@ -204,7 +216,9 @@ async fn e2e_phase1_audit_events_are_persisted() -> Result<()> {
 #[tokio::test]
 async fn e2e_session_lifecycle() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::from_fixture("text_only")?)).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::from_fixture("text_only")?))
+        .await?;
     let agent_id = uid("e2e-ses");
     let user = uid("user");
     let session_id = uid("session");
@@ -218,19 +232,32 @@ async fn e2e_session_lifecycle() -> Result<()> {
 
     let after = get_sessions(&app, &agent_id, &user).await?;
     assert_session_exists(&after, &session_id)?;
-    let session = after.iter().find(|s| s["id"].as_str() == Some(&session_id)).context("session not found")?;
+    let session = after
+        .iter()
+        .find(|s| s["id"].as_str() == Some(&session_id))
+        .context("session not found")?;
     assert_eq!(session["title"], "hello world");
 
     chat(&app, &agent_id, &session_id, &user, "follow up").await?;
     let final_sessions = get_sessions(&app, &agent_id, &user).await?;
-    assert_eq!(final_sessions.iter().filter(|s| s["id"].as_str() == Some(&session_id)).count(), 1);
+    assert_eq!(
+        final_sessions
+            .iter()
+            .filter(|s| s["id"].as_str() == Some(&session_id))
+            .count(),
+        1
+    );
     Ok(())
 }
 
 #[tokio::test]
 async fn e2e_parallel_tool_calls_all_persisted() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::from_fixture("tool_call_parallel")?)).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::from_fixture(
+            "tool_call_parallel",
+        )?))
+        .await?;
     let agent_id = uid("e2e-par");
     let user = uid("user");
     let session_id = uid("session");
@@ -252,7 +279,9 @@ async fn e2e_parallel_tool_calls_all_persisted() -> Result<()> {
 #[tokio::test]
 async fn e2e_tool_call_persists_operation_events_with_structured_detail() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::from_fixture("tool_call_single")?)).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::from_fixture("tool_call_single")?))
+        .await?;
     let agent_id = uid("e2e-op");
     let user = uid("user");
     let session_id = uid("session");
@@ -289,7 +318,9 @@ async fn e2e_tool_call_persists_operation_events_with_structured_detail() -> Res
 #[tokio::test]
 async fn e2e_system_prompt_flows_through_config() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::from_fixture("sql_expert")?)).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::from_fixture("sql_expert")?))
+        .await?;
     let agent_id = uid("e2e-sys");
     let user = uid("user");
     let session_id = uid("session");
@@ -317,7 +348,9 @@ async fn e2e_system_prompt_flows_through_config() -> Result<()> {
 #[tokio::test]
 async fn e2e_session_isolation() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::from_fixture("text_only")?)).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::from_fixture("text_only")?))
+        .await?;
     let agent_id = uid("e2e-iso");
     let user = uid("user");
     let session_a = uid("ses-a");
@@ -339,7 +372,9 @@ async fn e2e_session_isolation() -> Result<()> {
 #[tokio::test]
 async fn e2e_user_isolation() -> Result<()> {
     let ctx = TestContext::setup().await?;
-    let app = ctx.app_with_llm(Arc::new(MockLLMProvider::from_fixture("text_only")?)).await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::from_fixture("text_only")?))
+        .await?;
     let agent_id = uid("e2e-uiso");
     let user_a = uid("user-a");
     let user_b = uid("user-b");

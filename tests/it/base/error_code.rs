@@ -171,7 +171,9 @@ fn error_code_invalid_input() {
 #[test]
 fn result_ext_with_context_ok() -> Result<()> {
     let r: std::result::Result<i32, ErrorCode> = Ok(42);
-    let val = r.with_context(|| "ctx".into()).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let val = r
+        .with_context(|| "ctx".into())
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     assert_eq!(val, 42);
     Ok(())
 }
@@ -189,7 +191,9 @@ fn result_ext_with_context_err() -> Result<()> {
 #[test]
 fn option_ext_ok_or_not_found_some() -> Result<()> {
     let o: Option<i32> = Some(42);
-    let val = o.ok_or_not_found(|| "missing".into()).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let val = o
+        .ok_or_not_found(|| "missing".into())
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     assert_eq!(val, 42);
     Ok(())
 }
@@ -207,7 +211,9 @@ fn option_ext_ok_or_not_found_none() -> Result<()> {
 #[test]
 fn option_ext_ok_or_error_some() -> Result<()> {
     let o: Option<i32> = Some(1);
-    let val = o.ok_or_error(|| ErrorCode::internal("x")).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let val = o
+        .ok_or_error(|| ErrorCode::internal("x"))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     assert_eq!(val, 1);
     Ok(())
 }

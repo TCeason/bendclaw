@@ -80,7 +80,7 @@ fn compute_next_run_cron_returns_timestamp() -> Result<()> {
 fn compute_next_run_cron_ignores_every_seconds() {
     let result = compute_next_run("cron", "0 0 9 * * *", Some(300));
     assert!(result.is_some());
-    assert!(!result.as_deref().map_or(false, |s| s.contains("300")));
+    assert!(!result.as_deref().is_some_and(|s| s.contains("300")));
 }
 
 #[test]

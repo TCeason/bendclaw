@@ -119,7 +119,13 @@ async fn list_config_versions() -> Result<()> {
         .await?;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = json_body(resp).await?;
-    assert!(body["data"].as_array().context("expected data array")?.len() >= 2);
+    assert!(
+        body["data"]
+            .as_array()
+            .context("expected data array")?
+            .len()
+            >= 2
+    );
     Ok(())
 }
 

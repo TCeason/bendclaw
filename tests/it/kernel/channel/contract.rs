@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
+use bendclaw::kernel::channel::account::ChannelAccount;
 use bendclaw::kernel::channel::ChannelPlugin;
 use bendclaw::kernel::channel::InboundKind;
-use bendclaw::kernel::channel::account::ChannelAccount;
 
 fn test_account(channel_type: &str) -> ChannelAccount {
     let config = match channel_type {

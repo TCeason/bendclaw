@@ -38,7 +38,10 @@ async fn list_runs_empty() -> Result<()> {
         .await?;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = json_body(resp).await?;
-    assert!(body["data"].as_array().context("expected data array")?.is_empty());
+    assert!(body["data"]
+        .as_array()
+        .context("expected data array")?
+        .is_empty());
     Ok(())
 }
 
@@ -93,7 +96,10 @@ async fn get_run_by_id() -> Result<()> {
         .await?;
     let body = json_body(resp).await?;
     let runs = body["data"].as_array().context("expected data array")?;
-    let run_id = runs[0]["id"].as_str().context("missing run id")?.to_string();
+    let run_id = runs[0]["id"]
+        .as_str()
+        .context("missing run id")?
+        .to_string();
 
     let resp2 = app
         .clone()
@@ -134,7 +140,10 @@ async fn cancel_non_running_run_returns_ok() -> Result<()> {
         .await?;
     let body = json_body(resp).await?;
     let runs = body["data"].as_array().context("expected data array")?;
-    let run_id = runs[0]["id"].as_str().context("missing run id")?.to_string();
+    let run_id = runs[0]["id"]
+        .as_str()
+        .context("missing run id")?
+        .to_string();
 
     let resp2 = app
         .clone()
@@ -285,7 +294,13 @@ async fn list_runs_via_agno_style_endpoint() -> Result<()> {
         .await?;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = json_body(resp).await?;
-    assert_eq!(body["data"].as_array().context("expected data array")?.len(), 1);
+    assert_eq!(
+        body["data"]
+            .as_array()
+            .context("expected data array")?
+            .len(),
+        1
+    );
     Ok(())
 }
 
@@ -318,7 +333,10 @@ async fn continue_non_paused_run_returns_conflict() -> Result<()> {
         .await?;
     assert_eq!(resp.status(), StatusCode::OK);
     let created = json_body(resp).await?;
-    let run_id = created["id"].as_str().context("missing run id")?.to_string();
+    let run_id = created["id"]
+        .as_str()
+        .context("missing run id")?
+        .to_string();
 
     let continue_body = serde_json::json!({
         "input": "continue now",

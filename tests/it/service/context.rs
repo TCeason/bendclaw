@@ -63,8 +63,7 @@ fn context_empty_user_header_returns_401() -> Result<()> {
 
 #[test]
 fn context_trace_id_defaults_to_empty() -> Result<()> {
-    let ctx = extract_ctx(Some("u1"), None, "/")
-        .map_err(|e| anyhow::anyhow!("status: {e:?}"))?;
+    let ctx = extract_ctx(Some("u1"), None, "/").map_err(|e| anyhow::anyhow!("status: {e:?}"))?;
     assert_eq!(ctx.trace_id, "");
     Ok(())
 }

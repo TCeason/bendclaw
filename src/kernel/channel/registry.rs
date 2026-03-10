@@ -24,10 +24,11 @@ impl ChannelRegistry {
 
     pub fn register(&mut self, plugin: Arc<dyn ChannelPlugin>) {
         let inbound = plugin.inbound();
-        self.entries.insert(
-            plugin.channel_type().to_string(),
-            ChannelEntry { plugin, inbound },
-        );
+        self.entries
+            .insert(plugin.channel_type().to_string(), ChannelEntry {
+                plugin,
+                inbound,
+            });
     }
 
     pub fn get(&self, channel_type: &str) -> Option<&ChannelEntry> {

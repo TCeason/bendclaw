@@ -66,11 +66,17 @@ impl TestContext {
         let skills_dir = std::env::temp_dir().join("bendclaw-test-skills");
         std::fs::create_dir_all(&skills_dir)?;
 
-        let runtime =
-            bendclaw::kernel::Runtime::new(&base_url, &token, &warehouse, &self.prefix, "test_instance", llm)
-                .with_skills_dir(&skills_dir.to_string_lossy())
-                .build()
-                .await?;
+        let runtime = bendclaw::kernel::Runtime::new(
+            &base_url,
+            &token,
+            &warehouse,
+            &self.prefix,
+            "test_instance",
+            llm,
+        )
+        .with_skills_dir(&skills_dir.to_string_lossy())
+        .build()
+        .await?;
 
         let state = AppState {
             runtime,
@@ -127,7 +133,9 @@ impl Drop for TestContext {
                     if let Ok(rows) = pool.query_all(&sql).await {
                         for row in &rows {
                             let name: String = col(row, 0);
-                            let _ = pool.exec(&format!("DROP DATABASE IF EXISTS `{name}`")).await;
+                            let _ = pool
+                                .exec(&format!("DROP DATABASE IF EXISTS `{name}`"))
+                                .await;
                         }
                     }
                     let _ = pool

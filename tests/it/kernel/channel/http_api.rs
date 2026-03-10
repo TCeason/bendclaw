@@ -1,9 +1,9 @@
+use bendclaw::kernel::channel::plugins::http_api::HttpApiChannel;
+use bendclaw::kernel::channel::plugins::http_api::HTTP_API_CHANNEL_TYPE;
 use bendclaw::kernel::channel::ChannelKind;
 use bendclaw::kernel::channel::ChannelPlugin;
 use bendclaw::kernel::channel::InboundKind;
 use bendclaw::kernel::channel::InboundMode;
-use bendclaw::kernel::channel::plugins::http_api::HttpApiChannel;
-use bendclaw::kernel::channel::plugins::http_api::HTTP_API_CHANNEL_TYPE;
 
 #[test]
 fn channel_type() {
@@ -42,7 +42,9 @@ fn inbound_is_none() {
 async fn outbound_send_text_returns_error() {
     let ch = HttpApiChannel::new();
     let outbound = ch.outbound();
-    let result = outbound.send_text(&serde_json::json!({}), "chat_1", "hello").await;
+    let result = outbound
+        .send_text(&serde_json::json!({}), "chat_1", "hello")
+        .await;
     assert!(result.is_err());
 }
 

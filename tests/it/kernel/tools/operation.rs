@@ -1,6 +1,6 @@
-use anyhow::Result;
 use std::time::Duration;
 
+use anyhow::Result;
 use bendclaw::kernel::Impact;
 use bendclaw::kernel::OpType;
 use bendclaw::kernel::OperationMeta;
