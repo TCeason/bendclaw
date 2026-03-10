@@ -157,7 +157,7 @@ pub struct StorageConfig {
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
-            databend_api_base_url: "https://app.evot.ai/api/storage".to_string(),
+            databend_api_base_url: "https://api.databend.com/v1".to_string(),
             databend_api_token: String::new(),
             databend_warehouse: "default".to_string(),
             db_prefix: "bendclaw_".to_string(),
@@ -286,6 +286,19 @@ impl BendClawConfig {
         }
         if let Some(v) = &cli.auth_key {
             self.auth.api_key = v.clone();
+        }
+    }
+
+    /// Log the full config with sensitive fields redacted.
+    pub fn log_non_defaults(&self) {
+        match serde_json::to_value(self) {
+            Ok(v) => {
+                let redacted = crate::observability::redaction::redact(v);
+                tracing::info!("config: {redacted}");
+            }
+            Err(e) => {
+                tracing::warn!("failed to serialize config: {e}");
+            }
         }
     }
 

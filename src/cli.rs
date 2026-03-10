@@ -1,5 +1,6 @@
 use std::fs;
 use std::net::TcpStream;
+use std::net::ToSocketAddrs;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -169,9 +170,15 @@ fn kill_process(pid: u32, timeout: Duration) -> bool {
 
 fn wait_for_port(host: &str, port: u16, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
-    let addr = format!("{host}:{port}");
     while Instant::now() < deadline {
-        if TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_millis(500)).is_ok() {
+        let Ok(addrs) = (host, port).to_socket_addrs() else {
+            std::thread::sleep(Duration::from_millis(300));
+            continue;
+        };
+        if addrs
+            .into_iter()
+            .any(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok())
+        {
             return true;
         }
         std::thread::sleep(Duration::from_millis(300));

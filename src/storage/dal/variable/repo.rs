@@ -20,11 +20,11 @@ impl RowMapper for VariableMapper {
         "id, key, value, secret, TO_VARCHAR(last_used_at), TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> VariableRecord {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<VariableRecord> {
         let secret_str: String = sql::col(row, 3);
         let secret = matches!(secret_str.as_str(), "1" | "true");
         let last_used: String = sql::col(row, 4);
-        VariableRecord {
+        Ok(VariableRecord {
             id: sql::col(row, 0),
             key: sql::col(row, 1),
             value: sql::col(row, 2),
@@ -36,7 +36,7 @@ impl RowMapper for VariableMapper {
             },
             created_at: sql::col(row, 5),
             updated_at: sql::col(row, 6),
-        }
+        })
     }
 }
 

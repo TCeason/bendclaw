@@ -18,11 +18,11 @@ impl RowMapper for VersionMapper {
          identity, soul, token_limit_total, token_limit_daily, notes, TO_VARCHAR(created_at)"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> ConfigVersionRecord {
-        ConfigVersionRecord {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<ConfigVersionRecord> {
+        Ok(ConfigVersionRecord {
             id: sql::col(row, 0),
             agent_id: sql::col(row, 1),
-            version: sql::col(row, 2).parse().unwrap_or(0),
+            version: sql::col_u32(row, 2)?,
             label: sql::col(row, 3),
             stage: sql::col(row, 4),
             system_prompt: sql::col(row, 5),
@@ -34,7 +34,7 @@ impl RowMapper for VersionMapper {
             token_limit_daily: parse_optional_u64(&sql::col(row, 11)),
             notes: sql::col(row, 12),
             created_at: sql::col(row, 13),
-        }
+        })
     }
 }
 
@@ -110,14 +110,7 @@ impl ConfigVersionRepo {
             "SELECT COALESCE(MAX(version), 0) FROM agent_config_versions WHERE agent_id = '{aid}'"
         );
         let row = self.table.pool().query_row(&q).await?;
-        let max: u32 = row
-            .and_then(|r| {
-                r.as_array()
-                    .and_then(|a| a.first())
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-            })
-            .unwrap_or(0);
+        let max = sql::agg_u64_or_zero(row.as_ref(), 0)? as u32;
         Ok(max + 1)
     }
 }

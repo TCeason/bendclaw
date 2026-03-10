@@ -18,12 +18,10 @@ use crate::service::context::RequestContext;
 use crate::service::error::Result;
 use crate::service::error::ServiceError;
 use crate::service::state::AppState;
-use crate::service::v1::common::count_u64;
 use crate::service::v1::common::Paginated;
 use crate::storage::dal::run::record::RunRecord;
 use crate::storage::dal::run::repo::RunRepo;
 use crate::storage::dal::run_event::repo::RunEventRepo;
-use crate::storage::sql;
 
 // ── Queries ──────────────────────────────────────────────────────────────
 
@@ -40,33 +38,30 @@ pub async fn list_runs(
     }
 
     let pool = state.runtime.databases().agent_pool(agent_id)?;
-    let sid = sql::escape(&session_id);
-    let mut cond = format!("session_id = '{sid}'");
-    if let Some(ref status) = q.status {
-        cond.push_str(&format!(" AND status = '{}'", sql::escape(status)));
-    }
-    let total = count_u64(&pool, &format!("SELECT COUNT(*) FROM runs WHERE {cond}")).await;
-    let rows = pool
-        .query_all(&format!(
-            "SELECT id, session_id, agent_id, user_id, parent_run_id, status, input, output, error, metrics, stop_reason, iterations, TO_VARCHAR(created_at), TO_VARCHAR(updated_at) \
-             FROM runs WHERE {cond} ORDER BY created_at {} LIMIT {} OFFSET {}",
+    let repo = RunRepo::new(pool.clone());
+    let total = repo
+        .count_for_session(&session_id, q.status.as_deref())
+        .await?;
+    let rows = repo
+        .list_for_session(
+            &session_id,
+            q.status.as_deref(),
             q.list.order(),
-            q.list.limit(),
-            q.list.offset()
-        ))
+            q.list.limit() as u64,
+            q.list.offset() as u64,
+        )
         .await?;
     let events_repo = RunEventRepo::new(pool.clone());
     let include_events = q.include_events.unwrap_or(false);
 
     let mut data = Vec::with_capacity(rows.len());
-    for row in rows {
-        let record = row_to_run_record(&row);
+    for record in rows {
         let events = if include_events {
             Some(load_run_events(&events_repo, &record.id).await?)
         } else {
             None
         };
-        data.push(to_response(record, events));
+        data.push(to_response(record, events)?);
     }
 
     Ok(Paginated::new(data, &q.list, total))
@@ -81,7 +76,7 @@ pub async fn get_run(state: &AppState, agent_id: &str, run_id: &str) -> Result<R
         .await?
         .ok_or_else(|| ServiceError::AgentNotFound(format!("run '{run_id}' not found")))?;
     let events = load_run_events(&events_repo, run_id).await?;
-    Ok(to_response(record, Some(events)))
+    to_response(record, Some(events))
 }
 
 pub async fn load_run_record(state: &AppState, agent_id: &str, run_id: &str) -> Result<RunRecord> {
@@ -99,11 +94,7 @@ pub async fn cancel_run(
     agent_id: &str,
     run_id: &str,
 ) -> Result<serde_json::Value> {
-    state
-        .runtime
-        .cancel_run(agent_id, run_id)
-        .await
-        .map_err(ServiceError::from)?;
+    state.runtime.cancel_run(agent_id, run_id).await?;
     Ok(serde_json::json!({}))
 }
 
@@ -147,13 +138,11 @@ pub async fn execute_run(
     let session = state
         .runtime
         .get_or_create_session(&agent_id, &session_id, &ctx.user_id)
-        .await
-        .map_err(ServiceError::from)?;
+        .await?;
 
     let mut run_stream = session
         .run(&input, &ctx.trace_id, parent_run_id.as_deref())
-        .await
-        .map_err(ServiceError::from)?;
+        .await?;
     let run_id = run_stream.run_id().to_string();
 
     tracing::info!(
@@ -171,7 +160,7 @@ pub async fn execute_run(
 
     if !stream_output {
         while run_stream.next().await.is_some() {}
-        run_stream.finish().await.map_err(ServiceError::from)?;
+        run_stream.finish().await?;
         let run = get_run(&state, &agent_id, &run_id).await?;
         return Ok(Json(run).into_response());
     }
@@ -267,24 +256,22 @@ pub async fn execute_run(
 
 async fn load_run_events(repo: &RunEventRepo, run_id: &str) -> Result<Vec<RunEventResponse>> {
     let rows = repo.list_by_run(run_id, 5000).await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| RunEventResponse {
-            seq: r.seq,
-            event: r.event,
-            payload: serde_json::from_str(&r.payload).unwrap_or(serde_json::Value::Null),
-            created_at: r.created_at,
+    rows.into_iter()
+        .map(|r| {
+            let payload = r.payload_json()?;
+            Ok(RunEventResponse {
+                seq: r.seq,
+                event: r.event,
+                payload,
+                created_at: r.created_at,
+            })
         })
-        .collect())
+        .collect()
 }
 
-fn to_response(record: RunRecord, events: Option<Vec<RunEventResponse>>) -> RunResponse {
-    let metrics = if record.metrics.is_empty() {
-        serde_json::Value::Null
-    } else {
-        serde_json::from_str(&record.metrics).unwrap_or(serde_json::Value::Null)
-    };
-    RunResponse {
+fn to_response(record: RunRecord, events: Option<Vec<RunEventResponse>>) -> Result<RunResponse> {
+    let metrics = record.metrics_json()?;
+    Ok(RunResponse {
         id: record.id,
         session_id: record.session_id,
         status: record.status,
@@ -298,24 +285,5 @@ fn to_response(record: RunRecord, events: Option<Vec<RunEventResponse>>) -> RunR
         created_at: record.created_at,
         updated_at: record.updated_at,
         events,
-    }
-}
-
-fn row_to_run_record(row: &serde_json::Value) -> RunRecord {
-    RunRecord {
-        id: sql::col(row, 0),
-        session_id: sql::col(row, 1),
-        agent_id: sql::col(row, 2),
-        user_id: sql::col(row, 3),
-        parent_run_id: sql::col(row, 4),
-        status: sql::col(row, 5),
-        input: sql::col(row, 6),
-        output: sql::col(row, 7),
-        error: sql::col(row, 8),
-        metrics: sql::col(row, 9),
-        stop_reason: sql::col(row, 10),
-        iterations: sql::col(row, 11).parse().unwrap_or(0),
-        created_at: sql::col(row, 12),
-        updated_at: sql::col(row, 13),
-    }
+    })
 }

@@ -175,8 +175,24 @@ impl Workspace {
             }
         };
 
-        let mut stdout_handle = child.stdout.take().unwrap();
-        let mut stderr_handle = child.stderr.take().unwrap();
+        let Some(mut stdout_handle) = child.stdout.take() else {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return CommandOutput {
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: "Failed to capture stdout".to_string(),
+            };
+        };
+        let Some(mut stderr_handle) = child.stderr.take() else {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return CommandOutput {
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: "Failed to capture stderr".to_string(),
+            };
+        };
         let mut stdout_buf = Vec::new();
         let mut stderr_buf = Vec::new();
         let idle_timeout = self.command_idle_timeout;

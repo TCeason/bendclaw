@@ -2,6 +2,7 @@ use tracing;
 
 use super::record::UsageRecord;
 use super::types::CostSummary;
+use super::types::DailyUsage;
 use crate::base::Result;
 use crate::storage::pool::Pool;
 use crate::storage::sql;
@@ -17,7 +18,9 @@ impl RowMapper for UsageMapper {
     fn columns(&self) -> &str {
         "id"
     }
-    fn parse(&self, _row: &serde_json::Value) {}
+    fn parse(&self, _row: &serde_json::Value) -> crate::base::Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -84,10 +87,11 @@ impl UsageRepo {
             })
             .collect();
 
-        self.table.insert_batch(columns, &rows).await.map_err(|e| {
-            tracing::error!(count = records.len(), error = %e, "usage batch save failed");
-            e
-        })?;
+        let result = self.table.insert_batch(columns, &rows).await;
+        if let Err(error) = &result {
+            tracing::error!(count = records.len(), error = %error, "usage batch save failed");
+        }
+        result?;
         tracing::info!(count = records.len(), "usage batch saved");
         Ok(())
     }
@@ -119,13 +123,26 @@ impl UsageRepo {
         Ok(self.summary_by_agent_day(agent_id, day).await?.total_tokens)
     }
 
+    pub async fn daily_by_agent(&self, agent_id: &str, days: u32) -> Result<Vec<DailyUsage>> {
+        let aid = sql::escape(agent_id);
+        let query = format!(
+            "SELECT TO_VARCHAR(TO_DATE(created_at)) AS day, \
+             COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
+             COALESCE(SUM(total_tokens), 0), COALESCE(SUM(cost), 0), COUNT(*) \
+             FROM usage WHERE agent_id = '{aid}' AND created_at >= NOW() - INTERVAL {days} DAY \
+             GROUP BY day ORDER BY day DESC"
+        );
+        let rows = self.table.pool().query_all(&query).await?;
+        rows.iter().map(parse_daily_usage).collect()
+    }
+
     async fn summary_with_condition(&self, condition: Option<&str>) -> Result<CostSummary> {
         let select = "COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
              COALESCE(SUM(reasoning_tokens), 0), COALESCE(SUM(total_tokens), 0), \
              COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_write_tokens), 0), \
              COALESCE(SUM(cost), 0), COUNT(*)";
         let row = self.table.aggregate(select, condition).await?;
-        let summary = parse_cost_summary(row);
+        let summary = parse_cost_summary(row)?;
         tracing::info!(
             records = summary.record_count,
             total_tokens = summary.total_tokens,
@@ -136,33 +153,26 @@ impl UsageRepo {
     }
 }
 
-fn parse_cost_summary(row: Option<serde_json::Value>) -> CostSummary {
-    CostSummary {
-        total_prompt_tokens: parse_u64_col(row.clone(), 0),
-        total_completion_tokens: parse_u64_col(row.clone(), 1),
-        total_reasoning_tokens: parse_u64_col(row.clone(), 2),
-        total_tokens: parse_u64_col(row.clone(), 3),
-        total_cache_read_tokens: parse_u64_col(row.clone(), 4),
-        total_cache_write_tokens: parse_u64_col(row.clone(), 5),
-        total_cost: parse_f64_col(row.clone(), 6),
-        record_count: parse_u64_col(row, 7),
-    }
+fn parse_cost_summary(row: Option<serde_json::Value>) -> Result<CostSummary> {
+    Ok(CostSummary {
+        total_prompt_tokens: sql::agg_u64_or_zero(row.as_ref(), 0)?,
+        total_completion_tokens: sql::agg_u64_or_zero(row.as_ref(), 1)?,
+        total_reasoning_tokens: sql::agg_u64_or_zero(row.as_ref(), 2)?,
+        total_tokens: sql::agg_u64_or_zero(row.as_ref(), 3)?,
+        total_cache_read_tokens: sql::agg_u64_or_zero(row.as_ref(), 4)?,
+        total_cache_write_tokens: sql::agg_u64_or_zero(row.as_ref(), 5)?,
+        total_cost: sql::agg_f64_or_zero(row.as_ref(), 6)?,
+        record_count: sql::agg_u64_or_zero(row.as_ref(), 7)?,
+    })
 }
 
-fn parse_u64_col(row: Option<serde_json::Value>, idx: usize) -> u64 {
-    row.as_ref()
-        .and_then(|r| r.as_array())
-        .and_then(|a| a.get(idx))
-        .and_then(|v| v.as_str())
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0)
-}
-
-fn parse_f64_col(row: Option<serde_json::Value>, idx: usize) -> f64 {
-    row.as_ref()
-        .and_then(|r| r.as_array())
-        .and_then(|a| a.get(idx))
-        .and_then(|v| v.as_str())
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0.0)
+fn parse_daily_usage(row: &serde_json::Value) -> Result<DailyUsage> {
+    Ok(DailyUsage {
+        date: sql::col(row, 0),
+        prompt_tokens: sql::col_u64(row, 1)?,
+        completion_tokens: sql::col_u64(row, 2)?,
+        total_tokens: sql::col_u64(row, 3)?,
+        cost: sql::col_f64(row, 4)?,
+        requests: sql::col_u64(row, 5)?,
+    })
 }

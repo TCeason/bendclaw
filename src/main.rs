@@ -96,6 +96,7 @@ async fn cmd_run(
     bendclaw::version::log_version();
 
     config.validate()?;
+    config.log_non_defaults();
 
     let llm = Arc::new(LLMRouter::from_config(&config.llm)?);
 

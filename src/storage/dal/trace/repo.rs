@@ -14,6 +14,8 @@ use crate::storage::table::Where;
 
 // ── TraceRepo ─────────────────────────────────────────────────────────────────
 
+const REPO: &str = "traces";
+
 #[derive(Clone)]
 struct TraceMapper;
 
@@ -24,8 +26,8 @@ impl RowMapper for TraceMapper {
         "trace_id, run_id, session_id, agent_id, user_id, name, status, duration_ms, input_tokens, output_tokens, total_cost, TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> TraceRecord {
-        TraceRecord {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<TraceRecord> {
+        Ok(TraceRecord {
             trace_id: sql::col(row, 0),
             run_id: sql::col(row, 1),
             session_id: sql::col(row, 2),
@@ -33,14 +35,24 @@ impl RowMapper for TraceMapper {
             user_id: sql::col(row, 4),
             name: sql::col(row, 5),
             status: sql::col(row, 6),
-            duration_ms: parse_u64(&sql::col(row, 7)),
-            input_tokens: parse_u64(&sql::col(row, 8)),
-            output_tokens: parse_u64(&sql::col(row, 9)),
-            total_cost: sql::col(row, 10).parse().unwrap_or(0.0),
+            duration_ms: sql::col_u64(row, 7)?,
+            input_tokens: sql::col_u64(row, 8)?,
+            output_tokens: sql::col_u64(row, 9)?,
+            total_cost: sql::col_f64(row, 10)?,
             created_at: sql::col(row, 11),
             updated_at: sql::col(row, 12),
-        }
+        })
     }
+}
+
+pub struct TraceListFilter<'a> {
+    pub agent_id: &'a str,
+    pub session_id: Option<&'a str>,
+    pub run_id: Option<&'a str>,
+    pub user_id: Option<&'a str>,
+    pub status: Option<&'a str>,
+    pub start_time: Option<&'a str>,
+    pub end_time: Option<&'a str>,
 }
 
 #[derive(Clone)]
@@ -72,7 +84,7 @@ impl TraceRepo {
             .await;
         if let Err(error) = &result {
             repo_error(
-                "traces",
+                REPO,
                 "insert",
                 serde_json::json!({"trace_id": record.trace_id}),
                 error,
@@ -96,7 +108,7 @@ impl TraceRepo {
         let result = self.table.pool().exec(&sql).await;
         if let Err(error) = &result {
             repo_error(
-                "traces",
+                REPO,
                 "update_completed",
                 serde_json::json!({"trace_id": trace_id}),
                 error,
@@ -113,7 +125,7 @@ impl TraceRepo {
         let result = self.table.pool().exec(&sql).await;
         if let Err(error) = &result {
             repo_error(
-                "traces",
+                REPO,
                 "update_failed",
                 serde_json::json!({"trace_id": trace_id}),
                 error,
@@ -129,7 +141,7 @@ impl TraceRepo {
             .await;
         if let Err(error) = &result {
             repo_error(
-                "traces",
+                REPO,
                 "load",
                 serde_json::json!({"trace_id": trace_id}),
                 error,
@@ -149,11 +161,52 @@ impl TraceRepo {
             .await;
         if let Err(error) = &result {
             repo_error(
-                "traces",
+                REPO,
                 "list_by_session",
                 serde_json::json!({"session_id": session_id, "limit": limit}),
                 error,
             );
+        }
+        result
+    }
+
+    pub async fn count_filtered(&self, filter: &TraceListFilter<'_>) -> Result<u64> {
+        let condition = trace_condition(filter);
+        let result = async {
+            let query = format!("SELECT COUNT(*) FROM traces WHERE {condition}");
+            let row = self.table.pool().query_row(&query).await?;
+            sql::agg_u64_or_zero(row.as_ref(), 0)
+        }
+        .await;
+        if let Err(error) = &result {
+            repo_error(REPO, "count_filtered", trace_filter_payload(filter), error);
+        }
+        result
+    }
+
+    pub async fn list_filtered(
+        &self,
+        filter: &TraceListFilter<'_>,
+        order: &str,
+        limit: u64,
+        offset: u64,
+    ) -> Result<Vec<TraceRecord>> {
+        let condition = trace_condition(filter);
+        let result = async {
+            let query = format!(
+                "SELECT {} FROM traces WHERE {condition} ORDER BY created_at {order} LIMIT {limit} OFFSET {offset}",
+                TraceMapper.columns()
+            );
+            let rows = self.table.pool().query_all(&query).await?;
+            rows.iter().map(|row| TraceMapper.parse(row)).collect()
+        }
+        .await;
+        if let Err(error) = &result {
+            let mut payload = trace_filter_payload(filter);
+            payload["order"] = serde_json::json!(order);
+            payload["limit"] = serde_json::json!(limit);
+            payload["offset"] = serde_json::json!(offset);
+            repo_error(REPO, "list_filtered", payload, error);
         }
         result
     }
@@ -163,35 +216,35 @@ impl TraceRepo {
         let q1 = format!(
             "SELECT \
                 COUNT(*) AS trace_count, \
-                SUM(input_tokens) AS input_tokens, \
-                SUM(output_tokens) AS output_tokens, \
-                SUM(total_cost) AS total_cost, \
-                AVG(duration_ms) AS avg_duration_ms, \
+                COALESCE(SUM(input_tokens), 0) AS input_tokens, \
+                COALESCE(SUM(output_tokens), 0) AS output_tokens, \
+                COALESCE(SUM(total_cost), 0) AS total_cost, \
+                COALESCE(AVG(duration_ms), 0) AS avg_duration_ms, \
                 MAX(TO_VARCHAR(created_at)) AS last_active \
             FROM traces WHERE agent_id = '{aid}'"
         );
         let row = self.table.pool().query_row(&q1).await?;
         let q2 = format!(
             "SELECT \
-                SUM(CASE WHEN kind = 'llm' AND status = 'completed' THEN 1 ELSE 0 END), \
-                SUM(CASE WHEN kind = 'tool' AND status = 'completed' THEN 1 ELSE 0 END), \
-                SUM(CASE WHEN kind = 'skill' AND status = 'completed' THEN 1 ELSE 0 END), \
-                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) \
+                COALESCE(SUM(CASE WHEN kind = 'llm' AND status = 'completed' THEN 1 ELSE 0 END), 0), \
+                COALESCE(SUM(CASE WHEN kind = 'tool' AND status = 'completed' THEN 1 ELSE 0 END), 0), \
+                COALESCE(SUM(CASE WHEN kind = 'skill' AND status = 'completed' THEN 1 ELSE 0 END), 0), \
+                COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) \
             FROM spans WHERE trace_id IN (SELECT trace_id FROM traces WHERE agent_id = '{aid}')"
         );
         let sr = self.table.pool().query_row(&q2).await?;
         Ok(AgentTraceSummary {
             agent_id: agent_id.to_string(),
-            trace_count: parse_i64_col(row.as_ref(), 0),
-            input_tokens: parse_i64_col(row.as_ref(), 1),
-            output_tokens: parse_i64_col(row.as_ref(), 2),
-            total_cost: parse_f64_col(row.as_ref(), 3),
-            avg_duration_ms: parse_f64_col(row.as_ref(), 4),
-            last_active: parse_str_col(row.as_ref(), 5),
-            llm_calls: parse_i64_col(sr.as_ref(), 0),
-            tool_calls: parse_i64_col(sr.as_ref(), 1),
-            skill_calls: parse_i64_col(sr.as_ref(), 2),
-            error_count: parse_i64_col(sr.as_ref(), 3),
+            trace_count: sql::agg_i64_or_zero(row.as_ref(), 0)?,
+            input_tokens: sql::agg_i64_or_zero(row.as_ref(), 1)?,
+            output_tokens: sql::agg_i64_or_zero(row.as_ref(), 2)?,
+            total_cost: sql::agg_f64_or_zero(row.as_ref(), 3)?,
+            avg_duration_ms: sql::agg_f64_or_zero(row.as_ref(), 4)?,
+            last_active: sql::agg_str(row.as_ref(), 5),
+            llm_calls: sql::agg_i64_or_zero(sr.as_ref(), 0)?,
+            tool_calls: sql::agg_i64_or_zero(sr.as_ref(), 1)?,
+            skill_calls: sql::agg_i64_or_zero(sr.as_ref(), 2)?,
+            error_count: sql::agg_i64_or_zero(sr.as_ref(), 3)?,
         })
     }
 
@@ -255,21 +308,22 @@ impl TraceRepo {
 
     async fn query_breakdowns(&self, q: &str) -> Result<Vec<AgentTraceBreakdown>> {
         let rows = self.table.pool().query_all(q).await?;
-        Ok(rows
-            .iter()
-            .map(|r| AgentTraceBreakdown {
-                name: r
-                    .as_array()
-                    .and_then(|a| a.first())
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                calls: parse_i64_col(Some(r), 1),
-                errors: parse_i64_col(Some(r), 2),
-                avg_duration_ms: parse_f64_col(Some(r), 3),
-                total_cost: parse_f64_col(Some(r), 4),
+        rows.iter()
+            .map(|r| {
+                Ok(AgentTraceBreakdown {
+                    name: r
+                        .as_array()
+                        .and_then(|a| a.first())
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    calls: sql::agg_i64_or_zero(Some(r), 1)?,
+                    errors: sql::agg_i64_or_zero(Some(r), 2)?,
+                    avg_duration_ms: sql::agg_f64_or_zero(Some(r), 3)?,
+                    total_cost: sql::agg_f64_or_zero(Some(r), 4)?,
+                })
             })
-            .collect())
+            .collect()
     }
 }
 
@@ -285,8 +339,8 @@ impl RowMapper for SpanMapper {
         "span_id, trace_id, parent_span_id, name, kind, model_role, status, duration_ms, ttft_ms, input_tokens, output_tokens, reasoning_tokens, cost, error_code, error_message, summary, meta, TO_VARCHAR(created_at)"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> SpanRecord {
-        SpanRecord {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<SpanRecord> {
+        Ok(SpanRecord {
             span_id: sql::col(row, 0),
             trace_id: sql::col(row, 1),
             parent_span_id: sql::col(row, 2),
@@ -294,18 +348,18 @@ impl RowMapper for SpanMapper {
             kind: sql::col(row, 4),
             model_role: sql::col(row, 5),
             status: sql::col(row, 6),
-            duration_ms: parse_u64(&sql::col(row, 7)),
-            ttft_ms: parse_u64(&sql::col(row, 8)),
-            input_tokens: parse_u64(&sql::col(row, 9)),
-            output_tokens: parse_u64(&sql::col(row, 10)),
-            reasoning_tokens: parse_u64(&sql::col(row, 11)),
-            cost: sql::col(row, 12).parse().unwrap_or(0.0),
+            duration_ms: sql::col_u64(row, 7)?,
+            ttft_ms: sql::col_u64(row, 8)?,
+            input_tokens: sql::col_u64(row, 9)?,
+            output_tokens: sql::col_u64(row, 10)?,
+            reasoning_tokens: sql::col_u64(row, 11)?,
+            cost: sql::col_f64(row, 12)?,
             error_code: sql::col(row, 13),
             error_message: sql::col(row, 14),
             summary: sql::col(row, 15),
             meta: sql::col(row, 16),
             created_at: sql::col(row, 17),
-        }
+        })
     }
 }
 
@@ -404,30 +458,37 @@ impl SpanRepo {
     }
 }
 
-fn parse_u64(s: &str) -> u64 {
-    s.parse().unwrap_or(0)
+fn trace_condition(filter: &TraceListFilter<'_>) -> String {
+    let mut wheres = vec![format!("agent_id = '{}'", sql::escape(filter.agent_id))];
+    if let Some(session_id) = filter.session_id {
+        wheres.push(format!("session_id = '{}'", sql::escape(session_id)));
+    }
+    if let Some(run_id) = filter.run_id {
+        wheres.push(format!("run_id = '{}'", sql::escape(run_id)));
+    }
+    if let Some(user_id) = filter.user_id {
+        wheres.push(format!("user_id = '{}'", sql::escape(user_id)));
+    }
+    if let Some(status) = filter.status {
+        wheres.push(format!("status = '{}'", sql::escape(status)));
+    }
+    if let Some(start_time) = filter.start_time {
+        wheres.push(format!("created_at >= '{}'", sql::escape(start_time)));
+    }
+    if let Some(end_time) = filter.end_time {
+        wheres.push(format!("created_at <= '{}'", sql::escape(end_time)));
+    }
+    wheres.join(" AND ")
 }
 
-fn parse_i64_col(row: Option<&serde_json::Value>, idx: usize) -> i64 {
-    row.and_then(|r| r.as_array())
-        .and_then(|a| a.get(idx))
-        .and_then(|v| v.as_str())
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0)
-}
-
-fn parse_f64_col(row: Option<&serde_json::Value>, idx: usize) -> f64 {
-    row.and_then(|r| r.as_array())
-        .and_then(|a| a.get(idx))
-        .and_then(|v| v.as_str())
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0.0)
-}
-
-fn parse_str_col(row: Option<&serde_json::Value>, idx: usize) -> String {
-    row.and_then(|r| r.as_array())
-        .and_then(|a| a.get(idx))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string()
+fn trace_filter_payload(filter: &TraceListFilter<'_>) -> serde_json::Value {
+    serde_json::json!({
+        "agent_id": filter.agent_id,
+        "session_id": filter.session_id,
+        "run_id": filter.run_id,
+        "user_id": filter.user_id,
+        "status": filter.status,
+        "start_time": filter.start_time,
+        "end_time": filter.end_time,
+    })
 }

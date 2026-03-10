@@ -20,16 +20,16 @@ impl RowMapper for FeedbackMapper {
         "id, session_id, run_id, rating, comment, TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> FeedbackRecord {
-        FeedbackRecord {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<FeedbackRecord> {
+        Ok(FeedbackRecord {
             id: sql::col(row, 0),
             session_id: sql::col(row, 1),
             run_id: sql::col(row, 2),
-            rating: sql::col_i32(row, 3),
+            rating: sql::col_i32(row, 3)?,
             comment: sql::col(row, 4),
             created_at: sql::col(row, 5),
             updated_at: sql::col(row, 6),
-        }
+        })
     }
 }
 

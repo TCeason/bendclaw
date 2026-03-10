@@ -62,8 +62,7 @@ pub async fn get_agent(
     let config_store = state.runtime.agent_config_store(&agent_id)?;
     let record = config_store
         .get(&agent_id)
-        .await
-        .map_err(ServiceError::from)?
+        .await?
         .ok_or_else(|| ServiceError::AgentNotFound(format!("agent '{agent_id}' not found")))?;
     Ok(Json(AgentDetail {
         agent_id: record.agent_id,

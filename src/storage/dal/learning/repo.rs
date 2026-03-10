@@ -20,8 +20,8 @@ impl RowMapper for LearningMapper {
         "id, agent_id, user_id, session_id, title, content, tags, source, TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> LearningRecord {
-        LearningRecord {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<LearningRecord> {
+        Ok(LearningRecord {
             id: sql::col(row, 0),
             agent_id: sql::col(row, 1),
             user_id: sql::col(row, 2),
@@ -32,7 +32,7 @@ impl RowMapper for LearningMapper {
             source: sql::col(row, 7),
             created_at: sql::col(row, 8),
             updated_at: sql::col(row, 9),
-        }
+        })
     }
 }
 

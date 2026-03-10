@@ -154,7 +154,13 @@ macro_rules! impl_from_for_error_code {
     };
 }
 
-impl_from_for_error_code!(serde_json::Error, std::io::Error, anyhow::Error);
+impl_from_for_error_code!(
+    serde_json::Error,
+    std::io::Error,
+    anyhow::Error,
+    std::num::ParseIntError,
+    std::num::ParseFloatError
+);
 
 pub type Result<T> = std::result::Result<T, ErrorCode>;
 

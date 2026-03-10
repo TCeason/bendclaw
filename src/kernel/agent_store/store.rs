@@ -133,7 +133,7 @@ impl AgentStore {
         session_id: &str,
         state: &serde_json::Value,
     ) -> Result<()> {
-        let json = serde_json::to_string(state).unwrap_or_else(|_| "null".to_string());
+        let json = serde_json::to_string(state)?;
         let sql = format!(
             "UPDATE sessions SET session_state = PARSE_JSON('{}'), updated_at = NOW() WHERE id = '{}'",
             crate::storage::sql::escape(&json),

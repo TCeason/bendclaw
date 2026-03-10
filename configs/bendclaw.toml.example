@@ -9,7 +9,7 @@ instance_id = "aos_abc12345"
 bind_addr = "127.0.0.1:8787"
 
 [storage]
-databend_api_base_url = "https://app.databend.com/v1.1"
+databend_api_base_url = "https://api.databend.com/v1"
 databend_api_token = ""
 
 

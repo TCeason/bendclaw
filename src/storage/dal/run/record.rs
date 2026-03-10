@@ -68,10 +68,17 @@ pub struct RunRecord {
 }
 
 impl RunRecord {
-    pub fn parse_metrics(&self) -> RunMetrics {
+    pub fn parse_metrics(&self) -> crate::base::Result<RunMetrics> {
         if self.metrics.is_empty() {
-            return RunMetrics::default();
+            return Ok(RunMetrics::default());
         }
-        serde_json::from_str(&self.metrics).unwrap_or_default()
+        crate::storage::sql::parse_json(&self.metrics, "runs.metrics")
+    }
+
+    pub fn metrics_json(&self) -> crate::base::Result<serde_json::Value> {
+        if self.metrics.is_empty() {
+            return Ok(serde_json::Value::Null);
+        }
+        crate::storage::sql::parse_json(&self.metrics, "runs.metrics")
     }
 }

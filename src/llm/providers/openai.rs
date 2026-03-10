@@ -49,7 +49,7 @@ impl OpenAIProvider {
         tools: &[ToolSchema],
         temperature: f32,
         stream: bool,
-    ) -> serde_json::Value {
+    ) -> Result<serde_json::Value> {
         let mut body = json!({
             "model": model,
             "messages": serialize_messages(messages),
@@ -60,10 +60,10 @@ impl OpenAIProvider {
             body["stream_options"] = json!({ "include_usage": true });
         }
         if !tools.is_empty() {
-            body["tools"] = serde_json::to_value(tools).unwrap_or(json!([]));
+            body["tools"] = serde_json::to_value(tools)?;
             body["tool_choice"] = json!("auto");
         }
-        body
+        Ok(body)
     }
 }
 
@@ -82,7 +82,7 @@ impl LLMProvider for OpenAIProvider {
             msg_count = messages.len(),
             "llm chat request started"
         );
-        let body = self.build_body(model, messages, tools, temperature, false);
+        let body = self.build_body(model, messages, tools, temperature, false)?;
         let url = format!("{}/chat/completions", self.base_url);
 
         let resp = self
@@ -161,8 +161,11 @@ impl LLMProvider for OpenAIProvider {
         tools: &[ToolSchema],
         temperature: f32,
     ) -> ResponseStream {
+        let body = match self.build_body(model, messages, tools, temperature, true) {
+            Ok(b) => b,
+            Err(e) => return ResponseStream::from_error(e),
+        };
         let (writer, stream) = ResponseStream::channel(64);
-        let body = self.build_body(model, messages, tools, temperature, true);
         let url = format!("{}/chat/completions", self.base_url);
         let client = self.client.clone();
         let api_key = self.api_key.clone();

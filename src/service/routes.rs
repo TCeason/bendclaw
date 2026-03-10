@@ -21,10 +21,7 @@ pub async fn setup_agent(
     _ctx: RequestContext,
     Path(agent_id): Path<String>,
 ) -> Result<Json<SetupResponse>> {
-    s.runtime
-        .setup_agent(&agent_id)
-        .await
-        .map_err(ServiceError::from)?;
+    s.runtime.setup_agent(&agent_id).await?;
     let database = s.runtime.agent_database_name(&agent_id);
     Ok(Json(SetupResponse { ok: true, database }))
 }

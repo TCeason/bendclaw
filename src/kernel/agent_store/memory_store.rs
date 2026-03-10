@@ -117,8 +117,8 @@ impl RowMapper for EntryMapper {
         "id, user_id, scope, session_id, key, content, created_at, updated_at"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> MemoryEntry {
-        MemoryEntry {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<MemoryEntry> {
+        Ok(MemoryEntry {
             id: sql::col(row, 0),
             user_id: sql::col(row, 1),
             scope: parse_scope(&sql::col(row, 2)),
@@ -127,7 +127,7 @@ impl RowMapper for EntryMapper {
             content: sql::col(row, 5),
             created_at: sql::col(row, 6),
             updated_at: sql::col(row, 7),
-        }
+        })
     }
 }
 
@@ -141,16 +141,16 @@ impl RowMapper for ResultMapper {
         "id, key, content, scope, session_id, SCORE() AS score, updated_at"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> MemoryResult {
-        MemoryResult {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<MemoryResult> {
+        Ok(MemoryResult {
             id: sql::col(row, 0),
             key: sql::col(row, 1),
             content: sql::col(row, 2),
             scope: parse_scope(&sql::col(row, 3)),
             session_id: sql::col_opt(row, 4),
-            score: sql::col(row, 5).parse().unwrap_or(0.0),
+            score: sql::col_f32(row, 5)?,
             updated_at: sql::col(row, 6),
-        }
+        })
     }
 }
 
@@ -237,7 +237,7 @@ impl DatabendMemoryStore {
         .order_by("updated_at DESC")
         .limit(1);
         let row = self.entries.pool().query_row(&builder.build()).await?;
-        let result = row.as_ref().map(|r| EntryMapper.parse(r));
+        let result = row.as_ref().map(|r| EntryMapper.parse(r)).transpose()?;
         tracing::info!(user_id, key, found = result.is_some(), "memory get");
         Ok(result)
     }
@@ -251,7 +251,7 @@ impl DatabendMemoryStore {
         .where_eq("id", SqlVal::Str(id))
         .limit(1);
         let row = self.entries.pool().query_row(&builder.build()).await?;
-        Ok(row.as_ref().map(|r| EntryMapper.parse(r)))
+        row.as_ref().map(|r| EntryMapper.parse(r)).transpose()
     }
 
     pub async fn delete(&self, user_id: &str, id: &str) -> Result<()> {
@@ -282,7 +282,7 @@ impl DatabendMemoryStore {
         let results = rows
             .iter()
             .map(|r| EntryMapper.parse(r))
-            .collect::<Vec<_>>();
+            .collect::<crate::base::Result<Vec<_>>>()?;
         tracing::info!(user_id, count = results.len(), "memory list completed");
         Ok(results)
     }

@@ -65,7 +65,7 @@ impl TurnPersister {
             duration_ms,
             cost: 0.0,
         };
-        let metrics_json = serde_json::to_string(&metrics).unwrap_or_default();
+        let metrics_json = serde_json::to_string(&metrics)?;
         let status = status_from_reason(&result.stop_reason);
         let error = if matches!(status, RunStatus::Error) {
             response_text.clone()
@@ -263,18 +263,20 @@ impl TurnPersister {
         let records: Vec<RunEventRecord> = events
             .iter()
             .enumerate()
-            .map(|(idx, event)| RunEventRecord {
-                id: crate::kernel::new_id(),
-                run_id: self.run_id.clone(),
-                session_id: self.session_id.clone(),
-                agent_id: self.agent_id.to_string(),
-                user_id: self.user_id.to_string(),
-                seq: (idx + 1) as u32,
-                event: event.name(),
-                payload: serde_json::to_string(event).unwrap_or_else(|_| "{}".to_string()),
-                created_at: String::new(),
+            .map(|(idx, event)| {
+                Ok(RunEventRecord {
+                    id: crate::kernel::new_id(),
+                    run_id: self.run_id.clone(),
+                    session_id: self.session_id.clone(),
+                    agent_id: self.agent_id.to_string(),
+                    user_id: self.user_id.to_string(),
+                    seq: (idx + 1) as u32,
+                    event: event.name(),
+                    payload: serde_json::to_string(event)?,
+                    created_at: String::new(),
+                })
             })
-            .collect();
+            .collect::<crate::base::Result<Vec<_>>>()?;
         let result = self.storage.run_events_insert_batch(&records).await;
         match &result {
             Ok(_) => server_log::info(

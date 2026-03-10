@@ -20,18 +20,18 @@ impl RowMapper for RunEventMapper {
         "id, run_id, session_id, agent_id, user_id, seq, event, payload, TO_VARCHAR(created_at)"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> RunEventRecord {
-        RunEventRecord {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<RunEventRecord> {
+        Ok(RunEventRecord {
             id: sql::col(row, 0),
             run_id: sql::col(row, 1),
             session_id: sql::col(row, 2),
             agent_id: sql::col(row, 3),
             user_id: sql::col(row, 4),
-            seq: sql::col(row, 5).parse().unwrap_or(0),
+            seq: sql::col_u32(row, 5)?,
             event: sql::col(row, 6),
             payload: sql::col(row, 7),
             created_at: sql::col(row, 8),
-        }
+        })
     }
 }
 

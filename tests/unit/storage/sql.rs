@@ -78,28 +78,28 @@ fn test_col_opt_missing_returns_none() -> Result<()> {
 #[test]
 fn test_col_i32_valid() -> Result<()> {
     let row = json!(["123"]);
-    assert_eq!(col_i32(&row, 0), 123);
+    assert_eq!(col_i32(&row, 0)?, 123);
     Ok(())
 }
 
 #[test]
 fn test_col_i32_invalid() -> Result<()> {
     let row = json!(["abc"]);
-    assert_eq!(col_i32(&row, 0), 0);
+    assert!(col_i32(&row, 0).is_err());
     Ok(())
 }
 
 #[test]
 fn test_col_i64_valid() -> Result<()> {
     let row = json!(["9999999999"]);
-    assert_eq!(col_i64(&row, 0), 9_999_999_999);
+    assert_eq!(col_i64(&row, 0)?, 9_999_999_999);
     Ok(())
 }
 
 #[test]
 fn test_col_i64_missing() -> Result<()> {
     let row = json!([]);
-    assert_eq!(col_i64(&row, 0), 0);
+    assert!(col_i64(&row, 0).is_err());
     Ok(())
 }
 

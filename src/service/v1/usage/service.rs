@@ -4,7 +4,6 @@ use super::http::UsageSummaryResponse;
 use crate::service::error::Result;
 use crate::service::state::AppState;
 use crate::storage::dal::usage::repo::UsageRepo;
-use crate::storage::sql;
 
 fn to_summary(s: crate::storage::CostSummary) -> UsageSummaryResponse {
     UsageSummaryResponse {
@@ -33,24 +32,17 @@ pub async fn usage_daily(
 ) -> Result<Vec<DailyUsageResponse>> {
     let days = q.days.unwrap_or(14).min(90);
     let pool = state.runtime.databases().agent_pool(agent_id)?;
-    let aid = sql::escape(agent_id);
-    let sql_str = format!(
-        "SELECT TO_VARCHAR(TO_DATE(created_at)) AS day, \
-         COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
-         COALESCE(SUM(total_tokens), 0), COALESCE(SUM(cost), 0), COUNT(*) \
-         FROM usage WHERE agent_id = '{aid}' AND created_at >= NOW() - INTERVAL {days} DAY \
-         GROUP BY day ORDER BY day DESC"
-    );
-    let rows = pool.query_all(&sql_str).await?;
+    let repo = UsageRepo::new(pool);
+    let rows = repo.daily_by_agent(agent_id, days).await?;
     Ok(rows
-        .iter()
-        .map(|r| DailyUsageResponse {
-            date: sql::col(r, 0),
-            prompt_tokens: sql::col(r, 1).parse().unwrap_or(0),
-            completion_tokens: sql::col(r, 2).parse().unwrap_or(0),
-            total_tokens: sql::col(r, 3).parse().unwrap_or(0),
-            cost: sql::col(r, 4).parse().unwrap_or(0.0),
-            requests: sql::col(r, 5).parse().unwrap_or(0),
+        .into_iter()
+        .map(|row| DailyUsageResponse {
+            date: row.date,
+            prompt_tokens: row.prompt_tokens,
+            completion_tokens: row.completion_tokens,
+            total_tokens: row.total_tokens,
+            cost: row.cost,
+            requests: row.requests,
         })
         .collect())
 }

@@ -239,19 +239,19 @@ fn run_record_serde_roundtrip() -> anyhow::Result<()> {
 }
 
 #[test]
-fn run_record_parse_metrics_empty_string() {
+fn run_record_parse_metrics_empty_string() -> anyhow::Result<()> {
     let record = make_run_record("");
-    let m = record.parse_metrics();
+    let m = record.parse_metrics()?;
     assert_eq!(m.prompt_tokens, 0);
     assert_eq!(m.total_tokens, 0);
     assert_eq!(m.cost, 0.0);
+    Ok(())
 }
 
 #[test]
 fn run_record_parse_metrics_invalid_json() {
     let record = make_run_record("not-json");
-    let m = record.parse_metrics();
-    assert_eq!(m.prompt_tokens, 0);
+    assert!(record.parse_metrics().is_err());
 }
 
 #[test]
@@ -266,7 +266,7 @@ fn run_record_parse_metrics_valid_json() -> anyhow::Result<()> {
     };
     let json = serde_json::to_string(&metrics)?;
     let record = make_run_record(&json);
-    let parsed = record.parse_metrics();
+    let parsed = record.parse_metrics()?;
     assert_eq!(parsed.prompt_tokens, 200);
     assert_eq!(parsed.completion_tokens, 80);
     assert_eq!(parsed.total_tokens, 280);

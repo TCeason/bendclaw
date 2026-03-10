@@ -54,11 +54,11 @@ async fn versioned_update_and_delete_increment_version_with_single_sql_path() ->
         .await?;
 
     assert_eq!(rows.len(), 3);
-    assert_eq!(col_i64(&rows[0], 0), 1);
+    assert_eq!(col_i64(&rows[0], 0)?, 1);
     assert_eq!(bendclaw::storage::sql::col(&rows[0], 1), "create");
-    assert_eq!(col_i64(&rows[1], 0), 2);
+    assert_eq!(col_i64(&rows[1], 0)?, 2);
     assert_eq!(bendclaw::storage::sql::col(&rows[1], 1), "update");
-    assert_eq!(col_i64(&rows[2], 0), 3);
+    assert_eq!(col_i64(&rows[2], 0)?, 3);
     assert_eq!(bendclaw::storage::sql::col(&rows[2], 1), "delete");
 
     Ok(())

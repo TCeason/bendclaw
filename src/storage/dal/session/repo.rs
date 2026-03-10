@@ -21,17 +21,17 @@ impl RowMapper for SessionMapper {
         "id, agent_id, user_id, title, PARSE_JSON(session_state), PARSE_JSON(meta), TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> SessionRecord {
-        SessionRecord {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<SessionRecord> {
+        Ok(SessionRecord {
             id: sql::col(row, 0),
             agent_id: sql::col(row, 1),
             user_id: sql::col(row, 2),
             title: sql::col(row, 3),
-            session_state: parse_variant_json(&sql::col(row, 4)),
-            meta: parse_variant_json(&sql::col(row, 5)),
+            session_state: parse_variant_json(&sql::col(row, 4))?,
+            meta: parse_variant_json(&sql::col(row, 5))?,
             created_at: sql::col(row, 6),
             updated_at: sql::col(row, 7),
-        }
+        })
     }
 }
 
@@ -108,6 +108,60 @@ impl SessionRepo {
         result
     }
 
+    pub async fn count_by_user_search(&self, user_id: &str, search: Option<&str>) -> Result<u64> {
+        let condition = user_search_condition(user_id, search);
+        let result = async {
+            let query = format!("SELECT COUNT(*) FROM sessions WHERE {condition}");
+            let row = self.table.pool().query_row(&query).await?;
+            sql::agg_u64_or_zero(row.as_ref(), 0)
+        }
+        .await;
+        if let Err(error) = &result {
+            repo_error(
+                REPO,
+                "count_by_user_search",
+                serde_json::json!({"user_id": user_id, "search": search}),
+                error,
+            );
+        }
+        result
+    }
+
+    pub async fn list_by_user_search(
+        &self,
+        user_id: &str,
+        search: Option<&str>,
+        order: &str,
+        limit: u64,
+        offset: u64,
+    ) -> Result<Vec<SessionRecord>> {
+        let condition = user_search_condition(user_id, search);
+        let result = async {
+            let query = format!(
+                "SELECT {} FROM sessions WHERE {condition} ORDER BY {order} LIMIT {limit} OFFSET {offset}",
+                SessionMapper.columns()
+            );
+            let rows = self.table.pool().query_all(&query).await?;
+            rows.iter().map(|row| SessionMapper.parse(row)).collect()
+        }
+        .await;
+        if let Err(error) = &result {
+            repo_error(
+                REPO,
+                "list_by_user_search",
+                serde_json::json!({
+                    "user_id": user_id,
+                    "search": search,
+                    "order": order,
+                    "limit": limit,
+                    "offset": offset
+                }),
+                error,
+            );
+        }
+        result
+    }
+
     pub async fn list_by_user(&self, user_id: &str, limit: u32) -> Result<Vec<SessionRecord>> {
         let result = self
             .table
@@ -129,9 +183,18 @@ impl SessionRepo {
     }
 }
 
-fn parse_variant_json(raw: &str) -> serde_json::Value {
+fn parse_variant_json(raw: &str) -> crate::base::Result<serde_json::Value> {
     if raw.trim().is_empty() {
-        return serde_json::Value::Null;
+        return Ok(serde_json::Value::Null);
     }
-    serde_json::from_str(raw).unwrap_or(serde_json::Value::Null)
+    sql::parse_json(raw, "sessions.variant")
+}
+
+fn user_search_condition(user_id: &str, search: Option<&str>) -> String {
+    let mut condition = format!("user_id = '{}'", sql::escape(user_id));
+    if let Some(search) = search {
+        let search = sql::escape_like(search);
+        condition.push_str(&format!(" AND title LIKE '%{search}%' ESCAPE '\\\\'"));
+    }
+    condition
 }

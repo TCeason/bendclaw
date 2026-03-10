@@ -20,8 +20,8 @@ impl RowMapper for TaskHistoryMapper {
         "id, task_id, run_id, task_name, schedule_kind, cron_expr, prompt, status, output, error, duration_ms, webhook_url, webhook_status, webhook_error, executed_by_instance_id, TO_VARCHAR(created_at)"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> TaskHistoryRecord {
-        TaskHistoryRecord {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<TaskHistoryRecord> {
+        Ok(TaskHistoryRecord {
             id: sql::col(row, 0),
             task_id: sql::col(row, 1),
             run_id: sql::col_opt(row, 2),
@@ -38,7 +38,7 @@ impl RowMapper for TaskHistoryMapper {
             webhook_error: sql::col_opt(row, 13),
             executed_by_instance_id: sql::col_opt(row, 14),
             created_at: sql::col(row, 15),
-        }
+        })
     }
 }
 

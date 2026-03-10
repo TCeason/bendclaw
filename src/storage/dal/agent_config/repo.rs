@@ -25,8 +25,8 @@ impl RowMapper for ConfigMapper {
          PARSE_JSON(env), TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> AgentConfigRecord {
-        AgentConfigRecord {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<AgentConfigRecord> {
+        Ok(AgentConfigRecord {
             agent_id: sql::col(row, 0),
             system_prompt: sql::col(row, 1),
             display_name: sql::col(row, 2),
@@ -38,7 +38,7 @@ impl RowMapper for ConfigMapper {
             env: parse_env_json(&sql::col(row, 8)),
             created_at: sql::col(row, 9),
             updated_at: sql::col(row, 10),
-        }
+        })
     }
 }
 

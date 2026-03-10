@@ -45,7 +45,7 @@ pub(super) async fn update_config(
     agent_id: &str,
     req: UpdateConfigRequest,
 ) -> Result<u32> {
-    state
+    let version = state
         .runtime
         .update_config_with_version(
             agent_id,
@@ -60,8 +60,8 @@ pub(super) async fn update_config(
             req.notes.as_deref(),
             req.label.as_deref(),
         )
-        .await
-        .map_err(ServiceError::from)
+        .await?;
+    Ok(version)
 }
 
 pub(super) async fn rollback_config(
@@ -82,8 +82,8 @@ pub(super) async fn rollback_config(
             Some(record.token_limit_daily),
             None,
         )
-        .await
-        .map_err(ServiceError::from)
+        .await?;
+    Ok(())
 }
 
 pub(super) async fn list_versions(

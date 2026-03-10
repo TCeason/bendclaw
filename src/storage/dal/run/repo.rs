@@ -21,8 +21,8 @@ impl RowMapper for RunMapper {
         "id, session_id, agent_id, user_id, parent_run_id, status, input, output, error, metrics, stop_reason, iterations, TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> RunRecord {
-        RunRecord {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<RunRecord> {
+        Ok(RunRecord {
             id: sql::col(row, 0),
             session_id: sql::col(row, 1),
             agent_id: sql::col(row, 2),
@@ -34,10 +34,10 @@ impl RowMapper for RunMapper {
             error: sql::col(row, 8),
             metrics: sql::col(row, 9),
             stop_reason: sql::col(row, 10),
-            iterations: sql::col(row, 11).parse().unwrap_or(0),
+            iterations: sql::col_u32(row, 11)?,
             created_at: sql::col(row, 12),
             updated_at: sql::col(row, 13),
-        }
+        })
     }
 }
 
@@ -143,6 +143,60 @@ impl RunRepo {
         result
     }
 
+    pub async fn count_for_session(&self, session_id: &str, status: Option<&str>) -> Result<u64> {
+        let condition = session_condition(session_id, status);
+        let result = async {
+            let query = format!("SELECT COUNT(*) FROM runs WHERE {condition}");
+            let row = self.table.pool().query_row(&query).await?;
+            sql::agg_u64_or_zero(row.as_ref(), 0)
+        }
+        .await;
+        if let Err(error) = &result {
+            repo_error(
+                REPO,
+                "count_for_session",
+                serde_json::json!({"session_id": session_id, "status": status}),
+                error,
+            );
+        }
+        result
+    }
+
+    pub async fn list_for_session(
+        &self,
+        session_id: &str,
+        status: Option<&str>,
+        order: &str,
+        limit: u64,
+        offset: u64,
+    ) -> Result<Vec<RunRecord>> {
+        let condition = session_condition(session_id, status);
+        let result = async {
+            let query = format!(
+                "SELECT {} FROM runs WHERE {condition} ORDER BY created_at {order} LIMIT {limit} OFFSET {offset}",
+                RunMapper.columns()
+            );
+            let rows = self.table.pool().query_all(&query).await?;
+            rows.iter().map(|row| RunMapper.parse(row)).collect()
+        }
+        .await;
+        if let Err(error) = &result {
+            repo_error(
+                REPO,
+                "list_for_session",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "status": status,
+                    "order": order,
+                    "limit": limit,
+                    "offset": offset
+                }),
+                error,
+            );
+        }
+        result
+    }
+
     pub async fn list_by_session(&self, session_id: &str, limit: u32) -> Result<Vec<RunRecord>> {
         let result = self
             .table
@@ -162,4 +216,12 @@ impl RunRepo {
         }
         result
     }
+}
+
+fn session_condition(session_id: &str, status: Option<&str>) -> String {
+    let mut condition = format!("session_id = '{}'", sql::escape(session_id));
+    if let Some(status) = status {
+        condition.push_str(&format!(" AND status = '{}'", sql::escape(status)));
+    }
+    condition
 }

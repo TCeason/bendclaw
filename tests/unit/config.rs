@@ -12,7 +12,7 @@ fn default_storage_config() {
     let cfg = BendClawConfig::default();
     assert_eq!(
         cfg.storage.databend_api_base_url,
-        "https://app.evot.ai/api/storage"
+        "https://api.databend.com/v1"
     );
     assert!(cfg.storage.databend_api_token.is_empty());
     assert_eq!(cfg.storage.databend_warehouse, "default");

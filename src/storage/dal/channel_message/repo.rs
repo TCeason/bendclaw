@@ -17,8 +17,8 @@ impl RowMapper for Mapper {
         "id, channel_type, account_id, chat_id, session_id, direction, sender_id, text, platform_message_id, run_id, attachments, TO_VARCHAR(created_at)"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> Self::Entity {
-        ChannelMessageRecord {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<Self::Entity> {
+        Ok(ChannelMessageRecord {
             id: sql::col(row, 0),
             channel_type: sql::col(row, 1),
             account_id: sql::col(row, 2),
@@ -31,7 +31,7 @@ impl RowMapper for Mapper {
             run_id: sql::col(row, 9),
             attachments: sql::col(row, 10),
             created_at: sql::col(row, 11),
-        }
+        })
     }
 }
 

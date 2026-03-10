@@ -59,8 +59,8 @@ impl RowMapper for SkillMapper {
         "name, version, scope, source, agent_id, user_id, description, timeout, executable, content"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> Skill {
-        Skill {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<Skill> {
+        Ok(Skill {
             name: sql::col(row, 0),
             version: sql::col(row, 1),
             scope: SkillScope::parse(&sql::col(row, 2)),
@@ -68,13 +68,13 @@ impl RowMapper for SkillMapper {
             agent_id: sql::col_opt(row, 4),
             user_id: sql::col_opt(row, 5),
             description: sql::col(row, 6),
-            timeout: sql::col(row, 7).parse().unwrap_or(30),
+            timeout: sql::col_u64(row, 7)?,
             executable: matches!(sql::col(row, 8).as_str(), "1" | "true"),
             content: sql::col(row, 9),
             parameters: Vec::new(),
             files: Vec::new(),
             requires: None,
-        }
+        })
     }
 }
 
@@ -88,11 +88,11 @@ impl RowMapper for FileMapper {
         "file_path, file_body"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> SkillFile {
-        SkillFile {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<SkillFile> {
+        Ok(SkillFile {
             path: sql::col(row, 0),
             body: sql::col(row, 1),
-        }
+        })
     }
 }
 
@@ -106,8 +106,8 @@ impl RowMapper for ChecksumMapper {
         "name, sha256"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> (String, String) {
-        (sql::col(row, 0), sql::col(row, 1))
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<(String, String)> {
+        Ok((sql::col(row, 0), sql::col(row, 1)))
     }
 }
 

@@ -20,13 +20,13 @@ impl RowMapper for TaskMapper {
         "id, executor_instance_id, name, cron_expr, prompt, enabled, status, schedule_kind, every_seconds, TO_VARCHAR(at_time), tz, webhook_url, last_error, delete_after_run, run_count, TO_VARCHAR(last_run_at), TO_VARCHAR(next_run_at), lease_token, TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> TaskRecord {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<TaskRecord> {
         let enabled_str = sql::col(row, 5);
         let enabled = enabled_str == "1" || enabled_str.eq_ignore_ascii_case("true");
         let delete_after_run_str = sql::col(row, 13);
         let delete_after_run =
             delete_after_run_str == "1" || delete_after_run_str.eq_ignore_ascii_case("true");
-        TaskRecord {
+        Ok(TaskRecord {
             id: sql::col(row, 0),
             executor_instance_id: sql::col(row, 1),
             name: sql::col(row, 2),
@@ -41,13 +41,13 @@ impl RowMapper for TaskMapper {
             webhook_url: sql::col_opt(row, 11),
             last_error: sql::col_opt(row, 12),
             delete_after_run,
-            run_count: sql::col_i32(row, 14),
+            run_count: sql::col_i32(row, 14)?,
             last_run_at: sql::col(row, 15),
             next_run_at: sql::col_opt(row, 16),
             lease_token: sql::col_opt(row, 17),
             created_at: sql::col(row, 18),
             updated_at: sql::col(row, 19),
-        }
+        })
     }
 }
 

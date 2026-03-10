@@ -4,11 +4,9 @@ use crate::base::new_session_id;
 use crate::service::error::Result;
 use crate::service::error::ServiceError;
 use crate::service::state::AppState;
-use crate::service::v1::common::count_u64;
 use crate::service::v1::common::Paginated;
 use crate::storage::dal::session::record::SessionRecord;
 use crate::storage::dal::session::repo::SessionRepo;
-use crate::storage::sql;
 
 pub(super) async fn list_sessions(
     state: &AppState,
@@ -17,39 +15,21 @@ pub(super) async fn list_sessions(
     q: SessionsQuery,
 ) -> Result<Paginated<SessionResponse>> {
     let pool = state.runtime.databases().agent_pool(agent_id)?;
-    let uid = sql::escape(user_id);
-    let mut cond = format!("user_id = '{uid}'");
-    if let Some(ref s) = q.search {
-        let escaped = sql::escape(s);
-        cond.push_str(&format!(" AND title LIKE '%{escaped}%'"));
-    }
-    let total = count_u64(
-        &pool,
-        &format!("SELECT COUNT(*) FROM sessions WHERE {cond}"),
-    )
-    .await;
+    let repo = SessionRepo::new(pool);
+    let total = repo
+        .count_by_user_search(user_id, q.search.as_deref())
+        .await?;
     let order = format!("updated_at {}", q.list.order());
-    let data_sql = format!(
-        "SELECT id, agent_id, user_id, title, PARSE_JSON(session_state), PARSE_JSON(meta), \
-         TO_VARCHAR(created_at), TO_VARCHAR(updated_at) \
-         FROM sessions WHERE {cond} ORDER BY {order} LIMIT {} OFFSET {}",
-        q.list.limit(),
-        q.list.offset()
-    );
-    let rows = pool.query_all(&data_sql).await?;
-    let data = rows
-        .iter()
-        .map(|r| SessionResponse {
-            id: sql::col(r, 0),
-            agent_id: sql::col(r, 1),
-            user_id: sql::col(r, 2),
-            title: sql::col(r, 3),
-            session_state: parse_variant(&sql::col(r, 4)),
-            meta: parse_variant(&sql::col(r, 5)),
-            created_at: sql::col(r, 6),
-            updated_at: sql::col(r, 7),
-        })
-        .collect();
+    let rows = repo
+        .list_by_user_search(
+            user_id,
+            q.search.as_deref(),
+            &order,
+            q.list.limit() as u64,
+            q.list.offset() as u64,
+        )
+        .await?;
+    let data = rows.into_iter().map(to_response).collect();
     Ok(Paginated::new(data, &q.list, total))
 }
 
@@ -71,7 +51,7 @@ pub(super) async fn load_session_record(
 ) -> Result<Option<SessionRecord>> {
     let pool = state.runtime.databases().agent_pool(agent_id)?;
     let repo = SessionRepo::new(pool);
-    repo.load(session_id).await.map_err(ServiceError::from)
+    Ok(repo.load(session_id).await?)
 }
 
 pub(super) async fn create_session(
@@ -108,8 +88,8 @@ pub(super) async fn update_session(
             Some(session_state),
             Some(&existing.meta),
         )
-        .await
-        .map_err(ServiceError::from)
+        .await?;
+    Ok(())
 }
 
 pub(super) async fn delete_session(
@@ -117,11 +97,8 @@ pub(super) async fn delete_session(
     agent_id: &str,
     session_id: &str,
 ) -> Result<()> {
-    state
-        .runtime
-        .delete_session(agent_id, session_id)
-        .await
-        .map_err(ServiceError::from)
+    state.runtime.delete_session(agent_id, session_id).await?;
+    Ok(())
 }
 
 fn to_response(r: SessionRecord) -> SessionResponse {
@@ -135,11 +112,4 @@ fn to_response(r: SessionRecord) -> SessionResponse {
         created_at: r.created_at,
         updated_at: r.updated_at,
     }
-}
-
-fn parse_variant(raw: &str) -> serde_json::Value {
-    if raw.trim().is_empty() {
-        return serde_json::Value::Null;
-    }
-    serde_json::from_str(raw).unwrap_or(serde_json::Value::Null)
 }

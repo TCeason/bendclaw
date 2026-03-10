@@ -17,10 +17,10 @@ impl RowMapper for Mapper {
         "id, channel_type, account_id, agent_id, user_id, config, enabled, TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
-    fn parse(&self, row: &serde_json::Value) -> Self::Entity {
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<Self::Entity> {
         let config_raw: String = sql::col(row, 5);
-        let config = serde_json::from_str(&config_raw).unwrap_or(serde_json::Value::Null);
-        ChannelAccountRecord {
+        let config: serde_json::Value = sql::parse_json(&config_raw, "channel_accounts.config")?;
+        Ok(ChannelAccountRecord {
             id: sql::col(row, 0),
             channel_type: sql::col(row, 1),
             account_id: sql::col(row, 2),
@@ -30,7 +30,7 @@ impl RowMapper for Mapper {
             enabled: sql::col(row, 6) == "1",
             created_at: sql::col(row, 7),
             updated_at: sql::col(row, 8),
-        }
+        })
     }
 }
 
@@ -48,7 +48,7 @@ impl ChannelAccountRepo {
 
     pub async fn insert(&self, record: &ChannelAccountRecord) -> Result<()> {
         let enabled_str = if record.enabled { "1" } else { "0" };
-        let config_str = serde_json::to_string(&record.config).unwrap_or_else(|_| "{}".to_string());
+        let config_str = serde_json::to_string(&record.config)?;
         self.table
             .insert(&[
                 ("id", SqlVal::Str(&record.id)),

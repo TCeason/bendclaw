@@ -12,7 +12,7 @@ fn default_storage_config() {
     let cfg = BendClawConfig::default();
     assert_eq!(
         cfg.storage.databend_api_base_url,
-        "https://app.evot.ai/api/storage"
+        "https://api.databend.com/v1"
     );
     assert!(cfg.storage.databend_api_token.is_empty());
     assert_eq!(cfg.storage.databend_warehouse, "default");
@@ -45,6 +45,7 @@ fn validate_with_base_url_and_token_succeeds() {
     let mut cfg = BendClawConfig::default();
     cfg.storage.databend_api_base_url = "https://app.databend.com".into();
     cfg.storage.databend_api_token = "test-token".into();
+    cfg.instance_id = "test-instance".into();
     assert!(cfg.validate().is_ok());
 }
 

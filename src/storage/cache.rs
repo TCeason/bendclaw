@@ -15,7 +15,8 @@ impl<V: Clone> Cache<V> {
     pub fn new(name: &str, capacity: usize) -> Self {
         Self {
             inner: Mutex::new(LruCache::new(
-                NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::new(256).unwrap()),
+                NonZeroUsize::new(capacity)
+                    .unwrap_or_else(|| NonZeroUsize::new(256).expect("256 is non-zero")),
             )),
             name: name.to_string(),
             hits: Mutex::new(0),

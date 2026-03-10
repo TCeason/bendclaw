@@ -16,7 +16,7 @@ pub trait RowMapper: Send + Sync {
     /// Column expression for SELECT (e.g. "id, name, TO_VARCHAR(created_at)").
     fn columns(&self) -> &str;
     /// Parse a single row into the domain entity.
-    fn parse(&self, row: &serde_json::Value) -> Self::Entity;
+    fn parse(&self, row: &serde_json::Value) -> crate::base::Result<Self::Entity>;
 }
 
 /// A WHERE condition: column name + rendered SQL value.
@@ -65,7 +65,7 @@ impl<M: RowMapper> DatabendTable<M> {
         let q = Self::apply_wheres(Sql::select(self.mapper.columns()).from(&self.table), wheres);
         let query = q.limit(1).build();
         let row = self.pool.query_row(&query).await?;
-        Ok(row.as_ref().map(|r| self.mapper.parse(r)))
+        row.as_ref().map(|r| self.mapper.parse(r)).transpose()
     }
 
     pub async fn get_where(&self, condition: &str) -> Result<Option<M::Entity>> {
@@ -75,7 +75,7 @@ impl<M: RowMapper> DatabendTable<M> {
             .limit(1)
             .build();
         let row = self.pool.query_row(&query).await?;
-        Ok(row.as_ref().map(|r| self.mapper.parse(r)))
+        row.as_ref().map(|r| self.mapper.parse(r)).transpose()
     }
 
     // ── Multi-row reads ──
@@ -89,7 +89,7 @@ impl<M: RowMapper> DatabendTable<M> {
         let q = Self::apply_wheres(Sql::select(self.mapper.columns()).from(&self.table), wheres);
         let query = q.order_by(order).limit(limit).build();
         let rows = self.pool.query_all(&query).await?;
-        Ok(rows.iter().map(|r| self.mapper.parse(r)).collect())
+        rows.iter().map(|r| self.mapper.parse(r)).collect()
     }
 
     pub async fn list_where(
@@ -105,7 +105,7 @@ impl<M: RowMapper> DatabendTable<M> {
             .limit(limit)
             .build();
         let rows = self.pool.query_all(&query).await?;
-        Ok(rows.iter().map(|r| self.mapper.parse(r)).collect())
+        rows.iter().map(|r| self.mapper.parse(r)).collect()
     }
 
     // ── Writes ──
@@ -187,15 +187,14 @@ impl<M: RowMapper> DatabendTable<M> {
         }
         let sql_str = q.order_by(order).limit(limit).build();
         let rows = self.pool.query_all(&sql_str).await?;
-        Ok(rows
-            .iter()
+        rows.iter()
             .map(|r| {
-                let entity = self.mapper.parse(r);
+                let entity = self.mapper.parse(r)?;
                 let num_cols = self.mapper.columns().split(',').count();
-                let score: f32 = sql::col(r, num_cols).parse().unwrap_or(0.0);
-                (entity, score)
+                let score = sql::col_f32(r, num_cols)?;
+                Ok((entity, score))
             })
-            .collect())
+            .collect()
     }
 
     // ── Aggregation ──
