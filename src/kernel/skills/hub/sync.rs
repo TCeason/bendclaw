@@ -32,10 +32,8 @@ pub fn ensure(workspace_root: &Path, repo_url: &str, interval_secs: u64) -> Opti
     if !hub_dir.exists() {
         git_clone(url, &hub_dir)?;
         let _ = mark_synced(&hub_dir);
-    } else if should_sync(&hub_dir, interval_secs) {
-        if git_pull(&hub_dir) {
-            let _ = mark_synced(&hub_dir);
-        }
+    } else if should_sync(&hub_dir, interval_secs) && git_pull(&hub_dir) {
+        let _ = mark_synced(&hub_dir);
     }
     Some(hub_dir)
 }
