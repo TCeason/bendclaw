@@ -97,7 +97,7 @@ async fn variables_api_fast_crud_and_masking() -> Result<()> {
                 key: values[1].clone(),
                 value: values[2].clone(),
                 secret: sql.contains(", true,") || sql.contains(", TRUE,"),
-                revoked: sql.contains(", false,") && false || sql.contains(", true, revoked"),
+                revoked: sql.contains(", true, revoked"),
                 last_used_at: None,
                 created_at: "2026-03-11T00:00:00Z".to_string(),
                 updated_at: "2026-03-11T00:00:00Z".to_string(),
