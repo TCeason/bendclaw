@@ -65,7 +65,7 @@ fn workspace_secret_variable_helpers_return_expected_ids() -> Result<()> {
     all.sort();
     assert_eq!(all, vec!["v1".to_string(), "v3".to_string()]);
 
-    let mut filtered = ws.secret_variable_ids_for_keys(["BRAVE_API_KEY", "MISSING"].into_iter());
+    let mut filtered = ws.secret_variable_ids_for_keys(["BRAVE_API_KEY", "MISSING"]);
     filtered.sort();
     assert_eq!(filtered, vec!["v3".to_string()]);
     Ok(())
