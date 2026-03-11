@@ -150,8 +150,10 @@ mod tests {
             Arc::new(|_, _| {}),
         ));
 
-        let mut config = AgentConfig::default();
-        config.instance_id = "inst-1".to_string();
+        let config = AgentConfig {
+            instance_id: "inst-1".to_string(),
+            ..AgentConfig::default()
+        };
 
         Arc::new(Runtime::from_parts(RuntimeParts {
             config,
