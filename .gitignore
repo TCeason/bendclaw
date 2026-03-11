@@ -1,4 +1,6 @@
 /target
+/crates/test-harness/target
+/crates/test-harness/Cargo.lock
 .env
 *.swp
 *.swo

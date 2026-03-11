@@ -1,4 +1,4 @@
-#![cfg_attr(not(feature = "live-tests"), allow(dead_code))]
+#![allow(dead_code)]
 
 use std::collections::VecDeque;
 

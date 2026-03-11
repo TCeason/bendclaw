@@ -12,11 +12,32 @@ use crate::kernel::tools::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
 /// Search the web using the Brave Search API.
-pub struct WebSearchTool;
+#[derive(Clone)]
+pub struct WebSearchTool {
+    client: reqwest::Client,
+    base_url: String,
+}
 
 impl WebSearchTool {
+    pub fn new(base_url: impl Into<String>) -> Self {
+        Self {
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .user_agent("bendclaw/0.1")
+                .build()
+                .unwrap_or_default(),
+            base_url: base_url.into(),
+        }
+    }
+
     fn extract_query(args: &serde_json::Value) -> &str {
         args.get("query").and_then(|v| v.as_str()).unwrap_or("")
+    }
+}
+
+impl Default for WebSearchTool {
+    fn default() -> Self {
+        Self::new("https://api.search.brave.com/res/v1/web/search")
     }
 }
 
@@ -86,14 +107,9 @@ impl Tool for WebSearchTool {
             }
         };
 
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .user_agent("bendclaw/0.1")
-            .build()
-            .unwrap_or_default();
-
-        let resp = match client
-            .get("https://api.search.brave.com/res/v1/web/search")
+        let resp = match self
+            .client
+            .get(&self.base_url)
             .header("X-Subscription-Token", api_key.value.as_str())
             .query(&[("q", query), ("count", &count.to_string())])
             .send()

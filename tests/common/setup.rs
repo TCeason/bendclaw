@@ -47,33 +47,16 @@ impl TestContext {
         &self,
         llm: Arc<dyn bendclaw::llm::provider::LLMProvider>,
     ) -> anyhow::Result<axum::Router> {
-        use bendclaw::service::state::AppState;
-
         let (base_url, token, warehouse) = require_api_config()?;
-        let skills_dir = std::env::temp_dir().join("bendclaw-test-skills");
-        std::fs::create_dir_all(&skills_dir)?;
-
-        let runtime = bendclaw::kernel::Runtime::new(
+        app_with_root_pool_and_llm(
+            self.pool.clone(),
             &base_url,
             &token,
             &warehouse,
             &self.prefix,
-            "test_instance",
             llm,
         )
-        .with_hub_config(None)
-        .build()
-        .await?;
-
-        let state = AppState {
-            runtime,
-            auth_key: String::new(),
-        };
-        Ok(bendclaw::service::api_router(
-            state,
-            "info",
-            &bendclaw::config::AuthConfig::default(),
-        ))
+        .await
     }
 
     #[allow(dead_code)]
@@ -167,6 +150,47 @@ pub fn uid(prefix: &str) -> String {
 pub async fn pool() -> anyhow::Result<Pool> {
     static POOL: tokio::sync::OnceCell<Pool> = tokio::sync::OnceCell::const_new();
     POOL.get_or_try_init(create_pool).await.cloned()
+}
+
+pub async fn app_with_root_pool_and_llm(
+    root_pool: Pool,
+    api_base_url: &str,
+    api_token: &str,
+    warehouse: &str,
+    db_prefix: &str,
+    llm: Arc<dyn bendclaw::llm::provider::LLMProvider>,
+) -> anyhow::Result<axum::Router> {
+    use bendclaw::service::state::AppState;
+
+    let mut workspace = bendclaw::config::WorkspaceConfig::default();
+    workspace.root_dir = std::env::temp_dir()
+        .join(format!("bendclaw-test-workspace-{}", Ulid::new()))
+        .to_string_lossy()
+        .into_owned();
+
+    let runtime = bendclaw::kernel::Runtime::new(
+        api_base_url,
+        api_token,
+        warehouse,
+        db_prefix,
+        "test_instance",
+        llm,
+    )
+    .with_hub_config(None)
+    .with_root_pool(root_pool)
+    .with_workspace(workspace)
+    .build()
+    .await?;
+
+    let state = AppState {
+        runtime,
+        auth_key: String::new(),
+    };
+    Ok(bendclaw::service::api_router(
+        state,
+        "info",
+        &bendclaw::config::AuthConfig::default(),
+    ))
 }
 
 async fn create_pool() -> anyhow::Result<Pool> {

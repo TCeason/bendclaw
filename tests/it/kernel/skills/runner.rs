@@ -14,7 +14,11 @@ use bendclaw::kernel::skills::skill::SkillFile;
 use bendclaw::kernel::skills::skill::SkillScope;
 use bendclaw::kernel::skills::skill::SkillSource;
 use bendclaw::kernel::skills::store::SkillStore;
+use bendclaw::storage::VariableRecord;
 
+use crate::common::fake_databend::paged_rows;
+use crate::common::fake_databend::FakeDatabend;
+use crate::common::fake_databend::FakeDatabendCall;
 use crate::mocks::skill::test_skill_store;
 
 fn dummy_databases() -> Arc<bendclaw::storage::AgentDatabases> {
@@ -38,6 +42,19 @@ fn test_workspace_with_vars(variables: HashMap<String, String>) -> Arc<Workspace
         dir,
         vec!["PATH".into(), "HOME".into()],
         variables,
+        Duration::from_secs(10),
+        1_048_576,
+        Arc::new(SandboxResolver),
+    ))
+}
+
+fn test_workspace_with_variable_records(records: Vec<VariableRecord>) -> Arc<Workspace> {
+    let dir = std::env::temp_dir().join(format!("bendclaw-runner-test-{}", ulid::Ulid::new()));
+    let _ = std::fs::create_dir_all(&dir);
+    Arc::new(Workspace::from_variable_records(
+        dir,
+        vec!["PATH".into(), "HOME".into()],
+        records,
         Duration::from_secs(10),
         1_048_576,
         Arc::new(SandboxResolver),
@@ -241,5 +258,53 @@ async fn runner_missing_required_env_returns_error() -> Result<()> {
     let result = runner.execute("needs-env", &[]).await;
 
     assert!(result.is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn runner_updates_last_used_for_consumed_secret_variables() -> Result<()> {
+    let fake = FakeDatabend::new(|sql, _database| {
+        assert_eq!(
+            sql,
+            "UPDATE variables SET last_used_at=NOW() WHERE id='var-secret'"
+        );
+        Ok(paged_rows(&[], None, None))
+    });
+
+    let mut skill = base_skill("secret-skill");
+    skill.scope = SkillScope::Agent;
+    skill.source = SkillSource::Agent;
+    skill.agent_id = Some("a1".into());
+    skill.created_by_user_id = Some("u1".into());
+    skill.executable = true;
+    skill.requires = Some(bendclaw::kernel::skills::skill::SkillRequirements {
+        bins: vec!["bash".into()],
+        env: vec!["API_TOKEN".into()],
+    });
+    skill.files = vec![SkillFile {
+        path: "scripts/run.sh".into(),
+        body: "#!/usr/bin/env bash\ncat >/dev/null\nprintf '%s' \"$API_TOKEN\"".into(),
+    }];
+    let store = make_store_with_skill(&skill);
+    let workspace = test_workspace_with_variable_records(vec![VariableRecord {
+        id: "var-secret".into(),
+        key: "API_TOKEN".into(),
+        value: "secret-token".into(),
+        secret: true,
+        revoked: false,
+        last_used_at: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+    }]);
+    let runner = SkillRunner::new("a1", "u1", store, workspace, fake.pool());
+
+    let output = runner.execute("secret-skill", &[]).await?;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    assert_eq!(output.data, Some(serde_json::json!("secret-token")));
+    assert_eq!(fake.calls(), vec![FakeDatabendCall::Query {
+        sql: "UPDATE variables SET last_used_at=NOW() WHERE id='var-secret'".to_string(),
+        database: None,
+    }]);
     Ok(())
 }

@@ -27,6 +27,7 @@ pub struct Builder {
     db_prefix: String,
     instance_id: String,
     llm: Arc<dyn LLMProvider>,
+    root_pool: Option<Pool>,
     hub_config: Option<crate::config::HubConfig>,
     skills_sync_interval_secs: u64,
     max_iterations: u32,
@@ -51,6 +52,7 @@ impl Builder {
             db_prefix: db_prefix.to_string(),
             instance_id: instance_id.to_string(),
             llm,
+            root_pool: None,
             hub_config: None,
             skills_sync_interval_secs: 30,
             max_iterations: 20,
@@ -96,6 +98,12 @@ impl Builder {
         self
     }
 
+    #[must_use]
+    pub fn with_root_pool(mut self, pool: Pool) -> Self {
+        self.root_pool = Some(pool);
+        self
+    }
+
     pub async fn build(self) -> Result<Arc<Runtime>> {
         let config = AgentConfig {
             instance_id: self.instance_id,
@@ -112,6 +120,7 @@ impl Builder {
         construct(
             config,
             self.llm,
+            self.root_pool,
             self.hub_config,
             self.skills_sync_interval_secs,
         )
@@ -122,16 +131,20 @@ impl Builder {
 async fn construct(
     config: AgentConfig,
     llm: Arc<dyn LLMProvider>,
+    root_pool: Option<Pool>,
     hub_config: Option<crate::config::HubConfig>,
     skills_sync_interval_secs: u64,
 ) -> Result<Arc<Runtime>> {
     let t0 = std::time::Instant::now();
 
-    let pool = Pool::new(
-        &config.databend_api_base_url,
-        &config.databend_api_token,
-        &config.databend_warehouse,
-    )?;
+    let pool = match root_pool {
+        Some(pool) => pool,
+        None => Pool::new(
+            &config.databend_api_base_url,
+            &config.databend_api_token,
+            &config.databend_warehouse,
+        )?,
+    };
     let databases = Arc::new(crate::storage::AgentDatabases::new(
         pool.clone(),
         &config.db_prefix,

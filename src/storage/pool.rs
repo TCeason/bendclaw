@@ -1,5 +1,6 @@
 //! Databend Cloud HTTP API connection pool.
 
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -13,18 +14,23 @@ use crate::base::Result;
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Databend Cloud HTTP API client.
+#[async_trait::async_trait]
+pub trait DatabendClient: Send + Sync {
+    async fn query(&self, sql: &str, database: Option<&str>) -> Result<QueryResponse>;
+    async fn page(&self, uri: &str) -> Result<QueryResponse>;
+    async fn finalize(&self, uri: &str) -> Result<()>;
+}
+
 #[derive(Clone)]
-pub struct Pool {
+struct HttpDatabendClient {
     client: reqwest::Client,
     base_url: String,
     token: String,
     warehouse: String,
-    database: Option<String>,
 }
 
-impl Pool {
-    pub fn new(base_url: &str, token: &str, warehouse: &str) -> Result<Self> {
+impl HttpDatabendClient {
+    fn new(base_url: &str, token: &str, warehouse: &str) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(QUERY_TIMEOUT)
             .connect_timeout(Duration::from_secs(15))
@@ -34,14 +40,99 @@ impl Pool {
                 ErrorCode::storage_connection(format!("failed to create HTTP client: {e}"))
             })?;
 
-        let base_url = normalize_base_url(base_url);
         Ok(Self {
             client,
-            base_url,
+            base_url: normalize_base_url(base_url),
             token: token.to_string(),
             warehouse: warehouse.to_string(),
-            database: None,
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl DatabendClient for HttpDatabendClient {
+    async fn query(&self, sql: &str, database: Option<&str>) -> Result<QueryResponse> {
+        let url = format!("{}/query", self.base_url);
+        let session = database.map(|db| {
+            let mut data = serde_json::Map::new();
+            data.insert(
+                "database".to_string(),
+                serde_json::Value::String(db.to_string()),
+            );
+            serde_json::Value::Object(data)
+        });
+        let body = QueryRequest {
+            sql: sql.to_string(),
+            string_fields: true,
+            session,
+        };
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("X-DatabendCloud-Token", &self.token)
+            .header("X-DatabendCloud-Warehouse", &self.warehouse)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| classify_reqwest_error(e, "query"))?;
+
+        parse_response(resp, "query").await
+    }
+
+    async fn page(&self, uri: &str) -> Result<QueryResponse> {
+        let url = resolve_url(&self.base_url, uri);
+        let resp = self
+            .client
+            .get(&url)
+            .header("X-DatabendCloud-Token", &self.token)
+            .header("X-DatabendCloud-Warehouse", &self.warehouse)
+            .send()
+            .await
+            .map_err(|e| classify_reqwest_error(e, "page"))?;
+
+        parse_response(resp, "page").await
+    }
+
+    async fn finalize(&self, uri: &str) -> Result<()> {
+        let url = resolve_url(&self.base_url, uri);
+        if let Err(error) = self
+            .client
+            .get(&url)
+            .header("X-DatabendCloud-Token", &self.token)
+            .header("X-DatabendCloud-Warehouse", &self.warehouse)
+            .send()
+            .await
+        {
+            tracing::warn!(url = %url, error = %error, "finalize request failed");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct Pool {
+    client: Arc<dyn DatabendClient>,
+    base_url: String,
+    warehouse: String,
+    database: Option<String>,
+}
+
+impl Pool {
+    pub fn new(base_url: &str, token: &str, warehouse: &str) -> Result<Self> {
+        let base_url = normalize_base_url(base_url);
+        let client = Arc::new(HttpDatabendClient::new(&base_url, token, warehouse)?);
+        Ok(Self::from_client(&base_url, warehouse, client))
+    }
+
+    pub fn from_client(base_url: &str, warehouse: &str, client: Arc<dyn DatabendClient>) -> Self {
+        Self {
+            client,
+            base_url: normalize_base_url(base_url),
+            warehouse: warehouse.to_string(),
+            database: None,
+        }
     }
 
     pub fn base_url(&self) -> &str {
@@ -229,78 +320,23 @@ impl Pool {
 
     pub fn with_database(&self, db_name: &str) -> Result<Self> {
         Ok(Self {
-            client: self.client.clone(),
+            client: Arc::clone(&self.client),
             base_url: self.base_url.clone(),
-            token: self.token.clone(),
             warehouse: self.warehouse.clone(),
             database: Some(db_name.to_string()),
         })
     }
 
-    // ── HTTP helpers ──────────────────────────────────────────────────────
-
     async fn do_query(&self, sql: &str) -> Result<QueryResponse> {
-        let url = format!("{}/query", self.base_url);
-
-        let mut session = serde_json::Map::new();
-        if let Some(ref db) = self.database {
-            session.insert(
-                "database".to_string(),
-                serde_json::Value::String(db.clone()),
-            );
-        }
-
-        let body = QueryRequest {
-            sql: sql.to_string(),
-            string_fields: true,
-            session: if session.is_empty() {
-                None
-            } else {
-                Some(serde_json::Value::Object(session))
-            },
-        };
-
-        let resp = self
-            .client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .header("X-DatabendCloud-Token", &self.token)
-            .header("X-DatabendCloud-Warehouse", &self.warehouse)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| classify_reqwest_error(e, "query"))?;
-
-        parse_response(resp, "query").await
+        self.client.query(sql, self.database.as_deref()).await
     }
 
     async fn do_get_page(&self, uri: &str) -> Result<QueryResponse> {
-        let url = resolve_url(&self.base_url, uri);
-        let resp = self
-            .client
-            .get(&url)
-            .header("X-DatabendCloud-Token", &self.token)
-            .header("X-DatabendCloud-Warehouse", &self.warehouse)
-            .send()
-            .await
-            .map_err(|e| classify_reqwest_error(e, "page"))?;
-
-        parse_response(resp, "page").await
+        self.client.page(uri).await
     }
 
     async fn do_final(&self, uri: &str) -> Result<()> {
-        let url = resolve_url(&self.base_url, uri);
-        if let Err(e) = self
-            .client
-            .get(&url)
-            .header("X-DatabendCloud-Token", &self.token)
-            .header("X-DatabendCloud-Warehouse", &self.warehouse)
-            .send()
-            .await
-        {
-            tracing::warn!(url = %url, error = %e, "finalize request failed");
-        }
-        Ok(())
+        self.client.finalize(uri).await
     }
 
     async fn finalize(&self, resp: &QueryResponse) -> Result<()> {
@@ -463,7 +499,6 @@ impl std::fmt::Debug for Pool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Pool")
             .field("base_url", &self.base_url)
-            .field("token", &"***")
             .field("warehouse", &self.warehouse)
             .field("database", &self.database)
             .finish()

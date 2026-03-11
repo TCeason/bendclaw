@@ -153,7 +153,10 @@ pub fn create_session_tools(
     registry.register_builtin(ToolId::Shell, Arc::new(super::shell::ShellTool));
 
     // Web tools (zero-field — API key from VariableRepo at execution time)
-    registry.register_builtin(ToolId::WebSearch, Arc::new(super::web::WebSearchTool));
+    registry.register_builtin(
+        ToolId::WebSearch,
+        Arc::new(super::web::WebSearchTool::default()),
+    );
     registry.register_builtin(ToolId::WebFetch, Arc::new(super::web::WebFetchTool));
 
     // Databend tool

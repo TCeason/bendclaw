@@ -56,6 +56,18 @@ fn make_agent_skill(agent_id: &str, name: &str, description: &str, creator: &str
     }
 }
 
+fn make_agent_skill_with_files(
+    agent_id: &str,
+    name: &str,
+    description: &str,
+    creator: &str,
+    files: Vec<SkillFile>,
+) -> Skill {
+    let mut skill = make_agent_skill(agent_id, name, description, creator);
+    skill.files = files;
+    skill
+}
+
 fn make_workspace(root: &std::path::Path, vars: &[(&str, &str)]) -> Arc<Workspace> {
     let dir = root.join("session");
     let _ = std::fs::create_dir_all(&dir);
@@ -149,6 +161,79 @@ fn disk_checksum_changes_when_creator_changes() -> Result<()> {
 
     assert_ne!(checksum_v1, checksum_v2);
     assert_eq!(loaded.created_by_user_id.as_deref(), Some("user-2"));
+    Ok(())
+}
+
+#[test]
+fn same_agent_same_name_overwrite_replaces_files_and_creator() -> Result<()> {
+    let workspace = TempDir::new()?;
+    let store = SkillStore::new(dummy_databases(), workspace.path().to_path_buf(), None);
+
+    let skill_v1 = make_agent_skill_with_files("agent-a", "dup-skill", "first", "user-1", vec![
+        SkillFile {
+            path: "scripts/run.sh".to_string(),
+            body: "#!/usr/bin/env bash\necho first".to_string(),
+        },
+        SkillFile {
+            path: "references/old.md".to_string(),
+            body: "# old".to_string(),
+        },
+    ]);
+    store.insert(&skill_v1, "agent-a");
+
+    let skill_v2 = make_agent_skill_with_files("agent-a", "dup-skill", "second", "user-2", vec![
+        SkillFile {
+            path: "scripts/run.sh".to_string(),
+            body: "#!/usr/bin/env bash\necho second".to_string(),
+        },
+        SkillFile {
+            path: "references/new.md".to_string(),
+            body: "# new".to_string(),
+        },
+    ]);
+    store.insert(&skill_v2, "agent-a");
+
+    let loaded = store
+        .get("agent-a", "dup-skill")
+        .ok_or_else(|| anyhow::anyhow!("skill not found"))?;
+    assert_eq!(loaded.description, "second");
+    assert_eq!(loaded.created_by_user_id.as_deref(), Some("user-2"));
+    assert_eq!(
+        store.read_skill("agent-a", "dup-skill/references/new.md"),
+        Some("# new".to_string())
+    );
+    assert_eq!(
+        store.read_skill("agent-a", "dup-skill/references/old.md"),
+        None
+    );
+    Ok(())
+}
+
+#[test]
+fn same_name_can_exist_under_different_agents() -> Result<()> {
+    let workspace = TempDir::new()?;
+    let store = SkillStore::new(dummy_databases(), workspace.path().to_path_buf(), None);
+
+    store.insert(
+        &make_agent_skill("agent-a", "shared-name", "agent a", "user-a"),
+        "agent-a",
+    );
+    store.insert(
+        &make_agent_skill("agent-b", "shared-name", "agent b", "user-b"),
+        "agent-b",
+    );
+
+    let skill_a = store
+        .get("agent-a", "shared-name")
+        .ok_or_else(|| anyhow::anyhow!("agent-a skill missing"))?;
+    let skill_b = store
+        .get("agent-b", "shared-name")
+        .ok_or_else(|| anyhow::anyhow!("agent-b skill missing"))?;
+
+    assert_eq!(skill_a.description, "agent a");
+    assert_eq!(skill_a.created_by_user_id.as_deref(), Some("user-a"));
+    assert_eq!(skill_b.description, "agent b");
+    assert_eq!(skill_b.created_by_user_id.as_deref(), Some("user-b"));
     Ok(())
 }
 

@@ -39,7 +39,12 @@ jobs:
       - uses: ./.github/actions/setup-rust
       - uses: taiki-e/install-action@nextest
       - name: Run fast tests
-        run: cargo nextest run --test ${{ matrix.target }} --no-fail-fast
+        run: |
+          if [ "${{ matrix.target }}" = "unit" ]; then
+            cargo nextest run --lib --test unit --no-fail-fast
+          else
+            cargo nextest run --test ${{ matrix.target }} --no-fail-fast
+          fi
 
   test-live:
     name: Test (live)
@@ -70,10 +75,19 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - name: Collect coverage
         run: |
-          cargo llvm-cov nextest --test unit --test it --test contract \
+          cargo llvm-cov nextest --lib --test unit --test it --test contract \
             --ignore-run-fail --codecov --output-path codecov.json
           cargo llvm-cov report --html --output-dir coverage
           cargo llvm-cov report > coverage-summary.txt
+      - name: Enforce core coverage gate
+        id: core_coverage
+        run: |
+          python3 scripts/check_core_coverage.py coverage-summary.txt | tee core-coverage-summary.txt
+          {
+            echo 'summary<<EOF'
+            cat core-coverage-summary.txt
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-report
@@ -93,6 +107,12 @@ jobs:
           header: coverage
           message: |
             ## Code Coverage Report
+
+            ### Core Coverage Gate
+
+            ```
+            ${{ steps.core_coverage.outputs.summary }}
+            ```
 
             <details>
             <summary>Coverage Summary</summary>

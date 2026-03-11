@@ -1,3 +1,6 @@
+#[path = "../common/mod.rs"]
+mod common;
+
 mod architecture;
 mod base;
 mod config;

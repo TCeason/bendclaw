@@ -2,7 +2,7 @@
 
 DEV_CONFIG ?= $(HOME)/.bendclaw/bendclaw_dev.toml
 
-.PHONY: setup check run test test-unit test-integration test-contract test-e2e test-all coverage snapshot-review dev-env test-down ci
+.PHONY: setup check run test test-unit test-it test-contract test-live test-all coverage coverage-core-check snapshot-review dev-env test-down ci
 
 setup:
 	@echo "==> checking protoc..."
@@ -29,34 +29,40 @@ check:
 	cargo fmt --all -- --check
 	cargo clippy --all-targets -- -D warnings
 
-# Fast: unit + integration + contract (no credentials needed, < 30s)
-test: test-unit test-integration test-contract
+# Fast: unit + it + contract (no credentials needed)
+test: test-unit test-it test-contract
 
 test-unit:
-	cargo nextest run --test unit --no-fail-fast
+	cargo nextest run --lib --test unit --no-fail-fast
 
-test-integration:
-	cargo nextest run --test integration --no-fail-fast
+test-it:
+	cargo nextest run --test it --no-fail-fast
 
 test-contract:
 	cargo nextest run --test contract --no-fail-fast
 
 # Requires Databend credentials
-test-e2e: dev-env
-	RUST_LOG=ERROR cargo nextest run --test e2e --no-fail-fast
+test-live: dev-env
+	RUST_LOG=ERROR cargo test --test live --features live-tests -- --test-threads=1
 
 # Everything
-test-all: test test-e2e
+test-all: test test-live
 
 coverage:
 	cargo install cargo-llvm-cov --locked 2>/dev/null || true
-	cargo llvm-cov nextest --test unit --test integration --test contract \
+	cargo llvm-cov nextest --lib --test unit --test it --test contract \
 		--ignore-run-fail --html --output-dir coverage
 	@echo "==> coverage report: coverage/html/index.html"
 
+coverage-core-check:
+	cargo install cargo-llvm-cov --locked 2>/dev/null || true
+	cargo llvm-cov nextest --lib --test unit --test it --test contract \
+		--ignore-run-fail --summary-only > coverage-summary.txt
+	python3 scripts/check_core_coverage.py coverage-summary.txt
+
 coverage-all: dev-env
 	cargo install cargo-llvm-cov --locked 2>/dev/null || true
-	cargo llvm-cov nextest --test unit --test integration --test contract --test e2e \
+	cargo llvm-cov nextest --lib --test unit --test it --test contract \
 		--ignore-run-fail --html --output-dir coverage
 	@echo "==> coverage report: coverage/html/index.html"
 

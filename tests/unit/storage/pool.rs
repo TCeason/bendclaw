@@ -1,6 +1,10 @@
-use anyhow::Context as _;
 use anyhow::Result;
 use bendclaw::storage::Pool;
+
+use crate::common::fake_databend::api_error;
+use crate::common::fake_databend::paged_rows;
+use crate::common::fake_databend::FakeDatabend;
+use crate::common::fake_databend::FakeDatabendCall;
 
 // ── Unit tests (no network) ──────────────────────────────────────────────────
 
@@ -43,144 +47,64 @@ fn pool_with_database() -> Result<()> {
 fn pool_debug_hides_token() -> Result<()> {
     let pool = Pool::new("https://app.databend.com", "secret-token-123", "default")?;
     let debug = format!("{:?}", pool);
-    assert!(debug.contains("***"));
     assert!(!debug.contains("secret-token-123"));
-    Ok(())
-}
-
-// ── Integration tests (require Databend Cloud credentials) ───────────────────
-
-fn require_pool() -> Option<Pool> {
-    let (base_url, token, warehouse) = bendclaw_test_harness::setup::require_api_config().ok()?;
-    if token.is_empty() {
-        return None;
-    }
-    Pool::new(&base_url, &token, &warehouse).ok()
-}
-
-#[tokio::test]
-async fn http_select_one() -> Result<()> {
-    let Some(pool) = require_pool() else {
-        eprintln!("skipping: no Databend Cloud credentials");
-        return Ok(());
-    };
-    let rows = pool.query_all("SELECT 1 AS n").await?;
-    assert_eq!(rows.len(), 1);
+    assert!(debug.contains("base_url"));
+    assert!(debug.contains("warehouse"));
     Ok(())
 }
 
 #[tokio::test]
-async fn http_exec_and_query() -> Result<()> {
-    let Some(pool) = require_pool() else {
-        eprintln!("skipping: no Databend Cloud credentials");
-        return Ok(());
-    };
-    let db = format!(
-        "test_pool_it_{}",
-        &ulid::Ulid::new().to_string().to_lowercase()[..8]
+async fn pool_query_all_uses_paging_and_finalize_on_injected_client() -> Result<()> {
+    let fake = FakeDatabend::with_handlers(
+        |sql, database| {
+            assert_eq!(sql, "SELECT value FROM demo");
+            assert_eq!(database, Some("testdb"));
+            Ok(paged_rows(
+                &[&["first"]],
+                Some("/v1/query/page-2"),
+                Some("/v1/query/final"),
+            ))
+        },
+        |uri| {
+            assert_eq!(uri, "/v1/query/page-2");
+            Ok(paged_rows(&[&["second"]], None, None))
+        },
+        |uri| {
+            assert_eq!(uri, "/v1/query/final");
+            Ok(())
+        },
     );
+    let pool = fake.pool().with_database("testdb")?;
 
-    pool.exec(&format!("CREATE DATABASE IF NOT EXISTS `{db}`"))
-        .await?;
-    let db_pool = pool.with_database(&db)?;
+    let rows = pool.query_all("SELECT value FROM demo").await?;
 
-    db_pool
-        .exec("CREATE TABLE t_pool_test (id INT, name VARCHAR)")
-        .await?;
-    db_pool
-        .exec("INSERT INTO t_pool_test VALUES (1, 'alice'), (2, 'bob')")
-        .await?;
-
-    let rows = db_pool
-        .query_all("SELECT id, name FROM t_pool_test ORDER BY id")
-        .await?;
-    assert_eq!(rows.len(), 2);
-
-    let row0 = rows[0].as_array().context("expected array row 0")?;
-    assert_eq!(row0[0].as_str().context("expected str at [0][0]")?, "1");
-    assert_eq!(row0[1].as_str().context("expected str at [0][1]")?, "alice");
-
-    let row1 = rows[1].as_array().context("expected array row 1")?;
-    assert_eq!(row1[0].as_str().context("expected str at [1][0]")?, "2");
-    assert_eq!(row1[1].as_str().context("expected str at [1][1]")?, "bob");
-
-    // cleanup
-    pool.exec(&format!("DROP DATABASE IF EXISTS `{db}`"))
-        .await?;
+    assert_eq!(rows, vec![
+        serde_json::json!(["first"]),
+        serde_json::json!(["second"]),
+    ]);
+    assert_eq!(fake.calls(), vec![
+        FakeDatabendCall::Query {
+            sql: "SELECT value FROM demo".to_string(),
+            database: Some("testdb".to_string()),
+        },
+        FakeDatabendCall::Page {
+            uri: "/v1/query/page-2".to_string(),
+        },
+        FakeDatabendCall::Finalize {
+            uri: "/v1/query/final".to_string(),
+        },
+    ]);
     Ok(())
 }
 
 #[tokio::test]
-async fn http_query_row_returns_first() -> Result<()> {
-    let Some(pool) = require_pool() else {
-        eprintln!("skipping: no Databend Cloud credentials");
-        return Ok(());
-    };
-    let row = pool
-        .query_row("SELECT 42 AS answer")
-        .await?
-        .context("expected a row")?;
-    let arr = row.as_array().context("expected array")?;
-    assert_eq!(arr[0].as_str().context("expected str")?, "42");
-    Ok(())
-}
+async fn pool_exec_classifies_api_error_from_injected_client() {
+    let fake =
+        FakeDatabend::new(|_sql, _database| Ok(api_error(3901, "Unknown database 'missing_db'")));
+    let pool = fake.pool();
 
-#[tokio::test]
-async fn http_query_row_empty_returns_none() -> Result<()> {
-    let Some(pool) = require_pool() else {
-        eprintln!("skipping: no Databend Cloud credentials");
-        return Ok(());
-    };
-    let db = format!(
-        "test_pool_empty_{}",
-        &ulid::Ulid::new().to_string().to_lowercase()[..8]
-    );
-    pool.exec(&format!("CREATE DATABASE IF NOT EXISTS `{db}`"))
-        .await?;
-    let db_pool = pool.with_database(&db)?;
-    db_pool.exec("CREATE TABLE t_empty (id INT)").await?;
+    let error = pool.exec("SELECT 1").await.expect_err("query should fail");
 
-    let row = db_pool.query_row("SELECT id FROM t_empty").await?;
-    assert!(row.is_none());
-
-    pool.exec(&format!("DROP DATABASE IF EXISTS `{db}`"))
-        .await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn http_with_database_switches_context() -> Result<()> {
-    let Some(pool) = require_pool() else {
-        eprintln!("skipping: no Databend Cloud credentials");
-        return Ok(());
-    };
-    let db = format!(
-        "test_pool_ctx_{}",
-        &ulid::Ulid::new().to_string().to_lowercase()[..8]
-    );
-    pool.exec(&format!("CREATE DATABASE IF NOT EXISTS `{db}`"))
-        .await?;
-    let db_pool = pool.with_database(&db)?;
-
-    let row = db_pool
-        .query_row("SELECT currentDatabase()")
-        .await?
-        .context("expected a row")?;
-    let arr = row.as_array().context("expected array")?;
-    assert_eq!(arr[0].as_str().context("expected str")?, db);
-
-    pool.exec(&format!("DROP DATABASE IF EXISTS `{db}`"))
-        .await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn http_invalid_sql_returns_error() -> Result<()> {
-    let Some(pool) = require_pool() else {
-        eprintln!("skipping: no Databend Cloud credentials");
-        return Ok(());
-    };
-    let result = pool.exec("INVALID SQL STATEMENT").await;
-    assert!(result.is_err());
-    Ok(())
+    assert_eq!(error.code, bendclaw::base::ErrorCode::NOT_FOUND);
+    assert!(error.message.contains("Unknown database"));
 }
