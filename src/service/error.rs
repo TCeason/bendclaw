@@ -34,7 +34,9 @@ impl From<crate::base::ErrorCode> for ServiceError {
                 tracing::warn!(code = e.code, name = e.name, error = %e, "resource not found");
                 Self::AgentNotFound(e.message)
             }
-            ErrorCode::INVALID_INPUT => {
+            ErrorCode::INVALID_INPUT
+            | ErrorCode::SKILL_VALIDATION
+            | ErrorCode::SKILL_REQUIREMENTS => {
                 tracing::warn!(code = e.code, name = e.name, error = %e, "bad request");
                 Self::BadRequest(e.message)
             }

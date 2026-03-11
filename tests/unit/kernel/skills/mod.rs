@@ -6,5 +6,5 @@ mod sanitizer;
 mod schema;
 mod scope;
 mod skill;
-mod sync_policy;
 mod validate;
+mod workspace;

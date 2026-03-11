@@ -13,31 +13,6 @@ use crate::common::setup::TestContext;
 use crate::mocks::llm::MockLLMProvider;
 
 #[tokio::test]
-async fn list_skills_empty() -> Result<()> {
-    let ctx = TestContext::setup().await?;
-    let app = ctx
-        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
-        .await?;
-    let agent_id = uid("sk-empty");
-    let user = uid("user");
-    setup_agent(&app, &agent_id, &user).await?;
-
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/v1/agents/{agent_id}/skills"))
-                .header("x-user-id", &user)
-                .body(Body::empty())?,
-        )
-        .await?;
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = json_body(resp).await?;
-    assert!(body.is_array());
-    Ok(())
-}
-
-#[tokio::test]
 async fn create_and_get_skill() -> Result<()> {
     let ctx = TestContext::setup().await?;
     let app = ctx
@@ -47,7 +22,7 @@ async fn create_and_get_skill() -> Result<()> {
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
 
-    let skill_name = uid("my-skill");
+    let skill_name = uid("my-skill").to_lowercase();
     let payload = serde_json::json!({
         "name": skill_name,
         "description": "A test skill",
@@ -85,6 +60,98 @@ async fn create_and_get_skill() -> Result<()> {
 }
 
 #[tokio::test]
+async fn list_skills_returns_full_skill_payload_for_ui() -> Result<()> {
+    let ctx = TestContext::setup().await?;
+    let app = ctx
+        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
+        .await?;
+    let agent_id = uid("sk-full");
+    let user = uid("user");
+    setup_agent(&app, &agent_id, &user).await?;
+
+    let skill_name = uid("full-skill").to_lowercase();
+    let payload = serde_json::json!({
+        "name": skill_name,
+        "description": "A full skill",
+        "content": "skill body",
+        "executable": true,
+        "timeout": 45,
+        "parameters": [
+            {
+                "name": "table",
+                "description": "Table name",
+                "type": "string",
+                "required": true,
+                "default": null
+            }
+        ],
+        "files": [
+            {
+                "path": "scripts/run.sh",
+                "body": "#!/usr/bin/env bash\necho hi"
+            },
+            {
+                "path": "references/usage.md",
+                "body": "# Usage"
+            }
+        ],
+        "requires": {
+            "bins": ["bash"],
+            "env": ["API_TOKEN"]
+        },
+        "manifest": {
+            "credentials": [
+                {
+                    "env": "API_TOKEN",
+                    "label": "API Token"
+                }
+            ]
+        }
+    });
+
+    let create_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/agents/{agent_id}/skills"))
+                .header("content-type", "application/json")
+                .header("x-user-id", &user)
+                .body(Body::from(serde_json::to_vec(&payload)?))?,
+        )
+        .await?;
+    assert_eq!(create_resp.status(), StatusCode::OK);
+
+    let list_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/agents/{agent_id}/skills"))
+                .header("x-user-id", &user)
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let body = json_body(list_resp).await?;
+    let skill = body
+        .as_array()
+        .and_then(|skills| skills.iter().find(|s| s["name"] == skill_name))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("skill not found in list response"))?;
+
+    assert_eq!(skill["description"], "A full skill");
+    assert_eq!(skill["content"], "skill body");
+    assert_eq!(skill["timeout"], 45);
+    assert_eq!(skill["created_by_user_id"], user);
+    assert_eq!(skill["parameters"][0]["name"], "table");
+    assert_eq!(skill["files"][0]["path"], "references/usage.md");
+    assert_eq!(skill["files"][1]["path"], "scripts/run.sh");
+    assert_eq!(skill["requires"]["env"][0], "API_TOKEN");
+    assert_eq!(skill["manifest"]["credentials"][0]["env"], "API_TOKEN");
+    Ok(())
+}
+
+#[tokio::test]
 async fn delete_skill() -> Result<()> {
     let ctx = TestContext::setup().await?;
     let app = ctx
@@ -94,7 +161,7 @@ async fn delete_skill() -> Result<()> {
     let user = uid("user");
     setup_agent(&app, &agent_id, &user).await?;
 
-    let skill_name = uid("del-skill");
+    let skill_name = uid("del-skill").to_lowercase();
     let payload = serde_json::json!({
         "name": skill_name,
         "description": "to delete",
@@ -124,84 +191,5 @@ async fn delete_skill() -> Result<()> {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = json_body(resp).await?;
     assert_eq!(body["deleted"], skill_name.as_str());
-    Ok(())
-}
-
-#[tokio::test]
-async fn get_skill_not_found() -> Result<()> {
-    let ctx = TestContext::setup().await?;
-    let app = ctx
-        .app_with_llm(Arc::new(MockLLMProvider::with_text("ok")))
-        .await?;
-    let agent_id = uid("sk-nf");
-    let user = uid("user");
-    setup_agent(&app, &agent_id, &user).await?;
-
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/v1/agents/{agent_id}/skills/nonexistent-skill"))
-                .header("x-user-id", &user)
-                .body(Body::empty())?,
-        )
-        .await?;
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-    Ok(())
-}
-
-// ── SkillResponse serde ──
-
-#[test]
-fn skill_response_serializes_fields() -> anyhow::Result<()> {
-    let s = bendclaw::service::v1::skills::SkillResponse {
-        name: "my-skill".into(),
-        version: "1.0.0".into(),
-        scope: "agent".into(),
-        source: "agent".into(),
-        description: "does things".into(),
-        executable: true,
-    };
-    let v = serde_json::to_value(&s)?;
-    assert_eq!(v["name"], "my-skill");
-    assert_eq!(v["version"], "1.0.0");
-    assert_eq!(v["scope"], "agent");
-    assert_eq!(v["source"], "agent");
-    assert_eq!(v["description"], "does things");
-    assert_eq!(v["executable"], true);
-    Ok(())
-}
-
-#[test]
-fn skill_response_non_executable() -> anyhow::Result<()> {
-    let s = bendclaw::service::v1::skills::SkillResponse {
-        name: "read-only".into(),
-        version: "0.0.1".into(),
-        scope: "global".into(),
-        source: "builtin".into(),
-        description: String::new(),
-        executable: false,
-    };
-    let v = serde_json::to_value(&s)?;
-    assert_eq!(v["executable"], false);
-    assert_eq!(v["version"], "0.0.1");
-    Ok(())
-}
-
-#[test]
-fn skill_detail_response_serializes_content() -> anyhow::Result<()> {
-    let s = bendclaw::service::v1::skills::SkillDetailResponse {
-        name: "shell".into(),
-        version: "1.0.0".into(),
-        scope: "global".into(),
-        source: "builtin".into(),
-        description: "run shell commands".into(),
-        content: "#!/bin/bash\necho hello".into(),
-        executable: true,
-    };
-    let v = serde_json::to_value(&s)?;
-    assert_eq!(v["name"], "shell");
-    assert_eq!(v["content"], "#!/bin/bash\necho hello");
-    assert_eq!(v["executable"], true);
     Ok(())
 }

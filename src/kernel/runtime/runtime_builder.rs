@@ -16,7 +16,7 @@ use crate::kernel::runtime::runtime::Runtime;
 use crate::kernel::runtime::runtime::RuntimeParts;
 use crate::kernel::runtime::runtime::RuntimeStatus;
 use crate::kernel::session::SessionManager;
-use crate::kernel::skills::catalog::SkillCatalog;
+use crate::kernel::skills::store::SkillStore;
 use crate::llm::provider::LLMProvider;
 use crate::storage::pool::Pool;
 
@@ -27,7 +27,7 @@ pub struct Builder {
     db_prefix: String,
     instance_id: String,
     llm: Arc<dyn LLMProvider>,
-    skills_dir: String,
+    hub_config: Option<crate::config::HubConfig>,
     skills_sync_interval_secs: u64,
     max_iterations: u32,
     max_context_tokens: usize,
@@ -51,7 +51,7 @@ impl Builder {
             db_prefix: db_prefix.to_string(),
             instance_id: instance_id.to_string(),
             llm,
-            skills_dir: "./skills".to_string(),
+            hub_config: None,
             skills_sync_interval_secs: 30,
             max_iterations: 20,
             max_context_tokens: 250_000,
@@ -61,8 +61,8 @@ impl Builder {
     }
 
     #[must_use]
-    pub fn with_skills_dir(mut self, dir: &str) -> Self {
-        self.skills_dir = dir.to_string();
+    pub fn with_hub_config(mut self, hub_config: Option<crate::config::HubConfig>) -> Self {
+        self.hub_config = hub_config;
         self
     }
 
@@ -103,20 +103,26 @@ impl Builder {
             databend_api_token: self.api_token,
             databend_warehouse: self.warehouse,
             db_prefix: self.db_prefix,
-            skills_dir: self.skills_dir,
             max_iterations: self.max_iterations,
             max_context_tokens: self.max_context_tokens,
             max_duration_secs: self.max_duration_secs,
             workspace: self.workspace,
             checkpoint: CheckpointConfig::default(),
         };
-        construct(config, self.llm, self.skills_sync_interval_secs).await
+        construct(
+            config,
+            self.llm,
+            self.hub_config,
+            self.skills_sync_interval_secs,
+        )
+        .await
     }
 }
 
 async fn construct(
     config: AgentConfig,
     llm: Arc<dyn LLMProvider>,
+    hub_config: Option<crate::config::HubConfig>,
     skills_sync_interval_secs: u64,
 ) -> Result<Arc<Runtime>> {
     let t0 = std::time::Instant::now();
@@ -134,11 +140,12 @@ async fn construct(
 
     let sync_cancel = CancellationToken::new();
 
-    let skills_path = Path::new(&config.skills_dir);
+    let workspace_root = Path::new(&config.workspace.root_dir);
     let t2 = std::time::Instant::now();
-    let (skills, skill_count, sync_handle) = build_skill_catalog(
+    let (skills, skill_count, sync_handle) = build_skill_store(
         databases.clone(),
-        skills_path,
+        workspace_root,
+        hub_config,
         skills_sync_interval_secs,
         sync_cancel.clone(),
     )
@@ -196,33 +203,34 @@ async fn construct(
     Ok(runtime)
 }
 
-async fn build_skill_catalog(
+async fn build_skill_store(
     databases: Arc<crate::storage::AgentDatabases>,
-    skills_path: &Path,
+    workspace_root: &Path,
+    hub_config: Option<crate::config::HubConfig>,
     sync_interval_secs: u64,
     cancel: CancellationToken,
-) -> (Arc<dyn SkillCatalog>, usize, tokio::task::JoinHandle<()>) {
-    let catalog = Arc::new(crate::kernel::skills::catalog::SkillCatalogImpl::new(
+) -> (Arc<SkillStore>, usize, tokio::task::JoinHandle<()>) {
+    let store = Arc::new(SkillStore::new(
         databases,
-        skills_path.to_path_buf(),
+        workspace_root.to_path_buf(),
+        hub_config,
     ));
 
-    if let Err(e) = catalog.load().await {
-        tracing::warn!(error = %e, "initial skill sync from Databend failed, starting with empty catalog");
+    if let Err(e) = store.refresh().await {
+        tracing::warn!(error = %e, "initial skill sync failed, starting with empty store");
     } else {
-        tracing::info!("skills synced from Databend");
+        tracing::info!("skills loaded");
     }
 
-    catalog.log_loaded_skills();
-    let skill_count = catalog.loaded_skills().len();
+    let skill_count = store.loaded_skills().len();
 
-    let sync_handle = crate::kernel::skills::catalog::spawn_sync_task(
-        catalog.clone(),
+    let sync_handle = crate::kernel::skills::remote::sync::spawn_sync_task(
+        store.clone(),
         sync_interval_secs,
         cancel,
     );
 
-    (catalog, skill_count, sync_handle)
+    (store, skill_count, sync_handle)
 }
 
 fn build_channel_registry() -> crate::kernel::channel::registry::ChannelRegistry {

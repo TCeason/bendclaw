@@ -9,6 +9,7 @@ fn make_var(key: &str, value: &str, secret: bool) -> VariableRecord {
         key: key.to_string(),
         value: value.to_string(),
         secret,
+        revoked: false,
         last_used_at: None,
         created_at: "2026-01-01T00:00:00Z".into(),
         updated_at: "2026-01-01T00:00:00Z".into(),
@@ -46,6 +47,16 @@ fn variable_record_with_last_used_at() -> Result<()> {
     let json = serde_json::to_string(&rec)?;
     let back: VariableRecord = serde_json::from_str(&json)?;
     assert_eq!(back.last_used_at.as_deref(), Some("2026-06-01T12:00:00Z"));
+    Ok(())
+}
+
+#[test]
+fn variable_record_with_revoked_flag() -> Result<()> {
+    let mut rec = make_var("TOKEN", "abc", true);
+    rec.revoked = true;
+    let json = serde_json::to_string(&rec)?;
+    let back: VariableRecord = serde_json::from_str(&json)?;
+    assert!(back.revoked);
     Ok(())
 }
 

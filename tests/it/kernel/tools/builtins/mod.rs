@@ -4,3 +4,4 @@ mod memory;
 mod shell;
 mod skill;
 mod tool_result;
+mod web;

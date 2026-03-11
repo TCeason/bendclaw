@@ -1,4 +1,4 @@
-//! Filesystem operations: skill loading, disk mirror, and loaded skill wrapper.
+//! Filesystem operations: skill loading and loaded skill wrapper.
 
 use std::collections::HashMap;
 use std::path::Component;
@@ -7,7 +7,10 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+use crate::kernel::skills::manifest::SkillManifest;
+use crate::kernel::skills::remote::writer::SkillMeta;
 use crate::kernel::skills::skill::Skill;
+use crate::kernel::skills::skill::SkillFile;
 use crate::kernel::skills::skill::SkillParameter;
 use crate::kernel::skills::skill::SkillRequirements;
 use crate::kernel::skills::skill::SkillScope;
@@ -62,140 +65,6 @@ impl LoadedSkill {
     }
 }
 
-// ── SkillMirror ───────────────────────────────────────────────────────────────
-
-/// Manages the two-layer filesystem layout: builtins (read-only) + remote (writable).
-pub struct SkillMirror {
-    pub builtins_dir: PathBuf,
-    pub remote_dir: PathBuf,
-}
-
-impl SkillMirror {
-    pub fn new(local_dir: PathBuf) -> Self {
-        let builtins_dir = local_dir.clone();
-        let remote_dir = local_dir.join(".remote");
-        if let Err(e) = std::fs::create_dir_all(&builtins_dir) {
-            tracing::warn!(error = %e, path = %builtins_dir.display(), "failed to create builtins dir");
-        }
-        if let Err(e) = std::fs::create_dir_all(&remote_dir) {
-            tracing::warn!(error = %e, path = %remote_dir.display(), "failed to create remote dir");
-        }
-        Self {
-            builtins_dir,
-            remote_dir,
-        }
-    }
-
-    pub fn load_builtins(&self) -> Vec<LoadedSkill> {
-        load_skills(&self.builtins_dir)
-    }
-
-    pub fn skill_dir(&self, skill: &Skill) -> PathBuf {
-        if skill.source == SkillSource::Local {
-            self.builtins_dir.join(&skill.name)
-        } else {
-            self.remote_dir.join(&skill.name)
-        }
-    }
-
-    pub fn write_remote_skill(&self, name: &str, skill: &Skill) -> Option<LoadedSkill> {
-        let skill_dir = self.remote_dir.join(name);
-        self.write_skill_to_dir(&skill_dir, name, skill)
-    }
-
-    pub fn write_skill(&self, skill: &Skill) -> Option<LoadedSkill> {
-        let skill_dir = self.skill_dir(skill);
-        self.write_skill_to_dir(&skill_dir, &skill.name, skill)
-    }
-
-    fn write_skill_to_dir(
-        &self,
-        skill_dir: &Path,
-        fallback_name: &str,
-        skill: &Skill,
-    ) -> Option<LoadedSkill> {
-        if skill_dir.exists() {
-            if let Err(e) = std::fs::remove_dir_all(skill_dir) {
-                tracing::warn!(skill = %skill.name, error = %e, "failed to clean skill dir on insert");
-                return None;
-            }
-        }
-        if let Err(e) = std::fs::create_dir_all(skill_dir) {
-            tracing::warn!(skill = %skill.name, error = %e, "failed to create skill dir on insert");
-            return None;
-        }
-
-        let skill_md = format!(
-            "---\nname: {}\ndescription: {}\nversion: {}\ntimeout: {}\n---\n{}",
-            skill.name, skill.description, skill.version, skill.timeout, skill.content
-        );
-        if let Err(e) = std::fs::write(skill_dir.join("SKILL.md"), &skill_md) {
-            tracing::warn!(skill = %skill.name, error = %e, "failed to write SKILL.md on insert");
-            return None;
-        }
-
-        for f in &skill.files {
-            let rel = Path::new(&f.path);
-            if !is_safe_relative_path(rel) {
-                tracing::warn!(skill = %skill.name, path = %f.path, "unsafe skill file path rejected");
-                continue;
-            }
-            let file_path = skill_dir.join(rel);
-            if let Some(parent) = file_path.parent() {
-                if let Err(e) = std::fs::create_dir_all(parent) {
-                    tracing::warn!(skill = %skill.name, path = %f.path, error = %e, "failed to create parent dir");
-                    continue;
-                }
-            }
-            if let Err(e) = std::fs::write(&file_path, &f.body) {
-                tracing::warn!(skill = %skill.name, path = %f.path, error = %e, "failed to write skill file");
-                continue;
-            }
-        }
-
-        let mut loaded = load_skill_from_dir(skill_dir, fallback_name)?;
-        loaded.skill.scope = skill.scope.clone();
-        loaded.skill.source = skill.source.clone();
-        loaded.skill.agent_id = skill.agent_id.clone();
-        loaded.skill.user_id = skill.user_id.clone();
-        loaded.skill.executable = skill.executable;
-        loaded.skill.parameters = skill.parameters.clone();
-        loaded.skill.files = skill.files.clone();
-        loaded.skill.requires = skill.requires.clone();
-        Some(loaded)
-    }
-
-    pub fn remove_skill(&self, name: &str) {
-        if !is_safe_relative_path(Path::new(name)) {
-            tracing::warn!(skill = %name, "unsafe skill name rejected for removal");
-            return;
-        }
-        let dir = self.remote_dir.join(name);
-        if dir.exists() {
-            if let Err(e) = std::fs::remove_dir_all(&dir) {
-                tracing::warn!(skill = %name, error = %e, "failed to remove skill dir on evict");
-            }
-        }
-    }
-
-    pub fn remove_remote_skill(&self, name: &str) {
-        if !is_safe_relative_path(Path::new(name)) {
-            tracing::warn!(skill = %name, "unsafe skill name rejected for stale removal");
-            return;
-        }
-        let dir = self.remote_dir.join(name);
-        if dir.exists() {
-            if let Err(e) = std::fs::remove_dir_all(&dir) {
-                tracing::warn!(skill = %name, error = %e, "failed to remove stale remote skill dir");
-            }
-        }
-    }
-}
-
-fn is_safe_relative_path(path: &Path) -> bool {
-    !path.is_absolute() && path.components().all(|c| matches!(c, Component::Normal(_)))
-}
-
 // ── Loader ────────────────────────────────────────────────────────────────────
 
 /// Load all skills from a directory.
@@ -215,12 +84,10 @@ pub fn load_skills(skills_dir: &Path) -> Vec<LoadedSkill> {
             continue;
         }
         let dir_name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) if !n.starts_with('_') => n.to_string(),
+            Some(n) if !n.starts_with('_') && !n.starts_with('.') => n.to_string(),
             _ => continue,
         };
-        if let Some(loaded) =
-            load_versioned_skill(&path, &dir_name).or_else(|| load_skill_from_dir(&path, &dir_name))
-        {
+        if let Some(loaded) = load_skill_tree(&path, &dir_name) {
             skills.push(loaded);
         }
     }
@@ -250,7 +117,7 @@ fn load_versioned_skill(skill_dir: &Path, dir_name: &str) -> Option<LoadedSkill>
         return None;
     }
     versions.sort_by(|a, b| b.0.cmp(&a.0));
-    load_skill_from_dir(&versions[0].1, dir_name)
+    load_skill_with_meta(&versions[0].1, dir_name)
 }
 
 /// Load a skill from a directory that contains a `SKILL.md` file.
@@ -276,6 +143,11 @@ pub fn load_skill_from_dir(dir: &Path, fallback_name: &str) -> Option<LoadedSkil
     let executable = find_script(dir).is_some();
     let requires = parse_requires(&content);
 
+    let manifest = std::fs::read_to_string(dir.join("manifest.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<SkillManifest>(&s).ok());
+    let files = load_bundled_files(dir);
+
     let skill = Skill {
         name,
         description,
@@ -283,19 +155,86 @@ pub fn load_skill_from_dir(dir: &Path, fallback_name: &str) -> Option<LoadedSkil
         scope: SkillScope::Global,
         source: SkillSource::Local,
         agent_id: None,
-        user_id: None,
+        created_by_user_id: None,
         timeout,
         executable,
         parameters,
         content: body,
-        files: Vec::new(),
+        files,
         requires,
+        manifest,
     };
 
     Some(LoadedSkill {
         skill,
         fs_dir: dir.to_path_buf(),
     })
+}
+
+/// Load a skill from a directory, overlaying `.meta.json` if present.
+/// This restores scope/source/agent_id/executable that aren't in SKILL.md frontmatter.
+pub fn load_skill_with_meta(dir: &Path, fallback_name: &str) -> Option<LoadedSkill> {
+    let mut loaded = load_skill_from_dir(dir, fallback_name)?;
+    let meta_path = dir.join(".meta.json");
+    if let Ok(json) = std::fs::read_to_string(&meta_path) {
+        if let Ok(meta) = serde_json::from_str::<SkillMeta>(&json) {
+            loaded.skill.scope = SkillScope::parse(&meta.scope);
+            loaded.skill.source = SkillSource::parse(&meta.source);
+            loaded.skill.agent_id = meta.agent_id;
+            loaded.skill.created_by_user_id = meta.created_by_user_id;
+            loaded.skill.executable = meta.executable;
+            loaded.skill.parameters = meta.parameters;
+            loaded.skill.requires = meta.requires;
+            loaded.skill.manifest = meta.manifest;
+        }
+    }
+    Some(loaded)
+}
+
+/// Load a skill entry from a named directory, supporting both plain and
+/// versioned layouts while consistently applying mirror metadata.
+pub fn load_skill_tree(dir: &Path, fallback_name: &str) -> Option<LoadedSkill> {
+    load_versioned_skill(dir, fallback_name).or_else(|| load_skill_with_meta(dir, fallback_name))
+}
+
+fn load_bundled_files(dir: &Path) -> Vec<SkillFile> {
+    let mut files = Vec::new();
+    for root_name in ["scripts", "references"] {
+        let root = dir.join(root_name);
+        if !root.is_dir() {
+            continue;
+        }
+        collect_skill_files(dir, &root, &mut files);
+    }
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    files
+}
+
+fn collect_skill_files(skill_root: &Path, dir: &Path, out: &mut Vec<SkillFile>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_skill_files(skill_root, &path, out);
+            continue;
+        }
+        let rel = match path.strip_prefix(skill_root) {
+            Ok(rel) if is_safe_relative_path(rel) => rel,
+            _ => continue,
+        };
+        let rel_str = rel.to_string_lossy().to_string();
+        if rel_str.starts_with("scripts/") || rel_str.starts_with("references/") {
+            if let Ok(body) = std::fs::read_to_string(&path) {
+                out.push(SkillFile {
+                    path: rel_str,
+                    body,
+                });
+            }
+        }
+    }
 }
 
 // ── Parsing helpers ───────────────────────────────────────────────────────────
@@ -381,7 +320,7 @@ pub fn parse_param_line(line: &str) -> Option<SkillParameter> {
     })
 }
 
-fn find_script(dir: &Path) -> Option<PathBuf> {
+pub fn find_script(dir: &Path) -> Option<PathBuf> {
     let scripts_dir = dir.join("scripts");
     if !scripts_dir.is_dir() {
         return None;
@@ -410,9 +349,7 @@ fn safe_doc_target(root: &Path, sub_path: &str) -> Option<PathBuf> {
         || rel.components().any(|c| {
             matches!(
                 c,
-                std::path::Component::ParentDir
-                    | std::path::Component::RootDir
-                    | std::path::Component::Prefix(_)
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
             )
         })
     {
@@ -425,4 +362,9 @@ fn safe_doc_target(root: &Path, sub_path: &str) -> Option<PathBuf> {
     } else {
         None
     }
+}
+
+/// Check that a relative path has no `..` or absolute components.
+pub fn is_safe_relative_path(path: &Path) -> bool {
+    !path.is_absolute() && path.components().all(|c| matches!(c, Component::Normal(_)))
 }

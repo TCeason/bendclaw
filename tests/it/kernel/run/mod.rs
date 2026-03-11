@@ -1,9 +1,6 @@
 mod compactor;
 mod dispatcher;
+#[cfg(feature = "live-tests")]
 mod engine;
-mod event;
-mod fmt;
-mod prompt;
-mod result;
-mod run_loop;
-mod usage;
+#[cfg(feature = "live-tests")]
+mod prompt_live;

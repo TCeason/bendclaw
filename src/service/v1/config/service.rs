@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use super::http::ConfigResponse;
 use super::http::UpdateConfigRequest;
 use super::http::VersionResponse;
@@ -24,7 +22,6 @@ pub(super) async fn get_config(state: &AppState, agent_id: &str) -> Result<Confi
             soul: r.soul,
             token_limit_total: r.token_limit_total,
             token_limit_daily: r.token_limit_daily,
-            env: r.env,
         },
         None => ConfigResponse {
             agent_id: agent_id.to_string(),
@@ -35,7 +32,6 @@ pub(super) async fn get_config(state: &AppState, agent_id: &str) -> Result<Confi
             soul: String::new(),
             token_limit_total: None,
             token_limit_daily: None,
-            env: HashMap::new(),
         },
     })
 }
@@ -56,7 +52,6 @@ pub(super) async fn update_config(
             req.soul.as_deref(),
             req.token_limit_total,
             req.token_limit_daily,
-            req.env.as_ref(),
             req.notes.as_deref(),
             req.label.as_deref(),
         )
@@ -80,7 +75,6 @@ pub(super) async fn rollback_config(
             Some(&record.soul),
             Some(record.token_limit_total),
             Some(record.token_limit_daily),
-            None,
         )
         .await?;
     Ok(())

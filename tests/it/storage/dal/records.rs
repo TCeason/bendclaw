@@ -52,7 +52,6 @@ fn agent_config_record_serde_roundtrip() -> Result<()> {
         soul: String::new(),
         token_limit_total: None,
         token_limit_daily: None,
-        env: std::collections::HashMap::new(),
         created_at: "2026-01-01T00:00:00Z".into(),
         updated_at: "2026-01-01T00:00:00Z".into(),
     };

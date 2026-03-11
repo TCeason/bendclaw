@@ -85,6 +85,22 @@ fn from_error_code_invalid_input_maps_to_400() -> Result<()> {
 }
 
 #[test]
+fn from_error_code_skill_validation_maps_to_400() -> Result<()> {
+    let ec = bendclaw::base::ErrorCode::skill_validation("bad skill");
+    let se: ServiceError = ec.into();
+    assert_eq!(status(se), StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+#[test]
+fn from_error_code_skill_requirements_maps_to_400() -> Result<()> {
+    let ec = bendclaw::base::ErrorCode::skill_requirements("missing env");
+    let se: ServiceError = ec.into();
+    assert_eq!(status(se), StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+#[test]
 fn from_error_code_denied_maps_to_403() -> Result<()> {
     let ec = bendclaw::base::ErrorCode::denied("not your session");
     let se: ServiceError = ec.into();

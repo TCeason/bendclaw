@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -13,8 +11,6 @@ pub struct AgentConfigRecord {
     pub soul: String,
     pub token_limit_total: Option<u64>,
     pub token_limit_daily: Option<u64>,
-    #[serde(default)]
-    pub env: HashMap<String, String>,
     pub created_at: String,
     pub updated_at: String,
 }

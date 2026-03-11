@@ -9,7 +9,6 @@ fn agent_config_defaults() {
     assert!(config.databend_api_base_url.is_empty());
     assert!(config.databend_api_token.is_empty());
     assert_eq!(config.databend_warehouse, "default");
-    assert_eq!(config.skills_dir, "./skills");
     assert_eq!(config.max_iterations, 20);
     assert_eq!(config.max_context_tokens, 250_000);
     assert_eq!(config.max_duration_secs, 300);

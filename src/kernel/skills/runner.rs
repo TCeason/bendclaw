@@ -8,14 +8,17 @@ use serde_json::json;
 use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::session::workspace::Workspace;
-use crate::kernel::skills::catalog::SkillCatalog;
 use crate::kernel::skills::executor::SkillExecutor;
 use crate::kernel::skills::executor::SkillOutput;
 use crate::kernel::skills::skill::Skill;
+use crate::kernel::skills::store::SkillStore;
+use crate::storage::dal::variable::VariableRepo;
+use crate::storage::pool::Pool;
 
 pub struct SkillRunner {
-    catalog: Arc<dyn SkillCatalog>,
+    store: Arc<SkillStore>,
     workspace: Arc<Workspace>,
+    pool: Pool,
     agent_id: String,
     user_id: String,
 }
@@ -31,12 +34,14 @@ impl SkillRunner {
     pub fn new(
         agent_id: &str,
         user_id: &str,
-        catalog: Arc<dyn SkillCatalog>,
+        store: Arc<SkillStore>,
         workspace: Arc<Workspace>,
+        pool: Pool,
     ) -> Self {
         Self {
-            catalog,
+            store,
             workspace,
+            pool,
             agent_id: agent_id.to_string(),
             user_id: user_id.to_string(),
         }
@@ -60,8 +65,8 @@ impl SkillRunner {
             }
 
             let content = self
-                .catalog
-                .read_skill(path)
+                .store
+                .read_skill(&self.agent_id, path)
                 .unwrap_or_else(|| format!("Skill not found: {path}"));
 
             return Ok(SkillOutput {
@@ -71,11 +76,11 @@ impl SkillRunner {
         }
 
         let skill = self
-            .catalog
-            .resolve(skill_name)
+            .store
+            .resolve(&self.agent_id, skill_name)
             .ok_or_else(|| ErrorCode::skill_not_found(format!("unknown skill: {skill_name}")))?;
 
-        if !skill.is_visible_to(&self.agent_id, &self.user_id) {
+        if !skill.is_visible_to(&self.agent_id) {
             return Err(ErrorCode::skill_not_found(format!(
                 "unknown skill: {skill_name}"
             )));
@@ -83,9 +88,9 @@ impl SkillRunner {
 
         // Check script existence before preflight to avoid wasting time on
         // requirement checks for skills that have no runnable script.
-        let script_path = self
-            .catalog
-            .script_path(skill_name)
+        let host_script_path = self
+            .store
+            .host_script_path(&self.agent_id, skill_name)
             .ok_or_else(|| ErrorCode::skill_exec(format!("skill '{skill_name}' has no script")))?;
 
         self.preflight_check(&skill).await?;
@@ -99,7 +104,11 @@ impl SkillRunner {
         }))
         .map_err(|e| ErrorCode::skill_serde(format!("session serialize failed: {e}")))?;
 
-        let script_name = script_path.rsplit('/').next().unwrap_or("run.py");
+        let script_path = host_script_path.to_string_lossy().to_string();
+        let script_name = host_script_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("run.py");
         let program = interpreter_for(script_name)?;
 
         let mut cmd_args = vec![script_path];
@@ -133,6 +142,8 @@ impl SkillRunner {
             .wait_with_output()
             .await
             .map_err(|e| ErrorCode::skill_exec(format!("wait failed: {e}")))?;
+
+        self.touch_used_secret_variables(&skill);
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -202,7 +213,7 @@ impl SkillRunner {
         }
 
         for var in &requires.env {
-            if !self.workspace.has_env(var) {
+            if !self.workspace.has_variable(var) {
                 return Err(ErrorCode::skill_requirements(format!(
                     "skill '{}' requires env var '{}' but it is not set",
                     skill.name, var
@@ -211,6 +222,23 @@ impl SkillRunner {
         }
 
         Ok(())
+    }
+
+    fn touch_used_secret_variables(&self, skill: &Skill) {
+        let Some(requires) = &skill.requires else {
+            return;
+        };
+        let ids = self
+            .workspace
+            .secret_variable_ids_for_keys(requires.env.iter().map(|s| s.as_str()));
+        if ids.is_empty() {
+            return;
+        }
+        let pool = self.pool.clone();
+        tokio::spawn(async move {
+            let repo = VariableRepo::new(pool);
+            let _ = repo.touch_last_used_many(&ids).await;
+        });
     }
 }
 

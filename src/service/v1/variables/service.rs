@@ -34,6 +34,7 @@ pub(super) async fn create_variable(
         key: req.key,
         value: req.value,
         secret: req.secret.unwrap_or(false),
+        revoked: req.revoked.unwrap_or(false),
         last_used_at: None,
         created_at: String::new(),
         updated_at: String::new(),
@@ -69,7 +70,8 @@ pub(super) async fn update_variable(
     let key = req.key.unwrap_or(existing.key);
     let value = req.value.unwrap_or(existing.value);
     let secret = req.secret.unwrap_or(existing.secret);
-    repo.update(var_id, &key, &value, secret).await?;
+    let revoked = req.revoked.unwrap_or(existing.revoked);
+    repo.update(var_id, &key, &value, secret, revoked).await?;
     Ok(())
 }
 

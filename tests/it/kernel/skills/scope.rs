@@ -12,13 +12,14 @@ fn make_skill(scope: SkillScope, agent_id: Option<&str>, user_id: Option<&str>) 
         scope,
         source: SkillSource::Agent,
         agent_id: agent_id.map(String::from),
-        user_id: user_id.map(String::from),
+        created_by_user_id: user_id.map(String::from),
         timeout: 30,
         executable: false,
         parameters: vec![],
         content: String::new(),
         files: vec![],
         requires: None,
+        manifest: None,
     }
 }
 
@@ -29,10 +30,6 @@ fn scope_as_str_roundtrip() {
     assert_eq!(
         SkillScope::parse(SkillScope::Agent.as_str()),
         SkillScope::Agent
-    );
-    assert_eq!(
-        SkillScope::parse(SkillScope::User.as_str()),
-        SkillScope::User
     );
     assert_eq!(
         SkillScope::parse(SkillScope::Global.as_str()),
@@ -49,7 +46,6 @@ fn scope_parse_unknown_defaults_to_global() {
 #[test]
 fn scope_display() {
     assert_eq!(format!("{}", SkillScope::Agent), "agent");
-    assert_eq!(format!("{}", SkillScope::User), "user");
     assert_eq!(format!("{}", SkillScope::Global), "global");
 }
 
@@ -113,46 +109,33 @@ fn source_default_is_local() {
 #[test]
 fn global_skill_visible_to_everyone() {
     let skill = make_skill(SkillScope::Global, None, None);
-    assert!(skill.is_visible_to("agent-1", "user-1"));
-    assert!(skill.is_visible_to("agent-2", "user-2"));
-    assert!(skill.is_visible_to("any", "any"));
+    assert!(skill.is_visible_to("agent-1"));
+    assert!(skill.is_visible_to("agent-2"));
+    assert!(skill.is_visible_to("any"));
 }
 
 #[test]
-fn user_skill_visible_to_same_user() {
-    let skill = make_skill(SkillScope::User, None, Some("user-1"));
-    assert!(skill.is_visible_to("agent-1", "user-1"));
-    assert!(skill.is_visible_to("agent-2", "user-1"));
+fn agent_skill_visible_to_same_agent() {
+    let skill = make_skill(SkillScope::Agent, Some("agent-1"), Some("user-1"));
+    assert!(skill.is_visible_to("agent-1"));
 }
 
 #[test]
-fn user_skill_not_visible_to_other_user() {
-    let skill = make_skill(SkillScope::User, None, Some("user-1"));
-    assert!(!skill.is_visible_to("agent-1", "user-2"));
+fn agent_skill_not_visible_to_other_agent() {
+    let skill = make_skill(SkillScope::Agent, Some("agent-1"), Some("user-1"));
+    assert!(!skill.is_visible_to("agent-2"));
 }
 
 #[test]
 fn agent_skill_visible_to_same_agent_and_user() {
     let skill = make_skill(SkillScope::Agent, Some("agent-1"), Some("user-1"));
-    assert!(skill.is_visible_to("agent-1", "user-1"));
+    assert!(skill.is_visible_to("agent-1"));
 }
 
 #[test]
 fn agent_skill_not_visible_to_different_agent_same_user() {
     let skill = make_skill(SkillScope::Agent, Some("agent-1"), Some("user-1"));
-    assert!(!skill.is_visible_to("agent-2", "user-1"));
-}
-
-#[test]
-fn agent_skill_not_visible_to_same_agent_different_user() {
-    let skill = make_skill(SkillScope::Agent, Some("agent-1"), Some("user-1"));
-    assert!(!skill.is_visible_to("agent-1", "user-2"));
-}
-
-#[test]
-fn agent_skill_not_visible_to_different_agent_and_user() {
-    let skill = make_skill(SkillScope::Agent, Some("agent-1"), Some("user-1"));
-    assert!(!skill.is_visible_to("agent-2", "user-2"));
+    assert!(!skill.is_visible_to("agent-2"));
 }
 
 // ── Loader sets correct defaults ──────────────────────────────────────────────
@@ -172,6 +155,6 @@ fn loader_sets_global_scope_and_local_source() -> Result<(), Box<dyn std::error:
     assert_eq!(loaded.skill.scope, SkillScope::Global);
     assert_eq!(loaded.skill.source, SkillSource::Local);
     assert!(loaded.skill.agent_id.is_none());
-    assert!(loaded.skill.user_id.is_none());
+    assert!(loaded.skill.created_by_user_id.is_none());
     Ok(())
 }

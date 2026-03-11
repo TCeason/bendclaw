@@ -4,10 +4,10 @@ use async_trait::async_trait;
 use serde_json::json;
 use ulid::Ulid;
 
+use super::MemoryBackend;
 use crate::base::Result;
 use crate::kernel::agent_store::memory_store::MemoryEntry;
 use crate::kernel::agent_store::memory_store::MemoryScope;
-use crate::kernel::agent_store::AgentStore;
 use crate::kernel::tools::OperationClassifier;
 use crate::kernel::tools::Tool;
 use crate::kernel::tools::ToolContext;
@@ -17,11 +17,11 @@ use crate::kernel::OpType;
 
 /// Write a memory entry.
 pub struct MemoryWriteTool {
-    storage: Arc<AgentStore>,
+    storage: Arc<dyn MemoryBackend>,
 }
 
 impl MemoryWriteTool {
-    pub fn new(storage: Arc<AgentStore>) -> Self {
+    pub fn new(storage: Arc<dyn MemoryBackend>) -> Self {
         Self { storage }
     }
 }
@@ -113,7 +113,7 @@ impl Tool for MemoryWriteTool {
             updated_at: String::new(),
         };
 
-        match self.storage.memory_write(&ctx.user_id, entry).await {
+        match self.storage.write(&ctx.user_id, entry).await {
             Ok(()) => {
                 tracing::info!(key, scope = normalized_scope, "memory written");
                 Ok(ToolResult::ok(format!(

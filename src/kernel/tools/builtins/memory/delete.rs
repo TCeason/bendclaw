@@ -3,8 +3,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::json;
 
+use super::MemoryBackend;
 use crate::base::Result;
-use crate::kernel::agent_store::AgentStore;
 use crate::kernel::tools::OperationClassifier;
 use crate::kernel::tools::Tool;
 use crate::kernel::tools::ToolContext;
@@ -14,11 +14,11 @@ use crate::kernel::OpType;
 
 /// Delete a memory by ID.
 pub struct MemoryDeleteTool {
-    storage: Arc<AgentStore>,
+    storage: Arc<dyn MemoryBackend>,
 }
 
 impl MemoryDeleteTool {
-    pub fn new(storage: Arc<AgentStore>) -> Self {
+    pub fn new(storage: Arc<dyn MemoryBackend>) -> Self {
         Self { storage }
     }
 }
@@ -70,7 +70,7 @@ impl Tool for MemoryDeleteTool {
             return Ok(ToolResult::error("id is required"));
         }
 
-        match self.storage.memory_delete(&ctx.user_id, id).await {
+        match self.storage.delete(&ctx.user_id, id).await {
             Ok(()) => {
                 tracing::info!(id, "memory deleted");
                 Ok(ToolResult::ok(format!("Memory '{}' deleted.", id)))

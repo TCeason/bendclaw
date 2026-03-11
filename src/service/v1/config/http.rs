@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;
@@ -24,7 +22,6 @@ pub struct ConfigResponse {
     pub soul: String,
     pub token_limit_total: Option<u64>,
     pub token_limit_daily: Option<u64>,
-    pub env: HashMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -36,7 +33,6 @@ pub struct UpdateConfigRequest {
     pub soul: Option<String>,
     pub token_limit_total: Option<Option<u64>>,
     pub token_limit_daily: Option<Option<u64>>,
-    pub env: Option<HashMap<String, String>>,
     pub notes: Option<String>,
     pub label: Option<String>,
 }

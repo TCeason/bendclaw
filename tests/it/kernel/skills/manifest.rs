@@ -22,7 +22,7 @@ fn test_serde_roundtrip() -> Result<()> {
         scope: Default::default(),
         source: Default::default(),
         agent_id: None,
-        user_id: None,
+        created_by_user_id: None,
         timeout: 60,
         executable: true,
         parameters: vec![SkillParameter {
@@ -35,6 +35,7 @@ fn test_serde_roundtrip() -> Result<()> {
         content: String::new(),
         files: Vec::new(),
         requires: None,
+        manifest: None,
     };
     let json = serde_json::to_string(&skill)?;
     let decoded: Skill = serde_json::from_str(&json)?;
@@ -74,7 +75,7 @@ fn test_requires_serde_roundtrip() -> Result<()> {
         scope: Default::default(),
         source: Default::default(),
         agent_id: None,
-        user_id: None,
+        created_by_user_id: None,
         timeout: 30,
         executable: true,
         parameters: vec![],
@@ -84,6 +85,7 @@ fn test_requires_serde_roundtrip() -> Result<()> {
             bins: vec!["bendsql".into(), "jq".into()],
             env: vec!["DATABEND_DSN".into()],
         }),
+        manifest: None,
     };
     let json = serde_json::to_string(&skill)?;
     let decoded: Skill = serde_json::from_str(&json)?;

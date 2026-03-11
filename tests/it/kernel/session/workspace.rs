@@ -106,10 +106,10 @@ fn build_env_user_env_overrides_safe_var() -> Result<()> {
     Ok(())
 }
 
-// ── has_env ──
+// ── has_variable ──
 
 #[test]
-fn has_env_true() -> Result<()> {
+fn has_variable_true() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let mut user_env = HashMap::new();
     user_env.insert("API_KEY".into(), "secret".into());
@@ -121,15 +121,15 @@ fn has_env_true() -> Result<()> {
         1_048_576,
         Arc::new(SandboxResolver),
     );
-    assert!(ws.has_env("API_KEY"));
+    assert!(ws.has_variable("API_KEY"));
     Ok(())
 }
 
 #[test]
-fn has_env_false() -> Result<()> {
+fn has_variable_false() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let ws = test_ws(dir.path().to_path_buf());
-    assert!(!ws.has_env("NONEXISTENT"));
+    assert!(!ws.has_variable("NONEXISTENT"));
     Ok(())
 }
 

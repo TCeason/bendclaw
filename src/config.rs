@@ -64,11 +64,6 @@ impl Default for WorkspaceConfig {
 }
 
 impl WorkspaceConfig {
-    /// Skills directory: {root_dir}/skills
-    pub fn skills_dir(&self) -> std::path::PathBuf {
-        std::path::PathBuf::from(&self.root_dir).join("skills")
-    }
-
     /// Per-session workspace directory: {root_dir}/{user_id}/{agent_id}/{session_id}
     pub fn session_dir(
         &self,
@@ -207,17 +202,17 @@ fn dirs_default_workspace_dir() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HubConfig {
-    /// ClawHub URL. Empty = hub sync disabled.
-    pub url: String,
-    /// Sync interval in seconds. Default: 21600 (6 hours).
+    /// Git repo URL for hub skills. Default: https://github.com/EvotAI/skills
+    pub repo_url: String,
+    /// Sync interval in seconds. Default: 86400 (24 hours).
     pub sync_interval_secs: u64,
 }
 
 impl Default for HubConfig {
     fn default() -> Self {
         Self {
-            url: String::new(),
-            sync_interval_secs: 21600,
+            repo_url: "https://github.com/EvotAI/skills".to_string(),
+            sync_interval_secs: 86400,
         }
     }
 }
@@ -261,6 +256,10 @@ impl BendClawConfig {
             if !v.is_empty() {
                 self.auth.cors_origins = v.split(',').map(|s| s.trim().to_string()).collect();
             }
+        }
+        // Hub config env overrides
+        if let Some(hub) = self.hub.as_mut() {
+            override_str(&mut hub.repo_url, "BENDCLAW_HUB_REPO_URL");
         }
     }
 

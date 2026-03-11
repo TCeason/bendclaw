@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "live-tests"), allow(dead_code))]
+
 use std::collections::VecDeque;
 
 use anyhow::bail;

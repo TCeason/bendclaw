@@ -29,7 +29,7 @@ use crate::kernel::session::session_manager::SessionInfo;
 use crate::kernel::session::session_manager::TurnStats;
 use crate::kernel::session::session_stream::Stream;
 use crate::kernel::session::workspace::Workspace;
-use crate::kernel::skills::catalog::SkillCatalog;
+use crate::kernel::skills::store::SkillStore;
 use crate::kernel::tools::progressive::ProgressiveToolView;
 use crate::kernel::tools::registry::ToolRegistry;
 use crate::kernel::tools::ToolContext;
@@ -55,11 +55,12 @@ pub(crate) enum SessionState {
 pub struct SessionResources {
     pub workspace: Arc<Workspace>,
     pub tool_registry: Arc<ToolRegistry>,
-    pub skills: Arc<dyn SkillCatalog>,
+    pub skills: Arc<SkillStore>,
     pub tools: Arc<Vec<ToolSchema>>,
     pub storage: Arc<AgentStore>,
     pub llm: Arc<RwLock<Arc<dyn LLMProvider>>>,
     pub config: Arc<AgentConfig>,
+    pub variables: Vec<crate::storage::dal::variable::record::VariableRecord>,
 }
 
 pub struct Session {
@@ -152,6 +153,7 @@ impl Session {
 
         let full_prompt = PromptBuilder::new(self.res.storage.clone(), self.res.skills.clone())
             .with_tools(self.res.tools.clone())
+            .with_variables(self.res.variables.clone())
             .build(&self.agent_id, &self.user_id, &self.id)
             .await?;
 
@@ -308,6 +310,7 @@ impl Session {
             &self.user_id,
             self.res.skills.clone(),
             self.res.workspace.clone(),
+            self.res.storage.pool().clone(),
         ));
         let dispatcher = ToolDispatcher::new(
             self.res.tool_registry.clone(),

@@ -9,6 +9,8 @@ use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
 
+use crate::storage::dal::variable::record::VariableRecord;
+
 // ── Path resolver ──
 
 /// Path resolution strategy — decides which file paths a tool may access.
@@ -81,7 +83,8 @@ pub struct CommandOutput {
 pub struct Workspace {
     dir: PathBuf,
     safe_env_vars: Vec<String>,
-    user_env: HashMap<String, String>,
+    env_vars: HashMap<String, String>,
+    variable_records: Vec<VariableRecord>,
     command_idle_timeout: Duration,
     max_output_bytes: usize,
     resolver: Arc<dyn PathResolver>,
@@ -91,7 +94,7 @@ impl Workspace {
     pub fn new(
         dir: PathBuf,
         safe_env_vars: Vec<String>,
-        user_env: HashMap<String, String>,
+        variables: HashMap<String, String>,
         command_idle_timeout: Duration,
         max_output_bytes: usize,
         resolver: Arc<dyn PathResolver>,
@@ -99,7 +102,31 @@ impl Workspace {
         Self {
             dir,
             safe_env_vars,
-            user_env,
+            env_vars: variables,
+            variable_records: Vec::new(),
+            command_idle_timeout,
+            max_output_bytes,
+            resolver,
+        }
+    }
+
+    pub fn from_variable_records(
+        dir: PathBuf,
+        safe_env_vars: Vec<String>,
+        variable_records: Vec<VariableRecord>,
+        command_idle_timeout: Duration,
+        max_output_bytes: usize,
+        resolver: Arc<dyn PathResolver>,
+    ) -> Self {
+        let env_vars = variable_records
+            .iter()
+            .map(|v| (v.key.clone(), v.value.clone()))
+            .collect();
+        Self {
+            dir,
+            safe_env_vars,
+            env_vars,
+            variable_records,
             command_idle_timeout,
             max_output_bytes,
             resolver,
@@ -118,7 +145,7 @@ impl Workspace {
         self.max_output_bytes
     }
 
-    /// Build a subprocess environment: `env_clear()` + allowlist + user_env.
+    /// Build a subprocess environment: `env_clear()` + allowlist + variables.
     pub fn build_env(&self) -> HashMap<String, String> {
         let mut env = HashMap::new();
         for var in &self.safe_env_vars {
@@ -126,7 +153,7 @@ impl Workspace {
                 env.insert(var.clone(), val);
             }
         }
-        for (k, v) in &self.user_env {
+        for (k, v) in &self.env_vars {
             env.insert(k.clone(), v.clone());
         }
         env
@@ -144,8 +171,6 @@ impl Workspace {
     }
 
     /// Execute a shell command string with idle-timeout streaming.
-    ///
-    /// Optional `extra` env vars are layered on top of the base env (safe_vars + user_env).
     pub async fn exec(
         &self,
         shell_command: &str,
@@ -273,8 +298,32 @@ impl Workspace {
         self.resolver.resolve(&self.dir, path)
     }
 
-    /// Check whether the user_env contains a given variable (for skill preflight).
-    pub fn has_env(&self, var: &str) -> bool {
-        self.user_env.contains_key(var)
+    /// Check whether the variables contain a given key (for skill preflight).
+    pub fn has_variable(&self, var: &str) -> bool {
+        self.env_vars.contains_key(var)
+    }
+
+    pub fn variable(&self, key: &str) -> Option<&VariableRecord> {
+        self.variable_records.iter().find(|v| v.key == key)
+    }
+
+    pub fn secret_variable_ids(&self) -> Vec<String> {
+        self.variable_records
+            .iter()
+            .filter(|v| v.secret)
+            .map(|v| v.id.clone())
+            .collect()
+    }
+
+    pub fn secret_variable_ids_for_keys<'a>(
+        &self,
+        keys: impl IntoIterator<Item = &'a str>,
+    ) -> Vec<String> {
+        let wanted: std::collections::HashSet<&str> = keys.into_iter().collect();
+        self.variable_records
+            .iter()
+            .filter(|v| v.secret && wanted.contains(v.key.as_str()))
+            .map(|v| v.id.clone())
+            .collect()
     }
 }

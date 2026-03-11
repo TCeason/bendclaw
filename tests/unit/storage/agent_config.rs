@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use anyhow::Result;
 use bendclaw::storage::AgentConfigRecord;
 
@@ -14,7 +12,7 @@ fn agent_config_record_token_limits() {
         soul: "".into(),
         token_limit_total: Some(500000),
         token_limit_daily: Some(50000),
-        env: HashMap::new(),
+
         created_at: "".into(),
         updated_at: "".into(),
     };
@@ -33,7 +31,7 @@ fn agent_config_record_token_limits_none() {
         soul: "".into(),
         token_limit_total: None,
         token_limit_daily: None,
-        env: HashMap::new(),
+
         created_at: "".into(),
         updated_at: "".into(),
     };
@@ -52,7 +50,7 @@ fn agent_config_record_serde_roundtrip() -> Result<()> {
         soul: "Be concise and helpful".into(),
         token_limit_total: Some(1_000_000),
         token_limit_daily: None,
-        env: HashMap::new(),
+
         created_at: "2026-01-01".into(),
         updated_at: "2026-01-02".into(),
     };

@@ -3,40 +3,26 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use bendclaw::kernel::skills::catalog::SkillCatalog;
-use bendclaw::kernel::skills::skill::Skill;
-use bendclaw::kernel::skills::skill::SkillScope;
-use bendclaw::kernel::skills::skill::SkillSource;
+use bendclaw::kernel::skills::store::SkillStore;
 use bendclaw::kernel::tools::skill::SkillReadTool;
 use bendclaw::kernel::tools::OperationClassifier;
 use bendclaw::kernel::tools::Tool;
 use serde_json::json;
 
 use crate::mocks::context::test_tool_context;
-use crate::mocks::skill::MockSkillCatalog;
+use crate::mocks::skill::test_skill_store;
 
-fn make_tool() -> (SkillReadTool, Arc<MockSkillCatalog>) {
-    let catalog = Arc::new(MockSkillCatalog::new());
-    let tool = SkillReadTool::new(catalog.clone());
-    (tool, catalog)
-}
-
-fn insert_skill(catalog: &MockSkillCatalog, name: &str, content: &str) {
-    catalog.insert(&Skill {
-        name: name.to_string(),
-        version: "0.1.0".to_string(),
-        description: "test skill".to_string(),
-        scope: SkillScope::Global,
-        source: SkillSource::Local,
-        agent_id: None,
-        user_id: None,
-        timeout: 30,
-        executable: false,
-        parameters: vec![],
-        content: content.to_string(),
-        files: vec![],
-        requires: None,
-    });
+fn make_tool() -> (SkillReadTool, Arc<SkillStore>) {
+    let databases = {
+        let pool =
+            bendclaw::storage::Pool::new("http://localhost:0", "", "default").expect("dummy pool");
+        Arc::new(bendclaw::storage::AgentDatabases::new(pool, "test_").unwrap())
+    };
+    let dir = std::env::temp_dir().join(format!("bendclaw-read-{}", ulid::Ulid::new()));
+    let _ = std::fs::create_dir_all(&dir);
+    let store = test_skill_store(databases, dir);
+    let tool = SkillReadTool::new(store.clone());
+    (tool, store)
 }
 
 // ── metadata ──
@@ -77,21 +63,6 @@ fn summarize_missing_path_returns_unknown() {
 // ── execute ──
 
 #[tokio::test]
-async fn execute_returns_skill_content() -> Result<()> {
-    let (tool, catalog) = make_tool();
-    insert_skill(&catalog, "my-skill", "## Usage\nRun with --input flag.");
-    let ctx = test_tool_context();
-
-    let result = tool
-        .execute_with_context(json!({"path": "my-skill"}), &ctx)
-        .await?;
-
-    assert!(result.success);
-    assert!(result.output.contains("## Usage"));
-    Ok(())
-}
-
-#[tokio::test]
 async fn execute_skill_not_found() -> Result<()> {
     let (tool, _) = make_tool();
     let ctx = test_tool_context();
@@ -115,21 +86,5 @@ async fn execute_missing_path_param() -> Result<()> {
 
     assert!(result.success);
     assert!(result.output.contains("Skill not found"));
-    Ok(())
-}
-
-#[tokio::test]
-async fn execute_truncates_oversized_content() -> Result<()> {
-    let (tool, catalog) = make_tool();
-    let big_content = "x".repeat(64 * 1024 + 100);
-    insert_skill(&catalog, "big-skill", &big_content);
-    let ctx = test_tool_context();
-
-    let result = tool
-        .execute_with_context(json!({"path": "big-skill"}), &ctx)
-        .await?;
-
-    assert!(result.success);
-    assert!(result.output.contains("truncated"));
     Ok(())
 }

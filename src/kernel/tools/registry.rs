@@ -6,8 +6,8 @@ use super::ToolId;
 use super::ToolSpec;
 use crate::kernel::agent_store::AgentStore;
 use crate::kernel::channel::registry::ChannelRegistry;
-use crate::kernel::skills::catalog::SkillCatalog;
-use crate::kernel::skills::repository::SkillRepositoryFactory;
+use crate::kernel::skills::remote::repository::DatabendSkillRepositoryFactory;
+use crate::kernel::skills::store::SkillStore;
 use crate::llm::tool::ToolSchema;
 
 /// Registry of in-process tools, keyed by name.
@@ -92,8 +92,8 @@ impl Default for ToolRegistry {
 /// Create a per-session tool registry with all dependencies injected.
 pub fn create_session_tools(
     storage: Arc<AgentStore>,
-    skill_catalog: Arc<dyn SkillCatalog>,
-    skill_store_factory: Arc<dyn SkillRepositoryFactory>,
+    skill_store: Arc<SkillStore>,
+    skill_store_factory: Arc<DatabendSkillRepositoryFactory>,
     databend_pool: crate::storage::Pool,
     channels: Arc<ChannelRegistry>,
     instance_id: String,
@@ -101,44 +101,45 @@ pub fn create_session_tools(
     let mut registry = ToolRegistry::new();
 
     // Memory tools
+    let memory_backend: Arc<dyn super::memory::MemoryBackend> = storage.clone();
     registry.register_builtin(
         ToolId::MemoryWrite,
-        Arc::new(super::memory::MemoryWriteTool::new(storage.clone())),
+        Arc::new(super::memory::MemoryWriteTool::new(memory_backend.clone())),
     );
     registry.register_builtin(
         ToolId::MemorySearch,
-        Arc::new(super::memory::MemorySearchTool::new(storage.clone())),
+        Arc::new(super::memory::MemorySearchTool::new(memory_backend.clone())),
     );
     registry.register_builtin(
         ToolId::MemoryRead,
-        Arc::new(super::memory::MemoryReadTool::new(storage.clone())),
+        Arc::new(super::memory::MemoryReadTool::new(memory_backend.clone())),
     );
     registry.register_builtin(
         ToolId::MemoryDelete,
-        Arc::new(super::memory::MemoryDeleteTool::new(storage.clone())),
+        Arc::new(super::memory::MemoryDeleteTool::new(memory_backend.clone())),
     );
     registry.register_builtin(
         ToolId::MemoryList,
-        Arc::new(super::memory::MemoryListTool::new(storage)),
+        Arc::new(super::memory::MemoryListTool::new(memory_backend)),
     );
 
     // Skill tools
     registry.register_builtin(
         ToolId::SkillRead,
-        Arc::new(super::skill::SkillReadTool::new(skill_catalog.clone())),
+        Arc::new(super::skill::SkillReadTool::new(skill_store.clone())),
     );
     registry.register_builtin(
         ToolId::SkillCreate,
         Arc::new(super::skill::SkillCreateTool::new(
             skill_store_factory.clone(),
-            skill_catalog.clone(),
+            skill_store.clone(),
         )),
     );
     registry.register_builtin(
         ToolId::SkillRemove,
         Arc::new(super::skill::SkillRemoveTool::new(
             skill_store_factory,
-            skill_catalog,
+            skill_store,
         )),
     );
 

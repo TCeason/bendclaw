@@ -26,15 +26,11 @@ async fn shell_execute_allowed_command() -> Result<(), Box<dyn std::error::Error
     let tool = ShellTool;
     let ctx = make_ctx(dir.path().to_path_buf());
 
-    // dummy_pool cannot connect — variable loading fails and is reported
     let result = tool
         .execute_with_context(json!({"command": "echo hello"}), &ctx)
         .await?;
-    assert!(!result.success);
-    assert!(result
-        .error
-        .as_deref()
-        .is_some_and(|e| e.contains("Failed to load variables")));
+    assert!(result.success);
+    assert_eq!(result.output.trim(), "hello");
     Ok(())
 }
 
@@ -207,16 +203,12 @@ async fn shell_env_isolation() -> Result<(), Box<dyn std::error::Error>> {
     let tool = ShellTool;
     let ctx = make_ctx(dir.path().to_path_buf());
 
-    // dummy_pool cannot connect — variable loading fails and is reported
     std::env::set_var("BENDCLAW_TEST_SECRET", "super_secret");
     let result = tool
         .execute_with_context(json!({"command": "echo $BENDCLAW_TEST_SECRET"}), &ctx)
         .await?;
-    assert!(!result.success);
-    assert!(result
-        .error
-        .as_deref()
-        .is_some_and(|e| e.contains("Failed to load variables")));
+    assert!(result.success);
+    assert_eq!(result.output.trim(), "");
     std::env::remove_var("BENDCLAW_TEST_SECRET");
     Ok(())
 }

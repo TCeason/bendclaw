@@ -6,9 +6,9 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::base::Result;
-use crate::kernel::skills::catalog::SkillCatalog;
-use crate::kernel::skills::repository::SkillRepositoryFactory;
+use crate::kernel::skills::remote::repository::DatabendSkillRepositoryFactory;
 use crate::kernel::skills::skill::Skill;
+use crate::kernel::skills::store::SkillStore;
 use crate::kernel::tools::OperationClassifier;
 use crate::kernel::tools::Tool;
 use crate::kernel::tools::ToolContext;
@@ -17,18 +17,15 @@ use crate::kernel::tools::ToolResult;
 use crate::kernel::OpType;
 
 pub struct SkillRemoveTool {
-    store_factory: Arc<dyn SkillRepositoryFactory>,
-    catalog: Arc<dyn SkillCatalog>,
+    store_factory: Arc<DatabendSkillRepositoryFactory>,
+    store: Arc<SkillStore>,
 }
 
 impl SkillRemoveTool {
-    pub fn new(
-        store_factory: Arc<dyn SkillRepositoryFactory>,
-        catalog: Arc<dyn SkillCatalog>,
-    ) -> Self {
+    pub fn new(store_factory: Arc<DatabendSkillRepositoryFactory>, store: Arc<SkillStore>) -> Self {
         Self {
             store_factory,
-            catalog,
+            store,
         }
     }
 }
@@ -93,14 +90,11 @@ impl Tool for SkillRemoveTool {
             }
         };
 
-        if let Err(e) = store
-            .remove(&name, Some(&ctx.agent_id), Some(&ctx.user_id))
-            .await
-        {
+        if let Err(e) = store.remove(&name, Some(&ctx.agent_id)).await {
             return Ok(ToolResult::error(format!("failed to remove skill: {e}")));
         }
 
-        self.catalog.evict(&name);
+        self.store.evict(&name, &ctx.agent_id);
 
         tracing::info!(skill = %name, "skill removed by agent");
         Ok(ToolResult::ok(format!("Skill '{name}' removed")))

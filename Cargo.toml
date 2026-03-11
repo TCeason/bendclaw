@@ -43,6 +43,10 @@ cron = { version = "0.15", features = ["serde"] }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[features]
+default = []
+live-tests = []
+
 [dev-dependencies]
 bendclaw = { path = "." }
 bendclaw-test-harness = { path = "crates/test-harness" }
@@ -57,12 +61,13 @@ name = "unit"
 path = "tests/unit/main.rs"
 
 [[test]]
-name = "integration"
-path = "tests/integration/main.rs"
+name = "it"
+path = "tests/it/main.rs"
 
 [[test]]
-name = "e2e"
-path = "tests/e2e/main.rs"
+name = "live"
+path = "tests/live/main.rs"
+required-features = ["live-tests"]
 
 [[test]]
 name = "contract"

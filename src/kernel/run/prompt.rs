@@ -5,9 +5,10 @@ use std::sync::Arc;
 
 use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
-use crate::kernel::skills::catalog::SkillCatalog;
+use crate::kernel::skills::store::SkillStore;
 use crate::llm::tool::ToolSchema;
 use crate::storage::dal::learning::LearningRecord;
+use crate::storage::dal::variable::record::VariableRecord;
 
 const LEARNINGS_LIMIT: u32 = 20;
 const RECENT_ERRORS_LIMIT: u32 = 5;
@@ -67,7 +68,7 @@ pub fn truncate_layer(layer: &str, content: &str, max_bytes: usize, source: &str
 ///   Identity → Soul → System Prompt → Skills → Tools → Learnings → Variables → Recent Errors → Runtime
 pub struct PromptBuilder {
     storage: Arc<AgentStore>,
-    skills: Arc<dyn SkillCatalog>,
+    skills: Arc<SkillStore>,
 
     identity: Option<String>,
     soul: Option<String>,
@@ -75,10 +76,11 @@ pub struct PromptBuilder {
     learnings: Option<String>,
     recent_errors: Option<String>,
     tools: Option<Arc<Vec<ToolSchema>>>,
+    variables: Option<Vec<VariableRecord>>,
 }
 
 impl PromptBuilder {
-    pub fn new(storage: Arc<AgentStore>, skills: Arc<dyn SkillCatalog>) -> Self {
+    pub fn new(storage: Arc<AgentStore>, skills: Arc<SkillStore>) -> Self {
         Self {
             storage,
             skills,
@@ -88,6 +90,7 @@ impl PromptBuilder {
             learnings: None,
             recent_errors: None,
             tools: None,
+            variables: None,
         }
     }
 
@@ -133,6 +136,13 @@ impl PromptBuilder {
 
     pub fn with_tools(mut self, tools: Arc<Vec<ToolSchema>>) -> Self {
         self.tools = Some(tools);
+        self
+    }
+
+    pub fn with_variables(mut self, vars: Vec<VariableRecord>) -> Self {
+        if !vars.is_empty() {
+            self.variables = Some(vars);
+        }
         self
     }
 
@@ -224,7 +234,7 @@ impl PromptBuilder {
 
         // 4. Skills (metadata only)
         tracing::debug!("prompt step 4/9: loading skills layer");
-        self.append_skills(&mut prompt, agent_id, user_id);
+        self.append_skills(&mut prompt, agent_id);
 
         // 5. Tools (compact list)
         tracing::debug!("prompt step 5/9: loading tools layer");
@@ -261,11 +271,10 @@ impl PromptBuilder {
         Ok(substitute_template(&prompt, &state))
     }
 
-    fn append_skills(&self, prompt: &mut String, agent_id: &str, user_id: &str) {
-        let skills = self.skills.for_agent(agent_id, user_id);
+    fn append_skills(&self, prompt: &mut String, agent_id: &str) {
+        let skills = self.skills.for_agent(agent_id);
         tracing::debug!(
             agent_id,
-            user_id,
             total_skills = skills.len(),
             "skills: queried catalog for agent"
         );
@@ -374,6 +383,36 @@ impl PromptBuilder {
     }
 
     async fn append_variables(&self, prompt: &mut String) {
+        // If a snapshot was provided at session creation, use it instead of
+        // querying the database live.  This keeps the prompt stable within a
+        // session even when variables are changed externally.
+        if let Some(ref vars) = self.variables {
+            if vars.is_empty() {
+                tracing::info!("variables: snapshot empty — skipped");
+                return;
+            }
+            tracing::info!(count = vars.len(), "variables: using snapshot");
+            let mut buf = String::from("## Variables\n\n");
+            buf.push_str(
+                "The following variables are available as environment variables in shell commands.\n\n",
+            );
+            for v in vars {
+                if v.secret {
+                    let _ = writeln!(
+                        buf,
+                        "- `{}`: [SECRET] (available as env var `${}`)",
+                        v.key, v.key
+                    );
+                } else {
+                    let _ = writeln!(buf, "- `{}` = `{}`", v.key, v.value);
+                }
+            }
+            buf.push('\n');
+            let buf = truncate_layer("variables", &buf, MAX_VARIABLES_BYTES, "snapshot");
+            prompt.push_str(&buf);
+            return;
+        }
+
         tracing::info!("variables: querying db");
         let records = match self.storage.variable_list().await {
             Ok(r) if !r.is_empty() => r,

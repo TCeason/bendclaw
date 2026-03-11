@@ -8,6 +8,7 @@ use serde_json::json;
 
 use crate::base::ErrorCode;
 use crate::base::Result;
+use crate::kernel::skills::manifest::SkillManifest;
 use crate::kernel::skills::sanitizer::sanitize_skill_description;
 
 // ── Enums ─────────────────────────────────────────────────────────────────────
@@ -17,7 +18,6 @@ use crate::kernel::skills::sanitizer::sanitize_skill_description;
 #[serde(rename_all = "lowercase")]
 pub enum SkillScope {
     Agent,
-    User,
     #[default]
     Global,
 }
@@ -26,15 +26,14 @@ impl SkillScope {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Agent => "agent",
-            Self::User => "user",
             Self::Global => "global",
         }
     }
 
+    /// Parse scope from string. Legacy `"user"` maps to `Agent`.
     pub fn parse(s: &str) -> Self {
         match s {
-            "agent" => Self::Agent,
-            "user" => Self::User,
+            "agent" | "user" => Self::Agent,
             _ => Self::Global,
         }
     }
@@ -133,7 +132,7 @@ pub struct Skill {
     #[serde(default)]
     pub agent_id: Option<String>,
     #[serde(default)]
-    pub user_id: Option<String>,
+    pub created_by_user_id: Option<String>,
     #[serde(default = "default_timeout")]
     pub timeout: u64,
     pub executable: bool,
@@ -144,18 +143,16 @@ pub struct Skill {
     pub files: Vec<SkillFile>,
     #[serde(default)]
     pub requires: Option<SkillRequirements>,
+    #[serde(default)]
+    pub manifest: Option<SkillManifest>,
 }
 
 impl Skill {
-    /// Check if this skill is visible to the given agent/user context.
-    pub fn is_visible_to(&self, agent_id: &str, user_id: &str) -> bool {
+    /// Check if this skill is visible to the given agent context.
+    pub fn is_visible_to(&self, agent_id: &str) -> bool {
         match self.scope {
             SkillScope::Global => true,
-            SkillScope::User => self.user_id.as_deref() == Some(user_id),
-            SkillScope::Agent => {
-                self.agent_id.as_deref() == Some(agent_id)
-                    && self.user_id.as_deref() == Some(user_id)
-            }
+            SkillScope::Agent => self.agent_id.as_deref() == Some(agent_id),
         }
     }
 
@@ -170,6 +167,25 @@ impl Skill {
         hasher.update(self.description.as_bytes());
         hasher.update(b"|");
         hasher.update(self.timeout.to_string().as_bytes());
+        hasher.update(b"|");
+        hasher.update(self.scope.as_str().as_bytes());
+        hasher.update(b"|");
+        hasher.update(self.source.as_str().as_bytes());
+        hasher.update(b"|");
+        hasher.update(self.agent_id.as_deref().unwrap_or("").as_bytes());
+        hasher.update(b"|");
+        hasher.update(self.created_by_user_id.as_deref().unwrap_or("").as_bytes());
+        hasher.update(b"|");
+        hasher.update(if self.executable { b"1" } else { b"0" });
+        hasher.update(b"|");
+        let parameters_json = serde_json::to_string(&self.parameters).unwrap_or_default();
+        hasher.update(parameters_json.as_bytes());
+        hasher.update(b"|");
+        let requires_json = serde_json::to_string(&self.requires).unwrap_or_default();
+        hasher.update(requires_json.as_bytes());
+        hasher.update(b"|");
+        let manifest_json = serde_json::to_string(&self.manifest).unwrap_or_default();
+        hasher.update(manifest_json.as_bytes());
         hasher.update(b"|");
         hasher.update(self.content.as_bytes());
         let mut sorted: Vec<&SkillFile> = self.files.iter().collect();

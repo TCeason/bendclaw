@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "live-tests"), allow(dead_code))]
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -33,27 +35,12 @@ impl TestContext {
         let prefix = format!("test_bendclaw_{id}_");
         let db_name = format!("test_bendclaw_{id}");
 
-        root.exec(&format!("CREATE DATABASE IF NOT EXISTS `{db_name}`"))
-            .await?;
-        let db_pool = root.with_database(&db_name)?;
-
-        for sql in ALL_MIGRATIONS {
-            run_migration(&db_pool, sql).await?;
-        }
-
         Ok(Self {
             pool: root,
             prefix,
             db_name,
             cleaned: std::sync::atomic::AtomicBool::new(false),
         })
-    }
-
-    pub async fn app(&self) -> anyhow::Result<axum::Router> {
-        let llm = Arc::new(bendclaw::llm::router::LLMRouter::from_config(
-            &bendclaw::llm::config::LLMConfig::default(),
-        )?);
-        self.app_with_llm(llm).await
     }
 
     pub async fn app_with_llm(
@@ -74,7 +61,7 @@ impl TestContext {
             "test_instance",
             llm,
         )
-        .with_skills_dir(&skills_dir.to_string_lossy())
+        .with_hub_config(None)
         .build()
         .await?;
 
@@ -90,8 +77,8 @@ impl TestContext {
     }
 
     #[allow(dead_code)]
-    pub fn pool(&self) -> anyhow::Result<Pool> {
-        Ok(self.pool.with_database(&self.db_name)?)
+    pub async fn pool(&self) -> anyhow::Result<Pool> {
+        ensure_test_db(&self.pool, &self.db_name).await
     }
 
     #[allow(dead_code)]
@@ -156,6 +143,16 @@ impl Drop for TestContext {
                     .map_err(|_| std::io::Error::other("cleanup thread panicked"))
             });
     }
+}
+
+async fn ensure_test_db(pool: &Pool, db_name: &str) -> anyhow::Result<Pool> {
+    pool.exec(&format!("CREATE DATABASE IF NOT EXISTS `{db_name}`"))
+        .await?;
+    let db_pool = pool.with_database(db_name)?;
+    for sql in ALL_MIGRATIONS {
+        run_migration(&db_pool, sql).await?;
+    }
+    Ok(db_pool)
 }
 
 // ── Public helpers ────────────────────────────────────────────────────────────
@@ -249,19 +246,6 @@ pub async fn chat(
         "message": run["output"],
         "run": run,
     }))
-}
-
-pub async fn cleanup_prefix(prefix: &str) -> anyhow::Result<()> {
-    let (base_url, token, warehouse) = require_api_config()?;
-    let pool = Pool::new(&base_url, &token, &warehouse)?;
-    let sql = format!("SHOW DATABASES LIKE '{prefix}%'");
-    let rows = pool.query_all(&sql).await?;
-    for row in &rows {
-        let name: String = col(row, 0);
-        pool.exec(&format!("DROP DATABASE IF EXISTS `{name}`"))
-            .await?;
-    }
-    Ok(())
 }
 
 pub fn require_api_config() -> anyhow::Result<(String, String, String)> {

@@ -1,0 +1,72 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::Result;
+use bendclaw::kernel::session::workspace::SandboxResolver;
+use bendclaw::kernel::session::workspace::Workspace;
+use bendclaw::storage::dal::variable::VariableRecord;
+
+fn variable(id: &str, key: &str, value: &str, secret: bool) -> VariableRecord {
+    VariableRecord {
+        id: id.to_string(),
+        key: key.to_string(),
+        value: value.to_string(),
+        secret,
+        revoked: false,
+        last_used_at: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+    }
+}
+
+#[test]
+fn workspace_from_variable_records_builds_env_and_lookups() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let ws = Workspace::from_variable_records(
+        dir.path().to_path_buf(),
+        vec!["PATH".into()],
+        vec![
+            variable("v1", "API_TOKEN", "secret-token", true),
+            variable("v2", "LOG_LEVEL", "debug", false),
+        ],
+        Duration::from_secs(5),
+        1_048_576,
+        Arc::new(SandboxResolver),
+    );
+
+    let env = ws.build_env();
+    assert_eq!(
+        env.get("API_TOKEN").map(String::as_str),
+        Some("secret-token")
+    );
+    assert_eq!(env.get("LOG_LEVEL").map(String::as_str), Some("debug"));
+    assert!(ws.has_variable("API_TOKEN"));
+    assert_eq!(ws.variable("LOG_LEVEL").map(|v| v.id.as_str()), Some("v2"));
+    Ok(())
+}
+
+#[test]
+fn workspace_secret_variable_helpers_return_expected_ids() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let ws = Workspace::from_variable_records(
+        dir.path().to_path_buf(),
+        vec!["PATH".into()],
+        vec![
+            variable("v1", "API_TOKEN", "secret-token", true),
+            variable("v2", "LOG_LEVEL", "debug", false),
+            variable("v3", "BRAVE_API_KEY", "brave-secret", true),
+        ],
+        Duration::from_secs(5),
+        1_048_576,
+        Arc::new(SandboxResolver),
+    );
+
+    let mut all = ws.secret_variable_ids();
+    all.sort();
+    assert_eq!(all, vec!["v1".to_string(), "v3".to_string()]);
+
+    let mut filtered = ws.secret_variable_ids_for_keys(["BRAVE_API_KEY", "MISSING"].into_iter());
+    filtered.sort();
+    assert_eq!(filtered, vec!["v3".to_string()]);
+    Ok(())
+}

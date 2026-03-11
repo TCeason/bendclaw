@@ -11,8 +11,6 @@ use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
-use crate::storage::dal::variable::VariableRepo;
-
 /// Search the web using the Brave Search API.
 pub struct WebSearchTool;
 
@@ -79,18 +77,8 @@ impl Tool for WebSearchTool {
             .unwrap_or(5)
             .min(10) as u32;
 
-        // Read BRAVE_API_KEY from variables (same pattern as ShellTool)
-        let repo = VariableRepo::new(ctx.pool.clone());
-        let variables = match repo.list_all().await {
-            Ok(v) => v,
-            Err(e) => {
-                return Ok(ToolResult::error(format!("Failed to load variables: {e}")));
-            }
-        };
-
-        let api_key = variables.iter().find(|v| v.key == "BRAVE_API_KEY");
-        let api_key = match api_key {
-            Some(v) => &v.value,
+        let api_key = match ctx.workspace.variable("BRAVE_API_KEY") {
+            Some(v) => v,
             None => {
                 return Ok(ToolResult::error(
                     "No BRAVE_API_KEY variable configured. Add it via the variables API.",
@@ -106,7 +94,7 @@ impl Tool for WebSearchTool {
 
         let resp = match client
             .get("https://api.search.brave.com/res/v1/web/search")
-            .header("X-Subscription-Token", api_key.as_str())
+            .header("X-Subscription-Token", api_key.value.as_str())
             .query(&[("q", query), ("count", &count.to_string())])
             .send()
             .await
@@ -158,6 +146,14 @@ impl Tool for WebSearchTool {
         };
 
         tracing::info!(query, count, "web_search succeeded");
+        if api_key.secret {
+            let pool = ctx.pool.clone();
+            let id = api_key.id.clone();
+            tokio::spawn(async move {
+                let repo = crate::storage::dal::variable::VariableRepo::new(pool);
+                let _ = repo.touch_last_used(&id).await;
+            });
+        }
         Ok(ToolResult::ok(output))
     }
 }

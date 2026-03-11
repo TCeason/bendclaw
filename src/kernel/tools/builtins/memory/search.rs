@@ -3,9 +3,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::json;
 
+use super::MemoryBackend;
 use crate::base::Result;
 use crate::kernel::agent_store::memory_store::SearchOpts;
-use crate::kernel::agent_store::AgentStore;
 use crate::kernel::tools::OperationClassifier;
 use crate::kernel::tools::Tool;
 use crate::kernel::tools::ToolContext;
@@ -15,11 +15,11 @@ use crate::kernel::OpType;
 
 /// Search memories by query.
 pub struct MemorySearchTool {
-    storage: Arc<AgentStore>,
+    storage: Arc<dyn MemoryBackend>,
 }
 
 impl MemorySearchTool {
-    pub fn new(storage: Arc<AgentStore>) -> Self {
+    pub fn new(storage: Arc<dyn MemoryBackend>) -> Self {
         Self { storage }
     }
 }
@@ -96,7 +96,7 @@ impl Tool for MemorySearchTool {
             min_score: 0.0,
         };
 
-        match self.storage.memory_search(query, &ctx.user_id, opts).await {
+        match self.storage.search(query, &ctx.user_id, opts).await {
             Ok(results) => {
                 tracing::info!(query, results = results.len(), "memory search completed");
                 if results.is_empty() {

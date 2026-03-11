@@ -1,7 +1,11 @@
-pub mod catalog;
+pub mod cache;
 pub mod executor;
 pub mod fs;
-pub mod repository;
+pub mod hub;
+pub mod manifest;
+pub mod remote;
+pub mod resolver;
 pub mod runner;
 pub mod sanitizer;
 pub mod skill;
+pub mod store;

@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS variables (
     key        VARCHAR   NOT NULL   COMMENT 'Variable name (unique per agent db)',
     value      TEXT      NOT NULL DEFAULT '' COMMENT 'Variable value (masked if secret)',
     secret     BOOLEAN   NOT NULL DEFAULT false COMMENT 'Whether value should be masked in API responses',
+    revoked    BOOLEAN   NOT NULL DEFAULT false COMMENT 'Whether the variable is revoked and unavailable at runtime',
     last_used_at TIMESTAMP NULL     COMMENT 'Last time this variable was referenced in a run',
     created_at   TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMP NOT NULL DEFAULT NOW()

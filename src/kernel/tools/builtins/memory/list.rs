@@ -3,9 +3,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::json;
 
+use super::MemoryBackend;
 use crate::base::Result;
 use crate::kernel::agent_store::memory_store::MemoryScope;
-use crate::kernel::agent_store::AgentStore;
 use crate::kernel::tools::OperationClassifier;
 use crate::kernel::tools::Tool;
 use crate::kernel::tools::ToolContext;
@@ -15,11 +15,11 @@ use crate::kernel::OpType;
 
 /// List all memories.
 pub struct MemoryListTool {
-    storage: Arc<AgentStore>,
+    storage: Arc<dyn MemoryBackend>,
 }
 
 impl MemoryListTool {
-    pub fn new(storage: Arc<AgentStore>) -> Self {
+    pub fn new(storage: Arc<dyn MemoryBackend>) -> Self {
         Self { storage }
     }
 }
@@ -65,7 +65,7 @@ impl Tool for MemoryListTool {
     ) -> Result<ToolResult> {
         let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as u32;
 
-        match self.storage.memory_list(&ctx.user_id, limit).await {
+        match self.storage.list(&ctx.user_id, limit).await {
             Ok(entries) => {
                 tracing::info!(count = entries.len(), "memory list completed");
                 if entries.is_empty() {

@@ -12,8 +12,9 @@ use crate::kernel::session::workspace::SandboxResolver;
 use crate::kernel::session::workspace::Workspace;
 use crate::kernel::session::Session;
 use crate::kernel::session::SessionResources;
-use crate::kernel::skills::repository::DatabendSkillRepositoryFactory;
+use crate::kernel::skills::remote::repository::DatabendSkillRepositoryFactory;
 use crate::kernel::tools::registry::create_session_tools;
+use crate::storage::dal::variable::VariableRepo;
 
 impl Runtime {
     pub async fn get_or_create_session(
@@ -67,10 +68,12 @@ impl Runtime {
 
         let storage = Arc::new(AgentStore::new(pool.clone(), self.llm.read().clone()));
 
-        let agent_env = match storage.config_get(agent_id).await? {
-            Some(record) => record.env,
-            None => std::collections::HashMap::new(),
-        };
+        // Load variables from Variable table (the single source of business env)
+        let variable_repo = VariableRepo::new(pool.clone());
+        let variable_records = variable_repo
+            .list_all_active()
+            .await
+            .map_err(|e| ErrorCode::internal(format!("failed to load variables: {e}")))?;
 
         let resolver: Arc<dyn crate::kernel::session::workspace::PathResolver> =
             if self.config.workspace.sandbox {
@@ -79,10 +82,10 @@ impl Runtime {
                 Arc::new(OpenResolver)
             };
 
-        let workspace = Arc::new(Workspace::new(
+        let workspace = Arc::new(Workspace::from_variable_records(
             workspace_dir,
             self.config.workspace.safe_env_vars.clone(),
-            agent_env,
+            variable_records.clone(),
             Duration::from_secs(self.config.workspace.command_timeout_secs),
             self.config.workspace.max_output_bytes,
             resolver,
@@ -102,7 +105,7 @@ impl Runtime {
         let mut tools = tool_registry.tool_schemas();
         let existing_names: std::collections::HashSet<String> =
             tools.iter().map(|t| t.function.name.clone()).collect();
-        for skill in self.skills.for_agent(agent_id, user_id) {
+        for skill in self.skills.for_agent(agent_id) {
             if !skill.executable {
                 continue;
             }
@@ -131,6 +134,7 @@ impl Runtime {
                 storage,
                 llm: Arc::new(RwLock::new(self.llm.read().clone())),
                 config: Arc::new(self.config.clone()),
+                variables: variable_records,
             },
         ));
 

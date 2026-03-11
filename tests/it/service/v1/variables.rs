@@ -27,7 +27,7 @@ async fn variable_crud_and_secret_masking() -> Result<()> {
     setup_agent(&app, &agent_id, &user).await?;
 
     // Create non-secret
-    let plain = serde_json::json!({ "key": "LOG_LEVEL", "value": "debug", "secret": false });
+    let plain = serde_json::json!({ "key": "LOG_LEVEL", "value": "debug", "secret": false, "revoked": false });
     let resp = app
         .clone()
         .oneshot(
@@ -42,10 +42,11 @@ async fn variable_crud_and_secret_masking() -> Result<()> {
     assert_eq!(resp.status(), StatusCode::OK);
     let created = json_body(resp).await?;
     assert_eq!(created["value"], "debug");
+    assert_eq!(created["revoked"], false);
     let var_id = created["id"].as_str().context("missing id")?.to_string();
 
     // Create secret — value must be masked
-    let secret = serde_json::json!({ "key": "API_KEY", "value": "real-secret", "secret": true });
+    let secret = serde_json::json!({ "key": "API_KEY", "value": "real-secret", "secret": true, "revoked": false });
     let resp = app
         .clone()
         .oneshot(
@@ -60,6 +61,7 @@ async fn variable_crud_and_secret_masking() -> Result<()> {
     let sec = json_body(resp).await?;
     assert_eq!(sec["value"], "****");
     assert_ne!(sec["value"], "real-secret");
+    assert_eq!(sec["revoked"], false);
 
     // List — secret still masked
     let resp = app
@@ -117,7 +119,8 @@ async fn variable_partial_update() -> Result<()> {
     let user = uid("u");
     setup_agent(&app, &agent_id, &user).await?;
 
-    let payload = serde_json::json!({ "key": "TOKEN", "value": "tok123", "secret": false });
+    let payload =
+        serde_json::json!({ "key": "TOKEN", "value": "tok123", "secret": false, "revoked": false });
     let resp = app
         .clone()
         .oneshot(
@@ -132,8 +135,8 @@ async fn variable_partial_update() -> Result<()> {
     let created = json_body(resp).await?;
     let var_id = created["id"].as_str().context("missing id")?.to_string();
 
-    // Promote to secret — key and value unchanged
-    let patch = serde_json::json!({ "secret": true });
+    // Promote to secret and revoke — key and value unchanged
+    let patch = serde_json::json!({ "secret": true, "revoked": true });
     app.clone()
         .oneshot(
             Request::builder()
@@ -157,6 +160,7 @@ async fn variable_partial_update() -> Result<()> {
     let body = json_body(resp).await?;
     assert_eq!(body["key"], "TOKEN"); // unchanged
     assert_eq!(body["secret"], true);
+    assert_eq!(body["revoked"], true);
     assert_eq!(body["value"], "****"); // now masked
     Ok(())
 }

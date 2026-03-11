@@ -1,17 +1,22 @@
 use std::sync::Arc;
 
+use bendclaw::kernel::skills::remote::repository::DatabendSkillRepositoryFactory;
 use bendclaw::kernel::tools::registry::create_session_tools;
 use bendclaw::kernel::tools::registry::ToolRegistry;
 use bendclaw::kernel::tools::ToolId;
 
 use crate::mocks::llm::MockLLMProvider;
-use crate::mocks::skill::NoopSkillCatalog;
-use crate::mocks::skill::NoopSkillStore;
+use crate::mocks::skill::test_skill_store;
 
 fn make_registry() -> ToolRegistry {
-    let factory = Arc::new(FixedStoreFactory);
     let pool = bendclaw::storage::Pool::new("https://api.databend.com/v1", "test-token", "default")
         .expect("pool: static URL is always valid");
+    let databases =
+        Arc::new(bendclaw::storage::AgentDatabases::new(pool.clone(), "test_").unwrap());
+    let dir = std::env::temp_dir().join(format!("bendclaw-reg-{}", ulid::Ulid::new()));
+    let _ = std::fs::create_dir_all(&dir);
+    let skill_store = test_skill_store(databases.clone(), dir);
+    let factory = Arc::new(DatabendSkillRepositoryFactory::new(databases));
     let llm: Arc<dyn bendclaw::llm::provider::LLMProvider> =
         Arc::new(MockLLMProvider::with_text("ok"));
     let storage = Arc::new(bendclaw::kernel::agent_store::AgentStore::new(
@@ -21,24 +26,12 @@ fn make_registry() -> ToolRegistry {
     let channels = Arc::new(bendclaw::kernel::channel::registry::ChannelRegistry::new());
     create_session_tools(
         storage,
-        Arc::new(NoopSkillCatalog),
+        skill_store,
         factory,
         pool,
         channels,
         "test_instance".to_string(),
     )
-}
-
-struct FixedStoreFactory;
-
-impl bendclaw::kernel::skills::repository::SkillRepositoryFactory for FixedStoreFactory {
-    fn for_agent(
-        &self,
-        _agent_id: &str,
-    ) -> bendclaw::base::Result<Arc<dyn bendclaw::kernel::skills::repository::SkillRepository>>
-    {
-        Ok(Arc::new(NoopSkillStore))
-    }
 }
 
 #[test]

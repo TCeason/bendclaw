@@ -102,30 +102,14 @@ impl Tool for ShellTool {
             None => return Ok(ToolResult::error("Missing 'command' parameter")),
         };
 
-        // Load variables and build extra env map
-        let repo = VariableRepo::new(ctx.pool.clone());
-        let variables = match repo.list_all().await {
-            Ok(v) => v,
-            Err(e) => {
-                return Ok(ToolResult::error(format!("Failed to load variables: {e}")));
-            }
-        };
+        let output = ctx.workspace.exec(command, &HashMap::new()).await;
 
-        let extra: HashMap<String, String> = variables
-            .iter()
-            .map(|v| (v.key.clone(), v.value.clone()))
-            .collect();
-
-        let output = ctx.workspace.exec(command, &extra).await;
-
-        // Fire-and-forget: update last_used_at for all variables
-        if !variables.is_empty() {
+        let secret_ids = ctx.workspace.secret_variable_ids();
+        if !secret_ids.is_empty() {
             let pool = ctx.pool.clone();
             tokio::spawn(async move {
                 let repo = VariableRepo::new(pool);
-                for v in &variables {
-                    let _ = repo.touch_last_used(&v.id).await;
-                }
+                let _ = repo.touch_last_used_many(&secret_ids).await;
             });
         }
 
@@ -134,7 +118,7 @@ impl Tool for ShellTool {
             exit_code = output.exit_code,
             stdout_len = output.stdout.len(),
             stderr_len = output.stderr.len(),
-            variable_count = extra.len(),
+            variable_count = ctx.workspace.build_env().len(),
             "shell command executed"
         );
 

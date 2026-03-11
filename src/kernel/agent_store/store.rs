@@ -270,7 +270,6 @@ impl AgentStore {
         soul: Option<&str>,
         token_limit_total: Option<Option<u64>>,
         token_limit_daily: Option<Option<u64>>,
-        env: Option<&std::collections::HashMap<String, String>>,
     ) -> Result<()> {
         self.config
             .upsert(
@@ -282,7 +281,6 @@ impl AgentStore {
                 soul,
                 token_limit_total,
                 token_limit_daily,
-                env,
             )
             .await
     }
@@ -302,7 +300,6 @@ impl AgentStore {
         soul: Option<&str>,
         token_limit_total: Option<Option<u64>>,
         token_limit_daily: Option<Option<u64>>,
-        env: Option<&std::collections::HashMap<String, String>>,
         notes: Option<&str>,
         label: Option<&str>,
     ) -> Result<u32> {
@@ -316,7 +313,6 @@ impl AgentStore {
                 soul,
                 token_limit_total,
                 token_limit_daily,
-                env,
             )
             .await?;
 
@@ -341,19 +337,11 @@ impl AgentStore {
         version_repo.insert(&record).await.map(|_| next)
     }
 
-    pub async fn config_set_env_var(&self, agent_id: &str, key: &str, value: &str) -> Result<()> {
-        self.config.set_env_var(agent_id, key, value).await
-    }
-
-    pub async fn config_delete_env_var(&self, agent_id: &str, key: &str) -> Result<()> {
-        self.config.delete_env_var(agent_id, key).await
-    }
-
     // ── Variables ──────────────────────────────────────────────────────────
 
     pub async fn variable_list(&self) -> Result<Vec<VariableRecord>> {
         let repo = VariableRepo::new(self.pool.clone());
-        repo.list_all().await
+        repo.list_all_active().await
     }
 
     // ── Usage ─────────────────────────────────────────────────────────────

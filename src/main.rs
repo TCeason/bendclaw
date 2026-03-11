@@ -108,7 +108,7 @@ async fn cmd_run(
         &config.instance_id,
         llm,
     )
-    .with_skills_dir(&config.workspace.skills_dir().to_string_lossy())
+    .with_hub_config(config.hub.clone())
     .with_workspace(config.workspace.clone())
     .build()
     .await?;

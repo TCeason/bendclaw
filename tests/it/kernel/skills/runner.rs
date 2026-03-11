@@ -7,106 +7,84 @@ use std::time::Duration;
 use anyhow::Result;
 use bendclaw::kernel::session::workspace::SandboxResolver;
 use bendclaw::kernel::session::workspace::Workspace;
-use bendclaw::kernel::skills::catalog::SkillCatalog;
 use bendclaw::kernel::skills::executor::SkillExecutor;
 use bendclaw::kernel::skills::runner::SkillRunner;
 use bendclaw::kernel::skills::skill::Skill;
 use bendclaw::kernel::skills::skill::SkillFile;
-use bendclaw::kernel::skills::skill::SkillRequirements;
 use bendclaw::kernel::skills::skill::SkillScope;
 use bendclaw::kernel::skills::skill::SkillSource;
+use bendclaw::kernel::skills::store::SkillStore;
 
-use crate::mocks::skill::MockSkillCatalog;
+use crate::mocks::skill::test_skill_store;
+
+fn dummy_databases() -> Arc<bendclaw::storage::AgentDatabases> {
+    let pool =
+        bendclaw::storage::Pool::new("http://localhost:0", "", "default").expect("dummy pool");
+    Arc::new(bendclaw::storage::AgentDatabases::new(pool, "test_").unwrap())
+}
+
+fn dummy_pool() -> bendclaw::storage::Pool {
+    bendclaw::storage::Pool::new("http://localhost:0", "", "default").expect("dummy pool")
+}
 
 fn test_workspace() -> Arc<Workspace> {
+    test_workspace_with_vars(HashMap::new())
+}
+
+fn test_workspace_with_vars(variables: HashMap<String, String>) -> Arc<Workspace> {
     let dir = std::env::temp_dir().join(format!("bendclaw-runner-test-{}", ulid::Ulid::new()));
     let _ = std::fs::create_dir_all(&dir);
     Arc::new(Workspace::new(
         dir,
         vec!["PATH".into(), "HOME".into()],
-        HashMap::new(),
+        variables,
         Duration::from_secs(10),
         1_048_576,
         Arc::new(SandboxResolver),
     ))
 }
 
-// ── skill_read shortcut ──
+fn make_store_with_skill(skill: &Skill) -> Arc<SkillStore> {
+    let databases = dummy_databases();
+    let dir = std::env::temp_dir().join(format!("bendclaw-runner-{}", ulid::Ulid::new()));
+    let _ = std::fs::create_dir_all(&dir);
+    let store = test_skill_store(databases, dir);
+    store.insert(skill, "a1");
+    store
+}
 
-#[tokio::test]
-async fn runner_skill_read_returns_content() -> Result<()> {
-    let catalog = Arc::new(MockSkillCatalog::new());
-    let skill = Skill {
-        name: "my-skill".into(),
+fn make_empty_store() -> Arc<SkillStore> {
+    let databases = dummy_databases();
+    let dir = std::env::temp_dir().join(format!("bendclaw-runner-{}", ulid::Ulid::new()));
+    let _ = std::fs::create_dir_all(&dir);
+    test_skill_store(databases, dir)
+}
+
+fn base_skill(name: &str) -> Skill {
+    Skill {
+        name: name.into(),
         version: "1.0".into(),
         description: "desc".into(),
         scope: SkillScope::Global,
         source: SkillSource::Local,
         agent_id: None,
-        user_id: None,
+        created_by_user_id: None,
         timeout: 10,
         executable: false,
         parameters: vec![],
-        content: "This is the skill content.".into(),
+        content: String::new(),
         files: vec![],
         requires: None,
-    };
-    catalog.insert(&skill);
-
-    let runner = SkillRunner::new("a1", "u1", catalog, test_workspace());
-    let out = runner
-        .execute("skill_read", &["--path".into(), "my-skill".into()])
-        .await?;
-    assert!(!out.is_error());
-    let data = out.data.unwrap();
-    assert!(data
-        .as_str()
-        .unwrap()
-        .contains("This is the skill content."));
-    Ok(())
-}
-
-#[tokio::test]
-async fn runner_skill_read_missing_returns_not_found() -> Result<()> {
-    let catalog = Arc::new(MockSkillCatalog::new());
-    let runner = SkillRunner::new("a1", "u1", catalog, test_workspace());
-    let out = runner
-        .execute("skill_read", &["--path".into(), "nonexistent".into()])
-        .await?;
-    assert!(!out.is_error());
-    let data = out.data.unwrap();
-    assert!(data.as_str().unwrap().contains("not found"));
-    Ok(())
-}
-
-#[tokio::test]
-async fn runner_skill_read_no_path_arg_returns_error() -> Result<()> {
-    let catalog = Arc::new(MockSkillCatalog::new());
-    let runner = SkillRunner::new("a1", "u1", catalog, test_workspace());
-    // No --path argument at all
-    let result = runner.execute("skill_read", &[]).await;
-    assert!(result.is_err());
-    Ok(())
-}
-
-#[tokio::test]
-async fn runner_skill_read_empty_path_flag_returns_error() -> Result<()> {
-    let catalog = Arc::new(MockSkillCatalog::new());
-    let runner = SkillRunner::new("a1", "u1", catalog, test_workspace());
-    // --path with empty string value
-    let result = runner
-        .execute("skill_read", &["--path".into(), "".into()])
-        .await;
-    assert!(result.is_err());
-    Ok(())
+        manifest: None,
+    }
 }
 
 // ── unknown skill ──
 
 #[tokio::test]
 async fn runner_unknown_skill_returns_error() -> Result<()> {
-    let catalog = Arc::new(MockSkillCatalog::new());
-    let runner = SkillRunner::new("a1", "u1", catalog, test_workspace());
+    let store = make_empty_store();
+    let runner = SkillRunner::new("a1", "u1", store, test_workspace(), dummy_pool());
     let result = runner.execute("no-such-skill", &[]).await;
     assert!(result.is_err());
     Ok(())
@@ -116,29 +94,19 @@ async fn runner_unknown_skill_returns_error() -> Result<()> {
 
 #[tokio::test]
 async fn runner_invisible_skill_returns_error() -> Result<()> {
-    let catalog = Arc::new(MockSkillCatalog::new());
-    let skill = Skill {
-        name: "agent-skill".into(),
-        version: "1.0".into(),
-        description: "desc".into(),
-        scope: SkillScope::Agent,
-        source: SkillSource::Local,
-        agent_id: Some("other-agent".into()),
-        user_id: Some("u1".into()),
-        timeout: 10,
-        executable: true,
-        parameters: vec![],
-        content: "code".into(),
-        files: vec![SkillFile {
-            path: "scripts/run.py".into(),
-            body: String::new(),
-        }],
-        requires: None,
-    };
-    catalog.insert(&skill);
+    let mut skill = base_skill("agent-skill");
+    skill.scope = SkillScope::Agent;
+    skill.agent_id = Some("other-agent".into());
+    skill.created_by_user_id = Some("u1".into());
+    skill.executable = true;
+    skill.files = vec![SkillFile {
+        path: "scripts/run.py".into(),
+        body: String::new(),
+    }];
+    let store = make_store_with_skill(&skill);
 
     // runner uses agent_id "a1" but skill belongs to "other-agent"
-    let runner = SkillRunner::new("a1", "u1", catalog, test_workspace());
+    let runner = SkillRunner::new("a1", "u1", store, test_workspace(), dummy_pool());
     let result = runner.execute("agent-skill", &[]).await;
     assert!(result.is_err());
     Ok(())
@@ -148,151 +116,130 @@ async fn runner_invisible_skill_returns_error() -> Result<()> {
 
 #[tokio::test]
 async fn runner_skill_without_script_returns_error() -> Result<()> {
-    let catalog = Arc::new(MockSkillCatalog::new());
-    // Skill with no files → script_path returns None
-    let skill = Skill {
-        name: "no-script".into(),
-        version: "1.0".into(),
-        description: "desc".into(),
-        scope: SkillScope::Global,
-        source: SkillSource::Local,
-        agent_id: None,
-        user_id: None,
-        timeout: 10,
-        executable: true,
-        parameters: vec![],
-        content: "code".into(),
-        files: vec![],
-        requires: None,
-    };
-    catalog.insert(&skill);
+    let mut skill = base_skill("no-script");
+    skill.executable = true;
+    let store = make_store_with_skill(&skill);
 
-    let runner = SkillRunner::new("a1", "u1", catalog, test_workspace());
+    let runner = SkillRunner::new("a1", "u1", store, test_workspace(), dummy_pool());
     let result = runner.execute("no-script", &[]).await;
     assert!(result.is_err());
     Ok(())
 }
 
-// ── preflight: missing binary ──
-
 #[tokio::test]
-async fn runner_preflight_missing_bin_returns_error() -> Result<()> {
-    let catalog = Arc::new(MockSkillCatalog::new());
-    let skill = Skill {
-        name: "needs-bin".into(),
-        version: "1.0".into(),
-        description: "desc".into(),
-        scope: SkillScope::Global,
-        source: SkillSource::Local,
-        agent_id: None,
-        user_id: None,
-        timeout: 10,
-        executable: true,
-        parameters: vec![],
-        content: "code".into(),
-        files: vec![SkillFile {
-            path: "scripts/run.sh".into(),
-            body: String::new(),
-        }],
-        requires: Some(SkillRequirements {
-            bins: vec!["__nonexistent_binary_xyz__".into()],
-            env: vec![],
-        }),
-    };
-    catalog.insert(&skill);
+async fn runner_executes_shell_skill_and_parses_json_output() -> Result<()> {
+    let mut skill = base_skill("json-skill");
+    skill.scope = SkillScope::Agent;
+    skill.source = SkillSource::Agent;
+    skill.agent_id = Some("a1".into());
+    skill.created_by_user_id = Some("u1".into());
+    skill.executable = true;
+    skill.files = vec![SkillFile {
+        path: "scripts/run.sh".into(),
+        body: "#!/usr/bin/env bash\ncat >/dev/null\nprintf '{\"data\":\"ok\",\"error\":null}'"
+            .into(),
+    }];
+    let store = make_store_with_skill(&skill);
 
-    let runner = SkillRunner::new("a1", "u1", catalog, test_workspace());
-    let result = runner.execute("needs-bin", &[]).await;
-    assert!(result.is_err());
-    let msg = result.unwrap_err().to_string();
-    assert!(msg.contains("__nonexistent_binary_xyz__") || msg.contains("requires"));
+    let runner = SkillRunner::new("a1", "u1", store, test_workspace(), dummy_pool());
+    let output = runner.execute("json-skill", &[]).await?;
+
+    assert_eq!(output.data, Some(serde_json::json!("ok")));
+    assert_eq!(output.error, None);
     Ok(())
 }
 
-// ── preflight: missing env var ──
+#[tokio::test]
+async fn runner_executes_skill_with_required_env_snapshot() -> Result<()> {
+    let mut skill = base_skill("env-skill");
+    skill.scope = SkillScope::Agent;
+    skill.source = SkillSource::Agent;
+    skill.agent_id = Some("a1".into());
+    skill.created_by_user_id = Some("u1".into());
+    skill.executable = true;
+    skill.requires = Some(bendclaw::kernel::skills::skill::SkillRequirements {
+        bins: vec!["bash".into()],
+        env: vec!["API_TOKEN".into()],
+    });
+    skill.files = vec![SkillFile {
+        path: "scripts/run.sh".into(),
+        body: "#!/usr/bin/env bash\ncat >/dev/null\nprintf '%s' \"$API_TOKEN\"".into(),
+    }];
+    let store = make_store_with_skill(&skill);
+
+    let runner = SkillRunner::new(
+        "a1",
+        "u1",
+        store,
+        test_workspace_with_vars(HashMap::from([(
+            "API_TOKEN".to_string(),
+            "secret-token".to_string(),
+        )])),
+        dummy_pool(),
+    );
+    let output = runner.execute("env-skill", &[]).await?;
+
+    assert_eq!(output.data, Some(serde_json::json!("secret-token")));
+    assert_eq!(output.error, None);
+    Ok(())
+}
 
 #[tokio::test]
-async fn runner_preflight_missing_env_returns_error() -> Result<()> {
-    let catalog = Arc::new(MockSkillCatalog::new());
-    let skill = Skill {
-        name: "needs-env".into(),
-        version: "1.0".into(),
-        description: "desc".into(),
-        scope: SkillScope::Global,
-        source: SkillSource::Local,
-        agent_id: None,
-        user_id: None,
-        timeout: 10,
-        executable: true,
-        parameters: vec![],
-        content: "code".into(),
-        files: vec![SkillFile {
-            path: "scripts/run.sh".into(),
-            body: String::new(),
-        }],
-        requires: Some(SkillRequirements {
-            bins: vec![],
-            env: vec!["__NONEXISTENT_ENV_VAR_XYZ__".into()],
-        }),
-    };
-    catalog.insert(&skill);
+async fn runner_executes_python_skill_with_required_env_snapshot() -> Result<()> {
+    let mut skill = base_skill("env-python-skill");
+    skill.scope = SkillScope::Agent;
+    skill.source = SkillSource::Agent;
+    skill.agent_id = Some("a1".into());
+    skill.created_by_user_id = Some("u1".into());
+    skill.executable = true;
+    skill.requires = Some(bendclaw::kernel::skills::skill::SkillRequirements {
+        bins: vec!["python3".into()],
+        env: vec!["API_TOKEN".into()],
+    });
+    skill.files = vec![SkillFile {
+        path: "scripts/run.py".into(),
+        body: "import os, sys\nsys.stdin.read()\nprint(os.environ['API_TOKEN'])".into(),
+    }];
+    let store = make_store_with_skill(&skill);
 
-    // workspace has no user env vars set
-    let runner = SkillRunner::new("a1", "u1", catalog, test_workspace());
+    let runner = SkillRunner::new(
+        "a1",
+        "u1",
+        store,
+        test_workspace_with_vars(HashMap::from([(
+            "API_TOKEN".to_string(),
+            "python-secret".to_string(),
+        )])),
+        dummy_pool(),
+    );
+    let output = runner.execute("env-python-skill", &[]).await?;
+
+    assert_eq!(output.data, Some(serde_json::json!("python-secret")));
+    assert_eq!(output.error, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn runner_missing_required_env_returns_error() -> Result<()> {
+    let mut skill = base_skill("needs-env");
+    skill.scope = SkillScope::Agent;
+    skill.source = SkillSource::Agent;
+    skill.agent_id = Some("a1".into());
+    skill.created_by_user_id = Some("u1".into());
+    skill.executable = true;
+    skill.requires = Some(bendclaw::kernel::skills::skill::SkillRequirements {
+        bins: vec![],
+        env: vec!["API_TOKEN".into()],
+    });
+    skill.files = vec![SkillFile {
+        path: "scripts/run.sh".into(),
+        body: "#!/usr/bin/env bash\nprintf 'ok'".into(),
+    }];
+    let store = make_store_with_skill(&skill);
+
+    let runner = SkillRunner::new("a1", "u1", store, test_workspace(), dummy_pool());
     let result = runner.execute("needs-env", &[]).await;
+
     assert!(result.is_err());
-    Ok(())
-}
-
-// ── actual script execution ──
-
-#[tokio::test]
-async fn runner_executes_shell_script_successfully() -> Result<()> {
-    let dir = std::env::temp_dir().join(format!("bendclaw-runner-exec-{}", ulid::Ulid::new()));
-    std::fs::create_dir_all(&dir)?;
-
-    // Write a real shell script
-    let script_path = dir.join("scripts");
-    std::fs::create_dir_all(&script_path)?;
-    let script_file = script_path.join("run.sh");
-    std::fs::write(&script_file, "#!/bin/sh\necho '{\"data\":\"hello\"}'\n")?;
-
-    let catalog = Arc::new(MockSkillCatalog::new());
-    let skill = Skill {
-        name: "echo-skill".into(),
-        version: "1.0".into(),
-        description: "desc".into(),
-        scope: SkillScope::Global,
-        source: SkillSource::Local,
-        agent_id: None,
-        user_id: None,
-        timeout: 10,
-        executable: true,
-        parameters: vec![],
-        content: "code".into(),
-        files: vec![SkillFile {
-            path: "scripts/run.sh".into(),
-            body: String::new(),
-        }],
-        requires: None,
-    };
-    catalog.insert(&skill);
-
-    // Override script_path to return the real file path
-    // MockSkillCatalog returns the path from files[0].path relative to workspace
-    // We need to write the script to the workspace dir
-    let workspace = Arc::new(Workspace::new(
-        dir.clone(),
-        vec!["PATH".into(), "HOME".into()],
-        HashMap::new(),
-        Duration::from_secs(10),
-        1_048_576,
-        Arc::new(SandboxResolver),
-    ));
-
-    let runner = SkillRunner::new("a1", "u1", catalog, workspace);
-    let out = runner.execute("echo-skill", &[]).await?;
-    // Script outputs JSON or plain text — either way no error
-    assert!(!out.is_error());
     Ok(())
 }

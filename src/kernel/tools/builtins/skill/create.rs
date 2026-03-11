@@ -6,12 +6,12 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::base::Result;
-use crate::kernel::skills::catalog::SkillCatalog;
-use crate::kernel::skills::repository::SkillRepositoryFactory;
+use crate::kernel::skills::remote::repository::DatabendSkillRepositoryFactory;
 use crate::kernel::skills::skill::Skill;
 use crate::kernel::skills::skill::SkillFile;
 use crate::kernel::skills::skill::SkillScope;
 use crate::kernel::skills::skill::SkillSource;
+use crate::kernel::skills::store::SkillStore;
 use crate::kernel::tools::OperationClassifier;
 use crate::kernel::tools::Tool;
 use crate::kernel::tools::ToolContext;
@@ -20,18 +20,15 @@ use crate::kernel::tools::ToolResult;
 use crate::kernel::OpType;
 
 pub struct SkillCreateTool {
-    store_factory: Arc<dyn SkillRepositoryFactory>,
-    catalog: Arc<dyn SkillCatalog>,
+    store_factory: Arc<DatabendSkillRepositoryFactory>,
+    store: Arc<SkillStore>,
 }
 
 impl SkillCreateTool {
-    pub fn new(
-        store_factory: Arc<dyn SkillRepositoryFactory>,
-        catalog: Arc<dyn SkillCatalog>,
-    ) -> Self {
+    pub fn new(store_factory: Arc<DatabendSkillRepositoryFactory>, store: Arc<SkillStore>) -> Self {
         Self {
             store_factory,
-            catalog,
+            store,
         }
     }
 }
@@ -134,13 +131,14 @@ impl Tool for SkillCreateTool {
             scope: SkillScope::Agent,
             source: SkillSource::Agent,
             agent_id: Some(ctx.agent_id.to_string()),
-            user_id: Some(ctx.user_id.to_string()),
+            created_by_user_id: Some(ctx.user_id.to_string()),
             timeout,
             executable: true,
             parameters: crate::kernel::skills::fs::parse_parameters_section(&content),
             content,
             files,
             requires: None,
+            manifest: None,
         };
 
         let store = match self.store_factory.for_agent(&ctx.agent_id) {
@@ -156,7 +154,7 @@ impl Tool for SkillCreateTool {
             return Ok(ToolResult::error(format!("failed to save skill: {e}")));
         }
 
-        self.catalog.insert(&skill);
+        self.store.insert(&skill, &ctx.agent_id);
 
         tracing::info!(skill = %name, version = %version, "skill created by agent");
         Ok(ToolResult::ok(format!(

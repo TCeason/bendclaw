@@ -17,25 +17,28 @@ impl RowMapper for VariableMapper {
     type Entity = VariableRecord;
 
     fn columns(&self) -> &str {
-        "id, key, value, secret, TO_VARCHAR(last_used_at), TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
+        "id, key, value, secret, revoked, TO_VARCHAR(last_used_at), TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
     fn parse(&self, row: &serde_json::Value) -> crate::base::Result<VariableRecord> {
         let secret_str: String = sql::col(row, 3);
         let secret = matches!(secret_str.as_str(), "1" | "true");
-        let last_used: String = sql::col(row, 4);
+        let revoked_str: String = sql::col(row, 4);
+        let revoked = matches!(revoked_str.as_str(), "1" | "true");
+        let last_used: String = sql::col(row, 5);
         Ok(VariableRecord {
             id: sql::col(row, 0),
             key: sql::col(row, 1),
             value: sql::col(row, 2),
             secret,
+            revoked,
             last_used_at: if last_used.is_empty() {
                 None
             } else {
                 Some(last_used)
             },
-            created_at: sql::col(row, 5),
-            updated_at: sql::col(row, 6),
+            created_at: sql::col(row, 6),
+            updated_at: sql::col(row, 7),
         })
     }
 }
@@ -54,6 +57,7 @@ impl VariableRepo {
 
     pub async fn insert(&self, record: &VariableRecord) -> Result<()> {
         let secret_val = if record.secret { "true" } else { "false" };
+        let revoked_val = if record.revoked { "true" } else { "false" };
         let result = self
             .table
             .insert(&[
@@ -61,6 +65,7 @@ impl VariableRepo {
                 ("key", SqlVal::Str(&record.key)),
                 ("value", SqlVal::Str(&record.value)),
                 ("secret", SqlVal::Raw(secret_val)),
+                ("revoked", SqlVal::Raw(revoked_val)),
                 ("created_at", SqlVal::Raw("NOW()")),
                 ("updated_at", SqlVal::Raw("NOW()")),
             ])
@@ -85,7 +90,34 @@ impl VariableRepo {
     }
 
     pub async fn list_all(&self) -> Result<Vec<VariableRecord>> {
-        self.list(1000).await
+        self.table.list(&[], "created_at DESC", u64::MAX).await
+    }
+
+    pub async fn list_active(&self, limit: u32) -> Result<Vec<VariableRecord>> {
+        let result = self
+            .table
+            .list_where("revoked = FALSE", "created_at DESC", limit as u64)
+            .await;
+        if let Err(error) = &result {
+            repo_error(
+                REPO,
+                "list_active",
+                serde_json::json!({"limit": limit}),
+                error,
+            );
+        }
+        result
+    }
+
+    pub async fn list_all_active(&self) -> Result<Vec<VariableRecord>> {
+        let result = self
+            .table
+            .list_where("revoked = FALSE", "created_at DESC", u64::MAX)
+            .await;
+        if let Err(error) = &result {
+            repo_error(REPO, "list_all_active", serde_json::json!({}), error);
+        }
+        result
     }
 
     pub async fn get(&self, id: &str) -> Result<Option<VariableRecord>> {
@@ -96,13 +128,20 @@ impl VariableRepo {
         result
     }
 
-    pub async fn update(&self, id: &str, key: &str, value: &str, secret: bool) -> Result<()> {
+    pub async fn update(
+        &self,
+        id: &str,
+        key: &str,
+        value: &str,
+        secret: bool,
+        revoked: bool,
+    ) -> Result<()> {
         let key_e = sql::escape(key);
         let value_e = sql::escape(value);
         let id_e = sql::escape(id);
         let sql = format!(
-            "UPDATE variables SET key='{}', value='{}', secret={}, updated_at=NOW() WHERE id='{}'",
-            key_e, value_e, secret, id_e
+            "UPDATE variables SET key='{}', value='{}', secret={}, revoked={}, updated_at=NOW() WHERE id='{}'",
+            key_e, value_e, secret, revoked, id_e
         );
         let result = self.table.pool().exec(&sql).await;
         if let Err(error) = &result {
@@ -145,5 +184,12 @@ impl VariableRepo {
             );
         }
         result
+    }
+
+    pub async fn touch_last_used_many(&self, ids: &[String]) -> Result<()> {
+        for id in ids {
+            self.touch_last_used(id).await?;
+        }
+        Ok(())
     }
 }

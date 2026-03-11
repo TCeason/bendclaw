@@ -226,6 +226,13 @@ pub fn api_router(state: AppState, _log_level: &str, auth: &AuthConfig) -> Route
             "/v1/agents/{agent_id}/skills/{skill_name}",
             get(v1::skills::get_skill).delete(v1::skills::delete_skill),
         )
+        // Hub
+        .route("/v1/hub/skills", get(v1::hub::list_hub_skills))
+        .route(
+            "/v1/hub/skills/{skill_name}/credentials",
+            get(v1::hub::skill_credentials),
+        )
+        .route("/v1/hub/status", get(v1::hub::hub_status))
         // Config
         .route(
             "/v1/agents/{agent_id}/config",

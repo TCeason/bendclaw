@@ -6,7 +6,7 @@ use crate::kernel::channel::registry::ChannelRegistry;
 use crate::kernel::channel::supervisor::ChannelSupervisor;
 use crate::kernel::runtime::agent_config::AgentConfig;
 use crate::kernel::session::SessionManager;
-use crate::kernel::skills::catalog::SkillCatalog;
+use crate::kernel::skills::store::SkillStore;
 use crate::llm::provider::LLMProvider;
 use crate::storage::pool::Pool;
 
@@ -22,7 +22,7 @@ pub struct Runtime {
     pub(crate) config: AgentConfig,
     pub(crate) databases: Arc<crate::storage::AgentDatabases>,
     pub(crate) llm: RwLock<Arc<dyn LLMProvider>>,
-    pub(crate) skills: Arc<dyn SkillCatalog>,
+    pub(crate) skills: Arc<SkillStore>,
     pub(crate) sessions: Arc<SessionManager>,
     pub(crate) channels: Arc<ChannelRegistry>,
     pub(crate) supervisor: Arc<ChannelSupervisor>,
@@ -36,7 +36,7 @@ pub(crate) struct RuntimeParts {
     pub config: AgentConfig,
     pub databases: Arc<crate::storage::AgentDatabases>,
     pub llm: RwLock<Arc<dyn LLMProvider>>,
-    pub skills: Arc<dyn SkillCatalog>,
+    pub skills: Arc<SkillStore>,
     pub sessions: Arc<SessionManager>,
     pub channels: Arc<ChannelRegistry>,
     pub supervisor: Arc<ChannelSupervisor>,
@@ -82,9 +82,9 @@ impl Runtime {
         }
     }
 
-    pub fn skill_prompt(&self, agent_id: &str, user_id: &str) -> String {
+    pub fn skill_prompt(&self, agent_id: &str) -> String {
         self.skills
-            .for_agent(agent_id, user_id)
+            .for_agent(agent_id)
             .into_iter()
             .filter(|s| !s.executable)
             .map(|s| s.content)
@@ -113,7 +113,7 @@ impl Runtime {
         tracing::info!("LLM provider hot-reloaded");
     }
 
-    pub fn skills(&self) -> &Arc<dyn SkillCatalog> {
+    pub fn skills(&self) -> &Arc<SkillStore> {
         &self.skills
     }
 

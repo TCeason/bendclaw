@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -6,8 +5,8 @@ use crate::base::Result;
 use crate::kernel::agent_store::memory_store::MemoryEntry;
 use crate::kernel::agent_store::AgentStore;
 use crate::kernel::runtime::Runtime;
-use crate::kernel::skills::repository::DatabendSkillRepository;
-use crate::kernel::skills::repository::SkillRepository;
+use crate::kernel::skills::remote::repository::DatabendSkillRepository;
+use crate::kernel::skills::remote::repository::SkillRepository;
 use crate::kernel::skills::skill::Skill;
 use crate::observability::redaction;
 use crate::storage::dal::learning::record::LearningRecord;
@@ -205,7 +204,6 @@ impl Runtime {
         soul: Option<&str>,
         token_limit_total: Option<Option<u64>>,
         token_limit_daily: Option<Option<u64>>,
-        env: Option<&HashMap<String, String>>,
         notes: Option<&str>,
         label: Option<&str>,
     ) -> Result<u32> {
@@ -218,7 +216,6 @@ impl Runtime {
             "soul": soul,
             "token_limit_total": token_limit_total,
             "token_limit_daily": token_limit_daily,
-            "env": env,
             "notes": notes,
             "label": label,
         });
@@ -240,7 +237,6 @@ impl Runtime {
                 soul,
                 token_limit_total,
                 token_limit_daily,
-                env,
                 notes,
                 label,
             )
@@ -359,7 +355,7 @@ impl Runtime {
         let store = DatabendSkillRepository::new(pool);
         let result = async {
             store.save(&skill).await?;
-            self.skills.insert(&skill);
+            self.skills.insert(&skill, agent_id);
             Ok(())
         }
         .await;
@@ -382,26 +378,18 @@ impl Runtime {
         result
     }
 
-    pub async fn delete_skill(
-        &self,
-        agent_id: &str,
-        user_id: &str,
-        skill_name: &str,
-    ) -> Result<()> {
+    pub async fn delete_skill(&self, agent_id: &str, skill_name: &str) -> Result<()> {
         let started = Instant::now();
         let payload = serde_json::json!({
             "skill_name": skill_name,
-            "user_id": user_id,
         });
         log_runtime_info("delete_skill", "started", agent_id, 0, payload.clone());
         self.require_ready()?;
         let pool = self.databases.agent_pool(agent_id)?;
         let store = DatabendSkillRepository::new(pool);
         let result = async {
-            store
-                .remove(skill_name, Some(agent_id), Some(user_id))
-                .await?;
-            self.skills.evict(skill_name);
+            store.remove(skill_name, Some(agent_id)).await?;
+            self.skills.evict(skill_name, agent_id);
             Ok(())
         }
         .await;
@@ -490,7 +478,6 @@ impl Runtime {
         soul: Option<&str>,
         token_limit_total: Option<Option<u64>>,
         token_limit_daily: Option<Option<u64>>,
-        env: Option<&HashMap<String, String>>,
     ) -> Result<()> {
         let started = Instant::now();
         let payload = serde_json::json!({
@@ -501,7 +488,6 @@ impl Runtime {
             "soul": soul,
             "token_limit_total": token_limit_total,
             "token_limit_daily": token_limit_daily,
-            "env": env,
         });
         log_runtime_info("upsert_config", "started", agent_id, 0, payload.clone());
         let result = self
@@ -515,7 +501,6 @@ impl Runtime {
                 soul,
                 token_limit_total,
                 token_limit_daily,
-                env,
             )
             .await;
         match &result {

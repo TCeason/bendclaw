@@ -18,6 +18,7 @@ pub struct VariableResponse {
     pub key: String,
     pub value: String,
     pub secret: bool,
+    pub revoked: bool,
     pub last_used_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -29,6 +30,8 @@ pub struct CreateVariableRequest {
     pub value: String,
     #[serde(default)]
     pub secret: Option<bool>,
+    #[serde(default)]
+    pub revoked: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -36,6 +39,7 @@ pub struct UpdateVariableRequest {
     pub key: Option<String>,
     pub value: Option<String>,
     pub secret: Option<bool>,
+    pub revoked: Option<bool>,
 }
 
 pub async fn list_variables(
@@ -100,6 +104,7 @@ fn to_response(r: crate::storage::dal::variable::VariableRecord) -> VariableResp
             r.value
         },
         secret: r.secret,
+        revoked: r.revoked,
         last_used_at: r.last_used_at,
         created_at: r.created_at,
         updated_at: r.updated_at,

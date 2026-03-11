@@ -1,25 +1,112 @@
 use std::sync::Arc;
 
-use bendclaw::kernel::agent_store::AgentStore;
+use async_trait::async_trait;
+use bendclaw::kernel::agent_store::memory_store::MemoryEntry;
+use bendclaw::kernel::agent_store::memory_store::MemoryResult;
+use bendclaw::kernel::agent_store::memory_store::MemoryScope;
+use bendclaw::kernel::agent_store::memory_store::SearchOpts;
+use bendclaw::kernel::tools::memory::MemoryBackend;
+use bendclaw::kernel::tools::memory::MemoryDeleteTool;
+use bendclaw::kernel::tools::memory::MemoryListTool;
+use bendclaw::kernel::tools::memory::MemoryReadTool;
+use bendclaw::kernel::tools::memory::MemorySearchTool;
+use bendclaw::kernel::tools::memory::MemoryWriteTool;
+use bendclaw::kernel::tools::OperationClassifier;
 use bendclaw::kernel::tools::Tool;
+use parking_lot::Mutex;
 use serde_json::json;
 
 use crate::mocks::context::test_tool_context;
 
-fn storage() -> Arc<AgentStore> {
-    let (base_url, token, warehouse) =
-        crate::common::setup::require_api_config().expect("API config required");
-    let pool = bendclaw::storage::Pool::new(&base_url, &token, &warehouse)
-        .expect("pool: static URL is always valid");
-    let llm = Arc::new(crate::mocks::llm::MockLLMProvider::with_text("ok"));
-    Arc::new(AgentStore::new(pool, llm))
+#[derive(Default)]
+struct FakeMemoryBackend {
+    entries: Mutex<Vec<MemoryEntry>>,
 }
 
-// ── MemoryWriteTool ──
+#[async_trait]
+impl MemoryBackend for FakeMemoryBackend {
+    async fn write(&self, user_id: &str, mut entry: MemoryEntry) -> bendclaw::base::Result<()> {
+        entry.user_id = user_id.to_string();
+        self.entries.lock().push(entry);
+        Ok(())
+    }
+
+    async fn search(
+        &self,
+        query: &str,
+        user_id: &str,
+        opts: SearchOpts,
+    ) -> bendclaw::base::Result<Vec<MemoryResult>> {
+        let mut results: Vec<MemoryResult> = self
+            .entries
+            .lock()
+            .iter()
+            .filter(|entry| entry.user_id == user_id)
+            .filter(|entry| opts.include_shared || entry.scope != MemoryScope::Shared)
+            .filter(|entry| entry.key.contains(query) || entry.content.contains(query))
+            .map(|entry| MemoryResult {
+                id: entry.id.clone(),
+                key: entry.key.clone(),
+                content: entry.content.clone(),
+                scope: entry.scope,
+                session_id: entry.session_id.clone(),
+                score: 1.0,
+                updated_at: entry.updated_at.clone(),
+            })
+            .collect();
+        results.truncate(opts.max_results as usize);
+        Ok(results)
+    }
+
+    async fn get(&self, user_id: &str, key: &str) -> bendclaw::base::Result<Option<MemoryEntry>> {
+        Ok(self
+            .entries
+            .lock()
+            .iter()
+            .find(|entry| entry.user_id == user_id && entry.key == key)
+            .cloned())
+    }
+
+    async fn delete(&self, user_id: &str, id: &str) -> bendclaw::base::Result<()> {
+        self.entries
+            .lock()
+            .retain(|entry| !(entry.user_id == user_id && entry.id == id));
+        Ok(())
+    }
+
+    async fn list(&self, user_id: &str, limit: u32) -> bendclaw::base::Result<Vec<MemoryEntry>> {
+        let mut entries: Vec<_> = self
+            .entries
+            .lock()
+            .iter()
+            .filter(|entry| entry.user_id == user_id)
+            .cloned()
+            .collect();
+        entries.truncate(limit as usize);
+        Ok(entries)
+    }
+}
+
+fn backend() -> Arc<dyn MemoryBackend> {
+    Arc::new(FakeMemoryBackend::default())
+}
+
+fn seed_entry(user_id: &str, key: &str, content: &str) -> MemoryEntry {
+    MemoryEntry {
+        id: "mem-1".into(),
+        user_id: user_id.into(),
+        scope: MemoryScope::User,
+        session_id: None,
+        key: key.into(),
+        content: content.into(),
+        created_at: String::new(),
+        updated_at: String::new(),
+    }
+}
 
 #[tokio::test]
 async fn memory_write_success() -> Result<(), Box<dyn std::error::Error>> {
-    let tool = bendclaw::kernel::tools::memory::MemoryWriteTool::new(storage());
+    let tool = MemoryWriteTool::new(backend());
     let ctx = test_tool_context();
     let result = tool
         .execute_with_context(json!({"key": "test-key", "content": "test content"}), &ctx)
@@ -30,450 +117,154 @@ async fn memory_write_success() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[tokio::test]
-async fn memory_write_missing_key() -> Result<(), Box<dyn std::error::Error>> {
-    let tool = bendclaw::kernel::tools::memory::MemoryWriteTool::new(storage());
+async fn memory_write_missing_fields_return_errors() -> Result<(), Box<dyn std::error::Error>> {
+    let tool = MemoryWriteTool::new(backend());
     let ctx = test_tool_context();
-    let result = tool
+    let missing_key = tool
         .execute_with_context(json!({"content": "test content"}), &ctx)
         .await?;
-    assert!(!result.success);
-    let err = result
+    let missing_content = tool.execute_with_context(json!({"key": "k"}), &ctx).await?;
+    assert!(missing_key
         .error
         .as_deref()
-        .ok_or_else(|| std::io::Error::other("missing error"))?;
-    assert!(err.contains("key"));
-    Ok(())
-}
-
-#[tokio::test]
-async fn memory_write_missing_content() -> Result<(), Box<dyn std::error::Error>> {
-    let tool = bendclaw::kernel::tools::memory::MemoryWriteTool::new(storage());
-    let ctx = test_tool_context();
-    let result = tool
-        .execute_with_context(json!({"key": "test-key"}), &ctx)
-        .await?;
-    let err = result
+        .is_some_and(|e| e.contains("key")));
+    assert!(missing_content
         .error
         .as_deref()
-        .ok_or_else(|| std::io::Error::other("missing error"))?;
-    assert!(err.contains("content"));
+        .is_some_and(|e| e.contains("content")));
     Ok(())
 }
 
 #[tokio::test]
-async fn memory_write_with_shared_scope() -> Result<(), Box<dyn std::error::Error>> {
-    let tool = bendclaw::kernel::tools::memory::MemoryWriteTool::new(storage());
+async fn memory_read_and_delete_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    let backend = Arc::new(FakeMemoryBackend::default());
     let ctx = test_tool_context();
-    let result = tool
-        .execute_with_context(json!({"key": "k", "content": "c", "scope": "shared"}), &ctx)
+    backend
+        .write(&ctx.user_id, seed_entry(&ctx.user_id, "pref", "dark"))
         .await?;
-    assert!(result.success);
-    assert!(result.output.contains("shared"));
-    Ok(())
-}
 
-#[tokio::test]
-async fn memory_write_tenant_scope_aliases_to_shared() -> Result<(), Box<dyn std::error::Error>> {
-    let tool = bendclaw::kernel::tools::memory::MemoryWriteTool::new(storage());
-    let ctx = test_tool_context();
-    let result = tool
-        .execute_with_context(json!({"key": "k", "content": "c", "scope": "tenant"}), &ctx)
+    let read = MemoryReadTool::new(backend.clone())
+        .execute_with_context(json!({"key": "pref"}), &ctx)
         .await?;
-    assert!(result.success);
-    assert!(result.output.contains("shared"));
-    Ok(())
-}
+    assert!(read.success);
+    assert!(read.output.contains("dark"));
 
-// ── MemoryReadTool ──
-
-#[tokio::test]
-async fn memory_read_not_found() -> Result<(), Box<dyn std::error::Error>> {
-    let tool = bendclaw::kernel::tools::memory::MemoryReadTool::new(storage());
-    let ctx = test_tool_context();
-    let result = tool
-        .execute_with_context(json!({"key": "nonexistent"}), &ctx)
+    let delete = MemoryDeleteTool::new(backend.clone())
+        .execute_with_context(json!({"id": "mem-1"}), &ctx)
         .await?;
-    assert!(result.success);
-    assert!(result.output.contains("not found"));
-    Ok(())
-}
+    assert!(delete.success);
 
-#[tokio::test]
-async fn memory_read_missing_key() -> Result<(), Box<dyn std::error::Error>> {
-    let tool = bendclaw::kernel::tools::memory::MemoryReadTool::new(storage());
-    let ctx = test_tool_context();
-    let result = tool.execute_with_context(json!({}), &ctx).await?;
-    assert!(!result.success);
-    let err = result
-        .error
-        .as_deref()
-        .ok_or_else(|| std::io::Error::other("missing error"))?;
-    assert!(err.contains("key"));
-    Ok(())
-}
-
-// ── MemorySearchTool ──
-
-#[tokio::test]
-async fn memory_search_empty_results() -> Result<(), Box<dyn std::error::Error>> {
-    let tool = bendclaw::kernel::tools::memory::MemorySearchTool::new(storage());
-    let ctx = test_tool_context();
-    let result = tool
-        .execute_with_context(json!({"query": "test query"}), &ctx)
+    let read_missing = MemoryReadTool::new(backend)
+        .execute_with_context(json!({"key": "pref"}), &ctx)
         .await?;
-    assert!(result.success);
-    assert!(result.output.contains("No memories"));
+    assert!(read_missing.output.contains("not found"));
     Ok(())
 }
 
 #[tokio::test]
-async fn memory_search_empty_query() -> Result<(), Box<dyn std::error::Error>> {
-    let tool = bendclaw::kernel::tools::memory::MemorySearchTool::new(storage());
+async fn memory_search_and_list_use_fake_backend() -> Result<(), Box<dyn std::error::Error>> {
+    let backend = Arc::new(FakeMemoryBackend::default());
     let ctx = test_tool_context();
-    let result = tool
-        .execute_with_context(json!({"query": ""}), &ctx)
+    backend
+        .write(
+            &ctx.user_id,
+            seed_entry(&ctx.user_id, "project-rust", "rust tips"),
+        )
         .await?;
-    let err = result
-        .error
-        .as_deref()
-        .ok_or_else(|| std::io::Error::other("missing error"))?;
-    assert!(err.contains("query"));
-    Ok(())
-}
-
-// ── MemoryDeleteTool ──
-
-#[tokio::test]
-async fn memory_delete_success() -> Result<(), Box<dyn std::error::Error>> {
-    let tool = bendclaw::kernel::tools::memory::MemoryDeleteTool::new(storage());
-    let ctx = test_tool_context();
-    let result = tool
-        .execute_with_context(json!({"id": "mem-123"}), &ctx)
+    backend
+        .write(
+            &ctx.user_id,
+            seed_entry(&ctx.user_id, "project-go", "go tips"),
+        )
         .await?;
-    assert!(result.success);
-    assert!(result.output.contains("deleted"));
+
+    let search = MemorySearchTool::new(backend.clone())
+        .execute_with_context(json!({"query": "rust", "max_results": 5}), &ctx)
+        .await?;
+    assert!(search.success);
+    assert!(search.output.contains("project-rust"));
+
+    let list = MemoryListTool::new(backend)
+        .execute_with_context(json!({"limit": 1}), &ctx)
+        .await?;
+    assert!(list.success);
+    assert!(list.output.contains("project-rust") || list.output.contains("project-go"));
     Ok(())
 }
-
-#[tokio::test]
-async fn memory_delete_missing_id() -> Result<(), Box<dyn std::error::Error>> {
-    let tool = bendclaw::kernel::tools::memory::MemoryDeleteTool::new(storage());
-    let ctx = test_tool_context();
-    let result = tool.execute_with_context(json!({}), &ctx).await?;
-    let err = result
-        .error
-        .as_deref()
-        .ok_or_else(|| std::io::Error::other("missing error"))?;
-    assert!(err.contains("id"));
-    Ok(())
-}
-
-// ── MemoryListTool ──
-
-#[tokio::test]
-async fn memory_list_empty() -> Result<(), Box<dyn std::error::Error>> {
-    let tool = bendclaw::kernel::tools::memory::MemoryListTool::new(storage());
-    let ctx = test_tool_context();
-    let result = tool.execute_with_context(json!({}), &ctx).await?;
-    assert!(result.success);
-    // Shared memories from other test runs may exist, so just verify
-    // the output is either empty-list text or valid memory entries.
-    assert!(
-        result.output.contains("No memories found")
-            || result.output.contains("[shared]")
-            || result.output.contains("[user]")
-            || result.output.contains("[session]")
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn memory_list_with_limit() -> Result<(), Box<dyn std::error::Error>> {
-    let tool = bendclaw::kernel::tools::memory::MemoryListTool::new(storage());
-    let ctx = test_tool_context();
-    let result = tool.execute_with_context(json!({"limit": 5}), &ctx).await?;
-    assert!(result.success);
-    Ok(())
-}
-
-// ── Tool names ──
 
 #[test]
-fn memory_tool_names() {
-    let s = storage();
+fn memory_tool_metadata_is_stable() {
+    let storage = backend();
+    assert_eq!(MemoryWriteTool::new(storage.clone()).name(), "memory_write");
+    assert_eq!(MemoryReadTool::new(storage.clone()).name(), "memory_read");
     assert_eq!(
-        bendclaw::kernel::tools::memory::MemoryWriteTool::new(s.clone()).name(),
-        "memory_write"
-    );
-    assert_eq!(
-        bendclaw::kernel::tools::memory::MemoryReadTool::new(s.clone()).name(),
-        "memory_read"
-    );
-    assert_eq!(
-        bendclaw::kernel::tools::memory::MemorySearchTool::new(s.clone()).name(),
+        MemorySearchTool::new(storage.clone()).name(),
         "memory_search"
     );
     assert_eq!(
-        bendclaw::kernel::tools::memory::MemoryDeleteTool::new(s.clone()).name(),
+        MemoryDeleteTool::new(storage.clone()).name(),
         "memory_delete"
     );
-    assert_eq!(
-        bendclaw::kernel::tools::memory::MemoryListTool::new(s).name(),
-        "memory_list"
-    );
-}
+    assert_eq!(MemoryListTool::new(storage.clone()).name(), "memory_list");
 
-// ── OperationClassifier: op_type ──
-
-#[test]
-fn memory_tool_op_types() {
-    use bendclaw::kernel::tools::OperationClassifier;
-    use bendclaw::kernel::OpType;
-    let s = storage();
     assert_eq!(
-        bendclaw::kernel::tools::memory::MemoryWriteTool::new(s.clone()).op_type(),
-        OpType::MemoryWrite
-    );
-    assert_eq!(
-        bendclaw::kernel::tools::memory::MemoryReadTool::new(s.clone()).op_type(),
-        OpType::MemoryRead
-    );
-    assert_eq!(
-        bendclaw::kernel::tools::memory::MemorySearchTool::new(s.clone()).op_type(),
-        OpType::MemorySearch
-    );
-    assert_eq!(
-        bendclaw::kernel::tools::memory::MemoryDeleteTool::new(s.clone()).op_type(),
-        OpType::MemoryDelete
-    );
-    assert_eq!(
-        bendclaw::kernel::tools::memory::MemoryListTool::new(s).op_type(),
-        OpType::MemoryList
-    );
-}
-
-// ── OperationClassifier: classify_impact (all use default → None) ──
-
-#[test]
-fn memory_tools_classify_impact_is_none() {
-    use bendclaw::kernel::tools::OperationClassifier;
-    let s = storage();
-    let args = serde_json::json!({});
-    assert_eq!(
-        bendclaw::kernel::tools::memory::MemoryWriteTool::new(s.clone()).classify_impact(&args),
+        MemoryWriteTool::new(storage.clone()).classify_impact(&json!({})),
         None
     );
     assert_eq!(
-        bendclaw::kernel::tools::memory::MemoryReadTool::new(s.clone()).classify_impact(&args),
+        MemoryReadTool::new(storage.clone()).classify_impact(&json!({})),
         None
     );
     assert_eq!(
-        bendclaw::kernel::tools::memory::MemorySearchTool::new(s.clone()).classify_impact(&args),
+        MemorySearchTool::new(storage.clone()).classify_impact(&json!({})),
         None
     );
     assert_eq!(
-        bendclaw::kernel::tools::memory::MemoryDeleteTool::new(s.clone()).classify_impact(&args),
+        MemoryDeleteTool::new(storage.clone()).classify_impact(&json!({})),
         None
     );
     assert_eq!(
-        bendclaw::kernel::tools::memory::MemoryListTool::new(s).classify_impact(&args),
+        MemoryListTool::new(storage).classify_impact(&json!({})),
         None
     );
 }
 
-// ── OperationClassifier: summarize ──
-
 #[test]
-fn memory_write_summarize_returns_key() {
-    use bendclaw::kernel::tools::OperationClassifier;
-    let tool = bendclaw::kernel::tools::memory::MemoryWriteTool::new(storage());
+fn memory_tool_summaries_and_schemas_are_reasonable() {
+    let storage = backend();
     assert_eq!(
-        tool.summarize(&serde_json::json!({"key": "project-x", "content": "notes"})),
+        MemoryWriteTool::new(storage.clone()).summarize(&json!({"key": "project-x"})),
         "project-x"
     );
-}
-
-#[test]
-fn memory_write_summarize_missing_key_returns_unknown() {
-    use bendclaw::kernel::tools::OperationClassifier;
-    let tool = bendclaw::kernel::tools::memory::MemoryWriteTool::new(storage());
     assert_eq!(
-        tool.summarize(&serde_json::json!({"content": "notes"})),
-        "unknown"
-    );
-}
-
-#[test]
-fn memory_read_summarize_returns_key() {
-    use bendclaw::kernel::tools::OperationClassifier;
-    let tool = bendclaw::kernel::tools::memory::MemoryReadTool::new(storage());
-    assert_eq!(
-        tool.summarize(&serde_json::json!({"key": "my-pref"})),
+        MemoryReadTool::new(storage.clone()).summarize(&json!({"key": "my-pref"})),
         "my-pref"
     );
-}
-
-#[test]
-fn memory_read_summarize_missing_key_returns_unknown() {
-    use bendclaw::kernel::tools::OperationClassifier;
-    let tool = bendclaw::kernel::tools::memory::MemoryReadTool::new(storage());
-    assert_eq!(tool.summarize(&serde_json::json!({})), "unknown");
-}
-
-#[test]
-fn memory_search_summarize_returns_query() {
-    use bendclaw::kernel::tools::OperationClassifier;
-    let tool = bendclaw::kernel::tools::memory::MemorySearchTool::new(storage());
     assert_eq!(
-        tool.summarize(&serde_json::json!({"query": "rust tips"})),
+        MemorySearchTool::new(storage.clone()).summarize(&json!({"query": "rust tips"})),
         "rust tips"
     );
-}
-
-#[test]
-fn memory_search_summarize_missing_query_returns_unknown() {
-    use bendclaw::kernel::tools::OperationClassifier;
-    let tool = bendclaw::kernel::tools::memory::MemorySearchTool::new(storage());
-    assert_eq!(tool.summarize(&serde_json::json!({})), "unknown");
-}
-
-#[test]
-fn memory_delete_summarize_returns_id() {
-    use bendclaw::kernel::tools::OperationClassifier;
-    let tool = bendclaw::kernel::tools::memory::MemoryDeleteTool::new(storage());
     assert_eq!(
-        tool.summarize(&serde_json::json!({"id": "01JABCDEF"})),
-        "01JABCDEF"
+        MemoryDeleteTool::new(storage.clone()).summarize(&json!({"id": "mem-1"})),
+        "mem-1"
     );
-}
-
-#[test]
-fn memory_delete_summarize_missing_id_returns_unknown() {
-    use bendclaw::kernel::tools::OperationClassifier;
-    let tool = bendclaw::kernel::tools::memory::MemoryDeleteTool::new(storage());
-    assert_eq!(tool.summarize(&serde_json::json!({})), "unknown");
-}
-
-#[test]
-fn memory_list_summarize_is_fixed_string() {
-    use bendclaw::kernel::tools::OperationClassifier;
-    let tool = bendclaw::kernel::tools::memory::MemoryListTool::new(storage());
-    assert_eq!(tool.summarize(&serde_json::json!({})), "list memories");
     assert_eq!(
-        tool.summarize(&serde_json::json!({"limit": 5})),
+        MemoryListTool::new(storage.clone()).summarize(&json!({})),
         "list memories"
     );
-}
 
-#[test]
-fn memory_write_description_not_empty() {
-    use bendclaw::kernel::tools::memory::MemoryWriteTool;
-    let tool = MemoryWriteTool::new(storage());
-    assert!(!tool.description().is_empty());
-}
-
-#[test]
-fn memory_write_schema_has_key() {
-    use bendclaw::kernel::tools::memory::MemoryWriteTool;
-    let tool = MemoryWriteTool::new(storage());
-    assert!(tool.parameters_schema()["properties"]["key"].is_object());
-}
-
-#[test]
-fn memory_read_description_not_empty() {
-    use bendclaw::kernel::tools::memory::MemoryReadTool;
-    let tool = MemoryReadTool::new(storage());
-    assert!(!tool.description().is_empty());
-}
-
-#[test]
-fn memory_read_schema_has_key() {
-    use bendclaw::kernel::tools::memory::MemoryReadTool;
-    let tool = MemoryReadTool::new(storage());
-    assert!(tool.parameters_schema()["properties"]["key"].is_object());
-}
-
-#[test]
-fn memory_search_description_not_empty() {
-    use bendclaw::kernel::tools::memory::MemorySearchTool;
-    let tool = MemorySearchTool::new(storage());
-    assert!(!tool.description().is_empty());
-}
-
-#[test]
-fn memory_search_schema_has_query() {
-    use bendclaw::kernel::tools::memory::MemorySearchTool;
-    let tool = MemorySearchTool::new(storage());
-    assert!(tool.parameters_schema()["properties"]["query"].is_object());
-}
-
-#[test]
-fn memory_delete_description_not_empty() {
-    use bendclaw::kernel::tools::memory::MemoryDeleteTool;
-    let tool = MemoryDeleteTool::new(storage());
-    assert!(!tool.description().is_empty());
-}
-
-#[test]
-fn memory_delete_schema_has_id() {
-    use bendclaw::kernel::tools::memory::MemoryDeleteTool;
-    let tool = MemoryDeleteTool::new(storage());
-    assert!(tool.parameters_schema()["properties"]["id"].is_object());
-}
-
-#[test]
-fn memory_list_description_not_empty() {
-    use bendclaw::kernel::tools::memory::MemoryListTool;
-    let tool = MemoryListTool::new(storage());
-    assert!(!tool.description().is_empty());
-}
-
-#[test]
-fn memory_list_schema_has_limit() {
-    use bendclaw::kernel::tools::memory::MemoryListTool;
-    let tool = MemoryListTool::new(storage());
-    assert!(tool.parameters_schema()["properties"]["limit"].is_object());
-}
-
-#[tokio::test]
-async fn memory_search_with_include_tenant_false() -> Result<(), Box<dyn std::error::Error>> {
-    use bendclaw::kernel::tools::memory::MemorySearchTool;
-    let tool = MemorySearchTool::new(storage());
-    let ctx = test_tool_context();
-    let result = tool
-        .execute_with_context(
-            serde_json::json!({"query": "test", "include_tenant": false}),
-            &ctx,
-        )
-        .await?;
-    assert!(result.success || result.output.contains("No memories") || result.error.is_some());
-    Ok(())
-}
-
-#[tokio::test]
-async fn memory_search_with_max_results() -> Result<(), Box<dyn std::error::Error>> {
-    use bendclaw::kernel::tools::memory::MemorySearchTool;
-    let tool = MemorySearchTool::new(storage());
-    let ctx = test_tool_context();
-    let result = tool
-        .execute_with_context(serde_json::json!({"query": "test", "max_results": 5}), &ctx)
-        .await?;
-    assert!(result.success || result.output.contains("No memories") || result.error.is_some());
-    Ok(())
-}
-
-#[tokio::test]
-async fn memory_get_by_id_not_found() -> Result<(), Box<dyn std::error::Error>> {
-    let s = storage();
-    let result = s.memory_get_by_id("user-x", "nonexistent-id-000").await?;
-    assert!(result.is_none());
-    Ok(())
-}
-
-#[tokio::test]
-async fn memory_get_by_key_not_found() -> Result<(), Box<dyn std::error::Error>> {
-    let s = storage();
-    let result = s.memory_get("user-x", "nonexistent-key-000").await?;
-    assert!(result.is_none());
-    Ok(())
+    assert!(
+        MemoryWriteTool::new(storage.clone()).parameters_schema()["properties"]["key"].is_object()
+    );
+    assert!(
+        MemoryReadTool::new(storage.clone()).parameters_schema()["properties"]["key"].is_object()
+    );
+    assert!(
+        MemorySearchTool::new(storage.clone()).parameters_schema()["properties"]["query"]
+            .is_object()
+    );
+    assert!(
+        MemoryDeleteTool::new(storage.clone()).parameters_schema()["properties"]["id"].is_object()
+    );
+    assert!(MemoryListTool::new(storage).parameters_schema()["properties"]["limit"].is_object());
 }

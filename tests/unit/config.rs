@@ -103,8 +103,8 @@ fn serde_roundtrip() -> anyhow::Result<()> {
 #[test]
 fn hub_config_defaults() {
     let hub = bendclaw::config::HubConfig::default();
-    assert!(hub.url.is_empty());
-    assert_eq!(hub.sync_interval_secs, 21600);
+    assert_eq!(hub.repo_url, "https://github.com/EvotAI/skills");
+    assert_eq!(hub.sync_interval_secs, 86400);
 }
 
 #[test]

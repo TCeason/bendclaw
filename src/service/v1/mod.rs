@@ -3,6 +3,7 @@ pub mod channels;
 pub mod common;
 pub mod config;
 pub mod feedback;
+pub mod hub;
 pub mod learnings;
 pub mod memories;
 pub mod runs;
