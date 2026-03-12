@@ -6,7 +6,7 @@ use bendclaw::storage::Pool;
 fn agent_database_name() -> Result<()> {
     let pool = Pool::new("https://app.databend.com", "token", "default")?;
     let dbs = AgentDatabases::new(pool, "bendclaw_")?;
-    assert_eq!(dbs.agent_database_name("my-agent"), "bendclaw_my_agent");
+    assert_eq!(dbs.agent_database_name("my-agent")?, "bendclaw_my-agent");
     Ok(())
 }
 
@@ -51,64 +51,45 @@ fn agent_pool_creates_scoped_pool() -> Result<()> {
     Ok(())
 }
 
-// ── agent_database_name sanitization edge cases ──────────────────────────────
+// ── agent_database_name validation ───────────────────────────────────────────
 
 #[test]
-fn agent_database_name_uppercase_lowered() -> Result<()> {
+fn agent_database_name_preserves_case() -> Result<()> {
     let pool = Pool::new("https://app.databend.com", "token", "default")?;
     let dbs = AgentDatabases::new(pool, "bc_")?;
-    assert_eq!(dbs.agent_database_name("MyAgent"), "bc_myagent");
+    assert_eq!(dbs.agent_database_name("MyAgent")?, "bc_MyAgent");
     Ok(())
 }
 
 #[test]
-fn agent_database_name_consecutive_separators_collapsed() -> Result<()> {
+fn agent_database_name_allows_hyphen_and_underscore() -> Result<()> {
     let pool = Pool::new("https://app.databend.com", "token", "default")?;
     let dbs = AgentDatabases::new(pool, "bc_")?;
-    assert_eq!(dbs.agent_database_name("a--b..c"), "bc_a_b_c");
+    assert_eq!(dbs.agent_database_name("a--b_c")?, "bc_a--b_c");
     Ok(())
 }
 
 #[test]
-fn agent_database_name_leading_trailing_separators_trimmed() -> Result<()> {
+fn agent_database_name_rejects_special_chars() -> Result<()> {
     let pool = Pool::new("https://app.databend.com", "token", "default")?;
     let dbs = AgentDatabases::new(pool, "bc_")?;
-    assert_eq!(dbs.agent_database_name("--agent--"), "bc_agent");
+    assert!(dbs.agent_database_name("agent@company!v2").is_err());
     Ok(())
 }
 
 #[test]
-fn agent_database_name_empty_agent_id_falls_back_to_default() -> Result<()> {
+fn agent_database_name_rejects_empty_agent_id() -> Result<()> {
     let pool = Pool::new("https://app.databend.com", "token", "default")?;
     let dbs = AgentDatabases::new(pool, "bc_")?;
-    assert_eq!(dbs.agent_database_name(""), "bc_default");
+    assert!(dbs.agent_database_name("").is_err());
     Ok(())
 }
 
 #[test]
-fn agent_database_name_all_special_chars_falls_back_to_default() -> Result<()> {
+fn agent_database_name_rejects_whitespace_agent_id() -> Result<()> {
     let pool = Pool::new("https://app.databend.com", "token", "default")?;
     let dbs = AgentDatabases::new(pool, "bc_")?;
-    assert_eq!(dbs.agent_database_name("---"), "bc_default");
-    Ok(())
-}
-
-#[test]
-fn agent_database_name_whitespace_only_falls_back_to_default() -> Result<()> {
-    let pool = Pool::new("https://app.databend.com", "token", "default")?;
-    let dbs = AgentDatabases::new(pool, "bc_")?;
-    assert_eq!(dbs.agent_database_name("   "), "bc_default");
-    Ok(())
-}
-
-#[test]
-fn agent_database_name_special_chars_replaced() -> Result<()> {
-    let pool = Pool::new("https://app.databend.com", "token", "default")?;
-    let dbs = AgentDatabases::new(pool, "bc_")?;
-    assert_eq!(
-        dbs.agent_database_name("agent@company!v2"),
-        "bc_agent_company_v2"
-    );
+    assert!(dbs.agent_database_name("   ").is_err());
     Ok(())
 }
 
@@ -116,15 +97,15 @@ fn agent_database_name_special_chars_replaced() -> Result<()> {
 fn agent_database_name_numeric_agent_id() -> Result<()> {
     let pool = Pool::new("https://app.databend.com", "token", "default")?;
     let dbs = AgentDatabases::new(pool, "bc_")?;
-    assert_eq!(dbs.agent_database_name("42"), "bc_42");
+    assert_eq!(dbs.agent_database_name("42")?, "bc_42");
     Ok(())
 }
 
 #[test]
-fn agent_database_name_with_surrounding_whitespace() -> Result<()> {
+fn agent_database_name_rejects_surrounding_whitespace() -> Result<()> {
     let pool = Pool::new("https://app.databend.com", "token", "default")?;
     let dbs = AgentDatabases::new(pool, "bc_")?;
-    assert_eq!(dbs.agent_database_name("  agent  "), "bc_agent");
+    assert!(dbs.agent_database_name("  agent  ").is_err());
     Ok(())
 }
 

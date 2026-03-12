@@ -138,4 +138,4 @@ impl Runtime {
     }
 }
 
-pub use crate::kernel::sanitize_agent_id;
+pub use crate::kernel::validate_agent_id;

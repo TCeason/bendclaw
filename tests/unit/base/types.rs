@@ -1,7 +1,7 @@
 use anyhow::bail;
 use anyhow::Result;
 use bendclaw::kernel::new_id;
-use bendclaw::kernel::sanitize_agent_id;
+use bendclaw::kernel::validate_agent_id;
 use bendclaw::kernel::Content;
 use bendclaw::kernel::ErrorSource;
 use bendclaw::kernel::Impact;
@@ -288,31 +288,19 @@ fn new_id_is_not_empty() {
 }
 
 #[test]
-fn sanitize_simple() {
-    assert_eq!(sanitize_agent_id("myAgent"), "myagent");
+fn validate_agent_id_accepts_expected_chars() {
+    assert!(validate_agent_id("myAgent").is_ok());
+    assert!(validate_agent_id("my-agent_v2").is_ok());
 }
 
 #[test]
-fn sanitize_special_chars() {
-    assert_eq!(sanitize_agent_id("my-agent!v2"), "my_agent_v2");
+fn validate_agent_id_rejects_invalid_chars() {
+    assert!(validate_agent_id("my-agent!v2").is_err());
+    assert!(validate_agent_id("a--b..c").is_err());
 }
 
 #[test]
-fn sanitize_empty() {
-    assert_eq!(sanitize_agent_id(""), "default");
-}
-
-#[test]
-fn sanitize_whitespace_only() {
-    assert_eq!(sanitize_agent_id("   "), "default");
-}
-
-#[test]
-fn sanitize_consecutive_specials() {
-    assert_eq!(sanitize_agent_id("a--b..c"), "a_b_c");
-}
-
-#[test]
-fn sanitize_leading_trailing_specials() {
-    assert_eq!(sanitize_agent_id("--agent--"), "agent");
+fn validate_agent_id_rejects_empty_and_whitespace() {
+    assert!(validate_agent_id("").is_err());
+    assert!(validate_agent_id("   ").is_err());
 }

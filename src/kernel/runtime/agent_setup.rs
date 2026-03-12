@@ -9,7 +9,7 @@ impl Runtime {
 
     pub async fn setup_agent(&self, agent_id: &str) -> Result<()> {
         self.require_ready()?;
-        let db_name = self.databases.agent_database_name(agent_id);
+        let db_name = self.databases.agent_database_name(agent_id)?;
         let pool = self.database();
         pool.exec(&format!("CREATE DATABASE IF NOT EXISTS `{db_name}`"))
             .await?;
@@ -27,7 +27,7 @@ impl Runtime {
         Ok(())
     }
 
-    pub fn agent_database_name(&self, agent_id: &str) -> String {
+    pub fn agent_database_name(&self, agent_id: &str) -> Result<String> {
         self.databases.agent_database_name(agent_id)
     }
 }

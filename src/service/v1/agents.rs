@@ -51,7 +51,7 @@ pub async fn get_agent(
     _ctx: RequestContext,
     Path(agent_id): Path<String>,
 ) -> Result<Json<AgentDetail>> {
-    let db_name = state.runtime.agent_database_name(&agent_id);
+    let db_name = state.runtime.agent_database_name(&agent_id)?;
     let exists = state.runtime.databases().database_exists(&db_name).await?;
     if !exists {
         return Err(ServiceError::AgentNotFound(format!(
@@ -82,7 +82,7 @@ pub async fn delete_agent(
     _ctx: RequestContext,
     Path(agent_id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
-    let db_name = state.runtime.agent_database_name(&agent_id);
+    let db_name = state.runtime.agent_database_name(&agent_id)?;
     state
         .runtime
         .database()

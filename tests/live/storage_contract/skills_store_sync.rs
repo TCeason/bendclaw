@@ -60,7 +60,7 @@ async fn setup_databases(prefix: &str, agent_ids: &[&str]) -> Result<Arc<AgentDa
     let databases = Arc::new(AgentDatabases::new(root.clone(), prefix)?);
 
     for agent_id in agent_ids {
-        let db_name = databases.agent_database_name(agent_id);
+        let db_name = databases.agent_database_name(agent_id)?;
         root.exec(&format!("CREATE DATABASE IF NOT EXISTS `{db_name}`"))
             .await?;
         let pool = root.with_database(&db_name)?;

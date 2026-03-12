@@ -13,7 +13,7 @@ pub use id::new_id;
 pub use id::new_os_id;
 pub use id::new_run_id;
 pub use id::new_session_id;
-pub use id::sanitize_agent_id;
+pub use id::validate_agent_id;
 pub use message_types::Content;
 pub use message_types::Role;
 pub use message_types::ToolCall;

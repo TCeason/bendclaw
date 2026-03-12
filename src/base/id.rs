@@ -1,3 +1,6 @@
+use crate::base::ErrorCode;
+use crate::base::Result;
+
 pub fn new_id() -> String {
     ulid::Ulid::new().to_string().to_lowercase()
 }
@@ -22,19 +25,17 @@ pub fn new_run_id() -> String {
     new_prefixed_id("r")
 }
 
-pub fn sanitize_agent_id(id: &str) -> String {
-    let mut result = String::with_capacity(id.len());
-    for ch in id.trim().chars() {
-        if ch.is_ascii_alphanumeric() {
-            result.push(ch.to_ascii_lowercase());
-        } else if !result.ends_with('_') {
-            result.push('_');
-        }
+pub fn validate_agent_id(id: &str) -> Result<()> {
+    if id.is_empty() {
+        return Err(ErrorCode::invalid_input("agent_id must not be empty"));
     }
-    let trimmed = result.trim_matches('_').to_string();
-    if trimmed.is_empty() {
-        "default".to_string()
-    } else {
-        trimmed
+    if !id
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return Err(ErrorCode::invalid_input(format!(
+            "invalid agent_id '{id}' (only [a-zA-Z0-9_-] allowed)"
+        )));
     }
+    Ok(())
 }

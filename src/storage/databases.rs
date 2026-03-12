@@ -1,6 +1,6 @@
 //! Unified access to all agent databases.
 
-use crate::base::sanitize_agent_id;
+use crate::base::validate_agent_id;
 use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::storage::pool::Pool;
@@ -79,14 +79,14 @@ impl AgentDatabases {
     }
 
     /// Database name for a given agent ID.
-    pub fn agent_database_name(&self, agent_id: &str) -> String {
-        let sanitized = sanitize_agent_id(agent_id);
-        format!("{}{sanitized}", self.prefix)
+    pub fn agent_database_name(&self, agent_id: &str) -> Result<String> {
+        validate_agent_id(agent_id)?;
+        Ok(format!("{}{agent_id}", self.prefix))
     }
 
     /// Pool scoped to a specific agent's database.
     pub fn agent_pool(&self, agent_id: &str) -> Result<Pool> {
-        let db_name = self.agent_database_name(agent_id);
+        let db_name = self.agent_database_name(agent_id)?;
         self.pool.with_database(&db_name)
     }
 }

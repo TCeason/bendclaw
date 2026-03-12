@@ -21,7 +21,7 @@ pub use crate::base::new_id;
 pub use crate::base::new_os_id;
 pub use crate::base::new_run_id;
 pub use crate::base::new_session_id;
-pub use crate::base::sanitize_agent_id;
+pub use crate::base::validate_agent_id;
 pub use crate::base::Content;
 pub use crate::base::ErrorCode;
 pub use crate::base::ErrorSource;
