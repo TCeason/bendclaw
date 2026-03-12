@@ -113,7 +113,10 @@ impl ToolId {
         ToolId::LearningWrite,
         ToolId::KnowledgeSearch,
         ToolId::LearningSearch,
-        // Cluster
+    ];
+
+    /// Cluster tools, registered conditionally when cluster config is present.
+    pub const CLUSTER: &[ToolId] = &[
         ToolId::ClusterNodes,
         ToolId::ClusterDispatch,
         ToolId::ClusterCollect,
