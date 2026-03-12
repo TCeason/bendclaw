@@ -257,11 +257,24 @@ pub fn api_router(state: AppState, _log_level: &str, auth: &AuthConfig) -> Route
         )
         .route(
             "/v1/agents/{agent_id}/learnings/{learning_id}",
-            delete(v1::learnings::delete_learning),
+            get(v1::learnings::get_learning).delete(v1::learnings::delete_learning),
         )
         .route(
             "/v1/agents/{agent_id}/learnings/search",
             post(v1::learnings::search_learnings),
+        )
+        // Knowledge
+        .route(
+            "/v1/agents/{agent_id}/knowledge",
+            get(v1::knowledge::list_knowledge).post(v1::knowledge::create_knowledge),
+        )
+        .route(
+            "/v1/agents/{agent_id}/knowledge/{knowledge_id}",
+            get(v1::knowledge::get_knowledge).delete(v1::knowledge::delete_knowledge),
+        )
+        .route(
+            "/v1/agents/{agent_id}/knowledge/search",
+            post(v1::knowledge::search_knowledge),
         )
         // Traces
         .route("/v1/agents/{agent_id}/traces", get(v1::traces::list_traces))

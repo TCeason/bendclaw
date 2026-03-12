@@ -52,6 +52,7 @@ fn tool_id_as_str() {
     assert_eq!(ToolId::FileEdit.as_str(), "file_edit");
     assert_eq!(ToolId::Shell.as_str(), "shell");
     assert_eq!(ToolId::Databend.as_str(), "databend");
+    assert_eq!(ToolId::LearningWrite.as_str(), "learning_write");
 }
 
 #[test]

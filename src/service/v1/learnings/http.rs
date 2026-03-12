@@ -16,32 +16,43 @@ use crate::storage::LearningRecord;
 #[derive(Serialize)]
 pub struct LearningResponse {
     pub id: String,
-    pub agent_id: String,
-    pub user_id: String,
-    pub session_id: String,
+    pub kind: String,
+    pub subject: String,
     pub title: String,
     pub content: String,
-    pub tags: Vec<String>,
-    pub source: String,
+    pub conditions: Option<serde_json::Value>,
+    pub strategy: Option<serde_json::Value>,
+    pub priority: i32,
+    pub confidence: f64,
+    pub status: String,
+    pub supersedes_id: String,
+    pub user_id: String,
+    pub source_run_id: String,
+    pub success_count: i32,
+    pub failure_count: i32,
+    pub last_applied_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
 
 fn to_response(r: LearningRecord) -> LearningResponse {
-    let tags = if r.tags.is_empty() {
-        Vec::new()
-    } else {
-        r.tags.split(',').map(|s| s.trim().to_string()).collect()
-    };
     LearningResponse {
         id: r.id,
-        agent_id: r.agent_id,
-        user_id: r.user_id,
-        session_id: r.session_id,
+        kind: r.kind,
+        subject: r.subject,
         title: r.title,
         content: r.content,
-        tags,
-        source: r.source,
+        conditions: r.conditions,
+        strategy: r.strategy,
+        priority: r.priority,
+        confidence: r.confidence,
+        status: r.status,
+        supersedes_id: r.supersedes_id,
+        user_id: r.user_id,
+        source_run_id: r.source_run_id,
+        success_count: r.success_count,
+        failure_count: r.failure_count,
+        last_applied_at: r.last_applied_at,
         created_at: r.created_at,
         updated_at: r.updated_at,
     }
@@ -49,18 +60,22 @@ fn to_response(r: LearningRecord) -> LearningResponse {
 
 #[derive(Deserialize)]
 pub struct CreateLearningRequest {
-    pub title: String,
+    pub kind: String,
     pub content: String,
     #[serde(default)]
-    pub tags: Vec<String>,
+    pub subject: Option<String>,
     #[serde(default)]
-    pub session_id: String,
-    #[serde(default = "default_source")]
-    pub source: String,
-}
-
-fn default_source() -> String {
-    "manual".to_string()
+    pub title: Option<String>,
+    #[serde(default)]
+    pub conditions: Option<serde_json::Value>,
+    #[serde(default)]
+    pub strategy: Option<serde_json::Value>,
+    #[serde(default)]
+    pub priority: Option<i32>,
+    #[serde(default)]
+    pub confidence: Option<f64>,
+    #[serde(default)]
+    pub supersedes_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -91,6 +106,15 @@ pub async fn list_learnings(
         &q,
         total,
     )))
+}
+
+pub async fn get_learning(
+    State(state): State<AppState>,
+    _ctx: RequestContext,
+    Path((agent_id, learning_id)): Path<(String, String)>,
+) -> Result<Json<LearningResponse>> {
+    let record = service::get_learning(&state, &agent_id, &learning_id).await?;
+    Ok(Json(to_response(record)))
 }
 
 pub async fn search_learnings(

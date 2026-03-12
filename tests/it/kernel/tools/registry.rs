@@ -23,6 +23,7 @@ fn make_registry() -> ToolRegistry {
         pool.clone(),
         llm,
     ));
+    let recall_store = Arc::new(bendclaw::kernel::recall::RecallStore::new(pool.clone()));
     let channels = Arc::new(bendclaw::kernel::channel::registry::ChannelRegistry::new());
     create_session_tools(
         storage,
@@ -31,6 +32,7 @@ fn make_registry() -> ToolRegistry {
         pool,
         channels,
         "test_instance".to_string(),
+        recall_store,
     )
 }
 

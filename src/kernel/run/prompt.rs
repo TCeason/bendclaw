@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
+use crate::kernel::recall::RecallStore;
 use crate::kernel::skills::store::SkillStore;
 use crate::llm::tool::ToolSchema;
 use crate::storage::dal::learning::LearningRecord;
@@ -21,6 +22,7 @@ pub const MAX_SYSTEM_BYTES: usize = 65_536;
 pub const MAX_SKILLS_BYTES: usize = 32_768;
 pub const MAX_TOOLS_BYTES: usize = 32_768;
 pub const MAX_LEARNINGS_BYTES: usize = 32_768;
+pub const MAX_RECALL_BYTES: usize = 32_768;
 pub const MAX_ERRORS_BYTES: usize = 8_192;
 pub const MAX_VARIABLES_BYTES: usize = 16_384;
 pub const MAX_RUNTIME_BYTES: usize = 4_096;
@@ -77,6 +79,7 @@ pub struct PromptBuilder {
     recent_errors: Option<String>,
     tools: Option<Arc<Vec<ToolSchema>>>,
     variables: Option<Vec<VariableRecord>>,
+    recall: Option<Arc<RecallStore>>,
 }
 
 impl PromptBuilder {
@@ -91,6 +94,7 @@ impl PromptBuilder {
             recent_errors: None,
             tools: None,
             variables: None,
+            recall: None,
         }
     }
 
@@ -143,6 +147,11 @@ impl PromptBuilder {
         if !vars.is_empty() {
             self.variables = Some(vars);
         }
+        self
+    }
+
+    pub fn with_recall(mut self, store: Arc<RecallStore>) -> Self {
+        self.recall = Some(store);
         self
     }
 
@@ -240,9 +249,9 @@ impl PromptBuilder {
         tracing::debug!("prompt step 5/9: loading tools layer");
         self.append_tools(&mut prompt);
 
-        // 6. Learnings
+        // 6. Learnings / Recall Hints
         tracing::debug!("prompt step 6/9: loading learnings layer");
-        self.append_learnings(&mut prompt, agent_id).await;
+        self.append_recall_hints(&mut prompt, agent_id).await;
 
         // 7. Variables
         tracing::debug!("prompt step 7/9: loading variables layer");
@@ -332,53 +341,98 @@ impl PromptBuilder {
         }
         buf.push_str(
             "\nCall tools when they would help accomplish the task.\
-             \nAlways search memory before claiming you don't know something.\n\n",
+             \nUse memory_write for user or session preferences.\
+             \nUse learning_write for reusable agent-level lessons.\
+             \nSearch memory, knowledge, or learning when prior context may help.\n\n",
         );
 
         let buf = truncate_layer("tools", &buf, MAX_TOOLS_BYTES, "registry");
         prompt.push_str(&buf);
     }
 
-    async fn append_learnings(&self, prompt: &mut String, agent_id: &str) {
-        let (text, src) = if let Some(ref s) = self.learnings {
+    async fn append_recall_hints(&self, prompt: &mut String, agent_id: &str) {
+        // If text was injected directly, use it (backwards compat for tests)
+        if let Some(ref s) = self.learnings {
             tracing::debug!(size = s.len(), "learnings: using injected text");
-            (s.clone(), "injected")
-        } else {
-            tracing::debug!(agent_id, limit = LEARNINGS_LIMIT, "learnings: querying db");
-            match self
-                .storage
-                .learning_list_by_agent(agent_id, LEARNINGS_LIMIT)
-                .await
-            {
+            if !s.is_empty() {
+                let mut buf = String::from("## Learnings\n\n");
+                buf.push_str(s);
+                buf.push_str("\n\n");
+                let buf = truncate_layer("learnings", &buf, MAX_LEARNINGS_BYTES, "injected");
+                prompt.push_str(&buf);
+            }
+            return;
+        }
+
+        // If a RecallStore is available, build recall hints from it
+        if let Some(ref recall) = self.recall {
+            let mut buf = String::new();
+
+            // Agent learnings (all kinds, limit 10, high-confidence only)
+            match recall.learnings().list(10).await {
                 Ok(records) if !records.is_empty() => {
-                    tracing::debug!(count = records.len(), "learnings: loaded from db");
-                    for (i, r) in records.iter().enumerate() {
-                        tracing::debug!(
-                            index = i,
-                            title = %r.title,
-                            content = %r.content,
-                            "learnings: record"
-                        );
+                    let filtered: Vec<_> = records
+                        .iter()
+                        .filter(|r| r.confidence >= 0.7 && r.status == "active")
+                        .collect();
+                    if !filtered.is_empty() {
+                        buf.push_str("### Learnings\n\n");
+                        for r in &filtered {
+                            let _ = writeln!(buf, "- [{}] **{}**: {}", r.kind, r.title, r.content);
+                        }
+                        buf.push('\n');
                     }
-                    (format_learnings(&records), "db")
                 }
-                Ok(_) => {
-                    tracing::debug!("learnings: no records found — skipped");
-                    return;
+                Err(e) => tracing::warn!(error = %e, "recall: learnings query failed, skipping"),
+                _ => {}
+            }
+
+            // Active knowledge entries (limit 5, high-confidence only, metadata-only summaries)
+            match recall.knowledge().list_active(5).await {
+                Ok(records) if !records.is_empty() => {
+                    let filtered: Vec<_> = records.iter().filter(|r| r.confidence >= 0.7).collect();
+                    if !filtered.is_empty() {
+                        buf.push_str("### Known Context\n\n");
+                        for r in &filtered {
+                            let _ = writeln!(buf, "- [{}] {} ({})", r.kind, r.title, r.locator);
+                        }
+                        buf.push('\n');
+                    }
                 }
-                Err(e) => {
-                    tracing::debug!(error = %e, "learnings: db query failed — skipped");
-                    return;
+                Err(e) => tracing::warn!(error = %e, "recall: knowledge query failed, skipping"),
+                _ => {}
+            }
+
+            if !buf.is_empty() {
+                let mut section = String::from("## Recall Hints\n\n");
+                section.push_str(&buf);
+                let section =
+                    truncate_layer("recall_hints", &section, MAX_RECALL_BYTES, "recall_store");
+                prompt.push_str(&section);
+            }
+            return;
+        }
+
+        // Fallback: load old-style learnings from DB
+        tracing::debug!(agent_id, limit = LEARNINGS_LIMIT, "learnings: querying db");
+        match self.storage.learning_list(LEARNINGS_LIMIT).await {
+            Ok(records) if !records.is_empty() => {
+                tracing::debug!(count = records.len(), "learnings: loaded from db");
+                let text = format_learnings(&records);
+                if !text.is_empty() {
+                    let mut buf = String::from("## Learnings\n\n");
+                    buf.push_str(&text);
+                    buf.push_str("\n\n");
+                    let buf = truncate_layer("learnings", &buf, MAX_LEARNINGS_BYTES, "db");
+                    prompt.push_str(&buf);
                 }
             }
-        };
-
-        if !text.is_empty() {
-            let mut buf = String::from("## Learnings\n\n");
-            buf.push_str(&text);
-            buf.push_str("\n\n");
-            let buf = truncate_layer("learnings", &buf, MAX_LEARNINGS_BYTES, src);
-            prompt.push_str(&buf);
+            Ok(_) => {
+                tracing::debug!("learnings: no records found — skipped");
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "learnings: db query failed — skipped");
+            }
         }
     }
 

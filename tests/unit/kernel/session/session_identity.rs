@@ -39,6 +39,7 @@ async fn session_belongs_to_matches_exact_agent_and_user() -> Result<()> {
         llm: Arc::new(RwLock::new(llm)),
         config: Arc::new(AgentConfig::default()),
         variables: vec![],
+        recall: None,
     });
 
     assert!(session.belongs_to("a1", "u1"));

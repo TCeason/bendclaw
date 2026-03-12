@@ -246,6 +246,7 @@ fn op_type_display_all_variants() {
     assert_eq!(OpType::SkillRun.to_string(), "SKILL_RUN");
     assert_eq!(OpType::Compaction.to_string(), "COMPACTION");
     assert_eq!(OpType::Checkpoint.to_string(), "CHECKPOINT");
+    assert_eq!(OpType::LearningWrite.to_string(), "LEARNING_WRITE");
     assert_eq!(OpType::Databend.to_string(), "DATABEND");
     assert_eq!(OpType::TaskWrite.to_string(), "TASK_WRITE");
     assert_eq!(OpType::TaskRead.to_string(), "TASK_READ");

@@ -133,6 +133,7 @@ fn op_type_display() {
     assert_eq!(format!("{}", OpType::Compaction), "COMPACTION");
     assert_eq!(format!("{}", OpType::Checkpoint), "CHECKPOINT");
     assert_eq!(format!("{}", OpType::Databend), "DATABEND");
+    assert_eq!(format!("{}", OpType::LearningWrite), "LEARNING_WRITE");
 }
 
 #[test]
@@ -152,6 +153,7 @@ fn op_type_serde_roundtrip() -> Result<()> {
         OpType::Compaction,
         OpType::Checkpoint,
         OpType::Databend,
+        OpType::LearningWrite,
     ] {
         let json = serde_json::to_string(&op)?;
         let back: OpType = serde_json::from_str(&json)?;

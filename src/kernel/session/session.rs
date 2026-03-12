@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
+use crate::kernel::recall::RecallStore;
 use crate::kernel::run::compactor::Compactor;
 use crate::kernel::run::context::Context;
 use crate::kernel::run::dispatcher::ToolDispatcher;
@@ -61,6 +62,7 @@ pub struct SessionResources {
     pub llm: Arc<RwLock<Arc<dyn LLMProvider>>>,
     pub config: Arc<AgentConfig>,
     pub variables: Vec<crate::storage::dal::variable::record::VariableRecord>,
+    pub recall: Option<Arc<RecallStore>>,
 }
 
 pub struct Session {
@@ -151,11 +153,15 @@ impl Session {
                 .detail("input", user_message),
         );
 
-        let full_prompt = PromptBuilder::new(self.res.storage.clone(), self.res.skills.clone())
-            .with_tools(self.res.tools.clone())
-            .with_variables(self.res.variables.clone())
-            .build(&self.agent_id, &self.user_id, &self.id)
-            .await?;
+        let full_prompt = {
+            let mut pb = PromptBuilder::new(self.res.storage.clone(), self.res.skills.clone())
+                .with_tools(self.res.tools.clone())
+                .with_variables(self.res.variables.clone());
+            if let Some(ref recall) = self.res.recall {
+                pb = pb.with_recall(recall.clone());
+            }
+            pb.build(&self.agent_id, &self.user_id, &self.id).await?
+        };
 
         server_log::info(
             &run_ctx,
@@ -232,6 +238,7 @@ impl Session {
                 run_id,
                 self.user_id.clone(),
                 start,
+                self.res.recall.clone(),
             ),
             USAGE_PROVIDER_UNKNOWN.to_string(),
             usage_model,

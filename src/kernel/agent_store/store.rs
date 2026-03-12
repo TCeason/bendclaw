@@ -234,13 +234,9 @@ impl AgentStore {
 
     // ── Learnings ──────────────────────────────────────────────────────────
 
-    pub async fn learning_list_by_agent(
-        &self,
-        agent_id: &str,
-        limit: u32,
-    ) -> Result<Vec<LearningRecord>> {
+    pub async fn learning_list(&self, limit: u32) -> Result<Vec<LearningRecord>> {
         let repo = LearningRepo::new(self.pool.clone());
-        repo.list_by_agent(agent_id, limit).await
+        repo.list(limit).await
     }
 
     pub async fn learning_insert(&self, record: &LearningRecord) -> Result<()> {

@@ -1,3 +1,5 @@
+mod knowledge;
+mod learning;
 mod records;
 mod run_event_repo;
 mod run_repo;

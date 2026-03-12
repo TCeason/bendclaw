@@ -43,6 +43,9 @@ pub enum OpType {
     TaskRead,
     WebSearch,
     WebFetch,
+    LearningWrite,
+    KnowledgeSearch,
+    LearningSearch,
 }
 
 impl fmt::Display for OpType {
@@ -67,6 +70,9 @@ impl fmt::Display for OpType {
             Self::TaskRead => write!(f, "TASK_READ"),
             Self::WebSearch => write!(f, "WEB_SEARCH"),
             Self::WebFetch => write!(f, "WEB_FETCH"),
+            Self::LearningWrite => write!(f, "LEARNING_WRITE"),
+            Self::KnowledgeSearch => write!(f, "KNOWLEDGE_SEARCH"),
+            Self::LearningSearch => write!(f, "LEARNING_SEARCH"),
         }
     }
 }

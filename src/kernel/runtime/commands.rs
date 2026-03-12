@@ -66,10 +66,9 @@ impl Runtime {
         let payload = serde_json::json!({
             "learning_id": record.id.clone(),
             "user_id": record.user_id.clone(),
-            "session_id": record.session_id.clone(),
+            "kind": record.kind.clone(),
+            "subject": record.subject.clone(),
             "title": record.title.clone(),
-            "tags": record.tags.clone(),
-            "source": record.source.clone(),
             "content": record.content.clone(),
         });
         log_runtime_info("create_learning", "started", agent_id, 0, payload.clone());

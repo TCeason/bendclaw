@@ -6,6 +6,7 @@ use std::time::Instant;
 use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
+use crate::kernel::recall::RecallStore;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::result::Reason;
 use crate::kernel::run::result::Result as AgentResult;
@@ -27,6 +28,7 @@ pub struct TurnPersister {
     run_id: String,
     user_id: Arc<str>,
     start: Instant,
+    recall: Option<Arc<RecallStore>>,
 }
 
 impl TurnPersister {
@@ -38,6 +40,7 @@ impl TurnPersister {
         run_id: impl Into<String>,
         user_id: Arc<str>,
         start: Instant,
+        recall: Option<Arc<RecallStore>>,
     ) -> Self {
         Self {
             storage,
@@ -47,6 +50,7 @@ impl TurnPersister {
             run_id: run_id.into(),
             user_id,
             start,
+            recall,
         }
     }
 
@@ -186,6 +190,21 @@ impl TurnPersister {
                 .detail("response", response_text.clone())
                 .detail("error", error.clone()),
         );
+
+        // Fire-and-forget recall extraction from tool events
+        if let Some(recall) = &self.recall {
+            let recall = recall.clone();
+            let run_id = self.run_id.clone();
+            let user_id = self.user_id.to_string();
+            let events = events.to_vec();
+            tokio::spawn(async move {
+                crate::kernel::recall::post_run::process_run_events(
+                    &recall, &run_id, &user_id, &events,
+                )
+                .await;
+            });
+        }
+
         Ok(response_text)
     }
 

@@ -76,9 +76,7 @@ impl MockLLMProvider {
     /// ]}
     /// ```
     pub fn from_fixture(name: &str) -> anyhow::Result<Self> {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests/fixtures/llm_traces")
-            .join(format!("{name}.json"));
+        let path = fixture_path(name)?;
         let raw = std::fs::read_to_string(&path)
             .with_context(|| format!("fixture {name}.json not found at {}", path.display()))?;
         let doc: serde_json::Value = serde_json::from_str(&raw)
@@ -103,6 +101,29 @@ impl MockLLMProvider {
                 .unwrap_or(MockTurn::Text(String::new()))
         }
     }
+}
+
+fn fixture_path(name: &str) -> anyhow::Result<std::path::PathBuf> {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let candidates = [
+        manifest_dir.join("tests/fixtures/llm_traces"),
+        manifest_dir.join("../../tests/fixtures/llm_traces"),
+    ];
+
+    candidates
+        .iter()
+        .map(|dir| dir.join(format!("{name}.json")))
+        .find(|path| path.exists())
+        .with_context(|| {
+            format!(
+                "fixture {name}.json not found in candidates: {}",
+                candidates
+                    .iter()
+                    .map(|dir| dir.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
 }
 
 #[async_trait]

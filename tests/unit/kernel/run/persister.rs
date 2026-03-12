@@ -88,6 +88,7 @@ fn make_persister(client: &FakeDatabend) -> TurnPersister {
         "run-1",
         Arc::<str>::from("user-1"),
         Instant::now(),
+        None,
     )
 }
 

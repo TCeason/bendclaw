@@ -8,6 +8,7 @@ pub mod tool;
 pub use builtins::databend;
 pub use builtins::file;
 pub use builtins::memory;
+pub use builtins::recall;
 pub use builtins::shell;
 pub use builtins::skill;
 pub use builtins::task;

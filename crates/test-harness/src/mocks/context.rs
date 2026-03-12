@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use bendclaw::kernel::agent_store::AgentStore;
+use bendclaw::kernel::recall::RecallStore;
 use bendclaw::kernel::runtime::agent_config::AgentConfig;
 use bendclaw::kernel::session::workspace::SandboxResolver;
 use bendclaw::kernel::session::workspace::Workspace;
@@ -71,6 +72,7 @@ pub async fn test_session(llm: Arc<dyn LLMProvider>) -> Result<Session> {
 
     let channels = Arc::new(bendclaw::kernel::channel::registry::ChannelRegistry::new());
     let skill_store_factory = Arc::new(DatabendSkillRepositoryFactory::new(databases));
+    let recall_store = Arc::new(RecallStore::new(pool.clone()));
     let tool_registry = Arc::new(create_session_tools(
         storage.clone(),
         skills.clone(),
@@ -78,6 +80,7 @@ pub async fn test_session(llm: Arc<dyn LLMProvider>) -> Result<Session> {
         pool.clone(),
         channels,
         "test-instance".to_string(),
+        recall_store.clone(),
     ));
 
     let tools = Arc::new(tool_registry.tool_schemas());
@@ -95,6 +98,7 @@ pub async fn test_session(llm: Arc<dyn LLMProvider>) -> Result<Session> {
             llm: Arc::new(RwLock::new(llm)),
             config,
             variables: vec![],
+            recall: Some(recall_store),
         },
     ))
 }

@@ -1,5 +1,6 @@
 pub mod agent_store;
 pub mod channel;
+pub mod recall;
 pub mod run;
 pub mod runtime;
 pub mod scheduler;

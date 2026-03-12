@@ -171,13 +171,21 @@ fn substitute_repeated_placeholder() {
 fn make_learning(title: &str, content: &str) -> LearningRecord {
     LearningRecord {
         id: "1".into(),
-        agent_id: "a".into(),
-        user_id: "".into(),
-        session_id: "".into(),
+        kind: "pattern".into(),
+        subject: "".into(),
         title: title.into(),
         content: content.into(),
-        tags: "".into(),
-        source: "".into(),
+        conditions: None,
+        strategy: None,
+        priority: 0,
+        confidence: 1.0,
+        status: "active".into(),
+        supersedes_id: "".into(),
+        user_id: "".into(),
+        source_run_id: "".into(),
+        success_count: 0,
+        failure_count: 0,
+        last_applied_at: None,
         created_at: "".into(),
         updated_at: "".into(),
     }
@@ -413,17 +421,25 @@ async fn prompt_builder_build_falls_back_to_db_layers() -> Result<()> {
                 None,
             ));
         }
-        if sql.contains("FROM learnings WHERE agent_id = 'agent-1'") {
+        if sql.contains("FROM learnings") && !sql.contains("agent_id") {
             return Ok(paged_rows(
                 &[&[
                     "learn-1",
-                    "agent-1",
-                    "user-1",
-                    "session-1",
+                    "pattern",
+                    "",
                     "SQL",
                     "Use indexes",
                     "",
-                    "manual",
+                    "",
+                    "0",
+                    "1.0",
+                    "active",
+                    "",
+                    "user-1",
+                    "",
+                    "0",
+                    "0",
+                    "",
                     "2026-03-10T00:00:00Z",
                     "2026-03-10T00:00:00Z",
                 ]],

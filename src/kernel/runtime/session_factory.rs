@@ -6,6 +6,7 @@ use parking_lot::RwLock;
 use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
+use crate::kernel::recall::RecallStore;
 use crate::kernel::runtime::Runtime;
 use crate::kernel::session::workspace::OpenResolver;
 use crate::kernel::session::workspace::SandboxResolver;
@@ -68,6 +69,8 @@ impl Runtime {
 
         let storage = Arc::new(AgentStore::new(pool.clone(), self.llm.read().clone()));
 
+        let recall_store = Arc::new(RecallStore::new(pool.clone()));
+
         // Load variables from Variable table (the single source of business env)
         let variable_repo = VariableRepo::new(pool.clone());
         let variable_records = variable_repo
@@ -100,6 +103,7 @@ impl Runtime {
             pool.clone(),
             self.channels.clone(),
             self.config.instance_id.clone(),
+            recall_store.clone(),
         ));
 
         let mut tools = tool_registry.tool_schemas();
@@ -135,6 +139,7 @@ impl Runtime {
                 llm: Arc::new(RwLock::new(self.llm.read().clone())),
                 config: Arc::new(self.config.clone()),
                 variables: variable_records,
+                recall: Some(recall_store),
             },
         ));
 

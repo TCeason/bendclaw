@@ -6,6 +6,7 @@ use super::ToolId;
 use super::ToolSpec;
 use crate::kernel::agent_store::AgentStore;
 use crate::kernel::channel::registry::ChannelRegistry;
+use crate::kernel::recall::RecallStore;
 use crate::kernel::skills::remote::repository::DatabendSkillRepositoryFactory;
 use crate::kernel::skills::store::SkillStore;
 use crate::llm::tool::ToolSchema;
@@ -97,6 +98,7 @@ pub fn create_session_tools(
     databend_pool: crate::storage::Pool,
     channels: Arc<ChannelRegistry>,
     instance_id: String,
+    recall_store: Arc<RecallStore>,
 ) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
 
@@ -199,6 +201,22 @@ pub fn create_session_tools(
     registry.register_builtin(
         ToolId::TaskHistory,
         Arc::new(super::task::TaskHistoryTool::new(instance_id)),
+    );
+
+    // Recall tools
+    registry.register_builtin(
+        ToolId::LearningWrite,
+        Arc::new(super::recall::LearningWriteTool::new(recall_store.clone())),
+    );
+    registry.register_builtin(
+        ToolId::KnowledgeSearch,
+        Arc::new(super::recall::KnowledgeSearchTool::new(
+            recall_store.clone(),
+        )),
+    );
+    registry.register_builtin(
+        ToolId::LearningSearch,
+        Arc::new(super::recall::LearningSearchTool::new(recall_store)),
     );
 
     registry

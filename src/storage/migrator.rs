@@ -13,6 +13,7 @@ const AGENT_MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0008_tasks.sql"),
     include_str!("../../migrations/0009_feedback.sql"),
     include_str!("../../migrations/0010_channels.sql"),
+    include_str!("../../migrations/0011_recall.sql"),
 ];
 
 /// Run all agent migrations against the pool's current database.
@@ -21,19 +22,15 @@ pub async fn run_agent(pool: &Pool) {
 }
 
 /// Run a list of raw SQL migrations against the current database.
-/// All `CREATE TABLE IF NOT EXISTS` statements run concurrently for speed.
+/// All migrations run strictly sequentially to avoid race conditions
+/// (e.g. a DROP in one file racing with a CREATE in another).
 async fn run_statements(pool: &Pool, migrations: &[&str], scope: &str) {
-    let mut tasks = Vec::new();
     for sql in migrations {
         for stmt in sql.split(';').filter(|s| !s.trim().is_empty()) {
-            let pool = pool.clone();
-            let stmt = stmt.trim().to_string();
-            tasks.push(tokio::spawn(async move { pool.exec(&stmt).await }));
-        }
-    }
-    for task in tasks {
-        if let Ok(Err(e)) = task.await {
-            tracing::info!(scope, error = %e, "migration statement skipped (may already exist)");
+            let stmt = stmt.trim();
+            if let Err(e) = pool.exec(stmt).await {
+                tracing::info!(scope, error = %e, "migration statement skipped (may already exist)");
+            }
         }
     }
     tracing::info!(scope, count = migrations.len(), "migrations completed");
