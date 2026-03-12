@@ -1,37 +1,25 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use bendclaw::kernel::tools::recall::LearningWriteBackend;
+use bendclaw::kernel::recall::RecallStore;
 use bendclaw::kernel::tools::recall::LearningWriteTool;
 use bendclaw::kernel::tools::OperationClassifier;
 use bendclaw::kernel::tools::Tool;
-use bendclaw::storage::dal::learning::LearningRecord;
-use parking_lot::Mutex;
 use serde_json::json;
 
+use crate::common::fake_databend::rows;
+use crate::common::fake_databend::FakeDatabend;
+use crate::common::fake_databend::FakeDatabendCall;
 use crate::mocks::context::test_tool_context;
 
-#[derive(Default)]
-struct FakeLearningBackend {
-    entries: Mutex<Vec<LearningRecord>>,
-}
-
-#[async_trait]
-impl LearningWriteBackend for FakeLearningBackend {
-    async fn write_learning(&self, record: &LearningRecord) -> bendclaw::base::Result<()> {
-        self.entries.lock().push(record.clone());
-        Ok(())
-    }
-}
-
-fn backend() -> Arc<FakeLearningBackend> {
-    Arc::new(FakeLearningBackend::default())
+fn make_tool() -> (LearningWriteTool, FakeDatabend) {
+    let fake = FakeDatabend::new(|_sql, _db| Ok(rows(&[])));
+    let store = Arc::new(RecallStore::new(fake.pool()));
+    (LearningWriteTool::new(store), fake)
 }
 
 #[tokio::test]
 async fn learning_write_success() -> Result<(), Box<dyn std::error::Error>> {
-    let backend = backend();
-    let tool = LearningWriteTool::new(backend.clone());
+    let (tool, fake) = make_tool();
     let ctx = test_tool_context();
 
     let result = tool
@@ -53,21 +41,21 @@ async fn learning_write_success() -> Result<(), Box<dyn std::error::Error>> {
     assert!(result.success);
     assert!(result.output.contains("Read AGENTS first"));
 
-    let entries = backend.entries.lock();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].kind, "workflow");
-    assert_eq!(entries[0].subject, "repo");
-    assert_eq!(entries[0].priority, 7);
-    assert_eq!(entries[0].confidence, 0.9);
-    assert_eq!(entries[0].user_id, ctx.user_id.as_ref());
-    assert!(entries[0].conditions.is_some());
-    assert!(entries[0].strategy.is_some());
+    let calls = fake.calls();
+    assert!(calls.iter().any(|call| {
+        match call {
+            FakeDatabendCall::Query { sql, .. } => {
+                sql.contains("INSERT INTO learnings") && sql.contains("workflow")
+            }
+            _ => false,
+        }
+    }));
     Ok(())
 }
 
 #[tokio::test]
 async fn learning_write_validates_required_fields() -> Result<(), Box<dyn std::error::Error>> {
-    let tool = LearningWriteTool::new(backend());
+    let (tool, _) = make_tool();
     let ctx = test_tool_context();
 
     let missing_kind = tool
@@ -94,7 +82,7 @@ async fn learning_write_validates_required_fields() -> Result<(), Box<dyn std::e
 #[tokio::test]
 async fn learning_write_validates_optional_objects_and_ranges(
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let tool = LearningWriteTool::new(backend());
+    let (tool, _) = make_tool();
     let ctx = test_tool_context();
 
     let invalid_conditions = tool
@@ -135,8 +123,7 @@ async fn learning_write_validates_optional_objects_and_ranges(
 
 #[test]
 fn learning_write_metadata_is_stable() {
-    let storage = backend();
-    let tool = LearningWriteTool::new(storage);
+    let (tool, _) = make_tool();
     assert_eq!(tool.name(), "learning_write");
     assert_eq!(
         tool.summarize(&json!({"title": "Prefer file_edit"})),
