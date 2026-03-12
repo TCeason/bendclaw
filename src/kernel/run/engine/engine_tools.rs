@@ -268,14 +268,6 @@ impl Engine {
         }
     }
 
-    pub(super) fn abort_tool_results(&mut self, tool_calls: &[ToolCall]) {
-        for tc in tool_calls {
-            self.ctx
-                .messages
-                .push(Message::tool_result(&tc.id, &tc.name, "aborted", false));
-        }
-    }
-
     pub(super) async fn try_compact(&mut self, state: &mut RunLoopState) {
         let memory_tools = self
             .dispatcher

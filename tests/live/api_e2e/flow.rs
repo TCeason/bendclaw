@@ -126,7 +126,7 @@ async fn create_skill(
 }
 
 #[tokio::test]
-async fn e2e_tool_call_persists_full_message_chain() -> Result<()> {
+async fn e2e_tool_call_persists_events_and_structured_payloads() -> Result<()> {
     let ctx = TestContext::setup().await?;
     let app = ctx
         .app_with_llm(Arc::new(MockLLMProvider::from_fixture("tool_call_single")?))
@@ -148,6 +148,24 @@ async fn e2e_tool_call_persists_full_message_chain() -> Result<()> {
     let events = detail["events"].as_array().context("missing run events")?;
     assert_event_present(events, "ToolStart")?;
     assert_event_present(events, "ToolEnd")?;
+    assert!(
+        events.iter().any(|e| {
+            e["event"] == "ToolStart"
+                && e["payload"]["type"] == "ToolStart"
+                && e["payload"]["data"]["tool_call_id"].is_string()
+                && e["payload"]["data"]["arguments"].is_object()
+        }),
+        "missing structured ToolStart event"
+    );
+    assert!(
+        events.iter().any(|e| {
+            e["event"] == "ToolEnd"
+                && e["payload"]["type"] == "ToolEnd"
+                && e["payload"]["data"]["tool_call_id"].is_string()
+                && e["payload"]["data"]["success"].is_boolean()
+        }),
+        "missing structured ToolEnd event"
+    );
     Ok(())
 }
 
@@ -204,45 +222,6 @@ async fn e2e_parallel_tool_calls_all_persisted() -> Result<()> {
 
     assert_tool_call_count(events, 2)?;
     assert_eq!(events.iter().filter(|e| e["event"] == "ToolEnd").count(), 2);
-    Ok(())
-}
-
-#[tokio::test]
-async fn e2e_tool_call_persists_operation_events_with_structured_detail() -> Result<()> {
-    let ctx = TestContext::setup().await?;
-    let app = ctx
-        .app_with_llm(Arc::new(MockLLMProvider::from_fixture("tool_call_single")?))
-        .await?;
-    let agent_id = uid("e2e-op");
-    let user = uid("user");
-    let session_id = uid("session");
-
-    setup_agent(&app, &agent_id, &user).await?;
-    chat(&app, &agent_id, &session_id, &user, "run echo hello").await?;
-
-    let runs = get_runs(&app, &agent_id, &session_id, &user).await?;
-    let run_id = runs[0]["id"].as_str().context("run id missing")?;
-    let detail = get_run_detail(&app, &agent_id, run_id, &user).await?;
-    let events = detail["events"].as_array().context("events missing")?;
-
-    assert!(
-        events.iter().any(|e| {
-            e["event"] == "ToolStart"
-                && e["payload"]["type"] == "ToolStart"
-                && e["payload"]["data"]["tool_call_id"].is_string()
-                && e["payload"]["data"]["arguments"].is_object()
-        }),
-        "missing structured ToolStart event"
-    );
-    assert!(
-        events.iter().any(|e| {
-            e["event"] == "ToolEnd"
-                && e["payload"]["type"] == "ToolEnd"
-                && e["payload"]["data"]["tool_call_id"].is_string()
-                && e["payload"]["data"]["success"].is_boolean()
-        }),
-        "missing structured ToolEnd event"
-    );
     Ok(())
 }
 

@@ -67,10 +67,21 @@ fn usage_scope_variants() {
         agent_id: "a1".into(),
         day: "2026-01-01".into(),
     };
-    // Just verify they construct without panic
-    let _ = format!("{:?}", user);
-    let _ = format!("{:?}", total);
-    let _ = format!("{:?}", daily);
+    match user {
+        UsageScope::User { user_id } => assert_eq!(user_id, "u1"),
+        _ => panic!("expected user scope"),
+    }
+    match total {
+        UsageScope::AgentTotal { agent_id } => assert_eq!(agent_id, "a1"),
+        _ => panic!("expected agent total scope"),
+    }
+    match daily {
+        UsageScope::AgentDaily { agent_id, day } => {
+            assert_eq!(agent_id, "a1");
+            assert_eq!(day, "2026-01-01");
+        }
+        _ => panic!("expected agent daily scope"),
+    }
 }
 
 // ── ModelRole ──

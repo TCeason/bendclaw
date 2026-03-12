@@ -1,14 +1,17 @@
+pub mod compaction_rules;
 pub mod compactor;
 pub(crate) mod context;
 pub mod dispatcher;
 pub(crate) mod engine;
 pub mod event;
 pub mod fmt;
-pub(crate) mod persister;
+pub mod orchestration;
+pub mod persister;
 pub mod prompt;
 pub mod result;
 pub mod run_loop;
 pub(crate) mod run_record;
+pub mod transition;
 pub mod usage;
 
 pub use event::Delta;

@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
+use crate::kernel::run::compaction_rules::plan_compaction_split;
+use crate::kernel::run::compaction_rules::should_checkpoint;
 use crate::kernel::run::result::Usage;
 use crate::kernel::runtime::agent_config::CheckpointConfig;
 use crate::kernel::Message;
@@ -16,12 +18,6 @@ use crate::llm::usage::TokenUsage;
 
 /// Maximum characters per chunk for staged summarization (~2K tokens).
 const CHUNK_SIZE: usize = 8_000;
-
-/// Post-compaction target: keep at most this many tokens after compaction.
-const POST_COMPACTION_TARGET: usize = 40_000;
-
-/// Reserve space for the compaction summary itself.
-const SUMMARY_RESERVE: usize = 4_000;
 
 /// Metadata returned when compaction occurs.
 pub struct CompactionResult {
@@ -85,7 +81,14 @@ impl Compactor {
         let total_tokens: usize = msg_tokens.iter().sum();
 
         // 1. Checkpoint at 80% capacity
-        let checkpoint_usage = if total_tokens > max_context_tokens * 4 / 5 {
+        let checkpoint_usage = if should_checkpoint(
+            self.checkpoint.enabled,
+            self.checkpoint_done,
+            !memory_tools.is_empty(),
+            total_tokens,
+            max_context_tokens,
+            self.checkpoint.threshold,
+        ) {
             self.maybe_checkpoint(total_tokens, max_context_tokens, messages, memory_tools)
                 .await
         } else {
@@ -129,38 +132,10 @@ impl Compactor {
         tracing::info!(total_tokens, max_context_tokens, "compaction triggered");
 
         // 4. Find split point: keep tail messages within budget
-        let keep_budget = POST_COMPACTION_TARGET
-            .saturating_sub(SUMMARY_RESERVE)
-            .min(max_context_tokens.saturating_sub(SUMMARY_RESERVE));
-        let mut kept_tokens = 0;
-        let mut split = messages.len();
-
-        for i in (0..messages.len()).rev() {
-            // Skip system/compaction messages — they're always kept separately
-            if matches!(
-                messages[i],
-                Message::System { .. } | Message::CompactionSummary { .. }
-            ) {
-                continue;
-            }
-            if kept_tokens + msg_tokens[i] > keep_budget {
-                break;
-            }
-            kept_tokens += msg_tokens[i];
-            split = i;
-            // Don't split before a ToolResult (keep tool_use/tool_result paired)
-            if split > 0 && matches!(messages[split], Message::ToolResult { .. }) {
-                // Include the preceding assistant message too
-                if split > 0 {
-                    split -= 1;
-                    kept_tokens += msg_tokens[split];
-                }
-            }
-        }
-
-        if split == 0 {
+        let Some(plan) = plan_compaction_split(messages, &msg_tokens, max_context_tokens) else {
             return None;
-        }
+        };
+        let split = plan.split_index;
 
         // 5. Partition: system messages kept, non-system split into dropped/kept
         let (system, non_system): (Vec<Message>, Vec<Message>) =
@@ -209,7 +184,7 @@ impl Compactor {
                     messages_before,
                     messages_before - non_system_split,
                     total_tokens,
-                    kept_tokens + SUMMARY_RESERVE,
+                    plan.kept_tokens + crate::kernel::run::compaction_rules::SUMMARY_RESERVE,
                 ))
                 .finish();
             compacted.push(Message::compaction_with_operation(text, meta));
@@ -252,8 +227,14 @@ impl Compactor {
             return None;
         }
 
-        // Checkpoint at 80% of token budget
-        if total_tokens < max_context_tokens * 4 / 5 {
+        if !should_checkpoint(
+            self.checkpoint.enabled,
+            self.checkpoint_done,
+            !memory_tools.is_empty(),
+            total_tokens,
+            max_context_tokens,
+            self.checkpoint.threshold,
+        ) {
             return None;
         }
 

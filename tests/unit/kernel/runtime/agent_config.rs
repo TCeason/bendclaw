@@ -30,7 +30,7 @@ fn agent_config_serde() -> Result<(), Box<dyn std::error::Error>> {
 fn checkpoint_config_defaults() {
     let config = CheckpointConfig::default();
     assert!(config.enabled);
-    assert_eq!(config.threshold, 5);
+    assert_eq!(config.threshold, 20);
     assert!(!config.prompt.is_empty());
     assert!(config.prompt.contains("Checkpoint"));
 }
@@ -55,7 +55,7 @@ fn checkpoint_config_deserialize_with_defaults() -> Result<(), Box<dyn std::erro
     let json = "{}";
     let config: CheckpointConfig = serde_json::from_str(json)?;
     assert!(config.enabled);
-    assert_eq!(config.threshold, 5);
+    assert_eq!(config.threshold, 20);
     assert!(config.prompt.contains("Checkpoint"));
     Ok(())
 }
@@ -65,6 +65,6 @@ fn checkpoint_config_partial_deserialize() -> Result<(), Box<dyn std::error::Err
     let json = r#"{"enabled": false}"#;
     let config: CheckpointConfig = serde_json::from_str(json)?;
     assert!(!config.enabled);
-    assert_eq!(config.threshold, 5);
+    assert_eq!(config.threshold, 20);
     Ok(())
 }

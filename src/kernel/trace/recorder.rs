@@ -11,7 +11,7 @@ use crate::storage::dal::trace::repo::SpanRepo;
 use crate::storage::dal::trace::repo::TraceRepo;
 
 #[derive(Clone)]
-pub(crate) struct TraceRecorder {
+pub struct TraceRecorder {
     trace_repo: Arc<TraceRepo>,
     span_repo: Arc<SpanRepo>,
     pub trace_id: String,

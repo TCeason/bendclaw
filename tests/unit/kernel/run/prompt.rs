@@ -1,11 +1,17 @@
 //! Tests for prompt construction helpers: truncate_layer, substitute_template,
 //! format_learnings, and layer size constants.
 
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use anyhow::Context as _;
 use anyhow::Result;
+use async_trait::async_trait;
+use bendclaw::kernel::agent_store::AgentStore;
 use bendclaw::kernel::run::prompt::format_learnings;
 use bendclaw::kernel::run::prompt::substitute_template;
 use bendclaw::kernel::run::prompt::truncate_layer;
+use bendclaw::kernel::run::prompt::PromptBuilder;
 use bendclaw::kernel::run::prompt::MAX_ERRORS_BYTES;
 use bendclaw::kernel::run::prompt::MAX_IDENTITY_BYTES;
 use bendclaw::kernel::run::prompt::MAX_LEARNINGS_BYTES;
@@ -15,7 +21,20 @@ use bendclaw::kernel::run::prompt::MAX_SOUL_BYTES;
 use bendclaw::kernel::run::prompt::MAX_SYSTEM_BYTES;
 use bendclaw::kernel::run::prompt::MAX_TOOLS_BYTES;
 use bendclaw::kernel::run::prompt::MAX_VARIABLES_BYTES;
+use bendclaw::kernel::skills::hub::paths::hub_dir;
+use bendclaw::kernel::skills::store::SkillStore;
+use bendclaw::llm::message::ChatMessage;
+use bendclaw::llm::provider::LLMProvider;
+use bendclaw::llm::provider::LLMResponse;
+use bendclaw::llm::stream::ResponseStream;
+use bendclaw::llm::tool::ToolSchema;
 use bendclaw::storage::dal::learning::LearningRecord;
+use bendclaw::storage::AgentDatabases;
+use bendclaw::storage::VariableRecord;
+
+use crate::common::fake_databend::paged_rows;
+use crate::common::fake_databend::FakeDatabend;
+use crate::common::fake_databend::FakeDatabendCall;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // truncate_layer
@@ -164,6 +183,70 @@ fn make_learning(title: &str, content: &str) -> LearningRecord {
     }
 }
 
+struct NoopLLM;
+
+#[async_trait]
+impl LLMProvider for NoopLLM {
+    async fn chat(
+        &self,
+        _model: &str,
+        _messages: &[ChatMessage],
+        _tools: &[ToolSchema],
+        _temperature: f32,
+    ) -> bendclaw::base::Result<LLMResponse> {
+        unreachable!("prompt builder tests do not call chat")
+    }
+
+    fn chat_stream(
+        &self,
+        _model: &str,
+        _messages: &[ChatMessage],
+        _tools: &[ToolSchema],
+        _temperature: f32,
+    ) -> ResponseStream {
+        let (_writer, stream) = ResponseStream::channel(1);
+        stream
+    }
+
+    fn default_model(&self) -> &str {
+        "mock"
+    }
+
+    fn default_temperature(&self) -> f32 {
+        0.0
+    }
+}
+
+fn prompt_test_workspace() -> PathBuf {
+    std::env::temp_dir().join(format!("bendclaw-prompt-{}", ulid::Ulid::new()))
+}
+
+fn make_prompt_builder(
+    query: impl Fn(&str, Option<&str>) -> bendclaw::base::Result<bendclaw::storage::pool::QueryResponse>
+        + Send
+        + Sync
+        + 'static,
+) -> Result<(PromptBuilder, FakeDatabend, PathBuf)> {
+    let fake = FakeDatabend::new(query);
+    let pool = fake.pool();
+    let databases = Arc::new(AgentDatabases::new(pool.clone(), "test_")?);
+    let workspace_root = prompt_test_workspace();
+    std::fs::create_dir_all(&workspace_root)?;
+    let skills = Arc::new(SkillStore::new(databases, workspace_root.clone(), None));
+    let storage = Arc::new(AgentStore::new(pool, Arc::new(NoopLLM)));
+    Ok((PromptBuilder::new(storage, skills), fake, workspace_root))
+}
+
+fn write_hub_skill(workspace_root: &std::path::Path) -> Result<()> {
+    let skill_dir = hub_dir(workspace_root).join("demo-skill");
+    std::fs::create_dir_all(&skill_dir)?;
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: demo-skill\ndescription: Demo skill\n---\nUse this skill carefully.\n",
+    )?;
+    Ok(())
+}
+
 #[test]
 fn format_learnings_empty() {
     let result = format_learnings(&[]);
@@ -193,6 +276,228 @@ fn format_learnings_mixed() {
     let result = format_learnings(&records);
     assert!(result.contains("- **SQL**: Use EXPLAIN\n"));
     assert!(result.contains("- Check logs first\n"));
+}
+
+#[tokio::test]
+async fn prompt_builder_build_uses_injected_layers_in_order_and_substitutes_state() -> Result<()> {
+    let (builder, fake, workspace_root) = make_prompt_builder(|sql, _database| {
+        if sql.contains("FROM sessions WHERE id = 'session-1'") {
+            return Ok(paged_rows(
+                &[&[
+                    "session-1",
+                    "agent-1",
+                    "user-1",
+                    "Prompt Session",
+                    r#"{"name":"Alice"}"#,
+                    "",
+                    "2026-03-10T00:00:00Z",
+                    "2026-03-10T00:00:00Z",
+                ]],
+                None,
+                None,
+            ));
+        }
+        Ok(paged_rows(&[], None, None))
+    })?;
+    write_hub_skill(&workspace_root)?;
+
+    let tools = Arc::new(vec![ToolSchema::new(
+        "shell",
+        "Run shell commands",
+        serde_json::json!({"type": "object"}),
+    )]);
+    let variables = vec![
+        VariableRecord {
+            id: "var-1".into(),
+            key: "PLAIN_KEY".into(),
+            value: "plain-value".into(),
+            secret: false,
+            revoked: false,
+            last_used_at: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        },
+        VariableRecord {
+            id: "var-2".into(),
+            key: "SECRET_KEY".into(),
+            value: "secret-value".into(),
+            secret: true,
+            revoked: false,
+            last_used_at: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        },
+    ];
+
+    let prompt = builder
+        .with_identity("Identity for {name}")
+        .with_soul("Helpful soul")
+        .with_learnings("- learned for {name}\n")
+        .with_recent_errors("- `bad_tool`: failed before\n")
+        .with_tools(tools)
+        .with_variables(variables)
+        .with_runtime("Runtime for {name}")
+        .build("agent-1", "user-1", "session-1")
+        .await?;
+
+    assert!(prompt.contains("Identity for Alice"));
+    assert!(prompt.contains("## Soul\n\nHelpful soul"));
+    assert!(prompt.contains("<skill name=\"demo-skill\">Demo skill</skill>"));
+    assert!(prompt.contains("- `shell`: Run shell commands"));
+    assert!(prompt.contains("## Learnings\n\n- learned for Alice"));
+    assert!(prompt.contains("- `PLAIN_KEY` = `plain-value`"));
+    assert!(prompt.contains("[SECRET] (available as env var `$SECRET_KEY`)"));
+    assert!(prompt.contains("## Recent Errors"));
+    assert!(prompt.contains("- `bad_tool`: failed before"));
+    assert!(prompt.contains("## Runtime\n\nRuntime for Alice"));
+
+    let soul = prompt.find("## Soul").context("missing soul")?;
+    let skills = prompt
+        .find("## Available Skills")
+        .context("missing skills")?;
+    let tools = prompt.find("## Available Tools").context("missing tools")?;
+    let learnings = prompt.find("## Learnings").context("missing learnings")?;
+    let variables = prompt.find("## Variables").context("missing variables")?;
+    let errors = prompt.find("## Recent Errors").context("missing errors")?;
+    let runtime = prompt.find("## Runtime").context("missing runtime")?;
+    assert!(soul < skills && skills < tools && tools < learnings && learnings < variables);
+    assert!(variables < errors && errors < runtime);
+
+    let calls = fake.calls();
+    assert!(calls.iter().any(|call| matches!(call, FakeDatabendCall::Query { sql, .. } if sql.contains("FROM agent_config"))));
+    assert!(calls.iter().any(|call| matches!(call, FakeDatabendCall::Query { sql, .. } if sql.contains("FROM sessions WHERE id = 'session-1'"))));
+    assert!(!calls.iter().any(
+        |call| matches!(call, FakeDatabendCall::Query { sql, .. } if sql.contains("FROM variables"))
+    ));
+    assert!(!calls.iter().any(|call| matches!(call, FakeDatabendCall::Query { sql, .. } if sql.contains("FROM spans WHERE status = 'failed'"))));
+    assert!(!calls.iter().any(
+        |call| matches!(call, FakeDatabendCall::Query { sql, .. } if sql.contains("FROM learnings"))
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_builder_build_falls_back_to_db_layers() -> Result<()> {
+    let (builder, fake, _workspace_root) = make_prompt_builder(|sql, _database| {
+        if sql.contains("FROM agent_config WHERE agent_id = 'agent-1'") {
+            return Ok(paged_rows(
+                &[&[
+                    "agent-1",
+                    "System for {name}",
+                    "Prompt Agent",
+                    "Prompt agent description",
+                    "Identity for {name}",
+                    "Soul from db",
+                    "",
+                    "",
+                    "2026-03-10T00:00:00Z",
+                    "2026-03-10T00:00:00Z",
+                ]],
+                None,
+                None,
+            ));
+        }
+        if sql.contains("FROM sessions WHERE id = 'session-1'") {
+            return Ok(paged_rows(
+                &[&[
+                    "session-1",
+                    "agent-1",
+                    "user-1",
+                    "Prompt Session",
+                    r#"{"name":"Bob"}"#,
+                    "",
+                    "2026-03-10T00:00:00Z",
+                    "2026-03-10T00:00:00Z",
+                ]],
+                None,
+                None,
+            ));
+        }
+        if sql.contains("FROM learnings WHERE agent_id = 'agent-1'") {
+            return Ok(paged_rows(
+                &[&[
+                    "learn-1",
+                    "agent-1",
+                    "user-1",
+                    "session-1",
+                    "SQL",
+                    "Use indexes",
+                    "",
+                    "manual",
+                    "2026-03-10T00:00:00Z",
+                    "2026-03-10T00:00:00Z",
+                ]],
+                None,
+                None,
+            ));
+        }
+        if sql.contains("FROM variables WHERE revoked = FALSE") {
+            return Ok(paged_rows(
+                &[&[
+                    "var-1",
+                    "API_KEY",
+                    "secret",
+                    "true",
+                    "false",
+                    "",
+                    "2026-03-10T00:00:00Z",
+                    "2026-03-10T00:00:00Z",
+                ]],
+                None,
+                None,
+            ));
+        }
+        if sql.contains("FROM spans WHERE status = 'failed'") && sql.contains("session-1") {
+            return Ok(paged_rows(
+                &[&[
+                    "span-1",
+                    "trace-1",
+                    "",
+                    "shell",
+                    "tool",
+                    "",
+                    "failed",
+                    "10",
+                    "0",
+                    "0",
+                    "0",
+                    "0",
+                    "0",
+                    "tool_error",
+                    "command failed",
+                    "failed shell",
+                    "{}",
+                    "2026-03-10T00:00:00Z",
+                ]],
+                None,
+                None,
+            ));
+        }
+        Ok(paged_rows(&[], None, None))
+    })?;
+
+    let prompt = builder.build("agent-1", "user-1", "session-1").await?;
+
+    assert!(prompt.contains("Identity for Bob"));
+    assert!(prompt.contains("## Soul\n\nSoul from db"));
+    assert!(prompt.contains("System for Bob"));
+    assert!(prompt.contains("## Learnings"));
+    assert!(prompt.contains("- **SQL**: Use indexes"));
+    assert!(prompt.contains("## Variables"));
+    assert!(prompt.contains("`API_KEY`: [SECRET]"));
+    assert!(prompt.contains("## Recent Errors"));
+    assert!(prompt.contains("- `shell`: command failed"));
+    assert!(prompt.contains("## Runtime"));
+
+    let calls = fake.calls();
+    assert!(calls.iter().any(
+        |call| matches!(call, FakeDatabendCall::Query { sql, .. } if sql.contains("FROM learnings"))
+    ));
+    assert!(calls.iter().any(
+        |call| matches!(call, FakeDatabendCall::Query { sql, .. } if sql.contains("FROM variables"))
+    ));
+    assert!(calls.iter().any(|call| matches!(call, FakeDatabendCall::Query { sql, .. } if sql.contains("FROM spans WHERE status = 'failed'"))));
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

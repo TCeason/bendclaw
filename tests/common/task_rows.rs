@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use bendclaw::storage::pool::QueryResponse;
 
 #[derive(Clone)]
@@ -152,7 +154,6 @@ pub fn task_history_query(rows: impl IntoIterator<Item = TaskHistoryRow>) -> Que
     }
 }
 
-#[allow(dead_code)]
 pub fn quoted_values(sql: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut chars = sql.chars().peekable();

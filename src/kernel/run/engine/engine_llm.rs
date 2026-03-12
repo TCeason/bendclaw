@@ -9,7 +9,6 @@ use crate::kernel::run::fmt::to_chat_messages;
 use crate::kernel::run::run_loop::LLMResponse;
 use crate::kernel::run::run_loop::RunLoopState;
 use crate::kernel::trace::SpanMeta;
-use crate::kernel::ErrorSource;
 use crate::kernel::Message;
 use crate::kernel::OpType;
 use crate::kernel::OperationMeta;
@@ -228,61 +227,6 @@ impl Engine {
 
         (turn, llm_error)
     }
-
-    pub(super) fn record_llm_error(&mut self, err: &str, turn: &LLMResponse) {
-        self.ctx.messages.push(Message::operation_event(
-            "llm",
-            "reasoning.turn",
-            "failed",
-            serde_json::json!({"finish_reason": turn.finish_reason(), "error": err}),
-        ));
-        self.ctx
-            .messages
-            .push(Message::error(ErrorSource::Llm, err));
-    }
-
-    pub(super) fn record_assistant_message(
-        &mut self,
-        turn: &LLMResponse,
-        state: &mut RunLoopState,
-    ) {
-        let ttft_ms = turn.ttft_ms().unwrap_or(0);
-        let reasoning_tracker =
-            OperationMeta::begin(OpType::Reasoning).timeout(self.ctx.max_duration);
-        let reasoning_meta = reasoning_tracker
-            .summary(format!(
-                "{} -> {} tokens",
-                self.ctx.model,
-                turn.usage().total_tokens
-            ))
-            .finish();
-
-        let msg_metrics = crate::kernel::session::message::MessageMetrics {
-            input_tokens: turn.usage().prompt_tokens,
-            output_tokens: turn.usage().completion_tokens,
-            reasoning_tokens: 0,
-            ttft_ms,
-            duration_ms: 0,
-        };
-
-        if turn.has_tool_calls() {
-            self.ctx.messages.push(Message::assistant_with_metrics(
-                turn.text(),
-                turn.tool_calls().to_vec(),
-                reasoning_meta,
-                msg_metrics,
-            ));
-        } else {
-            self.ctx.messages.push(Message::assistant_with_metrics(
-                turn.text(),
-                Vec::new(),
-                reasoning_meta,
-                msg_metrics,
-            ));
-            state.record_final_response(turn.content_blocks());
-        }
-    }
-
     async fn collect_response(&self, stream: crate::llm::stream::ResponseStream) -> LLMResponse {
         let mut resp = LLMResponse::new();
         let mut stream = stream;

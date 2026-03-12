@@ -19,17 +19,37 @@ use crate::storage::dal::run::record::RunMetrics;
 use crate::storage::dal::run::record::RunStatus;
 use crate::storage::dal::run_event::record::RunEventRecord;
 
-pub(crate) struct TurnPersister {
-    pub storage: Arc<AgentStore>,
-    pub trace: TraceRecorder,
-    pub agent_id: Arc<str>,
-    pub session_id: String,
-    pub run_id: String,
-    pub user_id: Arc<str>,
-    pub start: Instant,
+pub struct TurnPersister {
+    storage: Arc<AgentStore>,
+    trace: TraceRecorder,
+    agent_id: Arc<str>,
+    session_id: String,
+    run_id: String,
+    user_id: Arc<str>,
+    start: Instant,
 }
 
 impl TurnPersister {
+    pub fn new(
+        storage: Arc<AgentStore>,
+        trace: TraceRecorder,
+        agent_id: Arc<str>,
+        session_id: impl Into<String>,
+        run_id: impl Into<String>,
+        user_id: Arc<str>,
+        start: Instant,
+    ) -> Self {
+        Self {
+            storage,
+            trace,
+            agent_id,
+            session_id: session_id.into(),
+            run_id: run_id.into(),
+            user_id,
+            start,
+        }
+    }
+
     fn ops_ctx(&self, turn: u32) -> server_log::ServerCtx<'_> {
         server_log::ServerCtx::new(
             &self.trace.trace_id,
@@ -38,6 +58,10 @@ impl TurnPersister {
             &self.agent_id,
             turn,
         )
+    }
+
+    pub fn run_id(&self) -> &str {
+        &self.run_id
     }
 
     pub async fn persist_success(
@@ -369,228 +393,11 @@ impl TurnPersister {
     }
 }
 
-fn status_from_reason(reason: &Reason) -> RunStatus {
+pub fn status_from_reason(reason: &Reason) -> RunStatus {
     match reason {
         Reason::EndTurn => RunStatus::Completed,
         Reason::MaxIterations | Reason::Timeout => RunStatus::Paused,
         Reason::Aborted => RunStatus::Cancelled,
         Reason::Error => RunStatus::Error,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-    use std::sync::Mutex;
-    use std::time::Instant;
-
-    use async_trait::async_trait;
-
-    use super::TurnPersister;
-    use crate::base::ErrorCode;
-    use crate::kernel::agent_store::AgentStore;
-    use crate::kernel::run::event::Event;
-    use crate::kernel::run::result::ContentBlock;
-    use crate::kernel::run::result::Reason;
-    use crate::kernel::run::result::Result as AgentResult;
-    use crate::kernel::run::result::Usage as AgentUsage;
-    use crate::kernel::trace::TraceRecorder;
-    use crate::llm::message::ChatMessage;
-    use crate::llm::provider::LLMProvider;
-    use crate::llm::provider::LLMResponse;
-    use crate::llm::stream::ResponseStream;
-    use crate::llm::tool::ToolSchema;
-    use crate::storage::pool::DatabendClient;
-    use crate::storage::pool::QueryResponse;
-    use crate::storage::Pool;
-    use crate::storage::SpanRepo;
-    use crate::storage::TraceRepo;
-
-    #[derive(Clone, Default)]
-    struct RecordingClient {
-        sqls: Arc<Mutex<Vec<String>>>,
-    }
-
-    impl RecordingClient {
-        fn sqls(&self) -> Vec<String> {
-            self.sqls.lock().expect("persister sqls lock").clone()
-        }
-    }
-
-    #[async_trait]
-    impl DatabendClient for RecordingClient {
-        async fn query(
-            &self,
-            sql: &str,
-            _database: Option<&str>,
-        ) -> crate::base::Result<QueryResponse> {
-            self.sqls
-                .lock()
-                .expect("persister sqls lock")
-                .push(sql.to_string());
-            Ok(QueryResponse {
-                id: String::new(),
-                state: "Succeeded".to_string(),
-                error: None,
-                data: Vec::new(),
-                next_uri: None,
-                final_uri: None,
-                schema: Vec::new(),
-            })
-        }
-
-        async fn page(&self, _uri: &str) -> crate::base::Result<QueryResponse> {
-            unreachable!("persister tests should not page")
-        }
-
-        async fn finalize(&self, _uri: &str) -> crate::base::Result<()> {
-            Ok(())
-        }
-    }
-
-    struct PricingLLM;
-
-    #[async_trait]
-    impl LLMProvider for PricingLLM {
-        async fn chat(
-            &self,
-            _model: &str,
-            _messages: &[ChatMessage],
-            _tools: &[ToolSchema],
-            _temperature: f32,
-        ) -> crate::base::Result<LLMResponse> {
-            Err(ErrorCode::internal("not used in persister tests"))
-        }
-
-        fn chat_stream(
-            &self,
-            _model: &str,
-            _messages: &[ChatMessage],
-            _tools: &[ToolSchema],
-            _temperature: f32,
-        ) -> ResponseStream {
-            let (_writer, stream) = ResponseStream::channel(1);
-            stream
-        }
-
-        fn pricing(&self, _model: &str) -> Option<(f64, f64)> {
-            Some((1.0, 2.0))
-        }
-
-        fn default_model(&self) -> &str {
-            "mock"
-        }
-
-        fn default_temperature(&self) -> f32 {
-            0.0
-        }
-    }
-
-    fn fake_pool(client: &RecordingClient) -> Pool {
-        Pool::from_client("http://fake.local/v1", "default", Arc::new(client.clone()))
-    }
-
-    fn make_persister(client: &RecordingClient) -> TurnPersister {
-        let pool = fake_pool(client);
-        let storage = Arc::new(AgentStore::new(pool.clone(), Arc::new(PricingLLM)));
-        let trace = TraceRecorder::new(
-            Arc::new(TraceRepo::new(pool.clone())),
-            Arc::new(SpanRepo::new(pool)),
-            "trace-1",
-            "run-1",
-            "agent-1",
-            "session-1",
-            "user-1",
-        );
-        TurnPersister {
-            storage,
-            trace,
-            agent_id: Arc::<str>::from("agent-1"),
-            session_id: "session-1".to_string(),
-            run_id: "run-1".to_string(),
-            user_id: Arc::<str>::from("user-1"),
-            start: Instant::now(),
-        }
-    }
-
-    #[tokio::test]
-    async fn persist_success_updates_run_events_usage_and_trace() {
-        let client = RecordingClient::default();
-        let persister = make_persister(&client);
-        let result = AgentResult {
-            content: vec![ContentBlock::text("done")],
-            iterations: 3,
-            usage: AgentUsage {
-                prompt_tokens: 10,
-                completion_tokens: 5,
-                reasoning_tokens: 2,
-                total_tokens: 15,
-                cache_read_tokens: 0,
-                cache_write_tokens: 0,
-                ttft_ms: 7,
-            },
-            stop_reason: Reason::EndTurn,
-            messages: Vec::new(),
-        };
-        let events = vec![Event::Start];
-
-        let text = persister
-            .persist_success(result, "mock-provider", "mock-model", &events)
-            .await
-            .expect("persist success");
-
-        assert_eq!(text, "done");
-        let sqls = client.sqls();
-        assert!(sqls.iter().any(|sql| sql.starts_with("INSERT INTO usage ")));
-        assert!(sqls
-            .iter()
-            .any(|sql| sql.starts_with("INSERT INTO run_events ") && sql.contains("'Start'")));
-        assert!(sqls.iter().any(|sql| {
-            sql.starts_with("INSERT INTO run_events ") && sql.contains("'run.completed'")
-        }));
-        assert!(sqls.iter().any(|sql| {
-            sql.contains("UPDATE runs SET status = 'COMPLETED'") && sql.contains("output = 'done'")
-        }));
-        assert!(sqls
-            .iter()
-            .any(|sql| sql.contains("UPDATE traces SET status = 'completed'")));
-    }
-
-    #[tokio::test]
-    async fn persist_error_marks_run_failed_and_persists_failure_event() {
-        let client = RecordingClient::default();
-        let persister = make_persister(&client);
-        let error = ErrorCode::internal("boom");
-
-        persister.persist_error(&error, &[Event::Start]).await;
-
-        let sqls = client.sqls();
-        assert!(sqls.iter().any(|sql| {
-            sql.starts_with("INSERT INTO run_events ") && sql.contains("'run.failed'")
-        }));
-        assert!(sqls.iter().any(|sql| {
-            sql.contains("UPDATE runs SET status = 'ERROR'") && sql.contains("boom")
-        }));
-        assert!(sqls
-            .iter()
-            .any(|sql| sql.contains("UPDATE traces SET status = 'failed'")));
-    }
-
-    #[tokio::test]
-    async fn persist_cancelled_marks_run_cancelled_and_persists_cancel_event() {
-        let client = RecordingClient::default();
-        let persister = make_persister(&client);
-
-        persister.persist_cancelled(&[Event::Start]).await;
-
-        let sqls = client.sqls();
-        assert!(sqls.iter().any(|sql| {
-            sql.starts_with("INSERT INTO run_events ") && sql.contains("'run.cancelled'")
-        }));
-        assert!(sqls.iter().any(|sql| sql
-            == "UPDATE runs SET status = 'CANCELLED', updated_at = NOW() WHERE id = 'run-1'"));
-        assert!(sqls
-            .iter()
-            .any(|sql| sql.contains("UPDATE traces SET status = 'failed'")));
     }
 }

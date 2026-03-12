@@ -25,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 enum MockToolBehavior {
     Ok(String),
     ToolError(String),
-    Sleep(Duration),
+    Pending,
 }
 
 struct MockTool {
@@ -68,9 +68,9 @@ impl Tool for MockTool {
         match &self.behavior {
             MockToolBehavior::Ok(out) => Ok(ToolResult::ok(out.clone())),
             MockToolBehavior::ToolError(msg) => Ok(ToolResult::error(msg.clone())),
-            MockToolBehavior::Sleep(d) => {
-                tokio::time::sleep(*d).await;
-                Ok(ToolResult::ok("late"))
+            MockToolBehavior::Pending => {
+                futures::future::pending::<()>().await;
+                unreachable!("pending tool should never resolve")
             }
         }
     }
@@ -143,10 +143,10 @@ fn dispatcher(
             user_id: "u1".into(),
             session_id: "s1".into(),
             agent_id: "a1".into(),
-            workspace: crate::mocks::context::test_workspace(
+            workspace: bendclaw_test_harness::mocks::context::test_workspace(
                 std::env::temp_dir().join("bendclaw-test-dispatcher"),
             ),
-            pool: crate::mocks::context::dummy_pool(),
+            pool: bendclaw_test_harness::mocks::context::dummy_pool(),
         },
         cancel,
     )
@@ -183,55 +183,6 @@ fn parse_calls_marks_tool_vs_skill_and_handles_bad_json() {
     assert!(matches!(parsed[0].kind, DispatchKind::Tool));
     assert!(matches!(parsed[1].kind, DispatchKind::Skill));
     assert_eq!(parsed[0].arguments["key"], "k");
-    assert!(parsed[1].arguments.is_object());
-    assert!(parsed[1]
-        .arguments
-        .as_object()
-        .is_some_and(|o| o.is_empty()));
-}
-
-#[test]
-fn parse_calls_classifies_tool_vs_skill_and_parses_arguments() {
-    let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(MockTool {
-        name: "memory_read".to_string(),
-        behavior: MockToolBehavior::Ok("ok".to_string()),
-    }));
-
-    let d = ToolDispatcher::new(
-        Arc::new(registry),
-        Arc::new(MockSkillExecutor::new(MockSkillBehavior::OkString(
-            "ok".into(),
-        ))),
-        ToolContext {
-            user_id: "u".into(),
-            session_id: "s".into(),
-            agent_id: "a".into(),
-            workspace: crate::mocks::context::test_workspace(
-                std::env::temp_dir().join("bendclaw-test-dispatcher2"),
-            ),
-            pool: crate::mocks::context::dummy_pool(),
-        },
-        CancellationToken::new(),
-    );
-
-    let calls = vec![
-        ToolCall {
-            id: "tc1".into(),
-            name: "memory_read".into(),
-            arguments: r#"{"a":1}"#.into(),
-        },
-        ToolCall {
-            id: "tc2".into(),
-            name: "custom_skill".into(),
-            arguments: "not-json".into(),
-        },
-    ];
-    let parsed = d.parse_calls(&calls);
-
-    assert!(matches!(parsed[0].kind, DispatchKind::Tool));
-    assert_eq!(parsed[0].arguments["a"], 1);
-    assert!(matches!(parsed[1].kind, DispatchKind::Skill));
     assert!(parsed[1].arguments.is_object());
     assert!(parsed[1]
         .arguments
@@ -369,7 +320,7 @@ async fn execute_calls_timeout_and_cancel_paths() -> Result<()> {
     let d_timeout = dispatcher(
         vec![Arc::new(MockTool {
             name: "slow_tool".to_string(),
-            behavior: MockToolBehavior::Sleep(Duration::from_millis(30)),
+            behavior: MockToolBehavior::Pending,
         })],
         Arc::new(MockSkillExecutor::new(MockSkillBehavior::OkString(
             "ok".to_string(),
@@ -378,7 +329,7 @@ async fn execute_calls_timeout_and_cancel_paths() -> Result<()> {
     );
     let parsed = d_timeout.parse_calls(&calls);
     let out = d_timeout
-        .execute_calls(&parsed, Instant::now() + Duration::from_millis(5))
+        .execute_calls(&parsed, Instant::now() + Duration::from_millis(1))
         .await;
     match &out[0].result {
         ToolCallResult::InfraError(msg, _) => assert!(msg.contains("timed out")),
@@ -389,7 +340,7 @@ async fn execute_calls_timeout_and_cancel_paths() -> Result<()> {
     let d_cancel = dispatcher(
         vec![Arc::new(MockTool {
             name: "slow_tool".to_string(),
-            behavior: MockToolBehavior::Sleep(Duration::from_millis(30)),
+            behavior: MockToolBehavior::Pending,
         })],
         Arc::new(MockSkillExecutor::new(MockSkillBehavior::OkString(
             "ok".to_string(),

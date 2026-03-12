@@ -45,7 +45,7 @@ impl Default for AgentConfig {
 pub struct CheckpointConfig {
     #[serde(default = "default_checkpoint_enabled")]
     pub enabled: bool,
-    /// Trigger when message count is within this many messages of the compaction threshold.
+    /// Trigger when remaining context budget falls below this percentage.
     #[serde(default = "default_checkpoint_threshold")]
     pub threshold: usize,
     #[serde(default = "default_checkpoint_prompt")]
@@ -56,7 +56,7 @@ fn default_checkpoint_enabled() -> bool {
     true
 }
 fn default_checkpoint_threshold() -> usize {
-    5
+    20
 }
 fn default_checkpoint_prompt() -> String {
     "Checkpoint: Store important information to memory now. \

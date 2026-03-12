@@ -1,6 +1,5 @@
 use anyhow::bail;
 use anyhow::Result;
-use bendclaw::kernel::run::ContentBlock;
 use bendclaw::kernel::run::Delta;
 use bendclaw::kernel::run::Event;
 use bendclaw::kernel::run::Reason;
@@ -9,113 +8,6 @@ use bendclaw::kernel::tools::operation::OpType;
 use bendclaw::kernel::tools::operation::OperationMeta;
 use bendclaw::llm::stream::StreamEvent;
 use bendclaw::llm::usage::TokenUsage;
-
-// ── Reason ──
-
-#[test]
-fn reason_as_str() {
-    assert_eq!(Reason::EndTurn.as_str(), "end_turn");
-    assert_eq!(Reason::MaxIterations.as_str(), "max_iterations");
-    assert_eq!(Reason::Timeout.as_str(), "timeout");
-    assert_eq!(Reason::Aborted.as_str(), "aborted");
-    assert_eq!(Reason::Error.as_str(), "error");
-}
-
-#[test]
-fn reason_display() {
-    assert_eq!(format!("{}", Reason::EndTurn), "end_turn");
-    assert_eq!(format!("{}", Reason::Timeout), "timeout");
-}
-
-#[test]
-fn reason_equality() {
-    assert_eq!(Reason::EndTurn, Reason::EndTurn);
-    assert_ne!(Reason::EndTurn, Reason::Timeout);
-}
-
-// ── ContentBlock ──
-
-#[test]
-fn content_block_text() -> Result<()> {
-    let block = ContentBlock::text("hello");
-    match block {
-        ContentBlock::Text { text } => assert_eq!(text, "hello"),
-        _ => bail!("expected Text"),
-    }
-    Ok(())
-}
-
-#[test]
-fn content_block_thinking() -> Result<()> {
-    let block = ContentBlock::thinking("reasoning...");
-    match block {
-        ContentBlock::Thinking { thinking } => assert_eq!(thinking, "reasoning..."),
-        _ => bail!("expected Thinking"),
-    }
-    Ok(())
-}
-
-// ── Usage ──
-
-#[test]
-fn usage_default_is_zero() {
-    let u = Usage::default();
-    assert_eq!(u.prompt_tokens, 0);
-    assert_eq!(u.completion_tokens, 0);
-    assert_eq!(u.total_tokens, 0);
-    assert_eq!(u.cache_read_tokens, 0);
-    assert_eq!(u.cache_write_tokens, 0);
-}
-
-#[test]
-fn usage_add_token_usage() {
-    let mut u = Usage::default();
-    let tu = TokenUsage::new(100, 50).with_cache(20, 10);
-    u.add(&tu);
-    assert_eq!(u.prompt_tokens, 100);
-    assert_eq!(u.completion_tokens, 50);
-    assert_eq!(u.total_tokens, 150);
-    assert_eq!(u.cache_read_tokens, 20);
-    assert_eq!(u.cache_write_tokens, 10);
-}
-
-#[test]
-fn usage_add_accumulates() {
-    let mut u = Usage::default();
-    u.add(&TokenUsage::new(100, 50));
-    u.add(&TokenUsage::new(200, 80));
-    assert_eq!(u.prompt_tokens, 300);
-    assert_eq!(u.completion_tokens, 130);
-    assert_eq!(u.total_tokens, 430);
-}
-
-#[test]
-fn usage_merge() {
-    let mut u1 = Usage::default();
-    u1.add(&TokenUsage::new(100, 50).with_cache(10, 5));
-
-    let mut u2 = Usage::default();
-    u2.add(&TokenUsage::new(200, 80).with_cache(20, 10));
-
-    u1.merge(&u2);
-    assert_eq!(u1.prompt_tokens, 300);
-    assert_eq!(u1.completion_tokens, 130);
-    assert_eq!(u1.cache_read_tokens, 30);
-    assert_eq!(u1.cache_write_tokens, 15);
-}
-
-#[test]
-fn usage_cache_hit_rate() {
-    let mut u = Usage::default();
-    u.add(&TokenUsage::new(100, 50).with_cache(75, 0));
-    assert!((u.cache_hit_rate() - 0.75).abs() < f64::EPSILON);
-}
-
-#[test]
-fn usage_cache_hit_rate_zero_prompt() {
-    let u = Usage::default();
-    assert_eq!(u.cache_hit_rate(), 0.0);
-}
 
 // ── Delta::from_stream_event ──
 
@@ -649,6 +541,113 @@ fn event_app_data_serde() -> Result<()> {
         _ => bail!("expected AppData"),
     }
     Ok(())
+}
+
+#[test]
+fn event_name_all_variants() {
+    assert_eq!(Event::Start.name(), "Start");
+    assert_eq!(
+        Event::End {
+            iterations: 1,
+            stop_reason: "end_turn".into(),
+            usage: Usage::default()
+        }
+        .name(),
+        "End"
+    );
+    assert_eq!(Event::TurnStart { iteration: 1 }.name(), "TurnStart");
+    assert_eq!(Event::TurnEnd { iteration: 1 }.name(), "TurnEnd");
+    assert_eq!(Event::ReasonStart.name(), "ReasonStart");
+    assert_eq!(
+        Event::StreamDelta(Delta::Text {
+            content: "hi".into()
+        })
+        .name(),
+        "StreamDelta"
+    );
+    assert_eq!(
+        Event::ReasonEnd {
+            finish_reason: "stop".into()
+        }
+        .name(),
+        "ReasonEnd"
+    );
+    assert_eq!(
+        Event::ReasonError {
+            error: "err".into()
+        }
+        .name(),
+        "ReasonError"
+    );
+    assert_eq!(
+        Event::ToolStart {
+            tool_call_id: "tc1".into(),
+            name: "shell".into(),
+            arguments: serde_json::json!({}),
+        }
+        .name(),
+        "ToolStart"
+    );
+    assert_eq!(
+        Event::ToolUpdate {
+            tool_call_id: "tc1".into(),
+            output: "out".into()
+        }
+        .name(),
+        "ToolUpdate"
+    );
+    assert_eq!(
+        Event::ToolEnd {
+            tool_call_id: "tc1".into(),
+            name: "shell".into(),
+            success: true,
+            output: "ok".into(),
+            operation: OperationMeta::new(OpType::Execute),
+        }
+        .name(),
+        "ToolEnd"
+    );
+    assert_eq!(
+        Event::CompactionDone {
+            messages_before: 10,
+            messages_after: 2,
+            summary_len: 100
+        }
+        .name(),
+        "CompactionDone"
+    );
+    assert_eq!(
+        Event::CheckpointDone {
+            prompt_tokens: 10,
+            completion_tokens: 5
+        }
+        .name(),
+        "CheckpointDone"
+    );
+    assert_eq!(
+        Event::Aborted {
+            reason: Reason::Timeout
+        }
+        .name(),
+        "Aborted"
+    );
+    assert_eq!(
+        Event::Error {
+            message: "oops".into()
+        }
+        .name(),
+        "Error"
+    );
+    assert_eq!(Event::AppData(serde_json::json!({})).name(), "AppData");
+}
+
+#[test]
+fn event_name_audit_returns_event_name_field() {
+    let event = Event::Audit {
+        name: "llm.request".into(),
+        payload: serde_json::json!({}),
+    };
+    assert_eq!(event.name(), "llm.request");
 }
 
 #[test]

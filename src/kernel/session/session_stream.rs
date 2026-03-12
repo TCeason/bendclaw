@@ -53,7 +53,7 @@ impl Stream {
     }
 
     pub fn run_id(&self) -> &str {
-        &self.persister.run_id
+        self.persister.run_id()
     }
 
     pub async fn finish(mut self) -> Result<String> {

@@ -1,0 +1,57 @@
+use std::time::Duration;
+
+use crate::kernel::run::run_loop::LLMResponse;
+use crate::kernel::run::run_loop::RunLoopState;
+use crate::kernel::session::message::MessageMetrics;
+use crate::kernel::Message;
+use crate::kernel::OpType;
+use crate::kernel::OperationMeta;
+use crate::llm::message::ToolCall;
+
+pub fn assistant_message_from_turn(
+    turn: &LLMResponse,
+    model: &str,
+    max_duration: Duration,
+) -> Message {
+    let ttft_ms = turn.ttft_ms().unwrap_or(0);
+    let reasoning_meta = OperationMeta::begin(OpType::Reasoning)
+        .timeout(max_duration)
+        .summary(format!("{model} -> {} tokens", turn.usage().total_tokens))
+        .finish();
+
+    let metrics = MessageMetrics {
+        input_tokens: turn.usage().prompt_tokens,
+        output_tokens: turn.usage().completion_tokens,
+        reasoning_tokens: 0,
+        ttft_ms,
+        duration_ms: 0,
+    };
+
+    let tool_calls = if turn.has_tool_calls() {
+        turn.tool_calls().to_vec()
+    } else {
+        Vec::new()
+    };
+
+    Message::assistant_with_metrics(turn.text(), tool_calls, reasoning_meta, metrics)
+}
+
+pub fn record_assistant_turn(
+    messages: &mut Vec<Message>,
+    turn: &LLMResponse,
+    state: &mut RunLoopState,
+    model: &str,
+    max_duration: Duration,
+) {
+    messages.push(assistant_message_from_turn(turn, model, max_duration));
+    if !turn.has_tool_calls() {
+        state.record_final_response(turn.content_blocks());
+    }
+}
+
+pub fn aborted_tool_result_messages(tool_calls: &[ToolCall]) -> Vec<Message> {
+    tool_calls
+        .iter()
+        .map(|tool_call| Message::tool_result(&tool_call.id, &tool_call.name, "aborted", false))
+        .collect()
+}

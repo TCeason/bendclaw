@@ -2,7 +2,7 @@
 
 DEV_CONFIG ?= $(HOME)/.bendclaw/bendclaw_dev.toml
 
-.PHONY: setup check run test test-unit test-it test-contract test-live test-all coverage coverage-core-check snapshot-review dev-env test-down ci
+.PHONY: setup check run test test-unit test-it test-contract test-live test-live-storage test-live-e2e test-all coverage coverage-core-check snapshot-review dev-env test-down ci
 
 setup:
 	@echo "==> checking protoc..."
@@ -42,8 +42,16 @@ test-contract:
 	cargo nextest run --test contract --no-fail-fast
 
 # Requires Databend credentials
-test-live: dev-env
-	RUST_LOG=ERROR cargo test --test live --features live-tests -- --test-threads=1
+# Runs the minimal live suite:
+# 1. Databend-backed storage contracts
+# 2. API end-to-end smoke flows
+test-live: test-live-storage test-live-e2e
+
+test-live-storage: dev-env
+	RUST_LOG=ERROR cargo test --test live-storage-contract --features live-tests -- --test-threads=1
+
+test-live-e2e: dev-env
+	RUST_LOG=ERROR cargo test --test live-api-e2e --features live-tests -- --test-threads=1
 
 # Everything
 test-all: test test-live

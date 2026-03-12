@@ -1,6 +1,12 @@
+mod compaction_rules;
+mod compactor;
+mod dispatcher;
 mod event;
 mod fmt;
+mod orchestration;
+mod persister;
 mod prompt;
 mod result;
 mod run_loop;
+mod transition;
 mod usage;

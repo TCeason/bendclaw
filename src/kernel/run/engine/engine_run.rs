@@ -11,6 +11,8 @@ use crate::kernel::run::result::Usage;
 use crate::kernel::run::run_loop::AbortSignal;
 use crate::kernel::run::run_loop::RunLoopConfig;
 use crate::kernel::run::run_loop::RunLoopState;
+use crate::kernel::run::transition::apply_turn_result;
+use crate::kernel::run::transition::TurnTransition;
 use crate::observability::server_log;
 
 pub(super) enum StepOutcome {
@@ -92,47 +94,57 @@ impl Engine {
         })
         .await;
 
-        if let Some(err) = llm_error {
-            self.record_llm_error(&err, &turn);
-            state.record_error(&err);
-            let mut payload = self.audit_payload(iteration);
-            payload.insert("status".to_string(), serde_json::json!("failed"));
-            payload.insert(
-                "finish_reason".to_string(),
-                serde_json::json!(turn.finish_reason()),
-            );
-            payload.insert(
-                "tool_calls".to_string(),
-                serde_json::json!(turn.tool_calls().len() as u64),
-            );
-            self.emit_audit("turn.completed", payload).await;
-            server_log::error(
-                &self.ops_ctx(iteration),
-                "turn",
-                "failed",
-                server_log::ServerFields::default()
-                    .tokens(turn.usage().total_tokens)
-                    .bytes(turn.bytes())
-                    .detail("finish_reason", turn.finish_reason())
-                    .detail("tool_calls", turn.tool_calls().len())
-                    .detail("error", err)
-                    .detail("usage", turn.usage().clone())
-                    .detail("chunk_count", turn.chunk_count()),
-            );
-            self.emit(Event::TurnEnd { iteration }).await;
-            return Ok(StepOutcome::Error(Reason::Error));
-        }
+        let abort_reason = if turn.has_tool_calls() && state.should_continue() {
+            state
+                .check_cancel_or_timeout(
+                    &self.abort_policy,
+                    self.cancel.is_cancelled(),
+                    Instant::now(),
+                )
+                .reason
+        } else {
+            None
+        };
 
-        self.record_assistant_message(&turn, state);
-
-        if turn.has_tool_calls() && state.should_continue() {
-            let abort = state.check_cancel_or_timeout(
-                &self.abort_policy,
-                self.cancel.is_cancelled(),
-                Instant::now(),
-            );
-            if let Some(reason) = abort.reason {
-                self.abort_tool_results(turn.tool_calls());
+        match apply_turn_result(
+            &mut self.ctx.messages,
+            state,
+            &turn,
+            llm_error.as_deref(),
+            abort_reason,
+            self.ctx.model.as_ref(),
+            self.ctx.max_duration,
+        ) {
+            TurnTransition::Error(reason) => {
+                let err = llm_error.unwrap_or_default();
+                let mut payload = self.audit_payload(iteration);
+                payload.insert("status".to_string(), serde_json::json!("failed"));
+                payload.insert(
+                    "finish_reason".to_string(),
+                    serde_json::json!(turn.finish_reason()),
+                );
+                payload.insert(
+                    "tool_calls".to_string(),
+                    serde_json::json!(turn.tool_calls().len() as u64),
+                );
+                self.emit_audit("turn.completed", payload).await;
+                server_log::error(
+                    &self.ops_ctx(iteration),
+                    "turn",
+                    "failed",
+                    server_log::ServerFields::default()
+                        .tokens(turn.usage().total_tokens)
+                        .bytes(turn.bytes())
+                        .detail("finish_reason", turn.finish_reason())
+                        .detail("tool_calls", turn.tool_calls().len())
+                        .detail("error", err)
+                        .detail("usage", turn.usage().clone())
+                        .detail("chunk_count", turn.chunk_count()),
+                );
+                self.emit(Event::TurnEnd { iteration }).await;
+                Ok(StepOutcome::Error(reason))
+            }
+            TurnTransition::Abort(reason) => {
                 let mut payload = self.audit_payload(iteration);
                 payload.insert("status".to_string(), serde_json::json!("aborted"));
                 payload.insert(
@@ -155,64 +167,66 @@ impl Engine {
                         .detail("reason", reason.as_str()),
                 );
                 self.emit(Event::TurnEnd { iteration }).await;
-                return Ok(StepOutcome::Abort(reason));
+                Ok(StepOutcome::Abort(reason))
             }
-
-            self.dispatch_tools(turn.tool_calls(), state).await;
-            let mut payload = self.audit_payload(iteration);
-            payload.insert("status".to_string(), serde_json::json!("tool_dispatch"));
-            payload.insert(
-                "finish_reason".to_string(),
-                serde_json::json!(turn.finish_reason()),
-            );
-            payload.insert(
-                "tool_calls".to_string(),
-                serde_json::json!(turn.tool_calls().len() as u64),
-            );
-            self.emit_audit("turn.completed", payload).await;
-            server_log::info(
-                &self.ops_ctx(iteration),
-                "turn",
-                "completed",
-                server_log::ServerFields::default()
-                    .tokens(turn.usage().total_tokens)
-                    .bytes(turn.bytes())
-                    .detail("status", "tool_dispatch")
-                    .detail("finish_reason", turn.finish_reason())
-                    .detail("tool_calls", turn.tool_calls().len())
-                    .detail("usage", turn.usage().clone())
-                    .detail("chunk_count", turn.chunk_count()),
-            );
-            self.emit(Event::TurnEnd { iteration }).await;
-            Ok(StepOutcome::Continue)
-        } else {
-            let mut payload = self.audit_payload(iteration);
-            payload.insert("status".to_string(), serde_json::json!("done"));
-            payload.insert(
-                "finish_reason".to_string(),
-                serde_json::json!(turn.finish_reason()),
-            );
-            payload.insert(
-                "tool_calls".to_string(),
-                serde_json::json!(turn.tool_calls().len() as u64),
-            );
-            self.emit_audit("turn.completed", payload).await;
-            server_log::info(
-                &self.ops_ctx(iteration),
-                "turn",
-                "completed",
-                server_log::ServerFields::default()
-                    .tokens(turn.usage().total_tokens)
-                    .bytes(turn.bytes())
-                    .detail("status", "done")
-                    .detail("finish_reason", turn.finish_reason())
-                    .detail("tool_calls", turn.tool_calls().len())
-                    .detail("usage", turn.usage().clone())
-                    .detail("chunk_count", turn.chunk_count())
-                    .detail("content_blocks", turn.content_blocks()),
-            );
-            self.emit(Event::TurnEnd { iteration }).await;
-            Ok(StepOutcome::Done)
+            TurnTransition::DispatchTools => {
+                self.dispatch_tools(turn.tool_calls(), state).await;
+                let mut payload = self.audit_payload(iteration);
+                payload.insert("status".to_string(), serde_json::json!("tool_dispatch"));
+                payload.insert(
+                    "finish_reason".to_string(),
+                    serde_json::json!(turn.finish_reason()),
+                );
+                payload.insert(
+                    "tool_calls".to_string(),
+                    serde_json::json!(turn.tool_calls().len() as u64),
+                );
+                self.emit_audit("turn.completed", payload).await;
+                server_log::info(
+                    &self.ops_ctx(iteration),
+                    "turn",
+                    "completed",
+                    server_log::ServerFields::default()
+                        .tokens(turn.usage().total_tokens)
+                        .bytes(turn.bytes())
+                        .detail("status", "tool_dispatch")
+                        .detail("finish_reason", turn.finish_reason())
+                        .detail("tool_calls", turn.tool_calls().len())
+                        .detail("usage", turn.usage().clone())
+                        .detail("chunk_count", turn.chunk_count()),
+                );
+                self.emit(Event::TurnEnd { iteration }).await;
+                Ok(StepOutcome::Continue)
+            }
+            TurnTransition::Done => {
+                let mut payload = self.audit_payload(iteration);
+                payload.insert("status".to_string(), serde_json::json!("done"));
+                payload.insert(
+                    "finish_reason".to_string(),
+                    serde_json::json!(turn.finish_reason()),
+                );
+                payload.insert(
+                    "tool_calls".to_string(),
+                    serde_json::json!(turn.tool_calls().len() as u64),
+                );
+                self.emit_audit("turn.completed", payload).await;
+                server_log::info(
+                    &self.ops_ctx(iteration),
+                    "turn",
+                    "completed",
+                    server_log::ServerFields::default()
+                        .tokens(turn.usage().total_tokens)
+                        .bytes(turn.bytes())
+                        .detail("status", "done")
+                        .detail("finish_reason", turn.finish_reason())
+                        .detail("tool_calls", turn.tool_calls().len())
+                        .detail("usage", turn.usage().clone())
+                        .detail("chunk_count", turn.chunk_count())
+                        .detail("content_blocks", turn.content_blocks()),
+                );
+                self.emit(Event::TurnEnd { iteration }).await;
+                Ok(StepOutcome::Done)
+            }
         }
     }
 

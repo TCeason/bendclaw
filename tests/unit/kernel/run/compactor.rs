@@ -5,9 +5,8 @@ use bendclaw::kernel::run::compactor::Compactor;
 use bendclaw::kernel::runtime::agent_config::CheckpointConfig;
 use bendclaw::kernel::Message;
 use bendclaw::llm::tool::ToolSchema;
+use bendclaw_test_harness::mocks::llm::MockLLMProvider;
 use tokio_util::sync::CancellationToken;
-
-use crate::mocks::llm::MockLLMProvider;
 
 #[test]
 fn split_chunks_short_text() {
@@ -83,7 +82,7 @@ async fn compact_returns_none_when_within_budget() {
     let llm = Arc::new(MockLLMProvider::with_text("summary"));
     let checkpoint = Arc::new(CheckpointConfig {
         enabled: false,
-        threshold: 5,
+        threshold: 20,
         prompt: String::new(),
     });
     let mut compactor = Compactor::new(llm, "mock".into(), checkpoint, CancellationToken::new());
@@ -98,29 +97,28 @@ async fn compact_runs_checkpoint_only_when_over_threshold_without_compaction() {
     let llm = Arc::new(MockLLMProvider::with_text("checkpoint done"));
     let checkpoint = Arc::new(CheckpointConfig {
         enabled: true,
-        threshold: 5,
+        threshold: 20,
         prompt: "save important memory".to_string(),
     });
     let mut compactor = Compactor::new(llm, "mock".into(), checkpoint, CancellationToken::new());
 
-    let long = "x".repeat(1200);
-    let mut messages = vec![Message::user(long.clone()), Message::assistant(long)];
+    let mut messages = vec![Message::user("token ".repeat(8_500))];
     let memory_tools = vec![ToolSchema::new(
         "memory_write",
         "write memory",
         serde_json::json!({"type": "object"}),
     )];
-    // total tokens likely > 80% of 1_000 but <= 1_000 compaction guard depends on tokenizer;
-    // we set higher max to avoid compaction while still allowing checkpoint branch.
+    let before = messages.len();
     let res = compactor
         .compact(&mut messages, 10_000, &memory_tools)
-        .await;
-    if let Some(r) = res {
-        // When checkpoint ran without compaction, summary_len should stay 0.
-        if r.checkpoint_usage.is_some() {
-            assert_eq!(r.summary_len, 0);
-        }
-    }
+        .await
+        .expect("checkpoint-only result");
+
+    assert!(res.checkpoint_usage.is_some());
+    assert_eq!(res.summary_len, 0);
+    assert_eq!(res.messages_before, before);
+    assert_eq!(res.messages_after, before);
+    assert_eq!(messages.len(), before);
 }
 
 #[tokio::test]
@@ -128,7 +126,7 @@ async fn compact_triggers_with_small_context_budget() {
     let llm = Arc::new(MockLLMProvider::with_text("condensed summary"));
     let checkpoint = Arc::new(CheckpointConfig {
         enabled: false,
-        threshold: 5,
+        threshold: 20,
         prompt: String::new(),
     });
     let mut compactor = Compactor::new(llm, "mock".into(), checkpoint, CancellationToken::new());
@@ -154,11 +152,88 @@ async fn compact_triggers_with_small_context_budget() {
 }
 
 #[tokio::test]
+async fn compact_preserves_system_and_existing_compaction_messages() {
+    let llm = Arc::new(MockLLMProvider::with_text("fresh summary"));
+    let checkpoint = Arc::new(CheckpointConfig {
+        enabled: false,
+        threshold: 20,
+        prompt: String::new(),
+    });
+    let mut compactor = Compactor::new(llm, "mock".into(), checkpoint, CancellationToken::new());
+
+    let big = "token ".repeat(3000);
+    let mut messages = vec![
+        Message::system("system identity"),
+        Message::compaction("older summary"),
+        Message::user(big.clone()),
+        Message::assistant(big),
+        Message::assistant("recent assistant"),
+    ];
+
+    let res = compactor
+        .compact(&mut messages, 256, &[])
+        .await
+        .expect("compaction");
+
+    assert!(res.summary_len > 0);
+    assert!(matches!(messages.first(), Some(Message::System { .. })));
+    assert!(messages.iter().any(|m| matches!(
+        m,
+        Message::CompactionSummary { summary, .. } if summary == "older summary"
+    )));
+    assert!(messages.iter().any(|m| matches!(
+        m,
+        Message::CompactionSummary { summary, .. } if summary == "fresh summary"
+    )));
+}
+
+#[tokio::test]
+async fn compact_keeps_assistant_and_tool_result_paired_in_tail() {
+    let llm = Arc::new(MockLLMProvider::with_text("paired summary"));
+    let checkpoint = Arc::new(CheckpointConfig {
+        enabled: false,
+        threshold: 20,
+        prompt: String::new(),
+    });
+    let mut compactor = Compactor::new(llm, "mock".into(), checkpoint, CancellationToken::new());
+
+    let big = "token ".repeat(3000);
+    let tool_context = "tool context ".repeat(2500);
+    let mut messages = vec![
+        Message::user(big.clone()),
+        Message::assistant(big),
+        Message::assistant(tool_context),
+        Message::tool_result("tc-1", "shell", "tool output", true),
+        Message::user("latest follow-up"),
+    ];
+
+    let _ = compactor
+        .compact(&mut messages, 6000, &[])
+        .await
+        .expect("compaction");
+
+    let assistant_index = messages
+        .iter()
+        .position(
+            |m| matches!(m, Message::Assistant { content, .. } if content.starts_with("tool context ")),
+        )
+        .expect("assistant kept");
+    let tool_result_index = messages
+        .iter()
+        .position(|m| matches!(m, Message::ToolResult { output, .. } if output == "tool output"))
+        .expect("tool result kept");
+    assert_eq!(tool_result_index, assistant_index + 1);
+    assert!(messages
+        .iter()
+        .any(|m| matches!(m, Message::User { .. } if m.text() == "latest follow-up")));
+}
+
+#[tokio::test]
 async fn checkpoint_runs_once_per_compactor_instance() {
     let llm = Arc::new(MockLLMProvider::with_text("summary"));
     let checkpoint = Arc::new(CheckpointConfig {
         enabled: true,
-        threshold: 5,
+        threshold: 20,
         prompt: "persist memory".to_string(),
     });
     let mut compactor = Compactor::new(llm, "mock".into(), checkpoint, CancellationToken::new());
@@ -188,7 +263,7 @@ async fn compaction_failure_guard_skips_after_three_failures_and_can_return_chec
     let llm = Arc::new(MockLLMProvider::with_text("summary"));
     let checkpoint = Arc::new(CheckpointConfig {
         enabled: true,
-        threshold: 5,
+        threshold: 20,
         prompt: "persist memory".to_string(),
     });
     let mut compactor = Compactor::new(llm, "mock".into(), checkpoint, CancellationToken::new());
@@ -221,7 +296,7 @@ async fn compaction_result_messages_before_matches_input_len() -> Result<()> {
     let llm = Arc::new(MockLLMProvider::with_text("summary text"));
     let checkpoint = Arc::new(CheckpointConfig {
         enabled: false,
-        threshold: 5,
+        threshold: 20,
         prompt: String::new(),
     });
     let mut compactor = Compactor::new(llm, "mock".into(), checkpoint, CancellationToken::new());
@@ -243,38 +318,11 @@ async fn compaction_result_messages_before_matches_input_len() -> Result<()> {
 }
 
 #[tokio::test]
-async fn compaction_result_duration_ms_is_set() -> Result<()> {
-    let llm = Arc::new(MockLLMProvider::with_text("summary text"));
-    let checkpoint = Arc::new(CheckpointConfig {
-        enabled: false,
-        threshold: 5,
-        prompt: String::new(),
-    });
-    let mut compactor = Compactor::new(llm, "mock".into(), checkpoint, CancellationToken::new());
-
-    let big = "token ".repeat(3000);
-    let mut messages = vec![
-        Message::user(big.clone()),
-        Message::assistant(big.clone()),
-        Message::user(big),
-    ];
-
-    let res = compactor
-        .compact(&mut messages, 256, &[])
-        .await
-        .ok_or_else(|| anyhow::anyhow!("expected Some compaction result"))?;
-    // duration_ms is a u64 derived from elapsed time; just verify it's present (not a sentinel)
-    // We can't assert an exact value, but it must be a valid u64 (always true).
-    let _ = res.duration_ms;
-    Ok(())
-}
-
-#[tokio::test]
 async fn compaction_result_token_usage_has_nonzero_tokens_when_summary_produced() -> Result<()> {
     let llm = Arc::new(MockLLMProvider::with_text("condensed summary text"));
     let checkpoint = Arc::new(CheckpointConfig {
         enabled: false,
-        threshold: 5,
+        threshold: 20,
         prompt: String::new(),
     });
     let mut compactor = Compactor::new(llm, "mock".into(), checkpoint, CancellationToken::new());
@@ -305,7 +353,7 @@ async fn compaction_result_messages_after_less_than_before_on_success() -> Resul
     let llm = Arc::new(MockLLMProvider::with_text("summary"));
     let checkpoint = Arc::new(CheckpointConfig {
         enabled: false,
-        threshold: 5,
+        threshold: 20,
         prompt: String::new(),
     });
     let mut compactor = Compactor::new(llm, "mock".into(), checkpoint, CancellationToken::new());

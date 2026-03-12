@@ -65,8 +65,13 @@ name = "it"
 path = "tests/it/main.rs"
 
 [[test]]
-name = "live"
-path = "tests/live/main.rs"
+name = "live-storage-contract"
+path = "tests/live_storage_contract/main.rs"
+required-features = ["live-tests"]
+
+[[test]]
+name = "live-api-e2e"
+path = "tests/live_api_e2e/main.rs"
 required-features = ["live-tests"]
 
 [[test]]
