@@ -4,6 +4,15 @@ use clap::Args;
 use clap::Parser;
 use clap::Subcommand;
 
+static SHORT_VERSION: LazyLock<String> = LazyLock::new(|| {
+    let tag = crate::version::BENDCLAW_GIT_TAG;
+    if !tag.is_empty() && tag != "unknown" {
+        tag.trim_start_matches('v').to_string()
+    } else {
+        crate::version::BENDCLAW_VERSION.to_string()
+    }
+});
+
 static LONG_VERSION: LazyLock<String> = LazyLock::new(|| {
     format!(
         "{}\ncommit: {}\nbranch: {}\nbuild:  {}\nrustc:  {}\nprofile: {}",
@@ -20,7 +29,7 @@ static LONG_VERSION: LazyLock<String> = LazyLock::new(|| {
 #[command(
     name = "bendclaw",
     about = "🦞 BendClaw — enterprise-grade OpenClaw service",
-    version = env!("CARGO_PKG_VERSION"),
+    version = SHORT_VERSION.as_str(),
     long_version = LONG_VERSION.as_str(),
 )]
 pub struct Cli {

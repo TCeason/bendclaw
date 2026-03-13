@@ -246,7 +246,9 @@ fn github_token() -> Option<String> {
 }
 
 fn user_agent() -> String {
-    format!("{BINARY_NAME}/{}", crate::version::BENDCLAW_VERSION)
+    let ver = current_release_tag();
+    let ver = ver.trim_start_matches('v');
+    format!("{BINARY_NAME}/{ver}")
 }
 
 fn tags_match(current: &str, latest: &str) -> bool {
