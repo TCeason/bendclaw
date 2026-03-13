@@ -142,7 +142,9 @@ pub async fn execute_run(
         .get_or_create_session(&agent_id, &session_id, &ctx.user_id)
         .await?;
 
-    // Validate parent_run_id belongs to the same agent and user
+    // `parent_run_id` may come from a different agent when a run is dispatched
+    // across the cluster. The header is internal-only, so preserve lineage even
+    // when the parent record does not exist in the current agent database.
     let parent_run_id = if let Some(ref prid) = parent_run_id {
         let pool = state.runtime.databases().agent_pool(&agent_id)?;
         let repo = RunRepo::new(pool);
@@ -153,19 +155,14 @@ pub async fn execute_run(
                         "parent_run_id belongs to a different user".into(),
                     ));
                 }
-                if parent.agent_id != agent_id {
-                    return Err(ServiceError::Forbidden(
-                        "parent_run_id belongs to a different agent".into(),
-                    ));
-                }
                 parent_run_id
             }
             None => {
-                tracing::warn!(
+                tracing::info!(
                     parent_run_id = %prid,
-                    "parent_run_id not found, ignoring"
+                    "parent_run_id not found in local agent database, preserving external lineage"
                 );
-                None
+                parent_run_id
             }
         }
     } else {

@@ -70,6 +70,11 @@ impl TestContext {
     }
 
     #[allow(dead_code)]
+    pub fn root_pool(&self) -> Pool {
+        self.pool.clone()
+    }
+
+    #[allow(dead_code)]
     async fn do_teardown(&self) -> anyhow::Result<()> {
         let sql = format!("SHOW DATABASES LIKE '{}%'", self.prefix);
         let rows = self.pool.query_all(&sql).await?;
@@ -150,6 +155,100 @@ pub fn uid(prefix: &str) -> String {
 pub async fn pool() -> anyhow::Result<Pool> {
     static POOL: tokio::sync::OnceCell<Pool> = tokio::sync::OnceCell::const_new();
     POOL.get_or_try_init(create_pool).await.cloned()
+}
+
+pub struct TestNodeOptions {
+    pub root_pool: Pool,
+    pub api_base_url: String,
+    pub api_token: String,
+    pub warehouse: String,
+    pub db_prefix: String,
+    pub instance_id: String,
+    pub auth_key: String,
+    pub llm: Arc<dyn bendclaw::llm::provider::LLMProvider>,
+    pub cluster: Option<bendclaw::config::ClusterConfig>,
+    pub cluster_options: bendclaw::kernel::cluster::ClusterOptions,
+}
+
+pub struct TestNode {
+    pub runtime: Arc<bendclaw::kernel::Runtime>,
+    pub base_url: String,
+    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    server_handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl TestNode {
+    pub async fn shutdown(mut self) -> anyhow::Result<()> {
+        self.runtime.shutdown().await?;
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(handle) = self.server_handle.take() {
+            let _ = handle.await;
+        }
+        Ok(())
+    }
+}
+
+pub async fn spawn_test_node(mut options: TestNodeOptions) -> anyhow::Result<TestNode> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let base_url = format!("http://{addr}");
+
+    if let Some(cluster) = options.cluster.as_mut() {
+        cluster.advertise_url = base_url.clone();
+    }
+
+    let workspace = bendclaw::config::WorkspaceConfig {
+        root_dir: std::env::temp_dir()
+            .join(format!("bendclaw-test-node-{}", Ulid::new()))
+            .to_string_lossy()
+            .into_owned(),
+        ..Default::default()
+    };
+
+    let runtime = bendclaw::kernel::Runtime::new(
+        &options.api_base_url,
+        &options.api_token,
+        &options.warehouse,
+        &options.db_prefix,
+        &options.instance_id,
+        options.llm,
+    )
+    .with_hub_config(None)
+    .with_root_pool(options.root_pool.clone())
+    .with_workspace(workspace)
+    .with_cluster_config(options.cluster, &options.auth_key)
+    .with_cluster_options(options.cluster_options)
+    .build()
+    .await?;
+
+    let auth = bendclaw::config::AuthConfig {
+        api_key: options.auth_key.clone(),
+        cors_origins: Vec::new(),
+    };
+    let state = bendclaw::service::state::AppState {
+        runtime: runtime.clone(),
+        auth_key: options.auth_key,
+    };
+    let router = bendclaw::service::api_router(state, "info", &auth);
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let server_handle = tokio::spawn(async move {
+        let shutdown = async {
+            let _ = shutdown_rx.await;
+        };
+        let _ = axum::serve(listener, router)
+            .with_graceful_shutdown(shutdown)
+            .await;
+    });
+
+    Ok(TestNode {
+        runtime,
+        base_url,
+        shutdown_tx: Some(shutdown_tx),
+        server_handle: Some(server_handle),
+    })
 }
 
 pub async fn app_with_root_pool_and_llm(
@@ -282,6 +381,13 @@ pub fn require_api_config() -> anyhow::Result<(String, String, String)> {
         std::env::var("BENDCLAW_STORAGE_DATABEND_API_TOKEN").unwrap_or_else(|_| String::new());
     let warehouse = std::env::var("BENDCLAW_STORAGE_DATABEND_WAREHOUSE")
         .unwrap_or_else(|_| "default".to_string());
+    if token.trim().is_empty() {
+        bail!(
+            "live tests require Databend credentials: set BENDCLAW_STORAGE_DATABEND_API_TOKEN \
+             or configure it in {}",
+            dev_config_path().display()
+        );
+    }
     Ok((base_url, token, warehouse))
 }
 

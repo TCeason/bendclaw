@@ -92,11 +92,31 @@ impl Tool for ClusterDispatchTool {
             Some(t) if !t.is_empty() => t,
             _ => return Ok(ToolResult::error("Missing or empty 'task' parameter")),
         };
+        let started = std::time::Instant::now();
+        tracing::info!(
+            user_id = %ctx.user_id,
+            agent_id = %ctx.agent_id,
+            run_id = %ctx.run_id,
+            node_id,
+            remote_agent_id = agent_id,
+            task_bytes = task.len(),
+            "cluster_dispatch tool started"
+        );
 
         // Resolve node_id to endpoint from trusted peer cache
         let endpoint = match self.service.resolve_endpoint(node_id) {
             Ok(ep) => ep,
-            Err(e) => return Ok(ToolResult::error(format!("{e}"))),
+            Err(e) => {
+                tracing::warn!(
+                    user_id = %ctx.user_id,
+                    agent_id = %ctx.agent_id,
+                    run_id = %ctx.run_id,
+                    node_id,
+                    error = %e,
+                    "cluster_dispatch endpoint resolution failed"
+                );
+                return Ok(ToolResult::error(format!("{e}")));
+            }
         };
 
         let user_id: &str = &ctx.user_id;
@@ -108,9 +128,33 @@ impl Tool for ClusterDispatchTool {
         {
             Ok(dispatch_id) => {
                 let result = json!({ "dispatch_id": dispatch_id });
+                tracing::info!(
+                    user_id = %ctx.user_id,
+                    agent_id = %ctx.agent_id,
+                    run_id = %ctx.run_id,
+                    node_id,
+                    endpoint,
+                    remote_agent_id = agent_id,
+                    dispatch_id = %result["dispatch_id"].as_str().unwrap_or_default(),
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "cluster_dispatch tool completed"
+                );
                 Ok(ToolResult::ok(result.to_string()))
             }
-            Err(e) => Ok(ToolResult::error(format!("Dispatch failed: {e}"))),
+            Err(e) => {
+                tracing::warn!(
+                    user_id = %ctx.user_id,
+                    agent_id = %ctx.agent_id,
+                    run_id = %ctx.run_id,
+                    node_id,
+                    endpoint,
+                    remote_agent_id = agent_id,
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    error = %e,
+                    "cluster_dispatch tool failed"
+                );
+                Ok(ToolResult::error(format!("Dispatch failed: {e}")))
+            }
         }
     }
 }

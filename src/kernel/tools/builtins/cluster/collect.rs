@@ -75,7 +75,7 @@ impl Tool for ClusterCollectTool {
     async fn execute_with_context(
         &self,
         args: serde_json::Value,
-        _ctx: &ToolContext,
+        ctx: &ToolContext,
     ) -> Result<ToolResult> {
         let dispatch_ids: Vec<String> = match args.get("dispatch_ids").and_then(|v| v.as_array()) {
             Some(arr) => arr
@@ -98,14 +98,73 @@ impl Tool for ClusterCollectTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(120);
         let timeout = Duration::from_secs(timeout_secs);
+        let started = std::time::Instant::now();
+        tracing::info!(
+            user_id = %ctx.user_id,
+            agent_id = %ctx.agent_id,
+            run_id = %ctx.run_id,
+            dispatch_count = dispatch_ids.len(),
+            timeout_ms = timeout.as_millis() as u64,
+            "cluster_collect tool started"
+        );
 
         match self.dispatch_table.collect(&dispatch_ids, timeout).await {
             Ok(entries) => {
                 let json =
                     serde_json::to_string_pretty(&entries).unwrap_or_else(|_| "[]".to_string());
+                let pending: Vec<String> = entries
+                    .iter()
+                    .filter(|entry| {
+                        !matches!(entry.status.as_str(), "COMPLETED" | "ERROR" | "CANCELLED")
+                    })
+                    .map(|entry| format!("{}:{}", entry.dispatch_id, entry.status))
+                    .collect();
+                let error_details: Vec<String> = entries
+                    .iter()
+                    .filter_map(|entry| {
+                        entry
+                            .error
+                            .as_ref()
+                            .map(|error| format!("{}:{}", entry.dispatch_id, error))
+                    })
+                    .collect();
+                tracing::info!(
+                    user_id = %ctx.user_id,
+                    agent_id = %ctx.agent_id,
+                    run_id = %ctx.run_id,
+                    dispatch_count = entries.len(),
+                    completed = entries.iter().filter(|entry| entry.status == "COMPLETED").count(),
+                    errors = entries.iter().filter(|entry| entry.status == "ERROR").count(),
+                    cancelled = entries.iter().filter(|entry| entry.status == "CANCELLED").count(),
+                    pending = ?pending,
+                    error_details = ?error_details,
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "cluster_collect tool completed"
+                );
+                if !pending.is_empty() {
+                    tracing::warn!(
+                        user_id = %ctx.user_id,
+                        agent_id = %ctx.agent_id,
+                        run_id = %ctx.run_id,
+                        pending = ?pending,
+                        elapsed_ms = started.elapsed().as_millis() as u64,
+                        "cluster_collect tool completed with pending dispatches"
+                    );
+                }
                 Ok(ToolResult::ok(json))
             }
-            Err(e) => Ok(ToolResult::error(format!("Collect failed: {e}"))),
+            Err(e) => {
+                tracing::warn!(
+                    user_id = %ctx.user_id,
+                    agent_id = %ctx.agent_id,
+                    run_id = %ctx.run_id,
+                    dispatch_count = dispatch_ids.len(),
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    error = %e,
+                    "cluster_collect tool failed"
+                );
+                Ok(ToolResult::error(format!("Collect failed: {e}")))
+            }
         }
     }
 }

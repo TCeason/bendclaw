@@ -16,7 +16,7 @@ pub struct ClusterClient {
     endpoint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeInfo {
     pub instance_id: String,
     pub endpoint: String,

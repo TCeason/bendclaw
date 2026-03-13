@@ -59,15 +59,37 @@ impl Tool for ClusterNodesTool {
     async fn execute_with_context(
         &self,
         _args: serde_json::Value,
-        _ctx: &ToolContext,
+        ctx: &ToolContext,
     ) -> Result<ToolResult> {
+        tracing::info!(
+            user_id = %ctx.user_id,
+            agent_id = %ctx.agent_id,
+            run_id = %ctx.run_id,
+            "cluster_nodes tool started"
+        );
         match self.service.refresh_peers().await {
             Ok(nodes) => {
                 let json =
                     serde_json::to_string_pretty(&nodes).unwrap_or_else(|_| "[]".to_string());
+                tracing::info!(
+                    user_id = %ctx.user_id,
+                    agent_id = %ctx.agent_id,
+                    run_id = %ctx.run_id,
+                    node_count = nodes.len(),
+                    "cluster_nodes tool completed"
+                );
                 Ok(ToolResult::ok(json))
             }
-            Err(e) => Ok(ToolResult::error(format!("Failed to discover nodes: {e}"))),
+            Err(e) => {
+                tracing::warn!(
+                    user_id = %ctx.user_id,
+                    agent_id = %ctx.agent_id,
+                    run_id = %ctx.run_id,
+                    error = %e,
+                    "cluster_nodes tool failed"
+                );
+                Ok(ToolResult::error(format!("Failed to discover nodes: {e}")))
+            }
         }
     }
 }

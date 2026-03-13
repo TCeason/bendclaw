@@ -1,3 +1,4 @@
+mod cluster;
 mod file;
 mod memory;
 mod recall;

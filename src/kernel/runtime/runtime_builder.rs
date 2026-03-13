@@ -13,6 +13,7 @@ use crate::kernel::channel::account::ChannelAccount;
 use crate::kernel::channel::dispatch::dispatch_inbound;
 use crate::kernel::channel::message::InboundEvent;
 use crate::kernel::channel::supervisor::ChannelSupervisor;
+use crate::kernel::cluster::ClusterOptions;
 use crate::kernel::cluster::ClusterService;
 use crate::kernel::runtime::agent_config::AgentConfig;
 use crate::kernel::runtime::agent_config::CheckpointConfig;
@@ -39,6 +40,7 @@ pub struct Builder {
     max_duration_secs: u64,
     workspace: WorkspaceConfig,
     cluster_config: Option<ClusterConfig>,
+    cluster_options: ClusterOptions,
     auth_key: String,
 }
 
@@ -66,6 +68,7 @@ impl Builder {
             max_duration_secs: 300,
             workspace: WorkspaceConfig::default(),
             cluster_config: None,
+            cluster_options: ClusterOptions::default(),
             auth_key: String::new(),
         }
     }
@@ -123,6 +126,12 @@ impl Builder {
         self
     }
 
+    #[must_use]
+    pub fn with_cluster_options(mut self, cluster_options: ClusterOptions) -> Self {
+        self.cluster_options = cluster_options;
+        self
+    }
+
     pub async fn build(self) -> Result<Arc<Runtime>> {
         let config = AgentConfig {
             instance_id: self.instance_id,
@@ -143,6 +152,7 @@ impl Builder {
             self.hub_config,
             self.skills_sync_interval_secs,
             self.cluster_config,
+            self.cluster_options,
             self.auth_key,
         )
         .await
@@ -157,6 +167,7 @@ async fn construct(
     hub_config: Option<crate::config::HubConfig>,
     skills_sync_interval_secs: u64,
     cluster_config: Option<ClusterConfig>,
+    cluster_options: ClusterOptions,
     auth_key: String,
 ) -> Result<Arc<Runtime>> {
     let t0 = std::time::Instant::now();
@@ -214,7 +225,11 @@ async fn construct(
             &auth_key,
             std::time::Duration::from_secs(300),
         ));
-        let svc = Arc::new(ClusterService::new(cluster_client, bendclaw_client));
+        let svc = Arc::new(ClusterService::with_options(
+            cluster_client,
+            bendclaw_client,
+            cluster_options,
+        ));
 
         if let Err(e) = svc.register_and_discover().await {
             tracing::warn!(error = %e, "cluster init failed, continuing without cluster");

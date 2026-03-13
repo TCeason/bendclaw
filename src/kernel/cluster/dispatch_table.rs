@@ -34,13 +34,19 @@ pub struct DispatchEntry {
 pub struct DispatchTable {
     entries: Mutex<HashMap<String, DispatchEntry>>,
     client: Arc<BendclawClient>,
+    poll_interval: Duration,
 }
 
 impl DispatchTable {
     pub fn new(client: Arc<BendclawClient>) -> Self {
+        Self::with_poll_interval(client, Duration::from_secs(2))
+    }
+
+    pub fn with_poll_interval(client: Arc<BendclawClient>, poll_interval: Duration) -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
             client,
+            poll_interval,
         }
     }
 
@@ -55,18 +61,19 @@ impl DispatchTable {
         user_id: &str,
         parent_run_id: Option<&str>,
     ) -> Result<String> {
+        let dispatch_id = ulid::Ulid::new().to_string();
         let resp = self
             .client
             .create_run(endpoint, agent_id, input, user_id, parent_run_id)
             .await?;
-        let dispatch_id = ulid::Ulid::new().to_string();
 
+        let remote_run_id = resp.id;
         let entry = DispatchEntry {
             dispatch_id: dispatch_id.clone(),
             node_id: node_id.to_string(),
             endpoint: endpoint.to_string(),
             agent_id: agent_id.to_string(),
-            run_id: resp.id,
+            run_id: remote_run_id.clone(),
             user_id: user_id.to_string(),
             status: "RUNNING".to_string(),
             output: None,
@@ -123,7 +130,6 @@ impl DispatchTable {
                             }
                         }
                         Err(e) => {
-                            tracing::warn!(dispatch_id = %id, error = %e, "poll failed");
                             let mut entries = self.entries.lock();
                             if let Some(entry) = entries.get_mut(id) {
                                 entry.status = "ERROR".to_string();
@@ -139,11 +145,10 @@ impl DispatchTable {
             }
 
             if tokio::time::Instant::now() >= deadline {
-                tracing::warn!("collect timeout reached");
                 break;
             }
 
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::time::sleep(self.poll_interval).await;
         }
 
         let entries = self.entries.lock();
