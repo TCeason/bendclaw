@@ -95,7 +95,6 @@ mod tests {
     use std::future::pending;
     use std::future::ready;
     use std::io::Error;
-    use std::io::ErrorKind;
 
     use tokio::sync::oneshot;
     use tokio_util::sync::CancellationToken;
@@ -113,7 +112,7 @@ mod tests {
             let _ = api_stopped_tx.send(());
             Ok(())
         };
-        let admin_server = async { Err(Error::new(ErrorKind::Other, "admin failed")) };
+        let admin_server = async { Err(Error::other("admin failed")) };
 
         let result =
             supervise_servers(shutdown_token, api_server, Some(admin_server), pending()).await;
