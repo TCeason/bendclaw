@@ -2,6 +2,9 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
+use super::ActivityGuard;
+use super::ActivityTracker;
+use super::SuspendStatus;
 use crate::kernel::channel::registry::ChannelRegistry;
 use crate::kernel::channel::supervisor::ChannelSupervisor;
 use crate::kernel::cluster::ClusterService;
@@ -36,6 +39,7 @@ pub struct Runtime {
     pub(crate) heartbeat_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) directive: Option<Arc<DirectiveService>>,
     pub(crate) directive_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
+    pub(crate) activity_tracker: Arc<ActivityTracker>,
 }
 
 pub(crate) struct RuntimeParts {
@@ -54,6 +58,7 @@ pub(crate) struct RuntimeParts {
     pub heartbeat_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     pub directive: Option<Arc<DirectiveService>>,
     pub directive_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
+    pub activity_tracker: Arc<ActivityTracker>,
 }
 
 impl Runtime {
@@ -93,7 +98,22 @@ impl Runtime {
             heartbeat_handle: parts.heartbeat_handle,
             directive: parts.directive,
             directive_handle: parts.directive_handle,
+            activity_tracker: parts.activity_tracker,
         }
+    }
+
+    pub fn suspend_status(&self) -> SuspendStatus {
+        let active_sessions = self.sessions.active_count();
+        let active_tasks = self.activity_tracker.active_task_count();
+        SuspendStatus {
+            can_suspend: active_sessions == 0 && active_tasks == 0,
+            active_sessions,
+            active_tasks,
+        }
+    }
+
+    pub(crate) fn track_task(&self) -> ActivityGuard {
+        self.activity_tracker.track_task()
     }
 
     pub fn skill_prompt(&self, agent_id: &str) -> String {

@@ -17,6 +17,7 @@
 //! | `BENDCLAW_INSTANCE_ID`       | `instance_id`          | **required**   |
 //! | `BENDCLAW_DIRECTIVE_API_BASE` | `directive.api_base`  | *(optional)*   |
 //! | `BENDCLAW_DIRECTIVE_TOKEN`   | `directive.token`      | *(optional)*   |
+//! | `BENDCLAW_ADMIN_BIND_ADDR`   | `admin.bind_addr`      | *(optional)*   |
 
 use std::fs;
 
@@ -100,6 +101,17 @@ pub struct BendClawConfig {
     /// Optional directive configuration for platform-driven agent behavior.
     /// When present, queries the evot-ai platform for directives injected into the system prompt.
     pub directive: Option<DirectiveConfig>,
+    /// Optional admin API configuration.
+    /// When present, starts a separate HTTP server for internal control-plane endpoints (no auth).
+    pub admin: Option<AdminConfig>,
+}
+
+/// Admin API configuration for internal control-plane endpoints.
+/// Listens on a separate port with no authentication — intended for internal network only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdminConfig {
+    /// Bind address for the admin API. Example: "127.0.0.1:8788"
+    pub bind_addr: String,
 }
 
 /// Directive configuration for platform-driven agent behavior.
@@ -308,6 +320,16 @@ impl BendClawConfig {
             }
         }
 
+        // Admin config env overrides
+        if let Some(admin) = self.admin.as_mut() {
+            override_str(&mut admin.bind_addr, "BENDCLAW_ADMIN_BIND_ADDR");
+        } else {
+            let bind_addr = std::env::var("BENDCLAW_ADMIN_BIND_ADDR").unwrap_or_default();
+            if !bind_addr.is_empty() {
+                self.admin = Some(AdminConfig { bind_addr });
+            }
+        }
+
         // Cluster config env overrides — create from env if both vars are set
         if let Some(cluster) = self.cluster.as_mut() {
             override_str(&mut cluster.registry_url, "BENDCLAW_CLUSTER_REGISTRY_URL");
@@ -396,6 +418,14 @@ impl BendClawConfig {
                 anyhow::bail!(
                     "invalid directive configuration:\n  \
                      directive.api_base and directive.token must both be set when [directive] is present"
+                );
+            }
+        }
+        if let Some(ref admin) = self.admin {
+            if admin.bind_addr.is_empty() {
+                anyhow::bail!(
+                    "invalid admin configuration:\n  \
+                     admin.bind_addr must be set when [admin] is present"
                 );
             }
         }

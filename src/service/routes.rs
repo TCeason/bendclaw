@@ -6,7 +6,6 @@ use serde::Serialize;
 use super::context::RequestContext;
 use super::error::ServiceError;
 use super::state::AppState;
-use crate::kernel::session::SessionStats;
 
 type Result<T> = std::result::Result<T, ServiceError>;
 
@@ -24,19 +23,4 @@ pub async fn setup_agent(
     s.runtime.setup_agent(&agent_id).await?;
     let database = s.runtime.agent_database_name(&agent_id)?;
     Ok(Json(SetupResponse { ok: true, database }))
-}
-
-pub async fn session_stats(State(s): State<AppState>) -> Result<Json<SessionStats>> {
-    Ok(Json(s.runtime.sessions().stats()))
-}
-
-#[derive(Serialize)]
-pub struct CanSuspendResponse {
-    pub can_suspend: bool,
-}
-
-pub async fn can_suspend(State(s): State<AppState>) -> Result<Json<CanSuspendResponse>> {
-    Ok(Json(CanSuspendResponse {
-        can_suspend: s.runtime.sessions().can_suspend(),
-    }))
 }

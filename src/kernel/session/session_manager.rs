@@ -61,8 +61,12 @@ impl SessionManager {
         }
     }
 
-    pub fn can_suspend(&self) -> bool {
-        self.sessions.read().values().all(|s| s.is_idle())
+    pub fn active_count(&self) -> usize {
+        self.sessions
+            .read()
+            .values()
+            .filter(|session| session.is_running())
+            .count()
     }
 }
 

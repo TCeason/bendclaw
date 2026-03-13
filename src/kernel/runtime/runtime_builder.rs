@@ -23,6 +23,7 @@ use crate::kernel::runtime::agent_config::CheckpointConfig;
 use crate::kernel::runtime::runtime::Runtime;
 use crate::kernel::runtime::runtime::RuntimeParts;
 use crate::kernel::runtime::runtime::RuntimeStatus;
+use crate::kernel::runtime::ActivityTracker;
 use crate::kernel::session::SessionManager;
 use crate::kernel::skills::store::SkillStore;
 use crate::llm::provider::LLMProvider;
@@ -225,6 +226,7 @@ async fn construct(
 
     let sessions = Arc::new(SessionManager::new());
     let channels = Arc::new(build_channel_registry());
+    let activity_tracker = Arc::new(ActivityTracker::new());
 
     // Directive cache (opt-in)
     let (directive, directive_handle) = if let Some(dc) = directive_config {
@@ -300,6 +302,7 @@ async fn construct(
             heartbeat_handle: RwLock::new(heartbeat_handle),
             directive,
             directive_handle: RwLock::new(directive_handle),
+            activity_tracker,
         })
     });
 

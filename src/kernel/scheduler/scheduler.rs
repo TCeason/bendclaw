@@ -68,7 +68,9 @@ async fn poll_once(
             let client = http_client.clone();
             let agent_id = agent_id.clone();
             let lease_token = lease_token.clone();
+            let guard = runtime.track_task();
             tokio::spawn(async move {
+                let _guard = guard;
                 if let Err(e) =
                     executor::execute_task(&runtime, &agent_id, &task, &lease_token, &client).await
                 {
@@ -171,6 +173,7 @@ mod tests {
             heartbeat_handle: RwLock::new(None),
             directive: None,
             directive_handle: RwLock::new(None),
+            activity_tracker: Arc::new(crate::kernel::runtime::ActivityTracker::new()),
         }))
     }
 

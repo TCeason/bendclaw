@@ -132,17 +132,32 @@ async fn cmd_run(
     let api_listener = tokio::net::TcpListener::bind(api_bind).await?;
     tracing::info!(bind = %api_bind, "server listening");
 
-    let shutdown_notify = Arc::new(tokio::sync::Notify::new());
-    let n1 = shutdown_notify.clone();
+    // Optional admin server on a separate port (no auth, internal only)
+    let admin_listener = if let Some(ref admin) = config.admin {
+        let admin_state = bendclaw::service::AdminState {
+            runtime: runtime.clone(),
+        };
+        let listener = tokio::net::TcpListener::bind(&admin.bind_addr).await?;
+        tracing::info!(bind = %admin.bind_addr, "admin server listening");
+        Some((listener, bendclaw::service::admin_router(admin_state)))
+    } else {
+        None
+    };
 
-    tokio::select! {
-        r = axum::serve(api_listener, api_router)
-            .with_graceful_shutdown(async move { n1.notified().await }) => r?,
-        _ = tokio::signal::ctrl_c() => {
-            tracing::info!("shutdown signal received");
-            shutdown_notify.notify_waiters();
-        }
-    }
+    let shutdown_token = tokio_util::sync::CancellationToken::new();
+    let api_shutdown = shutdown_token.clone();
+    let api_server = axum::serve(api_listener, api_router)
+        .with_graceful_shutdown(async move { api_shutdown.cancelled().await });
+    let admin_server = admin_listener.map(|(listener, router)| {
+        let admin_shutdown = shutdown_token.clone();
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async move { admin_shutdown.cancelled().await })
+    });
+
+    bendclaw::service::server::supervise_servers(shutdown_token, api_server, admin_server, async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await?;
 
     // Graceful shutdown: deregister from cluster, cancel heartbeat, close sessions
     if let Err(e) = runtime.shutdown().await {

@@ -1,0 +1,79 @@
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+
+use serde::Deserialize;
+use serde::Serialize;
+
+/// Control-plane summary of whether the runtime can be suspended safely.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SuspendStatus {
+    pub can_suspend: bool,
+    pub active_sessions: usize,
+    pub active_tasks: usize,
+}
+
+/// Tracks active runtime-managed background tasks.
+#[derive(Debug, Default)]
+pub(crate) struct ActivityTracker {
+    active_tasks: AtomicUsize,
+}
+
+impl ActivityTracker {
+    pub(crate) fn new() -> Self {
+        Self {
+            active_tasks: AtomicUsize::new(0),
+        }
+    }
+
+    pub(crate) fn track_task(self: &Arc<Self>) -> ActivityGuard {
+        self.active_tasks.fetch_add(1, Ordering::Relaxed);
+        ActivityGuard {
+            tracker: self.clone(),
+        }
+    }
+
+    pub(crate) fn active_task_count(&self) -> usize {
+        self.active_tasks.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_idle(&self) -> bool {
+        self.active_task_count() == 0
+    }
+}
+
+pub(crate) struct ActivityGuard {
+    tracker: Arc<ActivityTracker>,
+}
+
+impl Drop for ActivityGuard {
+    fn drop(&mut self) {
+        self.tracker.active_tasks.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn track_task_increments_and_guard_drop_decrements() {
+        let tracker = Arc::new(ActivityTracker::new());
+        assert!(tracker.is_idle());
+        assert_eq!(tracker.active_task_count(), 0);
+
+        let g1 = tracker.track_task();
+        assert_eq!(tracker.active_task_count(), 1);
+        assert!(!tracker.is_idle());
+
+        let g2 = tracker.track_task();
+        assert_eq!(tracker.active_task_count(), 2);
+
+        drop(g1);
+        assert_eq!(tracker.active_task_count(), 1);
+
+        drop(g2);
+        assert!(tracker.is_idle());
+    }
+}
