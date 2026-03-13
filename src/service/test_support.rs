@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -78,6 +79,7 @@ pub(crate) fn test_runtime(test_name: &str) -> Arc<Runtime> {
         config: AgentConfig::default(),
         databases,
         llm: RwLock::new(Arc::new(NoopLLM)),
+        agent_llms: RwLock::new(HashMap::new()),
         skills,
         sessions: Arc::new(SessionManager::new()),
         channels,

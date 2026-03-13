@@ -398,6 +398,7 @@ async fn prompt_builder_build_falls_back_to_db_layers() -> Result<()> {
                     "Soul from db",
                     "",
                     "",
+                    "",
                     "2026-03-10T00:00:00Z",
                     "2026-03-10T00:00:00Z",
                 ]],

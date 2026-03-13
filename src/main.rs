@@ -51,6 +51,12 @@ async fn cmd_run(
     config_path: Option<String>,
     overrides: bendclaw::cli::CliOverrides,
 ) -> anyhow::Result<()> {
+    // Load console-injected env vars (.env file < shell env < CLI)
+    let env_file = bendclaw::cli::evotai_dir().join("bendclaw.env");
+    if env_file.exists() {
+        dotenvy::from_path(&env_file).ok();
+    }
+
     let path = resolve_config_path(config_path);
     let mut config = if path.is_empty() {
         let mut cfg = BendClawConfig::default();

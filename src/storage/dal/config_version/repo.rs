@@ -1,5 +1,6 @@
 use super::record::ConfigVersionRecord;
 use crate::base::Result;
+use crate::llm::config::LLMConfig;
 use crate::storage::pool::Pool;
 use crate::storage::sql;
 use crate::storage::sql::SqlVal;
@@ -15,7 +16,7 @@ impl RowMapper for VersionMapper {
 
     fn columns(&self) -> &str {
         "id, agent_id, version, label, `stage`, system_prompt, display_name, description, \
-         identity, soul, token_limit_total, token_limit_daily, notes, TO_VARCHAR(created_at)"
+         identity, soul, token_limit_total, token_limit_daily, llm_config, notes, TO_VARCHAR(created_at)"
     }
 
     fn parse(&self, row: &serde_json::Value) -> crate::base::Result<ConfigVersionRecord> {
@@ -32,8 +33,12 @@ impl RowMapper for VersionMapper {
             soul: sql::col(row, 9),
             token_limit_total: parse_optional_u64(&sql::col(row, 10)),
             token_limit_daily: parse_optional_u64(&sql::col(row, 11)),
-            notes: sql::col(row, 12),
-            created_at: sql::col(row, 13),
+            llm_config: parse_optional_json::<LLMConfig>(
+                &sql::col(row, 12),
+                "agent_config_versions.llm_config",
+            )?,
+            notes: sql::col(row, 13),
+            created_at: sql::col(row, 14),
         })
     }
 }
@@ -59,6 +64,13 @@ impl ConfigVersionRepo {
             Some(v) => format!("{v}"),
             None => "NULL".to_string(),
         };
+        let llm_expr = match &record.llm_config {
+            Some(cfg) => {
+                let json = serde_json::to_string(cfg).unwrap_or_else(|_| "null".to_string());
+                format!("PARSE_JSON('{}')", sql::escape(&json))
+            }
+            None => "NULL".to_string(),
+        };
         self.table
             .insert(&[
                 ("id", SqlVal::Str(&record.id)),
@@ -73,6 +85,7 @@ impl ConfigVersionRepo {
                 ("soul", SqlVal::Str(&record.soul)),
                 ("token_limit_total", SqlVal::Raw(&total_str)),
                 ("token_limit_daily", SqlVal::Raw(&daily_str)),
+                ("llm_config", SqlVal::Raw(&llm_expr)),
                 ("notes", SqlVal::Str(&record.notes)),
                 ("created_at", SqlVal::Raw("NOW()")),
             ])
@@ -120,4 +133,14 @@ fn parse_optional_u64(raw: &str) -> Option<u64> {
         return None;
     }
     raw.parse::<u64>().ok()
+}
+
+fn parse_optional_json<T: serde::de::DeserializeOwned>(
+    raw: &str,
+    label: &str,
+) -> crate::base::Result<Option<T>> {
+    if raw.is_empty() || raw == "NULL" || raw == "null" {
+        return Ok(None);
+    }
+    sql::parse_json(raw, label).map(Some)
 }

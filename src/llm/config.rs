@@ -1,5 +1,10 @@
+use std::collections::HashSet;
+
 use serde::Deserialize;
 use serde::Serialize;
+
+use crate::base::ErrorCode;
+use crate::base::Result;
 
 /// LLM configuration with a weighted provider list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,7 +74,50 @@ fn default_circuit_breaker_cooldown_secs() -> u64 {
     60
 }
 
-impl LLMConfig {}
+impl LLMConfig {
+    pub fn validate(&self) -> Result<()> {
+        if self.providers.is_empty() {
+            return Err(ErrorCode::invalid_input(
+                "llm_config.providers must not be empty",
+            ));
+        }
+        if self.circuit_breaker_threshold == 0 {
+            return Err(ErrorCode::invalid_input(
+                "llm_config.circuit_breaker_threshold must be greater than 0",
+            ));
+        }
+
+        let mut names = HashSet::new();
+        for (index, provider) in self.providers.iter().enumerate() {
+            validate_provider_field(index, "name", &provider.name)?;
+            validate_provider_field(index, "provider", &provider.provider)?;
+            validate_provider_field(index, "base_url", &provider.base_url)?;
+            validate_provider_field(index, "model", &provider.model)?;
+
+            if !names.insert(provider.name.as_str()) {
+                return Err(ErrorCode::invalid_input(format!(
+                    "llm_config.providers[{index}].name '{}' must be unique",
+                    provider.name
+                )));
+            }
+        }
+
+        crate::llm::router::LLMRouter::from_config(self).map_err(|error| {
+            ErrorCode::invalid_input(format!("invalid llm_config: {}", error.message))
+        })?;
+
+        Ok(())
+    }
+}
+
+fn validate_provider_field(index: usize, field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(ErrorCode::invalid_input(format!(
+            "llm_config.providers[{index}].{field} must not be empty"
+        )));
+    }
+    Ok(())
+}
 
 impl Default for LLMConfig {
     fn default() -> Self {

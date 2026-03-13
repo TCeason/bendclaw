@@ -28,7 +28,35 @@ impl Runtime {
         self.require_ready()?;
 
         if let Some(session) = self.sessions.get(session_id) {
-            if session.belongs_to(agent_id, user_id) {
+            if !session.belongs_to(agent_id, user_id) {
+                tracing::error!(
+                    log_kind = "server_log",
+                    stage = "runtime",
+                    action = "get_or_create_session",
+                    status = "denied",
+                    agent_id,
+                    user_id,
+                    session_id,
+                    "runtime session"
+                );
+                return Err(ErrorCode::denied(format!(
+                    "session '{session_id}' belongs to a different agent/user"
+                )));
+            }
+            if session.is_stale() && !session.is_running() {
+                self.sessions.remove(session_id);
+                tracing::info!(
+                    log_kind = "server_log",
+                    stage = "runtime",
+                    action = "get_or_create_session",
+                    status = "recreated",
+                    reason = "stale_llm_config",
+                    agent_id,
+                    user_id,
+                    session_id,
+                    "runtime session"
+                );
+            } else {
                 tracing::info!(
                     log_kind = "server_log",
                     stage = "runtime",
@@ -41,19 +69,6 @@ impl Runtime {
                 );
                 return Ok(session);
             }
-            tracing::error!(
-                log_kind = "server_log",
-                stage = "runtime",
-                action = "get_or_create_session",
-                status = "denied",
-                agent_id,
-                user_id,
-                session_id,
-                "runtime session"
-            );
-            return Err(ErrorCode::denied(format!(
-                "session '{session_id}' belongs to a different agent/user"
-            )));
         }
 
         let pool = self.databases.agent_pool(agent_id)?;
@@ -68,7 +83,9 @@ impl Runtime {
             )));
         }
 
-        let storage = Arc::new(AgentStore::new(pool.clone(), self.llm.read().clone()));
+        let agent_llm = self.resolve_agent_llm(agent_id, &pool).await?;
+
+        let storage = Arc::new(AgentStore::new(pool.clone(), agent_llm.clone()));
 
         let recall_store = Arc::new(RecallStore::new(pool.clone()));
 
@@ -145,7 +162,7 @@ impl Runtime {
                 skills: self.skills.clone(),
                 tools: Arc::new(tools),
                 storage,
-                llm: Arc::new(RwLock::new(self.llm.read().clone())),
+                llm: Arc::new(RwLock::new(agent_llm)),
                 config: Arc::new(self.config.clone()),
                 variables: variable_records,
                 recall: Some(recall_store),

@@ -1,5 +1,6 @@
 //! Session — the aggregate root for agent conversations.
 
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -76,6 +77,7 @@ pub struct Session {
     pub(crate) state: Arc<Mutex<SessionState>>,
     history: Arc<Mutex<Vec<Message>>>,
     last_active: Mutex<Instant>,
+    stale: AtomicBool,
 }
 
 impl Session {
@@ -88,6 +90,7 @@ impl Session {
             state: Arc::new(Mutex::new(SessionState::Idle)),
             history: Arc::new(Mutex::new(Vec::new())),
             last_active: Mutex::new(Instant::now()),
+            stale: AtomicBool::new(false),
         }
     }
 
@@ -478,6 +481,18 @@ impl Session {
 
     pub fn belongs_to(&self, agent_id: &str, user_id: &str) -> bool {
         self.agent_id.as_ref() == agent_id && self.user_id.as_ref() == user_id
+    }
+
+    pub fn agent_id_ref(&self) -> &str {
+        &self.agent_id
+    }
+
+    pub(crate) fn mark_stale(&self) {
+        self.stale.store(true, Ordering::Relaxed);
+    }
+
+    pub(crate) fn is_stale(&self) -> bool {
+        self.stale.load(Ordering::Relaxed)
     }
 
     pub fn info(&self) -> SessionInfo {

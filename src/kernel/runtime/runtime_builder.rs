@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -293,6 +294,7 @@ async fn construct(
             config,
             databases,
             llm: RwLock::new(llm),
+            agent_llms: RwLock::new(HashMap::new()),
             skills,
             status: RwLock::new(RuntimeStatus::Ready),
             sync_cancel: sync_cancel.clone(),

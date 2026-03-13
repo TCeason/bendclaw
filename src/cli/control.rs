@@ -46,6 +46,10 @@ fn dirs_home() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("/tmp"))
 }
 
+pub fn evotai_dir() -> PathBuf {
+    dirs_home().join(".evotai")
+}
+
 fn read_pid() -> Option<u32> {
     fs::read_to_string(pid_file())
         .ok()?

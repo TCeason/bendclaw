@@ -10,4 +10,5 @@ pub use control::cmd_start;
 pub use control::cmd_status;
 pub use control::cmd_stop;
 pub use control::default_config_path;
+pub use control::evotai_dir;
 pub use update::cmd_update;

@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS agent_config (
     soul              TEXT      NOT NULL DEFAULT '' COMMENT 'Agent behavior/personality rules (PromptBuilder layer 2)',
     token_limit_total BIGINT UNSIGNED NULL COMMENT 'Total token usage limit',
     token_limit_daily BIGINT UNSIGNED NULL COMMENT 'Daily token usage limit',
+    llm_config        VARIANT   NULL COMMENT 'Per-agent LLM configuration (JSON, nullable)',
     env               VARIANT   NOT NULL DEFAULT '{}'::VARIANT COMMENT 'Agent environment variables (JSON object)',
     created_at        TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at        TIMESTAMP NOT NULL DEFAULT NOW()
@@ -27,6 +28,7 @@ CREATE TABLE IF NOT EXISTS agent_config_versions (
     soul              TEXT      NOT NULL DEFAULT '' COMMENT 'Soul snapshot',
     token_limit_total BIGINT UNSIGNED NULL COMMENT 'Total token limit snapshot',
     token_limit_daily BIGINT UNSIGNED NULL COMMENT 'Daily token limit snapshot',
+    llm_config        VARIANT   NULL COMMENT 'LLM configuration snapshot (JSON, nullable)',
     notes             VARCHAR   NOT NULL DEFAULT '' COMMENT 'Change notes',
     created_at        TIMESTAMP NOT NULL DEFAULT NOW()
 ) COMMENT = 'Agent config version history';

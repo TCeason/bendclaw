@@ -8,8 +8,15 @@ use crate::kernel::runtime::Runtime;
 use crate::kernel::skills::remote::repository::DatabendSkillRepository;
 use crate::kernel::skills::remote::repository::SkillRepository;
 use crate::kernel::skills::skill::Skill;
+use crate::llm::config::LLMConfig;
 use crate::observability::redaction;
 use crate::storage::dal::learning::record::LearningRecord;
+
+/// Validate that an LLMConfig can actually produce a working LLMRouter.
+/// Called before persisting to avoid storing broken configs.
+fn validate_llm_config(cfg: &LLMConfig) -> Result<()> {
+    cfg.validate()
+}
 
 fn runtime_payload(payload: serde_json::Value) -> String {
     serde_json::to_string(&redaction::redact(payload)).unwrap_or_else(|_| "{}".to_string())
@@ -203,6 +210,7 @@ impl Runtime {
         soul: Option<&str>,
         token_limit_total: Option<Option<u64>>,
         token_limit_daily: Option<Option<u64>>,
+        llm_config: Option<Option<&LLMConfig>>,
         notes: Option<&str>,
         label: Option<&str>,
     ) -> Result<u32> {
@@ -215,6 +223,7 @@ impl Runtime {
             "soul": soul,
             "token_limit_total": token_limit_total,
             "token_limit_daily": token_limit_daily,
+            "llm_config": llm_config.is_some(),
             "notes": notes,
             "label": label,
         });
@@ -225,6 +234,9 @@ impl Runtime {
             0,
             payload.clone(),
         );
+        if let Some(Some(cfg)) = llm_config {
+            validate_llm_config(cfg)?;
+        }
         let result = self
             .agent_store(agent_id)?
             .config_update_with_version(
@@ -236,18 +248,22 @@ impl Runtime {
                 soul,
                 token_limit_total,
                 token_limit_daily,
+                llm_config,
                 notes,
                 label,
             )
             .await;
         match &result {
-            Ok(version) => log_runtime_info(
-                "update_config_with_version",
-                "completed",
-                agent_id,
-                started.elapsed().as_millis() as u64,
-                serde_json::json!({"payload": payload, "version": version}),
-            ),
+            Ok(version) => {
+                self.invalidate_agent_llm(agent_id);
+                log_runtime_info(
+                    "update_config_with_version",
+                    "completed",
+                    agent_id,
+                    started.elapsed().as_millis() as u64,
+                    serde_json::json!({"payload": payload, "version": version}),
+                );
+            }
             Err(error) => log_runtime_error(
                 "update_config_with_version",
                 agent_id,
@@ -477,6 +493,7 @@ impl Runtime {
         soul: Option<&str>,
         token_limit_total: Option<Option<u64>>,
         token_limit_daily: Option<Option<u64>>,
+        llm_config: Option<Option<&LLMConfig>>,
     ) -> Result<()> {
         let started = Instant::now();
         let payload = serde_json::json!({
@@ -487,8 +504,12 @@ impl Runtime {
             "soul": soul,
             "token_limit_total": token_limit_total,
             "token_limit_daily": token_limit_daily,
+            "llm_config": llm_config.is_some(),
         });
         log_runtime_info("upsert_config", "started", agent_id, 0, payload.clone());
+        if let Some(Some(cfg)) = llm_config {
+            validate_llm_config(cfg)?;
+        }
         let result = self
             .agent_store(agent_id)?
             .config_upsert(
@@ -500,16 +521,20 @@ impl Runtime {
                 soul,
                 token_limit_total,
                 token_limit_daily,
+                llm_config,
             )
             .await;
         match &result {
-            Ok(_) => log_runtime_info(
-                "upsert_config",
-                "completed",
-                agent_id,
-                started.elapsed().as_millis() as u64,
-                payload,
-            ),
+            Ok(_) => {
+                self.invalidate_agent_llm(agent_id);
+                log_runtime_info(
+                    "upsert_config",
+                    "completed",
+                    agent_id,
+                    started.elapsed().as_millis() as u64,
+                    payload,
+                );
+            }
             Err(error) => log_runtime_error(
                 "upsert_config",
                 agent_id,

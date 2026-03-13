@@ -89,6 +89,7 @@ async fn poll_once(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     use async_trait::async_trait;
@@ -161,6 +162,7 @@ mod tests {
             config,
             databases,
             llm: RwLock::new(Arc::new(NoopLLM)),
+            agent_llms: RwLock::new(HashMap::new()),
             skills,
             sessions: Arc::new(SessionManager::new()),
             channels,

@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use super::service;
+use crate::llm::config::LLMConfig;
 use crate::service::context::RequestContext;
 use crate::service::error::Result;
 use crate::service::state::AppState;
@@ -22,6 +23,7 @@ pub struct ConfigResponse {
     pub soul: String,
     pub token_limit_total: Option<u64>,
     pub token_limit_daily: Option<u64>,
+    pub llm_config: Option<LLMConfig>,
 }
 
 #[derive(Deserialize)]
@@ -33,6 +35,7 @@ pub struct UpdateConfigRequest {
     pub soul: Option<String>,
     pub token_limit_total: Option<Option<u64>>,
     pub token_limit_daily: Option<Option<u64>>,
+    pub llm_config: Option<Option<LLMConfig>>,
     pub notes: Option<String>,
     pub label: Option<String>,
 }
@@ -50,6 +53,7 @@ pub struct VersionResponse {
     pub soul: String,
     pub token_limit_total: Option<u64>,
     pub token_limit_daily: Option<u64>,
+    pub llm_config: Option<LLMConfig>,
     pub notes: String,
     pub created_at: String,
 }

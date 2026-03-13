@@ -22,6 +22,7 @@ pub(super) async fn get_config(state: &AppState, agent_id: &str) -> Result<Confi
             soul: r.soul,
             token_limit_total: r.token_limit_total,
             token_limit_daily: r.token_limit_daily,
+            llm_config: r.llm_config,
         },
         None => ConfigResponse {
             agent_id: agent_id.to_string(),
@@ -32,6 +33,7 @@ pub(super) async fn get_config(state: &AppState, agent_id: &str) -> Result<Confi
             soul: String::new(),
             token_limit_total: None,
             token_limit_daily: None,
+            llm_config: None,
         },
     })
 }
@@ -41,6 +43,7 @@ pub(super) async fn update_config(
     agent_id: &str,
     req: UpdateConfigRequest,
 ) -> Result<u32> {
+    let llm_ref = req.llm_config.as_ref().map(|opt| opt.as_ref());
     let version = state
         .runtime
         .update_config_with_version(
@@ -52,6 +55,7 @@ pub(super) async fn update_config(
             req.soul.as_deref(),
             req.token_limit_total,
             req.token_limit_daily,
+            llm_ref,
             req.notes.as_deref(),
             req.label.as_deref(),
         )
@@ -75,6 +79,7 @@ pub(super) async fn rollback_config(
             Some(&record.soul),
             Some(record.token_limit_total),
             Some(record.token_limit_daily),
+            Some(record.llm_config.as_ref()),
         )
         .await?;
     Ok(())
@@ -135,6 +140,7 @@ fn to_version_response(r: ConfigVersionRecord) -> VersionResponse {
         soul: r.soul,
         token_limit_total: r.token_limit_total,
         token_limit_daily: r.token_limit_daily,
+        llm_config: r.llm_config,
         notes: r.notes,
         created_at: r.created_at,
     }

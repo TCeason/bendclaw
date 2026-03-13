@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::usage_store::UsageStore;
+use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::agent_store::memory_store::DatabendMemoryStore;
 use crate::kernel::agent_store::memory_store::MemoryEntry;
@@ -8,6 +9,7 @@ use crate::kernel::agent_store::memory_store::MemoryResult;
 use crate::kernel::agent_store::memory_store::SearchOpts;
 use crate::kernel::run::usage::UsageEvent;
 use crate::kernel::run::usage::UsageScope;
+use crate::llm::config::LLMConfig;
 use crate::llm::provider::LLMProvider;
 use crate::storage::dal::agent_config::record::AgentConfigRecord;
 use crate::storage::dal::agent_config::repo::AgentConfigStore;
@@ -266,7 +268,16 @@ impl AgentStore {
         soul: Option<&str>,
         token_limit_total: Option<Option<u64>>,
         token_limit_daily: Option<Option<u64>>,
+        llm_config: Option<Option<&LLMConfig>>,
     ) -> Result<()> {
+        let llm_json = llm_config.map(|opt| {
+            opt.map(|cfg| serde_json::to_string(cfg).unwrap_or_else(|_| "null".to_string()))
+        });
+        let llm_str: Option<&str> = match &llm_json {
+            Some(Some(s)) => Some(s.as_str()),
+            Some(None) => None,
+            None => None,
+        };
         self.config
             .upsert(
                 agent_id,
@@ -277,6 +288,7 @@ impl AgentStore {
                 soul,
                 token_limit_total,
                 token_limit_daily,
+                llm_str,
             )
             .await
     }
@@ -296,9 +308,18 @@ impl AgentStore {
         soul: Option<&str>,
         token_limit_total: Option<Option<u64>>,
         token_limit_daily: Option<Option<u64>>,
+        llm_config: Option<Option<&LLMConfig>>,
         notes: Option<&str>,
         label: Option<&str>,
     ) -> Result<u32> {
+        let llm_json = llm_config.map(|opt| {
+            opt.map(|cfg| serde_json::to_string(cfg).unwrap_or_else(|_| "null".to_string()))
+        });
+        let llm_str: Option<&str> = match &llm_json {
+            Some(Some(s)) => Some(s.as_str()),
+            Some(None) => None,
+            None => None,
+        };
         self.config
             .upsert(
                 agent_id,
@@ -309,8 +330,15 @@ impl AgentStore {
                 soul,
                 token_limit_total,
                 token_limit_daily,
+                llm_str,
             )
             .await?;
+
+        let snapshot = self
+            .config
+            .get(agent_id)
+            .await?
+            .ok_or_else(|| ErrorCode::internal("agent config missing after upsert"))?;
 
         let version_repo = ConfigVersionRepo::new(self.pool.clone());
         let next = version_repo.next_version(agent_id).await?;
@@ -320,13 +348,14 @@ impl AgentStore {
             version: next,
             label: label.unwrap_or_default().to_string(),
             stage: "published".to_string(),
-            system_prompt: system_prompt.unwrap_or_default().to_string(),
-            display_name: display_name.unwrap_or_default().to_string(),
-            description: description.unwrap_or_default().to_string(),
-            identity: identity.unwrap_or_default().to_string(),
-            soul: soul.unwrap_or_default().to_string(),
-            token_limit_total: token_limit_total.unwrap_or(None),
-            token_limit_daily: token_limit_daily.unwrap_or(None),
+            system_prompt: snapshot.system_prompt,
+            display_name: snapshot.display_name,
+            description: snapshot.description,
+            identity: snapshot.identity,
+            soul: snapshot.soul,
+            token_limit_total: snapshot.token_limit_total,
+            token_limit_daily: snapshot.token_limit_daily,
+            llm_config: snapshot.llm_config,
             notes: notes.unwrap_or_default().to_string(),
             created_at: String::new(),
         };

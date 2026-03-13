@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -27,6 +28,7 @@ pub struct Runtime {
     pub(crate) config: AgentConfig,
     pub(crate) databases: Arc<crate::storage::AgentDatabases>,
     pub(crate) llm: RwLock<Arc<dyn LLMProvider>>,
+    pub(crate) agent_llms: RwLock<HashMap<String, Arc<dyn LLMProvider>>>,
     pub(crate) skills: Arc<SkillStore>,
     pub(crate) sessions: Arc<SessionManager>,
     pub(crate) channels: Arc<ChannelRegistry>,
@@ -46,6 +48,7 @@ pub(crate) struct RuntimeParts {
     pub config: AgentConfig,
     pub databases: Arc<crate::storage::AgentDatabases>,
     pub llm: RwLock<Arc<dyn LLMProvider>>,
+    pub agent_llms: RwLock<HashMap<String, Arc<dyn LLMProvider>>>,
     pub skills: Arc<SkillStore>,
     pub sessions: Arc<SessionManager>,
     pub channels: Arc<ChannelRegistry>,
@@ -86,6 +89,7 @@ impl Runtime {
             config: parts.config,
             databases: parts.databases,
             llm: parts.llm,
+            agent_llms: parts.agent_llms,
             skills: parts.skills,
             sessions: parts.sessions,
             channels: parts.channels,
@@ -145,6 +149,53 @@ impl Runtime {
     pub fn reload_llm(&self, new_llm: Arc<dyn LLMProvider>) {
         *self.llm.write() = new_llm;
         tracing::info!("LLM provider hot-reloaded");
+    }
+
+    /// Resolve the LLM provider for a specific agent.
+    /// Checks the per-agent cache first, then queries DB for agent-specific config,
+    /// and falls back to the global LLM provider.
+    pub async fn resolve_agent_llm(
+        &self,
+        agent_id: &str,
+        pool: &Pool,
+    ) -> crate::base::Result<Arc<dyn LLMProvider>> {
+        // Check cache
+        if let Some(provider) = self.agent_llms.read().get(agent_id) {
+            return Ok(provider.clone());
+        }
+
+        // Query DB for agent-specific LLM config
+        let config_store =
+            crate::storage::dal::agent_config::repo::AgentConfigStore::new(pool.clone());
+        if let Some(record) = config_store.get(agent_id).await? {
+            if let Some(llm_config) = record.llm_config {
+                let router = crate::llm::router::LLMRouter::from_config(&llm_config)?;
+                let provider: Arc<dyn LLMProvider> = Arc::new(router);
+                self.agent_llms
+                    .write()
+                    .insert(agent_id.to_string(), provider.clone());
+                return Ok(provider);
+            }
+        }
+
+        // Fallback to global
+        Ok(self.llm.read().clone())
+    }
+
+    /// Remove a cached per-agent LLM provider, forcing re-resolution on next use.
+    /// Also marks live sessions stale and evicts the idle ones so future turns
+    /// pick up the new config.
+    pub fn invalidate_agent_llm(&self, agent_id: &str) {
+        self.agent_llms.write().remove(agent_id);
+        let result = self.sessions.invalidate_by_agent(agent_id);
+        if result.evicted_idle > 0 || result.marked_running > 0 {
+            tracing::info!(
+                agent_id,
+                evicted_idle = result.evicted_idle,
+                marked_running = result.marked_running,
+                "invalidated sessions after LLM config change"
+            );
+        }
     }
 
     pub fn skills(&self) -> &Arc<SkillStore> {

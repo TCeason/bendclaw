@@ -19,7 +19,7 @@ impl Runtime {
         let config_store = crate::storage::AgentConfigStore::new(agent_pool);
         if config_store.get(agent_id).await?.is_none() {
             config_store
-                .upsert(agent_id, None, None, None, None, None, None, None)
+                .upsert(agent_id, None, None, None, None, None, None, None, None)
                 .await?;
         }
 
