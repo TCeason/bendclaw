@@ -197,7 +197,6 @@ jobs:
           fi
 
           gh release create "${TAG}" \
-            --verify-tag \
             --target "${SHA}" \
             --title "${NAME}" \
             --notes-file "${{ steps.notes.outputs.file }}" \
