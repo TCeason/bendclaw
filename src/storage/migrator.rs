@@ -2,36 +2,53 @@ use tracing;
 
 use super::pool::Pool;
 
-const AGENT_MIGRATIONS: &[&str] = &[
-    include_str!("../../migrations/0001_sessions.sql"),
-    include_str!("../../migrations/0002_runs.sql"),
-    include_str!("../../migrations/0003_agent.sql"),
-    include_str!("../../migrations/0004_memory.sql"),
-    include_str!("../../migrations/0005_skills.sql"),
-    include_str!("../../migrations/0006_traces.sql"),
-    include_str!("../../migrations/0007_variables.sql"),
-    include_str!("../../migrations/0008_tasks.sql"),
-    include_str!("../../migrations/0009_feedback.sql"),
-    include_str!("../../migrations/0010_channels.sql"),
-    include_str!("../../migrations/0011_recall.sql"),
+/// Base migrations — independent CREATE TABLE IF NOT EXISTS files.
+/// Files have no cross-dependencies and can run in parallel.
+const BASE_MIGRATIONS: &[&str] = &[
+    include_str!("../../migrations/base/sessions.sql"),
+    include_str!("../../migrations/base/runs.sql"),
+    include_str!("../../migrations/base/agent.sql"),
+    include_str!("../../migrations/base/memory.sql"),
+    include_str!("../../migrations/base/skills.sql"),
+    include_str!("../../migrations/base/traces.sql"),
+    include_str!("../../migrations/base/variables.sql"),
+    include_str!("../../migrations/base/tasks.sql"),
+    include_str!("../../migrations/base/feedback.sql"),
+    include_str!("../../migrations/base/channels.sql"),
+    include_str!("../../migrations/base/recall.sql"),
+];
+
+/// Alter migrations — ALTER TABLE, DROP, etc. that depend on base tables.
+/// Executed strictly in order after all base migrations complete.
+const ALTER_MIGRATIONS: &[&str] = &[
+    // Future migrations go here, e.g.:
+    // include_str!("../../migrations/alter/0001_add_column.sql"),
 ];
 
 /// Run all agent migrations against the pool's current database.
 pub async fn run_agent(pool: &Pool) {
-    run_statements(pool, AGENT_MIGRATIONS, "agent").await;
+    // Phase 1: base tables — files run in parallel (no cross-dependencies).
+    let futs: Vec<_> = BASE_MIGRATIONS
+        .iter()
+        .map(|sql| run_one_file(pool, sql, "base"))
+        .collect();
+    futures::future::join_all(futs).await;
+    tracing::info!(count = BASE_MIGRATIONS.len(), "base migrations completed");
+
+    // Phase 2: alter — strict sequential for ordering guarantees.
+    if !ALTER_MIGRATIONS.is_empty() {
+        for sql in ALTER_MIGRATIONS {
+            run_one_file(pool, sql, "alter").await;
+        }
+        tracing::info!(count = ALTER_MIGRATIONS.len(), "alter migrations completed");
+    }
 }
 
-/// Run migration files sequentially — later files may ALTER tables created by
-/// earlier files, so ordering must be preserved.
-/// Statements within each file also run sequentially (e.g. CREATE INDEX after CREATE TABLE).
-async fn run_statements(pool: &Pool, migrations: &[&str], scope: &str) {
-    for sql in migrations {
-        for stmt in sql.split(';').filter(|s| !s.trim().is_empty()) {
-            let stmt = stmt.trim();
-            if let Err(e) = pool.exec(stmt).await {
-                tracing::info!(scope, error = %e, "migration statement skipped (may already exist)");
-            }
+async fn run_one_file(pool: &Pool, sql: &str, scope: &str) {
+    for stmt in sql.split(';').filter(|s| !s.trim().is_empty()) {
+        let stmt = stmt.trim();
+        if let Err(e) = pool.exec(stmt).await {
+            tracing::info!(scope, error = %e, "migration statement skipped (may already exist)");
         }
     }
-    tracing::info!(scope, count = migrations.len(), "migrations completed");
 }

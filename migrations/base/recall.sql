@@ -14,14 +14,14 @@ CREATE TABLE IF NOT EXISTS knowledge (
     first_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
     last_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-) ENGINE = FUSE;
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
 
-CREATE INVERTED INDEX IF NOT EXISTS idx_knowledge_kind ON knowledge(kind);
-CREATE INVERTED INDEX IF NOT EXISTS idx_knowledge_subject ON knowledge(subject);
-CREATE INVERTED INDEX IF NOT EXISTS idx_knowledge_locator ON knowledge(locator);
-CREATE INVERTED INDEX IF NOT EXISTS idx_knowledge_status ON knowledge(status);
-CREATE INVERTED INDEX IF NOT EXISTS idx_knowledge_summary ON knowledge(summary);
+    INVERTED INDEX idx_knowledge_kind(kind),
+    INVERTED INDEX idx_knowledge_subject(subject),
+    INVERTED INDEX idx_knowledge_locator(locator),
+    INVERTED INDEX idx_knowledge_status(status),
+    INVERTED INDEX idx_knowledge_summary(summary)
+) ENGINE = FUSE;
 
 CREATE TABLE IF NOT EXISTS learnings (
     id VARCHAR NOT NULL,
@@ -41,10 +41,10 @@ CREATE TABLE IF NOT EXISTS learnings (
     failure_count INT NOT NULL DEFAULT 0,
     last_applied_at TIMESTAMP NULL,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-) ENGINE = FUSE;
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
 
-CREATE INVERTED INDEX IF NOT EXISTS idx_learnings_kind ON learnings(kind);
-CREATE INVERTED INDEX IF NOT EXISTS idx_learnings_subject ON learnings(subject);
-CREATE INVERTED INDEX IF NOT EXISTS idx_learnings_status ON learnings(status);
-CREATE INVERTED INDEX IF NOT EXISTS idx_learnings_content ON learnings(content);
+    INVERTED INDEX idx_learnings_kind(kind),
+    INVERTED INDEX idx_learnings_subject(subject),
+    INVERTED INDEX idx_learnings_status(status),
+    INVERTED INDEX idx_learnings_content(content)
+) ENGINE = FUSE;

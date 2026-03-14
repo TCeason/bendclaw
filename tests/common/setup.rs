@@ -402,16 +402,16 @@ fn col(row: &serde_json::Value, idx: usize) -> String {
 }
 
 const ALL_MIGRATIONS: &[&str] = &[
-    include_str!("../../migrations/0001_sessions.sql"),
-    include_str!("../../migrations/0002_runs.sql"),
-    include_str!("../../migrations/0003_agent.sql"),
-    include_str!("../../migrations/0004_memory.sql"),
-    include_str!("../../migrations/0005_skills.sql"),
-    include_str!("../../migrations/0006_traces.sql"),
-    include_str!("../../migrations/0007_variables.sql"),
-    include_str!("../../migrations/0008_tasks.sql"),
-    include_str!("../../migrations/0009_feedback.sql"),
-    include_str!("../../migrations/0010_channels.sql"),
+    include_str!("../../migrations/base/sessions.sql"),
+    include_str!("../../migrations/base/runs.sql"),
+    include_str!("../../migrations/base/agent.sql"),
+    include_str!("../../migrations/base/memory.sql"),
+    include_str!("../../migrations/base/skills.sql"),
+    include_str!("../../migrations/base/traces.sql"),
+    include_str!("../../migrations/base/variables.sql"),
+    include_str!("../../migrations/base/tasks.sql"),
+    include_str!("../../migrations/base/feedback.sql"),
+    include_str!("../../migrations/base/channels.sql"),
 ];
 
 async fn run_migration(pool: &Pool, sql: &str) -> anyhow::Result<()> {
