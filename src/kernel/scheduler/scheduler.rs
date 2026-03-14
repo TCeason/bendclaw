@@ -36,7 +36,7 @@ impl TaskScheduler {
                 if let Err(e) = poll_once(&runtime, &http_client).await {
                     consecutive_errors += 1;
                     // Log first failure, then every 20th to avoid flooding.
-                    if consecutive_errors == 1 || consecutive_errors % 20 == 0 {
+                    if consecutive_errors == 1 || consecutive_errors.is_multiple_of(20) {
                         tracing::warn!(
                             error = %e,
                             consecutive_errors,

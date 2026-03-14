@@ -177,7 +177,7 @@ pub fn spawn_sync_task(
                 _ = interval.tick() => {
                     if let Err(e) = store.refresh().await {
                         consecutive_errors += 1;
-                        if consecutive_errors == 1 || consecutive_errors % 20 == 0 {
+                        if consecutive_errors == 1 || consecutive_errors.is_multiple_of(20) {
                             tracing::error!(
                                 error = %e,
                                 consecutive_errors,
