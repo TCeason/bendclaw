@@ -1,9 +1,17 @@
+mod agent_config_repo;
+mod channel_account_repo;
+mod channel_message_repo;
+mod config_version_repo;
+mod feedback_repo;
 mod knowledge;
 mod learning;
 mod records;
 mod run_event_repo;
 mod run_repo;
+mod session_repo;
 mod task;
 mod task_history_repo;
 mod task_repo;
+mod trace_repo;
+mod usage_repo;
 mod variable;

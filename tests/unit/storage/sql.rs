@@ -397,17 +397,18 @@ fn escape_like_no_special_chars() {
 
 #[test]
 fn escape_like_percent() {
-    assert_eq!(escape_like("100%"), "100\\%");
+    assert_eq!(escape_like("100%"), "100^%");
 }
 
 #[test]
 fn escape_like_underscore() {
-    assert_eq!(escape_like("a_b"), "a\\_b");
+    assert_eq!(escape_like("a_b"), "a^_b");
 }
 
 #[test]
 fn escape_like_backslash() {
-    assert_eq!(escape_like("a\\b"), "a\\\\b");
+    // Backslash is no longer special for LIKE escape; passes through unchanged
+    assert_eq!(escape_like("a\\b"), "a\\b");
 }
 
 #[test]
@@ -417,7 +418,12 @@ fn escape_like_single_quote() {
 
 #[test]
 fn escape_like_all_special() {
-    assert_eq!(escape_like("%_\\'"), "\\%\\_\\\\''");
+    assert_eq!(escape_like("%_^'"), "^%^_^^''");
+}
+
+#[test]
+fn escape_like_caret() {
+    assert_eq!(escape_like("a^b"), "a^^b");
 }
 
 // ── escape_ident tests ──────────────────────────────

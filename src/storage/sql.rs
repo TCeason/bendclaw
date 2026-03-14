@@ -11,11 +11,12 @@ pub fn escape(s: &str) -> String {
 }
 
 /// Escape a string for safe use in a SQL LIKE pattern.
-/// Escapes `%`, `_`, `\`, and `'` so they are treated as literals.
+/// Uses `^` as the ESCAPE character (Databend's tokenizer rejects backslash in ESCAPE clauses).
+/// Escapes `%`, `_`, `^`, and `'` so they are treated as literals.
 pub fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
+    s.replace('^', "^^")
+        .replace('%', "^%")
+        .replace('_', "^_")
         .replace('\'', "''")
 }
 

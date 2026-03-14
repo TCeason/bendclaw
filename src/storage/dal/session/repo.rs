@@ -194,7 +194,7 @@ fn user_search_condition(user_id: &str, search: Option<&str>) -> String {
     let mut condition = format!("user_id = '{}'", sql::escape(user_id));
     if let Some(search) = search {
         let search = sql::escape_like(search);
-        condition.push_str(&format!(" AND title LIKE '%{search}%' ESCAPE '\\\\'"));
+        condition.push_str(&format!(" AND title LIKE '%{search}%' ESCAPE '^'"));
     }
     condition
 }
