@@ -142,7 +142,7 @@ impl Pool {
     pub async fn exec(&self, sql: &str) -> Result<()> {
         let sql = sql.to_string();
         let started = Instant::now();
-        tracing::info!(
+        tracing::debug!(
             log_kind = "server_log",
             stage = "storage",
             operation = "exec",
@@ -217,7 +217,7 @@ impl Pool {
     pub async fn query_all(&self, sql: &str) -> Result<Vec<serde_json::Value>> {
         let sql = sql.to_string();
         let started = Instant::now();
-        tracing::info!(
+        tracing::debug!(
             log_kind = "server_log",
             stage = "storage",
             operation = "query_all",

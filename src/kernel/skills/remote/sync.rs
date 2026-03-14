@@ -170,12 +170,25 @@ pub fn spawn_sync_task(
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
         interval.tick().await;
+        let mut consecutive_errors: u64 = 0;
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => { tracing::info!("skill sync task cancelled"); break; }
                 _ = interval.tick() => {
                     if let Err(e) = store.refresh().await {
-                        tracing::error!(error = %e, "skill sync failed");
+                        consecutive_errors += 1;
+                        if consecutive_errors == 1 || consecutive_errors % 20 == 0 {
+                            tracing::error!(
+                                error = %e,
+                                consecutive_errors,
+                                "skill sync failed"
+                            );
+                        }
+                    } else {
+                        if consecutive_errors > 0 {
+                            tracing::info!(consecutive_errors, "skill sync recovered");
+                        }
+                        consecutive_errors = 0;
                     }
                 }
             }

@@ -57,6 +57,12 @@ async fn log_http_request(req: Request<Body>, next: Next) -> Response {
         .get::<MatchedPath>()
         .map(|path| path.as_str().to_string())
         .unwrap_or_default();
+
+    // Skip logging for health checks to reduce noise.
+    if matched_path == "/health" {
+        return next.run(req).await;
+    }
+
     let trace_id = header_value(&req, TRACE_HEADER);
     let user_id = {
         let header = header_value(&req, USER_HEADER);

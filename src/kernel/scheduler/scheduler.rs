@@ -8,7 +8,7 @@ use super::executor;
 use crate::kernel::runtime::Runtime;
 use crate::kernel::task::execution;
 
-const DEFAULT_POLL_INTERVAL_SECS: u64 = 15;
+const DEFAULT_POLL_INTERVAL_SECS: u64 = 30;
 
 pub struct TaskScheduler;
 
@@ -23,6 +23,7 @@ impl TaskScheduler {
         let interval = Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS);
         tokio::spawn(async move {
             tracing::info!("task scheduler started (poll interval: {interval:?})");
+            let mut consecutive_errors: u64 = 0;
             loop {
                 tokio::select! {
                     _ = cancel.cancelled() => {
@@ -33,7 +34,23 @@ impl TaskScheduler {
                 }
 
                 if let Err(e) = poll_once(&runtime, &http_client).await {
-                    tracing::warn!(error = %e, "task scheduler poll error");
+                    consecutive_errors += 1;
+                    // Log first failure, then every 20th to avoid flooding.
+                    if consecutive_errors == 1 || consecutive_errors % 20 == 0 {
+                        tracing::warn!(
+                            error = %e,
+                            consecutive_errors,
+                            "task scheduler poll error"
+                        );
+                    }
+                } else {
+                    if consecutive_errors > 0 {
+                        tracing::info!(
+                            consecutive_errors,
+                            "task scheduler recovered"
+                        );
+                    }
+                    consecutive_errors = 0;
                 }
             }
         })

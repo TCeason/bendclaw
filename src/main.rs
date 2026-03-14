@@ -73,13 +73,13 @@ async fn cmd_run(
         .unwrap_or_else(|_| EnvFilter::new("info,tower_http=warn"));
 
     let file_layer = if !config.log.dir.is_empty() {
-        let _ = std::fs::create_dir_all(&config.log.dir);
-        let file_appender = tracing_appender::rolling::daily(&config.log.dir, "bendclaw.log");
+        let writer = tracing_fmt::LocalDailyWriter::new(&config.log.dir, "bendclaw.log")
+            .expect("failed to create log file writer");
         Some(
             tracing_subscriber::fmt::layer()
                 .with_ansi(false)
                 .with_target(true)
-                .with_writer(file_appender),
+                .with_writer(writer),
         )
     } else {
         None
