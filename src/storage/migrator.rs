@@ -18,25 +18,20 @@ const AGENT_MIGRATIONS: &[&str] = &[
 
 /// Run all agent migrations against the pool's current database.
 pub async fn run_agent(pool: &Pool) {
-    run_migrations(pool, AGENT_MIGRATIONS, "agent").await;
+    run_statements(pool, AGENT_MIGRATIONS, "agent").await;
 }
 
-/// Run migration files in parallel (files are independent).
-/// Statements within each file run sequentially (e.g. CREATE INDEX depends on CREATE TABLE).
-async fn run_migrations(pool: &Pool, migrations: &[&str], scope: &str) {
-    let tasks: Vec<_> = migrations
-        .iter()
-        .map(|sql| run_one_file(pool, sql, scope))
-        .collect();
-    futures::future::join_all(tasks).await;
-    tracing::info!(scope, count = migrations.len(), "migrations completed");
-}
-
-async fn run_one_file(pool: &Pool, sql: &str, scope: &str) {
-    for stmt in sql.split(';').filter(|s| !s.trim().is_empty()) {
-        let stmt = stmt.trim();
-        if let Err(e) = pool.exec(stmt).await {
-            tracing::info!(scope, error = %e, "migration statement skipped (may already exist)");
+/// Run migration files sequentially — later files may ALTER tables created by
+/// earlier files, so ordering must be preserved.
+/// Statements within each file also run sequentially (e.g. CREATE INDEX after CREATE TABLE).
+async fn run_statements(pool: &Pool, migrations: &[&str], scope: &str) {
+    for sql in migrations {
+        for stmt in sql.split(';').filter(|s| !s.trim().is_empty()) {
+            let stmt = stmt.trim();
+            if let Err(e) = pool.exec(stmt).await {
+                tracing::info!(scope, error = %e, "migration statement skipped (may already exist)");
+            }
         }
     }
+    tracing::info!(scope, count = migrations.len(), "migrations completed");
 }
