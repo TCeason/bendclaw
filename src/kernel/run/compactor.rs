@@ -45,6 +45,7 @@ pub struct Compactor {
     cancel: CancellationToken,
     checkpoint_done: bool,
     compaction_failures: u32,
+    last_error: Option<String>,
 }
 
 impl Compactor {
@@ -61,6 +62,7 @@ impl Compactor {
             cancel,
             checkpoint_done: false,
             compaction_failures: 0,
+            last_error: None,
         }
     }
 
@@ -99,6 +101,7 @@ impl Compactor {
         if self.compaction_failures >= 3 {
             tracing::warn!(
                 failures = self.compaction_failures,
+                last_error = self.last_error.as_deref().unwrap_or("unknown"),
                 "skipping compaction after 3 consecutive failures"
             );
             if checkpoint_usage.is_some() {
@@ -172,6 +175,10 @@ impl Compactor {
         let dropped: Vec<&Message> = non_system.iter().take(non_system_split).collect();
         let (summary, token_usage) = self.summarize(&dropped).await;
 
+        if summary.is_none() {
+            self.last_error = Some("summarization returned no content".to_string());
+        }
+
         let summary_len = summary.as_ref().map(|s| s.len()).unwrap_or(0);
 
         let mut compacted = system;
@@ -194,6 +201,9 @@ impl Compactor {
 
         if messages_after >= messages_before {
             self.compaction_failures += 1;
+            self.last_error = Some(format!(
+                "compaction did not reduce: {messages_before} -> {messages_after}"
+            ));
             tracing::warn!(
                 messages_before,
                 messages_after,

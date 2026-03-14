@@ -35,6 +35,10 @@ async fn task_repo_claim_due_tasks_updates_then_loads_claimed_rows() -> Result<(
         if sql.starts_with("UPDATE tasks SET status = 'running'") {
             assert!(sql.contains("lease_token = 'lease-1'"));
             assert!(sql.contains("executor_instance_id = 'inst-1'"));
+            assert!(
+                sql.contains("(lease_token IS NULL OR lease_token = '')"),
+                "claim_due_tasks must guard against double-claim: {sql}"
+            );
             return Ok(paged_rows(&[], None, None));
         }
         assert_eq!(

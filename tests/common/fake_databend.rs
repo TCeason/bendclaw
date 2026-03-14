@@ -10,6 +10,9 @@ use bendclaw::storage::pool::DatabendClient;
 use bendclaw::storage::pool::QueryResponse;
 use bendclaw::storage::pool::SchemaField;
 use bendclaw::storage::Pool;
+use databend_common_ast::parser::Dialect;
+use databend_common_ast::parser::parse_sql;
+use databend_common_ast::parser::tokenize_sql;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FakeDatabendCall {
@@ -74,9 +77,24 @@ impl FakeDatabend {
     }
 }
 
+/// Validate SQL syntax using Databend's own parser. Panics on parse failure.
+/// Skips very large SQL (>4KB) to avoid stack overflow in the recursive parser.
+fn assert_valid_sql(sql: &str) {
+    if sql.len() > 4096 {
+        return;
+    }
+    let tokens = tokenize_sql(sql).unwrap_or_else(|e| {
+        panic!("SQL tokenize error in query:\n  {sql}\n  Error: {e}");
+    });
+    if let Err(e) = parse_sql(&tokens, Dialect::Experimental) {
+        panic!("SQL syntax error in query:\n  {sql}\n  Error: {e}");
+    }
+}
+
 #[async_trait::async_trait]
 impl DatabendClient for FakeDatabend {
     async fn query(&self, sql: &str, database: Option<&str>) -> Result<QueryResponse> {
+        assert_valid_sql(sql);
         self.calls
             .lock()
             .expect("fake databend calls lock")

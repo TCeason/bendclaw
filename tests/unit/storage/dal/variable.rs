@@ -97,3 +97,52 @@ async fn variable_repo_touch_last_used_many_updates_each_id() -> Result<()> {
     ]);
     Ok(())
 }
+
+#[tokio::test]
+async fn variable_repo_touch_last_used_many_empty_ids_is_noop() -> Result<()> {
+    let fake = FakeDatabend::new(|_sql, _database| {
+        panic!("no SQL should be issued for empty ids");
+    });
+    let repo = VariableRepo::new(fake.pool());
+
+    repo.touch_last_used_many(&[]).await?;
+
+    assert!(fake.calls().is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn variable_repo_list_all_uses_max_limit() -> Result<()> {
+    let fake = FakeDatabend::new(|sql, _database| {
+        assert!(
+            sql.contains("LIMIT 10000"),
+            "list_all must use MAX_LIST_LIMIT: {sql}"
+        );
+        Ok(paged_rows(&[], None, None))
+    });
+    let repo = VariableRepo::new(fake.pool());
+
+    let variables = repo.list_all().await?;
+    assert!(variables.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn variable_repo_list_all_active_uses_max_limit() -> Result<()> {
+    let fake = FakeDatabend::new(|sql, _database| {
+        assert!(
+            sql.contains("revoked = FALSE"),
+            "list_all_active must filter revoked: {sql}"
+        );
+        assert!(
+            sql.contains("LIMIT 10000"),
+            "list_all_active must use MAX_LIST_LIMIT: {sql}"
+        );
+        Ok(paged_rows(&[], None, None))
+    });
+    let repo = VariableRepo::new(fake.pool());
+
+    let variables = repo.list_all_active().await?;
+    assert!(variables.is_empty());
+    Ok(())
+}

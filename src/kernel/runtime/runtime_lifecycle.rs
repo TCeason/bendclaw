@@ -1,5 +1,6 @@
 use crate::base::ErrorCode;
 use crate::base::Result;
+use crate::kernel::agent_store::AgentStore;
 use crate::kernel::runtime::Runtime;
 use crate::kernel::runtime::RuntimeStatus;
 
@@ -57,6 +58,19 @@ impl Runtime {
         if let Some(handle) = directive_handle {
             if tokio::time::timeout(shutdown_timeout, handle).await.is_err() {
                 tracing::warn!("directive task did not finish within timeout");
+            }
+        }
+
+        // Flush buffered usage records for all agents before stopping.
+        if let Ok(agent_ids) = self.databases.list_agent_ids().await {
+            let llm = self.llm.read().clone();
+            for agent_id in &agent_ids {
+                if let Ok(pool) = self.databases.agent_pool(agent_id) {
+                    let store = AgentStore::new(pool, llm.clone());
+                    if let Err(e) = store.usage_flush().await {
+                        tracing::warn!(agent_id, error = %e, "failed to flush usage on shutdown");
+                    }
+                }
             }
         }
 
