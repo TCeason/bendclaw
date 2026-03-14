@@ -191,7 +191,11 @@ impl ChannelOutbound for TelegramOutbound {
             .map_err(|e| ErrorCode::internal(format!("telegram response: {e}")))?;
         let msg_id = json["result"]["message_id"]
             .as_i64()
-            .unwrap_or(0)
+            .ok_or_else(|| {
+                ErrorCode::internal(format!(
+                    "telegram sendMessage: missing message_id in response: {json}"
+                ))
+            })?
             .to_string();
         Ok(msg_id)
     }
@@ -218,7 +222,9 @@ impl ChannelOutbound for TelegramOutbound {
         let url = Self::api_url(&token, "editMessageText");
         let body = serde_json::json!({
             "chat_id": chat_id,
-            "message_id": msg_id.parse::<i64>().unwrap_or(0),
+            "message_id": msg_id.parse::<i64>().map_err(|e| {
+                ErrorCode::internal(format!("telegram editMessageText: invalid message_id '{msg_id}': {e}"))
+            })?,
             "text": text,
             "parse_mode": "Markdown",
         });
@@ -340,7 +346,9 @@ async fn poll_updates(
     }
 
     let updates: Vec<TelegramUpdate> =
-        serde_json::from_value(json["result"].clone()).unwrap_or_default();
+        serde_json::from_value(json["result"].clone()).map_err(|e| {
+            ErrorCode::internal(format!("telegram getUpdates: failed to parse result: {e}"))
+        })?;
 
     for update in updates {
         *offset = update.update_id + 1;

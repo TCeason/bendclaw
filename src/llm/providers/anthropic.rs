@@ -388,12 +388,16 @@ async fn drive_stream(
                             tc.id = block
                                 .get("id")
                                 .and_then(|i| i.as_str())
-                                .unwrap_or("")
+                                .ok_or_else(|| {
+                                    "anthropic stream: tool_use block missing id".to_string()
+                                })?
                                 .to_string();
                             tc.name = block
                                 .get("name")
                                 .and_then(|n| n.as_str())
-                                .unwrap_or("")
+                                .ok_or_else(|| {
+                                    "anthropic stream: tool_use block missing name".to_string()
+                                })?
                                 .to_string();
                             writer
                                 .tool_start(current_block_index, &tc.id, &tc.name)

@@ -137,7 +137,14 @@ impl ChannelOutbound for GitHubOutbound {
             .json()
             .await
             .map_err(|e| ErrorCode::internal(format!("github comment response: {e}")))?;
-        let comment_id = json["id"].as_i64().unwrap_or(0).to_string();
+        let comment_id = json["id"]
+            .as_i64()
+            .ok_or_else(|| {
+                ErrorCode::internal(format!(
+                    "github comment: missing id in response: {json}"
+                ))
+            })?
+            .to_string();
         Ok(comment_id)
     }
 
