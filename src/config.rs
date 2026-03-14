@@ -10,13 +10,20 @@
 //! | `BENDCLAW_SERVER_BIND_ADDR` | `server.bind_addr`     | `127.0.0.1:8787` |
 //! | `BENDCLAW_LOG_LEVEL`        | `log.level`            | `info`         |
 //! | `BENDCLAW_LOG_FORMAT`       | `log.format`           | `text`         |
-//! | `BENDCLAW_WORKSPACE_ROOT_DIR` | `workspace.root_dir`   | `~/.evot/workspace`  |
+//! | `BENDCLAW_WORKSPACE_ROOT_DIR` | `workspace.root_dir`   | `~/.evotai/workspace`  |
 //! | `BENDCLAW_WORKSPACE_SANDBOX` | `workspace.sandbox`    | `false`        |
 //! | `BENDCLAW_AUTH_KEY`          | `auth.api_key`         | *(empty)*      |
 //! | `BENDCLAW_AUTH_CORS_ORIGINS` | `auth.cors_origins`    | *(default whitelist)* |
 //! | `BENDCLAW_INSTANCE_ID`       | `instance_id`          | **required**   |
 //! | `BENDCLAW_DIRECTIVE_API_BASE` | `directive.api_base`  | *(optional)*   |
 //! | `BENDCLAW_DIRECTIVE_TOKEN`   | `directive.token`      | *(optional)*   |
+//! | `BENDCLAW_LLM_NAME`          | `llm.providers[0].name` | *(optional)* |
+//! | `BENDCLAW_LLM_PROVIDER`      | `llm.providers[0].provider` | *(optional)* |
+//! | `BENDCLAW_LLM_BASE_URL`      | `llm.providers[0].base_url` | *(optional)* |
+//! | `BENDCLAW_LLM_API_KEY`       | `llm.providers[0].api_key` | *(optional)* |
+//! | `BENDCLAW_LLM_MODEL`         | `llm.providers[0].model` | *(optional)* |
+//! | `BENDCLAW_LLM_WEIGHT`        | `llm.providers[0].weight` | `100`      |
+//! | `BENDCLAW_LLM_TEMPERATURE`   | `llm.providers[0].temperature` | `0.7` |
 //! | `BENDCLAW_ADMIN_BIND_ADDR`   | `admin.bind_addr`      | *(optional)*   |
 
 use std::fs;
@@ -25,12 +32,15 @@ use anyhow::Context;
 use serde::Deserialize;
 use serde::Serialize;
 
+/// Dot-directory name under `$HOME` for all bendclaw state, config, and logs.
+pub const EVOTAI_DIR_NAME: &str = ".evotai";
+
 pub use crate::llm::config::LLMConfig;
 /// Workspace configuration for agent file operations and command execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkspaceConfig {
-    /// Root directory for all workspace data. Default: "~/.evot/workspace"
+    /// Root directory for all workspace data. Default: "~/.evotai/workspace"
     /// Internal layout: {root_dir}/skills/, {root_dir}/{user_id}/{agent_id}/{session_id}/
     pub root_dir: String,
     /// Command idle timeout in seconds (no output = timeout). Default: 30
@@ -229,7 +239,7 @@ impl Default for LogConfig {
 
 fn dirs_default_log_dir() -> String {
     if let Some(home) = std::env::var_os("HOME") {
-        let path = std::path::PathBuf::from(home).join(".evotai").join("logs");
+        let path = std::path::PathBuf::from(home).join(EVOTAI_DIR_NAME).join("logs");
         return path.to_string_lossy().into_owned();
     }
     String::new()
@@ -238,7 +248,7 @@ fn dirs_default_log_dir() -> String {
 fn dirs_default_workspace_dir() -> String {
     if let Some(home) = std::env::var_os("HOME") {
         let path = std::path::PathBuf::from(home)
-            .join(".evot")
+            .join(EVOTAI_DIR_NAME)
             .join("workspace");
         return path.to_string_lossy().into_owned();
     }
@@ -349,6 +359,29 @@ impl BendClawConfig {
                         .unwrap_or_default(),
                 });
             }
+        }
+
+        // LLM provider env overrides — single-provider shorthand
+        let llm_name = std::env::var("BENDCLAW_LLM_NAME").unwrap_or_default();
+        if !llm_name.is_empty() {
+            use crate::llm::config::ProviderEndpoint;
+            self.llm.providers = vec![ProviderEndpoint {
+                name: llm_name,
+                provider: std::env::var("BENDCLAW_LLM_PROVIDER").unwrap_or_default(),
+                base_url: std::env::var("BENDCLAW_LLM_BASE_URL").unwrap_or_default(),
+                api_key: std::env::var("BENDCLAW_LLM_API_KEY").unwrap_or_default(),
+                model: std::env::var("BENDCLAW_LLM_MODEL").unwrap_or_default(),
+                weight: std::env::var("BENDCLAW_LLM_WEIGHT")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(100),
+                temperature: std::env::var("BENDCLAW_LLM_TEMPERATURE")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0.7),
+                input_price: 0.0,
+                output_price: 0.0,
+            }];
         }
     }
 

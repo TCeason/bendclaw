@@ -7,13 +7,15 @@ use std::process::Stdio;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::config::EVOTAI_DIR_NAME;
+
 fn state_dir() -> PathBuf {
     std::env::var("BENDCLAW_STATE_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| dirs_home().join(".evot"))
+        .unwrap_or_else(|_| dirs_home().join(EVOTAI_DIR_NAME))
 }
 
-/// Default config file path: `~/.evot/bendclaw.toml`.
+/// Default config file path: `~/.evotai/bendclaw.toml`.
 pub fn default_config_path() -> PathBuf {
     state_dir().join("bendclaw.toml")
 }
@@ -23,7 +25,7 @@ fn run_dir() -> PathBuf {
 }
 
 fn default_log_dir() -> PathBuf {
-    dirs_home().join(".evotai").join("logs")
+    dirs_home().join(EVOTAI_DIR_NAME).join("logs")
 }
 
 fn log_dir() -> PathBuf {
@@ -47,7 +49,7 @@ fn dirs_home() -> PathBuf {
 }
 
 pub fn evotai_dir() -> PathBuf {
-    dirs_home().join(".evotai")
+    dirs_home().join(EVOTAI_DIR_NAME)
 }
 
 fn read_pid() -> Option<u32> {
@@ -237,6 +239,6 @@ mod tests {
 
     #[test]
     fn default_background_log_dir_uses_evotai_logs() {
-        assert_eq!(default_log_dir(), dirs_home().join(".evotai").join("logs"));
+        assert_eq!(default_log_dir(), dirs_home().join(EVOTAI_DIR_NAME).join("logs"));
     }
 }
