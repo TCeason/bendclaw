@@ -1,39 +1,36 @@
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/d241ce05-ea15-4932-bec8-f8705f39dbba" alt="bendclaw" />
-</p>
-
-<p align="center">
   <strong>BendClaw</strong>
 </p>
 
 <p align="center">
-  Agents that evolve. Clusters that scale.
+  Distributed agent swarm. Share everything. Evolve together.
 </p>
 
 <p align="center">
-  An AgentOS where clusters of agents learn, evolve, and coordinate as one — autonomously.
+  An autonomous AgentOS — agents learn, coordinate, and improve without human intervention.
 </p>
 
 <p align="center">
-  The engine behind <a href="https://evot.ai">evot.ai</a> · Rust · Databend · Apache-2.0
+  The engine behind <a href="https://evot.ai">evot.ai</a>
 </p>
 
 ---
 
 ## Why BendClaw
 
-Most agent frameworks forget everything between runs. BendClaw doesn't — every execution automatically produces knowledge and learnings that feed the next run. Agents get smarter on their own, no prompt tuning required.
+Most agent frameworks forget everything between runs. BendClaw doesn't — every run produces knowledge that automatically feeds the next. Agents get smarter on their own, no prompt tuning required.
 
-BendClaw is a fully autonomous AgentOS built in Rust. Agents decide what to learn, when to dispatch work across the cluster, and how to coordinate — humans just review and track.
+It's also built for multi-node coordination. Agents fan out subtasks across the cluster, share what they learn, and self-organize — all on a single shared data layer backed by Databend.
 
 ## What's Inside
 
-- **Autonomous learning** — agents extract knowledge and learnings from every run, auto-injected into future prompts, no human curation
-- **Cluster dispatch** — agents autonomously decide when to fan out subtasks across nodes, coordinate, and collect results
-- **Persistent memory** — vector + full-text search on shared cloud storage, all agents access one unified data layer
-- **Hub integrations** — 100+ integrations (GitHub, Slack, Email, etc.) via pluggable skills, auto-synced from the hub
-- **Secret-safe execution** — secrets live in a vault, never exposed to LLMs; injected only at tool execution time, by design
-- **Full traceability** — spans, events, audits, sensitive field redaction — humans review and track, agents execute
+- **Autonomous learning** — agents extract knowledge from every run, auto-injected into future prompts
+- **Cluster dispatch** — agents fan out subtasks across nodes, coordinate, and collect results
+- **Lease-based scheduling** — tasks and channel receivers claimed via distributed DB leases; automatic failover
+- **Persistent memory** — vector + full-text search on shared cloud storage, one unified data layer
+- **Hub integrations** — 100+ integrations (GitHub, Slack, Email, etc.) via pluggable skills
+- **Secret-safe execution** — secrets in a vault, never exposed to LLMs; injected only at tool execution time
+- **Full traceability** — spans, events, audits, sensitive field redaction; humans review, agents execute
 - **Multi-tenant isolation** — separate DB per agent, isolated workspace per session
 - **18 built-in tools** — file, shell, memory, recall, task, web, databend, channel, cluster
 - **40+ REST endpoints** — SSE streaming, Bearer auth, per-agent scoping
@@ -68,7 +65,7 @@ curl -fsSL https://console.evot.ai/api/setup | sh -s -- \
   │  Gateway          │         │  Gateway          │         │  Gateway          │
   │  Kernel + Hub     │ cluster │  Kernel + Hub     │ cluster │  Kernel + Hub     │
   │  Recall           │◄───────▶│  Recall           │◄───────▶│  Recall           │
-  │  Scheduler        │   RPC   │  Scheduler        │   RPC   │  Scheduler        │
+  │  Lease            │   RPC   │  Lease            │   RPC   │  Lease            │
   │  Channels         │         │  Channels         │         │  Channels         │
   │                   │         │                   │         │                   │
   └─────────┬─────────┘         └─────────┬─────────┘         └─────────┬─────────┘
@@ -91,9 +88,9 @@ curl -fsSL https://console.evot.ai/api/setup | sh -s -- \
 | **Gateway** | HTTP routing, SSE streaming, Bearer auth, CORS, request logging |
 | **Kernel** | Agent loop, LLM router (Anthropic / OpenAI) with circuit breaker and failover, tool registry, context compaction, prompt builder |
 | **Recall** | Post-run knowledge extraction (fire-and-forget), learning accumulation, auto-injection into future prompts |
-| **Scheduler** | Background cron polling, per-agent task execution through Kernel |
+| **Lease** | Distributed lease coordination — claim/renew/release across nodes; per-resource callbacks for task scheduling and channel receiver lifecycle |
 | **Hub** | Pluggable skill registry, auto-sync from remote repo, 100+ integrations fed into Kernel |
-| **Channels** | Webhook ingestion (Feishu, Telegram, GitHub), inbound dispatch to Kernel |
+| **Channels** | Webhook ingestion (Feishu, Telegram, GitHub), lease-managed receivers, centralized sender trust (allow_from), inbound dispatch to Kernel |
 | **Cluster** | Peer-to-peer RPC — node registration, heartbeat, autonomous subtask dispatch across nodes |
 | **Databend** | Shared cloud storage — all agent data, one unified data layer |
 
