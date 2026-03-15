@@ -18,7 +18,7 @@ use crate::common::setup::require_api_config;
 use crate::common::setup::uid;
 use crate::common::setup::TestContext;
 
-const SKILLS_MIGRATION: &str = include_str!("../../../migrations/0005_skills.sql");
+const SKILLS_MIGRATION: &str = include_str!("../../../migrations/base/skills.sql");
 
 fn make_skill(agent_id: &str, name: &str, creator: &str) -> Skill {
     Skill {
