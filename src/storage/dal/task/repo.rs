@@ -19,7 +19,7 @@ impl RowMapper for TaskMapper {
     type Entity = TaskRecord;
 
     fn columns(&self) -> &str {
-        "id, executor_instance_id, name, prompt, enabled, status, schedule, delivery, last_error, delete_after_run, run_count, TO_VARCHAR(last_run_at), TO_VARCHAR(next_run_at), lease_token, TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
+        "id, executor_instance_id, name, prompt, enabled, status, schedule, delivery, last_error, delete_after_run, run_count, TO_VARCHAR(last_run_at), TO_VARCHAR(next_run_at), lease_token, lease_instance_id, TO_VARCHAR(lease_expires_at), TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
     fn parse(&self, row: &serde_json::Value) -> crate::base::Result<TaskRecord> {
@@ -43,8 +43,10 @@ impl RowMapper for TaskMapper {
             last_run_at: sql::col(row, 11),
             next_run_at: sql::col_opt(row, 12),
             lease_token: sql::col_opt(row, 13),
-            created_at: sql::col(row, 14),
-            updated_at: sql::col(row, 15),
+            lease_instance_id: sql::col_opt(row, 14),
+            lease_expires_at: sql::col_opt(row, 15),
+            created_at: sql::col(row, 16),
+            updated_at: sql::col(row, 17),
         })
     }
 }
@@ -93,6 +95,8 @@ impl TaskRepo {
                     SqlVal::str_or_null(record.next_run_at.as_deref()),
                 ),
                 ("lease_token", SqlVal::Null),
+                ("lease_instance_id", SqlVal::Null),
+                ("lease_expires_at", SqlVal::Raw("NULL")),
                 ("created_at", SqlVal::Raw("NOW()")),
                 ("updated_at", SqlVal::Raw("NOW()")),
             ])
@@ -140,6 +144,87 @@ impl TaskRepo {
                 REPO,
                 "list_due",
                 serde_json::json!({"executor_instance_id": executor_instance_id}),
+                error,
+            );
+        }
+        result
+    }
+
+    /// List all due tasks regardless of executor_instance_id (for lease-based scheduling).
+    /// Also picks up tasks stuck in 'running' with expired leases (crash recovery).
+    pub async fn list_due_any(&self) -> Result<Vec<TaskRecord>> {
+        let condition = "enabled = true AND next_run_at <= NOW() AND (\
+            status != 'running' \
+            OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= NOW()))\
+        )";
+        let result = self
+            .table
+            .list_where(condition, "next_run_at ASC", 100)
+            .await;
+        if let Err(error) = &result {
+            repo_error(REPO, "list_due_any", serde_json::json!({}), error);
+        }
+        result
+    }
+
+    /// List all tasks that are currently active: due and claimable, OR running
+    /// with a valid lease. Used by discover() to prevent stale eviction of
+    /// held tasks that are still executing.
+    /// Note: running tasks are included regardless of `enabled` — disabling a
+    /// task mid-execution must not cause stale eviction (which would lose results).
+    pub async fn list_active(&self) -> Result<Vec<TaskRecord>> {
+        let condition = "(\
+            (enabled = true AND next_run_at <= NOW() AND (\
+                status != 'running' \
+                OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= NOW()))\
+            )) \
+            OR (status = 'running' AND lease_token IS NOT NULL AND lease_token != '')\
+        )";
+        let result = self
+            .table
+            .list_where(condition, "next_run_at ASC", 100)
+            .await;
+        if let Err(error) = &result {
+            repo_error(REPO, "list_active", serde_json::json!({}), error);
+        }
+        result
+    }
+
+    /// Set task status to 'running' (called by task domain layer on acquisition).
+    pub async fn set_status_running(&self, task_id: &str) -> Result<()> {
+        let sql_str = sql::Sql::update("tasks")
+            .set("status", "running")
+            .set_raw("updated_at", "NOW()")
+            .where_eq("id", task_id)
+            .where_raw("status != 'running'")
+            .build();
+        let result = self.table.pool().exec(&sql_str).await;
+        if let Err(error) = &result {
+            repo_error(
+                REPO,
+                "set_status_running",
+                serde_json::json!({"task_id": task_id}),
+                error,
+            );
+        }
+        result
+    }
+
+    /// Reset task status from 'running' to 'idle' (abnormal exit recovery).
+    /// No-op if finish_task already set a final status.
+    pub async fn reset_status_if_running(&self, task_id: &str) -> Result<()> {
+        let sql_str = sql::Sql::update("tasks")
+            .set("status", "idle")
+            .set_raw("updated_at", "NOW()")
+            .where_eq("id", task_id)
+            .where_raw("status = 'running'")
+            .build();
+        let result = self.table.pool().exec(&sql_str).await;
+        if let Err(error) = &result {
+            repo_error(
+                REPO,
+                "reset_status_if_running",
+                serde_json::json!({"task_id": task_id}),
                 error,
             );
         }
@@ -291,6 +376,8 @@ impl TaskRepo {
         let mut builder = sql::Sql::update("tasks")
             .set("status", status)
             .set_raw("lease_token", "NULL")
+            .set_raw("lease_instance_id", "NULL")
+            .set_raw("lease_expires_at", "NULL")
             .set_raw("last_run_at", "NOW()")
             .set_raw("run_count", "run_count + 1")
             .set_raw("updated_at", "NOW()");

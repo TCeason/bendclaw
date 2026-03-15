@@ -5,4 +5,5 @@ pub mod fake_cluster;
 pub mod fake_databend;
 pub mod setup;
 pub mod task_rows;
+pub mod test_runtime;
 pub mod tracing;

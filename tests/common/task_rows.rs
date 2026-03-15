@@ -18,6 +18,8 @@ pub struct TaskRow {
     pub last_run_at: Option<String>,
     pub next_run_at: Option<String>,
     pub lease_token: Option<String>,
+    pub lease_instance_id: Option<String>,
+    pub lease_expires_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -39,6 +41,8 @@ impl TaskRow {
             last_run_at: None,
             next_run_at: Some("2026-03-11T00:00:00Z".to_string()),
             lease_token: None,
+            lease_instance_id: None,
+            lease_expires_at: None,
             created_at: "2026-03-10T00:00:00Z".to_string(),
             updated_at: "2026-03-10T00:00:00Z".to_string(),
         }
@@ -60,6 +64,8 @@ impl TaskRow {
             serde_json::Value::String(self.last_run_at.unwrap_or_default()),
             serde_json::Value::String(self.next_run_at.unwrap_or_default()),
             serde_json::Value::String(self.lease_token.unwrap_or_default()),
+            serde_json::Value::String(self.lease_instance_id.unwrap_or_default()),
+            serde_json::Value::String(self.lease_expires_at.unwrap_or_default()),
             serde_json::Value::String(self.created_at),
             serde_json::Value::String(self.updated_at),
         ]

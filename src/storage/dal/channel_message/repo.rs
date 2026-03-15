@@ -87,6 +87,29 @@ impl ChannelMessageRepo {
             .await
     }
 
+    /// Check if an inbound message with the given platform_message_id already exists.
+    pub async fn exists_by_platform_message_id(
+        &self,
+        channel_type: &str,
+        account_id: &str,
+        chat_id: &str,
+        platform_message_id: &str,
+    ) -> Result<bool> {
+        let condition = format!(
+            "channel_type = '{}' AND account_id = '{}' AND chat_id = '{}' AND platform_message_id = '{}' AND direction = 'inbound'",
+            sql::escape(channel_type),
+            sql::escape(account_id),
+            sql::escape(chat_id),
+            sql::escape(platform_message_id),
+        );
+        let query = format!(
+            "SELECT COUNT(*) FROM channel_messages WHERE {}",
+            condition
+        );
+        let row = self.table.pool().query_row(&query).await?;
+        Ok(row.map(|r| sql::col(&r, 0) != "0").unwrap_or(false))
+    }
+
     pub async fn list_by_session(
         &self,
         session_id: &str,

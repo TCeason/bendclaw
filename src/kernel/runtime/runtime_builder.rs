@@ -299,7 +299,7 @@ async fn construct(
             status: RwLock::new(RuntimeStatus::Ready),
             sync_cancel: sync_cancel.clone(),
             sync_handle: RwLock::new(Some(sync_handle)),
-            scheduler_handle: RwLock::new(None),
+            lease_handle: RwLock::new(None),
             cluster: cluster_service,
             heartbeat_handle: RwLock::new(heartbeat_handle),
             directive,
@@ -308,12 +308,25 @@ async fn construct(
         })
     });
 
-    let scheduler_handle = crate::kernel::scheduler::TaskScheduler::spawn(
-        runtime.clone(),
-        sync_cancel,
-        reqwest::Client::new(),
+    let http_client = reqwest::Client::new();
+    let mut lease_builder = crate::kernel::lease::LeaseServiceBuilder::new(
+        &runtime.config().instance_id,
     );
-    *runtime.scheduler_handle.write() = Some(scheduler_handle);
+    lease_builder.register(Arc::new(
+        crate::kernel::channel::lease::ChannelLeaseResource::new(
+            runtime.databases().clone(),
+            runtime.channels().clone(),
+            runtime.supervisor().clone(),
+        ),
+    ));
+    lease_builder.register(Arc::new(
+        crate::kernel::task::lease::TaskLeaseResource::new(
+            runtime.clone(),
+            http_client,
+        ),
+    ));
+    let lease_handle = lease_builder.spawn(sync_cancel);
+    *runtime.lease_handle.write() = Some(lease_handle);
 
     Ok(runtime)
 }

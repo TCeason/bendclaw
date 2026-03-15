@@ -38,6 +38,20 @@ async fn try_dispatch_inbound(
     let (input, reply_ctx) = ChannelDispatcher::extract_input(event);
     let chat_id = reply_ctx.as_ref().map(|r| r.chat_id.as_str()).unwrap_or("");
 
+    // Centralized sender trust check — reads allow_from from account config JSON.
+    // Works for all channel types. Empty/absent allow_from = allow all.
+    if let Some(sender_id) = event_sender_id(event) {
+        if !is_sender_allowed(&account.config, sender_id) {
+            tracing::debug!(
+                channel_type = %account.channel_type,
+                account_id = %account.channel_account_id,
+                sender_id,
+                "sender not in allow_from, dropping message"
+            );
+            return Ok(());
+        }
+    }
+
     if input.trim().is_empty() {
         return Ok(());
     }
@@ -50,6 +64,29 @@ async fn try_dispatch_inbound(
 
     let pool = runtime.databases().agent_pool(&account.agent_id)?;
     let msg_repo = ChannelMessageRepo::new(pool.clone());
+
+    // Dedup: skip if this platform message was already processed.
+    if let InboundEvent::Message(msg) = event {
+        if !msg.message_id.is_empty() {
+            if msg_repo
+                .exists_by_platform_message_id(
+                    &account.channel_type,
+                    &account.external_account_id,
+                    &msg.chat_id,
+                    &msg.message_id,
+                )
+                .await
+                .unwrap_or(false)
+            {
+                tracing::debug!(
+                    message_id = %msg.message_id,
+                    channel_type = %account.channel_type,
+                    "duplicate inbound message, skipping"
+                );
+                return Ok(());
+            }
+        }
+    }
 
     // Record inbound message.
     if let InboundEvent::Message(msg) = event {
@@ -141,4 +178,29 @@ async fn try_dispatch_inbound(
         .await;
 
     Ok(())
+}
+
+/// Extract sender_id from any inbound event variant.
+fn event_sender_id(event: &InboundEvent) -> Option<&str> {
+    match event {
+        InboundEvent::Message(msg) if !msg.sender_id.is_empty() => Some(&msg.sender_id),
+        _ => None,
+    }
+}
+
+/// Check if a sender is allowed by the account config's `allow_from` list.
+/// - Missing or empty `allow_from` → allow all (backward compatible).
+/// - `"*"` in the list → allow all.
+/// - Otherwise sender_id must match one of the entries.
+pub fn is_sender_allowed(config: &serde_json::Value, sender_id: &str) -> bool {
+    let Some(list) = config.get("allow_from").and_then(|v| v.as_array()) else {
+        return true; // no allow_from configured → allow all
+    };
+    if list.is_empty() {
+        return true;
+    }
+    list.iter().any(|entry| {
+        let s = entry.as_str().unwrap_or("");
+        s == "*" || s == sender_id || s.split('|').any(|part| part == sender_id)
+    })
 }

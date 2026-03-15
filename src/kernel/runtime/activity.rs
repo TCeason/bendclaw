@@ -11,29 +11,30 @@ pub struct SuspendStatus {
     pub can_suspend: bool,
     pub active_sessions: usize,
     pub active_tasks: usize,
+    pub active_leases: usize,
 }
 
 /// Tracks active runtime-managed background tasks.
 #[derive(Debug, Default)]
-pub(crate) struct ActivityTracker {
+pub struct ActivityTracker {
     active_tasks: AtomicUsize,
 }
 
 impl ActivityTracker {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             active_tasks: AtomicUsize::new(0),
         }
     }
 
-    pub(crate) fn track_task(self: &Arc<Self>) -> ActivityGuard {
+    pub fn track_task(self: &Arc<Self>) -> ActivityGuard {
         self.active_tasks.fetch_add(1, Ordering::Relaxed);
         ActivityGuard {
             tracker: self.clone(),
         }
     }
 
-    pub(crate) fn active_task_count(&self) -> usize {
+    pub fn active_task_count(&self) -> usize {
         self.active_tasks.load(Ordering::Relaxed)
     }
 
@@ -43,7 +44,7 @@ impl ActivityTracker {
     }
 }
 
-pub(crate) struct ActivityGuard {
+pub struct ActivityGuard {
     tracker: Arc<ActivityTracker>,
 }
 

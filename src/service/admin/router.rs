@@ -46,6 +46,7 @@ mod tests {
             can_suspend: true,
             active_sessions: 0,
             active_tasks: 0,
+            active_leases: 0,
         });
     }
 
@@ -75,6 +76,7 @@ mod tests {
             can_suspend: false,
             active_sessions: 0,
             active_tasks: 1,
+            active_leases: 0,
         });
     }
 }

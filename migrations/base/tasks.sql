@@ -1,7 +1,7 @@
 -- Scheduled tasks for periodic agent execution.
 CREATE TABLE IF NOT EXISTS tasks (
     id                    VARCHAR   NOT NULL   COMMENT 'ULID primary key',
-    executor_instance_id  VARCHAR   NOT NULL   COMMENT 'Executor instance ID that owns this task',
+    executor_instance_id  VARCHAR   NULL      COMMENT 'Deprecated: use lease columns instead',
     name                  VARCHAR   NOT NULL   COMMENT 'Human-readable task name',
     prompt                TEXT      NOT NULL DEFAULT '' COMMENT 'Prompt to execute on schedule',
     enabled               BOOLEAN   NOT NULL DEFAULT true COMMENT 'Whether task is active',
@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     last_run_at           TIMESTAMP NULL      COMMENT 'Last execution timestamp',
     next_run_at           TIMESTAMP NULL      COMMENT 'Next scheduled execution',
     lease_token           VARCHAR   NULL      COMMENT 'Execution lease token for concurrency control',
+    lease_instance_id     VARCHAR   NULL      COMMENT 'Instance holding the execution lease',
+    lease_expires_at      TIMESTAMP NULL      COMMENT 'Lease expiration time',
     created_at            TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at            TIMESTAMP NOT NULL DEFAULT NOW()
 ) COMMENT = 'Scheduled tasks for periodic agent execution';

@@ -14,6 +14,7 @@ use crate::kernel::runtime::agent_config::AgentConfig;
 use crate::kernel::session::SessionManager;
 use crate::kernel::skills::store::SkillStore;
 use crate::llm::provider::LLMProvider;
+use crate::kernel::lease::LeaseServiceHandle;
 use crate::storage::pool::Pool;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +37,7 @@ pub struct Runtime {
     pub(crate) status: RwLock<RuntimeStatus>,
     pub(crate) sync_cancel: tokio_util::sync::CancellationToken,
     pub(crate) sync_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
-    pub(crate) scheduler_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
+    pub(crate) lease_handle: RwLock<Option<LeaseServiceHandle>>,
     pub(crate) cluster: Option<Arc<ClusterService>>,
     pub(crate) heartbeat_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) directive: Option<Arc<DirectiveService>>,
@@ -44,7 +45,7 @@ pub struct Runtime {
     pub(crate) activity_tracker: Arc<ActivityTracker>,
 }
 
-pub(crate) struct RuntimeParts {
+pub struct RuntimeParts {
     pub config: AgentConfig,
     pub databases: Arc<crate::storage::AgentDatabases>,
     pub llm: RwLock<Arc<dyn LLMProvider>>,
@@ -56,7 +57,7 @@ pub(crate) struct RuntimeParts {
     pub status: RwLock<RuntimeStatus>,
     pub sync_cancel: tokio_util::sync::CancellationToken,
     pub sync_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
-    pub scheduler_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
+    pub lease_handle: RwLock<Option<LeaseServiceHandle>>,
     pub cluster: Option<Arc<ClusterService>>,
     pub heartbeat_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     pub directive: Option<Arc<DirectiveService>>,
@@ -84,7 +85,7 @@ impl Runtime {
         )
     }
 
-    pub(crate) fn from_parts(parts: RuntimeParts) -> Self {
+    pub fn from_parts(parts: RuntimeParts) -> Self {
         Self {
             config: parts.config,
             databases: parts.databases,
@@ -97,7 +98,7 @@ impl Runtime {
             status: parts.status,
             sync_cancel: parts.sync_cancel,
             sync_handle: parts.sync_handle,
-            scheduler_handle: parts.scheduler_handle,
+            lease_handle: parts.lease_handle,
             cluster: parts.cluster,
             heartbeat_handle: parts.heartbeat_handle,
             directive: parts.directive,
@@ -109,14 +110,21 @@ impl Runtime {
     pub fn suspend_status(&self) -> SuspendStatus {
         let active_sessions = self.sessions.active_count();
         let active_tasks = self.activity_tracker.active_task_count();
+        let active_leases = self
+            .lease_handle
+            .read()
+            .as_ref()
+            .map(|h| h.active_lease_count())
+            .unwrap_or(0);
         SuspendStatus {
-            can_suspend: active_sessions == 0 && active_tasks == 0,
+            can_suspend: active_sessions == 0 && active_tasks == 0 && active_leases == 0,
             active_sessions,
             active_tasks,
+            active_leases,
         }
     }
 
-    pub(crate) fn track_task(&self) -> ActivityGuard {
+    pub fn track_task(&self) -> ActivityGuard {
         self.activity_tracker.track_task()
     }
 

@@ -2,6 +2,7 @@ pub mod account;
 pub mod capabilities;
 pub mod dispatch;
 pub mod dispatcher;
+pub mod lease;
 pub mod message;
 pub mod outbound;
 pub mod plugin;

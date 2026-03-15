@@ -278,6 +278,8 @@ mod tests {
             last_run_at: String::new(),
             next_run_at: None,
             lease_token: None,
+            lease_instance_id: None,
+            lease_expires_at: None,
             created_at: String::new(),
             updated_at: String::new(),
         }
@@ -405,6 +407,9 @@ mod tests {
             serde_json::Value::String("user-1".to_string()),
             serde_json::Value::String("{}".to_string()),
             serde_json::Value::String(if enabled { "1" } else { "0" }.to_string()),
+            serde_json::Value::String("".to_string()),  // lease_instance_id
+            serde_json::Value::String("".to_string()),  // lease_token
+            serde_json::Value::String("".to_string()),  // lease_expires_at
             serde_json::Value::String("2026-03-10T00:00:00Z".to_string()),
             serde_json::Value::String("2026-03-10T00:00:00Z".to_string()),
         ]

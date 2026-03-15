@@ -48,6 +48,8 @@ fn make_task() -> TaskRecord {
         last_run_at: "2026-03-08T09:00:00Z".into(),
         next_run_at: Some("2026-03-09T09:00:00Z".into()),
         lease_token: None,
+        lease_instance_id: None,
+        lease_expires_at: None,
         created_at: "2026-01-01T00:00:00Z".into(),
         updated_at: "2026-03-08T09:00:00Z".into(),
     }

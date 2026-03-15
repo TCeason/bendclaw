@@ -36,12 +36,23 @@ impl Runtime {
             }
         }
 
-        let sched_handle = self.scheduler_handle.write().take();
-        if let Some(handle) = sched_handle {
-            if tokio::time::timeout(shutdown_timeout, handle).await.is_err() {
-                tracing::warn!("scheduler task did not finish within timeout");
+        let lease = self.lease_handle.write().take();
+        if let Some(handle) = lease {
+            // Wait for scan loops to exit. The cancel check before the claim
+            // branch in scan_once minimizes (but doesn't eliminate) the window
+            // for new claims — cooperative cancellation can't be fully atomic.
+            if tokio::time::timeout(shutdown_timeout, handle.join()).await.is_err() {
+                tracing::warn!("lease scan loops did not finish within timeout, aborting");
+                handle.abort_all();
             }
+            // Each resource type decides via safe_to_release() whether its
+            // leases can be released now. Channels always release immediately;
+            // tasks only release if all workers have drained (checked via
+            // activity_tracker). No global drain wait — avoids delaying
+            // channel failover when task workers are slow.
+            handle.release_all().await;
         }
+        self.supervisor.stop_all().await;
 
         // Cluster cleanup: cancel heartbeat and deregister
         let hb_handle = self.heartbeat_handle.write().take();

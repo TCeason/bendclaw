@@ -2,7 +2,7 @@ use super::http::ChannelAccountView;
 use super::http::CreateChannelAccountRequest;
 use crate::base::new_id;
 use crate::kernel::channel::account::ChannelAccount;
-use crate::kernel::channel::plugin::InboundKind;
+
 use crate::service::error::Result;
 use crate::service::error::ServiceError;
 use crate::service::state::AppState;
@@ -48,6 +48,9 @@ impl ChannelAccountService {
             user_id: req.user_id.clone(),
             config: req.config,
             enabled: req.enabled.unwrap_or(true),
+            lease_instance_id: None,
+            lease_token: None,
+            lease_expires_at: None,
             created_at: String::new(),
             updated_at: String::new(),
         };
@@ -60,18 +63,7 @@ impl ChannelAccountService {
             .ok_or_else(|| ServiceError::Internal("failed to load created account".to_string()))?;
 
         let account = record_to_domain(&saved);
-
-        if saved.enabled {
-            if let Err(e) = self.state.runtime.supervisor().start(&account).await {
-                tracing::warn!(
-                    channel_type = %saved.channel_type,
-                    account_id = %saved.id,
-                    error = %e,
-                    "supervisor.start() failed after account creation"
-                );
-            }
-        }
-
+        // Lease service will auto-discover and start the receiver.
         Ok(domain_to_view(account))
     }
 
@@ -108,66 +100,13 @@ impl ChannelAccountService {
                 .supervisor()
                 .stop(channel_account_id)
                 .await;
+            let _ = repo.release_lease(channel_account_id).await;
         }
 
         repo.delete(channel_account_id).await?;
         Ok(())
     }
 
-    /// Resume all Receiver-kind accounts on startup.
-    pub async fn resume_all_receivers(&self) {
-        let databases = self.state.runtime.databases();
-        let supervisor = self.state.runtime.supervisor();
-        let registry = self.state.runtime.channels();
-
-        let agent_ids = match databases.list_agent_ids().await {
-            Ok(ids) => ids,
-            Err(e) => {
-                tracing::warn!(error = %e, "failed to list agents for receiver resume");
-                return;
-            }
-        };
-
-        let mut count = 0u32;
-        for agent_id in &agent_ids {
-            let pool = match databases.agent_pool(agent_id) {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-            let repo = ChannelAccountRepo::new(pool);
-            let accounts = match repo.list_by_agent(agent_id).await {
-                Ok(a) => a,
-                Err(_) => continue,
-            };
-
-            for record in accounts {
-                if !record.enabled {
-                    continue;
-                }
-                let entry = match registry.get(&record.channel_type) {
-                    Some(e) => e,
-                    None => continue,
-                };
-                if !matches!(entry.inbound, InboundKind::Receiver(_)) {
-                    continue;
-                }
-                let account = record_to_domain(&record);
-                if let Err(e) = supervisor.start(&account).await {
-                    tracing::warn!(
-                        account_id = %record.id,
-                        error = %e,
-                        "failed to resume receiver"
-                    );
-                } else {
-                    count += 1;
-                }
-            }
-        }
-
-        if count > 0 {
-            tracing::info!(count, "resumed channel receivers");
-        }
-    }
 }
 
 pub fn record_to_domain(r: &ChannelAccountRecord) -> ChannelAccount {

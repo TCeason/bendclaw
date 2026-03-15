@@ -2,26 +2,24 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use bendclaw::kernel::channel::registry::ChannelRegistry;
+use bendclaw::kernel::channel::supervisor::ChannelSupervisor;
+use bendclaw::kernel::runtime::agent_config::AgentConfig;
+use bendclaw::kernel::runtime::ActivityTracker;
+use bendclaw::kernel::runtime::Runtime;
+use bendclaw::kernel::runtime::RuntimeParts;
+use bendclaw::kernel::runtime::RuntimeStatus;
+use bendclaw::kernel::session::SessionManager;
+use bendclaw::kernel::skills::store::SkillStore;
+use bendclaw::llm::message::ChatMessage;
+use bendclaw::llm::provider::LLMProvider;
+use bendclaw::llm::provider::LLMResponse;
+use bendclaw::llm::stream::ResponseStream;
+use bendclaw::llm::tool::ToolSchema;
+use bendclaw::storage::AgentDatabases;
 use parking_lot::RwLock;
 
-use crate::base::ErrorCode;
-use crate::kernel::channel::registry::ChannelRegistry;
-use crate::kernel::channel::supervisor::ChannelSupervisor;
-use crate::kernel::runtime::agent_config::AgentConfig;
-use crate::kernel::runtime::runtime::RuntimeParts;
-use crate::kernel::runtime::ActivityTracker;
-use crate::kernel::runtime::Runtime;
-use crate::kernel::runtime::RuntimeStatus;
-use crate::kernel::session::SessionManager;
-use crate::kernel::skills::store::SkillStore;
-use crate::llm::message::ChatMessage;
-use crate::llm::provider::LLMProvider;
-use crate::llm::provider::LLMResponse;
-use crate::llm::stream::ResponseStream;
-use crate::llm::tool::ToolSchema;
-use crate::service::state::AppState;
-use crate::storage::test_support::RecordingClient;
-use crate::storage::AgentDatabases;
+use super::fake_databend::FakeDatabend;
 
 struct NoopLLM;
 
@@ -33,8 +31,8 @@ impl LLMProvider for NoopLLM {
         _messages: &[ChatMessage],
         _tools: &[ToolSchema],
         _temperature: f32,
-    ) -> crate::base::Result<LLMResponse> {
-        Err(ErrorCode::internal("noop llm"))
+    ) -> bendclaw::base::Result<LLMResponse> {
+        Err(bendclaw::base::ErrorCode::internal("noop llm"))
     }
 
     fn chat_stream(
@@ -49,22 +47,12 @@ impl LLMProvider for NoopLLM {
     }
 }
 
-pub(crate) fn test_runtime(test_name: &str) -> Arc<Runtime> {
-    let client = RecordingClient::new(|_sql, _database| {
-        Ok(crate::storage::pool::QueryResponse {
-            id: String::new(),
-            state: "Succeeded".to_string(),
-            error: None,
-            data: Vec::new(),
-            next_uri: None,
-            final_uri: None,
-            schema: Vec::new(),
-        })
-    });
-    let pool = client.pool();
+/// Build a minimal Runtime backed by a FakeDatabend for use in external tests.
+pub fn test_runtime(fake: FakeDatabend) -> Arc<Runtime> {
+    let pool = fake.pool();
     let databases = Arc::new(AgentDatabases::new(pool, "test_").expect("agent databases"));
     let workspace_root =
-        std::env::temp_dir().join(format!("bendclaw-{test_name}-{}", ulid::Ulid::new()));
+        std::env::temp_dir().join(format!("bendclaw-test-{}", ulid::Ulid::new()));
     let _ = std::fs::create_dir_all(&workspace_root);
     let skills = Arc::new(SkillStore::new(databases.clone(), workspace_root, None));
     let channels = Arc::new(ChannelRegistry::new());
@@ -92,11 +80,4 @@ pub(crate) fn test_runtime(test_name: &str) -> Arc<Runtime> {
         directive_handle: RwLock::new(None),
         activity_tracker: Arc::new(ActivityTracker::new()),
     }))
-}
-
-pub(crate) fn test_app_state(auth_key: &str) -> AppState {
-    AppState {
-        runtime: test_runtime("service"),
-        auth_key: auth_key.to_string(),
-    }
 }

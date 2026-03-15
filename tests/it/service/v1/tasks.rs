@@ -113,6 +113,8 @@ async fn tasks_api_fast_create_list_and_toggle() -> Result<()> {
                 last_run_at: None,
                 next_run_at: Some("2026-03-11T00:00:00Z".to_string()),
                 lease_token: None,
+                lease_instance_id: None,
+                lease_expires_at: None,
                 created_at: "2026-03-10T00:00:00Z".to_string(),
                 updated_at: "2026-03-10T00:00:00Z".to_string(),
             });
@@ -234,6 +236,8 @@ async fn tasks_api_fast_update_delete_and_history() -> Result<()> {
             last_run_at: None,
             next_run_at: Some("2026-03-11T00:00:00Z".to_string()),
             lease_token: None,
+            lease_instance_id: None,
+            lease_expires_at: None,
             created_at: "2026-03-10T00:00:00Z".to_string(),
             updated_at: "2026-03-10T00:00:00Z".to_string(),
         }])),

@@ -94,4 +94,12 @@ impl ChannelSupervisor {
     pub async fn is_running(&self, channel_account_id: &str) -> bool {
         self.receivers.lock().await.contains_key(channel_account_id)
     }
+
+    /// Check if the receiver task is still alive (not finished/panicked).
+    pub async fn is_alive(&self, channel_account_id: &str) -> bool {
+        match self.receivers.lock().await.get(channel_account_id) {
+            Some(slot) => !slot.handle.is_finished(),
+            None => false,
+        }
+    }
 }

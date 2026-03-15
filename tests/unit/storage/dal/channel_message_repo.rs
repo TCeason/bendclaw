@@ -79,3 +79,37 @@ async fn channel_message_list_by_session_generates_valid_sql() -> Result<()> {
     assert_eq!(msgs.len(), 1);
     Ok(())
 }
+
+#[tokio::test]
+async fn channel_message_exists_by_platform_message_id_returns_true_when_found() -> Result<()> {
+    let fake = FakeDatabend::new(|sql, _db| {
+        assert!(sql.starts_with("SELECT COUNT(*)"));
+        assert!(sql.contains("channel_type = 'slack'"));
+        assert!(sql.contains("account_id = 'acc-1'"));
+        assert!(sql.contains("chat_id = 'chat-1'"));
+        assert!(sql.contains("platform_message_id = 'pm-42'"));
+        assert!(sql.contains("direction = 'inbound'"));
+        Ok(paged_rows(&[&["1"]], None, None))
+    });
+    let repo = ChannelMessageRepo::new(fake.pool());
+    let exists = repo
+        .exists_by_platform_message_id("slack", "acc-1", "chat-1", "pm-42")
+        .await?;
+    assert!(exists);
+    Ok(())
+}
+
+#[tokio::test]
+async fn channel_message_exists_by_platform_message_id_returns_false_when_not_found() -> Result<()>
+{
+    let fake = FakeDatabend::new(|sql, _db| {
+        assert!(sql.starts_with("SELECT COUNT(*)"));
+        Ok(paged_rows(&[&["0"]], None, None))
+    });
+    let repo = ChannelMessageRepo::new(fake.pool());
+    let exists = repo
+        .exists_by_platform_message_id("slack", "acc-1", "chat-1", "pm-99")
+        .await?;
+    assert!(!exists);
+    Ok(())
+}

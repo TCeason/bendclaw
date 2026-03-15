@@ -21,6 +21,8 @@ pub struct TaskRecord {
     pub last_run_at: String,
     pub next_run_at: Option<String>,
     pub lease_token: Option<String>,
+    pub lease_instance_id: Option<String>,
+    pub lease_expires_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

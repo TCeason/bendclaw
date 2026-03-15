@@ -53,6 +53,8 @@ pub async fn create_task(pool: &Pool, params: CreateTaskParams) -> Result<TaskRe
         last_run_at: String::new(),
         next_run_at,
         lease_token: None,
+        lease_instance_id: None,
+        lease_expires_at: None,
         created_at: String::new(),
         updated_at: String::new(),
     };
