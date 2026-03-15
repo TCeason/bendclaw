@@ -67,8 +67,8 @@ async fn try_dispatch_inbound(
 
     // Dedup: skip if this platform message was already processed.
     if let InboundEvent::Message(msg) = event {
-        if !msg.message_id.is_empty() {
-            if msg_repo
+        if !msg.message_id.is_empty()
+            && msg_repo
                 .exists_by_platform_message_id(
                     &account.channel_type,
                     &account.external_account_id,
@@ -77,14 +77,13 @@ async fn try_dispatch_inbound(
                 )
                 .await
                 .unwrap_or(false)
-            {
-                tracing::debug!(
-                    message_id = %msg.message_id,
-                    channel_type = %account.channel_type,
-                    "duplicate inbound message, skipping"
-                );
-                return Ok(());
-            }
+        {
+            tracing::debug!(
+                message_id = %msg.message_id,
+                channel_type = %account.channel_type,
+                "duplicate inbound message, skipping"
+            );
+            return Ok(());
         }
     }
 

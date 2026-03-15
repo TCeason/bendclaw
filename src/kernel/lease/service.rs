@@ -166,7 +166,7 @@ fn spawn_scan_loop(
                 }
                 Err(e) => {
                     consecutive_errors += 1;
-                    if consecutive_errors == 1 || consecutive_errors % 20 == 0 {
+                    if consecutive_errors == 1 || consecutive_errors.is_multiple_of(20) {
                         tracing::warn!(
                             table = resource.table(),
                             error = %e,

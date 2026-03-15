@@ -21,6 +21,7 @@ use parking_lot::RwLock;
 
 use super::fake_databend::FakeDatabend;
 
+#[allow(dead_code)]
 struct NoopLLM;
 
 #[async_trait]
@@ -48,6 +49,7 @@ impl LLMProvider for NoopLLM {
 }
 
 /// Build a minimal Runtime backed by a FakeDatabend for use in external tests.
+#[allow(dead_code)]
 pub fn test_runtime(fake: FakeDatabend) -> Arc<Runtime> {
     let pool = fake.pool();
     let databases = Arc::new(AgentDatabases::new(pool, "test_").expect("agent databases"));

@@ -54,7 +54,7 @@ fn span_row() -> Vec<serde_json::Value> {
 }
 
 fn agg_row(vals: &[&str]) -> bendclaw::storage::pool::QueryResponse {
-    paged_rows(&[&vals.iter().map(|s| *s).collect::<Vec<_>>()], None, None)
+    paged_rows(&[vals], None, None)
 }
 
 #[tokio::test]
