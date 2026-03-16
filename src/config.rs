@@ -10,6 +10,7 @@
 //! | `BENDCLAW_SERVER_BIND_ADDR` | `server.bind_addr`     | `127.0.0.1:8787` |
 //! | `BENDCLAW_LOG_LEVEL`        | `log.level`            | `info`         |
 //! | `BENDCLAW_LOG_FORMAT`       | `log.format`           | `text`         |
+//! | `BENDCLAW_TELEMETRY_ENABLED` | `telemetry.enabled`   | `true`         |
 //! | `BENDCLAW_WORKSPACE_ROOT_DIR` | `workspace.root_dir`   | `~/.evotai/workspace`  |
 //! | `BENDCLAW_WORKSPACE_SANDBOX` | `workspace.sandbox`    | `false`        |
 //! | `BENDCLAW_AUTH_KEY`          | `auth.api_key`         | *(empty)*      |
@@ -101,6 +102,7 @@ pub struct BendClawConfig {
     pub server: ServerConfig,
     pub storage: StorageConfig,
     pub log: LogConfig,
+    pub telemetry: TelemetryConfig,
     pub llm: LLMConfig,
     pub hub: Option<HubConfig>,
     pub workspace: WorkspaceConfig,
@@ -237,6 +239,21 @@ impl Default for LogConfig {
     }
 }
 
+/// Telemetry configuration — anonymous error reporting via Sentry.
+/// Enabled by default; set `enabled = false` or `BENDCLAW_TELEMETRY_ENABLED=false` to opt out.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TelemetryConfig {
+    /// Whether to send crash/error reports. Default: true.
+    pub enabled: bool,
+}
+
+impl Default for TelemetryConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 fn dirs_default_log_dir() -> String {
     if let Some(home) = std::env::var_os("HOME") {
         let path = std::path::PathBuf::from(home)
@@ -306,6 +323,7 @@ impl BendClawConfig {
         override_str(&mut self.log.level, "BENDCLAW_LOG_LEVEL");
         override_str(&mut self.log.format, "BENDCLAW_LOG_FORMAT");
         override_str(&mut self.log.dir, "BENDCLAW_LOG_DIR");
+        override_bool(&mut self.telemetry.enabled, "BENDCLAW_TELEMETRY_ENABLED");
         override_str(&mut self.workspace.root_dir, "BENDCLAW_WORKSPACE_ROOT_DIR");
         override_bool(&mut self.workspace.sandbox, "BENDCLAW_WORKSPACE_SANDBOX");
         override_str(&mut self.instance_id, "BENDCLAW_INSTANCE_ID");

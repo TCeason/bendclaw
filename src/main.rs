@@ -92,9 +92,42 @@ async fn cmd_run(
         .with_target(true)
         .event_format(tracing_fmt::TargetFirstFormatter);
 
+    // Sentry error reporting — enabled by default, opt out via config or env.
+    let _sentry_guard = if config.telemetry.enabled {
+        let guard = sentry::init((
+            "https://2d81d3539114623bd11edfa8ae3f7cb5@o1250071.ingest.us.sentry.io/4511053422723072",
+            sentry::ClientOptions {
+                release: sentry::release_name!(),
+                ..Default::default()
+            },
+        ));
+        sentry::configure_scope(|scope| {
+            scope.set_user(Some(sentry::User {
+                id: Some(config.instance_id.clone()),
+                ..Default::default()
+            }));
+            scope.set_tag("os", std::env::consts::OS);
+            scope.set_tag("arch", std::env::consts::ARCH);
+            scope.set_tag("git_sha", bendclaw::version::BENDCLAW_GIT_SHA);
+        });
+        Some(guard)
+    } else {
+        None
+    };
+
+    let sentry_layer = if config.telemetry.enabled {
+        Some(sentry_tracing::layer().event_filter(|md| match *md.level() {
+            tracing::Level::ERROR => sentry_tracing::EventFilter::Event,
+            _ => sentry_tracing::EventFilter::Ignore,
+        }))
+    } else {
+        None
+    };
+
     tracing_subscriber::registry()
         .with(terminal_layer.with_filter(filter))
         .with(file_layer)
+        .with(sentry_layer)
         .with(ErrorLayer::default())
         .init();
 

@@ -35,6 +35,8 @@ tracing = "0.1"
 tracing-appender = "0.2"
 tracing-error = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+sentry = { version = "0.47", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
+sentry-tracing = "0.47"
 ulid = "1"
 tiktoken-rs = "0.6"
 backon = { version = "1.6.0", features = ["tokio-sleep"] }
