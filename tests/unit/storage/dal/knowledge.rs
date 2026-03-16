@@ -1,3 +1,4 @@
+use bendclaw::storage::dal::knowledge::build_search_condition;
 use bendclaw::storage::dal::knowledge::KnowledgeRecord;
 
 #[test]
@@ -53,4 +54,35 @@ fn knowledge_record_serde_null_metadata() {
     let parsed: KnowledgeRecord = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.id, "k-2");
     assert!(parsed.metadata.is_none());
+}
+
+// ── build_search_condition tests ────────────────────
+
+#[test]
+fn search_condition_uses_query_not_match() {
+    let cond = build_search_condition("hello");
+    assert!(cond.starts_with("QUERY("));
+    assert!(!cond.contains("MATCH"));
+}
+
+#[test]
+fn search_condition_multi_column_with_boost() {
+    let cond = build_search_condition("test");
+    assert!(cond.contains("subject:test^3"));
+    assert!(cond.contains("summary:test^2"));
+    assert!(cond.contains("locator:test"));
+}
+
+#[test]
+fn search_condition_escapes_special_chars() {
+    let cond = build_search_condition("file:path");
+    assert!(cond.contains(r"file\:path"));
+    // colon must be escaped so it's not treated as a field separator
+    assert!(!cond.contains("file:path^"));
+}
+
+#[test]
+fn search_condition_escapes_quotes() {
+    let cond = build_search_condition("it's a test");
+    assert!(cond.contains("it''s a test"));
 }

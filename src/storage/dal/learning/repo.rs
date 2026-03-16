@@ -188,8 +188,8 @@ impl LearningRepo {
     }
 
     pub async fn search(&self, query: &str, limit: u32) -> Result<Vec<LearningRecord>> {
-        let q = sql::escape(query);
-        let cond = format!("MATCH(content, '{q}')");
+        let q = sql::escape_query(query);
+        let cond = format!("QUERY('content:{q}')");
         let result = self
             .table
             .list_where(&cond, "SCORE() DESC", limit as u64)

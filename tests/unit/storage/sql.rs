@@ -504,3 +504,48 @@ fn delete_builder_where_raw_combined() {
         "DELETE FROM logs WHERE agent_id = 'a1' AND created_at < '2025-01-01'"
     );
 }
+
+// ── escape_query tests ──────────────────────────────
+
+#[test]
+fn escape_query_plain_text() {
+    assert_eq!(escape_query("hello world"), "hello world");
+}
+
+#[test]
+fn escape_query_special_chars() {
+    assert_eq!(escape_query("c++"), "c\\+\\+");
+    assert_eq!(escape_query("file:path"), "file\\:path");
+    assert_eq!(escape_query("a*b?c"), "a\\*b\\?c");
+    assert_eq!(escape_query("(a OR b)"), "\\(a OR b\\)");
+    assert_eq!(escape_query("[1 TO 5]"), "\\[1 TO 5\\]");
+    assert_eq!(escape_query("{a}"), "\\{a\\}");
+    assert_eq!(escape_query("a^2"), "a\\^2");
+    assert_eq!(escape_query("~fuzzy"), "\\~fuzzy");
+    assert_eq!(escape_query("a&b|c!d"), "a\\&b\\|c\\!d");
+    assert_eq!(escape_query("a-b"), "a\\-b");
+}
+
+#[test]
+fn escape_query_quotes() {
+    assert_eq!(escape_query("it's"), "it''s");
+    assert_eq!(escape_query(r#"say "hi""#), r#"say \"hi\""#);
+}
+
+#[test]
+fn escape_query_backslash() {
+    assert_eq!(escape_query(r"a\b"), r"a\\b");
+}
+
+#[test]
+fn escape_query_empty() {
+    assert_eq!(escape_query(""), "");
+}
+
+#[test]
+fn escape_query_combined() {
+    assert_eq!(
+        escape_query("bendclaw:readme (v2)"),
+        "bendclaw\\:readme \\(v2\\)"
+    );
+}

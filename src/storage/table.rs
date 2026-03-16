@@ -178,7 +178,10 @@ impl<M: RowMapper> DatabendTable<M> {
         let score_cols = format!("{}, SCORE()", self.mapper.columns());
         let mut q = Sql::select(&score_cols)
             .from(&self.table)
-            .where_raw(&format!("MATCH({}, '{}')", fts_column, sql::escape(query)));
+            .where_raw(&format!(
+                "QUERY('{fts_column}:{}')",
+                sql::escape_query(query)
+            ));
         if let Some(wheres) = scope_where {
             q = Self::apply_wheres(q, wheres);
         }

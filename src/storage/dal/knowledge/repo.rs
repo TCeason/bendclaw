@@ -139,9 +139,7 @@ impl KnowledgeRepo {
     }
 
     pub async fn search(&self, query: &str, limit: u32) -> Result<Vec<KnowledgeRecord>> {
-        let q = sql::escape(query);
-        let cond =
-            format!("(MATCH(summary, '{q}') OR MATCH(locator, '{q}') OR MATCH(subject, '{q}'))");
+        let cond = build_search_condition(query);
         let result = self
             .table
             .list_where(&cond, "SCORE() DESC", limit as u64)
@@ -151,4 +149,11 @@ impl KnowledgeRepo {
         }
         result
     }
+}
+
+/// Build the WHERE condition for knowledge full-text search using QUERY().
+/// Searches across subject (highest boost), summary, and locator columns.
+pub fn build_search_condition(query: &str) -> String {
+    let q = sql::escape_query(query);
+    format!("QUERY('subject:{q}^3 OR summary:{q}^2 OR locator:{q}')")
 }

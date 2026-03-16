@@ -10,6 +10,41 @@ pub fn escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('\'', "''")
 }
 
+/// Escape a string for safe use inside a `QUERY('...')` Lucene expression.
+/// Escapes Lucene special characters with backslash and doubles SQL single quotes.
+pub fn escape_query(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + s.len() / 4);
+    for c in s.chars() {
+        if matches!(
+            c,
+            '+' | '-'
+                | '&'
+                | '|'
+                | '!'
+                | '('
+                | ')'
+                | '{'
+                | '}'
+                | '['
+                | ']'
+                | '^'
+                | '"'
+                | '~'
+                | '*'
+                | '?'
+                | ':'
+                | '\\'
+        ) {
+            out.push('\\');
+        }
+        if c == '\'' {
+            out.push('\'');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Escape a string for safe use in a SQL LIKE pattern.
 /// Uses `^` as the ESCAPE character (Databend's tokenizer rejects backslash in ESCAPE clauses).
 /// Escapes `%`, `_`, `^`, and `'` so they are treated as literals.
