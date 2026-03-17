@@ -461,17 +461,19 @@ fn event_tool_start_serde() -> Result<()> {
 fn event_tool_update_serde() -> Result<()> {
     let e = Event::ToolUpdate {
         tool_call_id: "tc_1".into(),
-        output: "partial".into(),
+        event: bendclaw::kernel::tools::cli_agent::AgentEvent::Text {
+            content: "partial".into(),
+        },
     };
     let json = serde_json::to_string(&e)?;
     let back: Event = serde_json::from_str(&json)?;
     match back {
         Event::ToolUpdate {
             tool_call_id,
-            output,
+            event: bendclaw::kernel::tools::cli_agent::AgentEvent::Text { content },
         } => {
             assert_eq!(tool_call_id, "tc_1");
-            assert_eq!(output, "partial");
+            assert_eq!(content, "partial");
         }
         _ => bail!("expected ToolUpdate"),
     }
@@ -591,7 +593,9 @@ fn event_name_all_variants() {
     assert_eq!(
         Event::ToolUpdate {
             tool_call_id: "tc1".into(),
-            output: "out".into()
+            event: bendclaw::kernel::tools::cli_agent::AgentEvent::Text {
+                content: "out".into()
+            }
         }
         .name(),
         "ToolUpdate"

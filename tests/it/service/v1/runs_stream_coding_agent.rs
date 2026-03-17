@@ -22,7 +22,9 @@ fn tool_update_maps_to_sse_tool_call_update() {
 
     let event = Event::ToolUpdate {
         tool_call_id: "tc_001".to_string(),
-        output: "streaming chunk".to_string(),
+        event: bendclaw::kernel::tools::cli_agent::AgentEvent::Text {
+            content: "streaming chunk".to_string(),
+        },
     };
     let sse = map_event_to_sse("agent-1", "session-1", "run-1", &event);
     assert!(sse.is_some(), "ToolUpdate should produce an SSE event");

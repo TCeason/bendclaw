@@ -2,6 +2,7 @@ use std::path::Path;
 
 use tokio::process::Command;
 
+use super::event::AgentEvent;
 use super::process::AgentOptions;
 
 /// Protocol adapter for a specific CLI agent (claude, codex, etc.).
@@ -27,7 +28,7 @@ pub trait CliAgent: Send + Sync {
     ) -> Command;
 
     fn parse_session_id(&self, line: &serde_json::Value) -> Option<String>;
-    fn parse_streaming_text(&self, line: &serde_json::Value) -> Option<String>;
+    fn parse_events(&self, line: &serde_json::Value) -> Vec<AgentEvent>;
     fn parse_result(&self, line: &serde_json::Value) -> Option<String>;
 
     fn supports_stdin_followup(&self) -> bool {

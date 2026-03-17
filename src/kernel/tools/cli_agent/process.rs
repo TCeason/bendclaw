@@ -10,6 +10,7 @@ use tokio::process::ChildStdout;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use super::event::AgentEvent;
 use super::protocol::CliAgent;
 use crate::base::Result;
 use crate::kernel::run::event::Event;
@@ -121,10 +122,8 @@ impl AgentProcess {
                                 return Ok(result);
                             }
 
-                            if let Some(text) = agent.parse_streaming_text(&msg) {
-                                if !text.is_empty() {
-                                    emit_update(event_tx, tool_call_id, &text).await;
-                                }
+                            for event in agent.parse_events(&msg) {
+                                emit_agent_event(event_tx, tool_call_id, event).await;
                             }
                         }
                     }
@@ -164,12 +163,16 @@ impl AgentProcess {
     }
 }
 
-pub async fn emit_update(event_tx: Option<&mpsc::Sender<Event>>, tool_call_id: &str, output: &str) {
+pub async fn emit_agent_event(
+    event_tx: Option<&mpsc::Sender<Event>>,
+    tool_call_id: &str,
+    agent_event: AgentEvent,
+) {
     if let Some(tx) = event_tx {
         let _ = tx
             .send(Event::ToolUpdate {
                 tool_call_id: tool_call_id.to_string(),
-                output: output.to_string(),
+                event: agent_event,
             })
             .await;
     }

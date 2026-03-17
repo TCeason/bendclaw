@@ -1,8 +1,9 @@
+pub mod event;
 pub mod process;
 pub mod protocol;
 pub mod state;
 
-pub use process::emit_update;
+pub use event::AgentEvent;
 pub use process::AgentOptions;
 pub use process::AgentProcess;
 pub use protocol::CliAgent;

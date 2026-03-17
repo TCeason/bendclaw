@@ -3,6 +3,7 @@ use serde::Serialize;
 
 use crate::kernel::run::result::Reason;
 use crate::kernel::run::result::Usage;
+use crate::kernel::tools::cli_agent::AgentEvent;
 use crate::kernel::OperationMeta;
 use crate::llm::stream::StreamEvent;
 use crate::llm::usage::TokenUsage;
@@ -53,7 +54,7 @@ pub enum Event {
     /// Partial output from a running tool.
     ToolUpdate {
         tool_call_id: String,
-        output: String,
+        event: AgentEvent,
     },
 
     /// A tool execution has finished.

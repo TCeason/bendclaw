@@ -3,6 +3,7 @@ use axum::response::sse::Event as SseEvent;
 use super::service::should_skip_event;
 use crate::kernel::run::event::Delta;
 use crate::kernel::run::event::Event;
+use crate::kernel::tools::cli_agent::AgentEvent;
 
 pub fn map_event_to_sse(
     agent_id: &str,
@@ -10,16 +11,19 @@ pub fn map_event_to_sse(
     run_id: &str,
     event: &Event,
 ) -> Option<SseEvent> {
-    // ToolUpdate is excluded from DB persistence but must flow through SSE.
+    // ToolUpdate carries structured AgentEvent — map each kind to its own SSE event.
     if let Event::ToolUpdate {
         tool_call_id,
-        output,
+        event: agent_event,
     } = event
     {
-        let mut payload = base_event_payload(agent_id, session_id, run_id, "ToolCallUpdate");
-        payload["tool_call_id"] = serde_json::Value::String(tool_call_id.clone());
-        payload["content"] = serde_json::Value::String(output.clone());
-        return Some(encode_sse("ToolCallUpdate", payload));
+        return Some(map_agent_event_to_sse(
+            agent_id,
+            session_id,
+            run_id,
+            tool_call_id,
+            agent_event,
+        ));
     }
 
     if should_skip_event(event) {
@@ -235,4 +239,62 @@ pub fn base_event_payload(
 
 pub fn encode_sse(event: &str, payload: serde_json::Value) -> SseEvent {
     SseEvent::default().event(event).data(payload.to_string())
+}
+
+fn map_agent_event_to_sse(
+    agent_id: &str,
+    session_id: &str,
+    run_id: &str,
+    tool_call_id: &str,
+    agent_event: &AgentEvent,
+) -> SseEvent {
+    let (event_name, mut payload) = match agent_event {
+        AgentEvent::Text { content } => {
+            let mut p = base_event_payload(agent_id, session_id, run_id, "ToolCallUpdate");
+            p["content"] = serde_json::Value::String(content.clone());
+            ("ToolCallUpdate", p)
+        }
+        AgentEvent::Thinking { content } => {
+            let mut p = base_event_payload(agent_id, session_id, run_id, "ToolCallThinking");
+            p["content"] = serde_json::Value::String(content.clone());
+            ("ToolCallThinking", p)
+        }
+        AgentEvent::ToolUse {
+            tool_name,
+            tool_use_id,
+            input,
+        } => {
+            let mut p = base_event_payload(agent_id, session_id, run_id, "ToolCallSubToolStarted");
+            p["tool_name"] = serde_json::Value::String(tool_name.clone());
+            p["sub_tool_call_id"] = serde_json::Value::String(tool_use_id.clone());
+            p["arguments"] = input.clone();
+            ("ToolCallSubToolStarted", p)
+        }
+        AgentEvent::ToolResult {
+            tool_use_id,
+            success,
+            output,
+        } => {
+            let mut p =
+                base_event_payload(agent_id, session_id, run_id, "ToolCallSubToolCompleted");
+            p["sub_tool_call_id"] = serde_json::Value::String(tool_use_id.clone());
+            p["success"] = serde_json::Value::Bool(*success);
+            p["content"] = serde_json::Value::String(output.clone());
+            ("ToolCallSubToolCompleted", p)
+        }
+        AgentEvent::System { subtype, metadata } => {
+            let mut p = base_event_payload(agent_id, session_id, run_id, "ToolCallStatus");
+            p["subtype"] = serde_json::Value::String(subtype.clone());
+            p["metadata"] = metadata.clone();
+            ("ToolCallStatus", p)
+        }
+        AgentEvent::Error { message } => {
+            let mut p = base_event_payload(agent_id, session_id, run_id, "ToolCallError");
+            p["content"] = serde_json::Value::String(message.clone());
+            ("ToolCallError", p)
+        }
+    };
+    payload["tool_call_id"] = serde_json::Value::String(tool_call_id.to_string());
+    payload["agent_event_kind"] = serde_json::Value::String(agent_event.kind().to_string());
+    encode_sse(event_name, payload)
 }

@@ -3,6 +3,7 @@ use std::path::Path;
 use serde_json::json;
 use tokio::process::Command;
 
+use crate::kernel::tools::cli_agent::AgentEvent;
 use crate::kernel::tools::cli_agent::AgentOptions;
 use crate::kernel::tools::cli_agent::CliAgent;
 
@@ -76,37 +77,16 @@ impl CliAgent for ClaudeCodeAgent {
         None
     }
 
-    fn parse_streaming_text(&self, line: &serde_json::Value) -> Option<String> {
-        match line.get("type")?.as_str()? {
-            "assistant" => {
-                let blocks = line.get("message")?.get("content")?.as_array()?;
-                let mut parts = Vec::new();
-                for block in blocks {
-                    match block.get("type").and_then(|t| t.as_str()) {
-                        Some("text") => {
-                            if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                                parts.push(text.to_string());
-                            }
-                        }
-                        Some("tool_use") => {
-                            let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("?");
-                            parts.push(format!("[tool_use:{name}]"));
-                        }
-                        _ => {}
-                    }
-                }
-                let text = parts.join("\n");
-                if text.is_empty() {
-                    None
-                } else {
-                    Some(text)
-                }
-            }
-            "system" => {
-                let subtype = line.get("subtype").and_then(|s| s.as_str())?;
-                Some(format!("[system:{subtype}]"))
-            }
-            _ => None,
+    fn parse_events(&self, line: &serde_json::Value) -> Vec<AgentEvent> {
+        let Some(msg_type) = line.get("type").and_then(|t| t.as_str()) else {
+            return vec![];
+        };
+
+        match msg_type {
+            "assistant" => self.parse_assistant(line),
+            "system" => self.parse_system(line),
+            "user" => self.parse_user_tool_results(line),
+            _ => vec![],
         }
     }
 
@@ -135,4 +115,131 @@ impl CliAgent for ClaudeCodeAgent {
         });
         Some(format!("{}\n", msg))
     }
+}
+
+impl ClaudeCodeAgent {
+    fn parse_assistant(&self, line: &serde_json::Value) -> Vec<AgentEvent> {
+        let Some(blocks) = line
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_array())
+        else {
+            return vec![];
+        };
+
+        let mut events = Vec::new();
+        for block in blocks {
+            let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            match block_type {
+                "text" => {
+                    if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                        if !text.is_empty() {
+                            events.push(AgentEvent::Text {
+                                content: text.to_string(),
+                            });
+                        }
+                    }
+                }
+                "thinking" => {
+                    if let Some(text) = block.get("thinking").and_then(|t| t.as_str()) {
+                        if !text.is_empty() {
+                            events.push(AgentEvent::Thinking {
+                                content: text.to_string(),
+                            });
+                        }
+                    }
+                }
+                "tool_use" => {
+                    let name = block
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("unknown");
+                    let id = block.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                    let input = block
+                        .get("input")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    events.push(AgentEvent::ToolUse {
+                        tool_name: name.to_string(),
+                        tool_use_id: id.to_string(),
+                        input,
+                    });
+                }
+                _ => {}
+            }
+        }
+        events
+    }
+
+    fn parse_system(&self, line: &serde_json::Value) -> Vec<AgentEvent> {
+        let subtype = line
+            .get("subtype")
+            .and_then(|s| s.as_str())
+            .unwrap_or("unknown");
+        let mut metadata = serde_json::Map::new();
+        if let Some(session_id) = line.get("session_id") {
+            metadata.insert("session_id".to_string(), session_id.clone());
+        }
+        if let Some(model) = line.get("model") {
+            metadata.insert("model".to_string(), model.clone());
+        }
+        if let Some(cwd) = line.get("cwd") {
+            metadata.insert("cwd".to_string(), cwd.clone());
+        }
+        vec![AgentEvent::System {
+            subtype: subtype.to_string(),
+            metadata: serde_json::Value::Object(metadata),
+        }]
+    }
+
+    fn parse_user_tool_results(&self, line: &serde_json::Value) -> Vec<AgentEvent> {
+        let Some(blocks) = line
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_array())
+        else {
+            return vec![];
+        };
+
+        let mut events = Vec::new();
+        for block in blocks {
+            if block.get("type").and_then(|t| t.as_str()) != Some("tool_result") {
+                continue;
+            }
+            let tool_use_id = block
+                .get("tool_use_id")
+                .and_then(|i| i.as_str())
+                .unwrap_or("")
+                .to_string();
+            let is_error = block
+                .get("is_error")
+                .and_then(|e| e.as_bool())
+                .unwrap_or(false);
+            let output = extract_tool_result_text(block);
+            events.push(AgentEvent::ToolResult {
+                tool_use_id,
+                success: !is_error,
+                output,
+            });
+        }
+        events
+    }
+}
+
+fn extract_tool_result_text(block: &serde_json::Value) -> String {
+    if let Some(content) = block.get("content") {
+        if let Some(s) = content.as_str() {
+            return s.to_string();
+        }
+        if let Some(arr) = content.as_array() {
+            let mut parts = Vec::new();
+            for item in arr {
+                if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                    parts.push(text.to_string());
+                }
+            }
+            return parts.join("\n");
+        }
+    }
+    String::new()
 }
