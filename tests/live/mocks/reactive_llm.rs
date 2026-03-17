@@ -13,7 +13,7 @@ use bendclaw::llm::tool::ToolSchema;
 use bendclaw::llm::usage::TokenUsage;
 
 type ReactiveHandler =
-    dyn Fn(usize, &[ChatMessage], &[ToolSchema], f32) -> Result<LLMResponse> + Send + Sync;
+    dyn Fn(usize, &[ChatMessage], &[ToolSchema], f64) -> Result<LLMResponse> + Send + Sync;
 
 fn mock_usage() -> TokenUsage {
     TokenUsage {
@@ -32,7 +32,7 @@ pub struct ReactiveMockLLMProvider {
 
 impl ReactiveMockLLMProvider {
     pub fn new(
-        handler: impl Fn(usize, &[ChatMessage], &[ToolSchema], f32) -> Result<LLMResponse>
+        handler: impl Fn(usize, &[ChatMessage], &[ToolSchema], f64) -> Result<LLMResponse>
             + Send
             + Sync
             + 'static,

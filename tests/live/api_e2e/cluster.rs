@@ -285,6 +285,7 @@ async fn cluster_multi_agent_collaboration_e2e() -> Result<()> {
             registry_url: registry.base_url().to_string(),
             registry_token: registry_token.to_string(),
             advertise_url: String::new(),
+            cluster_id: String::new(),
         })
     };
 
@@ -426,6 +427,7 @@ async fn cluster_shutdown_deregisters_nodes() -> Result<()> {
             registry_url: registry.base_url().to_string(),
             registry_token: registry_token.to_string(),
             advertise_url: String::new(),
+            cluster_id: String::new(),
         }),
         cluster_options: ClusterOptions {
             heartbeat_interval: Duration::from_millis(100),
