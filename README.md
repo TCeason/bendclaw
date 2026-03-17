@@ -1,8 +1,4 @@
 <p align="center">
-  <a href="https://evot.ai"><img src="https://www.evot.ai/_next/image?url=%2Flogo.png&w=96&q=75&dpl=dpl_6RSmM78VtbzvB2CD4qzLH2zq9wga" alt="evot.ai" /></a>
-</p>
-
-<p align="center">
   <strong>BendClaw</strong>
 </p>
 
