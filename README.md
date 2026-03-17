@@ -3,11 +3,16 @@
 </p>
 
 <p align="center">
-  Distributed agent swarm. Share everything. Evolve together.
+  <a href="https://github.com/datafuselabs/evot-ai/actions"><img src="https://github.com/datafuselabs/evot-ai/actions/workflows/ci.yml/badge.svg" alt="CI Status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
 </p>
 
 <p align="center">
-  An autonomous AgentOS — agents learn, coordinate, and improve without human intervention.
+  Distributed AI teams. Share everything. Co-evolve.
+</p>
+
+<p align="center">
+  A Rust-native runtime where every execution produces reusable knowledge — no prompt engineering required.
 </p>
 
 <p align="center">
@@ -18,22 +23,22 @@
 
 ## Why BendClaw
 
-Most agent frameworks forget everything between runs. BendClaw doesn't — every run produces knowledge that automatically feeds the next. Agents get smarter on their own, no prompt tuning required.
+Most agent frameworks are stateless — every run starts from zero. BendClaw turns each execution into reusable knowledge that's automatically shared across the team and injected into future runs. Agents co-evolve without prompt engineering.
 
-It's also built for multi-node coordination. Agents fan out subtasks across the cluster, share what they learn, and self-organize — all on a single shared data layer backed by Databend.
+It's also a distributed runtime from day one. Agents collaborate across nodes, fan out subtasks, and collect results — all on a single shared data layer backed by Databend. Add nodes to scale; the cluster handles coordination.
 
 ## What's Inside
 
-- **Autonomous learning** — agents extract knowledge from every run, auto-injected into future prompts
-- **Cluster dispatch** — agents fan out subtasks across nodes, coordinate, and collect results
+- **Autonomous learning** — agents extract and **share** knowledge from every run, auto-injected into future prompts for continuous **co-evolution**
+- **Cluster dispatch** — agents **collaborate** across nodes, fan out subtasks, and collect results
 - **Lease-based scheduling** — tasks and channel receivers claimed via distributed DB leases; automatic failover
-- **Persistent memory** — vector + full-text search on shared cloud storage, one unified data layer
+- **Shared persistent memory** — vector + full-text search on shared cloud storage, one unified data layer
 - **Hub integrations** — 100+ integrations (GitHub, Slack, Email, etc.) via pluggable skills
 - **Secret-safe execution** — secrets in a vault, never exposed to LLMs; injected only at tool execution time
 - **Full traceability** — spans, events, audits, sensitive field redaction; humans review, agents execute
 - **Multi-tenant isolation** — separate DB per agent, isolated workspace per session
-- **18 built-in tools** — file, shell, memory, recall, task, web, databend, channel, cluster
-- **40+ REST endpoints** — SSE streaming, Bearer auth, per-agent scoping
+- **30 built-in tools** — file, shell, memory, recall, task, web, databend, channel, cluster
+- **50+ REST endpoints** — SSE streaming, Bearer auth, per-agent scoping
 
 ## Quick Start
 
@@ -41,9 +46,7 @@ It's also built for multi-node coordination. Agents fan out subtasks across the 
 2. Copy and run the setup command:
 
 ```bash
-curl -fsSL https://console.evot.ai/api/setup | sh -s -- \
-  --auth-key <YOUR_AUTH_KEY> \
-  --instance-id <YOUR_INSTANCE_ID>
+curl -fsSL https://app.evot.ai/api/setup | sh -s -- <BASE64_CONFIG>
 ```
 
 3. `bendclaw run` — the console detects your instance automatically
@@ -231,6 +234,7 @@ All endpoints are under `/v1`.
 | `/v1/agents/{agent_id}/traces/summary` | GET | Trace summary |
 | `/v1/agents/{agent_id}/traces/{trace_id}` | GET | Get trace |
 | `/v1/agents/{agent_id}/traces/{trace_id}/spans` | GET | List spans |
+| `/v1/agents/{agent_id}/traces/{trace_id}/children` | GET | List child traces (distributed) |
 
 </details>
 
@@ -312,6 +316,12 @@ make coverage   # generate HTML coverage report
 ```
 
 ---
+
+## Community
+
+- [GitHub Issues](https://github.com/datafuselabs/evot-ai/issues) — bug reports & feature requests
+- [Twitter @Evot_AI](https://twitter.com/Evot_AI) — updates & announcements
+- team@evot.ai — reach the team directly
 
 ## License
 
