@@ -189,18 +189,10 @@ impl Tool for CodeReviewTool {
         let tool_call_id = ctx.current_tool_call_id().to_string();
 
         let mut process =
-            match AgentProcess::spawn(agent, cwd.as_ref(), &review_prompt, &opts).await {
+            match AgentProcess::start(agent, cwd.as_ref(), &review_prompt, &opts).await {
                 Ok(p) => p,
                 Err(e) => return Ok(ToolResult::error(format!("{e}"))),
             };
-
-        if agent.supports_stdin_followup() {
-            if let Err(e) = process.send_followup(agent, &review_prompt).await {
-                return Ok(ToolResult::error(format!(
-                    "Failed to send review prompt: {e}"
-                )));
-            }
-        }
 
         match process
             .read_until_result(

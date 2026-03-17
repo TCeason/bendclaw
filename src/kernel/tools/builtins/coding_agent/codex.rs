@@ -5,6 +5,8 @@ use super::codex_agent::CodexAgent;
 use crate::base::Result;
 use crate::kernel::tools::cli_agent::AgentOptions;
 use crate::kernel::tools::cli_agent::AgentProcess;
+use crate::kernel::tools::cli_agent::AgentStateKey;
+use crate::kernel::tools::cli_agent::CliAgent;
 use crate::kernel::tools::OperationClassifier;
 use crate::kernel::tools::Tool;
 use crate::kernel::tools::ToolContext;
@@ -81,11 +83,13 @@ impl Tool for CodexExecTool {
 
         let opts = AgentOptions::default();
         let tool_call_id = ctx.current_tool_call_id().to_string();
+        let state_key = AgentStateKey::new(AGENT.agent_type(), cwd);
 
         let state = ctx.runtime.cli_agent_state.clone();
         let mut guard = state.lock().await;
 
-        let mut process = if let Some(sid) = guard.get_session_id("codex").map(|s| s.to_string()) {
+        let mut process = if let Some(sid) = guard.get_session_id(&state_key).map(|s| s.to_string())
+        {
             match AgentProcess::resume(&AGENT, cwd.as_ref(), &sid, prompt, &opts).await {
                 Ok(p) => p,
                 Err(e) => {
@@ -114,7 +118,7 @@ impl Tool for CodexExecTool {
         {
             Ok(result) => {
                 if let Some(sid) = process.session_id() {
-                    guard.set_session_id("codex", sid.to_string());
+                    guard.set_session_id(state_key, sid.to_string());
                 }
                 Ok(ToolResult::ok(result))
             }

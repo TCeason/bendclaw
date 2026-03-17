@@ -1,13 +1,17 @@
+use std::collections::VecDeque;
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::Arc;
 
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tokio::io::Lines;
 use tokio::process::Child;
+use tokio::process::ChildStderr;
 use tokio::process::ChildStdout;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use super::event::AgentEvent;
@@ -28,9 +32,30 @@ pub struct AgentProcess {
     stdout_lines: Lines<BufReader<ChildStdout>>,
     session_id: Option<String>,
     agent_type: String,
+    stderr_tail: Arc<Mutex<VecDeque<String>>>,
+    _stderr_task: tokio::task::JoinHandle<()>,
 }
 
 impl AgentProcess {
+    pub async fn start(
+        agent: &dyn CliAgent,
+        cwd: &Path,
+        prompt: &str,
+        opts: &AgentOptions,
+    ) -> Result<Self> {
+        let initial_prompt = if agent.supports_stdin_followup() {
+            ""
+        } else {
+            prompt
+        };
+
+        let mut process = Self::spawn(agent, cwd, initial_prompt, opts).await?;
+        if agent.supports_stdin_followup() && !prompt.is_empty() {
+            process.send_followup(agent, prompt).await?;
+        }
+        Ok(process)
+    }
+
     pub async fn spawn(
         agent: &dyn CliAgent,
         cwd: &Path,
@@ -38,7 +63,8 @@ impl AgentProcess {
         opts: &AgentOptions,
     ) -> Result<Self> {
         let mut cmd = agent.build_command(cwd, prompt, opts);
-        cmd.stdout(Stdio::piped())
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
@@ -51,11 +77,17 @@ impl AgentProcess {
         })?;
 
         let stdout = child.stdout.take().expect("stdout piped");
+        let stderr = child.stderr.take().expect("stderr piped");
+        let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(20)));
+        let stderr_task =
+            spawn_stderr_task(agent.agent_type().to_string(), stderr, stderr_tail.clone());
         Ok(Self {
             child,
             stdout_lines: BufReader::new(stdout).lines(),
             session_id: None,
             agent_type: agent.agent_type().to_string(),
+            stderr_tail,
+            _stderr_task: stderr_task,
         })
     }
 
@@ -67,7 +99,8 @@ impl AgentProcess {
         opts: &AgentOptions,
     ) -> Result<Self> {
         let mut cmd = agent.build_resume_command(cwd, session_id, prompt, opts);
-        cmd.stdout(Stdio::piped())
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
@@ -79,11 +112,17 @@ impl AgentProcess {
         })?;
 
         let stdout = child.stdout.take().expect("stdout piped");
+        let stderr = child.stderr.take().expect("stderr piped");
+        let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(20)));
+        let stderr_task =
+            spawn_stderr_task(agent.agent_type().to_string(), stderr, stderr_tail.clone());
         Ok(Self {
             child,
             stdout_lines: BufReader::new(stdout).lines(),
             session_id: Some(session_id.to_string()),
             agent_type: agent.agent_type().to_string(),
+            stderr_tail,
+            _stderr_task: stderr_task,
         })
     }
 
@@ -135,7 +174,7 @@ impl AgentProcess {
             }
         }
 
-        Err(anyhow::anyhow!("{} CLI exited without a result message", self.agent_type).into())
+        Err(anyhow::anyhow!(self.missing_result_message().await).into())
     }
 
     pub async fn send_followup(&mut self, agent: &dyn CliAgent, prompt: &str) -> Result<()> {
@@ -158,9 +197,49 @@ impl AgentProcess {
         self.session_id.as_deref()
     }
 
-    pub fn stdout_lines_mut(&mut self) -> &mut Lines<BufReader<ChildStdout>> {
-        &mut self.stdout_lines
+    async fn missing_result_message(&self) -> String {
+        let stderr = self.stderr_tail.lock().await;
+        if stderr.is_empty() {
+            format!("{} CLI exited without a result message", self.agent_type)
+        } else {
+            format!(
+                "{} CLI exited without a result message. stderr: {}",
+                self.agent_type,
+                stderr.iter().cloned().collect::<Vec<_>>().join(" | ")
+            )
+        }
     }
+}
+
+fn spawn_stderr_task(
+    agent_type: String,
+    stderr: ChildStderr,
+    stderr_tail: Arc<Mutex<VecDeque<String>>>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    tracing::warn!(agent = %agent_type, stderr = %line, "cli stderr");
+                    let mut tail = stderr_tail.lock().await;
+                    if tail.len() >= 20 {
+                        tail.pop_front();
+                    }
+                    tail.push_back(line.to_string());
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    tracing::warn!(agent = %agent_type, error = %e, "stderr read error");
+                    break;
+                }
+            }
+        }
+    })
 }
 
 pub async fn emit_agent_event(

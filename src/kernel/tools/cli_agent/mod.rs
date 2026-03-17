@@ -8,5 +8,6 @@ pub use process::AgentOptions;
 pub use process::AgentProcess;
 pub use protocol::CliAgent;
 pub use state::new_shared_state;
+pub use state::AgentStateKey;
 pub use state::CliAgentState;
 pub use state::SharedAgentState;
