@@ -78,8 +78,7 @@ impl Engine {
                     .bytes(p.arguments.to_string().len() as u64)
                     .detail("tool_call_id", p.call.id.clone())
                     .detail("tool_name", p.call.name.clone())
-                    .detail("tool_kind", p.kind.as_str())
-                    .detail("arguments", p.arguments.clone()),
+                    .detail("tool_kind", p.kind.as_str()),
             );
             let turn = self.iteration.load(std::sync::atomic::Ordering::Relaxed);
             let mut payload = self.audit_payload(turn);
@@ -151,8 +150,7 @@ impl Engine {
                         .detail("tool_name", p.call.name.clone())
                         .detail("tool_kind", p.kind.as_str())
                         .detail("success", success)
-                        .detail("output", output.clone())
-                        .detail("operation", meta.clone()),
+                        .detail("summary", meta.summary.clone()),
                 );
             } else {
                 server_log::error(
@@ -172,9 +170,8 @@ impl Engine {
                         .detail("tool_name", p.call.name.clone())
                         .detail("tool_kind", p.kind.as_str())
                         .detail("success", success)
-                        .detail("output", output.clone())
-                        .detail("error", error_text.clone())
-                        .detail("operation", meta.clone()),
+                        .detail("summary", meta.summary.clone())
+                        .detail("error", error_text.clone()),
                 );
             }
             let turn = self.iteration.load(std::sync::atomic::Ordering::Relaxed);

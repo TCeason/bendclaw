@@ -92,7 +92,7 @@ pub fn load_skills(skills_dir: &Path) -> Vec<LoadedSkill> {
         }
     }
 
-    tracing::info!(count = skills.len(), "skills loaded");
+    tracing::debug!(count = skills.len(), "skills loaded");
     skills
 }
 

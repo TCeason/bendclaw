@@ -51,7 +51,7 @@ impl Engine {
         let request_bytes = serde_json::to_vec(&request_payload)
             .map(|body| body.len() as u64)
             .unwrap_or(0);
-        server_log::info(
+        server_log::debug(
             &self.ops_ctx(iteration),
             "llm",
             "request",
@@ -59,7 +59,13 @@ impl Engine {
                 .rows(chat_messages.len() as u64)
                 .bytes(request_bytes)
                 .attempt(iteration)
-                .payload(serde_json::Value::Object(request_payload.clone())),
+                .detail("model", self.ctx.model.to_string())
+                .detail("temperature", self.ctx.temperature)
+                .detail(
+                    "tool_strategy",
+                    format!("{:?}", self.ctx.tool_view.strategy()),
+                )
+                .detail("tool_count", active_tools.len()),
         );
         self.emit_audit("llm.request", request_payload).await;
 
@@ -151,7 +157,13 @@ impl Engine {
                     .tokens(turn.usage().total_tokens)
                     .bytes(turn.bytes())
                     .attempt(iteration)
-                    .payload(serde_json::Value::Object(payload.clone())),
+                    .detail("model", turn.model().unwrap_or(self.ctx.model.as_ref()))
+                    .detail("provider", turn.provider())
+                    .detail("finish_reason", turn.finish_reason())
+                    .detail("error", err.clone())
+                    .detail("tool_calls", turn.tool_calls().len())
+                    .detail("chunk_count", turn.chunk_count())
+                    .detail("ttft_ms", ttft_ms),
             );
             self.emit_audit("llm.error", payload).await;
             Some(err)
@@ -219,7 +231,12 @@ impl Engine {
                     .tokens(turn.usage().total_tokens)
                     .bytes(turn.bytes())
                     .attempt(iteration)
-                    .payload(serde_json::Value::Object(payload.clone())),
+                    .detail("model", turn.model().unwrap_or(self.ctx.model.as_ref()))
+                    .detail("provider", turn.provider())
+                    .detail("finish_reason", turn.finish_reason())
+                    .detail("tool_calls", turn.tool_calls().len())
+                    .detail("chunk_count", turn.chunk_count())
+                    .detail("ttft_ms", ttft_ms),
             );
             self.emit_audit("llm.response", payload).await;
             None

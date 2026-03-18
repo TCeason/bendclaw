@@ -167,7 +167,7 @@ impl PromptBuilder {
 
     /// Build the full system prompt.
     pub async fn build(&self, agent_id: &str, user_id: &str, session_id: &str) -> Result<String> {
-        tracing::info!(
+        tracing::debug!(
             stage = "prompt",
             status = "started",
             agent_id,
@@ -318,19 +318,15 @@ impl PromptBuilder {
 
         let has_claude = tools.iter().any(|t| t.function.name == "claude_code");
         let has_codex = tools.iter().any(|t| t.function.name == "codex_exec");
-        let has_review = tools.iter().any(|t| t.function.name == "code_review");
-        if has_claude || has_codex || has_review {
+        if has_claude || has_codex {
             buf.push_str("\n### Coding-agent orchestration\n\n");
-            buf.push_str("Treat coding-agent tools as single-shot actions: one execution or one review per call. You decide the overall workflow.\n");
+            buf.push_str("Coding-agent tools can continue work across multiple rounds in the same agent session. You decide the higher-level workflow: when to implement, review, switch agents, or stop.\n");
             if has_claude && has_codex {
                 buf.push_str(
                     "You may use one coding agent to implement and the other to review.\n",
                 );
             }
-            if has_review {
-                buf.push_str("Use `code_review` when you want a chosen coding agent to review a git diff target (`uncommitted`, `staged`, `branch:<name>`, `commit:<sha>`).\n");
-            }
-            buf.push_str("It is normal to do multiple review/fix rounds. Decide whether to continue or stop based on the remaining issues and the task goal.\n\n");
+            buf.push_str("It is normal to do multiple fix/review rounds. Decide whether to continue or stop based on the remaining issues and the task goal.\n\n");
         } else {
             buf.push('\n');
         }

@@ -223,7 +223,7 @@ async fn drive_stream(
     writer: &StreamWriter,
     model: &str,
 ) -> std::result::Result<(), String> {
-    tracing::info!(
+    tracing::debug!(
         provider = "anthropic",
         model = %model,
         url = %url,
@@ -273,7 +273,7 @@ async fn drive_stream(
         .unwrap_or("")
         .to_string();
 
-    tracing::info!(
+    tracing::debug!(
         provider = "anthropic",
         model = %model,
         request_id = %request_id,

@@ -32,7 +32,6 @@ pub enum ToolId {
     ClusterCollect,
     ClaudeCode,
     CodexExec,
-    CodeReview,
 }
 
 impl ToolId {
@@ -70,7 +69,6 @@ impl ToolId {
             Self::ClusterCollect => "cluster_collect",
             Self::ClaudeCode => "claude_code",
             Self::CodexExec => "codex_exec",
-            Self::CodeReview => "code_review",
         }
     }
 }
@@ -122,7 +120,6 @@ impl ToolId {
         // Coding agents
         ToolId::ClaudeCode,
         ToolId::CodexExec,
-        ToolId::CodeReview,
     ];
 
     /// Cluster tools, registered conditionally when cluster config is present.

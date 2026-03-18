@@ -73,7 +73,7 @@ impl Engine {
         self.emit(Event::TurnStart { iteration }).await;
         let payload = self.audit_payload(iteration);
         self.emit_audit("turn.started", payload).await;
-        server_log::info(
+        server_log::debug(
             &self.ops_ctx(iteration),
             "turn",
             "started",
@@ -85,6 +85,7 @@ impl Engine {
                     format!("{:?}", self.ctx.tool_view.strategy()),
                 ),
         );
+
         self.emit(Event::ReasonStart).await;
 
         let (turn, llm_error) = self.call_llm(state, iteration).await;
@@ -138,9 +139,9 @@ impl Engine {
                         .detail("finish_reason", turn.finish_reason())
                         .detail("tool_calls", turn.tool_calls().len())
                         .detail("error", err)
-                        .detail("usage", turn.usage().clone())
                         .detail("chunk_count", turn.chunk_count()),
                 );
+
                 self.emit(Event::TurnEnd { iteration }).await;
                 Ok(StepOutcome::Error(reason))
             }
@@ -192,9 +193,9 @@ impl Engine {
                         .detail("status", "tool_dispatch")
                         .detail("finish_reason", turn.finish_reason())
                         .detail("tool_calls", turn.tool_calls().len())
-                        .detail("usage", turn.usage().clone())
                         .detail("chunk_count", turn.chunk_count()),
                 );
+
                 self.emit(Event::TurnEnd { iteration }).await;
                 Ok(StepOutcome::Continue)
             }
@@ -220,10 +221,9 @@ impl Engine {
                         .detail("status", "done")
                         .detail("finish_reason", turn.finish_reason())
                         .detail("tool_calls", turn.tool_calls().len())
-                        .detail("usage", turn.usage().clone())
-                        .detail("chunk_count", turn.chunk_count())
-                        .detail("content_blocks", turn.content_blocks()),
+                        .detail("chunk_count", turn.chunk_count()),
                 );
+
                 self.emit(Event::TurnEnd { iteration }).await;
                 Ok(StepOutcome::Done)
             }

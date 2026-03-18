@@ -199,7 +199,7 @@ async fn construct(
         pool.clone(),
         &config.db_prefix,
     )?);
-    tracing::info!(elapsed_ms = t0.elapsed().as_millis() as u64, "pool created");
+    tracing::debug!(elapsed_ms = t0.elapsed().as_millis() as u64, "pool created");
 
     let sync_cancel = CancellationToken::new();
 
@@ -343,8 +343,6 @@ async fn build_skill_store(
 
     if let Err(e) = store.refresh().await {
         tracing::warn!(error = %e, "initial skill sync failed, starting with empty store");
-    } else {
-        tracing::info!("skills loaded");
     }
 
     let skill_count = store.loaded_skills().len();

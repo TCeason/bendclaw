@@ -109,6 +109,36 @@ impl ServerFields {
     }
 }
 
+pub fn preview_text(text: &str) -> String {
+    const MAX_PREVIEW_CHARS: usize = 200;
+    let preview: String = text.chars().take(MAX_PREVIEW_CHARS).collect();
+    if text.chars().count() > MAX_PREVIEW_CHARS {
+        format!("{preview}...")
+    } else {
+        preview
+    }
+}
+
+pub fn debug(ctx: &ServerCtx<'_>, stage: &str, status: &str, fields: ServerFields) {
+    tracing::debug!(
+        trace_id = %ctx.trace_id,
+        run_id = %ctx.run_id,
+        session_id = %ctx.session_id,
+        agent_id = %ctx.agent_id,
+        turn = ctx.turn,
+        stage,
+        status,
+        elapsed_ms = fields.elapsed_ms,
+        tokens = fields.tokens,
+        rows = fields.rows,
+        bytes = fields.bytes,
+        cost = fields.cost,
+        attempt = fields.attempt,
+        payload = %fields.payload_text(),
+        "server log"
+    );
+}
+
 pub fn info(ctx: &ServerCtx<'_>, stage: &str, status: &str, fields: ServerFields) {
     tracing::info!(
         trace_id = %ctx.trace_id,

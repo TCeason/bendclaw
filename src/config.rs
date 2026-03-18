@@ -443,7 +443,7 @@ impl BendClawConfig {
         match serde_json::to_value(self) {
             Ok(v) => {
                 let redacted = crate::observability::redaction::redact(v);
-                tracing::info!("config: {redacted}");
+                tracing::debug!("config: {redacted}");
             }
             Err(e) => {
                 tracing::warn!("failed to serialize config: {e}");

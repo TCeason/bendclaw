@@ -62,8 +62,8 @@ async fn log_http_request(mut req: Request<Body>, next: Next) -> Response {
         .map(|path| path.as_str().to_string())
         .unwrap_or_default();
 
-    // Skip logging for health checks to reduce noise.
-    if matched_path == "/health" {
+    // Skip logging for health checks and CORS preflight to reduce noise.
+    if matched_path == "/health" || method == axum::http::Method::OPTIONS {
         return next.run(req).await;
     }
 
@@ -111,8 +111,36 @@ async fn log_http_request(mut req: Request<Body>, next: Next) -> Response {
             elapsed_ms,
             "http request"
         );
-    } else {
+    } else if status.is_client_error() {
+        tracing::warn!(
+            stage = "http",
+            method = %method,
+            uri = %uri,
+            matched_path,
+            trace_id,
+            user_id,
+            user_agent,
+            content_length,
+            response_status = status.as_u16(),
+            elapsed_ms,
+            "http request"
+        );
+    } else if elapsed_ms >= 1000 {
         tracing::info!(
+            stage = "http",
+            method = %method,
+            uri = %uri,
+            matched_path,
+            trace_id,
+            user_id,
+            user_agent,
+            content_length,
+            response_status = status.as_u16(),
+            elapsed_ms,
+            "http request"
+        );
+    } else {
+        tracing::debug!(
             stage = "http",
             method = %method,
             uri = %uri,

@@ -191,9 +191,10 @@ impl TurnPersister {
                 .detail("iterations", result.iterations)
                 .detail("stop_reason", result.stop_reason.as_str())
                 .detail("event_count", all_events.len())
-                .detail("usage", result.usage.clone())
-                .detail("metrics", metrics.clone())
-                .detail("response", response_text.clone())
+                .detail("prompt_tokens", result.usage.prompt_tokens)
+                .detail("completion_tokens", result.usage.completion_tokens)
+                .detail("ttft_ms", result.usage.ttft_ms)
+                .detail("response_preview", server_log::preview_text(&response_text))
                 .detail("error", error.clone()),
         );
 
@@ -338,19 +339,11 @@ impl TurnPersister {
             .collect::<crate::base::Result<Vec<_>>>()?;
         let result = self.storage.run_events_insert_batch(&records).await;
         match &result {
-            Ok(_) => server_log::info(
+            Ok(_) => server_log::debug(
                 &self.ops_ctx(0),
                 "persist",
                 "run_events_saved",
-                server_log::ServerFields::default()
-                    .rows(records.len() as u64)
-                    .detail(
-                        "events",
-                        records
-                            .iter()
-                            .map(|record| record.event.clone())
-                            .collect::<Vec<_>>(),
-                    ),
+                server_log::ServerFields::default().rows(records.len() as u64),
             ),
             Err(error) => server_log::error(
                 &self.ops_ctx(0),
@@ -358,13 +351,6 @@ impl TurnPersister {
                 "run_events_failed",
                 server_log::ServerFields::default()
                     .rows(records.len() as u64)
-                    .detail(
-                        "events",
-                        records
-                            .iter()
-                            .map(|record| record.event.clone())
-                            .collect::<Vec<_>>(),
-                    )
                     .detail("error", error.to_string()),
             ),
         }
@@ -392,19 +378,19 @@ impl TurnPersister {
             cost: 0.0,
         };
         self.storage.usage_record(event.clone()).await?;
-        server_log::info(
+        server_log::debug(
             &self.ops_ctx(0),
             "persist",
             "usage_recorded",
             server_log::ServerFields::default()
                 .tokens(usage.total_tokens)
                 .detail("provider", provider)
-                .detail("model", model)
-                .detail("usage", event.clone()),
+                .detail("model", model),
         );
+
         let result = self.storage.usage_flush().await;
         match &result {
-            Ok(_) => server_log::info(
+            Ok(_) => server_log::debug(
                 &self.ops_ctx(0),
                 "persist",
                 "usage_flushed",
@@ -413,6 +399,7 @@ impl TurnPersister {
                     .detail("provider", provider)
                     .detail("model", model),
             ),
+
             Err(error) => server_log::error(
                 &self.ops_ctx(0),
                 "persist",

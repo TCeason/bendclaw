@@ -169,7 +169,7 @@ impl Session {
                 .detail("user_id", self.user_id.to_string())
                 .detail("run_index", run_index)
                 .detail("parent_run_id", parent_run_id)
-                .detail("input", user_message),
+                .detail("input_preview", server_log::preview_text(user_message)),
         );
 
         let full_prompt = {
@@ -186,7 +186,7 @@ impl Session {
             pb.build(&self.agent_id, &self.user_id, &self.id).await?
         };
 
-        server_log::info(
+        server_log::debug(
             &run_ctx,
             "prompt",
             "built",
@@ -194,8 +194,7 @@ impl Session {
                 .bytes(full_prompt.len() as u64)
                 .detail("user_id", self.user_id.to_string())
                 .detail("tool_count", self.res.tools.len())
-                .detail("history_messages", history.len())
-                .detail("prompt", full_prompt.clone()),
+                .detail("history_messages", history.len()),
         );
 
         let initial_events = vec![

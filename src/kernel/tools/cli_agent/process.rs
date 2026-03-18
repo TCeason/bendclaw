@@ -152,7 +152,7 @@ impl AgentProcess {
 
                             if self.session_id.is_none() {
                                 if let Some(sid) = agent.parse_session_id(&msg) {
-                                    tracing::info!(agent = %self.agent_type, session_id = %sid, "session started");
+                                    tracing::debug!(agent = %self.agent_type, session_id = %sid, "session started");
                                     self.session_id = Some(sid);
                                 }
                             }

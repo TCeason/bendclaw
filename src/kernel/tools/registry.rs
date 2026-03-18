@@ -230,10 +230,6 @@ pub fn create_session_tools(
         ToolId::CodexExec,
         Arc::new(super::coding_agent::CodexExecTool),
     );
-    registry.register_builtin(
-        ToolId::CodeReview,
-        Arc::new(super::coding_agent::CodeReviewTool),
-    );
 
     registry
 }
