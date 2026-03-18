@@ -43,6 +43,7 @@ pub struct Runtime {
     pub(crate) directive: Option<Arc<DirectiveService>>,
     pub(crate) directive_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) activity_tracker: Arc<ActivityTracker>,
+    pub(crate) trace_writer: crate::kernel::trace::TraceWriter,
 }
 
 pub struct RuntimeParts {
@@ -63,6 +64,7 @@ pub struct RuntimeParts {
     pub directive: Option<Arc<DirectiveService>>,
     pub directive_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     pub activity_tracker: Arc<ActivityTracker>,
+    pub trace_writer: crate::kernel::trace::TraceWriter,
 }
 
 impl Runtime {
@@ -104,6 +106,7 @@ impl Runtime {
             directive: parts.directive,
             directive_handle: parts.directive_handle,
             activity_tracker: parts.activity_tracker,
+            trace_writer: parts.trace_writer,
         }
     }
 

@@ -193,9 +193,18 @@ async fn cmd_run(
     })
     .await?;
 
-    // Graceful shutdown: deregister from cluster, cancel heartbeat, close sessions
-    if let Err(e) = runtime.shutdown().await {
-        tracing::warn!(error = %e, "runtime shutdown error");
+    // Graceful shutdown with 60s hard deadline
+    let shutdown_deadline = std::time::Duration::from_secs(60);
+    if tokio::time::timeout(shutdown_deadline, async {
+        if let Err(e) = runtime.shutdown().await {
+            tracing::warn!(error = %e, "runtime shutdown error");
+        }
+    })
+    .await
+    .is_err()
+    {
+        tracing::error!("shutdown exceeded 60s deadline, forcing exit");
+        std::process::exit(1);
     }
 
     Ok(())

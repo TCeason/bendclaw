@@ -27,17 +27,14 @@ impl Engine {
         let mut state = RunLoopState::new(RunLoopConfig::from_context(&self.ctx), Instant::now());
 
         self.emit(Event::Start).await;
-        let loop_span = self
-            .trace
-            .start_span(
-                "llm",
-                "reasoning.loop",
-                "",
-                "",
-                "{}",
-                "llm reasoning started",
-            )
-            .await;
+        let loop_span = self.trace.start_span(
+            "llm",
+            "reasoning.loop",
+            "",
+            "",
+            "{}",
+            "llm reasoning started",
+        );
         self.loop_span_id = loop_span.span_id.clone();
 
         while state.should_continue() {

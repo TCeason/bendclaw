@@ -1,9 +1,11 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::SinkExt;
 use futures::StreamExt;
+use prost::Message as ProstMessage;
 use serde::Deserialize;
 use serde::Serialize;
 use tokio_tungstenite::tungstenite::Message;
@@ -30,6 +32,50 @@ const FEISHU_MAX_MESSAGE_LEN: usize = 30_000;
 
 const DEFAULT_PING_INTERVAL_SECS: u64 = 120;
 const RECONNECT_DELAY_SECS: u64 = 5;
+
+// ── Protobuf (pbbp2) ──
+
+#[derive(Clone, PartialEq, ProstMessage)]
+struct PbHeader {
+    #[prost(string, required, tag = "1")]
+    key: String,
+    #[prost(string, required, tag = "2")]
+    value: String,
+}
+
+#[derive(Clone, PartialEq, ProstMessage)]
+struct PbFrame {
+    #[prost(uint64, required, tag = "1")]
+    seq_id: u64,
+    #[prost(uint64, required, tag = "2")]
+    log_id: u64,
+    #[prost(int32, required, tag = "3")]
+    service: i32,
+    #[prost(int32, required, tag = "4")]
+    method: i32,
+    #[prost(message, repeated, tag = "5")]
+    headers: Vec<PbHeader>,
+    #[prost(string, optional, tag = "6")]
+    payload_encoding: Option<String>,
+    #[prost(string, optional, tag = "7")]
+    payload_type: Option<String>,
+    #[prost(bytes = "vec", optional, tag = "8")]
+    payload: Option<Vec<u8>>,
+    #[prost(string, optional, tag = "9")]
+    log_id_new: Option<String>,
+}
+
+impl PbFrame {
+    fn get_header(&self, key: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|h| h.key == key)
+            .map(|h| h.value.as_str())
+    }
+}
+
+const FRAME_METHOD_CONTROL: i32 = 0;
+const FRAME_METHOD_DATA: i32 = 1;
 
 // ── Config ──
 
@@ -389,12 +435,19 @@ async fn ws_receive_loop(
 
     tracing::info!("feishu WebSocket connected");
 
+    let mut msg_cache: HashMap<String, Vec<Option<Vec<u8>>>> = HashMap::new();
+
     loop {
         tokio::select! {
             msg = read.next() => {
                 match msg {
-                    Some(Ok(Message::Text(text))) => {
-                        handle_ws_message(&text, config, event_tx);
+                    Some(Ok(Message::Binary(data))) => {
+                        if let Some(resp_frame) = handle_pb_frame(&data, config, event_tx, client, &mut msg_cache).await {
+                            let encoded = resp_frame.encode_to_vec();
+                            if write.send(Message::Binary(encoded)).await.is_err() {
+                                return Err(ErrorCode::internal("feishu ws write response failed"));
+                            }
+                        }
                     }
                     Some(Ok(Message::Ping(data))) => {
                         let _ = write.send(Message::Pong(data)).await;
@@ -410,54 +463,192 @@ async fn ws_receive_loop(
                 }
             }
             _ = ping_interval.tick() => {
-                if write.send(Message::Ping(vec![])).await.is_err() {
+                let ping_frame = PbFrame {
+                    seq_id: 0,
+                    log_id: 0,
+                    service: 0,
+                    method: FRAME_METHOD_CONTROL,
+                    headers: vec![PbHeader { key: "type".into(), value: "ping".into() }],
+                    payload_encoding: None,
+                    payload_type: None,
+                    payload: None,
+                    log_id_new: None,
+                };
+                let encoded = ping_frame.encode_to_vec();
+                if write.send(Message::Binary(encoded)).await.is_err() {
                     return Err(ErrorCode::internal("feishu ws ping failed"));
                 }
+                tracing::debug!("feishu ws ping sent");
             }
         }
     }
 }
 
-fn handle_ws_message(text: &str, config: &FeishuConfig, event_tx: &InboundEventSender) {
-    let json: serde_json::Value = match serde_json::from_str(text) {
-        Ok(v) => v,
+async fn handle_pb_frame(
+    data: &[u8],
+    config: &FeishuConfig,
+    event_tx: &InboundEventSender,
+    client: &reqwest::Client,
+    msg_cache: &mut HashMap<String, Vec<Option<Vec<u8>>>>,
+) -> Option<PbFrame> {
+    let frame = match PbFrame::decode(data) {
+        Ok(f) => f,
         Err(e) => {
-            tracing::warn!(error = %e, "feishu ws: invalid JSON frame");
-            return;
+            tracing::warn!(error = %e, "feishu ws: failed to decode protobuf frame");
+            return None;
         }
     };
 
-    let msg_type = json
-        .pointer("/header/type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if msg_type == "pong" {
-        return;
+    if frame.method == FRAME_METHOD_CONTROL {
+        let msg_type = frame.get_header("type").unwrap_or("");
+        if msg_type == "pong" {
+            tracing::debug!("feishu ws: received pong");
+        }
+        return None;
     }
+
+    if frame.method != FRAME_METHOD_DATA {
+        return None;
+    }
+
+    let msg_type = frame.get_header("type").unwrap_or("").to_string();
+    let msg_id = frame.get_header("message_id").unwrap_or("").to_string();
+    let trace_id = frame.get_header("trace_id").unwrap_or("").to_string();
+    let sum: usize = frame
+        .get_header("sum")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let seq: usize = frame
+        .get_header("seq")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    let payload_bytes = frame.payload.clone().unwrap_or_default();
+
+    // Multi-part message combining
+    let full_payload = if sum > 1 {
+        let buf = msg_cache
+            .entry(msg_id.clone())
+            .or_insert_with(|| vec![None; sum]);
+        if seq < buf.len() {
+            buf[seq] = Some(payload_bytes);
+        }
+        if buf.iter().all(|p| p.is_some()) {
+            let combined: Vec<u8> = buf
+                .iter()
+                .flat_map(|p| p.as_ref().unwrap().clone())
+                .collect();
+            msg_cache.remove(&msg_id);
+            combined
+        } else {
+            return None;
+        }
+    } else {
+        payload_bytes
+    };
+
+    let payload_str = String::from_utf8_lossy(&full_payload);
+    tracing::info!(msg_type, msg_id, trace_id, "feishu ws: received data frame");
+
+    if msg_type == "event" {
+        handle_event_payload(&payload_str, config, event_tx, client).await;
+    }
+
+    // Build response frame
+    let resp = serde_json::json!({"code": 200});
+    let mut resp_frame = frame.clone();
+    resp_frame.payload = Some(resp.to_string().into_bytes());
+    Some(resp_frame)
+}
+
+async fn handle_event_payload(
+    payload: &str,
+    config: &FeishuConfig,
+    event_tx: &InboundEventSender,
+    client: &reqwest::Client,
+) {
+    let json: serde_json::Value = match serde_json::from_str(payload) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "feishu ws: invalid JSON in event payload");
+            return;
+        }
+    };
 
     let event_type = json
         .pointer("/header/event_type")
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    if event_type == "im.message.receive_v1" {
-        if let Some(event_data) = json.get("event") {
-            let sender_id = event_data
-                .pointer("/sender/sender_id/open_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if !is_allowed(&config.allow_from, sender_id) {
-                tracing::warn!(sender_id, "feishu: sender not in allow_from, denied");
-                return;
-            }
-
-            if let Some(inbound) = parse_feishu_message(event_data) {
-                if event_tx.try_send(inbound).is_err() {
-                    tracing::warn!("feishu ws: event channel full or receiver dropped");
-                }
-            }
-        }
+    if event_type != "im.message.receive_v1" {
+        tracing::info!(event_type, "feishu ws: ignoring event type");
+        return;
     }
+
+    let Some(event_data) = json.get("event") else {
+        return;
+    };
+
+    let sender_id = event_data
+        .pointer("/sender/sender_id/open_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !is_allowed(&config.allow_from, sender_id) {
+        tracing::warn!(sender_id, "feishu: sender not in allow_from, denied");
+        return;
+    }
+
+    // Add thumbsup reaction
+    let feishu_msg_id = event_data
+        .pointer("/message/message_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !feishu_msg_id.is_empty() {
+        let _ = add_reaction(
+            client,
+            &config.app_id,
+            &config.app_secret,
+            feishu_msg_id,
+            "THUMBSUP",
+        )
+        .await;
+    }
+
+    if let Some(inbound) = parse_feishu_message(event_data) {
+        tracing::info!(sender_id, "feishu ws: dispatching inbound message");
+        if event_tx.try_send(inbound).is_err() {
+            tracing::warn!("feishu ws: event channel full or receiver dropped");
+        }
+    } else {
+        tracing::warn!("feishu ws: failed to parse feishu message from event data");
+    }
+}
+
+async fn add_reaction(
+    client: &reqwest::Client,
+    app_id: &str,
+    app_secret: &str,
+    message_id: &str,
+    emoji_type: &str,
+) -> Result<()> {
+    let token = get_tenant_token(client, app_id, app_secret).await?;
+    let url = format!("{FEISHU_API}/im/v1/messages/{message_id}/reactions");
+    let body = serde_json::json!({
+        "reaction_type": { "emoji_type": emoji_type }
+    });
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| ErrorCode::internal(format!("feishu add reaction: {e}")))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        tracing::warn!(status = %status, body, "feishu add reaction failed");
+    }
+    Ok(())
 }
 
 fn is_allowed(allow_from: &[String], sender_id: &str) -> bool {

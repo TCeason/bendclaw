@@ -1,6 +1,7 @@
 pub mod compaction_rules;
 pub mod compactor;
 pub(crate) mod context;
+pub mod default_identity;
 pub mod dispatcher;
 pub(crate) mod engine;
 pub mod event;
@@ -11,6 +12,7 @@ pub mod prompt;
 pub mod result;
 pub mod run_loop;
 pub(crate) mod run_record;
+pub mod runtime_context;
 pub mod transition;
 pub mod usage;
 

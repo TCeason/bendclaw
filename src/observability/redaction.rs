@@ -6,7 +6,6 @@ const SECRET_KEYS: &[&str] = &[
     "api_key",
     "apikey",
     "authorization",
-    "token",
     "secret",
     "password",
     "passwd",
@@ -15,6 +14,19 @@ const SECRET_KEYS: &[&str] = &[
     "client_secret",
     "refresh_token",
     "session_token",
+];
+
+/// Keys that contain a secret-like substring but are NOT secrets.
+const SAFE_KEYS: &[&str] = &[
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "cached_tokens",
+    "reasoning_tokens",
+    "input_tokens",
+    "output_tokens",
+    "token_count",
+    "max_tokens",
 ];
 
 pub fn redact(value: Value) -> Value {
@@ -60,5 +72,8 @@ fn redact_leaf(value: Value) -> Value {
 
 fn is_secret_key(key: &str) -> bool {
     let normalized = key.trim().to_ascii_lowercase();
+    if SAFE_KEYS.iter().any(|safe| normalized == *safe) {
+        return false;
+    }
     SECRET_KEYS.iter().any(|needle| normalized.contains(needle))
 }

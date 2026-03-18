@@ -151,6 +151,9 @@ async fn persist_success_updates_run_events_usage_and_trace() -> Result<()> {
     assert!(sqls.iter().any(|sql| {
         sql.contains("UPDATE runs SET status = 'COMPLETED'") && sql.contains("output = 'done'")
     }));
+    // Trace writes are fire-and-forget via background queue
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let sqls = recorded_sqls(&client);
     assert!(sqls
         .iter()
         .any(|sql| sql.contains("UPDATE traces SET status = 'completed'")));
@@ -185,6 +188,9 @@ async fn persist_success_pauses_run_for_timeout_reason() -> Result<()> {
     assert!(sqls.iter().any(|sql| {
         sql.contains("UPDATE runs SET status = 'PAUSED'") && sql.contains("stop_reason = 'timeout'")
     }));
+    // Trace writes are fire-and-forget via background queue
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let sqls = recorded_sqls(&client);
     assert!(sqls
         .iter()
         .any(|sql| sql.contains("UPDATE traces SET status = 'completed'")));
@@ -207,6 +213,9 @@ async fn persist_error_marks_run_failed_and_persists_failure_event() {
     assert!(sqls
         .iter()
         .any(|sql| sql.contains("UPDATE runs SET status = 'ERROR'") && sql.contains("boom")));
+    // Trace writes are fire-and-forget via background queue
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let sqls = recorded_sqls(&client);
     assert!(sqls
         .iter()
         .any(|sql| sql.contains("UPDATE traces SET status = 'failed'")));
@@ -227,6 +236,9 @@ async fn persist_cancelled_marks_run_cancelled_and_persists_cancel_event() {
         .iter()
         .any(|sql| sql
             == "UPDATE runs SET status = 'CANCELLED', updated_at = NOW() WHERE id = 'run-1'"));
+    // Trace writes are fire-and-forget via background queue
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let sqls = recorded_sqls(&client);
     assert!(sqls
         .iter()
         .any(|sql| sql.contains("UPDATE traces SET status = 'failed'")));

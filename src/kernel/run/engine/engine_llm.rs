@@ -77,17 +77,14 @@ impl Engine {
             &active_tools,
             self.ctx.temperature,
         );
-        let llm_span = self
-            .trace
-            .start_span(
-                "llm",
-                "reasoning.turn",
-                &self.loop_span_id,
-                "reasoning",
-                &SpanMeta::LlmTurn { iteration }.to_json(),
-                "llm reasoning turn started",
-            )
-            .await;
+        let llm_span = self.trace.start_span(
+            "llm",
+            "reasoning.turn",
+            &self.loop_span_id,
+            "reasoning",
+            &SpanMeta::LlmTurn { iteration }.to_json(),
+            "llm reasoning turn started",
+        );
 
         self.ctx.messages.push(Message::operation_event(
             "llm",

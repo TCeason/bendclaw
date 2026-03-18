@@ -97,6 +97,9 @@ impl Runtime {
             }
         }
 
+        // Flush trace writer queue
+        self.trace_writer.shutdown().await;
+
         *self.status.write() = RuntimeStatus::Stopped;
         tracing::info!(
             elapsed_ms = t0.elapsed().as_millis() as u64,

@@ -3,8 +3,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::base::Result;
 use crate::kernel::new_id;
+use crate::kernel::trace::writer::TraceOp;
+use crate::kernel::trace::writer::TraceWriter;
 use crate::storage::dal::trace::record::SpanRecord;
 use crate::storage::dal::trace::record::TraceRecord;
 use crate::storage::dal::trace::repo::SpanRepo;
@@ -12,6 +13,7 @@ use crate::storage::dal::trace::repo::TraceRepo;
 
 #[derive(Clone)]
 pub struct TraceRecorder {
+    writer: TraceWriter,
     trace_repo: Arc<TraceRepo>,
     span_repo: Arc<SpanRepo>,
     pub trace_id: String,
@@ -33,7 +35,31 @@ impl TraceRecorder {
         session_id: impl Into<String>,
         user_id: impl Into<String>,
     ) -> Self {
+        Self::with_writer(
+            TraceWriter::spawn(),
+            trace_repo,
+            span_repo,
+            trace_id,
+            run_id,
+            agent_id,
+            session_id,
+            user_id,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_writer(
+        writer: TraceWriter,
+        trace_repo: Arc<TraceRepo>,
+        span_repo: Arc<SpanRepo>,
+        trace_id: impl Into<String>,
+        run_id: impl Into<String>,
+        agent_id: impl Into<String>,
+        session_id: impl Into<String>,
+        user_id: impl Into<String>,
+    ) -> Self {
         Self {
+            writer,
             trace_repo,
             span_repo,
             trace_id: trace_id.into(),
@@ -57,10 +83,11 @@ impl TraceRecorder {
         self
     }
 
-    /// Insert the top-level trace record (status=running).
-    pub async fn start_trace(&self, name: &str) -> Result<()> {
-        self.trace_repo
-            .insert(&TraceRecord {
+    /// Insert the top-level trace record (status=running). Fire-and-forget.
+    pub fn start_trace(&self, name: &str) {
+        self.writer.send(TraceOp::InsertTrace {
+            repo: self.trace_repo.clone(),
+            record: TraceRecord {
                 trace_id: self.trace_id.clone(),
                 run_id: self.run_id.clone(),
                 session_id: self.session_id.clone(),
@@ -76,44 +103,48 @@ impl TraceRecorder {
                 origin_node_id: self.origin_node_id.clone(),
                 created_at: String::new(),
                 updated_at: String::new(),
-            })
-            .await
+            },
+        });
     }
 
-    /// Mark the trace as completed with aggregated metrics.
-    pub async fn complete_trace(
+    /// Mark the trace as completed with aggregated metrics. Fire-and-forget.
+    pub fn complete_trace(
         &self,
         duration_ms: u64,
         input_tokens: u64,
         output_tokens: u64,
         total_cost: f64,
-    ) -> Result<()> {
-        self.trace_repo
-            .update_completed(
-                &self.trace_id,
-                duration_ms,
-                input_tokens,
-                output_tokens,
-                total_cost,
-            )
-            .await
+    ) {
+        self.writer.send(TraceOp::UpdateTraceCompleted {
+            repo: self.trace_repo.clone(),
+            trace_id: self.trace_id.clone(),
+            duration_ms,
+            input_tokens,
+            output_tokens,
+            total_cost,
+        });
     }
 
-    /// Mark the trace as failed.
-    pub async fn fail_trace(&self, duration_ms: u64) -> Result<()> {
-        self.trace_repo
-            .update_failed(&self.trace_id, duration_ms)
-            .await
+    /// Mark the trace as failed. Fire-and-forget.
+    pub fn fail_trace(&self, duration_ms: u64) {
+        self.writer.send(TraceOp::UpdateTraceFailed {
+            repo: self.trace_repo.clone(),
+            trace_id: self.trace_id.clone(),
+            duration_ms,
+        });
     }
 
-    /// Append a span record.
+    /// Append a span record. Fire-and-forget via writer queue.
     #[allow(dead_code)]
-    pub async fn append_span(&self, record: &SpanRecord) -> Result<()> {
-        self.span_repo.append(record).await
+    pub fn append_span(&self, record: SpanRecord) {
+        self.writer.send(TraceOp::AppendSpan {
+            repo: self.span_repo.clone(),
+            record,
+        });
     }
 
-    /// Create a started span and persist it.
-    pub async fn started_span(
+    /// Create a started span and persist it. Fire-and-forget DB write.
+    pub fn started_span(
         &self,
         kind: &str,
         name: &str,
@@ -121,10 +152,11 @@ impl TraceRecorder {
         model_role: &str,
         meta: &str,
         summary: &str,
-    ) -> Result<String> {
+    ) -> String {
         let span_id = new_id();
-        self.span_repo
-            .append(&SpanRecord {
+        self.writer.send(TraceOp::AppendSpan {
+            repo: self.span_repo.clone(),
+            record: SpanRecord {
                 span_id: span_id.clone(),
                 trace_id: self.trace_id.clone(),
                 parent_span_id: parent.to_string(),
@@ -143,13 +175,13 @@ impl TraceRecorder {
                 summary: summary.to_string(),
                 meta: meta.to_string(),
                 created_at: String::new(),
-            })
-            .await?;
-        Ok(span_id)
+            },
+        });
+        span_id
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn completed_span(
+    pub fn completed_span(
         &self,
         span_id: &str,
         parent: &str,
@@ -164,9 +196,10 @@ impl TraceRecorder {
         cost: f64,
         meta: &str,
         summary: &str,
-    ) -> Result<()> {
-        self.span_repo
-            .append(&SpanRecord {
+    ) {
+        self.writer.send(TraceOp::AppendSpan {
+            repo: self.span_repo.clone(),
+            record: SpanRecord {
                 span_id: span_id.to_string(),
                 trace_id: self.trace_id.clone(),
                 parent_span_id: parent.to_string(),
@@ -185,12 +218,12 @@ impl TraceRecorder {
                 summary: summary.to_string(),
                 meta: meta.to_string(),
                 created_at: String::new(),
-            })
-            .await
+            },
+        });
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn failed_span(
+    pub fn failed_span(
         &self,
         span_id: &str,
         parent: &str,
@@ -202,9 +235,10 @@ impl TraceRecorder {
         error_message: &str,
         meta: &str,
         summary: &str,
-    ) -> Result<()> {
-        self.span_repo
-            .append(&SpanRecord {
+    ) {
+        self.writer.send(TraceOp::AppendSpan {
+            repo: self.span_repo.clone(),
+            record: SpanRecord {
                 span_id: span_id.to_string(),
                 trace_id: self.trace_id.clone(),
                 parent_span_id: parent.to_string(),
@@ -223,12 +257,12 @@ impl TraceRecorder {
                 summary: summary.to_string(),
                 meta: meta.to_string(),
                 created_at: String::new(),
-            })
-            .await
+            },
+        });
     }
 
     #[allow(dead_code)]
-    pub async fn cancelled_span(
+    pub fn cancelled_span(
         &self,
         span_id: &str,
         parent: &str,
@@ -236,9 +270,10 @@ impl TraceRecorder {
         name: &str,
         duration_ms: u64,
         summary: &str,
-    ) -> Result<()> {
-        self.span_repo
-            .append(&SpanRecord {
+    ) {
+        self.writer.send(TraceOp::AppendSpan {
+            repo: self.span_repo.clone(),
+            record: SpanRecord {
                 span_id: span_id.to_string(),
                 trace_id: self.trace_id.clone(),
                 parent_span_id: parent.to_string(),
@@ -257,8 +292,8 @@ impl TraceRecorder {
                 summary: summary.to_string(),
                 meta: "{}".to_string(),
                 created_at: String::new(),
-            })
-            .await
+            },
+        });
     }
 }
 
@@ -292,24 +327,21 @@ impl TraceSpan {
         meta: &str,
         summary: &str,
     ) {
-        let _ = self
-            .recorder
-            .completed_span(
-                &self.span_id,
-                &self.parent_id,
-                &self.kind,
-                &self.name,
-                &self.model_role,
-                duration_ms,
-                ttft_ms,
-                input_tokens,
-                output_tokens,
-                reasoning_tokens,
-                cost,
-                meta,
-                summary,
-            )
-            .await;
+        self.recorder.completed_span(
+            &self.span_id,
+            &self.parent_id,
+            &self.kind,
+            &self.name,
+            &self.model_role,
+            duration_ms,
+            ttft_ms,
+            input_tokens,
+            output_tokens,
+            reasoning_tokens,
+            cost,
+            meta,
+            summary,
+        );
     }
 
     pub async fn fail(
@@ -320,21 +352,18 @@ impl TraceSpan {
         meta: &str,
         summary: &str,
     ) {
-        let _ = self
-            .recorder
-            .failed_span(
-                &self.span_id,
-                &self.parent_id,
-                &self.kind,
-                &self.name,
-                &self.model_role,
-                duration_ms,
-                error_code,
-                error_message,
-                meta,
-                summary,
-            )
-            .await;
+        self.recorder.failed_span(
+            &self.span_id,
+            &self.parent_id,
+            &self.kind,
+            &self.name,
+            &self.model_role,
+            duration_ms,
+            error_code,
+            error_message,
+            meta,
+            summary,
+        );
     }
 }
 
@@ -350,7 +379,7 @@ impl Trace {
         Self { recorder }
     }
 
-    pub async fn start_span(
+    pub fn start_span(
         &self,
         kind: &str,
         name: &str,
@@ -361,9 +390,7 @@ impl Trace {
     ) -> TraceSpan {
         let span_id = self
             .recorder
-            .started_span(kind, name, parent, model_role, meta, summary)
-            .await
-            .unwrap_or_else(|_| new_id());
+            .started_span(kind, name, parent, model_role, meta, summary);
         TraceSpan {
             recorder: self.recorder.clone(),
             span_id,
@@ -451,19 +478,14 @@ mod tests {
             "user-1",
         );
 
-        recorder
-            .start_trace("agent.run")
-            .await
-            .expect("start trace");
+        recorder.start_trace("agent.run");
         let trace = Trace::new(recorder.clone());
-        let span = trace
-            .start_span("tool", "shell", "", "assistant", "{}", "echo hi")
-            .await;
+        let span = trace.start_span("tool", "shell", "", "assistant", "{}", "echo hi");
         span.complete(12, 3, 4, 5, 0, 0.25, "{}", "done").await;
-        recorder
-            .complete_trace(42, 10, 20, 0.5)
-            .await
-            .expect("complete trace");
+        recorder.complete_trace(42, 10, 20, 0.5);
+
+        // Let spawned tasks complete
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let sqls = client.sqls();
         assert!(sqls.iter().any(|sql| sql.contains("INSERT INTO traces")));
@@ -493,15 +515,13 @@ mod tests {
         );
 
         let trace = Trace::new(recorder.clone());
-        let span = trace
-            .start_span("skill", "remote-tool", "", "assistant", "{}", "run skill")
-            .await;
+        let span = trace.start_span("skill", "remote-tool", "", "assistant", "{}", "run skill");
         span.fail(9, "oops", "failed to run", "{}", "broken").await;
-        recorder
-            .cancelled_span("span-cancelled", "", "tool", "shell", 7, "cancelled")
-            .await
-            .expect("cancelled span");
-        recorder.fail_trace(99).await.expect("fail trace");
+        recorder.cancelled_span("span-cancelled", "", "tool", "shell", 7, "cancelled");
+        recorder.fail_trace(99);
+
+        // Let spawned tasks complete
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let sqls = client.sqls();
         assert!(sqls

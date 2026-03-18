@@ -231,6 +231,7 @@ mod tests {
                 recall: None,
                 cluster_client: None,
                 directive: None,
+                trace_writer: crate::kernel::trace::TraceWriter::noop(),
             },
         ))
     }

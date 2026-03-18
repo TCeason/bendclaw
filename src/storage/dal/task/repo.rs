@@ -431,4 +431,22 @@ impl TaskRepo {
         }
         result
     }
+
+    /// Set next_run_at to NOW() so the scheduler picks up the task immediately.
+    pub async fn trigger_now(&self, task_id: &str) -> Result<()> {
+        let sql_str = format!(
+            "UPDATE tasks SET next_run_at = NOW(), enabled = true, status = 'idle', updated_at = NOW() WHERE id = '{}'",
+            sql::escape(task_id)
+        );
+        let result = self.table.pool().exec(&sql_str).await;
+        if let Err(error) = &result {
+            repo_error(
+                REPO,
+                "trigger_now",
+                serde_json::json!({"task_id": task_id}),
+                error,
+            );
+        }
+        result
+    }
 }

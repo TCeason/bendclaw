@@ -36,21 +36,18 @@ impl Engine {
         let mut spans = HashMap::new();
         for p in parsed_calls {
             tracing::debug!(tool = %p.call.name, tool_call_id = %p.call.id, arguments = %p.arguments, "tool call started");
-            let span = self
-                .trace
-                .start_span(
-                    p.kind.as_str(),
-                    &p.call.name,
-                    &self.loop_span_id,
-                    "",
-                    &SpanMeta::ToolStarted {
-                        tool_call_id: p.call.id.clone(),
-                        arguments: p.arguments.clone(),
-                    }
-                    .to_json(),
-                    "tool/skill execution started",
-                )
-                .await;
+            let span = self.trace.start_span(
+                p.kind.as_str(),
+                &p.call.name,
+                &self.loop_span_id,
+                "",
+                &SpanMeta::ToolStarted {
+                    tool_call_id: p.call.id.clone(),
+                    arguments: p.arguments.clone(),
+                }
+                .to_json(),
+                "tool/skill execution started",
+            );
             spans.insert(p.call.id.clone(), span);
             self.ctx.messages.push(Message::operation_event(
                 p.kind.as_str(),

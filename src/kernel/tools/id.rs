@@ -24,6 +24,7 @@ pub enum ToolId {
     TaskDelete,
     TaskToggle,
     TaskHistory,
+    TaskRun,
     LearningWrite,
     KnowledgeSearch,
     LearningSearch,
@@ -61,6 +62,7 @@ impl ToolId {
             Self::TaskDelete => "task_delete",
             Self::TaskToggle => "task_toggle",
             Self::TaskHistory => "task_history",
+            Self::TaskRun => "task_run",
             Self::LearningWrite => "learning_write",
             Self::KnowledgeSearch => "knowledge_search",
             Self::LearningSearch => "learning_search",
@@ -113,6 +115,7 @@ impl ToolId {
         ToolId::TaskDelete,
         ToolId::TaskToggle,
         ToolId::TaskHistory,
+        ToolId::TaskRun,
         // Recall
         ToolId::LearningWrite,
         ToolId::KnowledgeSearch,

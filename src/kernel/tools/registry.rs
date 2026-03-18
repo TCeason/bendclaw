@@ -204,6 +204,7 @@ pub fn create_session_tools(
         ToolId::TaskHistory,
         Arc::new(super::task::TaskHistoryTool::new(node_id)),
     );
+    registry.register_builtin(ToolId::TaskRun, Arc::new(super::task::TaskRunTool));
 
     // Recall tools
     registry.register_builtin(

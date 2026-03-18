@@ -110,6 +110,7 @@ pub async fn test_session(llm: Arc<dyn LLMProvider>) -> Result<Session> {
             recall: Some(recall_store),
             cluster_client: None,
             directive: None,
+            trace_writer: bendclaw::kernel::trace::TraceWriter::spawn(),
         },
     ))
 }

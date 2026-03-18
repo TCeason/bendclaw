@@ -165,6 +165,7 @@ impl Runtime {
                 recall: Some(recall_store),
                 cluster_client: self.cluster.clone(),
                 directive: self.directive.clone(),
+                trace_writer: self.trace_writer.clone(),
             },
         ));
 

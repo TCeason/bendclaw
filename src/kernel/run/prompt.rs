@@ -7,6 +7,8 @@ use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
 use crate::kernel::cluster::ClusterService;
 use crate::kernel::recall::RecallStore;
+use crate::kernel::run::default_identity;
+use crate::kernel::run::runtime_context;
 use crate::kernel::skills::store::SkillStore;
 use crate::llm::tool::ToolSchema;
 use crate::storage::dal::learning::LearningRecord;
@@ -188,25 +190,29 @@ impl PromptBuilder {
 
         let mut prompt = String::with_capacity(4096);
 
-        // 1. Identity
-        let identity = self.identity.as_deref().or_else(|| {
-            let c = config.as_ref()?;
-            if c.identity.is_empty() {
-                None
-            } else {
-                Some(c.identity.as_str())
-            }
-        });
-        if let Some(s) = identity.filter(|s| !s.is_empty()) {
-            let src = if self.identity.is_some() {
-                "injected"
-            } else {
-                "db"
-            };
-            let s = truncate_layer("identity", s, MAX_IDENTITY_BYTES, src);
-            prompt.push_str(&s);
-            prompt.push_str("\n\n");
-        }
+        // 1. Identity (with default fallback)
+        let identity = self
+            .identity
+            .as_deref()
+            .or_else(|| {
+                let c = config.as_ref()?;
+                if c.identity.is_empty() {
+                    None
+                } else {
+                    Some(c.identity.as_str())
+                }
+            })
+            .unwrap_or_else(|| default_identity::default_identity());
+        let src = if self.identity.is_some() {
+            "injected"
+        } else if config.as_ref().is_some_and(|c| !c.identity.is_empty()) {
+            "db"
+        } else {
+            "default"
+        };
+        let s = truncate_layer("identity", identity, MAX_IDENTITY_BYTES, src);
+        prompt.push_str(&s);
+        prompt.push_str("\n\n");
 
         // 2. Soul
         let soul = self.soul.as_deref().or_else(|| {
@@ -533,13 +539,7 @@ impl PromptBuilder {
             b.push_str("\n\n");
             (b, "injected")
         } else {
-            let host = std::env::var("HOSTNAME")
-                .or_else(|_| std::env::var("HOST"))
-                .unwrap_or_else(|_| "unknown".into());
-            let os = std::env::consts::OS;
-            let arch = std::env::consts::ARCH;
-            let b = format!("## Runtime\n\nHost: {} | OS: {} ({})\n\n", host, os, arch,);
-            (b, "env")
+            (runtime_context::build_runtime_context(None, None), "env")
         };
 
         let buf = truncate_layer("runtime", &buf, MAX_RUNTIME_BYTES, src);

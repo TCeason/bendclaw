@@ -234,6 +234,7 @@ async fn construct(
     let sessions = Arc::new(SessionManager::new());
     let channels = Arc::new(build_channel_registry());
     let activity_tracker = Arc::new(ActivityTracker::new());
+    let trace_writer = crate::kernel::trace::TraceWriter::spawn();
 
     // Directive cache (opt-in)
     let (directive, directive_handle) = if let Some(dc) = directive_config {
@@ -312,6 +313,7 @@ async fn construct(
             directive,
             directive_handle: RwLock::new(directive_handle),
             activity_tracker,
+            trace_writer,
         })
     });
 

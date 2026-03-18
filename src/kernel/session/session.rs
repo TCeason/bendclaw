@@ -68,6 +68,7 @@ pub struct SessionResources {
     pub recall: Option<Arc<RecallStore>>,
     pub cluster_client: Option<Arc<crate::kernel::cluster::ClusterService>>,
     pub directive: Option<Arc<DirectiveService>>,
+    pub trace_writer: crate::kernel::trace::TraceWriter,
 }
 
 pub struct Session {
@@ -285,7 +286,8 @@ impl Session {
         } else {
             trace_id.to_string()
         };
-        let mut trace = TraceRecorder::new(
+        let mut trace = TraceRecorder::with_writer(
+            self.res.trace_writer.clone(),
             self.res.storage.trace_repo(),
             self.res.storage.span_repo(),
             effective_trace_id,
@@ -297,7 +299,7 @@ impl Session {
         if !parent_trace_id.is_empty() {
             trace = trace.with_parent_trace(parent_trace_id, origin_node_id);
         }
-        let _ = trace.start_trace("agent.run").await;
+        trace.start_trace("agent.run");
         trace
     }
 

@@ -9,19 +9,21 @@ use chrono::Local;
 use parking_lot::Mutex;
 use tracing_subscriber::registry::LookupSpan;
 
-/// A daily-rolling file writer that uses local time for date boundaries.
+/// An hourly-rolling file writer that uses local time for boundaries.
 ///
 /// `tracing_appender::rolling::daily` uses UTC, which causes the log filename
 /// to lag behind in positive-offset timezones (e.g. UTC+8). This writer rolls
 /// based on `chrono::Local` so the filename matches the operator's wall clock.
+/// Old log files beyond `max_files` are automatically cleaned up.
 pub struct LocalDailyWriter {
     dir: PathBuf,
     prefix: String,
+    max_files: usize,
     state: Mutex<WriterState>,
 }
 
 struct WriterState {
-    current_date: String,
+    current_hour: String,
     file: File,
 }
 
@@ -29,33 +31,61 @@ impl LocalDailyWriter {
     pub fn new(dir: impl AsRef<Path>, prefix: impl Into<String>) -> std::io::Result<Self> {
         let dir = dir.as_ref().to_path_buf();
         let prefix = prefix.into();
-        let date = Local::now().format("%Y-%m-%d").to_string();
-        let file = open_log_file(&dir, &prefix, &date)?;
-        Ok(Self {
+        let hour = Local::now().format("%Y-%m-%d-%H").to_string();
+        let file = open_log_file(&dir, &prefix, &hour)?;
+        let writer = Self {
             dir,
             prefix,
+            max_files: 5,
             state: Mutex::new(WriterState {
-                current_date: date,
+                current_hour: hour,
                 file,
             }),
-        })
+        };
+        writer.cleanup_old_files();
+        Ok(writer)
+    }
+
+    fn cleanup_old_files(&self) {
+        let prefix = format!("{}.", self.prefix);
+        let mut log_files: Vec<_> = fs::read_dir(&self.dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .map(|n| n.starts_with(&prefix))
+                    .unwrap_or(false)
+            })
+            .collect();
+        log_files.sort_by_key(|e| e.file_name());
+        if log_files.len() > self.max_files {
+            let to_remove = log_files.len() - self.max_files;
+            for entry in log_files.into_iter().take(to_remove) {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
     }
 }
 
-fn open_log_file(dir: &Path, prefix: &str, date: &str) -> std::io::Result<File> {
+fn open_log_file(dir: &Path, prefix: &str, hour: &str) -> std::io::Result<File> {
     fs::create_dir_all(dir)?;
-    let path = dir.join(format!("{prefix}.{date}"));
+    let path = dir.join(format!("{prefix}.{hour}"));
     OpenOptions::new().create(true).append(true).open(path)
 }
 
 impl Write for &LocalDailyWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let today = Local::now().format("%Y-%m-%d").to_string();
+        let now_hour = Local::now().format("%Y-%m-%d-%H").to_string();
         let mut state = self.state.lock();
-        if state.current_date != today {
-            if let Ok(f) = open_log_file(&self.dir, &self.prefix, &today) {
+        if state.current_hour != now_hour {
+            if let Ok(f) = open_log_file(&self.dir, &self.prefix, &now_hour) {
                 state.file = f;
-                state.current_date = today;
+                state.current_hour = now_hour;
+                drop(state);
+                self.cleanup_old_files();
+                return self.state.lock().file.write(buf);
             }
         }
         state.file.write(buf)
