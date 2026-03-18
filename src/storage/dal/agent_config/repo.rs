@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use super::record::AgentConfigRecord;
 use crate::base::Result;
 use crate::llm::config::LLMConfig;
@@ -10,6 +12,8 @@ use crate::storage::table::RowMapper;
 use crate::storage::table::Where;
 
 const REPO: &str = "agent_config";
+const CACHE_TTL: Duration = Duration::from_secs(60);
+const CACHE_CAPACITY: usize = 128;
 
 #[derive(Clone)]
 struct ConfigMapper;
@@ -51,7 +55,8 @@ pub struct AgentConfigStore {
 impl AgentConfigStore {
     pub fn new(pool: Pool) -> Self {
         Self {
-            table: DatabendTable::new(pool, "agent_config", ConfigMapper),
+            table: DatabendTable::new(pool, "agent_config", ConfigMapper)
+                .with_cache(CACHE_TTL, CACHE_CAPACITY),
         }
     }
 

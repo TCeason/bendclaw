@@ -141,7 +141,11 @@ impl AgentStore {
             crate::storage::sql::escape(&json),
             crate::storage::sql::escape(session_id)
         );
-        self.pool.exec(&sql).await
+        let result = self.pool.exec(&sql).await;
+        if result.is_ok() {
+            self.sessions.clear_cache();
+        }
+        result
     }
 
     pub async fn session_get_state(&self, session_id: &str) -> Result<serde_json::Value> {
@@ -156,7 +160,11 @@ impl AgentStore {
             "DELETE FROM sessions WHERE id = '{}'",
             crate::storage::sql::escape(session_id)
         );
-        self.pool.exec(&sql).await
+        let result = self.pool.exec(&sql).await;
+        if result.is_ok() {
+            self.sessions.clear_cache();
+        }
+        result
     }
 
     // ── Runs ──────────────────────────────────────────────────────────────

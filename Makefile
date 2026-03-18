@@ -14,8 +14,8 @@ setup:
 		else sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler; fi; \
 	fi
 	@if [ "$$(uname -s)" = "Darwin" ]; then \
-		echo "==> preparing boxlite runtime..."; \
-		BOXLITE_DEPS_STUB=2 cargo test --test unit --no-run 2>/dev/null; \
+		echo "==> pre-compiling unit tests..."; \
+		cargo test --test unit --no-run 2>/dev/null; \
 	fi
 	@echo "==> installing git hooks..."
 	@mkdir -p .git/hooks

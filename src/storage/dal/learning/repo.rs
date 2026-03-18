@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use super::record::LearningRecord;
 use crate::base::Result;
 use crate::storage::dal::logging::repo_error;
@@ -10,6 +12,8 @@ use crate::storage::table::RowMapper;
 use crate::storage::table::Where;
 
 const REPO: &str = "learnings";
+const CACHE_TTL: Duration = Duration::from_secs(60);
+const CACHE_CAPACITY: usize = 128;
 
 #[derive(Clone)]
 struct LearningMapper;
@@ -77,7 +81,8 @@ pub struct LearningRepo {
 impl LearningRepo {
     pub fn new(pool: Pool) -> Self {
         Self {
-            table: DatabendTable::new(pool, "learnings", LearningMapper),
+            table: DatabendTable::new(pool, "learnings", LearningMapper)
+                .with_cache(CACHE_TTL, CACHE_CAPACITY),
         }
     }
 
@@ -176,6 +181,9 @@ impl LearningRepo {
             sql::escape(learning_id)
         );
         let result = self.table.pool().exec(&sql).await;
+        if result.is_ok() {
+            self.table.clear_cache();
+        }
         if let Err(error) = &result {
             repo_error(
                 REPO,
@@ -208,6 +216,9 @@ impl LearningRepo {
             .where_eq("id", id)
             .build();
         let result = self.table.pool().exec(&sql).await;
+        if result.is_ok() {
+            self.table.clear_cache();
+        }
         if let Err(error) = &result {
             repo_error(
                 REPO,
@@ -227,6 +238,9 @@ impl LearningRepo {
             .where_eq("id", id)
             .build();
         let result = self.table.pool().exec(&sql).await;
+        if result.is_ok() {
+            self.table.clear_cache();
+        }
         if let Err(error) = &result {
             repo_error(
                 REPO,

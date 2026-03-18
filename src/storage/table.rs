@@ -4,6 +4,10 @@
 //! Each domain store keeps its own table schema but delegates SQL
 //! mechanics to [`DatabendTable`].
 
+use std::sync::Arc;
+use std::time::Duration;
+
+use super::cache::TtlCache;
 use super::pool::Pool;
 use super::sql;
 use super::sql::Sql;
@@ -28,6 +32,7 @@ pub struct DatabendTable<M> {
     pool: Pool,
     table: String,
     mapper: M,
+    cache: Option<Arc<TtlCache<Vec<serde_json::Value>>>>,
 }
 
 impl<M: RowMapper> DatabendTable<M> {
@@ -36,11 +41,40 @@ impl<M: RowMapper> DatabendTable<M> {
             pool,
             table: table.to_string(),
             mapper,
+            cache: None,
         }
+    }
+
+    /// Enable LRU+TTL caching for read operations on this table.
+    /// Write operations automatically clear the cache.
+    pub fn with_cache(mut self, ttl: Duration, capacity: usize) -> Self {
+        self.cache = Some(Arc::new(TtlCache::new(&self.table, capacity, ttl)));
+        self
     }
 
     pub fn pool(&self) -> &Pool {
         &self.pool
+    }
+
+    fn cached_rows(&self, sql: &str) -> Option<Vec<serde_json::Value>> {
+        self.cache.as_ref().and_then(|c| c.get(sql))
+    }
+
+    fn store_rows(&self, sql: &str, rows: &[serde_json::Value]) {
+        if let Some(c) = &self.cache {
+            c.put(sql.to_string(), rows.to_vec());
+        }
+    }
+
+    fn invalidate_cache(&self) {
+        if let Some(c) = &self.cache {
+            c.clear();
+        }
+    }
+
+    /// Manually clear the cache. Use when writes bypass the table layer (raw SQL).
+    pub fn clear_cache(&self) {
+        self.invalidate_cache();
     }
 
     fn apply_wheres(q: sql::SelectBuilder, wheres: &[Where<'_>]) -> sql::SelectBuilder {
@@ -64,7 +98,15 @@ impl<M: RowMapper> DatabendTable<M> {
     pub async fn get(&self, wheres: &[Where<'_>]) -> Result<Option<M::Entity>> {
         let q = Self::apply_wheres(Sql::select(self.mapper.columns()).from(&self.table), wheres);
         let query = q.limit(1).build();
+        if let Some(rows) = self.cached_rows(&query) {
+            return rows.first().map(|r| self.mapper.parse(r)).transpose();
+        }
         let row = self.pool.query_row(&query).await?;
+        if let Some(ref r) = row {
+            self.store_rows(&query, std::slice::from_ref(r));
+        } else {
+            self.store_rows(&query, &[]);
+        }
         row.as_ref().map(|r| self.mapper.parse(r)).transpose()
     }
 
@@ -74,7 +116,15 @@ impl<M: RowMapper> DatabendTable<M> {
             .where_raw(condition)
             .limit(1)
             .build();
+        if let Some(rows) = self.cached_rows(&query) {
+            return rows.first().map(|r| self.mapper.parse(r)).transpose();
+        }
         let row = self.pool.query_row(&query).await?;
+        if let Some(ref r) = row {
+            self.store_rows(&query, std::slice::from_ref(r));
+        } else {
+            self.store_rows(&query, &[]);
+        }
         row.as_ref().map(|r| self.mapper.parse(r)).transpose()
     }
 
@@ -88,7 +138,11 @@ impl<M: RowMapper> DatabendTable<M> {
     ) -> Result<Vec<M::Entity>> {
         let q = Self::apply_wheres(Sql::select(self.mapper.columns()).from(&self.table), wheres);
         let query = q.order_by(order).limit(limit).build();
+        if let Some(rows) = self.cached_rows(&query) {
+            return rows.iter().map(|r| self.mapper.parse(r)).collect();
+        }
         let rows = self.pool.query_all(&query).await?;
+        self.store_rows(&query, &rows);
         rows.iter().map(|r| self.mapper.parse(r)).collect()
     }
 
@@ -104,7 +158,11 @@ impl<M: RowMapper> DatabendTable<M> {
             .order_by(order)
             .limit(limit)
             .build();
+        if let Some(rows) = self.cached_rows(&query) {
+            return rows.iter().map(|r| self.mapper.parse(r)).collect();
+        }
         let rows = self.pool.query_all(&query).await?;
+        self.store_rows(&query, &rows);
         rows.iter().map(|r| self.mapper.parse(r)).collect()
     }
 
@@ -115,7 +173,11 @@ impl<M: RowMapper> DatabendTable<M> {
         for (col, val) in values {
             builder = builder.value(col, SqlVal::Raw(&val.render()));
         }
-        self.pool.exec(&builder.build()).await
+        let result = self.pool.exec(&builder.build()).await;
+        if result.is_ok() {
+            self.invalidate_cache();
+        }
+        result
     }
 
     pub async fn upsert(&self, values: &[(&str, SqlVal<'_>)], conflict_key: &str) -> Result<()> {
@@ -123,7 +185,11 @@ impl<M: RowMapper> DatabendTable<M> {
         for (col, val) in values {
             builder = builder.value(col, SqlVal::Raw(&val.render()));
         }
-        self.pool.exec(&builder.build()).await
+        let result = self.pool.exec(&builder.build()).await;
+        if result.is_ok() {
+            self.invalidate_cache();
+        }
+        result
     }
 
     pub async fn insert_batch(&self, columns: &[&str], rows: &[Vec<SqlVal<'_>>]) -> Result<()> {
@@ -136,6 +202,7 @@ impl<M: RowMapper> DatabendTable<M> {
         }
         if let Some(query) = batch.build() {
             self.pool.exec(&query).await?;
+            self.invalidate_cache();
         }
         Ok(())
     }
@@ -144,12 +211,20 @@ impl<M: RowMapper> DatabendTable<M> {
 
     pub async fn delete(&self, wheres: &[Where<'_>]) -> Result<()> {
         let q = Self::apply_delete_wheres(Sql::delete(&self.table), wheres);
-        self.pool.exec(&q.build()).await
+        let result = self.pool.exec(&q.build()).await;
+        if result.is_ok() {
+            self.invalidate_cache();
+        }
+        result
     }
 
     pub async fn delete_where(&self, condition: &str) -> Result<()> {
         let q = Sql::delete(&self.table).where_raw(condition);
-        self.pool.exec(&q.build()).await
+        let result = self.pool.exec(&q.build()).await;
+        if result.is_ok() {
+            self.invalidate_cache();
+        }
+        result
     }
 
     // ── Search ──

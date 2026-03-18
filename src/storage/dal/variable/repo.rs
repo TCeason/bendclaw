@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use super::record::VariableRecord;
 use crate::base::Result;
 use crate::storage::dal::logging::repo_error;
@@ -10,6 +12,8 @@ use crate::storage::table::Where;
 
 const REPO: &str = "variable";
 const MAX_LIST_LIMIT: u64 = 10_000;
+const CACHE_TTL: Duration = Duration::from_secs(60);
+const CACHE_CAPACITY: usize = 128;
 
 #[derive(Clone)]
 struct VariableMapper;
@@ -52,7 +56,8 @@ pub struct VariableRepo {
 impl VariableRepo {
     pub fn new(pool: Pool) -> Self {
         Self {
-            table: DatabendTable::new(pool, "variables", VariableMapper),
+            table: DatabendTable::new(pool, "variables", VariableMapper)
+                .with_cache(CACHE_TTL, CACHE_CAPACITY),
         }
     }
 
@@ -165,6 +170,9 @@ impl VariableRepo {
             key_e, value_e, secret, revoked, id_e
         );
         let result = self.table.pool().exec(&sql).await;
+        if result.is_ok() {
+            self.table.clear_cache();
+        }
         if let Err(error) = &result {
             repo_error(
                 REPO,
@@ -179,6 +187,9 @@ impl VariableRepo {
     pub async fn delete(&self, id: &str) -> Result<()> {
         let sql = format!("DELETE FROM variables WHERE id = '{}'", sql::escape(id));
         let result = self.table.pool().exec(&sql).await;
+        if result.is_ok() {
+            self.table.clear_cache();
+        }
         if let Err(error) = &result {
             repo_error(
                 REPO,
@@ -196,6 +207,9 @@ impl VariableRepo {
             sql::escape(id)
         );
         let result = self.table.pool().exec(&sql).await;
+        if result.is_ok() {
+            self.table.clear_cache();
+        }
         if let Err(error) = &result {
             repo_error(
                 REPO,
@@ -221,6 +235,9 @@ impl VariableRepo {
             in_list
         );
         let result = self.table.pool().exec(&sql_str).await;
+        if result.is_ok() {
+            self.table.clear_cache();
+        }
         if let Err(error) = &result {
             repo_error(
                 REPO,

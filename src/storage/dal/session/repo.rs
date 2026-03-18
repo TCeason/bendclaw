@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use super::record::SessionRecord;
 use crate::base::ErrorCode;
 use crate::base::Result;
@@ -10,6 +12,8 @@ use crate::storage::table::RowMapper;
 use crate::storage::table::Where;
 
 const REPO: &str = "sessions";
+const CACHE_TTL: Duration = Duration::from_secs(15);
+const CACHE_CAPACITY: usize = 128;
 
 #[derive(Clone)]
 struct SessionMapper;
@@ -43,7 +47,8 @@ pub struct SessionRepo {
 impl SessionRepo {
     pub fn new(pool: Pool) -> Self {
         Self {
-            table: DatabendTable::new(pool, "sessions", SessionMapper),
+            table: DatabendTable::new(pool, "sessions", SessionMapper)
+                .with_cache(CACHE_TTL, CACHE_CAPACITY),
         }
     }
 
@@ -106,6 +111,11 @@ impl SessionRepo {
             );
         }
         result
+    }
+
+    /// Clear the read cache. Call after raw SQL writes that bypass the table layer.
+    pub fn clear_cache(&self) {
+        self.table.clear_cache();
     }
 
     pub async fn count_by_user_search(&self, user_id: &str, search: Option<&str>) -> Result<u64> {
