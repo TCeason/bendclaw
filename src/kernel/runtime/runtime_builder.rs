@@ -219,8 +219,14 @@ async fn construct(
         "skill catalog ready"
     );
 
+    let cluster_id = cluster_config
+        .as_ref()
+        .map(|c| c.cluster_id.as_str())
+        .unwrap_or("");
     tracing::info!(
         total_ms = t0.elapsed().as_millis() as u64,
+        node_id = %config.node_id,
+        cluster_id,
         skills = skill_count,
         "runtime ready"
     );
