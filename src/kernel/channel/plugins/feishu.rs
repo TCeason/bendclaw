@@ -6,7 +6,6 @@ use futures::SinkExt;
 use futures::StreamExt;
 use serde::Deserialize;
 use serde::Serialize;
-use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
@@ -361,6 +360,12 @@ fn redact_ws_url(url: &str) -> String {
         .unwrap_or_else(|_| url.to_string())
 }
 
+fn build_native_tls_connector() -> Result<tokio_tungstenite::Connector> {
+    let tls = native_tls::TlsConnector::new()
+        .map_err(|e| ErrorCode::internal(format!("native tls: {e}")))?;
+    Ok(tokio_tungstenite::Connector::NativeTls(tls))
+}
+
 async fn ws_receive_loop(
     client: &reqwest::Client,
     config: &FeishuConfig,
@@ -372,9 +377,11 @@ async fn ws_receive_loop(
     let redacted_url = redact_ws_url(&ws_url);
     tracing::info!(url = %redacted_url, ping_interval = ping_interval_secs, "feishu WebSocket connecting");
 
-    let (ws_stream, _) = connect_async(&ws_url)
-        .await
-        .map_err(|e| ErrorCode::internal(format!("feishu ws connect: {e}")))?;
+    let connector = build_native_tls_connector()?;
+    let (ws_stream, _) =
+        tokio_tungstenite::connect_async_tls_with_config(&ws_url, None, false, Some(connector))
+            .await
+            .map_err(|e| ErrorCode::internal(format!("feishu ws connect: {e}")))?;
 
     let (mut write, mut read) = ws_stream.split();
     let mut ping_interval = tokio::time::interval(Duration::from_secs(ping_interval_secs));

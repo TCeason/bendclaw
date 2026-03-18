@@ -27,7 +27,7 @@ sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
-tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 tokio-util = "0.7"
 
 tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
@@ -44,6 +44,7 @@ cron = { version = "0.15", features = ["serde"] }
 dotenvy = "0.15"
 flate2 = "1"
 tar = "0.4"
+native-tls = "0.2.18"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
