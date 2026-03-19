@@ -43,6 +43,8 @@ async fn session_belongs_to_matches_exact_agent_and_user() -> Result<()> {
         cluster_client: None,
         directive: None,
         trace_writer: bendclaw::kernel::trace::TraceWriter::spawn(),
+        persist_writer: bendclaw::kernel::writer::BackgroundWriter::noop("persist"),
+        cached_config: None,
     });
 
     assert!(session.belongs_to("a1", "u1"));

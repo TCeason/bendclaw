@@ -81,5 +81,6 @@ pub fn test_runtime(fake: FakeDatabend) -> Arc<Runtime> {
         directive_handle: RwLock::new(None),
         activity_tracker: Arc::new(ActivityTracker::new()),
         trace_writer: bendclaw::kernel::trace::TraceWriter::noop(),
+        persist_writer: bendclaw::kernel::writer::BackgroundWriter::noop("persist"),
     }))
 }

@@ -69,6 +69,8 @@ pub struct SessionResources {
     pub cluster_client: Option<Arc<crate::kernel::cluster::ClusterService>>,
     pub directive: Option<Arc<DirectiveService>>,
     pub trace_writer: crate::kernel::trace::TraceWriter,
+    pub persist_writer: crate::kernel::run::persist_op::PersistWriter,
+    pub cached_config: Option<crate::storage::dal::agent_config::record::AgentConfigRecord>,
 }
 
 pub struct Session {
@@ -176,7 +178,8 @@ impl Session {
         let full_prompt = {
             let mut pb = PromptBuilder::new(self.res.storage.clone(), self.res.skills.clone())
                 .with_tools(self.res.tools.clone())
-                .with_variables(self.res.variables.clone());
+                .with_variables(self.res.variables.clone())
+                .with_cached_config(self.res.cached_config.clone());
             if let Some(ref recall) = self.res.recall {
                 pb = pb.with_recall(recall.clone());
             }
@@ -256,6 +259,7 @@ impl Session {
                 self.user_id.clone(),
                 start,
                 self.res.recall.clone(),
+                self.res.persist_writer.clone(),
             ),
             USAGE_PROVIDER_UNKNOWN.to_string(),
             usage_model,
@@ -389,8 +393,9 @@ impl Session {
     }
 
     async fn enforce_token_limits(&self) -> Result<()> {
-        let Some(record) = self.res.storage.config_get(&self.agent_id).await? else {
-            return Ok(());
+        let record = match &self.res.cached_config {
+            Some(r) => r.clone(),
+            None => return Ok(()),
         };
         let need_total = record.token_limit_total.is_some();
         let need_daily = record.token_limit_daily.is_some();

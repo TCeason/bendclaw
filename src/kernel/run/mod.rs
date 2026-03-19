@@ -7,6 +7,7 @@ pub(crate) mod engine;
 pub mod event;
 pub mod fmt;
 pub mod orchestration;
+pub mod persist_op;
 pub mod persister;
 pub mod prompt;
 pub mod result;

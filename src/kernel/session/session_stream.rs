@@ -66,33 +66,28 @@ impl Stream {
         match task_result {
             Ok(Ok(result)) => {
                 *self.history.lock() = result.messages.clone();
-                self.persister
-                    .persist_success(
-                        result,
-                        &self.usage_provider,
-                        &self.usage_model,
-                        &self.collected_events,
-                    )
-                    .await
+                self.persister.persist_success(
+                    result,
+                    &self.usage_provider,
+                    &self.usage_model,
+                    &self.collected_events,
+                )
             }
             Ok(Err(e)) => {
-                self.persister
-                    .persist_error(&e, &self.collected_events)
-                    .await;
-                Ok(Message::error(ErrorSource::Internal, format!("{e}")).text())
+                let text = Message::error(ErrorSource::Internal, format!("{e}")).text();
+                self.persister.persist_error(&e, &self.collected_events);
+                Ok(text)
             }
             Err(e) if e.is_cancelled() => {
-                self.persister
-                    .persist_cancelled(&self.collected_events)
-                    .await;
-                Ok(AgentResult::aborted().text())
+                let text = AgentResult::aborted().text();
+                self.persister.persist_cancelled(&self.collected_events);
+                Ok(text)
             }
             Err(e) => {
                 let err = ErrorCode::internal(format!("agent task failed: {e}"));
-                self.persister
-                    .persist_error(&err, &self.collected_events)
-                    .await;
-                Ok(Message::error(ErrorSource::Internal, format!("{err}")).text())
+                let text = Message::error(ErrorSource::Internal, format!("{err}")).text();
+                self.persister.persist_error(&err, &self.collected_events);
+                Ok(text)
             }
         }
     }

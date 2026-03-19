@@ -85,6 +85,9 @@ impl Runtime {
             svc.deregister().await;
         }
 
+        // Drain background writers: persist first (has pending DB writes),
+        // then trace (lightweight).
+        self.persist_writer.shutdown().await;
         self.trace_writer.shutdown().await;
 
         *self.status.write() = RuntimeStatus::Stopped;

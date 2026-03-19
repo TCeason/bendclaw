@@ -92,6 +92,7 @@ pub(crate) fn test_runtime(test_name: &str) -> Arc<Runtime> {
         directive_handle: RwLock::new(None),
         activity_tracker: Arc::new(ActivityTracker::new()),
         trace_writer: crate::kernel::trace::TraceWriter::noop(),
+        persist_writer: crate::kernel::writer::BackgroundWriter::noop("persist"),
     }))
 }
 

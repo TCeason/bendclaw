@@ -232,6 +232,8 @@ mod tests {
                 cluster_client: None,
                 directive: None,
                 trace_writer: crate::kernel::trace::TraceWriter::noop(),
+                persist_writer: crate::kernel::writer::BackgroundWriter::noop("persist"),
+                cached_config: None,
             },
         ))
     }

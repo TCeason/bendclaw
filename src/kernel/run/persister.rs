@@ -1,18 +1,16 @@
-//! Run persistence: run status, run events, usage, traces.
+//! Run persistence: assembles PersistOps and sends to background writer.
 
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
 use crate::kernel::recall::RecallStore;
 use crate::kernel::run::event::Event;
+use crate::kernel::run::persist_op::PersistOp;
+use crate::kernel::run::persist_op::PersistWriter;
 use crate::kernel::run::result::Reason;
 use crate::kernel::run::result::Result as AgentResult;
-use crate::kernel::run::result::Usage as AgentUsage;
-use crate::kernel::run::usage::ModelRole;
-use crate::kernel::run::usage::UsageEvent;
 use crate::kernel::trace::TraceRecorder;
 use crate::observability::audit;
 use crate::observability::server_log;
@@ -29,6 +27,7 @@ pub struct TurnPersister {
     user_id: Arc<str>,
     start: Instant,
     recall: Option<Arc<RecallStore>>,
+    writer: PersistWriter,
 }
 
 impl TurnPersister {
@@ -42,6 +41,7 @@ impl TurnPersister {
         user_id: Arc<str>,
         start: Instant,
         recall: Option<Arc<RecallStore>>,
+        writer: PersistWriter,
     ) -> Self {
         Self {
             storage,
@@ -52,25 +52,18 @@ impl TurnPersister {
             user_id,
             start,
             recall,
+            writer,
         }
-    }
-
-    fn ops_ctx(&self, turn: u32) -> server_log::ServerCtx<'_> {
-        server_log::ServerCtx::new(
-            &self.trace.trace_id,
-            &self.run_id,
-            &self.session_id,
-            &self.agent_id,
-            turn,
-        )
     }
 
     pub fn run_id(&self) -> &str {
         &self.run_id
     }
 
-    pub async fn persist_success(
-        &self,
+    /// Assemble a success op and send to background writer. Returns response
+    /// text immediately — DB writes happen asynchronously.
+    pub fn persist_success(
+        self,
         result: AgentResult,
         provider: &str,
         model: &str,
@@ -78,10 +71,6 @@ impl TurnPersister {
     ) -> Result<String> {
         let response_text = result.text();
         let duration_ms = self.start.elapsed().as_millis() as u64;
-
-        if let Err(e) = self.record_usage(&result.usage, provider, model).await {
-            tracing::warn!(error = %e, "failed to persist usage");
-        }
 
         let metrics = RunMetrics {
             prompt_tokens: result.usage.prompt_tokens,
@@ -96,7 +85,7 @@ impl TurnPersister {
         };
         let metrics_json = serde_json::to_string(&metrics)?;
         let status = status_from_reason(&result.stop_reason);
-        let error = if matches!(status, RunStatus::Error) {
+        let error_text = if matches!(status, RunStatus::Error) {
             response_text.clone()
         } else {
             String::new()
@@ -123,7 +112,7 @@ impl TurnPersister {
             "output".to_string(),
             serde_json::json!(response_text.clone()),
         );
-        payload.insert("error".to_string(), serde_json::json!(error.clone()));
+        payload.insert("error".to_string(), serde_json::json!(error_text.clone()));
         payload.insert("usage".to_string(), serde_json::json!(result.usage.clone()));
         payload.insert("metrics".to_string(), serde_json::json!(metrics.clone()));
         payload.insert(
@@ -135,87 +124,45 @@ impl TurnPersister {
             serde_json::json!(result.messages.clone()),
         );
         all_events.push(audit::event_from_map("run.completed", payload));
-        if let Err(e) = self.persist_events(&all_events).await {
-            tracing::error!(error = %e, "failed to persist run events");
-        }
 
-        if let Err(e) = self
-            .storage
-            .run_update_final(
-                &self.run_id,
-                status.clone(),
-                &response_text,
-                &error,
-                &metrics_json,
-                result.stop_reason.as_str(),
-                result.iterations,
-            )
-            .await
-        {
-            tracing::error!(error = %e, "failed to update run record");
-        }
+        let event_records = self.build_event_records(&all_events);
 
-        match status {
-            RunStatus::Completed | RunStatus::Paused => {
-                self.trace.complete_trace(
-                    duration_ms,
-                    result.usage.prompt_tokens,
-                    result.usage.completion_tokens,
-                    0.0,
-                );
-            }
-            RunStatus::Cancelled | RunStatus::Error | RunStatus::Pending | RunStatus::Running => {
-                self.trace.fail_trace(duration_ms);
-            }
-        }
-
-        server_log::info(
-            &self.ops_ctx(result.iterations),
-            "run",
-            "completed",
-            server_log::ServerFields::default()
-                .elapsed_ms(duration_ms)
-                .tokens(result.usage.total_tokens)
-                .bytes(metrics_json.len() as u64)
-                .detail("status", status.as_str())
-                .detail("provider", provider)
-                .detail("model", model)
-                .detail("iterations", result.iterations)
-                .detail("stop_reason", result.stop_reason.as_str())
-                .detail("event_count", all_events.len())
-                .detail("prompt_tokens", result.usage.prompt_tokens)
-                .detail("completion_tokens", result.usage.completion_tokens)
-                .detail("ttft_ms", result.usage.ttft_ms)
-                .detail("response_preview", server_log::preview_text(&response_text))
-                .detail("error", error.clone()),
-        );
-
-        // Fire-and-forget recall extraction from tool events
-        if let Some(recall) = &self.recall {
-            let recall = recall.clone();
-            let run_id = self.run_id.clone();
-            let user_id = self.user_id.to_string();
-            let events = events.to_vec();
-            tokio::spawn(async move {
-                crate::kernel::recall::post_run::process_run_events(
-                    &recall, &run_id, &user_id, &events,
-                )
-                .await;
-            });
-        }
+        self.writer.send(PersistOp::RunSuccess {
+            storage: self.storage,
+            trace: Box::new(self.trace),
+            recall: self.recall,
+            run_id: self.run_id,
+            session_id: self.session_id,
+            agent_id: self.agent_id,
+            user_id: self.user_id,
+            response_text: response_text.clone(),
+            error_text,
+            status,
+            metrics_json,
+            stop_reason: result.stop_reason.as_str().to_string(),
+            iterations: result.iterations,
+            duration_ms,
+            usage: result.usage,
+            provider: provider.to_string(),
+            model: model.to_string(),
+            event_records,
+            events: events.to_vec(),
+        });
 
         Ok(response_text)
     }
 
-    pub async fn persist_error(&self, error: &ErrorCode, events: &[Event]) {
+    /// Assemble an error op and send to background writer.
+    pub fn persist_error(self, error: &crate::base::ErrorCode, events: &[Event]) {
         let duration_ms = self.start.elapsed().as_millis() as u64;
-        let error_str = format!("{error}");
+        let error_text = format!("{error}");
+
         tracing::error!(
             agent_id = %self.agent_id,
             session_id = %self.session_id,
             run_id = %self.run_id,
             duration_ms,
-            error = %error_str,
+            error = %error_text,
             "run failed"
         );
 
@@ -229,42 +176,25 @@ impl TurnPersister {
             "status".to_string(),
             serde_json::json!(RunStatus::Error.as_str()),
         );
-        payload.insert("error".to_string(), serde_json::json!(error_str.clone()));
+        payload.insert("error".to_string(), serde_json::json!(error_text.clone()));
         all_events.push(audit::event_from_map("run.failed", payload));
-        if let Err(e) = self.persist_events(&all_events).await {
-            tracing::error!(error = %e, "failed to persist run events");
-        }
 
-        server_log::error(
-            &self.ops_ctx(0),
-            "run",
-            "failed",
-            server_log::ServerFields::default()
-                .elapsed_ms(duration_ms)
-                .detail("status", RunStatus::Error.as_str())
-                .detail("error", error_str.clone())
-                .detail("event_count", all_events.len()),
-        );
+        let event_records = self.build_event_records(&all_events);
 
-        if let Err(e) = self
-            .storage
-            .run_update_final(
-                &self.run_id,
-                RunStatus::Error,
-                "",
-                &error_str,
-                "",
-                Reason::Error.as_str(),
-                0,
-            )
-            .await
-        {
-            tracing::warn!(error = %e, "failed to update run record on error");
-        }
-        self.trace.fail_trace(duration_ms);
+        self.writer.send(PersistOp::RunError {
+            storage: self.storage,
+            trace: self.trace,
+            run_id: self.run_id,
+            session_id: self.session_id,
+            agent_id: self.agent_id,
+            error_text,
+            duration_ms,
+            event_records,
+        });
     }
 
-    pub async fn persist_cancelled(&self, events: &[Event]) {
+    /// Assemble a cancellation op and send to background writer.
+    pub fn persist_cancelled(self, events: &[Event]) {
         let duration_ms = self.start.elapsed().as_millis() as u64;
 
         let mut all_events = events.to_vec();
@@ -279,9 +209,8 @@ impl TurnPersister {
         );
         payload.insert("error".to_string(), serde_json::json!("cancelled"));
         all_events.push(audit::event_from_map("run.cancelled", payload));
-        if let Err(e) = self.persist_events(&all_events).await {
-            tracing::error!(error = %e, "failed to persist run events");
-        }
+
+        let event_records = self.build_event_records(&all_events);
 
         server_log::warn(
             &self.ops_ctx(0),
@@ -294,25 +223,31 @@ impl TurnPersister {
                 .detail("event_count", all_events.len()),
         );
 
-        if let Err(e) = self
-            .storage
-            .run_update_status(&self.run_id, RunStatus::Cancelled)
-            .await
-        {
-            tracing::warn!(error = %e, "failed to update run status on cancel");
-        }
-        self.trace.fail_trace(duration_ms);
+        self.writer.send(PersistOp::RunCancelled {
+            storage: self.storage,
+            trace: self.trace,
+            run_id: self.run_id,
+            duration_ms,
+            event_records,
+        });
     }
 
-    async fn persist_events(&self, events: &[Event]) -> Result<()> {
-        if events.is_empty() {
-            return Ok(());
-        }
-        let records: Vec<RunEventRecord> = events
+    fn ops_ctx(&self, turn: u32) -> server_log::ServerCtx<'_> {
+        server_log::ServerCtx::new(
+            &self.trace.trace_id,
+            &self.run_id,
+            &self.session_id,
+            &self.agent_id,
+            turn,
+        )
+    }
+
+    fn build_event_records(&self, events: &[Event]) -> Vec<RunEventRecord> {
+        events
             .iter()
             .enumerate()
-            .map(|(idx, event)| {
-                Ok(RunEventRecord {
+            .filter_map(|(idx, event)| {
+                Some(RunEventRecord {
                     id: crate::kernel::new_id(),
                     run_id: self.run_id.clone(),
                     session_id: self.session_id.clone(),
@@ -320,86 +255,11 @@ impl TurnPersister {
                     user_id: self.user_id.to_string(),
                     seq: (idx + 1) as u32,
                     event: event.name(),
-                    payload: serde_json::to_string(event)?,
+                    payload: serde_json::to_string(event).ok()?,
                     created_at: String::new(),
                 })
             })
-            .collect::<crate::base::Result<Vec<_>>>()?;
-        let result = self.storage.run_events_insert_batch(&records).await;
-        match &result {
-            Ok(_) => server_log::debug(
-                &self.ops_ctx(0),
-                "persist",
-                "run_events_saved",
-                server_log::ServerFields::default().rows(records.len() as u64),
-            ),
-            Err(error) => server_log::error(
-                &self.ops_ctx(0),
-                "persist",
-                "run_events_failed",
-                server_log::ServerFields::default()
-                    .rows(records.len() as u64)
-                    .detail("error", error.to_string()),
-            ),
-        }
-        result
-    }
-
-    async fn record_usage(&self, usage: &AgentUsage, provider: &str, model: &str) -> Result<()> {
-        if usage.total_tokens == 0 {
-            return Ok(());
-        }
-        let event = UsageEvent {
-            agent_id: self.agent_id.to_string(),
-            user_id: self.user_id.to_string(),
-            session_id: self.session_id.clone(),
-            run_id: self.run_id.clone(),
-            provider: provider.to_string(),
-            model: model.to_string(),
-            model_role: ModelRole::Reasoning,
-            prompt_tokens: usage.prompt_tokens,
-            completion_tokens: usage.completion_tokens,
-            reasoning_tokens: usage.reasoning_tokens,
-            cache_read_tokens: usage.cache_read_tokens,
-            cache_write_tokens: usage.cache_write_tokens,
-            ttft_ms: usage.ttft_ms,
-            cost: 0.0,
-        };
-        self.storage.usage_record(event.clone()).await?;
-        server_log::debug(
-            &self.ops_ctx(0),
-            "persist",
-            "usage_recorded",
-            server_log::ServerFields::default()
-                .tokens(usage.total_tokens)
-                .detail("provider", provider)
-                .detail("model", model),
-        );
-
-        let result = self.storage.usage_flush().await;
-        match &result {
-            Ok(_) => server_log::debug(
-                &self.ops_ctx(0),
-                "persist",
-                "usage_flushed",
-                server_log::ServerFields::default()
-                    .tokens(usage.total_tokens)
-                    .detail("provider", provider)
-                    .detail("model", model),
-            ),
-
-            Err(error) => server_log::error(
-                &self.ops_ctx(0),
-                "persist",
-                "usage_flush_failed",
-                server_log::ServerFields::default()
-                    .tokens(usage.total_tokens)
-                    .detail("provider", provider)
-                    .detail("model", model)
-                    .detail("error", error.to_string()),
-            ),
-        }
-        result
+            .collect()
     }
 }
 

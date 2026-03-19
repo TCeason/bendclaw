@@ -111,6 +111,8 @@ pub async fn test_session(llm: Arc<dyn LLMProvider>) -> Result<Session> {
             cluster_client: None,
             directive: None,
             trace_writer: bendclaw::kernel::trace::TraceWriter::spawn(),
+            persist_writer: bendclaw::kernel::writer::BackgroundWriter::noop("persist"),
+            cached_config: None,
         },
     ))
 }

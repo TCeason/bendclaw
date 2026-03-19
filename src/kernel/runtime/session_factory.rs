@@ -80,18 +80,20 @@ impl Runtime {
             )));
         }
 
-        let agent_llm = self.resolve_agent_llm(agent_id, &pool).await?;
+        // Parallelize the two independent DB queries: agent config + variables.
+        let variable_repo = VariableRepo::new(pool.clone());
+        let (llm_config_result, vars_result) = tokio::join!(
+            self.resolve_agent_llm_and_config(agent_id, &pool),
+            variable_repo.list_all_active()
+        );
+
+        let (agent_llm, cached_config) = llm_config_result?;
+        let variable_records = vars_result
+            .map_err(|e| ErrorCode::internal(format!("failed to load variables: {e}")))?;
 
         let storage = Arc::new(AgentStore::new(pool.clone(), agent_llm.clone()));
 
         let recall_store = Arc::new(RecallStore::new(pool.clone()));
-
-        // Load variables from Variable table (the single source of business env)
-        let variable_repo = VariableRepo::new(pool.clone());
-        let variable_records = variable_repo
-            .list_all_active()
-            .await
-            .map_err(|e| ErrorCode::internal(format!("failed to load variables: {e}")))?;
 
         let resolver: Arc<dyn crate::kernel::session::workspace::PathResolver> =
             if self.config.workspace.sandbox {
@@ -166,6 +168,8 @@ impl Runtime {
                 cluster_client: self.cluster.clone(),
                 directive: self.directive.clone(),
                 trace_writer: self.trace_writer.clone(),
+                persist_writer: self.persist_writer.clone(),
+                cached_config,
             },
         ));
 

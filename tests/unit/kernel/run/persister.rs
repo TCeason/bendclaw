@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use bendclaw::base::ErrorCode;
 use bendclaw::kernel::agent_store::AgentStore;
 use bendclaw::kernel::run::event::Event;
+use bendclaw::kernel::run::persist_op::spawn_persist_writer;
 use bendclaw::kernel::run::persister::status_from_reason;
 use bendclaw::kernel::run::persister::TurnPersister;
 use bendclaw::kernel::run::result::ContentBlock;
@@ -68,7 +69,10 @@ fn make_client() -> FakeDatabend {
     FakeDatabend::new(|_sql, _database| Ok(paged_rows(&[], None, None)))
 }
 
-fn make_persister(client: &FakeDatabend) -> TurnPersister {
+fn make_persister(
+    client: &FakeDatabend,
+    writer: &bendclaw::kernel::run::persist_op::PersistWriter,
+) -> TurnPersister {
     let pool = client.pool();
     let storage = Arc::new(AgentStore::new(pool.clone(), Arc::new(PricingLLM)));
     let trace = TraceRecorder::new(
@@ -89,6 +93,7 @@ fn make_persister(client: &FakeDatabend) -> TurnPersister {
         Arc::<str>::from("user-1"),
         Instant::now(),
         None,
+        writer.clone(),
     )
 }
 
@@ -101,6 +106,13 @@ fn recorded_sqls(client: &FakeDatabend) -> Vec<String> {
             _ => None,
         })
         .collect()
+}
+
+/// Wait for background writer to drain all queued ops.
+async fn drain(writer: &bendclaw::kernel::run::persist_op::PersistWriter) {
+    writer.shutdown().await;
+    // Also give trace writer time to flush (fire-and-forget)
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 }
 
 #[test]
@@ -118,7 +130,8 @@ fn status_from_reason_maps_terminal_run_status() {
 #[tokio::test]
 async fn persist_success_updates_run_events_usage_and_trace() -> Result<()> {
     let client = make_client();
-    let persister = make_persister(&client);
+    let writer = spawn_persist_writer();
+    let persister = make_persister(&client, &writer);
     let result = AgentResult {
         content: vec![ContentBlock::text("done")],
         iterations: 3,
@@ -135,11 +148,11 @@ async fn persist_success_updates_run_events_usage_and_trace() -> Result<()> {
         messages: Vec::new(),
     };
 
-    let text = persister
-        .persist_success(result, "mock-provider", "mock-model", &[Event::Start])
-        .await?;
-
+    let text = persister.persist_success(result, "mock-provider", "mock-model", &[Event::Start])?;
     assert_eq!(text, "done");
+
+    drain(&writer).await;
+
     let sqls = recorded_sqls(&client);
     assert!(sqls.iter().any(|sql| sql.starts_with("INSERT INTO usage ")));
     assert!(sqls
@@ -151,9 +164,6 @@ async fn persist_success_updates_run_events_usage_and_trace() -> Result<()> {
     assert!(sqls.iter().any(|sql| {
         sql.contains("UPDATE runs SET status = 'COMPLETED'") && sql.contains("output = 'done'")
     }));
-    // Trace writes are fire-and-forget via background queue
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    let sqls = recorded_sqls(&client);
     assert!(sqls
         .iter()
         .any(|sql| sql.contains("UPDATE traces SET status = 'completed'")));
@@ -163,7 +173,8 @@ async fn persist_success_updates_run_events_usage_and_trace() -> Result<()> {
 #[tokio::test]
 async fn persist_success_pauses_run_for_timeout_reason() -> Result<()> {
     let client = make_client();
-    let persister = make_persister(&client);
+    let writer = spawn_persist_writer();
+    let persister = make_persister(&client, &writer);
     let result = AgentResult {
         content: vec![ContentBlock::text("partial")],
         iterations: 5,
@@ -180,17 +191,14 @@ async fn persist_success_pauses_run_for_timeout_reason() -> Result<()> {
         messages: Vec::new(),
     };
 
-    let _ = persister
-        .persist_success(result, "mock-provider", "mock-model", &[Event::Start])
-        .await?;
+    let _ = persister.persist_success(result, "mock-provider", "mock-model", &[Event::Start])?;
+
+    drain(&writer).await;
 
     let sqls = recorded_sqls(&client);
     assert!(sqls.iter().any(|sql| {
         sql.contains("UPDATE runs SET status = 'PAUSED'") && sql.contains("stop_reason = 'timeout'")
     }));
-    // Trace writes are fire-and-forget via background queue
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    let sqls = recorded_sqls(&client);
     assert!(sqls
         .iter()
         .any(|sql| sql.contains("UPDATE traces SET status = 'completed'")));
@@ -200,11 +208,12 @@ async fn persist_success_pauses_run_for_timeout_reason() -> Result<()> {
 #[tokio::test]
 async fn persist_error_marks_run_failed_and_persists_failure_event() {
     let client = make_client();
-    let persister = make_persister(&client);
+    let writer = spawn_persist_writer();
+    let persister = make_persister(&client, &writer);
 
-    persister
-        .persist_error(&ErrorCode::internal("boom"), &[Event::Start])
-        .await;
+    persister.persist_error(&ErrorCode::internal("boom"), &[Event::Start]);
+
+    drain(&writer).await;
 
     let sqls = recorded_sqls(&client);
     assert!(sqls
@@ -213,9 +222,6 @@ async fn persist_error_marks_run_failed_and_persists_failure_event() {
     assert!(sqls
         .iter()
         .any(|sql| sql.contains("UPDATE runs SET status = 'ERROR'") && sql.contains("boom")));
-    // Trace writes are fire-and-forget via background queue
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    let sqls = recorded_sqls(&client);
     assert!(sqls
         .iter()
         .any(|sql| sql.contains("UPDATE traces SET status = 'failed'")));
@@ -224,9 +230,12 @@ async fn persist_error_marks_run_failed_and_persists_failure_event() {
 #[tokio::test]
 async fn persist_cancelled_marks_run_cancelled_and_persists_cancel_event() {
     let client = make_client();
-    let persister = make_persister(&client);
+    let writer = spawn_persist_writer();
+    let persister = make_persister(&client, &writer);
 
-    persister.persist_cancelled(&[Event::Start]).await;
+    persister.persist_cancelled(&[Event::Start]);
+
+    drain(&writer).await;
 
     let sqls = recorded_sqls(&client);
     assert!(sqls.iter().any(|sql| {
@@ -236,10 +245,31 @@ async fn persist_cancelled_marks_run_cancelled_and_persists_cancel_event() {
         .iter()
         .any(|sql| sql
             == "UPDATE runs SET status = 'CANCELLED', updated_at = NOW() WHERE id = 'run-1'"));
-    // Trace writes are fire-and-forget via background queue
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    let sqls = recorded_sqls(&client);
     assert!(sqls
         .iter()
         .any(|sql| sql.contains("UPDATE traces SET status = 'failed'")));
+}
+
+#[tokio::test]
+async fn persist_success_returns_text_immediately() {
+    let client = make_client();
+    let writer = spawn_persist_writer();
+    let persister = make_persister(&client, &writer);
+    let result = AgentResult {
+        content: vec![ContentBlock::text("fast")],
+        iterations: 1,
+        usage: AgentUsage::default(),
+        stop_reason: Reason::EndTurn,
+        messages: Vec::new(),
+    };
+
+    // persist_success is synchronous — returns before any DB write
+    let text = persister
+        .persist_success(result, "p", "m", &[])
+        .expect("should not fail");
+    assert_eq!(text, "fast");
+
+    // At this point no SQL should have been executed yet (background queue)
+    // (We can't strictly guarantee timing, but the sync return is the key assertion)
+    writer.shutdown().await;
 }

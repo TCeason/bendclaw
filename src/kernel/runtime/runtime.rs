@@ -44,6 +44,7 @@ pub struct Runtime {
     pub(crate) directive_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) activity_tracker: Arc<ActivityTracker>,
     pub(crate) trace_writer: crate::kernel::trace::TraceWriter,
+    pub(crate) persist_writer: crate::kernel::run::persist_op::PersistWriter,
 }
 
 pub struct RuntimeParts {
@@ -65,6 +66,7 @@ pub struct RuntimeParts {
     pub directive_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     pub activity_tracker: Arc<ActivityTracker>,
     pub trace_writer: crate::kernel::trace::TraceWriter,
+    pub persist_writer: crate::kernel::run::persist_op::PersistWriter,
 }
 
 impl Runtime {
@@ -107,6 +109,7 @@ impl Runtime {
             directive_handle: parts.directive_handle,
             activity_tracker: parts.activity_tracker,
             trace_writer: parts.trace_writer,
+            persist_writer: parts.persist_writer,
         }
     }
 
@@ -153,6 +156,16 @@ impl Runtime {
         &self.config
     }
 
+    /// Wait until all queued persist operations have been processed.
+    /// Used by the non-stream path to ensure DB writes complete before
+    /// reading back the run record.
+    pub async fn flush_persist(&self) {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.persist_writer
+            .send(crate::kernel::run::persist_op::PersistOp::Flush(tx));
+        let _ = rx.await;
+    }
+
     pub fn llm(&self) -> Arc<dyn LLMProvider> {
         self.llm.read().clone()
     }
@@ -170,27 +183,46 @@ impl Runtime {
         agent_id: &str,
         pool: &Pool,
     ) -> crate::base::Result<Arc<dyn LLMProvider>> {
-        // Check cache
-        if let Some(provider) = self.agent_llms.read().get(agent_id) {
-            return Ok(provider.clone());
-        }
+        let (llm, _config) = self.resolve_agent_llm_and_config(agent_id, pool).await?;
+        Ok(llm)
+    }
 
-        // Query DB for agent-specific LLM config
+    /// Resolve LLM provider and return the agent config record (if any).
+    /// Single DB query shared by session factory for both LLM resolution
+    /// and config caching.
+    pub async fn resolve_agent_llm_and_config(
+        &self,
+        agent_id: &str,
+        pool: &Pool,
+    ) -> crate::base::Result<(
+        Arc<dyn LLMProvider>,
+        Option<crate::storage::dal::agent_config::record::AgentConfigRecord>,
+    )> {
+        // Check LLM cache (still need to fetch config for caller)
+        let cached_llm = self.agent_llms.read().get(agent_id).cloned();
+
         let config_store =
             crate::storage::dal::agent_config::repo::AgentConfigStore::new(pool.clone());
-        if let Some(record) = config_store.get(agent_id).await? {
-            if let Some(llm_config) = record.llm_config {
-                let router = crate::llm::router::LLMRouter::from_config(&llm_config)?;
+        let config_record = config_store.get(agent_id).await?;
+
+        let llm = if let Some(provider) = cached_llm {
+            provider
+        } else if let Some(ref record) = config_record {
+            if let Some(ref llm_config) = record.llm_config {
+                let router = crate::llm::router::LLMRouter::from_config(llm_config)?;
                 let provider: Arc<dyn LLMProvider> = Arc::new(router);
                 self.agent_llms
                     .write()
                     .insert(agent_id.to_string(), provider.clone());
-                return Ok(provider);
+                provider
+            } else {
+                self.llm.read().clone()
             }
-        }
+        } else {
+            self.llm.read().clone()
+        };
 
-        // Fallback to global
-        Ok(self.llm.read().clone())
+        Ok((llm, config_record))
     }
 
     /// Remove a cached per-agent LLM provider, forcing re-resolution on next use.

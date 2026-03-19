@@ -80,6 +80,7 @@ pub struct PromptBuilder {
     recall: Option<Arc<RecallStore>>,
     cluster_client: Option<Arc<ClusterService>>,
     directive_prompt: Option<String>,
+    cached_config: Option<crate::storage::dal::agent_config::record::AgentConfigRecord>,
 }
 
 impl PromptBuilder {
@@ -97,7 +98,16 @@ impl PromptBuilder {
             recall: None,
             cluster_client: None,
             directive_prompt: None,
+            cached_config: None,
         }
+    }
+
+    pub fn with_cached_config(
+        mut self,
+        config: Option<crate::storage::dal::agent_config::record::AgentConfigRecord>,
+    ) -> Self {
+        self.cached_config = config;
+        self
     }
 
     pub fn with_identity(mut self, s: impl Into<String>) -> Self {
@@ -305,7 +315,14 @@ impl PromptBuilder {
         String,
         Result<serde_json::Value>,
     ) {
-        let config_fut = self.storage.config_get(agent_id);
+        // Use cached config if available (avoids a DB round-trip).
+        let config_fut = async {
+            if let Some(ref record) = self.cached_config {
+                Ok(Some(record.clone()))
+            } else {
+                self.storage.config_get(agent_id).await
+            }
+        };
         let recall_fut = self.build_recall_hints(agent_id);
         let vars_fut = self.build_variables_text();
         let errors_fut = self.build_errors_text(session_id);

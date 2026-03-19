@@ -11,6 +11,7 @@ pub mod skills;
 pub mod task;
 pub mod tools;
 pub mod trace;
+pub mod writer;
 
 pub use runtime::Runtime;
 pub use session::Message;

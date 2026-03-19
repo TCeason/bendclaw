@@ -1,0 +1,307 @@
+//! Persist operations — dispatched to a background writer.
+
+use std::sync::Arc;
+
+use crate::kernel::agent_store::AgentStore;
+use crate::kernel::recall::RecallStore;
+use crate::kernel::run::event::Event;
+use crate::kernel::run::result::Reason;
+use crate::kernel::run::usage::ModelRole;
+use crate::kernel::run::usage::UsageEvent;
+use crate::kernel::trace::TraceRecorder;
+use crate::kernel::writer::BackgroundWriter;
+use crate::observability::server_log;
+use crate::storage::dal::run::record::RunStatus;
+use crate::storage::dal::run_event::record::RunEventRecord;
+
+pub enum PersistOp {
+    /// Barrier: signals all preceding ops are done. Used by non-stream path
+    /// to wait for DB writes before reading back.
+    Flush(tokio::sync::oneshot::Sender<()>),
+    RunSuccess {
+        storage: Arc<AgentStore>,
+        trace: Box<TraceRecorder>,
+        recall: Option<Arc<RecallStore>>,
+        run_id: String,
+        session_id: String,
+        agent_id: Arc<str>,
+        user_id: Arc<str>,
+        response_text: String,
+        error_text: String,
+        status: RunStatus,
+        metrics_json: String,
+        stop_reason: String,
+        iterations: u32,
+        duration_ms: u64,
+        usage: crate::kernel::run::result::Usage,
+        provider: String,
+        model: String,
+        event_records: Vec<RunEventRecord>,
+        events: Vec<Event>,
+    },
+    RunError {
+        storage: Arc<AgentStore>,
+        trace: TraceRecorder,
+        run_id: String,
+        session_id: String,
+        agent_id: Arc<str>,
+        error_text: String,
+        duration_ms: u64,
+        event_records: Vec<RunEventRecord>,
+    },
+    RunCancelled {
+        storage: Arc<AgentStore>,
+        trace: TraceRecorder,
+        run_id: String,
+        duration_ms: u64,
+        event_records: Vec<RunEventRecord>,
+    },
+}
+
+pub type PersistWriter = BackgroundWriter<PersistOp>;
+
+pub fn spawn_persist_writer() -> PersistWriter {
+    BackgroundWriter::spawn("persist", 256, |op| async {
+        handle_op(op).await;
+        true
+    })
+}
+
+async fn handle_op(op: PersistOp) {
+    match op {
+        PersistOp::Flush(tx) => {
+            let _ = tx.send(());
+        }
+        PersistOp::RunSuccess {
+            storage,
+            trace,
+            recall,
+            run_id,
+            session_id,
+            agent_id,
+            user_id,
+            response_text,
+            error_text,
+            status,
+            metrics_json,
+            stop_reason,
+            iterations,
+            duration_ms,
+            usage,
+            provider,
+            model,
+            event_records,
+            events,
+        } => {
+            let ctx = server_log::ServerCtx::new(
+                &trace.trace_id,
+                &run_id,
+                &session_id,
+                &agent_id,
+                iterations,
+            );
+
+            // Usage, events, run update — all in parallel
+            let usage_fut = record_usage(&storage, &ctx, &usage, &provider, &model);
+            let events_fut = persist_event_records(&storage, &ctx, &event_records);
+            let run_fut = storage.run_update_final(
+                &run_id,
+                status.clone(),
+                &response_text,
+                &error_text,
+                &metrics_json,
+                &stop_reason,
+                iterations,
+            );
+
+            let (usage_res, events_res, run_res) = tokio::join!(usage_fut, events_fut, run_fut);
+
+            if let Err(e) = usage_res {
+                tracing::warn!(error = %e, "persist: usage failed");
+            }
+            if let Err(e) = events_res {
+                tracing::error!(error = %e, "persist: run events failed");
+            }
+            if let Err(e) = run_res {
+                tracing::error!(error = %e, "persist: run update failed");
+            }
+
+            match status {
+                RunStatus::Completed | RunStatus::Paused => {
+                    trace.complete_trace(
+                        duration_ms,
+                        usage.prompt_tokens,
+                        usage.completion_tokens,
+                        0.0,
+                    );
+                }
+                _ => {
+                    trace.fail_trace(duration_ms);
+                }
+            }
+
+            server_log::info(
+                &ctx,
+                "run",
+                "completed",
+                server_log::ServerFields::default()
+                    .elapsed_ms(duration_ms)
+                    .tokens(usage.total_tokens)
+                    .bytes(metrics_json.len() as u64)
+                    .detail("status", status.as_str())
+                    .detail("provider", &provider)
+                    .detail("model", &model)
+                    .detail("iterations", iterations)
+                    .detail("stop_reason", &stop_reason)
+                    .detail("event_count", event_records.len())
+                    .detail("prompt_tokens", usage.prompt_tokens)
+                    .detail("completion_tokens", usage.completion_tokens)
+                    .detail("ttft_ms", usage.ttft_ms)
+                    .detail("response_preview", server_log::preview_text(&response_text))
+                    .detail("error", &error_text),
+            );
+
+            if let Some(recall) = recall {
+                let run_id = run_id.clone();
+                let user_id = user_id.to_string();
+                tokio::spawn(async move {
+                    crate::kernel::recall::post_run::process_run_events(
+                        &recall, &run_id, &user_id, &events,
+                    )
+                    .await;
+                });
+            }
+        }
+        PersistOp::RunError {
+            storage,
+            trace,
+            run_id,
+            session_id,
+            agent_id,
+            error_text,
+            duration_ms,
+            event_records,
+        } => {
+            let ctx =
+                server_log::ServerCtx::new(&trace.trace_id, &run_id, &session_id, &agent_id, 0);
+
+            let (events_res, run_res) = tokio::join!(
+                persist_event_records(&storage, &ctx, &event_records),
+                storage.run_update_final(
+                    &run_id,
+                    RunStatus::Error,
+                    "",
+                    &error_text,
+                    "",
+                    Reason::Error.as_str(),
+                    0,
+                )
+            );
+
+            if let Err(e) = events_res {
+                tracing::error!(error = %e, "persist: run events failed");
+            }
+            if let Err(e) = run_res {
+                tracing::warn!(error = %e, "persist: run update failed");
+            }
+
+            trace.fail_trace(duration_ms);
+
+            server_log::error(
+                &ctx,
+                "run",
+                "failed",
+                server_log::ServerFields::default()
+                    .elapsed_ms(duration_ms)
+                    .detail("status", RunStatus::Error.as_str())
+                    .detail("error", &error_text)
+                    .detail("event_count", event_records.len()),
+            );
+        }
+        PersistOp::RunCancelled {
+            storage,
+            trace,
+            run_id,
+            duration_ms,
+            event_records,
+        } => {
+            // Events and status update can be parallel, but we don't have
+            // ctx fields here — keep it simple.
+            for record in &event_records {
+                if let Err(e) = storage
+                    .run_events_insert_batch(std::slice::from_ref(record))
+                    .await
+                {
+                    tracing::error!(error = %e, "persist: cancel event failed");
+                }
+            }
+
+            if let Err(e) = storage
+                .run_update_status(&run_id, RunStatus::Cancelled)
+                .await
+            {
+                tracing::warn!(error = %e, "persist: cancel status update failed");
+            }
+
+            trace.fail_trace(duration_ms);
+        }
+    }
+}
+
+async fn record_usage(
+    storage: &AgentStore,
+    ctx: &server_log::ServerCtx<'_>,
+    usage: &crate::kernel::run::result::Usage,
+    provider: &str,
+    model: &str,
+) -> crate::base::Result<()> {
+    if usage.total_tokens == 0 {
+        return Ok(());
+    }
+    let event = UsageEvent {
+        agent_id: ctx.agent_id.to_string(),
+        user_id: String::new(),
+        session_id: ctx.session_id.to_string(),
+        run_id: ctx.run_id.to_string(),
+        provider: provider.to_string(),
+        model: model.to_string(),
+        model_role: ModelRole::Reasoning,
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        reasoning_tokens: usage.reasoning_tokens,
+        cache_read_tokens: usage.cache_read_tokens,
+        cache_write_tokens: usage.cache_write_tokens,
+        ttft_ms: usage.ttft_ms,
+        cost: 0.0,
+    };
+    storage.usage_record(event).await?;
+    storage.usage_flush().await
+}
+
+async fn persist_event_records(
+    storage: &AgentStore,
+    ctx: &server_log::ServerCtx<'_>,
+    records: &[RunEventRecord],
+) -> crate::base::Result<()> {
+    if records.is_empty() {
+        return Ok(());
+    }
+    let result = storage.run_events_insert_batch(records).await;
+    match &result {
+        Ok(_) => server_log::debug(
+            ctx,
+            "persist",
+            "run_events_saved",
+            server_log::ServerFields::default().rows(records.len() as u64),
+        ),
+        Err(error) => server_log::error(
+            ctx,
+            "persist",
+            "run_events_failed",
+            server_log::ServerFields::default()
+                .rows(records.len() as u64)
+                .detail("error", error.to_string()),
+        ),
+    }
+    result
+}

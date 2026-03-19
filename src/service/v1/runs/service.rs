@@ -196,6 +196,8 @@ pub async fn execute_run(
     if !stream_output {
         while run_stream.next().await.is_some() {}
         run_stream.finish().await?;
+        // Wait for background persist to complete before reading back.
+        state.runtime.flush_persist().await;
         let run = get_run(&state, &agent_id, &run_id).await?;
         return Ok(Json(run).into_response());
     }
