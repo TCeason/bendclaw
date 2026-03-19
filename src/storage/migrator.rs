@@ -21,8 +21,7 @@ const BASE_MIGRATIONS: &[&str] = &[
 /// Alter migrations — ALTER TABLE, DROP, etc. that depend on base tables.
 /// Executed strictly in order after all base migrations complete.
 const ALTER_MIGRATIONS: &[&str] = &[
-    // Future migrations go here, e.g.:
-    // include_str!("../../migrations/alter/0001_add_column.sql"),
+    include_str!("../../migrations/alter/0001_add_missing_columns.sql"),
 ];
 
 /// Run all agent migrations against the pool's current database.
