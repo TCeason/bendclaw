@@ -218,6 +218,11 @@ async fn scan_once(
         return Ok(());
     }
     let entries = resource.discover().await?;
+    tracing::info!(
+        table = resource.table(),
+        count = entries.len(),
+        "lease scan: resources discovered"
+    );
     let mut seen_ids = HashSet::new();
     let lease_secs = resource.lease_secs();
     let table = resource.table();
@@ -263,7 +268,13 @@ async fn scan_once(
                 held_map.remove(&entry.id);
             }
         } else if is_held_by_other(node_id, entry) {
-            // Another instance holds a valid lease — skip.
+            tracing::info!(
+                table,
+                resource_id = %entry.id,
+                holder = entry.lease_node_id.as_deref().unwrap_or(""),
+                expires = entry.lease_expires_at.as_deref().unwrap_or(""),
+                "lease held by another node, skipping"
+            );
         } else if cancel.is_cancelled() {
             // Shutting down — don't claim new resources.
         } else {
@@ -337,9 +348,17 @@ async fn scan_once(
                     }
                     held_map = held.lock().await;
                 }
-                Ok(false) => {}
+                Ok(false) => {
+                    tracing::info!(
+                        table,
+                        resource_id = %entry.id,
+                        lease_node_id = entry.lease_node_id.as_deref().unwrap_or(""),
+                        lease_expires_at = entry.lease_expires_at.as_deref().unwrap_or(""),
+                        "lease claim lost (row not updated)"
+                    );
+                }
                 Err(e) => {
-                    tracing::debug!(
+                    tracing::warn!(
                         table,
                         resource_id = %entry.id,
                         error = %e,
@@ -379,7 +398,7 @@ fn is_held_by_other(node_id: &str, entry: &ResourceEntry) -> bool {
     let Some(ref expires) = entry.lease_expires_at else {
         return false;
     };
-    match chrono::NaiveDateTime::parse_from_str(expires, "%Y-%m-%d %H:%M:%S") {
+    match chrono::NaiveDateTime::parse_from_str(expires, "%Y-%m-%d %H:%M:%S%.f") {
         Ok(exp) => exp > chrono::Utc::now().naive_utc(),
         Err(_) => false,
     }

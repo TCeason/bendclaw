@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use serde::Serialize;
 use serde_json::Map;
 use serde_json::Value;
@@ -94,19 +96,85 @@ impl ServerFields {
         self
     }
 
-    fn payload_text(&self) -> String {
-        let payload = redaction::redact(Value::Object(self.payload.clone()));
-        let text = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string());
-        const MAX_PAYLOAD: usize = 1024;
-        if text.len() > MAX_PAYLOAD {
-            format!(
-                "{}...(truncated {} bytes)",
-                truncate_bytes_on_char_boundary(&text, MAX_PAYLOAD),
-                text.len() - MAX_PAYLOAD
-            )
-        } else {
-            text
+    /// Build a compact single-line message: non-zero metrics + flattened payload + context.
+    fn format_line(&self, stage: &str, status: &str, ctx: &ServerCtx<'_>) -> String {
+        let mut buf = format!("[{stage}] {status}");
+
+        if self.elapsed_ms > 0 {
+            write!(buf, " elapsed={}ms", self.elapsed_ms).ok();
         }
+        if self.tokens > 0 {
+            write!(buf, " tokens={}", self.tokens).ok();
+        }
+        if self.rows > 0 {
+            write!(buf, " rows={}", self.rows).ok();
+        }
+        if self.bytes > 0 {
+            write!(buf, " bytes={}", self.bytes).ok();
+        }
+        if self.cost > 0.0 {
+            write!(buf, " cost={:.4}", self.cost).ok();
+        }
+        if self.attempt > 0 {
+            write!(buf, " attempt={}", self.attempt).ok();
+        }
+
+        // Flatten payload key=value pairs inline.
+        let redacted = redaction::redact(Value::Object(self.payload.clone()));
+        if let Value::Object(map) = redacted {
+            for (k, v) in &map {
+                match v {
+                    Value::Null => {}
+                    Value::Bool(b) => {
+                        write!(buf, " {k}={b}").ok();
+                    }
+                    Value::Number(n) => {
+                        write!(buf, " {k}={n}").ok();
+                    }
+                    Value::String(s) => {
+                        if !s.is_empty() {
+                            const MAX_VAL: usize = 200;
+                            if s.len() > MAX_VAL {
+                                write!(
+                                    buf,
+                                    " {k}=\"{}...\"",
+                                    truncate_bytes_on_char_boundary(s, MAX_VAL)
+                                )
+                                .ok();
+                            } else if s.contains(' ') {
+                                write!(buf, " {k}=\"{s}\"").ok();
+                            } else {
+                                write!(buf, " {k}={s}").ok();
+                            }
+                        }
+                    }
+                    _ => {
+                        let json = serde_json::to_string(v).unwrap_or_default();
+                        const MAX_JSON: usize = 200;
+                        if json.len() > MAX_JSON {
+                            write!(
+                                buf,
+                                " {k}={}...",
+                                truncate_bytes_on_char_boundary(&json, MAX_JSON)
+                            )
+                            .ok();
+                        } else {
+                            write!(buf, " {k}={json}").ok();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Context IDs after separator.
+        write!(
+            buf,
+            " | run={} sid={} turn={}",
+            ctx.run_id, ctx.session_id, ctx.turn
+        )
+        .ok();
+
+        buf
     }
 }
 
@@ -121,81 +189,21 @@ pub fn preview_text(text: &str) -> String {
 }
 
 pub fn debug(ctx: &ServerCtx<'_>, stage: &str, status: &str, fields: ServerFields) {
-    tracing::debug!(
-        trace_id = %ctx.trace_id,
-        run_id = %ctx.run_id,
-        session_id = %ctx.session_id,
-        agent_id = %ctx.agent_id,
-        turn = ctx.turn,
-        stage,
-        status,
-        elapsed_ms = fields.elapsed_ms,
-        tokens = fields.tokens,
-        rows = fields.rows,
-        bytes = fields.bytes,
-        cost = fields.cost,
-        attempt = fields.attempt,
-        payload = %fields.payload_text(),
-        "server log"
-    );
+    let msg = fields.format_line(stage, status, ctx);
+    tracing::debug!("{msg}");
 }
 
 pub fn info(ctx: &ServerCtx<'_>, stage: &str, status: &str, fields: ServerFields) {
-    tracing::info!(
-        trace_id = %ctx.trace_id,
-        run_id = %ctx.run_id,
-        session_id = %ctx.session_id,
-        agent_id = %ctx.agent_id,
-        turn = ctx.turn,
-        stage,
-        status,
-        elapsed_ms = fields.elapsed_ms,
-        tokens = fields.tokens,
-        rows = fields.rows,
-        bytes = fields.bytes,
-        cost = fields.cost,
-        attempt = fields.attempt,
-        payload = %fields.payload_text(),
-        "server log"
-    );
+    let msg = fields.format_line(stage, status, ctx);
+    tracing::info!("{msg}");
 }
 
 pub fn warn(ctx: &ServerCtx<'_>, stage: &str, status: &str, fields: ServerFields) {
-    tracing::warn!(
-        trace_id = %ctx.trace_id,
-        run_id = %ctx.run_id,
-        session_id = %ctx.session_id,
-        agent_id = %ctx.agent_id,
-        turn = ctx.turn,
-        stage,
-        status,
-        elapsed_ms = fields.elapsed_ms,
-        tokens = fields.tokens,
-        rows = fields.rows,
-        bytes = fields.bytes,
-        cost = fields.cost,
-        attempt = fields.attempt,
-        payload = %fields.payload_text(),
-        "server log"
-    );
+    let msg = fields.format_line(stage, status, ctx);
+    tracing::warn!("{msg}");
 }
 
 pub fn error(ctx: &ServerCtx<'_>, stage: &str, status: &str, fields: ServerFields) {
-    tracing::error!(
-        trace_id = %ctx.trace_id,
-        run_id = %ctx.run_id,
-        session_id = %ctx.session_id,
-        agent_id = %ctx.agent_id,
-        turn = ctx.turn,
-        stage,
-        status,
-        elapsed_ms = fields.elapsed_ms,
-        tokens = fields.tokens,
-        rows = fields.rows,
-        bytes = fields.bytes,
-        cost = fields.cost,
-        attempt = fields.attempt,
-        payload = %fields.payload_text(),
-        "server log"
-    );
+    let msg = fields.format_line(stage, status, ctx);
+    tracing::error!("{msg}");
 }

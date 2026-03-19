@@ -85,7 +85,6 @@ async fn log_http_request(mut req: Request<Body>, next: Next) -> Response {
             header
         }
     };
-    let user_agent = header_value(&req, "user-agent");
     let content_length = req
         .headers()
         .get("content-length")
@@ -97,62 +96,29 @@ async fn log_http_request(mut req: Request<Body>, next: Next) -> Response {
     let status = response.status();
     let elapsed_ms = started.elapsed().as_millis() as u64;
 
-    if status.is_server_error() {
-        tracing::error!(
-            stage = "http",
-            method = %method,
-            uri = %uri,
-            matched_path,
-            trace_id,
-            user_id,
-            user_agent,
-            content_length,
-            response_status = status.as_u16(),
-            elapsed_ms,
-            "http request"
-        );
-    } else if status.is_client_error() {
-        tracing::warn!(
-            stage = "http",
-            method = %method,
-            uri = %uri,
-            matched_path,
-            trace_id,
-            user_id,
-            user_agent,
-            content_length,
-            response_status = status.as_u16(),
-            elapsed_ms,
-            "http request"
-        );
-    } else if elapsed_ms >= 1000 {
-        tracing::info!(
-            stage = "http",
-            method = %method,
-            uri = %uri,
-            matched_path,
-            trace_id,
-            user_id,
-            user_agent,
-            content_length,
-            response_status = status.as_u16(),
-            elapsed_ms,
-            "http request"
-        );
+    let path = if matched_path.is_empty() {
+        uri.path().to_string()
     } else {
-        tracing::debug!(
-            stage = "http",
-            method = %method,
-            uri = %uri,
-            matched_path,
-            trace_id,
-            user_id,
-            user_agent,
-            content_length,
-            response_status = status.as_u16(),
-            elapsed_ms,
-            "http request"
-        );
+        matched_path
+    };
+    let code = status.as_u16();
+    let len_part = if content_length > 0 {
+        format!(" len={content_length}")
+    } else {
+        String::new()
+    };
+    let msg = format!(
+        "[http] {code} {method} {path} elapsed={elapsed_ms}ms{len_part} | trace={trace_id} user={user_id}"
+    );
+
+    if status.is_server_error() {
+        tracing::error!("{msg}");
+    } else if status.is_client_error() {
+        tracing::warn!("{msg}");
+    } else if elapsed_ms >= 1000 {
+        tracing::info!("{msg}");
+    } else {
+        tracing::debug!("{msg}");
     }
 
     response

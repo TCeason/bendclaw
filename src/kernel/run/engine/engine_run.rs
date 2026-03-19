@@ -267,12 +267,10 @@ impl Engine {
             usage: usage.clone(),
         })
         .await;
+        let dur = self.start_time.elapsed().as_millis() as u64;
         tracing::info!(
-            duration_ms = self.start_time.elapsed().as_millis() as u64,
-            iterations, prompt_tokens = usage.prompt_tokens,
-            completion_tokens = usage.completion_tokens,
-            ttft_ms = usage.ttft_ms,
-            stop_reason = %stop_reason, "engine finished"
+            "[engine] finished duration={dur}ms iters={iterations} prompt={} completion={} ttft={}ms stop={stop_reason}",
+            usage.prompt_tokens, usage.completion_tokens, usage.ttft_ms
         );
         Ok(AgentResult {
             content,
