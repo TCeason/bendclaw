@@ -9,6 +9,15 @@ use crate::base::ErrorCode;
 use crate::base::Result as BaseResult;
 use crate::storage::sql;
 
+/// Parse a cron expression, auto-padding 5-field user input to the 7-field
+/// format required by the `cron` crate (prepend seconds, append year).
+fn parse_cron(expr: &str) -> Result<Schedule, cron::error::Error> {
+    Schedule::from_str(expr).or_else(|_| {
+        let padded = format!("0 {expr} *");
+        Schedule::from_str(&padded)
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TaskSchedule {
@@ -25,7 +34,7 @@ impl TaskSchedule {
                 if expr.is_empty() {
                     return Err("schedule.expr is required".into());
                 }
-                Schedule::from_str(expr).map_err(|e| format!("invalid cron expression: {e}"))?;
+                parse_cron(expr).map_err(|e| format!("invalid cron expression: {e}"))?;
                 if let Some(tz_name) = tz {
                     tz_name
                         .parse::<chrono_tz::Tz>()
@@ -60,7 +69,7 @@ impl TaskSchedule {
                 if expr.is_empty() {
                     return None;
                 }
-                let schedule = match Schedule::from_str(expr) {
+                let schedule = match parse_cron(expr) {
                     Ok(s) => s,
                     Err(e) => {
                         tracing::warn!(cron_expr = expr, error = %e, "invalid cron expression");

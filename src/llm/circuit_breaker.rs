@@ -5,6 +5,27 @@ use std::time::Instant;
 
 use parking_lot::Mutex;
 
+use crate::base::ErrorCode;
+
+/// Whether an error is transient (network, rate-limit, server) and should
+/// count toward the circuit breaker threshold. Non-transient errors (auth,
+/// context-length, invalid input) should not trip the breaker.
+pub fn is_transient(error: &ErrorCode) -> bool {
+    matches!(
+        error.code,
+        ErrorCode::LLM_RATE_LIMIT | ErrorCode::LLM_SERVER | ErrorCode::TIMEOUT
+    ) || {
+        let msg = error.message.to_lowercase();
+        msg.contains("rate")
+            || msg.contains("overloaded")
+            || msg.contains("503")
+            || msg.contains("502")
+            || msg.contains("429")
+            || msg.contains("timeout")
+            || msg.contains("connection")
+    }
+}
+
 /// Tracks consecutive failures and trips open after a threshold.
 ///
 /// States:
@@ -76,6 +97,15 @@ impl CircuitBreaker {
                 );
             }
             *guard = Some(Instant::now());
+        }
+    }
+
+    /// Like `record_failure`, but only counts transient errors.
+    /// Non-transient errors (auth, context-length) are ignored to avoid
+    /// false trips that block all requests.
+    pub fn record_failure_if_transient(&self, error: &ErrorCode) {
+        if is_transient(error) {
+            self.record_failure();
         }
     }
 

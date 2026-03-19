@@ -180,7 +180,8 @@ fn spawn_scan_loop(
             lease_count.store(held.lock().await.len(), Ordering::Relaxed);
 
             let sleep_dur = if consecutive_errors > 0 {
-                let secs = (60u64 << (consecutive_errors - 1).min(3)).min(300);
+                let max_backoff = resource.lease_secs() / 2;
+                let secs = (60u64 << (consecutive_errors - 1).min(3)).min(max_backoff);
                 Duration::from_secs(secs)
             } else {
                 interval

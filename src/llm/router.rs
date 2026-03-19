@@ -150,7 +150,7 @@ impl LLMProvider for LLMRouter {
                     return Ok(resp);
                 }
                 Err(e) => {
-                    slot.breaker.record_failure();
+                    slot.breaker.record_failure_if_transient(&e);
                     tracing::warn!(
                         name = %slot.name,
                         provider = %slot.provider_name,

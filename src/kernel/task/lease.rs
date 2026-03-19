@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 
@@ -9,6 +10,10 @@ use crate::kernel::lease::types::ResourceEntry;
 use crate::kernel::runtime::Runtime;
 use crate::storage::dal::task::repo::TaskRepo;
 use crate::storage::pool::Pool;
+
+/// Maximum wall-clock time a single task execution may take.
+/// Prevents runaway LLM calls or hung deliveries from holding a lease forever.
+const TASK_EXECUTION_TIMEOUT: Duration = Duration::from_secs(270);
 
 /// Drop guard that calls release_fn when the spawned task exits,
 /// regardless of whether it completed normally or panicked.
@@ -131,16 +136,29 @@ impl LeaseResource for TaskLeaseResource {
                 task_id,
                 release_fn,
             };
-            if let Err(e) =
-                super::executor::execute_task(&runtime, &agent_id, &task, &lease_token, &client)
-                    .await
-            {
-                tracing::error!(
-                    task_id = task.id,
-                    agent_id,
-                    error = %e,
-                    "task execution failed"
-                );
+            let result = tokio::time::timeout(
+                TASK_EXECUTION_TIMEOUT,
+                super::executor::execute_task(&runtime, &agent_id, &task, &lease_token, &client),
+            )
+            .await;
+            match result {
+                Ok(Err(e)) => {
+                    tracing::error!(
+                        task_id = task.id,
+                        agent_id,
+                        error = %e,
+                        "task execution failed"
+                    );
+                }
+                Err(_) => {
+                    tracing::error!(
+                        task_id = task.id,
+                        agent_id,
+                        timeout_secs = TASK_EXECUTION_TIMEOUT.as_secs(),
+                        "task execution timed out"
+                    );
+                }
+                Ok(Ok(())) => {}
             }
         });
 

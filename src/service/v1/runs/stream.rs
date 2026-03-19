@@ -77,7 +77,7 @@ pub fn map_event_to_sse(
             name,
             success,
             output,
-            ..
+            operation,
         } => {
             let event_name = if *success {
                 "ToolCallCompleted"
@@ -89,6 +89,12 @@ pub fn map_event_to_sse(
             payload["tool_name"] = serde_json::Value::String(name.clone());
             payload["content"] = serde_json::Value::String(output.clone());
             payload["success"] = serde_json::Value::Bool(*success);
+            payload["op_type"] = serde_json::Value::String(operation.op_type.to_string());
+            payload["duration_ms"] = serde_json::json!(operation.duration_ms);
+            payload["summary"] = serde_json::Value::String(operation.summary.clone());
+            if let Some(ref impact) = operation.impact {
+                payload["impact"] = serde_json::Value::String(impact.to_string());
+            }
             (event_name, payload)
         }
         Event::CompactionDone {
