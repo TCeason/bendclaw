@@ -523,6 +523,48 @@ mod sse_mapping {
     }
 
     #[test]
+    fn tool_end_sse_includes_operation_fields() {
+        let mut meta = bendclaw::kernel::OperationMeta::new(bendclaw::kernel::OpType::Execute);
+        meta.impact = Some(bendclaw::kernel::Impact::High);
+        meta.summary = "delete task task-1".into();
+        meta.duration_ms = 42;
+        let event = Event::ToolEnd {
+            tool_call_id: "tc_2".into(),
+            name: "task_delete".into(),
+            success: true,
+            output: "deleted".into(),
+            operation: meta,
+        };
+        let sse = map_event_to_sse("a", "s", "r", &event).unwrap();
+        let data = format!("{sse:?}");
+        assert!(data.contains("high"), "should include impact: {data}");
+        assert!(data.contains("EXECUTE"), "should include op_type: {data}");
+        assert!(
+            data.contains("delete task task-1"),
+            "should include summary: {data}"
+        );
+    }
+
+    #[test]
+    fn tool_end_sse_omits_impact_when_none() {
+        let meta = bendclaw::kernel::OperationMeta::new(bendclaw::kernel::OpType::FileRead);
+        let event = Event::ToolEnd {
+            tool_call_id: "tc_3".into(),
+            name: "file_read".into(),
+            success: true,
+            output: "content".into(),
+            operation: meta,
+        };
+        let sse = map_event_to_sse("a", "s", "r", &event).unwrap();
+        let data = format!("{sse:?}");
+        assert!(data.contains("FILE_READ"), "should include op_type: {data}");
+        assert!(
+            !data.contains("\"impact\""),
+            "should omit impact when None: {data}"
+        );
+    }
+
+    #[test]
     fn agent_event_payload_includes_tool_call_id() {
         let (_, payload) = map_agent_event("a", "s", "r", "tc_99", &AgentEvent::Text {
             content: "x".into(),

@@ -1,6 +1,8 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use bendclaw::base::ErrorCode;
+use bendclaw::llm::circuit_breaker::is_transient;
 use bendclaw::llm::circuit_breaker::CircuitBreaker;
 
 #[test]
@@ -71,5 +73,80 @@ fn test_failure_count_continues_to_increment_after_tripped() -> Result<()> {
     cb.record_failure();
     assert_eq!(cb.failure_count(), 3);
     assert!(!cb.is_available());
+    Ok(())
+}
+
+// ── is_transient ──
+
+#[test]
+fn transient_rate_limit_error() {
+    assert!(is_transient(&ErrorCode::llm_rate_limit(
+        "rate limit exceeded"
+    )));
+}
+
+#[test]
+fn transient_server_error() {
+    assert!(is_transient(&ErrorCode::llm_server(
+        "internal server error"
+    )));
+}
+
+#[test]
+fn transient_timeout_error() {
+    assert!(is_transient(&ErrorCode::timeout("request timed out")));
+}
+
+#[test]
+fn transient_message_overloaded() {
+    assert!(is_transient(&ErrorCode::llm_request("model is overloaded")));
+}
+
+#[test]
+fn transient_message_503() {
+    assert!(is_transient(&ErrorCode::llm_request("HTTP 503")));
+}
+
+#[test]
+fn transient_message_connection() {
+    assert!(is_transient(&ErrorCode::llm_request(
+        "connection reset by peer"
+    )));
+}
+
+#[test]
+fn non_transient_auth_error() {
+    assert!(!is_transient(&ErrorCode::llm_request("invalid API key")));
+}
+
+#[test]
+fn non_transient_context_length() {
+    assert!(!is_transient(&ErrorCode::llm_request(
+        "context length exceeded"
+    )));
+}
+
+// ── record_failure_if_transient ──
+
+#[test]
+fn record_failure_if_transient_counts_transient() -> Result<()> {
+    let cb = CircuitBreaker::new(2, Duration::from_secs(60));
+    let e = ErrorCode::llm_rate_limit("rate limit");
+    cb.record_failure_if_transient(&e);
+    cb.record_failure_if_transient(&e);
+    assert_eq!(cb.failure_count(), 2);
+    assert!(!cb.is_available());
+    Ok(())
+}
+
+#[test]
+fn record_failure_if_transient_ignores_non_transient() -> Result<()> {
+    let cb = CircuitBreaker::new(2, Duration::from_secs(60));
+    let e = ErrorCode::llm_request("invalid API key");
+    cb.record_failure_if_transient(&e);
+    cb.record_failure_if_transient(&e);
+    cb.record_failure_if_transient(&e);
+    assert_eq!(cb.failure_count(), 0);
+    assert!(cb.is_available());
     Ok(())
 }

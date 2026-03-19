@@ -112,6 +112,43 @@ fn schedule_cron_with_invalid_tz_falls_back_to_utc() -> Result<()> {
     Ok(())
 }
 
+// ── Cron 5-field auto-pad ──
+
+#[test]
+fn schedule_cron_five_field_auto_pads() -> Result<()> {
+    let schedule = TaskSchedule::Cron {
+        expr: "0 9 * * *".into(),
+        tz: None,
+    };
+    let result = schedule.next_run_at();
+    assert!(result.is_some());
+    let ts = NaiveDateTime::parse_from_str(result.as_deref().unwrap(), "%Y-%m-%d %H:%M:%S")?;
+    assert_eq!(ts.and_utc().format("%H:%M").to_string(), "09:00");
+    Ok(())
+}
+
+#[test]
+fn validate_cron_five_field_ok() {
+    let schedule = TaskSchedule::Cron {
+        expr: "0 9 * * *".into(),
+        tz: None,
+    };
+    assert!(schedule.validate().is_ok());
+}
+
+#[test]
+fn schedule_cron_five_field_with_tz() -> Result<()> {
+    let schedule = TaskSchedule::Cron {
+        expr: "0 9 * * *".into(),
+        tz: Some("Asia/Shanghai".into()),
+    };
+    let result = schedule.next_run_at();
+    assert!(result.is_some());
+    let ts = NaiveDateTime::parse_from_str(result.as_deref().unwrap(), "%Y-%m-%d %H:%M:%S")?;
+    assert_eq!(ts.and_utc().format("%H:%M").to_string(), "01:00");
+    Ok(())
+}
+
 // ── validate ──
 
 #[test]
