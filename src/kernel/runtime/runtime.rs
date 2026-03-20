@@ -45,6 +45,8 @@ pub struct Runtime {
     pub(crate) activity_tracker: Arc<ActivityTracker>,
     pub(crate) trace_writer: crate::kernel::trace::TraceWriter,
     pub(crate) persist_writer: crate::kernel::run::persist_op::PersistWriter,
+    pub(crate) channel_message_writer: crate::kernel::channel::ChannelMessageWriter,
+    pub(crate) tool_writer: crate::kernel::writer::tool_op::ToolWriter,
 }
 
 pub struct RuntimeParts {
@@ -67,6 +69,8 @@ pub struct RuntimeParts {
     pub activity_tracker: Arc<ActivityTracker>,
     pub trace_writer: crate::kernel::trace::TraceWriter,
     pub persist_writer: crate::kernel::run::persist_op::PersistWriter,
+    pub channel_message_writer: crate::kernel::channel::ChannelMessageWriter,
+    pub tool_writer: crate::kernel::writer::tool_op::ToolWriter,
 }
 
 impl Runtime {
@@ -110,6 +114,8 @@ impl Runtime {
             activity_tracker: parts.activity_tracker,
             trace_writer: parts.trace_writer,
             persist_writer: parts.persist_writer,
+            channel_message_writer: parts.channel_message_writer,
+            tool_writer: parts.tool_writer,
         }
     }
 

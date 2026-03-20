@@ -364,6 +364,8 @@ impl PromptBuilder {
         }
         buf.push_str(
             "\nCall tools when they would help accomplish the task.\
+             \nPrefer `grep` over shell for searching file contents (regex pattern matching).\
+             \nPrefer `glob` over shell for finding files by name pattern.\
              \nUse memory_write for user or session preferences.\
              \nUse learning_write for reusable agent-level lessons.\
              \nSearch memory, knowledge, or learning when prior context may help.\n",

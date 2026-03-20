@@ -186,6 +186,7 @@ async fn web_search_success_formats_results_and_caps_count(
             cli_agent_state: bendclaw::kernel::tools::cli_agent::new_shared_state(),
             tool_call_id: None,
         },
+        tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),
     };
 
     let result = tool

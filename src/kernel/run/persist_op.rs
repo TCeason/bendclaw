@@ -11,6 +11,7 @@ use crate::kernel::run::usage::UsageEvent;
 use crate::kernel::trace::TraceRecorder;
 use crate::kernel::writer::BackgroundWriter;
 use crate::observability::server_log;
+use crate::storage::dal::run::record::RunRecord;
 use crate::storage::dal::run::record::RunStatus;
 use crate::storage::dal::run_event::record::RunEventRecord;
 
@@ -18,6 +19,16 @@ pub enum PersistOp {
     /// Barrier: signals all preceding ops are done. Used by non-stream path
     /// to wait for DB writes before reading back.
     Flush(tokio::sync::oneshot::Sender<()>),
+    InitRun {
+        storage: Arc<AgentStore>,
+        run_id: String,
+        session_id: String,
+        agent_id: String,
+        user_id: String,
+        user_message: String,
+        parent_run_id: String,
+        node_id: String,
+    },
     RunSuccess {
         storage: Arc<AgentStore>,
         trace: Box<TraceRecorder>,
@@ -71,6 +82,53 @@ async fn handle_op(op: PersistOp) {
     match op {
         PersistOp::Flush(tx) => {
             let _ = tx.send(());
+        }
+        PersistOp::InitRun {
+            storage,
+            run_id,
+            session_id,
+            agent_id,
+            user_id,
+            user_message,
+            parent_run_id,
+            node_id,
+        } => {
+            if storage
+                .session_load(&session_id)
+                .await
+                .ok()
+                .flatten()
+                .is_none()
+            {
+                if let Err(e) = storage
+                    .session_upsert(&session_id, &agent_id, &user_id, Some(&user_message), None)
+                    .await
+                {
+                    tracing::warn!(error = %e, "persist: session upsert failed");
+                }
+            }
+            if let Err(e) = storage
+                .run_insert(&RunRecord {
+                    id: run_id,
+                    session_id,
+                    agent_id,
+                    user_id,
+                    parent_run_id,
+                    node_id,
+                    status: RunStatus::Running.as_str().to_string(),
+                    input: user_message,
+                    output: String::new(),
+                    error: String::new(),
+                    metrics: String::new(),
+                    stop_reason: String::new(),
+                    iterations: 0,
+                    created_at: String::new(),
+                    updated_at: String::new(),
+                })
+                .await
+            {
+                tracing::warn!(error = %e, "persist: run insert failed");
+            }
         }
         PersistOp::RunSuccess {
             storage,

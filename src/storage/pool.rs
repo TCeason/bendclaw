@@ -13,6 +13,19 @@ use crate::base::ErrorCode;
 use crate::base::Result;
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(60);
+const SQL_LOG_MAX_LEN: usize = 200;
+
+fn truncate_sql(sql: &str) -> String {
+    if sql.len() <= SQL_LOG_MAX_LEN {
+        sql.to_string()
+    } else {
+        let mut end = SQL_LOG_MAX_LEN;
+        while end > 0 && !sql.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...({}B)", &sql[..end], sql.len())
+    }
+}
 
 #[async_trait::async_trait]
 pub trait DatabendClient: Send + Sync {
@@ -172,10 +185,8 @@ impl Pool {
                     stage = "storage",
                     operation = "exec",
                     status = "retrying",
-                    base_url = %self.base_url,
-                    warehouse = %self.warehouse,
                     database = self.database.as_deref().unwrap_or_default(),
-                    sql = %sql,
+                    sql = %truncate_sql(&sql),
                     error = %e,
                     delay_ms = dur.as_millis() as u64,
                     "storage query"
@@ -187,10 +198,8 @@ impl Pool {
                 stage = "storage",
                 operation = "exec",
                 status = "completed",
-                base_url = %self.base_url,
-                warehouse = %self.warehouse,
                 database = self.database.as_deref().unwrap_or_default(),
-                sql = %sql,
+                sql = %truncate_sql(&sql),
                 elapsed_ms = started.elapsed().as_millis() as u64,
                 "storage query"
             ),
@@ -198,10 +207,8 @@ impl Pool {
                 stage = "storage",
                 operation = "exec",
                 status = "failed",
-                base_url = %self.base_url,
-                warehouse = %self.warehouse,
                 database = self.database.as_deref().unwrap_or_default(),
-                sql = %sql,
+                sql = %truncate_sql(&sql),
                 elapsed_ms = started.elapsed().as_millis() as u64,
                 error = %error,
                 "storage query"
@@ -265,10 +272,8 @@ impl Pool {
                     stage = "storage",
                     operation = "query_all",
                     status = "retrying",
-                    base_url = %self.base_url,
-                    warehouse = %self.warehouse,
                     database = self.database.as_deref().unwrap_or_default(),
-                    sql = %sql,
+                    sql = %truncate_sql(&sql),
                     error = %e,
                     delay_ms = dur.as_millis() as u64,
                     "storage query"
@@ -280,10 +285,8 @@ impl Pool {
                 stage = "storage",
                 operation = "query_all",
                 status = "completed",
-                base_url = %self.base_url,
-                warehouse = %self.warehouse,
                 database = self.database.as_deref().unwrap_or_default(),
-                sql = %sql,
+                sql = %truncate_sql(&sql),
                 rows = rows.len(),
                 elapsed_ms = started.elapsed().as_millis() as u64,
                 "storage query"
@@ -292,10 +295,8 @@ impl Pool {
                 stage = "storage",
                 operation = "query_all",
                 status = "failed",
-                base_url = %self.base_url,
-                warehouse = %self.warehouse,
                 database = self.database.as_deref().unwrap_or_default(),
-                sql = %sql,
+                sql = %truncate_sql(&sql),
                 elapsed_ms = started.elapsed().as_millis() as u64,
                 error = %error,
                 "storage query"

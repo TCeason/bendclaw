@@ -203,19 +203,16 @@ impl Tool for LearningWriteTool {
             updated_at: String::new(),
         };
 
-        match self.store.learnings().insert(&record).await {
-            Ok(()) => {
-                tracing::info!(kind, subject, title, "learning written");
-                Ok(ToolResult::ok(format!(
-                    "Learning '{}' written successfully ({})",
-                    title, kind
-                )))
-            }
-            Err(e) => {
-                tracing::warn!(kind, subject, title, error = %e, "learning write failed");
-                Ok(ToolResult::error(format!("Failed to write learning: {e}")))
-            }
-        }
+        let op = crate::kernel::writer::tool_op::ToolWriteOp::LearningWrite {
+            store: self.store.clone(),
+            record: Box::new(record),
+        };
+        ctx.tool_writer.send(op);
+
+        Ok(ToolResult::ok(format!(
+            "Learning '{}' written ({})",
+            title, kind
+        )))
     }
 }
 

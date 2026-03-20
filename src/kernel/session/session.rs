@@ -68,6 +68,7 @@ pub struct SessionResources {
     pub recall: Option<Arc<RecallStore>>,
     pub cluster_client: Option<Arc<crate::kernel::cluster::ClusterService>>,
     pub directive: Option<Arc<DirectiveService>>,
+    pub tool_writer: crate::kernel::writer::tool_op::ToolWriter,
     pub trace_writer: crate::kernel::trace::TraceWriter,
     pub persist_writer: crate::kernel::run::persist_op::PersistWriter,
     pub cached_config: Option<crate::storage::dal::agent_config::record::AgentConfigRecord>,
@@ -142,14 +143,14 @@ impl Session {
 
         let run_id = crate::kernel::run::run_record::init_run(
             &self.res.storage,
+            &self.res.persist_writer,
             &self.id,
             &self.agent_id,
             &self.user_id,
             user_message,
             parent_run_id,
             &self.res.config.node_id,
-        )
-        .await?;
+        )?;
 
         history.push(Message::user(user_message));
 
@@ -372,6 +373,7 @@ impl Session {
                     cli_agent_state: crate::kernel::tools::cli_agent::new_shared_state(),
                     tool_call_id: None,
                 },
+                tool_writer: self.res.tool_writer.clone(),
             },
             cancel.clone(),
             event_tx,

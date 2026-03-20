@@ -113,18 +113,16 @@ impl Tool for MemoryWriteTool {
             updated_at: String::new(),
         };
 
-        match self.storage.write(&ctx.user_id, entry).await {
-            Ok(()) => {
-                tracing::info!(key, scope = normalized_scope, "memory written");
-                Ok(ToolResult::ok(format!(
-                    "Memory '{}' written successfully (scope: {})",
-                    key, normalized_scope
-                )))
-            }
-            Err(e) => {
-                tracing::warn!(key, scope = normalized_scope, error = %e, "memory write failed");
-                Ok(ToolResult::error(format!("Failed to write memory: {e}")))
-            }
-        }
+        let op = crate::kernel::writer::tool_op::ToolWriteOp::MemoryWrite {
+            storage: self.storage.clone(),
+            user_id: ctx.user_id.to_string(),
+            entry,
+        };
+        ctx.tool_writer.send(op);
+
+        Ok(ToolResult::ok(format!(
+            "Memory '{}' written (scope: {})",
+            key, normalized_scope
+        )))
     }
 }

@@ -23,6 +23,8 @@ pub struct ToolRuntime {
     pub tool_call_id: Option<Arc<str>>,
 }
 
+use crate::kernel::writer::tool_op::ToolWriter;
+
 /// Per-session identity context passed to tools at execution time.
 #[derive(Clone)]
 pub struct ToolContext {
@@ -37,6 +39,7 @@ pub struct ToolContext {
     /// Prevents nested dispatch — only one level of fanout is allowed.
     pub is_dispatched: bool,
     pub runtime: ToolRuntime,
+    pub tool_writer: ToolWriter,
 }
 
 impl ToolContext {

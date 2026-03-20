@@ -5,6 +5,7 @@ pub mod databend;
 pub mod file;
 pub mod memory;
 pub mod recall;
+pub mod search;
 pub mod shell;
 pub mod skill;
 pub mod task;

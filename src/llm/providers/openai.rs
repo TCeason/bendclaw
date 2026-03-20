@@ -186,11 +186,9 @@ impl LLMProvider for OpenAIProvider {
             )
             .await
             {
-                tracing::error!(
+                tracing::warn!(
                     provider = "openai",
                     model = %model_owned,
-                    base_url = %base_url,
-                    api_key = %masked_api_key,
                     error = %msg,
                     "llm stream failed"
                 );
@@ -208,7 +206,7 @@ async fn drive_stream(
     client: &Client,
     url: &str,
     api_key: &str,
-    base_url: &str,
+    _base_url: &str,
     masked_api_key: &str,
     body: &serde_json::Value,
     writer: &StreamWriter,
@@ -237,18 +235,15 @@ async fn drive_stream(
         let headers = resp.headers().clone();
         let request_id = response_request_id(&headers);
         let text = resp.text().await.unwrap_or_default();
-        tracing::error!(
+        tracing::warn!(
             provider = "openai",
             model = %model,
-            base_url = %base_url,
-            api_key = %masked_api_key,
             status = %status,
             request_id = %request_id,
-            headers = %response_headers_value(&headers),
             response_bytes = text.len(),
             "llm stream api error"
         );
-        tracing::debug!(provider = "openai", model = %model, response = %truncate_for_log(&text), "llm stream api error body");
+        tracing::debug!(provider = "openai", model = %model, headers = %response_headers_value(&headers), response = %truncate_for_log(&text), "llm stream api error detail");
         return Err(format!("OpenAI API error {status}: {text}"));
     }
 

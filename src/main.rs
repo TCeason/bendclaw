@@ -189,7 +189,13 @@ async fn cmd_run(
     })
     .await?;
 
-    // Graceful shutdown with 60s hard deadline
+    // Graceful shutdown with 60s hard deadline; second Ctrl+C forces exit.
+    let force_exit = tokio::spawn(async {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::warn!("second Ctrl+C received, forcing exit");
+        std::process::exit(1);
+    });
+
     let shutdown_deadline = std::time::Duration::from_secs(60);
     if tokio::time::timeout(shutdown_deadline, async {
         if let Err(e) = runtime.shutdown().await {
@@ -202,6 +208,8 @@ async fn cmd_run(
         tracing::error!("shutdown exceeded 60s deadline, forcing exit");
         std::process::exit(1);
     }
+
+    force_exit.abort();
 
     Ok(())
 }
@@ -223,6 +231,11 @@ fn print_banner(config: &BendClawConfig) {
 
     let _ = writeln!(buf, "  node_id:      {}", config.node_id);
     let _ = writeln!(buf, "  db_prefix:    {}", config.storage.db_prefix);
+    let _ = writeln!(
+        buf,
+        "  db_api:       {}",
+        config.storage.databend_api_base_url
+    );
     let _ = writeln!(buf, "  api:          {}", config.server.bind_addr);
 
     if let Some(ref admin) = config.admin {

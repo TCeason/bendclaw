@@ -55,7 +55,7 @@ impl LeaseResource for TaskLeaseResource {
     }
 
     fn scan_interval_secs(&self) -> u64 {
-        30
+        60
     }
 
     fn claim_condition(&self) -> Option<&str> {

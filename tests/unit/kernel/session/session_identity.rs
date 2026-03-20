@@ -44,6 +44,7 @@ async fn session_belongs_to_matches_exact_agent_and_user() -> Result<()> {
         directive: None,
         trace_writer: bendclaw::kernel::trace::TraceWriter::spawn(),
         persist_writer: bendclaw::kernel::writer::BackgroundWriter::noop("persist"),
+        tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),
         cached_config: None,
     });
 

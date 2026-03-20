@@ -33,6 +33,8 @@ pub enum ToolId {
     ClusterCollect,
     ClaudeCode,
     CodexExec,
+    Grep,
+    Glob,
 }
 
 impl ToolId {
@@ -71,6 +73,8 @@ impl ToolId {
             Self::ClusterCollect => "cluster_collect",
             Self::ClaudeCode => "claude_code",
             Self::CodexExec => "codex_exec",
+            Self::Grep => "grep",
+            Self::Glob => "glob",
         }
     }
 }
@@ -99,6 +103,8 @@ impl ToolId {
         ToolId::FileWrite,
         ToolId::FileEdit,
         ToolId::ListDir,
+        ToolId::Grep,
+        ToolId::Glob,
         // Shell
         ToolId::Shell,
         // Integrations

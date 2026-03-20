@@ -218,7 +218,7 @@ async fn scan_once(
         return Ok(());
     }
     let entries = resource.discover().await?;
-    tracing::info!(
+    tracing::debug!(
         table = resource.table(),
         count = entries.len(),
         "lease scan: resources discovered"
@@ -268,7 +268,7 @@ async fn scan_once(
                 held_map.remove(&entry.id);
             }
         } else if is_held_by_other(node_id, entry) {
-            tracing::info!(
+            tracing::debug!(
                 table,
                 resource_id = %entry.id,
                 holder = entry.lease_node_id.as_deref().unwrap_or(""),
@@ -292,6 +292,11 @@ async fn scan_once(
             .await
             {
                 Ok(true) => {
+                    tracing::info!(
+                        table,
+                        resource_id = %entry.id,
+                        "lease claimed"
+                    );
                     held_map.insert(entry.id.clone(), HeldLease {
                         token: token.clone(),
                         pool: entry.pool.clone(),
@@ -349,7 +354,7 @@ async fn scan_once(
                     held_map = held.lock().await;
                 }
                 Ok(false) => {
-                    tracing::info!(
+                    tracing::debug!(
                         table,
                         resource_id = %entry.id,
                         lease_node_id = entry.lease_node_id.as_deref().unwrap_or(""),

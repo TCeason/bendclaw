@@ -153,6 +153,10 @@ pub fn create_session_tools(
     registry.register_builtin(ToolId::FileEdit, Arc::new(super::file::FileEditTool));
     registry.register_builtin(ToolId::ListDir, Arc::new(super::file::ListDirTool));
 
+    // Search tools
+    registry.register_builtin(ToolId::Grep, Arc::new(super::builtins::search::GrepTool));
+    registry.register_builtin(ToolId::Glob, Arc::new(super::builtins::search::GlobTool));
+
     // Shell tool (zero-field — workspace comes from ToolContext at execution time)
     registry.register_builtin(ToolId::Shell, Arc::new(super::shell::ShellTool));
 

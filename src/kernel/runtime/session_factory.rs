@@ -169,6 +169,7 @@ impl Runtime {
                 directive: self.directive.clone(),
                 trace_writer: self.trace_writer.clone(),
                 persist_writer: self.persist_writer.clone(),
+                tool_writer: self.tool_writer.clone(),
                 cached_config,
             },
         ));

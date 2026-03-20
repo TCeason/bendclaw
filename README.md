@@ -36,7 +36,7 @@ It's also a distributed runtime from day one. Agents collaborate across nodes, f
 - **Secret-safe execution** — secrets in a vault, never exposed to LLMs; injected only at tool execution time
 - **Full traceability** — spans, events, audits, sensitive field redaction; humans review, agents execute
 - **Multi-tenant isolation** — separate DB per agent, isolated workspace per session
-- **30 built-in tools** — file, shell, memory, recall, task, web, databend, channel, cluster
+- **32 built-in tools** — file, search, shell, memory, recall, task, web, databend, channel, cluster
 - **50+ REST endpoints** — SSE streaming, Bearer auth, per-agent scoping
 
 ## Quick Start
@@ -122,6 +122,7 @@ curl -fsSL https://app.evot.ai/api/setup | sh -s -- <BASE64_CONFIG>
 | Category | Tools | Description |
 |---|---|---|
 | **File** | `file_read`, `file_write`, `file_edit`, `list_dir` | Workspace file operations (sandbox mode optional) |
+| **Search** | `grep`, `glob` | Content search (regex) and file search (glob pattern) across workspace |
 | **Shell** | `shell` | Allowlisted commands with configurable timeout |
 | **Memory** | `memory_write`, `memory_read`, `memory_search`, `memory_list`, `memory_delete` | Long-term memory with vector + full-text search |
 | **Skill** | `skill_read`, `create_skill`, `remove_skill` | Skill documentation access and management; executable skills can act as runtime tools |

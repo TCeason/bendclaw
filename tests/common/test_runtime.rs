@@ -82,5 +82,7 @@ pub fn test_runtime(fake: FakeDatabend) -> Arc<Runtime> {
         activity_tracker: Arc::new(ActivityTracker::new()),
         trace_writer: bendclaw::kernel::trace::TraceWriter::noop(),
         persist_writer: bendclaw::kernel::writer::BackgroundWriter::noop("persist"),
+        channel_message_writer: bendclaw::kernel::writer::BackgroundWriter::noop("channel_message"),
+        tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),
     }))
 }

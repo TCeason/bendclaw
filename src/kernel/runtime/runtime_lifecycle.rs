@@ -85,10 +85,13 @@ impl Runtime {
             svc.deregister().await;
         }
 
-        // Drain background writers: persist first (has pending DB writes),
-        // then trace (lightweight).
-        self.persist_writer.shutdown().await;
-        self.trace_writer.shutdown().await;
+        // Drain background writers in parallel.
+        tokio::join!(
+            self.persist_writer.shutdown(),
+            self.trace_writer.shutdown(),
+            self.channel_message_writer.shutdown(),
+            self.tool_writer.shutdown(),
+        );
 
         *self.status.write() = RuntimeStatus::Stopped;
         tracing::info!(

@@ -24,10 +24,9 @@ fn make_ctx(workspace_dir: std::path::PathBuf) -> bendclaw::kernel::tools::ToolC
             cli_agent_state: bendclaw::kernel::tools::cli_agent::new_shared_state(),
             tool_call_id: None,
         },
+        tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),
     }
 }
-
-// ── FileReadTool ──
 
 #[tokio::test]
 async fn file_read_success() -> Result<(), Box<dyn std::error::Error>> {

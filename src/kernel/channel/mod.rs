@@ -10,6 +10,7 @@ pub mod plugin;
 pub mod plugins;
 pub mod registry;
 pub mod supervisor;
+pub mod writer;
 
 pub use capabilities::ChannelCapabilities;
 pub use capabilities::ChannelKind;
@@ -30,3 +31,5 @@ pub use plugin::WebhookHandler;
 pub use registry::ChannelEntry;
 pub use registry::ChannelRegistry;
 pub use supervisor::ChannelSupervisor;
+pub use writer::spawn_channel_message_writer;
+pub use writer::ChannelMessageWriter;

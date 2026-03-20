@@ -47,31 +47,29 @@ impl LocalDailyWriter {
     }
 
     fn cleanup_old_files(&self) {
-        let prefix = format!("{}.", self.prefix);
-        let mut log_files: Vec<_> = fs::read_dir(&self.dir)
+        // Collect date subdirectories (e.g. "2026-03-20"), sorted ascending.
+        let mut date_dirs: Vec<_> = fs::read_dir(&self.dir)
             .into_iter()
             .flatten()
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_name()
-                    .to_str()
-                    .map(|n| n.starts_with(&prefix))
-                    .unwrap_or(false)
-            })
+            .filter(|e| e.path().is_dir())
             .collect();
-        log_files.sort_by_key(|e| e.file_name());
-        if log_files.len() > self.max_files {
-            let to_remove = log_files.len() - self.max_files;
-            for entry in log_files.into_iter().take(to_remove) {
-                let _ = fs::remove_file(entry.path());
+        date_dirs.sort_by_key(|e| e.file_name());
+        if date_dirs.len() > self.max_files {
+            let to_remove = date_dirs.len() - self.max_files;
+            for entry in date_dirs.into_iter().take(to_remove) {
+                let _ = fs::remove_dir_all(entry.path());
             }
         }
     }
 }
 
 fn open_log_file(dir: &Path, prefix: &str, hour: &str) -> std::io::Result<File> {
-    fs::create_dir_all(dir)?;
-    let path = dir.join(format!("{prefix}.{hour}"));
+    // hour format: "2026-03-20-08" → date subdir: "2026-03-20"
+    let date = hour.rsplitn(2, '-').last().unwrap_or(hour);
+    let subdir = dir.join(date);
+    fs::create_dir_all(&subdir)?;
+    let path = subdir.join(format!("{prefix}.{hour}"));
     OpenOptions::new().create(true).append(true).open(path)
 }
 

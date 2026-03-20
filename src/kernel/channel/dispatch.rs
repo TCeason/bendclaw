@@ -8,6 +8,7 @@ use crate::base::truncate_bytes_on_char_boundary;
 use crate::kernel::channel::account::ChannelAccount;
 use crate::kernel::channel::dispatcher::ChannelDispatcher;
 use crate::kernel::channel::message::InboundEvent;
+use crate::kernel::channel::writer::ChannelMessageOp;
 use crate::kernel::run::event::Delta;
 use crate::kernel::run::event::Event;
 use crate::kernel::runtime::Runtime;
@@ -92,8 +93,6 @@ async fn try_dispatch_inbound(
     tracing::info!(
         channel_type = %account.channel_type,
         account_id = %account.channel_account_id,
-        external_account_id = %account.external_account_id,
-        session_id = %session_key,
         chat_id,
         sender_id = event_sender_id(event).unwrap_or(""),
         message_id = event_message_id(event).unwrap_or(""),
@@ -101,24 +100,27 @@ async fn try_dispatch_inbound(
         "channel inbound accepted"
     );
 
-    // Record inbound message.
+    // Record inbound message (fire-and-forget via background writer).
     if let InboundEvent::Message(msg) = event {
-        let _ = msg_repo
-            .insert(&ChannelMessageRecord {
-                id: new_id(),
-                channel_type: account.channel_type.clone(),
-                account_id: account.external_account_id.clone(),
-                chat_id: msg.chat_id.clone(),
-                session_id: session_key.clone(),
-                direction: "inbound".into(),
-                sender_id: msg.sender_id.clone(),
-                text: msg.text.clone(),
-                platform_message_id: msg.message_id.clone(),
-                run_id: String::new(),
-                attachments: "[]".into(),
-                created_at: String::new(),
-            })
-            .await;
+        runtime
+            .channel_message_writer
+            .send(ChannelMessageOp::Insert {
+                repo: msg_repo.clone(),
+                record: ChannelMessageRecord {
+                    id: new_id(),
+                    channel_type: account.channel_type.clone(),
+                    account_id: account.external_account_id.clone(),
+                    chat_id: msg.chat_id.clone(),
+                    session_id: session_key.clone(),
+                    direction: "inbound".into(),
+                    sender_id: msg.sender_id.clone(),
+                    text: msg.text.clone(),
+                    platform_message_id: msg.message_id.clone(),
+                    run_id: String::new(),
+                    attachments: "[]".into(),
+                    created_at: String::new(),
+                },
+            });
     }
 
     // Get outbound interface.
@@ -129,24 +131,19 @@ async fn try_dispatch_inbound(
 
     // Send typing indicator.
     if let Some(ref ob) = outbound {
-        let started = Instant::now();
         match ob.send_typing(&account.config, chat_id).await {
-            Ok(()) => tracing::info!(
+            Ok(()) => tracing::debug!(
                 channel_type = %account.channel_type,
                 account_id = %account.channel_account_id,
-                external_account_id = %account.external_account_id,
                 chat_id,
                 send_type = "typing",
-                elapsed_ms = started.elapsed().as_millis() as u64,
                 "channel outbound sent"
             ),
             Err(error) => tracing::warn!(
                 channel_type = %account.channel_type,
                 account_id = %account.channel_account_id,
-                external_account_id = %account.external_account_id,
                 chat_id,
                 send_type = "typing",
-                elapsed_ms = started.elapsed().as_millis() as u64,
                 error = %error,
                 "channel outbound failed"
             ),
@@ -157,6 +154,13 @@ async fn try_dispatch_inbound(
     let session = runtime
         .get_or_create_session(&account.agent_id, &session_key, &account.user_id)
         .await?;
+
+    tracing::info!(
+        channel_type = %account.channel_type,
+        chat_id,
+        session_id = %session_key,
+        "channel dispatch: session ready, starting LLM"
+    );
 
     let trace_id = new_id();
     let mut run_stream = session.run(&input, &trace_id, None, "", "", false).await?;
@@ -192,7 +196,6 @@ async fn try_dispatch_inbound(
                 tracing::info!(
                     channel_type = %account.channel_type,
                     account_id = %account.channel_account_id,
-                    external_account_id = %account.external_account_id,
                     chat_id,
                     send_type = "text",
                     message_id = %msg_id,
@@ -206,7 +209,6 @@ async fn try_dispatch_inbound(
                 tracing::warn!(
                     channel_type = %account.channel_type,
                     account_id = %account.channel_account_id,
-                    external_account_id = %account.external_account_id,
                     chat_id,
                     send_type = "text",
                     output_bytes = output_text.len(),
@@ -221,23 +223,26 @@ async fn try_dispatch_inbound(
         String::new()
     };
 
-    // Record outbound message.
-    let _ = msg_repo
-        .insert(&ChannelMessageRecord {
-            id: new_id(),
-            channel_type: account.channel_type.clone(),
-            account_id: account.external_account_id.clone(),
-            chat_id: chat_id.to_string(),
-            session_id: session_key,
-            direction: "outbound".into(),
-            sender_id: "agent".into(),
-            text: output_text,
-            platform_message_id: platform_msg_id,
-            run_id,
-            attachments: "[]".into(),
-            created_at: String::new(),
-        })
-        .await;
+    // Record outbound message (fire-and-forget via background writer).
+    runtime
+        .channel_message_writer
+        .send(ChannelMessageOp::Insert {
+            repo: msg_repo,
+            record: ChannelMessageRecord {
+                id: new_id(),
+                channel_type: account.channel_type.clone(),
+                account_id: account.external_account_id.clone(),
+                chat_id: chat_id.to_string(),
+                session_id: session_key,
+                direction: "outbound".into(),
+                sender_id: "agent".into(),
+                text: output_text,
+                platform_message_id: platform_msg_id,
+                run_id,
+                attachments: "[]".into(),
+                created_at: String::new(),
+            },
+        });
 
     Ok(())
 }
