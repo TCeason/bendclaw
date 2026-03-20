@@ -20,6 +20,7 @@ async fn session_belongs_to_matches_exact_agent_and_user() -> Result<()> {
     let _ = std::fs::create_dir_all(&workspace_dir);
     let workspace = Arc::new(Workspace::new(
         workspace_dir.clone(),
+        workspace_dir.clone(),
         vec!["PATH".into(), "HOME".into()],
         std::collections::HashMap::new(),
         std::time::Duration::from_secs(5),

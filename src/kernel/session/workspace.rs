@@ -80,9 +80,16 @@ pub struct CommandOutput {
 ///
 /// Created once per session, shared via `Arc` with all tools and skill executors.
 /// Owns directory, env isolation, path safety, and command execution.
+///
+/// Two distinct directories:
+/// - `dir`  — where agent-produced files live (downloads, generated code, temp files)
+/// - `cwd`  — default working directory for shell/grep/glob (`$HOME` in open mode, `dir` in sandbox)
 #[derive(Debug)]
 pub struct Workspace {
+    /// Agent output directory (workspace storage).
     dir: PathBuf,
+    /// Default working directory for shell commands and search tools.
+    cwd: PathBuf,
     safe_env_vars: Vec<String>,
     env_vars: HashMap<String, String>,
     variable_records: Vec<VariableRecord>,
@@ -94,6 +101,7 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(
         dir: PathBuf,
+        cwd: PathBuf,
         safe_env_vars: Vec<String>,
         variables: HashMap<String, String>,
         command_idle_timeout: Duration,
@@ -102,6 +110,7 @@ impl Workspace {
     ) -> Self {
         Self {
             dir,
+            cwd,
             safe_env_vars,
             env_vars: variables,
             variable_records: Vec::new(),
@@ -113,6 +122,7 @@ impl Workspace {
 
     pub fn from_variable_records(
         dir: PathBuf,
+        cwd: PathBuf,
         safe_env_vars: Vec<String>,
         variable_records: Vec<VariableRecord>,
         command_idle_timeout: Duration,
@@ -125,6 +135,7 @@ impl Workspace {
             .collect();
         Self {
             dir,
+            cwd,
             safe_env_vars,
             env_vars,
             variable_records,
@@ -136,6 +147,11 @@ impl Workspace {
 
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    /// Default working directory for shell commands and search tools.
+    pub fn cwd(&self) -> &Path {
+        &self.cwd
     }
 
     pub fn command_idle_timeout(&self) -> Duration {
@@ -160,10 +176,10 @@ impl Workspace {
         env
     }
 
-    /// Create a `Command` with env isolation and workspace `current_dir` pre-configured.
+    /// Create a `Command` with env isolation and `cwd` as `current_dir`.
     pub fn command(&self, program: &str) -> tokio::process::Command {
         let mut cmd = tokio::process::Command::new(program);
-        cmd.current_dir(&self.dir);
+        cmd.current_dir(&self.cwd);
         cmd.env_clear();
         for (k, v) in self.build_env() {
             cmd.env(&k, &v);
@@ -304,9 +320,20 @@ impl Workspace {
         }
     }
 
-    /// Resolve a path according to the configured [`PathResolver`] strategy.
+    /// Resolve a path for file tools (read/write/edit) — enforces sandbox boundary.
     pub fn resolve_safe_path(&self, path: &str) -> Option<PathBuf> {
         self.resolver.resolve(&self.dir, path)
+    }
+
+    /// Resolve a path for search tools (grep/glob/shell).
+    /// Relative paths are anchored to `cwd`; absolute paths go through the resolver.
+    pub fn resolve_search_path(&self, path: &str) -> Option<PathBuf> {
+        if Path::new(path).is_absolute() {
+            self.resolver.resolve(&self.dir, path)
+        } else {
+            let abs = self.cwd.join(path);
+            self.resolver.resolve(&self.dir, &abs.to_string_lossy())
+        }
     }
 
     /// Check whether the variables contain a given key (for skill preflight).

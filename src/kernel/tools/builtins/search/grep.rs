@@ -46,7 +46,7 @@ impl Tool for GrepTool {
                 },
                 "path": {
                     "type": "string",
-                    "description": "Directory or file path to search in (relative to workspace, default: '.')"
+                    "description": "Directory or file path to search in (relative to working directory, default: '.')"
                 },
                 "file_pattern": {
                     "type": "string",
@@ -69,7 +69,7 @@ impl Tool for GrepTool {
         let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
         let file_pattern = args.get("file_pattern").and_then(|v| v.as_str());
 
-        let full_path = match ctx.workspace.resolve_safe_path(path) {
+        let full_path = match ctx.workspace.resolve_search_path(path) {
             Some(p) => p,
             None => return Ok(ToolResult::error("Path escapes workspace directory")),
         };

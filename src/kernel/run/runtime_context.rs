@@ -1,11 +1,16 @@
 //! Runtime context — injected before each turn so the LLM knows "when" and "where".
 
 use std::fmt::Write;
+use std::path::Path;
 
 use chrono::Local;
 
-/// Build a runtime context block with current time, timezone, OS, and optional channel info.
-pub fn build_runtime_context(channel_type: Option<&str>, chat_id: Option<&str>) -> String {
+/// Build a runtime context block with current time, timezone, OS, cwd, and optional channel info.
+pub fn build_runtime_context(
+    channel_type: Option<&str>,
+    chat_id: Option<&str>,
+    cwd: Option<&Path>,
+) -> String {
     let mut buf = String::with_capacity(256);
     buf.push_str("## Runtime\n\n");
 
@@ -19,6 +24,11 @@ pub fn build_runtime_context(channel_type: Option<&str>, chat_id: Option<&str>) 
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
     let _ = writeln!(buf, "Platform: {os} ({arch})");
+
+    // Working directory
+    if let Some(cwd) = cwd {
+        let _ = writeln!(buf, "Working directory: {}", cwd.display());
+    }
 
     // Channel info (if running from a channel like feishu/telegram)
     if let Some(ch) = channel_type.filter(|s| !s.is_empty()) {

@@ -27,6 +27,7 @@ fn workspace_from_variable_records_builds_env_and_lookups() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let ws = Workspace::from_variable_records(
         dir.path().to_path_buf(),
+        dir.path().to_path_buf(),
         vec!["PATH".into()],
         vec![
             variable("v1", "API_TOKEN", "secret-token", true),
@@ -52,6 +53,7 @@ fn workspace_from_variable_records_builds_env_and_lookups() -> Result<()> {
 fn workspace_secret_variable_helpers_return_expected_ids() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let ws = Workspace::from_variable_records(
+        dir.path().to_path_buf(),
         dir.path().to_path_buf(),
         vec!["PATH".into()],
         vec![

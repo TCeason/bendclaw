@@ -72,6 +72,7 @@ fn make_workspace(root: &std::path::Path, vars: &[(&str, &str)]) -> Arc<Workspac
     let dir = root.join("session");
     let _ = std::fs::create_dir_all(&dir);
     Arc::new(Workspace::new(
+        dir.clone(),
         dir,
         vec!["PATH".into(), "HOME".into()],
         vars.iter()

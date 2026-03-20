@@ -102,8 +102,20 @@ impl Runtime {
                 Arc::new(OpenResolver)
             };
 
+        // cwd: where shell/grep/glob operate by default.
+        // sandbox=true  → workspace dir (agent is isolated)
+        // sandbox=false → $HOME (agent can navigate the user's filesystem)
+        let cwd = if self.config.workspace.sandbox {
+            workspace_dir.clone()
+        } else {
+            std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| workspace_dir.clone())
+        };
+
         let workspace = Arc::new(Workspace::from_variable_records(
             workspace_dir,
+            cwd,
             self.config.workspace.safe_env_vars.clone(),
             variable_records.clone(),
             Duration::from_secs(self.config.workspace.command_timeout_secs),

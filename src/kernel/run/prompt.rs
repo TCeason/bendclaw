@@ -73,6 +73,7 @@ pub struct PromptBuilder {
     identity: Option<String>,
     soul: Option<String>,
     runtime: Option<String>,
+    cwd: Option<std::path::PathBuf>,
     learnings: Option<String>,
     recent_errors: Option<String>,
     tools: Option<Arc<Vec<ToolSchema>>>,
@@ -91,6 +92,7 @@ impl PromptBuilder {
             identity: None,
             soul: None,
             runtime: None,
+            cwd: None,
             learnings: None,
             recent_errors: None,
             tools: None,
@@ -131,6 +133,11 @@ impl PromptBuilder {
         if !s.is_empty() {
             self.runtime = Some(s);
         }
+        self
+    }
+
+    pub fn with_cwd(mut self, cwd: std::path::PathBuf) -> Self {
+        self.cwd = Some(cwd);
         self
     }
 
@@ -582,7 +589,11 @@ impl PromptBuilder {
                 None => (None, None),
             };
             (
-                runtime_context::build_runtime_context(ch_type, ch_chat),
+                runtime_context::build_runtime_context(
+                    ch_type,
+                    ch_chat,
+                    self.cwd.as_deref(),
+                ),
                 "env",
             )
         };

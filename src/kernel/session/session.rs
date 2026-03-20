@@ -180,7 +180,8 @@ impl Session {
             let mut pb = PromptBuilder::new(self.res.storage.clone(), self.res.skills.clone())
                 .with_tools(self.res.tools.clone())
                 .with_variables(self.res.variables.clone())
-                .with_cached_config(self.res.cached_config.clone());
+                .with_cached_config(self.res.cached_config.clone())
+                .with_cwd(self.res.workspace.cwd().to_path_buf());
             if let Some(ref recall) = self.res.recall {
                 pb = pb.with_recall(recall.clone());
             }

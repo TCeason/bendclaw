@@ -151,8 +151,10 @@ async fn web_search_success_formats_results_and_caps_count(
     });
 
     let tool = WebSearchTool::new(format!("http://{addr}/search"));
+    let _ws_dir = std::env::temp_dir().join(format!("bendclaw-web-search-{}", ulid::Ulid::new()));
     let workspace = bendclaw::kernel::session::workspace::Workspace::from_variable_records(
-        std::env::temp_dir().join(format!("bendclaw-web-search-{}", ulid::Ulid::new())),
+        _ws_dir.clone(),
+        _ws_dir,
         vec!["PATH".into(), "HOME".into()],
         vec![bendclaw::storage::VariableRecord {
             id: "var-brave".into(),

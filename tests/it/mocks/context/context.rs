@@ -11,6 +11,7 @@ use bendclaw::storage::Pool;
 /// Build a test Workspace for a temp directory.
 pub fn test_workspace(dir: std::path::PathBuf) -> Arc<Workspace> {
     Arc::new(Workspace::new(
+        dir.clone(),
         dir,
         vec!["PATH".into(), "HOME".into()],
         HashMap::new(),

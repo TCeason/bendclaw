@@ -58,6 +58,7 @@ fn test_session(session_id: &str, agent_id: &str) -> Arc<Session> {
     let _ = std::fs::create_dir_all(&workspace_dir);
     let workspace = Arc::new(Workspace::new(
         workspace_dir.clone(),
+        workspace_dir.clone(),
         vec!["PATH".into(), "HOME".into()],
         std::collections::HashMap::new(),
         Duration::from_secs(5),

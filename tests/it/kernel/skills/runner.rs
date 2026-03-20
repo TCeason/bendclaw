@@ -39,6 +39,7 @@ fn test_workspace_with_vars(variables: HashMap<String, String>) -> Arc<Workspace
     let dir = std::env::temp_dir().join(format!("bendclaw-runner-test-{}", ulid::Ulid::new()));
     let _ = std::fs::create_dir_all(&dir);
     Arc::new(Workspace::new(
+        dir.clone(),
         dir,
         vec!["PATH".into(), "HOME".into()],
         variables,
@@ -52,6 +53,7 @@ fn test_workspace_with_variable_records(records: Vec<VariableRecord>) -> Arc<Wor
     let dir = std::env::temp_dir().join(format!("bendclaw-runner-test-{}", ulid::Ulid::new()));
     let _ = std::fs::create_dir_all(&dir);
     Arc::new(Workspace::from_variable_records(
+        dir.clone(),
         dir,
         vec!["PATH".into(), "HOME".into()],
         records,

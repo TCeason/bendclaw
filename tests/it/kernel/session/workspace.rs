@@ -10,6 +10,7 @@ use bendclaw::kernel::session::workspace::Workspace;
 
 fn test_ws(dir: std::path::PathBuf) -> Workspace {
     Workspace::new(
+        dir.clone(),
         dir,
         vec!["PATH".into(), "HOME".into()],
         HashMap::new(),
@@ -77,6 +78,7 @@ fn build_env_includes_user_env() -> Result<()> {
     user_env.insert("MY_KEY".into(), "my_value".into());
     let ws = Workspace::new(
         dir.path().to_path_buf(),
+        dir.path().to_path_buf(),
         vec!["PATH".into()],
         user_env,
         Duration::from_secs(5),
@@ -94,6 +96,7 @@ fn build_env_user_env_overrides_safe_var() -> Result<()> {
     let mut user_env = HashMap::new();
     user_env.insert("PATH".into(), "/custom/path".into());
     let ws = Workspace::new(
+        dir.path().to_path_buf(),
         dir.path().to_path_buf(),
         vec!["PATH".into()],
         user_env,
@@ -114,6 +117,7 @@ fn has_variable_true() -> Result<()> {
     let mut user_env = HashMap::new();
     user_env.insert("API_KEY".into(), "secret".into());
     let ws = Workspace::new(
+        dir.path().to_path_buf(),
         dir.path().to_path_buf(),
         vec![],
         user_env,
@@ -191,6 +195,7 @@ async fn exec_user_env_visible() -> Result<()> {
     user_env.insert("GREETING".into(), "hi_there".into());
     let ws = Workspace::new(
         dir.path().to_path_buf(),
+        dir.path().to_path_buf(),
         vec!["PATH".into()],
         user_env,
         Duration::from_secs(5),
@@ -207,6 +212,7 @@ async fn exec_user_env_visible() -> Result<()> {
 async fn exec_idle_timeout() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let ws = Workspace::new(
+        dir.path().to_path_buf(),
         dir.path().to_path_buf(),
         vec!["PATH".into()],
         HashMap::new(),
@@ -250,6 +256,7 @@ fn max_output_bytes_returns_configured() -> Result<()> {
 
 fn test_ws_open(dir: std::path::PathBuf) -> Workspace {
     Workspace::new(
+        dir.clone(),
         dir,
         vec!["PATH".into(), "HOME".into()],
         HashMap::new(),
@@ -346,6 +353,7 @@ async fn exec_with_env_overrides_user_env() -> Result<()> {
     let mut user_env = HashMap::new();
     user_env.insert("CONFLICT".into(), "original".into());
     let ws = Workspace::new(
+        dir.path().to_path_buf(),
         dir.path().to_path_buf(),
         vec!["PATH".into()],
         user_env,
