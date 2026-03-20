@@ -8,12 +8,9 @@ pub const BENDCLAW_BUILD_PROFILE: &str = env!("BENDCLAW_BUILD_PROFILE");
 
 /// Semver-like display string: `v0.1.0-abc1234567(rust-1.80.0-2026-02-19 12:00:00 UTC)`
 pub fn commit_version() -> String {
-    let tag = if BENDCLAW_GIT_TAG.is_empty() || BENDCLAW_GIT_TAG == "unknown" {
-        format!("v{BENDCLAW_VERSION}")
-    } else {
-        BENDCLAW_GIT_TAG.to_string()
-    };
-    format!("{tag}-{BENDCLAW_GIT_SHA}({BENDCLAW_RUSTC_VERSION}, {BENDCLAW_BUILD_TIMESTAMP})")
+    format!(
+        "v{BENDCLAW_VERSION}-{BENDCLAW_GIT_SHA}({BENDCLAW_RUSTC_VERSION}, {BENDCLAW_BUILD_TIMESTAMP})"
+    )
 }
 
 /// Log all build metadata at info level.
