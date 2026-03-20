@@ -368,7 +368,8 @@ impl PromptBuilder {
              \nPrefer `glob` over shell for finding files by name pattern.\
              \nUse memory_write for user or session preferences.\
              \nUse learning_write for reusable agent-level lessons.\
-             \nSearch memory, knowledge, or learning when prior context may help.\n",
+             \nSearch memory, knowledge, or learning when prior context may help.\
+             \nTo self-upgrade, run `bendclaw update && bendclaw restart` via shell. Warn the user that the session will be interrupted.\n",
         );
 
         let has_claude = tools.iter().any(|t| t.function.name == "claude_code");
