@@ -589,11 +589,7 @@ impl PromptBuilder {
                 None => (None, None),
             };
             (
-                runtime_context::build_runtime_context(
-                    ch_type,
-                    ch_chat,
-                    self.cwd.as_deref(),
-                ),
+                runtime_context::build_runtime_context(ch_type, ch_chat, self.cwd.as_deref()),
                 "env",
             )
         };
