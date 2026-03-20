@@ -3,6 +3,7 @@ mod common;
 
 mod architecture;
 mod base;
+mod cli;
 mod config;
 mod config_cluster;
 mod config_directive;

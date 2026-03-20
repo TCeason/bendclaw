@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     agent_id       VARCHAR   NOT NULL DEFAULT '' COMMENT 'Agent identifier',
     user_id        VARCHAR   NOT NULL   COMMENT 'Owner',
     title          VARCHAR   NOT NULL DEFAULT '' COMMENT 'Display title',
+    scope          VARCHAR   NOT NULL DEFAULT 'private' COMMENT 'private | shared',
     session_state  VARIANT   NULL       COMMENT 'Persistent session state (JSON)',
     meta           VARIANT   NULL       COMMENT 'Arbitrary session metadata (JSON)',
     created_at     TIMESTAMP NOT NULL DEFAULT NOW(),

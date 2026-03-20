@@ -204,6 +204,8 @@ fn make_learning(title: &str, content: &str) -> LearningRecord {
         status: "active".into(),
         supersedes_id: "".into(),
         user_id: "".into(),
+        scope: "shared".into(),
+        created_by: "".into(),
         source_run_id: "".into(),
         success_count: 0,
         failure_count: 0,
@@ -318,6 +320,7 @@ async fn prompt_builder_build_uses_injected_layers_in_order_and_substitutes_stat
                     "agent-1",
                     "user-1",
                     "Prompt Session",
+                    "private",
                     r#"{"name":"Alice"}"#,
                     "",
                     "2026-03-10T00:00:00Z",
@@ -343,6 +346,9 @@ async fn prompt_builder_build_uses_injected_layers_in_order_and_substitutes_stat
             value: "plain-value".into(),
             secret: false,
             revoked: false,
+            user_id: String::new(),
+            scope: String::new(),
+            created_by: String::new(),
             last_used_at: None,
             created_at: String::new(),
             updated_at: String::new(),
@@ -353,6 +359,9 @@ async fn prompt_builder_build_uses_injected_layers_in_order_and_substitutes_stat
             value: "secret-value".into(),
             secret: true,
             revoked: false,
+            user_id: String::new(),
+            scope: String::new(),
+            created_by: String::new(),
             last_used_at: None,
             created_at: String::new(),
             updated_at: String::new(),
@@ -421,6 +430,7 @@ async fn prompt_builder_build_falls_back_to_db_layers() -> Result<()> {
                     "",
                     "",
                     "",
+                    "", // created_by
                     "2026-03-10T00:00:00Z",
                     "2026-03-10T00:00:00Z",
                 ]],
@@ -435,6 +445,7 @@ async fn prompt_builder_build_falls_back_to_db_layers() -> Result<()> {
                     "agent-1",
                     "user-1",
                     "Prompt Session",
+                    "private",
                     r#"{"name":"Bob"}"#,
                     "",
                     "2026-03-10T00:00:00Z",
@@ -459,6 +470,8 @@ async fn prompt_builder_build_falls_back_to_db_layers() -> Result<()> {
                     "active",
                     "",
                     "user-1",
+                    "shared", // scope
+                    "",       // created_by
                     "",
                     "0",
                     "0",
@@ -478,6 +491,9 @@ async fn prompt_builder_build_falls_back_to_db_layers() -> Result<()> {
                     "secret",
                     "true",
                     "false",
+                    "",       // user_id
+                    "shared", // scope
+                    "",       // created_by
                     "",
                     "2026-03-10T00:00:00Z",
                     "2026-03-10T00:00:00Z",

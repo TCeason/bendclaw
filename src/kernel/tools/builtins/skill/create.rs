@@ -131,7 +131,7 @@ impl Tool for SkillCreateTool {
             scope: SkillScope::Agent,
             source: SkillSource::Agent,
             agent_id: Some(ctx.agent_id.to_string()),
-            created_by_user_id: Some(ctx.user_id.to_string()),
+            created_by: Some(ctx.user_id.to_string()),
             timeout,
             executable: true,
             parameters: crate::kernel::skills::fs::parse_parameters_section(&content),

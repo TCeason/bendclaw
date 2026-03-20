@@ -139,6 +139,9 @@ fn account_row(id: &str, channel_type: &str, enabled: bool) -> Vec<serde_json::V
         "ext-1".to_string(),
         "agent1".to_string(),
         "user-1".to_string(),
+        "private".to_string(), // scope
+        String::new(),         // node_id
+        String::new(),         // created_by
         r#"{"token":"abc"}"#.to_string(),
         if enabled { "1" } else { "0" }.to_string(),
         String::new(), // lease_node_id

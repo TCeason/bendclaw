@@ -29,8 +29,12 @@ pub(super) async fn create_feedback(
     let repo = FeedbackRepo::new(pool);
     let record = FeedbackRecord {
         id: new_id(),
+        agent_id: agent_id.to_string(),
         session_id: req.session_id.unwrap_or_default(),
         run_id: req.run_id.unwrap_or_default(),
+        user_id: String::new(),
+        scope: "shared".to_string(),
+        created_by: String::new(),
         rating: req.rating,
         comment: req.comment.unwrap_or_default(),
         created_at: String::new(),

@@ -20,6 +20,7 @@ pub struct TaskHistoryRecord {
     pub delivery: TaskDelivery,
     pub delivery_status: Option<String>,
     pub delivery_error: Option<String>,
+    pub user_id: String,
     pub executed_by_node_id: Option<String>,
     pub created_at: String,
 }

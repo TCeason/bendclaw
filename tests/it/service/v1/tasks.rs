@@ -100,13 +100,16 @@ async fn tasks_api_fast_create_list_and_toggle() -> Result<()> {
             let values = quoted_values(sql);
             records.push(TaskRow {
                 id: values[0].clone(),
-                executor_node_id: values[1].clone(),
+                node_id: values[1].clone(),
                 name: values[2].clone(),
                 prompt: values[3].clone(),
                 enabled: true,
                 status: values[4].clone(),
                 schedule_json: r#"{"kind":"every","seconds":60}"#.to_string(),
                 delivery_json: String::new(),
+                user_id: String::new(),
+                scope: String::new(),
+                created_by: String::new(),
                 last_error: None,
                 delete_after_run: false,
                 run_count: 0,
@@ -124,7 +127,7 @@ async fn tasks_api_fast_create_list_and_toggle() -> Result<()> {
             let count = records.len().to_string();
             return Ok(paged_rows(&[&[count.as_str()]], None, None));
         }
-        if sql.starts_with("SELECT id, executor_node_id") && sql.contains("WHERE id = ") {
+        if sql.starts_with("SELECT id, node_id") && sql.contains("WHERE id = ") {
             let id = quoted_values(sql).pop().unwrap_or_default();
             let found: Vec<_> = records
                 .iter()
@@ -133,7 +136,7 @@ async fn tasks_api_fast_create_list_and_toggle() -> Result<()> {
                 .collect();
             return Ok(task_query(found));
         }
-        if sql.starts_with("SELECT id, executor_node_id") {
+        if sql.starts_with("SELECT id, node_id") {
             let mut all = records.clone();
             all.reverse();
             return Ok(task_query(all));
@@ -223,13 +226,16 @@ async fn tasks_api_fast_update_delete_and_history() -> Result<()> {
     let state = TaskState {
         records: Arc::new(Mutex::new(vec![TaskRow {
             id: "task-1".to_string(),
-            executor_node_id: "test_instance".to_string(),
+            node_id: "test_instance".to_string(),
             name: "nightly-report".to_string(),
             prompt: "run report".to_string(),
             enabled: true,
             status: "idle".to_string(),
             schedule_json: r#"{"kind":"every","seconds":60}"#.to_string(),
             delivery_json: String::new(),
+            user_id: String::new(),
+            scope: String::new(),
+            created_by: String::new(),
             last_error: None,
             delete_after_run: false,
             run_count: 0,
@@ -269,7 +275,7 @@ async fn tasks_api_fast_update_delete_and_history() -> Result<()> {
         }
 
         let mut records = fake_state.records.lock().expect("task state");
-        if sql.starts_with("SELECT id, executor_node_id") && sql.contains("WHERE id = ") {
+        if sql.starts_with("SELECT id, node_id") && sql.contains("WHERE id = ") {
             let id = quoted_values(sql).pop().unwrap_or_default();
             let found: Vec<_> = records
                 .iter()

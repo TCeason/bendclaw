@@ -85,7 +85,7 @@ fn base_skill(name: &str) -> Skill {
         scope: SkillScope::Global,
         source: SkillSource::Local,
         agent_id: None,
-        created_by_user_id: None,
+        created_by: None,
         timeout: 10,
         executable: false,
         parameters: vec![],
@@ -114,7 +114,7 @@ async fn runner_invisible_skill_returns_error() -> Result<()> {
     let mut skill = base_skill("agent-skill");
     skill.scope = SkillScope::Agent;
     skill.agent_id = Some("other-agent".into());
-    skill.created_by_user_id = Some("u1".into());
+    skill.created_by = Some("u1".into());
     skill.executable = true;
     skill.files = vec![SkillFile {
         path: "scripts/run.py".into(),
@@ -149,7 +149,7 @@ async fn runner_executes_shell_skill_and_parses_json_output() -> Result<()> {
     skill.scope = SkillScope::Agent;
     skill.source = SkillSource::Agent;
     skill.agent_id = Some("a1".into());
-    skill.created_by_user_id = Some("u1".into());
+    skill.created_by = Some("u1".into());
     skill.executable = true;
     skill.files = vec![SkillFile {
         path: "scripts/run.sh".into(),
@@ -172,7 +172,7 @@ async fn runner_executes_skill_with_required_env_snapshot() -> Result<()> {
     skill.scope = SkillScope::Agent;
     skill.source = SkillSource::Agent;
     skill.agent_id = Some("a1".into());
-    skill.created_by_user_id = Some("u1".into());
+    skill.created_by = Some("u1".into());
     skill.executable = true;
     skill.requires = Some(bendclaw::kernel::skills::skill::SkillRequirements {
         bins: vec!["bash".into()],
@@ -207,7 +207,7 @@ async fn runner_executes_python_skill_with_required_env_snapshot() -> Result<()>
     skill.scope = SkillScope::Agent;
     skill.source = SkillSource::Agent;
     skill.agent_id = Some("a1".into());
-    skill.created_by_user_id = Some("u1".into());
+    skill.created_by = Some("u1".into());
     skill.executable = true;
     skill.requires = Some(bendclaw::kernel::skills::skill::SkillRequirements {
         bins: vec!["python3".into()],
@@ -242,7 +242,7 @@ async fn runner_missing_required_env_returns_error() -> Result<()> {
     skill.scope = SkillScope::Agent;
     skill.source = SkillSource::Agent;
     skill.agent_id = Some("a1".into());
-    skill.created_by_user_id = Some("u1".into());
+    skill.created_by = Some("u1".into());
     skill.executable = true;
     skill.requires = Some(bendclaw::kernel::skills::skill::SkillRequirements {
         bins: vec![],
@@ -275,7 +275,7 @@ async fn runner_updates_last_used_for_consumed_secret_variables() -> Result<()> 
     skill.scope = SkillScope::Agent;
     skill.source = SkillSource::Agent;
     skill.agent_id = Some("a1".into());
-    skill.created_by_user_id = Some("u1".into());
+    skill.created_by = Some("u1".into());
     skill.executable = true;
     skill.requires = Some(bendclaw::kernel::skills::skill::SkillRequirements {
         bins: vec!["bash".into()],
@@ -292,6 +292,9 @@ async fn runner_updates_last_used_for_consumed_secret_variables() -> Result<()> 
         value: "secret-token".into(),
         secret: true,
         revoked: false,
+        user_id: String::new(),
+        scope: String::new(),
+        created_by: String::new(),
         last_used_at: None,
         created_at: String::new(),
         updated_at: String::new(),

@@ -16,7 +16,7 @@ fn default_storage_config() {
     );
     assert!(cfg.storage.databend_api_token.is_empty());
     assert_eq!(cfg.storage.databend_warehouse, "default");
-    assert_eq!(cfg.storage.db_prefix, "bendclaw_");
+    assert_eq!(cfg.storage.db_prefix, "bendclaw_v2_");
 }
 
 #[test]

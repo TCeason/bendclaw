@@ -13,6 +13,7 @@ fn session_record_serde_roundtrip() -> Result<()> {
         agent_id: String::new(),
         user_id: "user-1".into(),
         title: "Test Session".into(),
+        scope: String::new(),
         session_state: serde_json::Value::Null,
         meta: serde_json::json!({"key": "value"}),
         created_at: "2026-01-01T00:00:00Z".into(),
@@ -53,7 +54,7 @@ fn agent_config_record_serde_roundtrip() -> Result<()> {
         token_limit_total: None,
         token_limit_daily: None,
         llm_config: None,
-
+        created_by: String::new(),
         created_at: "2026-01-01T00:00:00Z".into(),
         updated_at: "2026-01-01T00:00:00Z".into(),
     };

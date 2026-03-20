@@ -1,5 +1,6 @@
 mod checksum;
 mod executor;
+mod hub;
 mod loader;
 mod manifest;
 mod sanitizer;

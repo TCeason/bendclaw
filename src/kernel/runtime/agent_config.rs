@@ -4,6 +4,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::config::WorkspaceConfig;
+use crate::config::DEFAULT_DB_PREFIX;
 
 /// Everything needed to build and run the agent runtime.
 #[derive(Debug, Clone, Serialize)]
@@ -27,7 +28,7 @@ impl Default for AgentConfig {
             databend_api_base_url: String::new(),
             databend_api_token: String::new(),
             databend_warehouse: "default".to_string(),
-            db_prefix: "bendclaw_".to_string(),
+            db_prefix: DEFAULT_DB_PREFIX.to_string(),
             max_iterations: 20,
             max_context_tokens: 250_000,
             max_duration_secs: 300,

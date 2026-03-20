@@ -44,7 +44,7 @@ impl RowMapper for SkillMapper {
     type Entity = Skill;
 
     fn columns(&self) -> &str {
-        "name, version, scope, source, agent_id, created_by_user_id, description, timeout, executable, content"
+        "name, version, scope, source, agent_id, created_by, description, timeout, executable, content"
     }
 
     fn parse(&self, row: &serde_json::Value) -> crate::base::Result<Skill> {
@@ -54,7 +54,7 @@ impl RowMapper for SkillMapper {
             scope: SkillScope::parse(&sql::col(row, 2)),
             source: SkillSource::parse(&sql::col(row, 3)),
             agent_id: sql::col_opt(row, 4),
-            created_by_user_id: sql::col_opt(row, 5),
+            created_by: sql::col_opt(row, 5),
             description: sql::col(row, 6),
             timeout: sql::col_u64(row, 7)?,
             executable: matches!(sql::col(row, 8).as_str(), "1" | "true"),
@@ -147,7 +147,7 @@ impl SkillRepository for DatabendSkillRepository {
 
         let sha256 = skill.compute_sha256();
         let agent_id_val = skill.agent_id.as_deref().map(sql::escape);
-        let created_by_user_id_val = skill.created_by_user_id.as_deref().map(sql::escape);
+        let created_by_val = skill.created_by.as_deref().map(sql::escape);
 
         self.skills
             .insert(&[
@@ -159,7 +159,7 @@ impl SkillRepository for DatabendSkillRepository {
                     Some(v) => SqlVal::Str(v),
                     None => SqlVal::Null,
                 }),
-                ("created_by_user_id", match &created_by_user_id_val {
+                ("created_by", match &created_by_val {
                     Some(v) => SqlVal::Str(v),
                     None => SqlVal::Null,
                 }),
@@ -180,7 +180,7 @@ impl SkillRepository for DatabendSkillRepository {
             let columns = &[
                 "skill_name",
                 "agent_id",
-                "created_by_user_id",
+                "created_by",
                 "file_path",
                 "file_body",
                 "sha256",
@@ -196,7 +196,7 @@ impl SkillRepository for DatabendSkillRepository {
                             Some(v) => SqlVal::Str(v),
                             None => SqlVal::Null,
                         },
-                        match &created_by_user_id_val {
+                        match &created_by_val {
                             Some(v) => SqlVal::Str(v),
                             None => SqlVal::Null,
                         },

@@ -21,7 +21,7 @@ impl RowMapper for VariableMapper {
     type Entity = VariableRecord;
 
     fn columns(&self) -> &str {
-        "id, key, value, secret, revoked, TO_VARCHAR(last_used_at), TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
+        "id, key, value, secret, revoked, user_id, scope, created_by, TO_VARCHAR(last_used_at), TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
     fn parse(&self, row: &serde_json::Value) -> crate::base::Result<VariableRecord> {
@@ -29,20 +29,23 @@ impl RowMapper for VariableMapper {
         let secret = matches!(secret_str.as_str(), "1" | "true");
         let revoked_str: String = sql::col(row, 4);
         let revoked = matches!(revoked_str.as_str(), "1" | "true");
-        let last_used: String = sql::col(row, 5);
+        let last_used: String = sql::col(row, 8);
         Ok(VariableRecord {
             id: sql::col(row, 0),
             key: sql::col(row, 1),
             value: sql::col(row, 2),
             secret,
             revoked,
+            user_id: sql::col(row, 5),
+            scope: sql::col(row, 6),
+            created_by: sql::col(row, 7),
             last_used_at: if last_used.is_empty() {
                 None
             } else {
                 Some(last_used)
             },
-            created_at: sql::col(row, 6),
-            updated_at: sql::col(row, 7),
+            created_at: sql::col(row, 9),
+            updated_at: sql::col(row, 10),
         })
     }
 }
@@ -70,6 +73,9 @@ impl VariableRepo {
                 ("value", SqlVal::Str(&record.value)),
                 ("secret", SqlVal::Raw(secret_val)),
                 ("revoked", SqlVal::Raw(revoked_val)),
+                ("user_id", SqlVal::Str(&record.user_id)),
+                ("scope", SqlVal::Str(&record.scope)),
+                ("created_by", SqlVal::Str(&record.created_by)),
                 ("created_at", SqlVal::Raw("NOW()")),
                 ("updated_at", SqlVal::Raw("NOW()")),
             ])

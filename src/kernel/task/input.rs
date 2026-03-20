@@ -19,14 +19,22 @@ pub struct TaskCreateSpec {
 }
 
 impl TaskCreateSpec {
-    pub fn into_params(self, executor_node_id: String) -> CreateTaskParams {
+    pub fn into_params(
+        self,
+        node_id: String,
+        user_id: String,
+        created_by: String,
+    ) -> CreateTaskParams {
         CreateTaskParams {
-            executor_node_id,
+            node_id,
             name: self.name,
             prompt: self.prompt,
             schedule: self.schedule,
             delivery: self.delivery,
             delete_after_run: self.delete_after_run,
+            user_id: user_id.clone(),
+            scope: "private".to_string(),
+            created_by,
         }
     }
 }

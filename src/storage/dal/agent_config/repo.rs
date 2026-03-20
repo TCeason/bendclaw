@@ -23,7 +23,7 @@ impl RowMapper for ConfigMapper {
     fn columns(&self) -> &str {
         "agent_id, system_prompt, display_name, description, \
          identity, soul, token_limit_total, token_limit_daily, \
-         llm_config, TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
+         llm_config, created_by, TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
     fn parse(&self, row: &serde_json::Value) -> crate::base::Result<AgentConfigRecord> {
@@ -40,8 +40,9 @@ impl RowMapper for ConfigMapper {
                 &sql::col(row, 8),
                 "agent_config.llm_config",
             )?,
-            created_at: sql::col(row, 9),
-            updated_at: sql::col(row, 10),
+            created_by: sql::col(row, 9),
+            created_at: sql::col(row, 10),
+            updated_at: sql::col(row, 11),
         })
     }
 }
@@ -121,6 +122,7 @@ impl AgentConfigStore {
                     ("token_limit_total", SqlVal::Raw(&total_str)),
                     ("token_limit_daily", SqlVal::Raw(&daily_str)),
                     ("llm_config", SqlVal::Raw(&llm_expr)),
+                    ("created_by", SqlVal::Str("")),
                     ("created_at", SqlVal::Raw("NOW()")),
                     ("updated_at", SqlVal::Raw("NOW()")),
                 ],

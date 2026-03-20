@@ -22,7 +22,7 @@ impl RowMapper for LearningMapper {
 
     fn columns(&self) -> &str {
         "id, kind, subject, title, content, conditions, strategy, \
-         priority, confidence, status, supersedes_id, user_id, source_run_id, \
+         priority, confidence, status, supersedes_id, user_id, scope, created_by, source_run_id, \
          success_count, failure_count, TO_VARCHAR(last_applied_at), \
          TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
@@ -42,9 +42,9 @@ impl RowMapper for LearningMapper {
         };
         let priority = sql::col_i32(row, 7).unwrap_or(0);
         let confidence = sql::col_f64(row, 8).unwrap_or(1.0);
-        let success_count = sql::col_i32(row, 13).unwrap_or(0);
-        let failure_count = sql::col_i32(row, 14).unwrap_or(0);
-        let last_applied = sql::col(row, 15);
+        let success_count = sql::col_i32(row, 15).unwrap_or(0);
+        let failure_count = sql::col_i32(row, 16).unwrap_or(0);
+        let last_applied = sql::col(row, 17);
         Ok(LearningRecord {
             id: sql::col(row, 0),
             kind: sql::col(row, 1),
@@ -58,7 +58,9 @@ impl RowMapper for LearningMapper {
             status: sql::col(row, 9),
             supersedes_id: sql::col(row, 10),
             user_id: sql::col(row, 11),
-            source_run_id: sql::col(row, 12),
+            scope: sql::col(row, 12),
+            created_by: sql::col(row, 13),
+            source_run_id: sql::col(row, 14),
             success_count,
             failure_count,
             last_applied_at: if last_applied.is_empty() {
@@ -66,8 +68,8 @@ impl RowMapper for LearningMapper {
             } else {
                 Some(last_applied)
             },
-            created_at: sql::col(row, 16),
-            updated_at: sql::col(row, 17),
+            created_at: sql::col(row, 18),
+            updated_at: sql::col(row, 19),
         })
     }
 }
@@ -106,6 +108,8 @@ impl LearningRepo {
             ("status", SqlVal::Str(&record.status)),
             ("supersedes_id", SqlVal::Str(&record.supersedes_id)),
             ("user_id", SqlVal::Str(&record.user_id)),
+            ("scope", SqlVal::Str(&record.scope)),
+            ("created_by", SqlVal::Str(&record.created_by)),
             ("source_run_id", SqlVal::Str(&record.source_run_id)),
             ("created_at", SqlVal::Raw("NOW()")),
             ("updated_at", SqlVal::Raw("NOW()")),

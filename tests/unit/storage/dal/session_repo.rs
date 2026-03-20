@@ -10,6 +10,7 @@ fn session_row(id: &str) -> Vec<serde_json::Value> {
         "agent-1",
         "user-1",
         "My Chat",
+        "private",
         "{}",
         "{}",
         "2026-03-11T00:00:00Z",

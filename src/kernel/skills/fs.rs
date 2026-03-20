@@ -155,7 +155,7 @@ pub fn load_skill_from_dir(dir: &Path, fallback_name: &str) -> Option<LoadedSkil
         scope: SkillScope::Global,
         source: SkillSource::Local,
         agent_id: None,
-        created_by_user_id: None,
+        created_by: None,
         timeout,
         executable,
         parameters,
@@ -181,7 +181,7 @@ pub fn load_skill_with_meta(dir: &Path, fallback_name: &str) -> Option<LoadedSki
             loaded.skill.scope = SkillScope::parse(&meta.scope);
             loaded.skill.source = SkillSource::parse(&meta.source);
             loaded.skill.agent_id = meta.agent_id;
-            loaded.skill.created_by_user_id = meta.created_by_user_id;
+            loaded.skill.created_by = meta.created_by;
             loaded.skill.executable = meta.executable;
             loaded.skill.parameters = meta.parameters;
             loaded.skill.requires = meta.requires;

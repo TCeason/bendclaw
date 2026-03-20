@@ -21,7 +21,7 @@ impl RowMapper for SessionMapper {
     type Entity = SessionRecord;
 
     fn columns(&self) -> &str {
-        "id, agent_id, user_id, title, PARSE_JSON(session_state), PARSE_JSON(meta), TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
+        "id, agent_id, user_id, title, scope, PARSE_JSON(session_state), PARSE_JSON(meta), TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
     fn parse(&self, row: &serde_json::Value) -> crate::base::Result<SessionRecord> {
@@ -30,10 +30,11 @@ impl RowMapper for SessionMapper {
             agent_id: sql::col(row, 1),
             user_id: sql::col(row, 2),
             title: sql::col(row, 3),
-            session_state: parse_variant_json(&sql::col(row, 4))?,
-            meta: parse_variant_json(&sql::col(row, 5))?,
-            created_at: sql::col(row, 6),
-            updated_at: sql::col(row, 7),
+            scope: sql::col(row, 4),
+            session_state: parse_variant_json(&sql::col(row, 5))?,
+            meta: parse_variant_json(&sql::col(row, 6))?,
+            created_at: sql::col(row, 7),
+            updated_at: sql::col(row, 8),
         })
     }
 }
@@ -76,6 +77,7 @@ impl SessionRepo {
                     ("agent_id", SqlVal::Str(agent_id)),
                     ("user_id", SqlVal::Str(user_id)),
                     ("title", SqlVal::Str(title.unwrap_or_default())),
+                    ("scope", SqlVal::Str("private")),
                     ("session_state", SqlVal::Raw(&state_expr)),
                     ("meta", SqlVal::Raw(&meta_expr)),
                     ("created_at", SqlVal::Raw("NOW()")),

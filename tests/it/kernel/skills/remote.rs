@@ -60,7 +60,7 @@ fn make_skill(agent_id: &str, name: &str, creator: &str, body: &str) -> Skill {
         scope: SkillScope::Agent,
         source: SkillSource::Agent,
         agent_id: Some(agent_id.to_string()),
-        created_by_user_id: Some(creator.to_string()),
+        created_by: Some(creator.to_string()),
         timeout: 45,
         executable: true,
         parameters: vec![],
@@ -86,7 +86,7 @@ fn skill_rows(skills: impl Iterator<Item = Skill>) -> bendclaw::storage::pool::Q
                 serde_json::Value::String(skill.scope.as_str().to_string()),
                 serde_json::Value::String(skill.source.as_str().to_string()),
                 serde_json::Value::String(skill.agent_id.unwrap_or_default()),
-                serde_json::Value::String(skill.created_by_user_id.unwrap_or_default()),
+                serde_json::Value::String(skill.created_by.unwrap_or_default()),
                 serde_json::Value::String(skill.description),
                 serde_json::Value::String(skill.timeout.to_string()),
                 serde_json::Value::String(skill.executable.to_string()),
@@ -196,7 +196,7 @@ fn fake_pool(state: &RemoteState, prefix: &str) -> bendclaw::storage::Pool {
                 scope: SkillScope::parse(&values[2]),
                 source: SkillSource::parse(&values[3]),
                 agent_id: Some(values[4].clone()),
-                created_by_user_id: Some(values[5].clone()),
+                created_by: Some(values[5].clone()),
                 timeout: 45,
                 executable: true,
                 parameters: vec![],
@@ -229,7 +229,7 @@ fn fake_pool(state: &RemoteState, prefix: &str) -> bendclaw::storage::Pool {
             return Ok(paged_rows(&[], None, None));
         }
 
-        if sql.starts_with("SELECT name, version, scope, source, agent_id, created_by_user_id, description, timeout, executable, content FROM skills WHERE name = ") {
+        if sql.starts_with("SELECT name, version, scope, source, agent_id, created_by, description, timeout, executable, content FROM skills WHERE name = ") {
             let name = quoted_values(sql).first().cloned().unwrap_or_default();
             let row = databases
                 .get(&db_name)
@@ -247,7 +247,7 @@ fn fake_pool(state: &RemoteState, prefix: &str) -> bendclaw::storage::Pool {
             return Ok(row.map_or_else(|| paged_rows(&[], None, None), |skill| file_rows(&skill)));
         }
 
-        if sql.starts_with("SELECT name, version, scope, source, agent_id, created_by_user_id, description, timeout, executable, content FROM skills WHERE enabled = TRUE") {
+        if sql.starts_with("SELECT name, version, scope, source, agent_id, created_by, description, timeout, executable, content FROM skills WHERE enabled = TRUE") {
             let rows = databases
                 .get(&db_name)
                 .map(|skills| {
@@ -293,7 +293,7 @@ async fn remote_repository_roundtrip_on_fake_databend() -> Result<()> {
         .get("remote-tool")
         .await?
         .ok_or_else(|| anyhow::anyhow!("skill missing after save"))?;
-    assert_eq!(fetched.created_by_user_id.as_deref(), Some("user-1"));
+    assert_eq!(fetched.created_by.as_deref(), Some("user-1"));
     assert_eq!(fetched.files.len(), 1);
     assert_eq!(fetched.files[0].path, "scripts/run.sh");
 
@@ -375,8 +375,8 @@ async fn skill_store_refresh_syncs_remote_skills_and_evicts_stale_dirs() -> Resu
         .get("agent-b", "remote-b")
         .ok_or_else(|| anyhow::anyhow!("agent-b skill missing"))?;
 
-    assert_eq!(skill_a.created_by_user_id.as_deref(), Some("user-a"));
-    assert_eq!(skill_b.created_by_user_id.as_deref(), Some("user-b"));
+    assert_eq!(skill_a.created_by.as_deref(), Some("user-a"));
+    assert_eq!(skill_b.created_by.as_deref(), Some("user-b"));
     let script_a = store
         .host_script_path("agent-a", "remote-a")
         .ok_or_else(|| anyhow::anyhow!("agent-a script missing"))?;

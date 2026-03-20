@@ -14,15 +14,15 @@ const BINARY_NAME: &str = "bendclaw";
 const DRACULA_GREEN: (u8, u8, u8) = (80, 250, 123);
 
 #[derive(Debug, Deserialize)]
-struct GitHubRelease {
-    tag_name: String,
-    assets: Vec<GitHubReleaseAsset>,
+pub struct GitHubRelease {
+    pub tag_name: String,
+    pub assets: Vec<GitHubReleaseAsset>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct GitHubReleaseAsset {
-    name: String,
-    url: String,
+pub struct GitHubReleaseAsset {
+    pub name: String,
+    pub url: String,
 }
 
 pub async fn cmd_update() -> Result<()> {
@@ -205,7 +205,7 @@ fn copy_permissions(source: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
-fn select_asset(release: &GitHubRelease, target: &str) -> Option<GitHubReleaseAsset> {
+pub fn select_asset(release: &GitHubRelease, target: &str) -> Option<GitHubReleaseAsset> {
     let exact_name = format!("{}-{}-{}.tar.gz", BINARY_NAME, release.tag_name, target);
     release
         .assets
@@ -251,7 +251,7 @@ fn user_agent() -> String {
     format!("{BINARY_NAME}/{ver}")
 }
 
-fn tags_match(current: &str, latest: &str) -> bool {
+pub fn tags_match(current: &str, latest: &str) -> bool {
     current == latest || current.trim_start_matches('v') == latest.trim_start_matches('v')
 }
 
@@ -275,36 +275,4 @@ fn stdout_supports_color() -> bool {
     }
 
     std::io::stdout().is_terminal()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tags_match_ignores_v_prefix() {
-        assert!(tags_match("v2026.3.13", "2026.3.13"));
-        assert!(tags_match("2026.3.13", "v2026.3.13"));
-        assert!(!tags_match("v2026.3.13", "v2026.3.14"));
-    }
-
-    #[test]
-    fn select_asset_prefers_exact_name() {
-        let release = GitHubRelease {
-            tag_name: "v2026.3.13".to_string(),
-            assets: vec![
-                GitHubReleaseAsset {
-                    name: "bendclaw-v2026.3.13-x86_64-unknown-linux-gnu.tar.gz".to_string(),
-                    url: "https://example.com/exact".to_string(),
-                },
-                GitHubReleaseAsset {
-                    name: "bendclaw-x86_64-unknown-linux-gnu.tar.gz".to_string(),
-                    url: "https://example.com/fallback".to_string(),
-                },
-            ],
-        };
-
-        let asset = select_asset(&release, "x86_64-unknown-linux-gnu").expect("asset");
-        assert_eq!(asset.url, "https://example.com/exact");
-    }
 }

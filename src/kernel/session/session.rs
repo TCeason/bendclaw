@@ -46,7 +46,7 @@ use crate::observability::server_log;
 
 const USAGE_PROVIDER_UNKNOWN: &str = "unknown";
 
-pub(crate) enum SessionState {
+pub enum SessionState {
     Idle,
     Running {
         run_id: String,
@@ -78,7 +78,7 @@ pub struct Session {
     agent_id: Arc<str>,
     user_id: Arc<str>,
     res: SessionResources,
-    pub(crate) state: Arc<Mutex<SessionState>>,
+    pub state: Arc<Mutex<SessionState>>,
     history: Arc<Mutex<Vec<Message>>>,
     last_active: Mutex<Instant>,
     stale: AtomicBool,
@@ -544,7 +544,7 @@ impl Session {
         self.stale.store(true, Ordering::Relaxed);
     }
 
-    pub(crate) fn is_stale(&self) -> bool {
+    pub fn is_stale(&self) -> bool {
         self.stale.load(Ordering::Relaxed)
     }
 

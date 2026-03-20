@@ -30,7 +30,7 @@ fn task_delivery_validate_rejects_missing_channel_fields() {
 fn make_task() -> TaskRecord {
     TaskRecord {
         id: "task-001".into(),
-        executor_node_id: "os-abc12345".into(),
+        node_id: "os-abc12345".into(),
         name: "Daily report".into(),
         prompt: "Generate daily report".into(),
         enabled: true,
@@ -42,6 +42,9 @@ fn make_task() -> TaskRecord {
         delivery: TaskDelivery::Webhook {
             url: "https://example.com/hook".into(),
         },
+        user_id: String::new(),
+        scope: String::new(),
+        created_by: String::new(),
         last_error: None,
         delete_after_run: false,
         run_count: 5,
@@ -61,7 +64,7 @@ fn task_record_serde_roundtrip() -> Result<()> {
     let json = serde_json::to_string(&record)?;
     let parsed: TaskRecord = serde_json::from_str(&json)?;
     assert_eq!(parsed.id, "task-001");
-    assert_eq!(parsed.executor_node_id, "os-abc12345");
+    assert_eq!(parsed.node_id, "os-abc12345");
     assert_eq!(parsed.name, "Daily report");
     assert_eq!(parsed.prompt, "Generate daily report");
     assert!(parsed.enabled);
@@ -160,6 +163,7 @@ fn make_history() -> TaskHistoryRecord {
         },
         delivery_status: Some("ok".into()),
         delivery_error: None,
+        user_id: String::new(),
         executed_by_node_id: None,
         created_at: "2026-03-09T09:00:01Z".into(),
     }

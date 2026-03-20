@@ -9,6 +9,8 @@ pub struct SessionRecord {
     pub user_id: String,
     pub title: String,
     #[serde(default)]
+    pub scope: String,
+    #[serde(default)]
     pub session_state: serde_json::Value,
     #[serde(default)]
     pub meta: serde_json::Value,

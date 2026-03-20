@@ -133,9 +133,8 @@ async fn cmd_run(
         .with(ErrorLayer::default())
         .init();
 
-    bendclaw::version::log_version();
-
     config.validate()?;
+    print_banner(&config);
     config.log_non_defaults();
 
     let llm = Arc::new(LLMRouter::from_config(&config.llm)?);
@@ -164,15 +163,12 @@ async fn cmd_run(
 
     let api_bind = &config.server.bind_addr;
     let api_listener = tokio::net::TcpListener::bind(api_bind).await?;
-    tracing::info!(bind = %api_bind, "server listening");
 
-    // Optional admin server on a separate port (no auth, internal only)
     let admin_listener = if let Some(ref admin) = config.admin {
         let admin_state = bendclaw::service::AdminState {
             runtime: runtime.clone(),
         };
         let listener = tokio::net::TcpListener::bind(&admin.bind_addr).await?;
-        tracing::info!(bind = %admin.bind_addr, "admin server listening");
         Some((listener, bendclaw::service::admin_router(admin_state)))
     } else {
         None
@@ -208,4 +204,53 @@ async fn cmd_run(
     }
 
     Ok(())
+}
+
+fn print_banner(config: &BendClawConfig) {
+    use std::fmt::Write;
+
+    use bendclaw::version;
+
+    let ver = version::commit_version();
+    let line = "─".repeat(56);
+
+    let mut buf = format!(
+        "\n\
+         {line}\n  \
+         BendClaw {ver}\n\
+         {line}\n"
+    );
+
+    let _ = writeln!(buf, "  node_id:      {}", config.node_id);
+    let _ = writeln!(buf, "  db_prefix:    {}", config.storage.db_prefix);
+    let _ = writeln!(buf, "  api:          {}", config.server.bind_addr);
+
+    if let Some(ref admin) = config.admin {
+        let _ = writeln!(buf, "  admin:        {}", admin.bind_addr);
+    }
+
+    if let Some(ref cluster) = config.cluster {
+        let _ = writeln!(buf, "  cluster_id:   {}", cluster.cluster_id);
+        if !cluster.advertise_url.is_empty() {
+            let _ = writeln!(buf, "  advertise:    {}", cluster.advertise_url);
+        }
+    }
+
+    if config.hub.is_some() {
+        let _ = writeln!(buf, "  hub:          enabled");
+    }
+
+    if config.directive.is_some() {
+        let _ = writeln!(buf, "  directive:    enabled");
+    }
+
+    let _ = writeln!(buf, "  log_level:    {}", config.log.level);
+
+    if !config.log.dir.is_empty() {
+        let _ = writeln!(buf, "  log_dir:      {}", config.log.dir);
+    }
+
+    let _ = writeln!(buf, "{line}");
+
+    eprint!("{buf}");
 }

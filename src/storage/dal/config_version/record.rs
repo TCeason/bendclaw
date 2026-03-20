@@ -19,5 +19,6 @@ pub struct ConfigVersionRecord {
     pub token_limit_daily: Option<u64>,
     pub llm_config: Option<LLMConfig>,
     pub notes: String,
+    pub created_by: String,
     pub created_at: String,
 }

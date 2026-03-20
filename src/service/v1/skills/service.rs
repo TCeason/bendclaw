@@ -29,7 +29,7 @@ pub(super) async fn create_skill(
         scope: SkillScope::Agent,
         source: SkillSource::Agent,
         agent_id: Some(agent_id.to_string()),
-        created_by_user_id: Some(user_id.to_string()),
+        created_by: Some(user_id.to_string()),
         description: req.description,
         content: req.content,
         timeout: req.timeout,

@@ -16,7 +16,7 @@ impl RowMapper for VersionMapper {
 
     fn columns(&self) -> &str {
         "id, agent_id, version, label, `stage`, system_prompt, display_name, description, \
-         identity, soul, token_limit_total, token_limit_daily, llm_config, notes, TO_VARCHAR(created_at)"
+         identity, soul, token_limit_total, token_limit_daily, llm_config, notes, created_by, TO_VARCHAR(created_at)"
     }
 
     fn parse(&self, row: &serde_json::Value) -> crate::base::Result<ConfigVersionRecord> {
@@ -38,7 +38,8 @@ impl RowMapper for VersionMapper {
                 "agent_config_versions.llm_config",
             )?,
             notes: sql::col(row, 13),
-            created_at: sql::col(row, 14),
+            created_by: sql::col(row, 14),
+            created_at: sql::col(row, 15),
         })
     }
 }
@@ -87,6 +88,7 @@ impl ConfigVersionRepo {
                 ("token_limit_daily", SqlVal::Raw(&daily_str)),
                 ("llm_config", SqlVal::Raw(&llm_expr)),
                 ("notes", SqlVal::Str(&record.notes)),
+                ("created_by", SqlVal::Str(&record.created_by)),
                 ("created_at", SqlVal::Raw("NOW()")),
             ])
             .await

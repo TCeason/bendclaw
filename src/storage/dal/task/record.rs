@@ -7,7 +7,7 @@ use super::schedule::TaskSchedule;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskRecord {
     pub id: String,
-    pub executor_node_id: String,
+    pub node_id: String,
     pub name: String,
     pub prompt: String,
     pub enabled: bool,
@@ -15,6 +15,9 @@ pub struct TaskRecord {
     pub schedule: TaskSchedule,
     #[serde(default)]
     pub delivery: TaskDelivery,
+    pub user_id: String,
+    pub scope: String,
+    pub created_by: String,
     pub last_error: Option<String>,
     pub delete_after_run: bool,
     pub run_count: i32,

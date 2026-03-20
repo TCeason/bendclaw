@@ -1,4 +1,4 @@
-pub(crate) mod recorder;
+pub mod recorder;
 pub mod span_meta;
 pub mod writer;
 

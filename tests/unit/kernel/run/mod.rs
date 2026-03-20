@@ -1,5 +1,6 @@
 mod compaction_rules;
 mod compactor;
+mod default_identity;
 mod dispatcher;
 mod event;
 mod fmt;
@@ -8,5 +9,6 @@ mod persister;
 mod prompt;
 mod result;
 mod run_loop;
+mod runtime_context;
 mod transition;
 mod usage;

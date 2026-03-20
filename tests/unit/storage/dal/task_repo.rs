@@ -8,11 +8,19 @@ use crate::common::task_rows::task_query;
 use crate::common::task_rows::TaskRow;
 
 #[tokio::test]
-async fn task_repo_list_due_scopes_by_executor_instance() -> Result<()> {
+async fn task_repo_list_due_returns_eligible_tasks() -> Result<()> {
     let fake = FakeDatabend::new(|sql, _database| {
-        assert_eq!(
-            sql,
-            "SELECT id, executor_node_id, name, prompt, enabled, status, schedule, delivery, last_error, delete_after_run, run_count, TO_VARCHAR(last_run_at), TO_VARCHAR(next_run_at), lease_token, lease_node_id, TO_VARCHAR(lease_expires_at), TO_VARCHAR(created_at), TO_VARCHAR(updated_at) FROM tasks WHERE enabled = true AND status != 'running' AND next_run_at <= NOW() AND executor_node_id = 'inst-1' ORDER BY next_run_at ASC LIMIT 100"
+        assert!(
+            sql.contains("WHERE enabled = true AND next_run_at <= NOW()"),
+            "should have base conditions: {sql}"
+        );
+        assert!(
+            sql.contains("status != 'running'"),
+            "should filter non-running tasks: {sql}"
+        );
+        assert!(
+            sql.contains("lease_expires_at"),
+            "should recover stuck running tasks with expired leases: {sql}"
         );
         Ok(task_query([TaskRow::every(
             "task-1",
@@ -22,40 +30,10 @@ async fn task_repo_list_due_scopes_by_executor_instance() -> Result<()> {
     });
     let repo = TaskRepo::new(fake.pool());
 
-    let tasks = repo.list_due("inst-1").await?;
+    let tasks = repo.list_due().await?;
 
     assert_eq!(tasks.len(), 1);
     assert_eq!(tasks[0].id, "task-1");
-    Ok(())
-}
-
-#[tokio::test]
-async fn task_repo_claim_due_tasks_updates_then_loads_claimed_rows() -> Result<()> {
-    let fake = FakeDatabend::new(|sql, _database| {
-        if sql.starts_with("UPDATE tasks SET status = 'running'") {
-            assert!(sql.contains("lease_token = 'lease-1'"));
-            assert!(sql.contains("executor_node_id = 'inst-1'"));
-            assert!(
-                sql.contains("(lease_token IS NULL OR lease_token = '')"),
-                "claim_due_tasks must guard against double-claim: {sql}"
-            );
-            return Ok(paged_rows(&[], None, None));
-        }
-        assert_eq!(
-            sql,
-            "SELECT id, executor_node_id, name, prompt, enabled, status, schedule, delivery, last_error, delete_after_run, run_count, TO_VARCHAR(last_run_at), TO_VARCHAR(next_run_at), lease_token, lease_node_id, TO_VARCHAR(lease_expires_at), TO_VARCHAR(created_at), TO_VARCHAR(updated_at) FROM tasks WHERE lease_token = 'lease-1' AND status = 'running' ORDER BY next_run_at ASC LIMIT 100"
-        );
-        Ok(task_query([TaskRow {
-            lease_token: Some("lease-1".to_string()),
-            ..TaskRow::every("task-1", "nightly-report", true)
-        }]))
-    });
-    let repo = TaskRepo::new(fake.pool());
-
-    let tasks = repo.claim_due_tasks("inst-1", "lease-1").await?;
-
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0].lease_token.as_deref(), Some("lease-1"));
     Ok(())
 }
 
@@ -109,36 +87,6 @@ async fn task_repo_toggle_and_delete_issue_expected_sql() -> Result<()> {
             database: None,
         },
     ]);
-    Ok(())
-}
-
-#[tokio::test]
-async fn task_repo_list_due_any_omits_executor_instance_filter() -> Result<()> {
-    let fake = FakeDatabend::new(|sql, _database| {
-        assert!(
-            sql.contains("WHERE enabled = true AND next_run_at <= NOW()"),
-            "should have base conditions: {sql}"
-        );
-        assert!(
-            !sql.contains("AND executor_node_id ="),
-            "list_due_any must not filter by executor_node_id: {sql}"
-        );
-        assert!(
-            sql.contains("status != 'running'"),
-            "should filter non-running tasks: {sql}"
-        );
-        assert!(
-            sql.contains("lease_expires_at"),
-            "should recover stuck running tasks with expired leases: {sql}"
-        );
-        Ok(task_query([TaskRow::every("task-1", "report", true)]))
-    });
-    let repo = TaskRepo::new(fake.pool());
-
-    let tasks = repo.list_due_any().await?;
-
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0].id, "task-1");
     Ok(())
 }
 

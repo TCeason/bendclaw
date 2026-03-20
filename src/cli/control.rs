@@ -24,7 +24,7 @@ fn run_dir() -> PathBuf {
     state_dir().join("run")
 }
 
-fn default_log_dir() -> PathBuf {
+pub fn default_log_dir() -> PathBuf {
     dirs_home().join(EVOTAI_DIR_NAME).join("logs")
 }
 
@@ -42,7 +42,7 @@ fn log_file() -> PathBuf {
     log_dir().join("bendclaw.out")
 }
 
-fn dirs_home() -> PathBuf {
+pub fn dirs_home() -> PathBuf {
     std::env::var("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/tmp"))
@@ -230,18 +230,5 @@ pub fn cmd_status() {
         None => {
             println!("🦞 BendClaw is not running");
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_background_log_dir_uses_evotai_logs() {
-        assert_eq!(
-            default_log_dir(),
-            dirs_home().join(EVOTAI_DIR_NAME).join("logs")
-        );
     }
 }

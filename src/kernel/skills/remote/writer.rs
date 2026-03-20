@@ -27,7 +27,7 @@ pub struct SkillMeta {
     #[serde(default)]
     pub agent_id: Option<String>,
     #[serde(default)]
-    pub created_by_user_id: Option<String>,
+    pub created_by: Option<String>,
     pub executable: bool,
     #[serde(default)]
     pub parameters: Vec<SkillParameter>,
@@ -68,7 +68,7 @@ pub fn write_skill(workspace_root: &Path, agent_id: &str, skill: &Skill) -> Opti
         scope: skill.scope.as_str().to_string(),
         source: skill.source.as_str().to_string(),
         agent_id: skill.agent_id.clone(),
-        created_by_user_id: skill.created_by_user_id.clone(),
+        created_by: skill.created_by.clone(),
         executable: skill.executable,
         parameters: skill.parameters.clone(),
         requires: skill.requires.clone(),
@@ -105,7 +105,7 @@ pub fn write_skill(workspace_root: &Path, agent_id: &str, skill: &Skill) -> Opti
     loaded.skill.scope = skill.scope.clone();
     loaded.skill.source = skill.source.clone();
     loaded.skill.agent_id = skill.agent_id.clone();
-    loaded.skill.created_by_user_id = skill.created_by_user_id.clone();
+    loaded.skill.created_by = skill.created_by.clone();
     loaded.skill.executable = skill.executable;
     loaded.skill.parameters = skill.parameters.clone();
     loaded.skill.files = skill.files.clone();

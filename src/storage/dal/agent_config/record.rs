@@ -14,6 +14,7 @@ pub struct AgentConfigRecord {
     pub token_limit_total: Option<u64>,
     pub token_limit_daily: Option<u64>,
     pub llm_config: Option<LLMConfig>,
+    pub created_by: String,
     pub created_at: String,
     pub updated_at: String,
 }

@@ -10,12 +10,15 @@ use crate::storage::dal::task_history::TaskHistoryRepo;
 use crate::storage::pool::Pool;
 
 pub struct CreateTaskParams {
-    pub executor_node_id: String,
+    pub node_id: String,
     pub name: String,
     pub prompt: String,
     pub schedule: TaskSchedule,
     pub delivery: TaskDelivery,
     pub delete_after_run: bool,
+    pub user_id: String,
+    pub scope: String,
+    pub created_by: String,
 }
 
 pub struct UpdateTaskParams {
@@ -40,13 +43,16 @@ pub async fn create_task(pool: &Pool, params: CreateTaskParams) -> Result<TaskRe
     let next_run_at = params.schedule.initial_next_run_at();
     let record = TaskRecord {
         id: new_id(),
-        executor_node_id: params.executor_node_id,
+        node_id: params.node_id,
         name: params.name,
         prompt: params.prompt,
         enabled: true,
         status: "idle".to_string(),
         schedule: params.schedule,
         delivery: params.delivery,
+        user_id: params.user_id,
+        scope: params.scope,
+        created_by: params.created_by,
         last_error: None,
         delete_after_run: params.delete_after_run,
         run_count: 0,

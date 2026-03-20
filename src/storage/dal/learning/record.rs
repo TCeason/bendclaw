@@ -15,6 +15,8 @@ pub struct LearningRecord {
     pub status: String,
     pub supersedes_id: String,
     pub user_id: String,
+    pub scope: String,
+    pub created_by: String,
     pub source_run_id: String,
     pub success_count: i32,
     pub failure_count: i32,

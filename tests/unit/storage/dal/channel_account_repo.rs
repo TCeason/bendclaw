@@ -12,6 +12,9 @@ fn account_row(id: &str) -> Vec<serde_json::Value> {
         "acc-1",
         "agent-1",
         "user-1",
+        "", // scope
+        "", // node_id
+        "", // created_by
         "{\"token\":\"abc\"}",
         "1",
         "",
@@ -52,6 +55,9 @@ async fn channel_account_insert_generates_valid_sql() -> Result<()> {
         account_id: "acc-1".into(),
         agent_id: "agent-1".into(),
         user_id: "user-1".into(),
+        scope: String::new(),
+        node_id: String::new(),
+        created_by: String::new(),
         config: serde_json::json!({"token": "abc"}),
         enabled: true,
         lease_node_id: None,
@@ -66,12 +72,9 @@ async fn channel_account_insert_generates_valid_sql() -> Result<()> {
 }
 
 #[tokio::test]
-async fn channel_account_load_and_find_generate_valid_sql() -> Result<()> {
+async fn channel_account_load_generates_valid_sql() -> Result<()> {
     let fake = FakeDatabend::new(|sql, _db| {
         if sql.contains("WHERE id = 'ca-1' LIMIT 1") {
-            return Ok(account_response("ca-1"));
-        }
-        if sql.contains("WHERE channel_type = 'slack' AND account_id = 'acc-1'") {
             return Ok(account_response("ca-1"));
         }
         panic!("unexpected SQL: {sql}");
@@ -81,12 +84,6 @@ async fn channel_account_load_and_find_generate_valid_sql() -> Result<()> {
     let loaded = repo.load("ca-1").await?.expect("should exist");
     assert_eq!(loaded.channel_type, "slack");
     assert!(loaded.enabled);
-
-    let found = repo
-        .find_by_account("slack", "acc-1")
-        .await?
-        .expect("should exist");
-    assert_eq!(found.id, "ca-1");
     Ok(())
 }
 

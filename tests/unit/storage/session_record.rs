@@ -8,6 +8,7 @@ fn session_record_serde_roundtrip() -> Result<()> {
         agent_id: String::new(),
         user_id: "u1".into(),
         title: "My session".into(),
+        scope: String::new(),
         session_state: serde_json::Value::Null,
         meta: serde_json::json!({"key": "value"}),
         created_at: "2026-01-01".into(),

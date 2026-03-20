@@ -63,6 +63,7 @@ async fn config_version_insert_generates_valid_sql() -> Result<()> {
         token_limit_daily: None,
         llm_config: None,
         notes: "initial".into(),
+        created_by: String::new(),
         created_at: String::new(),
     };
     repo.insert(&record).await?;

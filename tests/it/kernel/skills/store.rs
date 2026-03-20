@@ -42,7 +42,7 @@ fn make_agent_skill(agent_id: &str, name: &str, description: &str, creator: &str
         scope: SkillScope::Agent,
         source: SkillSource::Agent,
         agent_id: Some(agent_id.to_string()),
-        created_by_user_id: Some(creator.to_string()),
+        created_by: Some(creator.to_string()),
         timeout: 30,
         executable: true,
         parameters: vec![],
@@ -160,7 +160,7 @@ fn disk_checksum_changes_when_creator_changes() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("skill not loaded"))?;
 
     assert_ne!(checksum_v1, checksum_v2);
-    assert_eq!(loaded.created_by_user_id.as_deref(), Some("user-2"));
+    assert_eq!(loaded.created_by.as_deref(), Some("user-2"));
     Ok(())
 }
 
@@ -197,7 +197,7 @@ fn same_agent_same_name_overwrite_replaces_files_and_creator() -> Result<()> {
         .get("agent-a", "dup-skill")
         .ok_or_else(|| anyhow::anyhow!("skill not found"))?;
     assert_eq!(loaded.description, "second");
-    assert_eq!(loaded.created_by_user_id.as_deref(), Some("user-2"));
+    assert_eq!(loaded.created_by.as_deref(), Some("user-2"));
     assert_eq!(
         store.read_skill("agent-a", "dup-skill/references/new.md"),
         Some("# new".to_string())
@@ -231,9 +231,9 @@ fn same_name_can_exist_under_different_agents() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("agent-b skill missing"))?;
 
     assert_eq!(skill_a.description, "agent a");
-    assert_eq!(skill_a.created_by_user_id.as_deref(), Some("user-a"));
+    assert_eq!(skill_a.created_by.as_deref(), Some("user-a"));
     assert_eq!(skill_b.description, "agent b");
-    assert_eq!(skill_b.created_by_user_id.as_deref(), Some("user-b"));
+    assert_eq!(skill_b.created_by.as_deref(), Some("user-b"));
     Ok(())
 }
 

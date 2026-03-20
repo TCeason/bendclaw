@@ -132,7 +132,7 @@ pub struct Skill {
     #[serde(default)]
     pub agent_id: Option<String>,
     #[serde(default)]
-    pub created_by_user_id: Option<String>,
+    pub created_by: Option<String>,
     #[serde(default = "default_timeout")]
     pub timeout: u64,
     pub executable: bool,
@@ -174,7 +174,7 @@ impl Skill {
         hasher.update(b"|");
         hasher.update(self.agent_id.as_deref().unwrap_or("").as_bytes());
         hasher.update(b"|");
-        hasher.update(self.created_by_user_id.as_deref().unwrap_or("").as_bytes());
+        hasher.update(self.created_by.as_deref().unwrap_or("").as_bytes());
         hasher.update(b"|");
         hasher.update(if self.executable { b"1" } else { b"0" });
         hasher.update(b"|");

@@ -22,7 +22,7 @@ fn test_serde_roundtrip() -> Result<()> {
         scope: Default::default(),
         source: Default::default(),
         agent_id: None,
-        created_by_user_id: None,
+        created_by: None,
         timeout: 60,
         executable: true,
         parameters: vec![SkillParameter {
@@ -75,7 +75,7 @@ fn test_requires_serde_roundtrip() -> Result<()> {
         scope: Default::default(),
         source: Default::default(),
         agent_id: None,
-        created_by_user_id: None,
+        created_by: None,
         timeout: 30,
         executable: true,
         parameters: vec![],

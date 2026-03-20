@@ -17,18 +17,22 @@ impl RowMapper for FeedbackMapper {
     type Entity = FeedbackRecord;
 
     fn columns(&self) -> &str {
-        "id, session_id, run_id, rating, comment, TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
+        "id, agent_id, session_id, run_id, user_id, scope, created_by, rating, comment, TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
     fn parse(&self, row: &serde_json::Value) -> crate::base::Result<FeedbackRecord> {
         Ok(FeedbackRecord {
             id: sql::col(row, 0),
-            session_id: sql::col(row, 1),
-            run_id: sql::col(row, 2),
-            rating: sql::col_i32(row, 3)?,
-            comment: sql::col(row, 4),
-            created_at: sql::col(row, 5),
-            updated_at: sql::col(row, 6),
+            agent_id: sql::col(row, 1),
+            session_id: sql::col(row, 2),
+            run_id: sql::col(row, 3),
+            user_id: sql::col(row, 4),
+            scope: sql::col(row, 5),
+            created_by: sql::col(row, 6),
+            rating: sql::col_i32(row, 7)?,
+            comment: sql::col(row, 8),
+            created_at: sql::col(row, 9),
+            updated_at: sql::col(row, 10),
         })
     }
 }
@@ -50,8 +54,12 @@ impl FeedbackRepo {
             .table
             .insert(&[
                 ("id", SqlVal::Str(&record.id)),
+                ("agent_id", SqlVal::Str(&record.agent_id)),
                 ("session_id", SqlVal::Str(&record.session_id)),
                 ("run_id", SqlVal::Str(&record.run_id)),
+                ("user_id", SqlVal::Str(&record.user_id)),
+                ("scope", SqlVal::Str(&record.scope)),
+                ("created_by", SqlVal::Str(&record.created_by)),
                 ("rating", SqlVal::Int(record.rating as i64)),
                 ("comment", SqlVal::Str(&record.comment)),
                 ("created_at", SqlVal::Raw("NOW()")),

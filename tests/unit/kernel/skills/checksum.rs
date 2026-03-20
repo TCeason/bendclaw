@@ -11,7 +11,7 @@ fn base_skill() -> Skill {
         scope: Default::default(),
         source: Default::default(),
         agent_id: None,
-        created_by_user_id: None,
+        created_by: None,
         timeout: 30,
         executable: false,
         parameters: vec![],

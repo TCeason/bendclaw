@@ -64,10 +64,10 @@ fn make_record(id: &str, subject: &str, summary: &str, locator: &str) -> Knowled
         status: "active".into(),
         confidence: 1.0,
         user_id: "u1".into(),
+        scope: String::new(),
+        created_by: String::new(),
         first_run_id: "r1".into(),
         last_run_id: "r1".into(),
-        first_seen_at: String::new(),
-        last_seen_at: String::new(),
         created_at: String::new(),
         updated_at: String::new(),
     }

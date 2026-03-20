@@ -1,6 +1,6 @@
 mod args;
-mod control;
-mod update;
+pub mod control;
+pub mod update;
 
 pub use args::Cli;
 pub use args::CliOverrides;

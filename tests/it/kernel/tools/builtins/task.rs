@@ -263,7 +263,7 @@ async fn task_history_tool_returns_entries() -> Result<()> {
     let fake = FakeDatabend::new(|sql, _database| {
         assert_eq!(
             sql,
-            "SELECT id, task_id, run_id, task_name, schedule, prompt, status, output, error, duration_ms, delivery, delivery_status, delivery_error, executed_by_node_id, TO_VARCHAR(created_at) FROM task_history WHERE task_id = 'task-1' ORDER BY created_at DESC LIMIT 5"
+            "SELECT id, task_id, run_id, task_name, schedule, prompt, status, output, error, duration_ms, delivery, delivery_status, delivery_error, user_id, executed_by_node_id, TO_VARCHAR(created_at) FROM task_history WHERE task_id = 'task-1' ORDER BY created_at DESC LIMIT 5"
         );
         Ok(task_history_query([TaskHistoryRow::ok("task-1")]))
     });

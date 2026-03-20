@@ -70,7 +70,7 @@ fn test_skill(scope: SkillScope, agent_id: Option<&str>, user_id: Option<&str>) 
         scope,
         source: SkillSource::Local,
         agent_id: agent_id.map(String::from),
-        created_by_user_id: user_id.map(String::from),
+        created_by: user_id.map(String::from),
         timeout: 30,
         executable: true,
         parameters: vec![],
@@ -143,7 +143,7 @@ fn skill_serde_roundtrip() -> Result<()> {
         scope: SkillScope::Agent,
         source: SkillSource::Hub,
         agent_id: Some("a1".into()),
-        created_by_user_id: Some("u1".into()),
+        created_by: Some("u1".into()),
         timeout: 60,
         executable: true,
         parameters: vec![SkillParameter {

@@ -89,7 +89,7 @@ fn git_pull(repo_dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
-pub(crate) fn should_sync(hub_dir: &Path, interval_secs: u64) -> bool {
+pub fn should_sync(hub_dir: &Path, interval_secs: u64) -> bool {
     std::fs::metadata(hub_dir.join(paths::SYNC_MARKER))
         .and_then(|m| m.modified())
         .ok()
@@ -98,30 +98,6 @@ pub(crate) fn should_sync(hub_dir: &Path, interval_secs: u64) -> bool {
         .unwrap_or(true)
 }
 
-fn mark_synced(hub_dir: &Path) -> std::io::Result<()> {
+pub fn mark_synced(hub_dir: &Path) -> std::io::Result<()> {
     std::fs::write(hub_dir.join(paths::SYNC_MARKER), b"synced")
-}
-
-#[cfg(test)]
-mod tests {
-    use tempfile::TempDir;
-
-    use super::*;
-
-    #[test]
-    fn should_sync_true_when_no_marker() {
-        let tmp = TempDir::new().unwrap();
-        let hub = paths::hub_dir(tmp.path());
-        std::fs::create_dir_all(&hub).unwrap();
-        assert!(should_sync(&hub, 3600));
-    }
-
-    #[test]
-    fn should_sync_false_when_recently_synced() {
-        let tmp = TempDir::new().unwrap();
-        let hub = paths::hub_dir(tmp.path());
-        std::fs::create_dir_all(&hub).unwrap();
-        mark_synced(&hub).unwrap();
-        assert!(!should_sync(&hub, 3600));
-    }
 }

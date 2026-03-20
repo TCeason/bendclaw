@@ -95,7 +95,7 @@ async fn create_skill_overwrites_same_name_within_agent_fast() -> Result<()> {
     let skill = json_body(get_resp).await?;
     assert_eq!(skill["description"], "second version");
     assert_eq!(skill["content"], "second body");
-    assert_eq!(skill["created_by_user_id"], user);
+    assert_eq!(skill["created_by"], user);
     assert_eq!(skill["files"][0]["path"], "references/new.md");
 
     let list_resp = app

@@ -12,7 +12,7 @@ fn make_skill(scope: SkillScope, agent_id: Option<&str>) -> Skill {
         scope,
         source: SkillSource::Agent,
         agent_id: agent_id.map(String::from),
-        created_by_user_id: None,
+        created_by: None,
         timeout: 30,
         executable: false,
         parameters: vec![],
@@ -156,6 +156,6 @@ fn loader_sets_global_scope_and_local_source() -> Result<(), Box<dyn std::error:
     assert_eq!(loaded.skill.scope, SkillScope::Global);
     assert_eq!(loaded.skill.source, SkillSource::Local);
     assert!(loaded.skill.agent_id.is_none());
-    assert!(loaded.skill.created_by_user_id.is_none());
+    assert!(loaded.skill.created_by.is_none());
     Ok(())
 }

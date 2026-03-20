@@ -347,6 +347,7 @@ impl AgentStore {
             token_limit_daily: snapshot.token_limit_daily,
             llm_config: snapshot.llm_config,
             notes: notes.unwrap_or_default().to_string(),
+            created_by: String::new(),
             created_at: String::new(),
         };
         version_repo.insert(&record).await.map(|_| next)

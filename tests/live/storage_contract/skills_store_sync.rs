@@ -28,7 +28,7 @@ fn make_skill(agent_id: &str, name: &str, creator: &str) -> Skill {
         scope: SkillScope::Agent,
         source: SkillSource::Agent,
         agent_id: Some(agent_id.to_string()),
-        created_by_user_id: Some(creator.to_string()),
+        created_by: Some(creator.to_string()),
         timeout: 45,
         executable: true,
         parameters: vec![],
@@ -120,7 +120,7 @@ async fn refresh_mirrors_remote_skill_and_exposes_full_data() -> Result<()> {
     let loaded = store
         .get(&agent_id, &skill_name)
         .ok_or_else(|| anyhow::anyhow!("skill not found after refresh"))?;
-    assert_eq!(loaded.created_by_user_id.as_deref(), Some("user-1"));
+    assert_eq!(loaded.created_by.as_deref(), Some("user-1"));
     assert_eq!(loaded.timeout, 45);
     assert_eq!(loaded.files.len(), 2);
     assert_eq!(loaded.files[0].path, "references/usage.md");

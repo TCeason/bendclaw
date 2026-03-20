@@ -8,8 +8,12 @@ use crate::common::fake_databend::FakeDatabendCall;
 fn feedback_row(id: &str) -> Vec<serde_json::Value> {
     vec![
         id,
+        "", // agent_id
         "sess-1",
         "run-1",
+        "", // user_id
+        "", // scope
+        "", // created_by
         "5",
         "great",
         "2026-03-11T00:00:00Z",
@@ -30,8 +34,12 @@ async fn feedback_repo_insert_generates_valid_sql() -> Result<()> {
     let repo = FeedbackRepo::new(fake.pool());
     let record = bendclaw::storage::FeedbackRecord {
         id: "fb-1".into(),
+        agent_id: String::new(),
         session_id: "sess-1".into(),
         run_id: "run-1".into(),
+        user_id: String::new(),
+        scope: String::new(),
+        created_by: String::new(),
         rating: 5,
         comment: "great".into(),
         created_at: String::new(),

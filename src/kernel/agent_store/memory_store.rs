@@ -183,7 +183,6 @@ impl DatabendMemoryStore {
                 ),
                 ("key", SqlVal::Str(&entry.key)),
                 ("content", SqlVal::Str(&entry.content)),
-                ("embedding", SqlVal::Raw("NULL")),
                 ("created_at", SqlVal::Raw("NOW()")),
                 ("updated_at", SqlVal::Raw("NOW()")),
             ])

@@ -54,6 +54,8 @@ pub(super) async fn create_learning(
         status: "active".to_string(),
         supersedes_id: req.supersedes_id.unwrap_or_default(),
         user_id: user_id.to_string(),
+        scope: "shared".to_string(),
+        created_by: String::new(),
         source_run_id: String::new(),
         success_count: 0,
         failure_count: 0,

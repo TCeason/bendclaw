@@ -40,10 +40,10 @@ pub(super) async fn create_knowledge(
         status: req.status.unwrap_or_else(|| "active".to_string()),
         confidence: req.confidence.unwrap_or(1.0),
         user_id: user_id.to_string(),
+        scope: "shared".to_string(),
+        created_by: String::new(),
         first_run_id: String::new(),
         last_run_id: String::new(),
-        first_seen_at: String::new(),
-        last_seen_at: String::new(),
         created_at: String::new(),
         updated_at: String::new(),
     };

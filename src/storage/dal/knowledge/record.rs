@@ -13,10 +13,10 @@ pub struct KnowledgeRecord {
     pub status: String,
     pub confidence: f64,
     pub user_id: String,
+    pub scope: String,
+    pub created_by: String,
     pub first_run_id: String,
     pub last_run_id: String,
-    pub first_seen_at: String,
-    pub last_seen_at: String,
     pub created_at: String,
     pub updated_at: String,
 }

@@ -209,9 +209,11 @@ pub struct StorageConfig {
     pub databend_api_token: String,
     /// Databend Cloud warehouse name. Default: "default"
     pub databend_warehouse: String,
-    /// Prefix for agent databases. Default: "bendclaw_"
+    /// Prefix for agent databases.
     pub db_prefix: String,
 }
+
+pub const DEFAULT_DB_PREFIX: &str = "bendclaw_v2_";
 
 impl Default for StorageConfig {
     fn default() -> Self {
@@ -219,7 +221,7 @@ impl Default for StorageConfig {
             databend_api_base_url: "https://api.databend.com/v1".to_string(),
             databend_api_token: String::new(),
             databend_warehouse: "default".to_string(),
-            db_prefix: "bendclaw_".to_string(),
+            db_prefix: DEFAULT_DB_PREFIX.to_string(),
         }
     }
 }

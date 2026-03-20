@@ -79,7 +79,12 @@ impl Tool for TaskCreateTool {
             }
         }
 
-        match admin::create_task(&ctx.pool, spec.into_params(self.node_id.clone())).await {
+        let params = spec.into_params(
+            self.node_id.clone(),
+            ctx.user_id.to_string(),
+            ctx.user_id.to_string(),
+        );
+        match admin::create_task(&ctx.pool, params).await {
             Ok(record) => Ok(ToolResult::ok(
                 serde_json::to_string_pretty(&TaskView::from(record)).unwrap_or_default(),
             )),

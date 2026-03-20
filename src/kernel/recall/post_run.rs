@@ -78,10 +78,10 @@ async fn process_tool_success(
                 status: "active".to_string(),
                 confidence: 1.0,
                 user_id: user_id.to_string(),
+                scope: "shared".to_string(),
+                created_by: user_id.to_string(),
                 first_run_id: run_id.to_string(),
                 last_run_id: run_id.to_string(),
-                first_seen_at: String::new(),
-                last_seen_at: String::new(),
                 created_at: String::new(),
                 updated_at: String::new(),
             };

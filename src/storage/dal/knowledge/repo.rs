@@ -21,8 +21,7 @@ impl RowMapper for KnowledgeMapper {
 
     fn columns(&self) -> &str {
         "id, kind, subject, locator, title, summary, metadata, status, confidence, \
-         user_id, first_run_id, last_run_id, \
-         TO_VARCHAR(first_seen_at), TO_VARCHAR(last_seen_at), \
+         user_id, scope, created_by, first_run_id, last_run_id, \
          TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
@@ -45,10 +44,10 @@ impl RowMapper for KnowledgeMapper {
             status: sql::col(row, 7),
             confidence,
             user_id: sql::col(row, 9),
-            first_run_id: sql::col(row, 10),
-            last_run_id: sql::col(row, 11),
-            first_seen_at: sql::col(row, 12),
-            last_seen_at: sql::col(row, 13),
+            scope: sql::col(row, 10),
+            created_by: sql::col(row, 11),
+            first_run_id: sql::col(row, 12),
+            last_run_id: sql::col(row, 13),
             created_at: sql::col(row, 14),
             updated_at: sql::col(row, 15),
         })
@@ -83,10 +82,10 @@ impl KnowledgeRepo {
             ("status", SqlVal::Str(&record.status)),
             ("confidence", SqlVal::Raw(&confidence_str)),
             ("user_id", SqlVal::Str(&record.user_id)),
+            ("scope", SqlVal::Str(&record.scope)),
+            ("created_by", SqlVal::Str(&record.created_by)),
             ("first_run_id", SqlVal::Str(&record.first_run_id)),
             ("last_run_id", SqlVal::Str(&record.last_run_id)),
-            ("first_seen_at", SqlVal::Raw("NOW()")),
-            ("last_seen_at", SqlVal::Raw("NOW()")),
             ("created_at", SqlVal::Raw("NOW()")),
             ("updated_at", SqlVal::Raw("NOW()")),
         ];

@@ -14,11 +14,11 @@ impl RowMapper for Mapper {
     type Entity = ChannelAccountRecord;
 
     fn columns(&self) -> &str {
-        "id, channel_type, account_id, agent_id, user_id, config, enabled, lease_node_id, lease_token, TO_VARCHAR(lease_expires_at), TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
+        "id, channel_type, account_id, agent_id, user_id, scope, node_id, created_by, config, enabled, lease_node_id, lease_token, TO_VARCHAR(lease_expires_at), TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
     }
 
     fn parse(&self, row: &serde_json::Value) -> crate::base::Result<Self::Entity> {
-        let config_raw: String = sql::col(row, 5);
+        let config_raw: String = sql::col(row, 8);
         let config: serde_json::Value = sql::parse_json(&config_raw, "channel_accounts.config")?;
         Ok(ChannelAccountRecord {
             id: sql::col(row, 0),
@@ -26,13 +26,16 @@ impl RowMapper for Mapper {
             account_id: sql::col(row, 2),
             agent_id: sql::col(row, 3),
             user_id: sql::col(row, 4),
+            scope: sql::col(row, 5),
+            node_id: sql::col(row, 6),
+            created_by: sql::col(row, 7),
             config,
-            enabled: sql::col(row, 6) == "1",
-            lease_node_id: sql::col_opt(row, 7),
-            lease_token: sql::col_opt(row, 8),
-            lease_expires_at: sql::col_opt(row, 9),
-            created_at: sql::col(row, 10),
-            updated_at: sql::col(row, 11),
+            enabled: sql::col(row, 9) == "1",
+            lease_node_id: sql::col_opt(row, 10),
+            lease_token: sql::col_opt(row, 11),
+            lease_expires_at: sql::col_opt(row, 12),
+            created_at: sql::col(row, 13),
+            updated_at: sql::col(row, 14),
         })
     }
 }
@@ -59,6 +62,9 @@ impl ChannelAccountRepo {
                 ("account_id", SqlVal::Str(&record.account_id)),
                 ("agent_id", SqlVal::Str(&record.agent_id)),
                 ("user_id", SqlVal::Str(&record.user_id)),
+                ("scope", SqlVal::Str(&record.scope)),
+                ("node_id", SqlVal::Str(&record.node_id)),
+                ("created_by", SqlVal::Str(&record.created_by)),
                 (
                     "config",
                     SqlVal::Raw(&format!(
@@ -75,19 +81,6 @@ impl ChannelAccountRepo {
 
     pub async fn load(&self, id: &str) -> Result<Option<ChannelAccountRecord>> {
         self.table.get(&[Where("id", SqlVal::Str(id))]).await
-    }
-
-    pub async fn find_by_account(
-        &self,
-        channel_type: &str,
-        account_id: &str,
-    ) -> Result<Option<ChannelAccountRecord>> {
-        self.table
-            .get(&[
-                Where("channel_type", SqlVal::Str(channel_type)),
-                Where("account_id", SqlVal::Str(account_id)),
-            ])
-            .await
     }
 
     pub async fn list_by_agent(&self, agent_id: &str) -> Result<Vec<ChannelAccountRecord>> {

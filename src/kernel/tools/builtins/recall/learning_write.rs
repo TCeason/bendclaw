@@ -193,6 +193,8 @@ impl Tool for LearningWriteTool {
             status: "active".to_string(),
             supersedes_id: String::new(),
             user_id: ctx.user_id.to_string(),
+            scope: "shared".to_string(),
+            created_by: ctx.user_id.to_string(),
             source_run_id: String::new(),
             success_count: 0,
             failure_count: 0,

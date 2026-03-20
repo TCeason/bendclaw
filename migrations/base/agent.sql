@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS agent_config (
     token_limit_total BIGINT UNSIGNED NULL COMMENT 'Total token usage limit',
     token_limit_daily BIGINT UNSIGNED NULL COMMENT 'Daily token usage limit',
     llm_config        VARIANT   NULL COMMENT 'Per-agent LLM configuration (JSON, nullable)',
-    env               VARIANT   NOT NULL DEFAULT '{}'::VARIANT COMMENT 'Agent environment variables (JSON object)',
+    created_by        VARCHAR   NOT NULL DEFAULT '' COMMENT 'User who last modified this config',
     created_at        TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at        TIMESTAMP NOT NULL DEFAULT NOW()
 ) COMMENT = 'Agent-level configuration and persona';
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS agent_config (
 -- Agent config version history for rollback and audit.
 CREATE TABLE IF NOT EXISTS agent_config_versions (
     id                VARCHAR   NOT NULL   COMMENT 'ULID primary key',
-    agent_id          VARCHAR   NOT NULL   COMMENT 'FK → agent_config.agent_id',
+    agent_id          VARCHAR   NOT NULL   COMMENT 'FK -> agent_config.agent_id',
     version           UINT32    NOT NULL   COMMENT 'Monotonically increasing version number',
     label             VARCHAR   NOT NULL DEFAULT '' COMMENT 'Human label (e.g. stable, v1.2)',
     `stage`           VARCHAR   NOT NULL DEFAULT 'published' COMMENT 'draft | published',
@@ -30,5 +30,6 @@ CREATE TABLE IF NOT EXISTS agent_config_versions (
     token_limit_daily BIGINT UNSIGNED NULL COMMENT 'Daily token limit snapshot',
     llm_config        VARIANT   NULL COMMENT 'LLM configuration snapshot (JSON, nullable)',
     notes             VARCHAR   NOT NULL DEFAULT '' COMMENT 'Change notes',
+    created_by        VARCHAR   NOT NULL DEFAULT '' COMMENT 'User who created this version',
     created_at        TIMESTAMP NOT NULL DEFAULT NOW()
 ) COMMENT = 'Agent config version history';

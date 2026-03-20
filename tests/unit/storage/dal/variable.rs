@@ -11,7 +11,7 @@ async fn variable_repo_list_active_filters_revoked_and_parses_fields() -> Result
         assert_eq!(database, None);
         assert_eq!(
             sql,
-            "SELECT id, key, value, secret, revoked, TO_VARCHAR(last_used_at), TO_VARCHAR(created_at), TO_VARCHAR(updated_at) FROM variables WHERE revoked = FALSE ORDER BY created_at DESC LIMIT 5"
+            "SELECT id, key, value, secret, revoked, user_id, scope, created_by, TO_VARCHAR(last_used_at), TO_VARCHAR(created_at), TO_VARCHAR(updated_at) FROM variables WHERE revoked = FALSE ORDER BY created_at DESC LIMIT 5"
         );
         Ok(paged_rows(
             &[&[
@@ -20,6 +20,9 @@ async fn variable_repo_list_active_filters_revoked_and_parses_fields() -> Result
                 "secret-value",
                 "true",
                 "false",
+                "",
+                "",
+                "",
                 "2026-03-11T00:00:00Z",
                 "2026-03-10T00:00:00Z",
                 "2026-03-11T00:00:00Z",
@@ -48,7 +51,7 @@ async fn variable_repo_get_builds_id_lookup_query() -> Result<()> {
     let fake = FakeDatabend::new(|sql, _database| {
         assert_eq!(
             sql,
-            "SELECT id, key, value, secret, revoked, TO_VARCHAR(last_used_at), TO_VARCHAR(created_at), TO_VARCHAR(updated_at) FROM variables WHERE id = 'var-7' LIMIT 1"
+            "SELECT id, key, value, secret, revoked, user_id, scope, created_by, TO_VARCHAR(last_used_at), TO_VARCHAR(created_at), TO_VARCHAR(updated_at) FROM variables WHERE id = 'var-7' LIMIT 1"
         );
         Ok(paged_rows(
             &[&[
@@ -57,6 +60,9 @@ async fn variable_repo_get_builds_id_lookup_query() -> Result<()> {
                 "debug",
                 "false",
                 "false",
+                "",
+                "",
+                "",
                 "",
                 "2026-03-10T00:00:00Z",
                 "2026-03-10T00:00:00Z",
