@@ -28,6 +28,7 @@ async fn can_suspend_reports_idle_runtime() {
     let runtime = build_runtime("admin-idle");
     let router = admin_router(AdminState {
         runtime: runtime.clone(),
+        shutdown_token: tokio_util::sync::CancellationToken::new(),
     });
 
     let response = router
@@ -59,6 +60,7 @@ async fn can_suspend_reports_active_tasks() {
     let _task = runtime.track_task();
     let router = admin_router(AdminState {
         runtime: runtime.clone(),
+        shutdown_token: tokio_util::sync::CancellationToken::new(),
     });
 
     let response = router

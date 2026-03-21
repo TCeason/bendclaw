@@ -164,9 +164,12 @@ async fn cmd_run(
     let api_bind = &config.server.bind_addr;
     let api_listener = tokio::net::TcpListener::bind(api_bind).await?;
 
+    let shutdown_token = tokio_util::sync::CancellationToken::new();
+
     let admin_listener = if let Some(ref admin) = config.admin {
         let admin_state = bendclaw::service::AdminState {
             runtime: runtime.clone(),
+            shutdown_token: shutdown_token.clone(),
         };
         let listener = tokio::net::TcpListener::bind(&admin.bind_addr).await?;
         Some((listener, bendclaw::service::admin_router(admin_state)))
@@ -174,7 +177,6 @@ async fn cmd_run(
         None
     };
 
-    let shutdown_token = tokio_util::sync::CancellationToken::new();
     let api_shutdown = shutdown_token.clone();
     let api_server = axum::serve(api_listener, api_router)
         .with_graceful_shutdown(async move { api_shutdown.cancelled().await });

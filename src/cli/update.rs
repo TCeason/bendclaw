@@ -99,7 +99,7 @@ impl UpdateCliStyle {
     }
 }
 
-async fn fetch_latest_release() -> Result<GitHubRelease> {
+pub async fn fetch_latest_release() -> Result<GitHubRelease> {
     let client = reqwest::Client::builder()
         .build()
         .context("failed to build HTTP client")?;
@@ -122,7 +122,7 @@ async fn fetch_latest_release() -> Result<GitHubRelease> {
     serde_json::from_str(&body).context("failed to parse latest release response")
 }
 
-async fn download_asset(asset: GitHubReleaseAsset) -> Result<Vec<u8>> {
+pub async fn download_asset(asset: GitHubReleaseAsset) -> Result<Vec<u8>> {
     let client = reqwest::Client::builder()
         .build()
         .context("failed to build HTTP client")?;
@@ -152,7 +152,7 @@ async fn download_asset(asset: GitHubReleaseAsset) -> Result<Vec<u8>> {
         .to_vec())
 }
 
-fn extract_binary(archive: &[u8]) -> Result<Vec<u8>> {
+pub fn extract_binary(archive: &[u8]) -> Result<Vec<u8>> {
     let decoder = GzDecoder::new(Cursor::new(archive));
     let mut tar = tar::Archive::new(decoder);
 
@@ -173,7 +173,7 @@ fn extract_binary(archive: &[u8]) -> Result<Vec<u8>> {
     anyhow::bail!("binary {BINARY_NAME} not found in archive")
 }
 
-fn install_binary(current_exe: &Path, binary: &[u8]) -> Result<()> {
+pub fn install_binary(current_exe: &Path, binary: &[u8]) -> Result<()> {
     let parent = current_exe
         .parent()
         .context("current executable has no parent directory")?;
@@ -220,7 +220,7 @@ pub fn select_asset(release: &GitHubRelease, target: &str) -> Option<GitHubRelea
         .cloned()
 }
 
-fn current_release_tag() -> String {
+pub fn current_release_tag() -> String {
     if !crate::version::BENDCLAW_GIT_TAG.is_empty() && crate::version::BENDCLAW_GIT_TAG != "unknown"
     {
         crate::version::BENDCLAW_GIT_TAG.to_string()
@@ -229,7 +229,7 @@ fn current_release_tag() -> String {
     }
 }
 
-fn supported_target() -> Result<&'static str> {
+pub fn supported_target() -> Result<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu"),
         ("linux", "aarch64") => Ok("aarch64-unknown-linux-gnu"),

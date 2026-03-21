@@ -78,8 +78,11 @@ pub fn write_skill(workspace_root: &Path, agent_id: &str, skill: &Skill) -> Opti
         let _ = std::fs::write(tmp_dir.join(".meta.json"), json);
     }
 
-    // Write files (scripts/, references/)
+    // Write files (scripts/, references/) — skip SKILL.md since it's written above with frontmatter.
     for f in &skill.files {
+        if f.path == "SKILL.md" {
+            continue;
+        }
         let rel = std::path::Path::new(&f.path);
         if !is_safe_relative_path(rel) {
             tracing::warn!(skill = %skill.name, path = %f.path, "unsafe skill file path rejected");

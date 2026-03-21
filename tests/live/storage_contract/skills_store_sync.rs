@@ -122,15 +122,12 @@ async fn refresh_mirrors_remote_skill_and_exposes_full_data() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("skill not found after refresh"))?;
     assert_eq!(loaded.created_by.as_deref(), Some("user-1"));
     assert_eq!(loaded.timeout, 45);
-    // 2 explicit files + SKILL.md auto-generated from skill.content
-    assert_eq!(loaded.files.len(), 3);
+    // SkillStore loads from filesystem: scripts/ + references/ → 2 files.
+    // SKILL.md is parsed into skill.content, not included in files.
+    assert_eq!(loaded.files.len(), 2);
     let file_paths: Vec<&str> = loaded.files.iter().map(|f| f.path.as_str()).collect();
     assert!(file_paths.contains(&"references/usage.md"));
     assert!(file_paths.contains(&"scripts/run.sh"));
-    assert!(file_paths.contains(&"SKILL.md"));
-    // SKILL.md body should match skill.content
-    let skill_md = loaded.files.iter().find(|f| f.path == "SKILL.md").unwrap();
-    assert_eq!(skill_md.body, "# Remote Skill");
     assert_eq!(
         store.read_skill(&agent_id, &format!("{skill_name}/references/usage.md")),
         Some("# Usage".to_string())
@@ -178,6 +175,38 @@ async fn refresh_removes_stale_remote_skill_directory() -> Result<()> {
 }
 
 #[tokio::test]
+async fn save_writes_skill_md_to_skill_files() -> Result<()> {
+    let ctx = TestContext::setup().await?;
+    let agent_id = uid("agent");
+    let prefix = ctx.prefix().to_string();
+    let Some(databases) = setup_databases_or_skip(&prefix, &[&agent_id]).await? else {
+        return Ok(());
+    };
+    let repo = DatabendSkillRepository::new(databases.agent_pool(&agent_id)?);
+
+    let skill_name = uid("skill-md-test");
+    repo.save(&make_skill(&agent_id, &skill_name, "user-1"))
+        .await?;
+
+    // Load via repository (DB path) — this is what the console file tree uses.
+    let loaded = repo
+        .get(&skill_name)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("skill not found in DB"))?;
+
+    // 2 explicit files + SKILL.md from skill.content = 3 total.
+    let file_paths: Vec<&str> = loaded.files.iter().map(|f| f.path.as_str()).collect();
+    assert!(file_paths.contains(&"references/usage.md"));
+    assert!(file_paths.contains(&"scripts/run.sh"));
+    assert!(file_paths.contains(&"SKILL.md"));
+    assert_eq!(loaded.files.len(), 3);
+
+    let skill_md = loaded.files.iter().find(|f| f.path == "SKILL.md").unwrap();
+    assert_eq!(skill_md.body, "# Remote Skill");
+    Ok(())
+}
+
+#[tokio::test]
 async fn save_with_empty_content_does_not_create_skill_md() -> Result<()> {
     let ctx = TestContext::setup().await?;
     let agent_id = uid("agent");
@@ -193,13 +222,11 @@ async fn save_with_empty_content_does_not_create_skill_md() -> Result<()> {
 
     repo.save(&skill).await?;
 
-    let workspace = TempDir::new()?;
-    let store = SkillStore::new(databases, workspace.path().to_path_buf(), None);
-    store.refresh().await?;
+    let loaded = repo
+        .get(&skill_name)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("skill not found in DB"))?;
 
-    let loaded = store
-        .get(&agent_id, &skill_name)
-        .ok_or_else(|| anyhow::anyhow!("skill not found after refresh"))?;
     // Only the 2 explicit files — no SKILL.md since content was empty.
     let file_paths: Vec<&str> = loaded.files.iter().map(|f| f.path.as_str()).collect();
     assert!(!file_paths.contains(&"SKILL.md"));
