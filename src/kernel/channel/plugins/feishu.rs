@@ -465,6 +465,10 @@ async fn ws_receive_loop(
     let (mut write, mut read) = ws_stream.split();
     let mut ping_interval = tokio::time::interval(Duration::from_secs(ping_interval_secs));
     ping_interval.tick().await;
+    let mut last_recv = tokio::time::Instant::now();
+    let heartbeat_timeout = Duration::from_secs(ping_interval_secs.max(120) * 3);
+    let mut timeout_check = tokio::time::interval(Duration::from_secs(10));
+    timeout_check.tick().await;
 
     slog!(info, "feishu_ws", "connected",);
 
@@ -472,7 +476,19 @@ async fn ws_receive_loop(
 
     loop {
         tokio::select! {
+            biased;
+
+            _ = timeout_check.tick() => {
+                if last_recv.elapsed() > heartbeat_timeout {
+                    slog!(warn, "feishu_ws", "heartbeat_timeout",
+                        elapsed_secs = last_recv.elapsed().as_secs(),
+                        timeout_secs = heartbeat_timeout.as_secs(),
+                    );
+                    return Err(ErrorCode::internal("feishu ws: heartbeat timeout, reconnecting"));
+                }
+            }
             msg = read.next() => {
+                last_recv = tokio::time::Instant::now();
                 match msg {
                     Some(Ok(Message::Binary(data))) => {
                         if let Some(resp_frame) = handle_pb_frame(&data, config, event_tx, client, &mut msg_cache).await {
