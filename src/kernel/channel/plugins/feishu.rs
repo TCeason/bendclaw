@@ -463,6 +463,17 @@ async fn ws_receive_loop(
             .map_err(|e| ErrorCode::internal(format!("feishu ws connect: {e}")))?;
 
     let (mut write, mut read) = ws_stream.split();
+
+    // Extract service_id from WS URL for ping frames
+    let service_id: i32 = reqwest::Url::parse(&ws_url)
+        .ok()
+        .and_then(|u| {
+            u.query_pairs()
+                .find(|(k, _)| k == "service_id")
+                .and_then(|(_, v)| v.parse().ok())
+        })
+        .unwrap_or(0);
+
     let mut ping_interval = tokio::time::interval(Duration::from_secs(ping_interval_secs));
     ping_interval.tick().await;
     let mut last_recv = tokio::time::Instant::now();
@@ -470,7 +481,31 @@ async fn ws_receive_loop(
     let mut timeout_check = tokio::time::interval(Duration::from_secs(10));
     timeout_check.tick().await;
 
-    slog!(info, "feishu_ws", "connected",);
+    slog!(info, "feishu_ws", "connected", service_id,);
+
+    // Send initial ping immediately (like the official SDK) so the server
+    // starts responding with pongs and registers this connection.
+    let initial_ping = PbFrame {
+        seq_id: 1,
+        log_id: 0,
+        service: service_id,
+        method: FRAME_METHOD_CONTROL,
+        headers: vec![PbHeader {
+            key: "type".into(),
+            value: "ping".into(),
+        }],
+        payload_encoding: None,
+        payload_type: None,
+        payload: None,
+        log_id_new: None,
+    };
+    if write
+        .send(Message::Binary(initial_ping.encode_to_vec()))
+        .await
+        .is_err()
+    {
+        return Err(ErrorCode::internal("feishu ws: initial ping failed"));
+    }
 
     let mut msg_cache: HashMap<String, Vec<Option<Vec<u8>>>> = HashMap::new();
 
@@ -514,7 +549,7 @@ async fn ws_receive_loop(
                 let ping_frame = PbFrame {
                     seq_id: 0,
                     log_id: 0,
-                    service: 0,
+                    service: service_id,
                     method: FRAME_METHOD_CONTROL,
                     headers: vec![PbHeader { key: "type".into(), value: "ping".into() }],
                     payload_encoding: None,
