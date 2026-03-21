@@ -64,7 +64,9 @@ async fn log_http_request(mut req: Request<Body>, next: Next) -> Response {
 
     // Skip logging for health checks and CORS preflight to reduce noise.
     if matched_path == "/health" || method == axum::http::Method::OPTIONS {
-        return next.run(req).await;
+        let mut response = next.run(req).await;
+        set_private_network_header(&mut response);
+        return response;
     }
 
     let trace_id = {
@@ -92,7 +94,8 @@ async fn log_http_request(mut req: Request<Body>, next: Next) -> Response {
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(0);
 
-    let response = next.run(req).await;
+    let mut response = next.run(req).await;
+    set_private_network_header(&mut response);
     let status = response.status();
     let elapsed_ms = started.elapsed().as_millis() as u64;
 
@@ -114,6 +117,15 @@ async fn log_http_request(mut req: Request<Body>, next: Next) -> Response {
     }
 
     response
+}
+
+/// Chrome 104+ requires this header on preflight responses to allow
+/// public-origin pages to access private-network (localhost) endpoints.
+fn set_private_network_header(response: &mut Response) {
+    response.headers_mut().insert(
+        axum::http::header::HeaderName::from_static("access-control-allow-private-network"),
+        axum::http::HeaderValue::from_static("true"),
+    );
 }
 
 fn build_cors(auth: &AuthConfig) -> CorsLayer {
