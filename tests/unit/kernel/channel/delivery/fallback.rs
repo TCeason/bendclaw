@@ -4,7 +4,6 @@ use async_trait::async_trait;
 use bendclaw::base::ErrorCode;
 use bendclaw::base::Result;
 use bendclaw::kernel::channel::delivery::fallback::DeliveryMethod;
-use bendclaw::kernel::channel::delivery::fallback::DeliveryResult;
 use bendclaw::kernel::channel::delivery::fallback::FallbackDelivery;
 use bendclaw::kernel::channel::delivery::retry::RetryConfig;
 use bendclaw::kernel::channel::plugin::ChannelOutbound;
