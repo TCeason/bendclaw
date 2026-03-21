@@ -83,7 +83,7 @@ async fn try_dispatch_inbound(
                     false
                 })
         {
-            slog!(debug, "channel", "dedup_skipped",
+            slog!(info, "channel", "dedup_skipped",
                 message_id = %msg.message_id,
                 channel_type = %account.channel_type,
             );
