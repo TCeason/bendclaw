@@ -76,7 +76,8 @@ impl StreamDelivery {
                     } else if draft_msg_id.is_some()
                         && !draft_broken
                         && last_edit.elapsed().as_millis() as u64 >= self.config.throttle_ms
-                        && self.try_update(&draft_msg_id, &text_buf, &tool_status, &mut last_edit)
+                        && self
+                            .try_update(&draft_msg_id, &text_buf, &tool_status, &mut last_edit)
                             .await
                             .is_err()
                     {
@@ -86,7 +87,8 @@ impl StreamDelivery {
                 Event::ToolStart { name, .. } if self.config.show_tool_progress => {
                     tool_status = format!("\u{1F527} {name}...");
                     if !draft_broken
-                        && self.try_update(&draft_msg_id, &text_buf, &tool_status, &mut last_edit)
+                        && self
+                            .try_update(&draft_msg_id, &text_buf, &tool_status, &mut last_edit)
                             .await
                             .is_err()
                     {
@@ -97,7 +99,8 @@ impl StreamDelivery {
                     let icon = if *success { "\u{2705}" } else { "\u{274C}" };
                     tool_status = format!("{icon} {name}");
                     if !draft_broken
-                        && self.try_update(&draft_msg_id, &text_buf, &tool_status, &mut last_edit)
+                        && self
+                            .try_update(&draft_msg_id, &text_buf, &tool_status, &mut last_edit)
                             .await
                             .is_err()
                     {
