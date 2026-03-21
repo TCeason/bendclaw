@@ -636,7 +636,14 @@ async fn handle_pb_frame(
 
     if msg_type == "event" {
         *last_recv = tokio::time::Instant::now();
-        slog!(info, "feishu_ws", "event_received", msg_id, trace_id,);
+        slog!(
+            info,
+            "feishu_ws",
+            "event_received",
+            msg_id,
+            trace_id,
+            app_id = config.app_id.as_str(),
+        );
         handle_event_payload(&payload_str, config, event_tx, client).await;
     } else {
         slog!(
@@ -681,6 +688,7 @@ async fn handle_event_payload(
     }
 
     let Some(event_data) = json.get("event") else {
+        slog!(warn, "feishu_ws", "missing_event_field",);
         return;
     };
 
