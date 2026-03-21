@@ -488,10 +488,9 @@ async fn ws_receive_loop(
                 }
             }
             msg = read.next() => {
-                last_recv = tokio::time::Instant::now();
                 match msg {
                     Some(Ok(Message::Binary(data))) => {
-                        if let Some(resp_frame) = handle_pb_frame(&data, config, event_tx, client, &mut msg_cache).await {
+                        if let Some(resp_frame) = handle_pb_frame(&data, config, event_tx, client, &mut msg_cache, &mut last_recv).await {
                             let encoded = resp_frame.encode_to_vec();
                             if write.send(Message::Binary(encoded)).await.is_err() {
                                 return Err(ErrorCode::internal("feishu ws write response failed"));
@@ -539,6 +538,7 @@ async fn handle_pb_frame(
     event_tx: &InboundEventSender,
     client: &reqwest::Client,
     msg_cache: &mut HashMap<String, Vec<Option<Vec<u8>>>>,
+    last_recv: &mut tokio::time::Instant,
 ) -> Option<PbFrame> {
     let frame = match PbFrame::decode(data) {
         Ok(f) => f,
@@ -599,6 +599,7 @@ async fn handle_pb_frame(
     let payload_str = String::from_utf8_lossy(&full_payload);
 
     if msg_type == "event" {
+        *last_recv = tokio::time::Instant::now();
         slog!(info, "feishu_ws", "event_received", msg_id, trace_id,);
         handle_event_payload(&payload_str, config, event_tx, client).await;
     } else {
