@@ -781,12 +781,25 @@ fn parse_feishu_message(event: &serde_json::Value) -> Option<InboundEvent> {
     let msg_type = message.get("message_type")?.as_str()?;
 
     if msg_type != "text" {
+        slog!(warn, "feishu_ws", "unsupported_msg_type", msg_type, msg_id,);
         return None;
     }
 
     let content_str = message.get("content")?.as_str()?;
-    let content: serde_json::Value = serde_json::from_str(content_str).ok()?;
-    let text = content.get("text")?.as_str()?;
+    let content: serde_json::Value = match serde_json::from_str(content_str) {
+        Ok(v) => v,
+        Err(e) => {
+            slog!(warn, "feishu_ws", "content_parse_failed", msg_id, error = %e, content_str,);
+            return None;
+        }
+    };
+    let text = match content.get("text").and_then(|v| v.as_str()) {
+        Some(t) => t,
+        None => {
+            slog!(warn, "feishu_ws", "no_text_field", msg_id, content = %content,);
+            return None;
+        }
+    };
 
     let timestamp = message
         .get("create_time")
