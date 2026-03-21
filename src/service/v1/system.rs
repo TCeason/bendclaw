@@ -2,7 +2,8 @@ use anyhow::Context as _;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 use crate::service::state::AppState;
 
@@ -27,11 +28,17 @@ pub async fn upgrade(
     let to_version = body.target_version.clone().unwrap_or_default();
 
     let base_url = body.download_base_url.ok_or_else(|| {
-        (StatusCode::BAD_REQUEST, "missing download_base_url".to_string())
+        (
+            StatusCode::BAD_REQUEST,
+            "missing download_base_url".to_string(),
+        )
     })?;
 
     let target = crate::cli::update::supported_target().map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("unsupported platform: {e}"))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("unsupported platform: {e}"),
+        )
     })?;
 
     let download_url = format!("{base_url}/{target}");
@@ -40,19 +47,31 @@ pub async fn upgrade(
 
     let archive = download_binary(&download_url).await.map_err(|e| {
         tracing::error!(%download_url, error = %e, "upgrade: download failed");
-        (StatusCode::BAD_GATEWAY, format!("download failed from {download_url}: {e}"))
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("download failed from {download_url}: {e}"),
+        )
     })?;
 
     let binary = crate::cli::update::extract_binary(&archive).map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("extract failed: {e}"))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("extract failed: {e}"),
+        )
     })?;
 
     let current_exe = std::env::current_exe().map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("cannot resolve exe: {e}"))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("cannot resolve exe: {e}"),
+        )
     })?;
 
     crate::cli::update::install_binary(&current_exe, &binary).map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("install failed: {e}"))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("install failed: {e}"),
+        )
     })?;
 
     tracing::info!(
@@ -92,5 +111,9 @@ async fn download_binary(url: &str) -> anyhow::Result<Vec<u8>> {
         anyhow::bail!("HTTP {status}: {body}");
     }
 
-    Ok(resp.bytes().await.context("failed to read response bytes")?.to_vec())
+    Ok(resp
+        .bytes()
+        .await
+        .context("failed to read response bytes")?
+        .to_vec())
 }
