@@ -214,21 +214,21 @@ async fn exec_user_env_visible() -> Result<()> {
 }
 
 #[tokio::test]
-async fn exec_idle_timeout() -> Result<()> {
+async fn exec_total_timeout_kills_long_running_command() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let ws = Workspace::new(
         dir.path().to_path_buf(),
         dir.path().to_path_buf(),
         vec!["PATH".into()],
         HashMap::new(),
-        Duration::from_millis(100),
-        Duration::from_secs(300),
+        Duration::from_millis(50),
+        Duration::from_millis(200),
         1_048_576,
         Arc::new(SandboxResolver),
     );
     let output = ws.exec("sleep 10", &HashMap::new()).await;
     assert_eq!(output.exit_code, -1);
-    assert!(output.stderr.contains("idle timeout"));
+    assert!(output.stderr.contains("total timeout"));
     Ok(())
 }
 

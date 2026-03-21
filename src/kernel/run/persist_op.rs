@@ -104,14 +104,14 @@ async fn handle_op(op: PersistOp) {
                     .session_upsert(&session_id, &agent_id, &user_id, Some(&user_message), None)
                     .await
                 {
-                    tracing::warn!(error = %e, "persist: session upsert failed");
+                    tracing::warn!(run_id = %run_id, session_id = %session_id, agent_id = %agent_id, error = %e, "persist: session upsert failed");
                 }
             }
             if let Err(e) = storage
                 .run_insert(&RunRecord {
-                    id: run_id,
-                    session_id,
-                    agent_id,
+                    id: run_id.clone(),
+                    session_id: session_id.clone(),
+                    agent_id: agent_id.clone(),
                     user_id,
                     parent_run_id,
                     node_id,
@@ -127,7 +127,7 @@ async fn handle_op(op: PersistOp) {
                 })
                 .await
             {
-                tracing::warn!(error = %e, "persist: run insert failed");
+                tracing::warn!(run_id = %run_id, session_id = %session_id, agent_id = %agent_id, error = %e, "persist: run insert failed");
             }
         }
         PersistOp::RunSuccess {
@@ -175,13 +175,13 @@ async fn handle_op(op: PersistOp) {
             let (usage_res, events_res, run_res) = tokio::join!(usage_fut, events_fut, run_fut);
 
             if let Err(e) = usage_res {
-                tracing::warn!(error = %e, "persist: usage failed");
+                tracing::warn!(run_id = %run_id, session_id = %session_id, agent_id = %*agent_id, error = %e, "persist: usage failed");
             }
             if let Err(e) = events_res {
-                tracing::error!(error = %e, "persist: run events failed");
+                tracing::error!(run_id = %run_id, session_id = %session_id, agent_id = %*agent_id, error = %e, "persist: run events failed");
             }
             if let Err(e) = run_res {
-                tracing::error!(error = %e, "persist: run update failed");
+                tracing::error!(run_id = %run_id, session_id = %session_id, agent_id = %*agent_id, error = %e, "persist: run update failed");
             }
 
             match status {
@@ -257,10 +257,10 @@ async fn handle_op(op: PersistOp) {
             );
 
             if let Err(e) = events_res {
-                tracing::error!(error = %e, "persist: run events failed");
+                tracing::error!(run_id = %run_id, session_id = %session_id, agent_id = %*agent_id, error = %e, "persist: run events failed");
             }
             if let Err(e) = run_res {
-                tracing::warn!(error = %e, "persist: run update failed");
+                tracing::warn!(run_id = %run_id, session_id = %session_id, agent_id = %*agent_id, error = %e, "persist: run update failed");
             }
 
             trace.fail_trace(duration_ms);
@@ -290,7 +290,7 @@ async fn handle_op(op: PersistOp) {
                     .run_events_insert_batch(std::slice::from_ref(record))
                     .await
                 {
-                    tracing::error!(error = %e, "persist: cancel event failed");
+                    tracing::error!(run_id = %run_id, error = %e, "persist: cancel event failed");
                 }
             }
 
@@ -298,7 +298,7 @@ async fn handle_op(op: PersistOp) {
                 .run_update_status(&run_id, RunStatus::Cancelled)
                 .await
             {
-                tracing::warn!(error = %e, "persist: cancel status update failed");
+                tracing::warn!(run_id = %run_id, error = %e, "persist: cancel status update failed");
             }
 
             trace.fail_trace(duration_ms);

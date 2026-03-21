@@ -17,6 +17,7 @@ use crate::llm::stream::ResponseStream;
 use crate::llm::tokens::count_tokens;
 use crate::llm::tool::ToolSchema;
 use crate::llm::usage::TokenUsage;
+use crate::observability::log::slog;
 
 /// Maximum characters per chunk for staged summarization (~10K tokens).
 const CHUNK_SIZE: usize = 40_000;
@@ -106,10 +107,12 @@ impl Compactor {
 
         // 2. Skip compaction if too many consecutive failures
         if self.compaction_failures >= 3 {
-            tracing::warn!(
+            slog!(
+                warn,
+                "compaction",
+                "skipped",
                 failures = self.compaction_failures,
                 last_error = self.last_error.as_deref().unwrap_or("unknown"),
-                "skipping compaction after 3 consecutive failures"
             );
             if checkpoint_usage.is_some() {
                 return Some(CompactionResult {
@@ -139,16 +142,24 @@ impl Compactor {
             return None;
         }
 
-        tracing::info!(total_tokens, max_context_tokens, "compaction triggered");
+        slog!(
+            info,
+            "compaction",
+            "triggered",
+            total_tokens,
+            max_context_tokens,
+        );
 
         // 4. Cooldown: skip expensive summarization if recent compaction was ineffective
         if self.compaction_failures > 0 {
             if let Some(last) = self.last_compaction_at {
                 if last.elapsed() < COMPACTION_COOLDOWN {
-                    tracing::info!(
+                    slog!(
+                        info,
+                        "compaction",
+                        "cooldown_active",
                         elapsed_secs = last.elapsed().as_secs(),
                         failures = self.compaction_failures,
-                        "skipping compaction: cooldown active after ineffective compaction"
                     );
                     if checkpoint_usage.is_some() {
                         return Some(CompactionResult {
@@ -235,11 +246,13 @@ impl Compactor {
             self.last_error = Some(format!(
                 "compaction did not reduce: {messages_before} -> {messages_after}"
             ));
-            tracing::warn!(
+            slog!(
+                warn,
+                "compaction",
+                "ineffective",
                 messages_before,
                 messages_after,
                 consecutive_failures = self.compaction_failures,
-                "compaction did not reduce message count"
             );
         } else {
             self.compaction_failures = 0;
@@ -250,10 +263,12 @@ impl Compactor {
         if post_tokens > total_tokens * 9 / 10 {
             self.compaction_failures += 1;
             self.last_compaction_at = Some(Instant::now());
-            tracing::warn!(
+            slog!(
+                warn,
+                "compaction",
+                "tokens_barely_reduced",
                 pre_tokens = total_tokens,
                 post_tokens,
-                "compaction ineffective: token count barely reduced"
             );
         }
 
@@ -289,7 +304,7 @@ impl Compactor {
             return None;
         }
 
-        tracing::info!(total_tokens, "running pre-compaction checkpoint");
+        slog!(info, "compaction", "checkpoint_started", total_tokens,);
         let usage = self.run_checkpoint(messages, memory_tools).await;
         self.checkpoint_done = true;
         usage
@@ -327,7 +342,7 @@ impl Compactor {
         tokio::select! {
             usage = collect_turn_usage(stream) => Some(usage),
             _ = self.cancel.cancelled() => {
-                tracing::info!("checkpoint cancelled");
+                slog!(info, "compaction", "checkpoint_cancelled",);
                 None
             }
         }
@@ -383,13 +398,13 @@ impl Compactor {
                         (content, usage)
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "compaction summarization failed");
+                        slog!(warn, "compaction", "summarize_failed", error = %e,);
                         (None, TokenUsage::default())
                     }
                 }
             }
             _ = self.cancel.cancelled() => {
-                tracing::info!("compaction summarize cancelled");
+                slog!(info, "compaction", "summarize_cancelled",);
                 (None, TokenUsage::default())
             }
         }

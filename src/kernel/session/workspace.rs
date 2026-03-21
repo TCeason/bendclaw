@@ -208,8 +208,11 @@ impl Workspace {
         self.run_with_idle_timeout(cmd).await
     }
 
-    /// Run an arbitrary `Command` with streaming stdout/stderr and idle timeout.
-    /// Wrapped in a total timeout as a final safety net.
+    /// Run an arbitrary `Command` with streaming stdout/stderr.
+    ///
+    /// Uses `tokio::join!` to concurrently drain stdout, stderr, and wait for
+    /// the child — preventing pipe-buffer deadlocks. Wrapped in a total timeout
+    /// as the final safety net.
     pub async fn run_with_idle_timeout(&self, mut cmd: tokio::process::Command) -> CommandOutput {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
@@ -225,94 +228,57 @@ impl Workspace {
             }
         };
 
-        let Some(mut stdout_handle) = child.stdout.take() else {
-            if let Err(e) = child.kill().await {
-                tracing::warn!(error = %e, "failed to kill child process");
-            }
-            if let Err(e) = child.wait().await {
-                tracing::warn!(error = %e, "failed to wait on child process");
-            }
-            return CommandOutput {
-                exit_code: -1,
-                stdout: String::new(),
-                stderr: "Failed to capture stdout".to_string(),
-            };
-        };
-        let Some(mut stderr_handle) = child.stderr.take() else {
-            if let Err(e) = child.kill().await {
-                tracing::warn!(error = %e, "failed to kill child process");
-            }
-            if let Err(e) = child.wait().await {
-                tracing::warn!(error = %e, "failed to wait on child process");
-            }
-            return CommandOutput {
-                exit_code: -1,
-                stdout: String::new(),
-                stderr: "Failed to capture stderr".to_string(),
-            };
-        };
-        let idle_timeout = self.command_idle_timeout;
-        let max_total = self.max_command_timeout;
+        let stdout_handle = child.stdout.take();
+        let stderr_handle = child.stderr.take();
         let max_output = self.max_output_bytes;
+        let max_total = self.max_command_timeout;
 
-        let idle_loop = async {
-            let mut stdout_buf = Vec::new();
-            let mut stderr_buf = Vec::new();
-            let mut stdout_done = false;
-            let mut stderr_done = false;
-
-            loop {
-                if stdout_done && stderr_done {
-                    break;
-                }
-
-                let mut buf = [0u8; 4096];
-                let mut ebuf = [0u8; 4096];
-
-                tokio::select! {
-                    result = stdout_handle.read(&mut buf), if !stdout_done => {
-                        match result {
-                            Ok(0) => stdout_done = true,
-                            Ok(n) => {
-                                if stdout_buf.len() < max_output {
-                                    stdout_buf.extend_from_slice(&buf[..n]);
-                                }
+        let result = tokio::time::timeout(max_total, async {
+            let stdout_fut = async {
+                let Some(mut reader) = stdout_handle else {
+                    return Vec::new();
+                };
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    match reader.read(&mut chunk).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            if buf.len() < max_output {
+                                buf.extend_from_slice(&chunk[..n]);
                             }
-                            Err(_) => stdout_done = true,
                         }
-                    }
-                    result = stderr_handle.read(&mut ebuf), if !stderr_done => {
-                        match result {
-                            Ok(0) => stderr_done = true,
-                            Ok(n) => {
-                                if stderr_buf.len() < max_output {
-                                    stderr_buf.extend_from_slice(&ebuf[..n]);
-                                }
-                            }
-                            Err(_) => stderr_done = true,
-                        }
-                    }
-                    _ = tokio::time::sleep(idle_timeout) => {
-                        if let Err(e) = child.kill().await {
-                            tracing::warn!(error = %e, "failed to kill timed-out child process");
-                        }
-                        if let Err(e) = child.wait().await {
-                            tracing::warn!(error = %e, "failed to reap timed-out child process");
-                        }
-                        return CommandOutput {
-                            exit_code: -1,
-                            stdout: String::from_utf8_lossy(&stdout_buf).into_owned(),
-                            stderr: format!(
-                                "Command idle timeout after {}s (no output)",
-                                idle_timeout.as_secs()
-                            ),
-                        };
                     }
                 }
-            }
+                // Drain remaining so child doesn't block on write.
+                let _ = tokio::io::copy(&mut reader, &mut tokio::io::sink()).await;
+                buf
+            };
 
-            let status = child.wait().await;
-            let exit_code = status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
+            let stderr_fut = async {
+                let Some(mut reader) = stderr_handle else {
+                    return Vec::new();
+                };
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    match reader.read(&mut chunk).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            if buf.len() < max_output {
+                                buf.extend_from_slice(&chunk[..n]);
+                            }
+                        }
+                    }
+                }
+                let _ = tokio::io::copy(&mut reader, &mut tokio::io::sink()).await;
+                buf
+            };
+
+            let (stdout_buf, stderr_buf, wait_result) =
+                tokio::join!(stdout_fut, stderr_fut, child.wait());
+
+            let exit_code = wait_result.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
 
             let mut stdout = String::from_utf8_lossy(&stdout_buf).into_owned();
             let mut stderr = String::from_utf8_lossy(&stderr_buf).into_owned();
@@ -329,9 +295,10 @@ impl Workspace {
                 stdout,
                 stderr,
             }
-        };
+        })
+        .await;
 
-        match tokio::time::timeout(max_total, idle_loop).await {
+        match result {
             Ok(output) => output,
             Err(_) => {
                 // Total timeout exceeded — force kill and reap.

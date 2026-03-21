@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 use super::types::LeaseResource;
 use super::types::ResourceEntry;
 use crate::base::id::new_id;
+use crate::observability::log::slog;
 use crate::storage::pool::Pool;
 use crate::storage::sql;
 
@@ -101,11 +102,7 @@ impl LeaseServiceHandle {
         let mut futs = Vec::new();
         for (i, resource) in self.resources.iter().enumerate() {
             if !resource.safe_to_release() {
-                tracing::info!(
-                    table = resource.table(),
-                    "skipping lease release — active workers still running, \
-                     leases will expire naturally"
-                );
+                slog!(info, "lease", "release_skipped", table = resource.table(),);
                 continue;
             }
             let held = self.held_maps[i].lock().await;
@@ -117,11 +114,10 @@ impl LeaseServiceHandle {
                 let resource = resource.clone();
                 futs.push(async move {
                     if let Err(e) = release_sql(&pool, &table, &id, &token).await {
-                        tracing::warn!(
+                        slog!(warn, "lease", "release_failed",
                             table,
                             resource_id = %id,
                             error = %e,
-                            "failed to release lease on shutdown"
                         );
                     }
                     resource.on_released(&id, &pool).await;
@@ -165,10 +161,12 @@ fn spawn_scan_loop(
             match scan_once(&node_id, &resource, &held, &lease_count, &cancel).await {
                 Ok(()) => {
                     if consecutive_errors > 0 {
-                        tracing::info!(
+                        slog!(
+                            info,
+                            "lease",
+                            "scan_recovered",
                             table = resource.table(),
                             consecutive_errors,
-                            "lease scan recovered"
                         );
                     }
                     consecutive_errors = 0;
@@ -176,11 +174,10 @@ fn spawn_scan_loop(
                 Err(e) => {
                     consecutive_errors += 1;
                     if consecutive_errors == 1 || consecutive_errors.is_multiple_of(20) {
-                        tracing::warn!(
+                        slog!(warn, "lease", "scan_error",
                             table = resource.table(),
                             error = %e,
                             consecutive_errors,
-                            "lease scan error"
                         );
                     }
                 }
@@ -198,7 +195,7 @@ fn spawn_scan_loop(
 
             tokio::select! {
                 _ = cancel.cancelled() => {
-                    tracing::info!(table = resource.table(), "lease scan loop cancelled");
+                    slog!(info, "lease", "scan_cancelled", table = resource.table(),);
                     break;
                 }
                 _ = tokio::time::sleep(sleep_dur) => {}
@@ -218,10 +215,12 @@ async fn scan_once(
         return Ok(());
     }
     let entries = resource.discover().await?;
-    tracing::debug!(
+    slog!(
+        debug,
+        "lease",
+        "resources_discovered",
         table = resource.table(),
         count = entries.len(),
-        "lease scan: resources discovered"
     );
     let mut seen_ids = HashSet::new();
     let lease_secs = resource.lease_secs();
@@ -239,10 +238,9 @@ async fn scan_once(
             let healthy = resource.is_healthy(&entry.id).await;
             held_map = held.lock().await;
             if !healthy {
-                tracing::warn!(
+                slog!(warn, "lease", "unhealthy_released",
                     table,
                     resource_id = %entry.id,
-                    "resource unhealthy, releasing lease"
                 );
                 if let Some(lease) = held_map.remove(&entry.id) {
                     let _ = release_sql(&lease.pool, table, &entry.id, &lease.token).await;
@@ -259,21 +257,19 @@ async fn scan_once(
             // We hold this lease — renew it.
             let token = &held_map[&entry.id].token;
             if let Err(e) = renew_sql(&entry.pool, table, &entry.id, token, lease_secs).await {
-                tracing::warn!(
+                slog!(warn, "lease", "renew_failed",
                     table,
                     resource_id = %entry.id,
                     error = %e,
-                    "lease renew failed, removing from held"
                 );
                 held_map.remove(&entry.id);
             }
         } else if is_held_by_other(node_id, entry) {
-            tracing::debug!(
+            slog!(debug, "lease", "held_by_other",
                 table,
                 resource_id = %entry.id,
                 holder = entry.lease_node_id.as_deref().unwrap_or(""),
                 expires = entry.lease_expires_at.as_deref().unwrap_or(""),
-                "lease held by another node, skipping"
             );
         } else if cancel.is_cancelled() {
             // Shutting down — don't claim new resources.
@@ -292,11 +288,10 @@ async fn scan_once(
             .await
             {
                 Ok(true) => {
-                    tracing::info!(
+                    slog!(info, "lease", "claimed",
                         table,
                         resource_id = %entry.id,
                         context = %entry.context,
-                        "lease claimed"
                     );
                     held_map.insert(entry.id.clone(), HeldLease {
                         token: token.clone(),
@@ -339,11 +334,10 @@ async fn scan_once(
                     // Drop lock before callback to avoid holding it during potentially slow I/O.
                     drop(held_map);
                     if let Err(e) = resource.on_acquired(&claimed_entry).await {
-                        tracing::warn!(
+                        slog!(warn, "lease", "on_acquired_failed",
                             table,
                             resource_id = %entry.id,
                             error = %e,
-                            "on_acquired failed, releasing lease"
                         );
                         let mut map = held.lock().await;
                         if let Some(lease) = map.remove(&entry.id) {
@@ -355,20 +349,18 @@ async fn scan_once(
                     held_map = held.lock().await;
                 }
                 Ok(false) => {
-                    tracing::debug!(
+                    slog!(debug, "lease", "claim_lost",
                         table,
                         resource_id = %entry.id,
                         lease_node_id = entry.lease_node_id.as_deref().unwrap_or(""),
                         lease_expires_at = entry.lease_expires_at.as_deref().unwrap_or(""),
-                        "lease claim lost (row not updated)"
                     );
                 }
                 Err(e) => {
-                    tracing::warn!(
+                    slog!(warn, "lease", "claim_failed",
                         table,
                         resource_id = %entry.id,
                         error = %e,
-                        "lease claim failed"
                     );
                 }
             }

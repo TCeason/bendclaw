@@ -52,9 +52,7 @@ impl FallbackDelivery {
 
     /// Try streaming delivery; if send_draft or finalize_draft failed, fall back to send_text.
     pub async fn deliver<S>(&self, stream: &mut S) -> Result<DeliveryResult>
-    where
-        S: tokio_stream::Stream<Item = Event> + Unpin,
-    {
+    where S: tokio_stream::Stream<Item = Event> + Unpin {
         let draft_sent = Arc::new(AtomicBool::new(false));
         let finalize_ok = Arc::new(AtomicBool::new(false));
         let tracking = Arc::new(TrackingOutbound {
@@ -139,7 +137,10 @@ struct TrackingOutbound {
 #[async_trait::async_trait]
 impl ChannelOutbound for TrackingOutbound {
     async fn send_text(
-        &self, config: &serde_json::Value, chat_id: &str, text: &str,
+        &self,
+        config: &serde_json::Value,
+        chat_id: &str,
+        text: &str,
     ) -> Result<String> {
         self.inner.send_text(config, chat_id, text).await
     }
@@ -149,19 +150,32 @@ impl ChannelOutbound for TrackingOutbound {
     }
 
     async fn edit_message(
-        &self, config: &serde_json::Value, chat_id: &str, msg_id: &str, text: &str,
+        &self,
+        config: &serde_json::Value,
+        chat_id: &str,
+        msg_id: &str,
+        text: &str,
     ) -> Result<()> {
         self.inner.edit_message(config, chat_id, msg_id, text).await
     }
 
     async fn add_reaction(
-        &self, config: &serde_json::Value, chat_id: &str, msg_id: &str, emoji: &str,
+        &self,
+        config: &serde_json::Value,
+        chat_id: &str,
+        msg_id: &str,
+        emoji: &str,
     ) -> Result<()> {
-        self.inner.add_reaction(config, chat_id, msg_id, emoji).await
+        self.inner
+            .add_reaction(config, chat_id, msg_id, emoji)
+            .await
     }
 
     async fn send_draft(
-        &self, config: &serde_json::Value, chat_id: &str, text: &str,
+        &self,
+        config: &serde_json::Value,
+        chat_id: &str,
+        text: &str,
     ) -> Result<String> {
         let result = self.inner.send_draft(config, chat_id, text).await;
         if result.is_ok() {
@@ -171,15 +185,26 @@ impl ChannelOutbound for TrackingOutbound {
     }
 
     async fn update_draft(
-        &self, config: &serde_json::Value, chat_id: &str, msg_id: &str, text: &str,
+        &self,
+        config: &serde_json::Value,
+        chat_id: &str,
+        msg_id: &str,
+        text: &str,
     ) -> Result<()> {
         self.inner.update_draft(config, chat_id, msg_id, text).await
     }
 
     async fn finalize_draft(
-        &self, config: &serde_json::Value, chat_id: &str, msg_id: &str, text: &str,
+        &self,
+        config: &serde_json::Value,
+        chat_id: &str,
+        msg_id: &str,
+        text: &str,
     ) -> Result<()> {
-        let result = self.inner.finalize_draft(config, chat_id, msg_id, text).await;
+        let result = self
+            .inner
+            .finalize_draft(config, chat_id, msg_id, text)
+            .await;
         if result.is_ok() {
             self.finalize_ok.store(true, Ordering::Relaxed);
         }

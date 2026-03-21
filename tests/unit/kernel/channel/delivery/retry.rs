@@ -7,32 +7,52 @@ use bendclaw::kernel::channel::delivery::retry::RetryConfig;
 fn retryable_error_codes() {
     assert!(is_channel_retryable(&ErrorCode::timeout("timed out")));
     assert!(is_channel_retryable(&ErrorCode::internal("server error")));
-    assert!(is_channel_retryable(&ErrorCode::channel_send("send failed")));
+    assert!(is_channel_retryable(&ErrorCode::channel_send(
+        "send failed"
+    )));
     assert!(is_channel_retryable(&ErrorCode::channel_timeout("slow")));
-    assert!(is_channel_retryable(&ErrorCode::channel_rate_limited("throttled")));
+    assert!(is_channel_retryable(&ErrorCode::channel_rate_limited(
+        "throttled"
+    )));
 }
 
 #[test]
 fn non_retryable_error_codes() {
     assert!(!is_channel_retryable(&ErrorCode::not_found("missing")));
     assert!(!is_channel_retryable(&ErrorCode::denied("forbidden")));
-    assert!(!is_channel_retryable(&ErrorCode::invalid_input("bad input")));
+    assert!(!is_channel_retryable(&ErrorCode::invalid_input(
+        "bad input"
+    )));
 }
 
 #[test]
 fn retryable_by_message_content() {
-    assert!(is_channel_retryable(&ErrorCode::internal("connection refused")));
-    assert!(is_channel_retryable(&ErrorCode::not_found("timeout waiting")));
+    assert!(is_channel_retryable(&ErrorCode::internal(
+        "connection refused"
+    )));
+    assert!(is_channel_retryable(&ErrorCode::not_found(
+        "timeout waiting"
+    )));
     assert!(is_channel_retryable(&ErrorCode::denied("reset by peer")));
-    assert!(is_channel_retryable(&ErrorCode::invalid_input("HTTP 502 Bad Gateway")));
-    assert!(is_channel_retryable(&ErrorCode::invalid_input("rate limit exceeded")));
-    assert!(is_channel_retryable(&ErrorCode::invalid_input("too many requests")));
+    assert!(is_channel_retryable(&ErrorCode::invalid_input(
+        "HTTP 502 Bad Gateway"
+    )));
+    assert!(is_channel_retryable(&ErrorCode::invalid_input(
+        "rate limit exceeded"
+    )));
+    assert!(is_channel_retryable(&ErrorCode::invalid_input(
+        "too many requests"
+    )));
 }
 
 #[test]
 fn not_retryable_by_message() {
-    assert!(!is_channel_retryable(&ErrorCode::not_found("user not found")));
-    assert!(!is_channel_retryable(&ErrorCode::invalid_input("invalid json")));
+    assert!(!is_channel_retryable(&ErrorCode::not_found(
+        "user not found"
+    )));
+    assert!(!is_channel_retryable(&ErrorCode::invalid_input(
+        "invalid json"
+    )));
 }
 
 #[tokio::test]

@@ -583,7 +583,14 @@ async fn handle_pb_frame(
         slog!(info, "feishu_ws", "event_received", msg_id, trace_id,);
         handle_event_payload(&payload_str, config, event_tx, client).await;
     } else {
-        slog!(debug, "feishu_ws", "data_frame_received", msg_type, msg_id, trace_id,);
+        slog!(
+            debug,
+            "feishu_ws",
+            "data_frame_received",
+            msg_type,
+            msg_id,
+            trace_id,
+        );
     }
 
     // Build response frame
@@ -688,7 +695,13 @@ async fn add_reaction(
         let body = resp.text().await.unwrap_or_default();
         slog!(warn, "feishu_outbound", "reaction_failed", http_status = %status, body, message_id = message_id, emoji_type,);
     } else {
-        slog!(info, "feishu_outbound", "reaction_sent", message_id = message_id, emoji_type,);
+        slog!(
+            info,
+            "feishu_outbound",
+            "reaction_sent",
+            message_id = message_id,
+            emoji_type,
+        );
     }
     Ok(())
 }

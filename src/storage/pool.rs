@@ -11,11 +11,13 @@ use serde::Serialize;
 
 use crate::base::ErrorCode;
 use crate::base::Result;
+use crate::observability::log::slog;
+use crate::observability::log::storage_log;
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(60);
 const SQL_LOG_MAX_LEN: usize = 200;
 
-fn truncate_sql(sql: &str) -> String {
+pub(crate) fn truncate_sql(sql: &str) -> String {
     if sql.len() <= SQL_LOG_MAX_LEN {
         sql.to_string()
     } else {
@@ -118,7 +120,7 @@ impl DatabendClient for HttpDatabendClient {
             .send()
             .await
         {
-            tracing::warn!(url = %url, error = %error, "finalize request failed");
+            slog!(warn, "storage", "finalize_failed", url = %url, error = %error,);
         }
         Ok(())
     }
@@ -155,16 +157,12 @@ impl Pool {
     pub async fn exec(&self, sql: &str) -> Result<()> {
         let sql = sql.to_string();
         let started = Instant::now();
-        tracing::debug!(
-            stage = "storage",
-            operation = "exec",
-            status = "started",
+        storage_log!(debug, "exec", "started",
+            database = self.database.as_deref().unwrap_or_default(),
+            sql = &sql,
             base_url = %self.base_url,
             warehouse = %self.warehouse,
-            database = self.database.as_deref().unwrap_or_default(),
-            sql = %sql,
             sql_bytes = sql.len(),
-            "storage query"
         );
         let op = || async {
             let resp = self.do_query(&sql).await?;
@@ -181,37 +179,28 @@ impl Pool {
             .retry(backoff_builder())
             .when(is_retryable)
             .notify(|e: &ErrorCode, dur: Duration| {
-                tracing::warn!(
-                    stage = "storage",
-                    operation = "exec",
-                    status = "retrying",
+                storage_log!(warn, "exec", "retrying",
                     database = self.database.as_deref().unwrap_or_default(),
-                    sql = %truncate_sql(&sql),
+                    sql = &sql,
                     error = %e,
                     delay_ms = dur.as_millis() as u64,
-                    "storage query"
                 );
             })
             .await;
         match &result {
-            Ok(_) => tracing::debug!(
-                stage = "storage",
-                operation = "exec",
-                status = "completed",
+            Ok(_) => storage_log!(
+                debug,
+                "exec",
+                "completed",
                 database = self.database.as_deref().unwrap_or_default(),
-                sql = %truncate_sql(&sql),
+                sql = &sql,
                 elapsed_ms = started.elapsed().as_millis() as u64,
-                "storage query"
             ),
-            Err(error) => tracing::error!(
-                stage = "storage",
-                operation = "exec",
-                status = "failed",
+            Err(error) => storage_log!(error, "exec", "failed",
                 database = self.database.as_deref().unwrap_or_default(),
-                sql = %truncate_sql(&sql),
+                sql = &sql,
                 elapsed_ms = started.elapsed().as_millis() as u64,
                 error = %error,
-                "storage query"
             ),
         }
         result
@@ -220,16 +209,12 @@ impl Pool {
     pub async fn query_all(&self, sql: &str) -> Result<Vec<serde_json::Value>> {
         let sql = sql.to_string();
         let started = Instant::now();
-        tracing::debug!(
-            stage = "storage",
-            operation = "query_all",
-            status = "started",
+        storage_log!(debug, "query_all", "started",
+            database = self.database.as_deref().unwrap_or_default(),
+            sql = &sql,
             base_url = %self.base_url,
             warehouse = %self.warehouse,
-            database = self.database.as_deref().unwrap_or_default(),
-            sql = %sql,
             sql_bytes = sql.len(),
-            "storage query"
         );
         let op = || async {
             let resp = self.do_query(&sql).await?;
@@ -268,38 +253,29 @@ impl Pool {
             .retry(backoff_builder())
             .when(is_retryable)
             .notify(|e: &ErrorCode, dur: Duration| {
-                tracing::warn!(
-                    stage = "storage",
-                    operation = "query_all",
-                    status = "retrying",
+                storage_log!(warn, "query_all", "retrying",
                     database = self.database.as_deref().unwrap_or_default(),
-                    sql = %truncate_sql(&sql),
+                    sql = &sql,
                     error = %e,
                     delay_ms = dur.as_millis() as u64,
-                    "storage query"
                 );
             })
             .await;
         match &result {
-            Ok(rows) => tracing::debug!(
-                stage = "storage",
-                operation = "query_all",
-                status = "completed",
+            Ok(rows) => storage_log!(
+                debug,
+                "query_all",
+                "completed",
                 database = self.database.as_deref().unwrap_or_default(),
-                sql = %truncate_sql(&sql),
+                sql = &sql,
                 rows = rows.len(),
                 elapsed_ms = started.elapsed().as_millis() as u64,
-                "storage query"
             ),
-            Err(error) => tracing::error!(
-                stage = "storage",
-                operation = "query_all",
-                status = "failed",
+            Err(error) => storage_log!(error, "query_all", "failed",
                 database = self.database.as_deref().unwrap_or_default(),
-                sql = %truncate_sql(&sql),
+                sql = &sql,
                 elapsed_ms = started.elapsed().as_millis() as u64,
                 error = %error,
-                "storage query"
             ),
         }
         result

@@ -16,6 +16,7 @@ use crate::kernel::OpType;
 use crate::kernel::OperationMeta;
 use crate::kernel::OperationTracker;
 use crate::llm::message::ToolCall;
+use crate::observability::log::slog;
 
 /// Hard upper limit on any tool/skill output (~64K tokens).
 const MAX_TOOL_OUTPUT: usize = 256_000;
@@ -114,16 +115,7 @@ impl ToolDispatcher {
                 let arguments = match serde_json::from_str(&tc.arguments) {
                     Ok(arguments) => arguments,
                     Err(error) => {
-                        tracing::warn!(
-                            stage = "tool",
-                            action = "parse_arguments",
-                            status = "failed",
-                            tool_name = %tc.name,
-                            tool_call_id = %tc.id,
-                            raw_arguments = %tc.arguments,
-                            error = %error,
-                            "tool arguments parse failed"
-                        );
+                        slog!(warn, "tool", "parse_failed", tool_name = %tc.name, tool_call_id = %tc.id, raw_arguments = %tc.arguments, error = %error,);
                         serde_json::Value::Object(serde_json::Map::new())
                     }
                 };
@@ -170,7 +162,7 @@ impl ToolDispatcher {
                             match result {
                                 Ok(r) => r,
                                 Err(_) => {
-                                    tracing::warn!(tool = %name, tool_call_id = %parsed.call.id, "tool call timed out");
+                                    slog!(warn, "tool", "timed_out", tool = %name, tool_call_id = %parsed.call.id,);
                                     ToolCallResult::InfraError(
                                         format!("tool '{name}' timed out"),
                                         tracker.finish(),
@@ -179,7 +171,7 @@ impl ToolDispatcher {
                             }
                         }
                         _ = cancel.cancelled() => {
-                            tracing::info!(tool = %name, "tool call cancelled");
+                            slog!(info, "tool", "cancelled", tool = %name,);
                             ToolCallResult::InfraError("cancelled".into(), tracker.finish())
                         }
                     };
@@ -238,7 +230,7 @@ impl ToolDispatcher {
         let result = match tool.execute_with_context(args, &tool_context).await {
             Ok(r) => r,
             Err(e) => {
-                tracing::warn!(tool = name, error = %e, "tool execution failed");
+                slog!(warn, "tool", "exec_failed", tool = name, error = %e,);
                 return ToolCallResult::InfraError(format!("{e}"), tracker.finish());
             }
         };
@@ -246,7 +238,7 @@ impl ToolDispatcher {
         let meta = tracker.finish();
         if !result.success {
             let msg = result.error.unwrap_or_else(|| "unknown error".into());
-            tracing::warn!(tool = name, error = %msg, "tool returned error");
+            slog!(warn, "tool", "returned_error", tool = name, error = %msg,);
             return ToolCallResult::ToolError(truncate_output(msg), meta);
         }
         ToolCallResult::Success(truncate_output(result.output), meta)
@@ -261,14 +253,14 @@ impl ToolDispatcher {
         let out = match self.skill_executor.execute(name, &args).await {
             Ok(out) => out,
             Err(e) => {
-                tracing::warn!(skill = name, error = %e, "skill execution failed");
+                slog!(warn, "tool", "skill_exec_failed", skill = name, error = %e,);
                 return ToolCallResult::InfraError(format!("{e}"), tracker.finish());
             }
         };
 
         let meta = tracker.finish();
         if let Some(ref err) = out.error {
-            tracing::warn!(skill = name, error = %err, "skill returned error");
+            slog!(warn, "tool", "skill_returned_error", skill = name, error = %err,);
             return ToolCallResult::ToolError(truncate_output(err.clone()), meta);
         }
         let text = match out.data {

@@ -10,6 +10,7 @@ use crate::base::Result;
 use crate::client::BendclawClient;
 use crate::client::ClusterClient;
 use crate::client::NodeEntry;
+use crate::observability::log::slog;
 
 /// Unified cluster abstraction owning registration, peer cache, and node-to-node client.
 /// Runtime holds a single `Arc<ClusterService>` instead of scattered fields.
@@ -57,16 +58,20 @@ impl ClusterService {
         let changed = *peers != nodes;
         *peers = nodes.clone();
         if changed {
-            tracing::info!(
+            slog!(
+                info,
+                "cluster",
+                "peers_refreshed",
                 peer_count = nodes.len(),
                 elapsed_ms = started.elapsed().as_millis() as u64,
-                "cluster peer cache refreshed"
             );
         } else {
-            tracing::debug!(
+            slog!(
+                debug,
+                "cluster",
+                "peers_unchanged",
                 peer_count = nodes.len(),
                 elapsed_ms = started.elapsed().as_millis() as u64,
-                "cluster peer cache unchanged"
             );
         }
         Ok(nodes)
@@ -98,16 +103,18 @@ impl ClusterService {
     /// Register this node, do initial peer discovery, and return self.
     pub async fn register_and_discover(self: &Arc<Self>) -> Result<()> {
         self.cluster_client.register().await?;
-        tracing::info!(
-            node_id = %self.cluster_client.node_id(),
-            "cluster node registered, starting peer discovery"
-        );
+        slog!(info, "cluster", "registered", node_id = %self.cluster_client.node_id(),);
         match self.refresh_peers().await {
             Ok(nodes) => {
-                tracing::info!(peer_count = nodes.len(), "initial peer discovery done");
+                slog!(
+                    info,
+                    "cluster",
+                    "discovery_completed",
+                    peer_count = nodes.len(),
+                );
             }
             Err(e) => {
-                tracing::warn!(error = %e, "initial peer discovery failed, starting with empty cache");
+                slog!(warn, "cluster", "discovery_failed", error = %e,);
             }
         }
         Ok(())
@@ -122,22 +129,24 @@ impl ClusterService {
         let interval_duration = self.options.heartbeat_interval;
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(interval_duration);
-            tracing::info!(
+            slog!(
+                info,
+                "cluster",
+                "heartbeat_started",
                 heartbeat_interval_ms = interval_duration.as_millis() as u64,
-                "cluster heartbeat loop started"
             );
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
                         if let Err(e) = svc.cluster_client.heartbeat().await {
-                            tracing::warn!(error = %e, "cluster heartbeat failed");
+                            slog!(warn, "cluster", "heartbeat_failed", error = %e,);
                         }
                         if let Err(e) = svc.refresh_peers().await {
-                            tracing::warn!(error = %e, "peer refresh failed");
+                            slog!(warn, "cluster", "refresh_failed", error = %e,);
                         }
                     }
                     _ = cancel.cancelled() => {
-                        tracing::info!("cluster heartbeat stopped");
+                        slog!(info, "cluster", "heartbeat_stopped",);
                         break;
                     }
                 }
@@ -147,12 +156,9 @@ impl ClusterService {
 
     /// Deregister from the cluster registry.
     pub async fn deregister(&self) {
-        tracing::info!(
-            node_id = %self.cluster_client.node_id(),
-            "cluster deregistration started"
-        );
+        slog!(info, "cluster", "deregistration_started", node_id = %self.cluster_client.node_id(),);
         if let Err(e) = self.cluster_client.deregister().await {
-            tracing::warn!(error = %e, "cluster deregistration failed");
+            slog!(warn, "cluster", "deregistration_failed", error = %e,);
         }
     }
 }

@@ -11,23 +11,26 @@ use super::repository::SkillRepository;
 use super::writer;
 use crate::base::Result;
 use crate::kernel::skills::skill::Skill;
+use crate::observability::log::slog;
 use crate::storage::AgentDatabases;
 
 pub async fn sync(databases: &Arc<AgentDatabases>, workspace_root: &std::path::Path) -> Result<()> {
     let db_names = match databases.list_databases().await {
         Ok(dbs) => dbs,
         Err(e) => {
-            tracing::warn!(error = %e, "failed to list agent databases for skill sync");
+            slog!(warn, "skill_sync", "db_list_failed", error = %e,);
             return Ok(());
         }
     };
 
     let all_skills = fetch_all(databases, &db_names).await;
 
-    tracing::debug!(
+    slog!(
+        debug,
+        "skill_sync",
+        "fetched",
         databases = db_names.len(),
         skills = all_skills.len(),
-        "skill sync from agent databases"
     );
 
     // Collect live keys so we can detect stale dirs
@@ -58,7 +61,7 @@ pub async fn sync(databases: &Arc<AgentDatabases>, workspace_root: &std::path::P
     }
 
     if written > 0 || skipped > 0 {
-        tracing::info!(written, skipped, "skill sync write summary");
+        slog!(info, "skill_sync", "completed", written, skipped,);
     }
 
     // Remove stale skill dirs that are no longer in DB
@@ -105,7 +108,7 @@ fn evict_stale(workspace_root: &std::path::Path, live_keys: &HashSet<(String, St
         }
     }
     if removed > 0 {
-        tracing::info!(count = removed, "evicted stale remote skill directories");
+        slog!(info, "skill_sync", "evicted_stale", count = removed,);
     }
 }
 
@@ -117,7 +120,7 @@ async fn fetch_all(databases: &Arc<AgentDatabases>, db_names: &[String]) -> Vec<
         let pool = match databases.root_pool().with_database(db_name) {
             Ok(p) => p,
             Err(e) => {
-                tracing::warn!(db = %db_name, error = %e, "skip database for skill sync");
+                slog!(warn, "skill_sync", "db_skipped", db = %db_name, error = %e,);
                 continue;
             }
         };
@@ -142,11 +145,7 @@ async fn fetch_all(databases: &Arc<AgentDatabases>, db_names: &[String]) -> Vec<
                             all_skills.push(skill);
                         }
                         Err(e) => {
-                            tracing::warn!(
-                                skill = %skill.name,
-                                error = %e,
-                                "failed to fetch skill files, using metadata only"
-                            );
+                            slog!(warn, "skill_sync", "skill_fetch_failed", skill = %skill.name, error = %e,);
                             seen.insert(key);
                             all_skills.push(skill);
                         }
@@ -154,7 +153,7 @@ async fn fetch_all(databases: &Arc<AgentDatabases>, db_names: &[String]) -> Vec<
                 }
             }
             Err(e) => {
-                tracing::warn!(db = %db_name, error = %e, "failed to list skills from database");
+                slog!(warn, "skill_sync", "skill_list_failed", db = %db_name, error = %e,);
             }
         }
     }
@@ -175,23 +174,19 @@ pub fn spawn_sync_task(
         let mut next_sleep = std::time::Duration::ZERO;
         loop {
             tokio::select! {
-                _ = cancel.cancelled() => { tracing::info!("skill sync task cancelled"); break; }
+                _ = cancel.cancelled() => { slog!(info, "skill_sync", "cancelled",); break; }
                 _ = tokio::time::sleep(next_sleep) => {
                     if let Err(e) = store.refresh().await {
                         consecutive_errors += 1;
                         if consecutive_errors == 1 || consecutive_errors.is_multiple_of(20) {
-                            tracing::error!(
-                                error = %e,
-                                consecutive_errors,
-                                "skill sync failed"
-                            );
+                            slog!(error, "skill_sync", "failed", error = %e, consecutive_errors,);
                         }
                         // Exponential backoff: 60s, 120s, 240s, capped at 300s
                         let secs = (60u64 << (consecutive_errors - 1).min(3)).min(300);
                         next_sleep = std::time::Duration::from_secs(secs);
                     } else {
                         if consecutive_errors > 0 {
-                            tracing::info!(consecutive_errors, "skill sync recovered");
+                            slog!(info, "skill_sync", "recovered", consecutive_errors,);
                         }
                         consecutive_errors = 0;
                         next_sleep = base_interval;

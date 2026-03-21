@@ -9,9 +9,7 @@ pub struct BackpressureConfig {
 
 impl Default for BackpressureConfig {
     fn default() -> Self {
-        Self {
-            busy_threshold: 50,
-        }
+        Self { busy_threshold: 50 }
     }
 }
 

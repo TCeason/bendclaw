@@ -191,7 +191,7 @@ impl DatabendMemoryStore {
                 tracing::error!(user_id, key = %entry.key, scope = %scope_value, error = %e, "memory write failed");
                 e
             })?;
-        tracing::info!(user_id, key = %entry.key, scope = %scope_value, "memory written");
+        tracing::debug!(user_id, key = %entry.key, scope = %scope_value, "memory written");
         Ok(())
     }
 
@@ -217,7 +217,7 @@ impl DatabendMemoryStore {
             .map(|(r, _)| r)
             .collect::<Vec<_>>();
 
-        tracing::info!(
+        tracing::debug!(
             user_id,
             query,
             results = results.len(),
@@ -237,7 +237,7 @@ impl DatabendMemoryStore {
         .limit(1);
         let row = self.entries.pool().query_row(&builder.build()).await?;
         let result = row.as_ref().map(|r| EntryMapper.parse(r)).transpose()?;
-        tracing::info!(user_id, key, found = result.is_some(), "memory get");
+        tracing::debug!(user_id, key, found = result.is_some(), "memory get");
         Ok(result)
     }
 
@@ -264,7 +264,7 @@ impl DatabendMemoryStore {
                 tracing::error!(user_id, id, error = %e, "memory delete failed");
                 e
             })?;
-        tracing::info!(user_id, id, "memory deleted");
+        tracing::debug!(user_id, id, "memory deleted");
         Ok(())
     }
 
@@ -282,7 +282,7 @@ impl DatabendMemoryStore {
             .iter()
             .map(|r| EntryMapper.parse(r))
             .collect::<crate::base::Result<Vec<_>>>()?;
-        tracing::info!(user_id, count = results.len(), "memory list completed");
+        tracing::debug!(user_id, count = results.len(), "memory list completed");
         Ok(results)
     }
 }

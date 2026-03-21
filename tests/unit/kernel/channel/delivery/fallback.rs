@@ -59,15 +59,11 @@ impl ChannelOutbound for MockOutbound {
     async fn send_typing(&self, _: &serde_json::Value, _: &str) -> Result<()> {
         Ok(())
     }
-    async fn edit_message(
-        &self, _: &serde_json::Value, _: &str, _: &str, _: &str,
-    ) -> Result<()> {
+    async fn edit_message(&self, _: &serde_json::Value, _: &str, _: &str, _: &str) -> Result<()> {
         self.calls.lock().push("edit_message".into());
         Ok(())
     }
-    async fn add_reaction(
-        &self, _: &serde_json::Value, _: &str, _: &str, _: &str,
-    ) -> Result<()> {
+    async fn add_reaction(&self, _: &serde_json::Value, _: &str, _: &str, _: &str) -> Result<()> {
         Ok(())
     }
     async fn send_draft(&self, _: &serde_json::Value, _: &str, _: &str) -> Result<String> {
@@ -78,15 +74,11 @@ impl ChannelOutbound for MockOutbound {
             Ok("msg_draft".into())
         }
     }
-    async fn update_draft(
-        &self, _: &serde_json::Value, _: &str, _: &str, _: &str,
-    ) -> Result<()> {
+    async fn update_draft(&self, _: &serde_json::Value, _: &str, _: &str, _: &str) -> Result<()> {
         self.calls.lock().push("update_draft".into());
         Ok(())
     }
-    async fn finalize_draft(
-        &self, _: &serde_json::Value, _: &str, _: &str, _: &str,
-    ) -> Result<()> {
+    async fn finalize_draft(&self, _: &serde_json::Value, _: &str, _: &str, _: &str) -> Result<()> {
         self.calls.lock().push("finalize_draft".into());
         if self.finalize_draft_fail {
             Err(ErrorCode::channel_send("finalize_draft failed"))

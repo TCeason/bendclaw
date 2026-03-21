@@ -7,7 +7,8 @@ use crate::kernel::channel::dispatcher::ChannelDispatcher;
 use crate::kernel::channel::message::InboundEvent;
 use crate::kernel::channel::writer::ChannelMessageOp;
 use crate::kernel::runtime::Runtime;
-use crate::observability::log::{slog, channel_log};
+use crate::observability::log::channel_log;
+use crate::observability::log::slog;
 use crate::storage::dal::channel_message::record::ChannelMessageRecord;
 use crate::storage::dal::channel_message::repo::ChannelMessageRepo;
 

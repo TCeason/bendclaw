@@ -40,22 +40,16 @@ struct NoopOutbound;
 
 #[async_trait]
 impl ChannelOutbound for NoopOutbound {
-    async fn send_text(
-        &self, _: &serde_json::Value, _: &str, _: &str,
-    ) -> Result<String> {
+    async fn send_text(&self, _: &serde_json::Value, _: &str, _: &str) -> Result<String> {
         Ok(String::new())
     }
     async fn send_typing(&self, _: &serde_json::Value, _: &str) -> Result<()> {
         Ok(())
     }
-    async fn edit_message(
-        &self, _: &serde_json::Value, _: &str, _: &str, _: &str,
-    ) -> Result<()> {
+    async fn edit_message(&self, _: &serde_json::Value, _: &str, _: &str, _: &str) -> Result<()> {
         Ok(())
     }
-    async fn add_reaction(
-        &self, _: &serde_json::Value, _: &str, _: &str, _: &str,
-    ) -> Result<()> {
+    async fn add_reaction(&self, _: &serde_json::Value, _: &str, _: &str, _: &str) -> Result<()> {
         Ok(())
     }
 }
@@ -108,8 +102,7 @@ async fn check_once_restarts_dead_receiver() {
     registry.register(Arc::new(DyingPlugin));
     let registry = Arc::new(registry);
 
-    let handler: Arc<dyn Fn(ChannelAccount, InboundEvent) + Send + Sync> =
-        Arc::new(|_, _| {});
+    let handler: Arc<dyn Fn(ChannelAccount, InboundEvent) + Send + Sync> = Arc::new(|_, _| {});
     let supervisor = Arc::new(ChannelSupervisor::new(registry, handler));
 
     let account = make_account();
@@ -119,14 +112,11 @@ async fn check_once_restarts_dead_receiver() {
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(!supervisor.is_alive("ca_test").await);
 
-    let monitor = ChannelHealthMonitor::new(
-        supervisor.clone(),
-        HealthMonitorConfig {
-            poll_interval: Duration::from_secs(1),
-            restart_cooldown: Duration::ZERO,
-            max_restarts: 3,
-        },
-    );
+    let monitor = ChannelHealthMonitor::new(supervisor.clone(), HealthMonitorConfig {
+        poll_interval: Duration::from_secs(1),
+        restart_cooldown: Duration::ZERO,
+        max_restarts: 3,
+    });
 
     let mut restart_counts = HashMap::new();
     let mut last_restart = HashMap::new();
@@ -143,22 +133,18 @@ async fn check_once_respects_max_restarts() {
     registry.register(Arc::new(DyingPlugin));
     let registry = Arc::new(registry);
 
-    let handler: Arc<dyn Fn(ChannelAccount, InboundEvent) + Send + Sync> =
-        Arc::new(|_, _| {});
+    let handler: Arc<dyn Fn(ChannelAccount, InboundEvent) + Send + Sync> = Arc::new(|_, _| {});
     let supervisor = Arc::new(ChannelSupervisor::new(registry, handler));
 
     let account = make_account();
     supervisor.start(&account).await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let monitor = ChannelHealthMonitor::new(
-        supervisor.clone(),
-        HealthMonitorConfig {
-            poll_interval: Duration::from_secs(1),
-            restart_cooldown: Duration::ZERO,
-            max_restarts: 2,
-        },
-    );
+    let monitor = ChannelHealthMonitor::new(supervisor.clone(), HealthMonitorConfig {
+        poll_interval: Duration::from_secs(1),
+        restart_cooldown: Duration::ZERO,
+        max_restarts: 2,
+    });
 
     let mut restart_counts = HashMap::new();
     restart_counts.insert("ca_test".to_string(), 2); // Already at max.

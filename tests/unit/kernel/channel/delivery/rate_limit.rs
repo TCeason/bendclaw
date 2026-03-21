@@ -11,9 +11,15 @@ fn allows_up_to_burst() {
         refill_rate: 1.0,
     });
     for _ in 0..3 {
-        assert!(matches!(limiter.check("feishu", "acc1"), RateLimitResult::Allowed));
+        assert!(matches!(
+            limiter.check("feishu", "acc1"),
+            RateLimitResult::Allowed
+        ));
     }
-    assert!(matches!(limiter.check("feishu", "acc1"), RateLimitResult::RetryAfter(_)));
+    assert!(matches!(
+        limiter.check("feishu", "acc1"),
+        RateLimitResult::RetryAfter(_)
+    ));
 }
 
 #[test]
@@ -22,12 +28,24 @@ fn separate_buckets_per_key() {
         burst: 1,
         refill_rate: 1.0,
     });
-    assert!(matches!(limiter.check("feishu", "acc1"), RateLimitResult::Allowed));
-    assert!(matches!(limiter.check("feishu", "acc2"), RateLimitResult::Allowed));
+    assert!(matches!(
+        limiter.check("feishu", "acc1"),
+        RateLimitResult::Allowed
+    ));
+    assert!(matches!(
+        limiter.check("feishu", "acc2"),
+        RateLimitResult::Allowed
+    ));
     // acc1 exhausted
-    assert!(matches!(limiter.check("feishu", "acc1"), RateLimitResult::RetryAfter(_)));
+    assert!(matches!(
+        limiter.check("feishu", "acc1"),
+        RateLimitResult::RetryAfter(_)
+    ));
     // acc2 exhausted
-    assert!(matches!(limiter.check("feishu", "acc2"), RateLimitResult::RetryAfter(_)));
+    assert!(matches!(
+        limiter.check("feishu", "acc2"),
+        RateLimitResult::RetryAfter(_)
+    ));
 }
 
 #[test]
@@ -57,7 +75,10 @@ fn evict_stale_removes_old_buckets() {
     limiter.evict_stale(Duration::ZERO);
     // Bucket was evicted, so a new one is created with full burst.
     for _ in 0..5 {
-        assert!(matches!(limiter.check("feishu", "old"), RateLimitResult::Allowed));
+        assert!(matches!(
+            limiter.check("feishu", "old"),
+            RateLimitResult::Allowed
+        ));
     }
 }
 
@@ -70,7 +91,10 @@ async fn wait_if_needed_reacquires_token() {
 
     // Exhaust the single token.
     assert!(matches!(limiter.check("ch", "a"), RateLimitResult::Allowed));
-    assert!(matches!(limiter.check("ch", "a"), RateLimitResult::RetryAfter(_)));
+    assert!(matches!(
+        limiter.check("ch", "a"),
+        RateLimitResult::RetryAfter(_)
+    ));
 
     // wait_if_needed should loop until a token is available.
     let start = std::time::Instant::now();
@@ -80,7 +104,10 @@ async fn wait_if_needed_reacquires_token() {
     assert!(elapsed < Duration::from_secs(1));
 
     // After wait_if_needed, the token was consumed — next check should fail.
-    assert!(matches!(limiter.check("ch", "a"), RateLimitResult::RetryAfter(_)));
+    assert!(matches!(
+        limiter.check("ch", "a"),
+        RateLimitResult::RetryAfter(_)
+    ));
 }
 
 #[tokio::test]
@@ -109,5 +136,8 @@ async fn concurrent_senders_respect_burst() {
     // After 100ms, at most 0 should have completed (refill is 0.5/sec).
     tokio::time::sleep(Duration::from_millis(100)).await;
     let completed = counter.load(std::sync::atomic::Ordering::SeqCst);
-    assert!(completed <= 1, "at most 1 should complete quickly, got {completed}");
+    assert!(
+        completed <= 1,
+        "at most 1 should complete quickly, got {completed}"
+    );
 }

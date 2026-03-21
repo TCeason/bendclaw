@@ -102,23 +102,15 @@ async fn log_http_request(mut req: Request<Body>, next: Next) -> Response {
         matched_path
     };
     let code = status.as_u16();
-    let len_part = if content_length > 0 {
-        format!(" len={content_length}")
-    } else {
-        String::new()
-    };
-    let msg = format!(
-        "[http] {code} {method} {path} elapsed={elapsed_ms}ms{len_part} | trace={trace_id} user={user_id}"
-    );
 
     if status.is_server_error() {
-        tracing::error!("{msg}");
+        tracing::error!(code, %method, %path, elapsed_ms, content_length, %trace_id, %user_id, "http request");
     } else if status.is_client_error() {
-        tracing::warn!("{msg}");
+        tracing::warn!(code, %method, %path, elapsed_ms, content_length, %trace_id, %user_id, "http request");
     } else if elapsed_ms >= 1000 {
-        tracing::info!("{msg}");
+        tracing::info!(code, %method, %path, elapsed_ms, content_length, %trace_id, %user_id, "http request");
     } else {
-        tracing::debug!("{msg}");
+        tracing::debug!(code, %method, %path, elapsed_ms, content_length, %trace_id, %user_id, "http request");
     }
 
     response

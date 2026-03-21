@@ -46,11 +46,24 @@ where
     rate_limiter.wait_if_needed(channel_type, account_id).await;
 
     if supports_edit {
-        deliver_streaming(outbound, channel_config, chat_id, max_message_len, run_stream).await
+        deliver_streaming(
+            outbound,
+            channel_config,
+            chat_id,
+            max_message_len,
+            run_stream,
+        )
+        .await
     } else {
         deliver_non_streaming(
-            outbound, outbound_queue, channel_type, account_id,
-            channel_config, chat_id, max_message_len, run_stream,
+            outbound,
+            outbound_queue,
+            channel_type,
+            account_id,
+            channel_config,
+            chat_id,
+            max_message_len,
+            run_stream,
         )
         .await
     }

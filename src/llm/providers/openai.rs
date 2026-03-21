@@ -235,7 +235,7 @@ async fn drive_stream(
         let headers = resp.headers().clone();
         let request_id = response_request_id(&headers);
         let text = resp.text().await.unwrap_or_default();
-        tracing::warn!(
+        tracing::error!(
             provider = "openai",
             model = %model,
             status = %status,

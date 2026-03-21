@@ -9,6 +9,7 @@
 - Promote code reuse
 - Use OOP principles without over-engineering
 - Design for testability
+- `mod.rs` files must only contain module declarations (`mod`), re-exports (`pub use`), and `use` statements — no code logic
 
 # Testing
 

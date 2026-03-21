@@ -96,7 +96,59 @@ impl ServerFields {
         self
     }
 
+    /// Build a compact payload string from the detail map (redacted).
+    fn format_payload(&self) -> String {
+        let redacted = redaction::redact(Value::Object(self.payload.clone()));
+        let mut buf = String::new();
+        if let Value::Object(map) = redacted {
+            for (k, v) in &map {
+                match v {
+                    Value::Null => {}
+                    Value::Bool(b) => {
+                        write!(buf, " {k}={b}").ok();
+                    }
+                    Value::Number(n) => {
+                        write!(buf, " {k}={n}").ok();
+                    }
+                    Value::String(s) => {
+                        if !s.is_empty() {
+                            const MAX_VAL: usize = 200;
+                            if s.len() > MAX_VAL {
+                                write!(
+                                    buf,
+                                    " {k}=\"{}...\"",
+                                    truncate_bytes_on_char_boundary(s, MAX_VAL)
+                                )
+                                .ok();
+                            } else if s.contains(' ') {
+                                write!(buf, " {k}=\"{s}\"").ok();
+                            } else {
+                                write!(buf, " {k}={s}").ok();
+                            }
+                        }
+                    }
+                    _ => {
+                        let json = serde_json::to_string(v).unwrap_or_default();
+                        const MAX_JSON: usize = 200;
+                        if json.len() > MAX_JSON {
+                            write!(
+                                buf,
+                                " {k}={}...",
+                                truncate_bytes_on_char_boundary(&json, MAX_JSON)
+                            )
+                            .ok();
+                        } else {
+                            write!(buf, " {k}={json}").ok();
+                        }
+                    }
+                }
+            }
+        }
+        buf
+    }
+
     /// Build a compact single-line message: non-zero metrics + flattened payload + context.
+    #[allow(dead_code)]
     fn format_line(&self, stage: &str, status: &str, ctx: &ServerCtx<'_>) -> String {
         let mut buf = format!("[{stage}] {status}");
 
@@ -189,21 +241,69 @@ pub fn preview_text(text: &str) -> String {
 }
 
 pub fn debug(ctx: &ServerCtx<'_>, stage: &str, status: &str, fields: ServerFields) {
-    let msg = fields.format_line(stage, status, ctx);
-    tracing::debug!("{msg}");
+    tracing::debug!(
+        stage,
+        status,
+        run_id = ctx.run_id,
+        session_id = ctx.session_id,
+        agent_id = ctx.agent_id,
+        turn = ctx.turn,
+        elapsed_ms = fields.elapsed_ms,
+        tokens = fields.tokens,
+        rows = fields.rows,
+        bytes = fields.bytes,
+        payload = %fields.format_payload(),
+        "{stage} {status}"
+    );
 }
 
 pub fn info(ctx: &ServerCtx<'_>, stage: &str, status: &str, fields: ServerFields) {
-    let msg = fields.format_line(stage, status, ctx);
-    tracing::info!("{msg}");
+    tracing::info!(
+        stage,
+        status,
+        run_id = ctx.run_id,
+        session_id = ctx.session_id,
+        agent_id = ctx.agent_id,
+        turn = ctx.turn,
+        elapsed_ms = fields.elapsed_ms,
+        tokens = fields.tokens,
+        rows = fields.rows,
+        bytes = fields.bytes,
+        payload = %fields.format_payload(),
+        "{stage} {status}"
+    );
 }
 
 pub fn warn(ctx: &ServerCtx<'_>, stage: &str, status: &str, fields: ServerFields) {
-    let msg = fields.format_line(stage, status, ctx);
-    tracing::warn!("{msg}");
+    tracing::warn!(
+        stage,
+        status,
+        run_id = ctx.run_id,
+        session_id = ctx.session_id,
+        agent_id = ctx.agent_id,
+        turn = ctx.turn,
+        elapsed_ms = fields.elapsed_ms,
+        tokens = fields.tokens,
+        rows = fields.rows,
+        bytes = fields.bytes,
+        payload = %fields.format_payload(),
+        "{stage} {status}"
+    );
 }
 
 pub fn error(ctx: &ServerCtx<'_>, stage: &str, status: &str, fields: ServerFields) {
-    let msg = fields.format_line(stage, status, ctx);
-    tracing::error!("{msg}");
+    tracing::error!(
+        stage,
+        status,
+        run_id = ctx.run_id,
+        session_id = ctx.session_id,
+        agent_id = ctx.agent_id,
+        turn = ctx.turn,
+        elapsed_ms = fields.elapsed_ms,
+        tokens = fields.tokens,
+        rows = fields.rows,
+        bytes = fields.bytes,
+        payload = %fields.format_payload(),
+        "{stage} {status}"
+    );
 }

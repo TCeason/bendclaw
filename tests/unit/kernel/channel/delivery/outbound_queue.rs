@@ -4,9 +4,9 @@ use std::time::Instant;
 use async_trait::async_trait;
 use bendclaw::base::ErrorCode;
 use bendclaw::base::Result;
+use bendclaw::kernel::channel::delivery::outbound_queue::spawn_outbound_queue;
 use bendclaw::kernel::channel::delivery::outbound_queue::OutboundQueueConfig;
 use bendclaw::kernel::channel::delivery::outbound_queue::QueuedMessage;
-use bendclaw::kernel::channel::delivery::outbound_queue::spawn_outbound_queue;
 use bendclaw::kernel::channel::delivery::retry::RetryConfig;
 use bendclaw::kernel::channel::plugin::ChannelOutbound;
 use parking_lot::Mutex;
@@ -30,14 +30,10 @@ impl ChannelOutbound for CountingOutbound {
     async fn send_typing(&self, _: &serde_json::Value, _: &str) -> Result<()> {
         Ok(())
     }
-    async fn edit_message(
-        &self, _: &serde_json::Value, _: &str, _: &str, _: &str,
-    ) -> Result<()> {
+    async fn edit_message(&self, _: &serde_json::Value, _: &str, _: &str, _: &str) -> Result<()> {
         Ok(())
     }
-    async fn add_reaction(
-        &self, _: &serde_json::Value, _: &str, _: &str, _: &str,
-    ) -> Result<()> {
+    async fn add_reaction(&self, _: &serde_json::Value, _: &str, _: &str, _: &str) -> Result<()> {
         Ok(())
     }
 }
@@ -152,5 +148,8 @@ async fn queue_no_head_of_line_blocking() {
     // After 200ms, the immediate message should have been delivered
     // even though the delayed one hasn't fired yet.
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    assert!(*count.lock() >= 1, "immediate message should have been delivered");
+    assert!(
+        *count.lock() >= 1,
+        "immediate message should have been delivered"
+    );
 }

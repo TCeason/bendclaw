@@ -11,6 +11,7 @@ use crate::kernel::run::default_identity;
 use crate::kernel::run::runtime_context;
 use crate::kernel::skills::store::SkillStore;
 use crate::llm::tool::ToolSchema;
+use crate::observability::log::slog;
 use crate::storage::dal::learning::LearningRecord;
 use crate::storage::dal::variable::record::VariableRecord;
 
@@ -48,14 +49,16 @@ pub fn truncate_layer(layer: &str, content: &str, max_bytes: usize, source: &str
     }
     let truncated = &content[..end];
     let dropped = original - end;
-    tracing::warn!(
+    slog!(
+        warn,
+        "prompt",
+        "layer_truncated",
         layer,
         original_size = original,
         truncated_size = end,
         dropped_bytes = dropped,
         max = max_bytes,
         source,
-        "prompt layer TRUNCATED"
     );
     format!("{truncated}\n[... truncated at {end}/{original} bytes ...]")
 }
@@ -186,14 +189,7 @@ impl PromptBuilder {
 
     /// Build the full system prompt.
     pub async fn build(&self, agent_id: &str, user_id: &str, session_id: &str) -> Result<String> {
-        tracing::debug!(
-            stage = "prompt",
-            status = "started",
-            agent_id,
-            user_id,
-            session_id,
-            "prompt build"
-        );
+        slog!(debug, "prompt", "started", agent_id, user_id, session_id,);
 
         // Phase 1: Fire all independent DB queries in parallel.
         let (config, recall_hints, variables_text, errors_text, state) =
@@ -201,13 +197,7 @@ impl PromptBuilder {
 
         let config = config?;
         let has_config = config.is_some();
-        tracing::debug!(
-            stage = "prompt",
-            status = "config_loaded",
-            agent_id,
-            has_config,
-            "prompt build"
-        );
+        slog!(debug, "prompt", "config_loaded", agent_id, has_config,);
 
         // Phase 2: Assemble prompt (CPU-only, no I/O).
         let mut prompt = String::with_capacity(4096);
@@ -288,21 +278,15 @@ impl PromptBuilder {
         // 9. Runtime (sync)
         self.append_runtime(&mut prompt, session_id);
 
-        tracing::info!(
-            stage = "prompt",
-            status = "completed",
+        slog!(
+            info,
+            "prompt",
+            "completed",
             agent_id,
             session_id,
             total_size = prompt.len(),
-            "prompt build"
         );
-        tracing::debug!(
-            stage = "prompt",
-            agent_id,
-            session_id,
-            content = %prompt,
-            "prompt full content"
-        );
+        slog!(debug, "prompt", "full_content", agent_id, session_id, content = %prompt,);
 
         // Template substitution (state was fetched in parallel)
         let state = state?;
@@ -481,7 +465,7 @@ impl PromptBuilder {
                         buf.push('\n');
                     }
                 }
-                Err(e) => tracing::warn!(error = %e, "recall: learnings query failed, skipping"),
+                Err(e) => slog!(warn, "prompt", "recall_learnings_failed", error = %e,),
                 _ => {}
             }
 
@@ -496,7 +480,7 @@ impl PromptBuilder {
                         buf.push('\n');
                     }
                 }
-                Err(e) => tracing::warn!(error = %e, "recall: knowledge query failed, skipping"),
+                Err(e) => slog!(warn, "prompt", "recall_knowledge_failed", error = %e,),
                 _ => {}
             }
 
@@ -522,7 +506,7 @@ impl PromptBuilder {
             }
             Ok(_) => String::new(),
             Err(e) => {
-                tracing::warn!(error = %e, "learnings: db query failed — skipped");
+                slog!(warn, "prompt", "learnings_db_failed", error = %e,);
                 String::new()
             }
         }
@@ -546,7 +530,7 @@ impl PromptBuilder {
                 }
                 Ok(_) => return String::new(),
                 Err(e) => {
-                    tracing::warn!(error = %e, "variables: db query failed — skipped");
+                    slog!(warn, "prompt", "variables_db_failed", error = %e,);
                     return String::new();
                 }
             }
@@ -622,7 +606,7 @@ impl PromptBuilder {
                 }
                 Ok(_) => return String::new(),
                 Err(e) => {
-                    tracing::warn!(error = %e, "recent_errors: db query failed — skipped");
+                    slog!(warn, "prompt", "recent_errors_db_failed", error = %e,);
                     return String::new();
                 }
             }
