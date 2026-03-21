@@ -284,7 +284,7 @@ impl ChannelOutbound for FeishuOutbound {
         });
         let resp = self
             .client
-            .patch(&url)
+            .put(&url)
             .bearer_auth(&token)
             .json(&body)
             .send()
@@ -294,6 +294,9 @@ impl ChannelOutbound for FeishuOutbound {
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
             slog!(warn, "feishu_outbound", "edit_failed", http_status = %status, body,);
+            return Err(ErrorCode::channel_send(format!(
+                "feishu edit_message failed: HTTP {status}: {body}"
+            )));
         }
         Ok(())
     }

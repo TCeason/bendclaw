@@ -26,6 +26,10 @@ impl Default for RetryConfig {
 
 /// Classify whether a channel error is transient and worth retrying.
 pub fn is_channel_retryable(e: &ErrorCode) -> bool {
+    // Never retry client errors (4xx) — they indicate a permanent problem.
+    if is_client_error(&e.message) {
+        return false;
+    }
     matches!(
         e.code,
         ErrorCode::TIMEOUT
@@ -34,6 +38,16 @@ pub fn is_channel_retryable(e: &ErrorCode) -> bool {
             | ErrorCode::CHANNEL_TIMEOUT
             | ErrorCode::CHANNEL_RATE_LIMITED
     ) || is_transient_message(&e.message)
+}
+
+fn is_client_error(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    m.contains("http 400")
+        || m.contains("http 401")
+        || m.contains("http 403")
+        || m.contains("http 404")
+        || m.contains("http 405")
+        || m.contains("http 422")
 }
 
 fn is_transient_message(msg: &str) -> bool {
