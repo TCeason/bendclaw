@@ -265,9 +265,10 @@ async fn scan_once(
                 held_map.remove(&entry.id);
             }
         } else if is_held_by_other(node_id, entry) {
-            slog!(debug, "lease", "held_by_other",
+            slog!(info, "lease", "held_by_other",
                 table,
                 resource_id = %entry.id,
+                context = %entry.context,
                 holder = entry.lease_node_id.as_deref().unwrap_or(""),
                 expires = entry.lease_expires_at.as_deref().unwrap_or(""),
             );
@@ -292,6 +293,7 @@ async fn scan_once(
                         table,
                         resource_id = %entry.id,
                         context = %entry.context,
+                        node_id,
                     );
                     held_map.insert(entry.id.clone(), HeldLease {
                         token: token.clone(),
