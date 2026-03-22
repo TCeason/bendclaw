@@ -130,7 +130,7 @@ impl LeaseResource for TaskLeaseResource {
         let client = self.http_client.clone();
         let guard = runtime.track_task();
 
-        tokio::spawn(async move {
+        crate::base::spawn_fire_and_forget("task_execution", async move {
             let _guard = guard;
             let _lease_guard = LeaseGuard {
                 task_id,

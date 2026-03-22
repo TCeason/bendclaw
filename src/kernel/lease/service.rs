@@ -153,7 +153,7 @@ fn spawn_scan_loop(
     lease_count: Arc<AtomicUsize>,
     cancel: CancellationToken,
 ) -> JoinHandle<()> {
-    tokio::spawn(async move {
+    crate::base::spawn_named("lease_scan_loop", async move {
         let interval = Duration::from_secs(resource.scan_interval_secs());
         let mut consecutive_errors: u64 = 0;
 
@@ -310,7 +310,7 @@ async fn scan_once(
                         let cnt = release_count.clone();
                         let res = release_resource.clone();
                         let id = resource_id.to_string();
-                        tokio::spawn(async move {
+                        crate::base::spawn_named("lease_release", async move {
                             let pool = if let Some(lease) = h.lock().await.remove(&id) {
                                 let p = lease.pool.clone();
                                 let _ = release_sql(&p, &t, &id, &lease.token).await;

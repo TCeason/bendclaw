@@ -60,7 +60,7 @@ pub async fn sync(databases: &Arc<AgentDatabases>, workspace_root: &std::path::P
         written += 1;
     }
 
-    if written > 0 || skipped > 0 {
+    if written > 0 {
         slog!(info, "skill_sync", "completed", written, skipped,);
     }
 
@@ -166,7 +166,7 @@ pub fn spawn_sync_task(
     interval_secs: u64,
     cancel: tokio_util::sync::CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
+    crate::base::spawn_named("skill_sync_loop", async move {
         let base_interval = std::time::Duration::from_secs(interval_secs);
         let mut consecutive_errors: u64 = 0;
         // First refresh fires immediately so the server starts without

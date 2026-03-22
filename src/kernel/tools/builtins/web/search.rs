@@ -165,7 +165,7 @@ impl Tool for WebSearchTool {
         if api_key.secret {
             let pool = ctx.pool.clone();
             let id = api_key.id.clone();
-            tokio::spawn(async move {
+            crate::base::spawn_fire_and_forget("variable_touch_last_used", async move {
                 let repo = crate::storage::dal::variable::VariableRepo::new(pool);
                 let _ = repo.touch_last_used(&id).await;
             });

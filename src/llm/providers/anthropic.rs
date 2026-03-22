@@ -183,7 +183,7 @@ impl LLMProvider for AnthropicProvider {
         let masked_api_key = mask_api_key(&self.api_key);
         let model_owned = model.to_string();
 
-        tokio::spawn(async move {
+        crate::base::spawn_fire_and_forget("anthropic_stream_driver", async move {
             if let Err(msg) = drive_stream(
                 &client,
                 &url,

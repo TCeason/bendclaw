@@ -235,7 +235,7 @@ impl SkillRunner {
             return;
         }
         let pool = self.pool.clone();
-        tokio::spawn(async move {
+        crate::base::spawn_fire_and_forget("variable_touch_last_used", async move {
             let repo = VariableRepo::new(pool);
             let _ = repo.touch_last_used_many(&ids).await;
         });

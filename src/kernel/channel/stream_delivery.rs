@@ -70,7 +70,7 @@ impl StreamDelivery {
                                 last_edit = Instant::now();
                             }
                             Err(e) => {
-                                tracing::warn!(error = %e, "stream_delivery: send_draft failed");
+                                tracing::warn!(error = %e, "send_draft failed");
                             }
                         }
                     } else if draft_msg_id.is_some()
@@ -114,29 +114,17 @@ impl StreamDelivery {
             }
         }
 
-        // Finalize: if draft is broken or finalize fails, send as new message.
+        // Finalize: send final text if draft was created and not broken.
+        // If draft is broken or finalize fails, FallbackDelivery handles the fallback.
         let final_text = self.truncate(&text_buf);
         if let Some(ref msg_id) = draft_msg_id {
-            if draft_broken {
+            if !draft_broken {
                 if let Err(e) = self
                     .outbound
-                    .send_text(&self.channel_config, &self.chat_id, &final_text)
+                    .finalize_draft(&self.channel_config, &self.chat_id, msg_id, &final_text)
                     .await
                 {
-                    tracing::warn!(error = %e, "stream_delivery: fallback send_text failed");
-                }
-            } else if let Err(e) = self
-                .outbound
-                .finalize_draft(&self.channel_config, &self.chat_id, msg_id, &final_text)
-                .await
-            {
-                tracing::warn!(error = %e, "stream_delivery: finalize_draft failed, sending new message");
-                if let Err(e2) = self
-                    .outbound
-                    .send_text(&self.channel_config, &self.chat_id, &final_text)
-                    .await
-                {
-                    tracing::warn!(error = %e2, "stream_delivery: fallback send_text failed");
+                    tracing::warn!(error = %e, "finalize_draft failed");
                 }
             }
         }
@@ -160,7 +148,7 @@ impl StreamDelivery {
             .update_draft(&self.channel_config, &self.chat_id, msg_id, &display)
             .await
         {
-            tracing::warn!(error = %e, "stream_delivery: update_draft failed");
+            tracing::warn!(error = %e, "update_draft failed");
             *last_edit = Instant::now();
             return Err(());
         }

@@ -60,11 +60,14 @@ impl ChannelSupervisor {
         // Spawn consumer that dispatches events to the handler.
         let handler = self.event_handler.clone();
         let account_clone = account.clone();
-        tokio::spawn(async move {
+        crate::base::spawn_fire_and_forget("channel_event_consumer", async move {
             while let Some(event) = event_rx.recv().await {
                 let h = handler.clone();
                 let a = account_clone.clone();
-                tokio::spawn(async move { h(a, event) });
+                crate::base::spawn_fire_and_forget(
+                    "channel_event_handler",
+                    async move { h(a, event) },
+                );
             }
         });
 

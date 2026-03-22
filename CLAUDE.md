@@ -10,6 +10,7 @@
 - Use OOP principles without over-engineering
 - Design for testability
 - `mod.rs` files must only contain module declarations (`mod`), re-exports (`pub use`), and `use` statements — no code logic
+- `lib.rs` files follow the same rule: only module declarations, re-exports, and `use` statements — no business logic
 
 # Testing
 

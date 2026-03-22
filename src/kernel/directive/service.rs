@@ -70,7 +70,7 @@ impl DirectiveService {
     ) -> tokio::task::JoinHandle<()> {
         let service = self.clone();
         let interval_duration = self.refresh_interval;
-        tokio::spawn(async move {
+        crate::base::spawn_named("directive_refresh_loop", async move {
             let mut interval = tokio::time::interval(interval_duration);
             interval.tick().await;
             tracing::info!(

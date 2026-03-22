@@ -116,8 +116,7 @@ impl ReceiverFactory for TelegramReceiverFactory {
         let client = self.client.clone();
         let account_id = account.channel_account_id.clone();
 
-        let handle = tokio::spawn(async move {
-            tracing::info!(account_id = %account_id, "telegram long-poll receiver started");
+        let handle = crate::base::spawn_named("telegram_long_poll", async move {
             let mut offset: i64 = 0;
             loop {
                 tokio::select! {

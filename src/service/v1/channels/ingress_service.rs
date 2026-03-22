@@ -74,7 +74,7 @@ impl ChannelIngressService {
         let account = record_to_domain(&record);
 
         // Process events in background so the webhook returns 200 quickly.
-        tokio::spawn(async move {
+        crate::base::spawn_fire_and_forget("webhook_event_dispatch", async move {
             for event in events {
                 crate::kernel::channel::dispatch_inbound(&runtime, account.clone(), event).await;
             }

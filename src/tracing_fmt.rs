@@ -105,7 +105,17 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LocalDailyWriter {
 pub struct TargetFirstFormatter;
 
 fn short_target(target: &str) -> &str {
-    target.rsplit("::").next().unwrap_or(target)
+    // Keep last 2 segments: "bendclaw::kernel::channel::plugins::feishu::ws" → "feishu::ws"
+    let mut parts = target.rsplitn(3, "::");
+    let last = parts.next().unwrap_or(target);
+    match parts.next() {
+        Some(second) => {
+            // Find where "second::last" starts in the original string
+            let start = target.len() - second.len() - 2 - last.len();
+            &target[start..]
+        }
+        None => last,
+    }
 }
 
 impl<S, N> tracing_subscriber::fmt::FormatEvent<S, N> for TargetFirstFormatter

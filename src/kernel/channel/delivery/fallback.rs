@@ -88,9 +88,9 @@ impl FallbackDelivery {
 
         if !sent || !finalized {
             if !sent {
-                tracing::warn!("fallback_delivery: send_draft failed, falling back");
+                tracing::warn!("send_draft failed, falling back to send_text");
             } else {
-                tracing::warn!("fallback_delivery: finalize_draft failed, falling back");
+                tracing::warn!("finalize_draft failed, falling back to send_text");
             }
             return self.fallback_send_text(&text).await;
         }

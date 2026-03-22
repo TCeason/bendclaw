@@ -206,7 +206,7 @@ pub async fn execute_run(
     let spawned_agent_id = agent_id.clone();
     let spawned_session_id = session_id.clone();
     let spawned_run_id = run_id.clone();
-    tokio::spawn(async move {
+    crate::base::spawn_fire_and_forget("run_execution_stream", async move {
         if let Some(from) = continue_from_run_id {
             let payload = stream::base_event_payload(
                 &spawned_agent_id,

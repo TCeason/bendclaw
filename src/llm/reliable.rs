@@ -102,7 +102,8 @@ impl LLMProvider for ReliableProvider {
         let tools = tools.to_vec();
         let span = tracing::Span::current();
 
-        tokio::spawn(
+        crate::base::spawn_fire_and_forget(
+            "llm_retry_stream",
             async move {
                 loop {
                     let mut inner_stream =

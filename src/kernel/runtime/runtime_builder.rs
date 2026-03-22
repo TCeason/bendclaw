@@ -299,7 +299,7 @@ async fn construct(
         let event_handler: Arc<dyn Fn(ChannelAccount, InboundEvent) + Send + Sync> =
             Arc::new(move |account, event| {
                 if let Some(runtime) = weak.upgrade() {
-                    tokio::spawn(async move {
+                    crate::base::spawn_fire_and_forget("inbound_event_dispatch", async move {
                         dispatch_inbound(&runtime, account, event).await;
                     });
                 }

@@ -224,7 +224,7 @@ fn spawn_stderr_task(
     stderr: ChildStderr,
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
 ) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
+    crate::base::spawn_named("cli_stderr_capture", async move {
         let mut lines = BufReader::new(stderr).lines();
         loop {
             match lines.next_line().await {

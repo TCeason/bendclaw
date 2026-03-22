@@ -105,7 +105,7 @@ impl Tool for ShellTool {
         let secret_ids = ctx.workspace.secret_variable_ids();
         if !secret_ids.is_empty() {
             let pool = ctx.pool.clone();
-            tokio::spawn(async move {
+            crate::base::spawn_fire_and_forget("variable_touch_last_used", async move {
                 let repo = VariableRepo::new(pool);
                 let _ = repo.touch_last_used_many(&secret_ids).await;
             });

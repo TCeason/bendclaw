@@ -81,7 +81,7 @@ pub async fn upgrade(
     );
 
     let shutdown_token = state.shutdown_token.clone();
-    tokio::spawn(async move {
+    crate::base::spawn_fire_and_forget("graceful_shutdown_delay", async move {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         shutdown_token.cancel();
     });

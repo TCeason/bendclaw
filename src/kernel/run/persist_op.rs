@@ -222,7 +222,7 @@ async fn handle_op(op: PersistOp) {
             if let Some(recall) = recall {
                 let run_id = run_id.clone();
                 let user_id = user_id.to_string();
-                tokio::spawn(async move {
+                crate::base::spawn_fire_and_forget("recall_post_run_events", async move {
                     crate::kernel::recall::post_run::process_run_events(
                         &recall, &run_id, &user_id, &events,
                     )

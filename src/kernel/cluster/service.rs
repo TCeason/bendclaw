@@ -127,7 +127,7 @@ impl ClusterService {
     ) -> tokio::task::JoinHandle<()> {
         let svc = self.clone();
         let interval_duration = self.options.heartbeat_interval;
-        tokio::spawn(async move {
+        crate::base::spawn_named("cluster_heartbeat", async move {
             let mut interval = tokio::time::interval(interval_duration);
             slog!(
                 info,

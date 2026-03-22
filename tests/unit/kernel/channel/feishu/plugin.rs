@@ -72,8 +72,6 @@ async fn outbound_add_reaction_returns_error() {
 async fn outbound_edit_message_does_not_panic() {
     let ch = FeishuChannel::new();
     let outbound = ch.outbound();
-    // edit_message now calls the real Feishu API, so it will fail with a network error
-    // but should not panic.
     let _ = outbound
         .edit_message(
             &serde_json::json!({"app_id": "id", "app_secret": "secret"}),

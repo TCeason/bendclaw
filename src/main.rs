@@ -82,7 +82,15 @@ async fn cmd_run(
             .with_ansi(false)
             .with_target(true)
             .with_writer(writer);
-        let layer = base.json().boxed();
+        let layer = if config.log.format == "json" {
+            base.json()
+                .flatten_event(true)
+                .with_current_span(false)
+                .with_span_list(false)
+                .boxed()
+        } else {
+            base.event_format(tracing_fmt::TargetFirstFormatter).boxed()
+        };
         Some(layer.with_filter(file_filter))
     } else {
         None
