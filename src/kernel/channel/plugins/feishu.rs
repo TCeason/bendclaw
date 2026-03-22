@@ -180,7 +180,7 @@ impl ReceiverFactory for FeishuReceiverFactory {
                         slog!(info, "feishu_ws", "receiver_cancelled", account_id = %account_id,);
                         return;
                     }
-                    result = ws_receive_loop(&client, &config, &event_tx) => {
+                    result = ws_receive_loop(&client, &config, &event_tx, &cancel) => {
                         match result {
                             Ok(()) => {
                                 slog!(info, "feishu_ws", "closed_reconnecting", account_id = %account_id,);
@@ -449,6 +449,7 @@ async fn ws_receive_loop(
     client: &reqwest::Client,
     config: &FeishuConfig,
     event_tx: &InboundEventSender,
+    cancel: &CancellationToken,
 ) -> Result<()> {
     let (ws_url, ping_interval_secs) =
         get_ws_endpoint(client, &config.app_id, &config.app_secret).await?;
@@ -457,14 +458,33 @@ async fn ws_receive_loop(
     slog!(info, "feishu_ws", "connecting", url = %redacted_url, ping_interval = ping_interval_secs,);
 
     let connector = build_native_tls_connector()?;
-    let (ws_stream, _) =
+    let (ws_stream, ws_resp) =
         tokio_tungstenite::connect_async_tls_with_config(&ws_url, None, false, Some(connector))
             .await
             .map_err(|e| ErrorCode::internal(format!("feishu ws connect: {e}")))?;
 
+    // Log handshake response headers (official SDK checks Handshake-Status)
+    let hs_status = ws_resp
+        .headers()
+        .get("Handshake-Status")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let hs_msg = ws_resp
+        .headers()
+        .get("Handshake-Msg")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    slog!(
+        info,
+        "feishu_ws",
+        "handshake",
+        status = ws_resp.status().as_u16(),
+        hs_status,
+        hs_msg,
+    );
+
     let (mut write, mut read) = ws_stream.split();
 
-    // Extract service_id from WS URL for ping frames
     let service_id: i32 = reqwest::Url::parse(&ws_url)
         .ok()
         .and_then(|u| {
@@ -474,19 +494,95 @@ async fn ws_receive_loop(
         })
         .unwrap_or(0);
 
-    let mut ping_interval = tokio::time::interval(Duration::from_secs(ping_interval_secs));
+    let mut ping_interval_dur = Duration::from_secs(ping_interval_secs);
+    let mut ping_interval = tokio::time::interval(ping_interval_dur);
     ping_interval.tick().await;
     let mut last_recv = tokio::time::Instant::now();
-    let heartbeat_timeout = Duration::from_secs(ping_interval_secs.max(120) * 3);
     let mut timeout_check = tokio::time::interval(Duration::from_secs(10));
     timeout_check.tick().await;
 
     slog!(info, "feishu_ws", "connected", service_id,);
 
-    // Send initial ping immediately (like the official SDK) so the server
-    // starts responding with pongs and registers this connection.
-    let initial_ping = PbFrame {
-        seq_id: 1,
+    let initial_ping = build_ping_frame(service_id);
+    if write
+        .send(Message::Binary(initial_ping.encode_to_vec()))
+        .await
+        .is_err()
+    {
+        return Err(ErrorCode::internal("feishu ws: initial ping failed"));
+    }
+
+    let mut msg_cache: HashMap<String, Vec<Option<Vec<u8>>>> = HashMap::new();
+
+    let result = loop {
+        let heartbeat_timeout = ping_interval_dur.max(Duration::from_secs(120)) * 3;
+        tokio::select! {
+            biased;
+
+            _ = cancel.cancelled() => {
+                slog!(info, "feishu_ws", "closing_gracefully",);
+                let _ = write.send(Message::Close(None)).await;
+                break Ok(());
+            }
+            _ = timeout_check.tick() => {
+                if last_recv.elapsed() > heartbeat_timeout {
+                    slog!(warn, "feishu_ws", "heartbeat_timeout",
+                        elapsed_secs = last_recv.elapsed().as_secs(),
+                        timeout_secs = heartbeat_timeout.as_secs(),
+                    );
+                    break Err(ErrorCode::internal("feishu ws: heartbeat timeout, reconnecting"));
+                }
+            }
+            msg = read.next() => {
+                match msg {
+                    Some(Ok(Message::Binary(data))) => {
+                        let (resp_frame, event_payload) = decode_frame(
+                            &data, &mut msg_cache, &mut last_recv, &config.app_id,
+                            &mut ping_interval_dur,
+                        );
+                        // Send response BEFORE processing event (match official SDK behavior)
+                        if let Some(resp) = resp_frame {
+                            if write.send(Message::Binary(resp.encode_to_vec())).await.is_err() {
+                                break Err(ErrorCode::internal("feishu ws write response failed"));
+                            }
+                        }
+                        if let Some(payload) = event_payload {
+                            handle_event_payload(&payload, config, event_tx, client).await;
+                        }
+                    }
+                    Some(Ok(Message::Ping(data))) => {
+                        let _ = write.send(Message::Pong(data)).await;
+                    }
+                    Some(Ok(Message::Close(_))) | None => {
+                        slog!(info, "feishu_ws", "closed_by_server",);
+                        break Ok(());
+                    }
+                    Some(Err(e)) => {
+                        break Err(ErrorCode::internal(format!("feishu ws read: {e}")));
+                    }
+                    Some(Ok(other)) => {
+                        slog!(warn, "feishu_ws", "unexpected_ws_msg", msg_type = %format!("{:?}", std::mem::discriminant(&other)),);
+                    }
+                }
+            }
+            _ = ping_interval.tick() => {
+                let encoded = build_ping_frame(service_id).encode_to_vec();
+                if write.send(Message::Binary(encoded)).await.is_err() {
+                    break Err(ErrorCode::internal("feishu ws ping failed"));
+                }
+                slog!(info, "feishu_ws", "ping_sent",);
+            }
+        }
+    };
+
+    // Always try to send close frame on exit
+    let _ = write.send(Message::Close(None)).await;
+    result
+}
+
+fn build_ping_frame(service_id: i32) -> PbFrame {
+    PbFrame {
+        seq_id: 0,
         log_id: 0,
         service: service_id,
         method: FRAME_METHOD_CONTROL,
@@ -498,104 +594,47 @@ async fn ws_receive_loop(
         payload_type: None,
         payload: None,
         log_id_new: None,
-    };
-    if write
-        .send(Message::Binary(initial_ping.encode_to_vec()))
-        .await
-        .is_err()
-    {
-        return Err(ErrorCode::internal("feishu ws: initial ping failed"));
-    }
-
-    let mut msg_cache: HashMap<String, Vec<Option<Vec<u8>>>> = HashMap::new();
-
-    loop {
-        tokio::select! {
-            biased;
-
-            _ = timeout_check.tick() => {
-                if last_recv.elapsed() > heartbeat_timeout {
-                    slog!(warn, "feishu_ws", "heartbeat_timeout",
-                        elapsed_secs = last_recv.elapsed().as_secs(),
-                        timeout_secs = heartbeat_timeout.as_secs(),
-                    );
-                    return Err(ErrorCode::internal("feishu ws: heartbeat timeout, reconnecting"));
-                }
-            }
-            msg = read.next() => {
-                match msg {
-                    Some(Ok(Message::Binary(data))) => {
-                        if let Some(resp_frame) = handle_pb_frame(&data, config, event_tx, client, &mut msg_cache, &mut last_recv).await {
-                            let encoded = resp_frame.encode_to_vec();
-                            if write.send(Message::Binary(encoded)).await.is_err() {
-                                return Err(ErrorCode::internal("feishu ws write response failed"));
-                            }
-                        }
-                    }
-                    Some(Ok(Message::Ping(data))) => {
-                        let _ = write.send(Message::Pong(data)).await;
-                    }
-                    Some(Ok(Message::Close(_))) | None => {
-                        slog!(info, "feishu_ws", "closed_by_server",);
-                        return Ok(());
-                    }
-                    Some(Err(e)) => {
-                        return Err(ErrorCode::internal(format!("feishu ws read: {e}")));
-                    }
-                    Some(Ok(other)) => {
-                        slog!(warn, "feishu_ws", "unexpected_ws_msg", msg_type = %format!("{:?}", std::mem::discriminant(&other)),);
-                    }
-                }
-            }
-            _ = ping_interval.tick() => {
-                let ping_frame = PbFrame {
-                    seq_id: 0,
-                    log_id: 0,
-                    service: service_id,
-                    method: FRAME_METHOD_CONTROL,
-                    headers: vec![PbHeader { key: "type".into(), value: "ping".into() }],
-                    payload_encoding: None,
-                    payload_type: None,
-                    payload: None,
-                    log_id_new: None,
-                };
-                let encoded = ping_frame.encode_to_vec();
-                if write.send(Message::Binary(encoded)).await.is_err() {
-                    return Err(ErrorCode::internal("feishu ws ping failed"));
-                }
-                slog!(info, "feishu_ws", "ping_sent",);
-            }
-        }
     }
 }
 
-async fn handle_pb_frame(
+/// Decode a PB frame, return (optional response frame, optional event payload to process).
+/// This is intentionally sync so the WS read loop is not blocked by event processing.
+fn decode_frame(
     data: &[u8],
-    config: &FeishuConfig,
-    event_tx: &InboundEventSender,
-    client: &reqwest::Client,
     msg_cache: &mut HashMap<String, Vec<Option<Vec<u8>>>>,
     last_recv: &mut tokio::time::Instant,
-) -> Option<PbFrame> {
+    app_id: &str,
+    ping_interval_dur: &mut Duration,
+) -> (Option<PbFrame>, Option<String>) {
     let frame = match PbFrame::decode(data) {
         Ok(f) => f,
         Err(e) => {
             slog!(warn, "feishu_ws", "decode_failed", error = %e,);
-            return None;
+            return (None, None);
         }
     };
 
     if frame.method == FRAME_METHOD_CONTROL {
         let msg_type = frame.get_header("type").unwrap_or("");
         if msg_type == "pong" {
-            slog!(info, "feishu_ws", "pong_received",);
+            // Parse ClientConfig from pong payload (like official SDK)
+            if let Some(payload) = &frame.payload {
+                if let Ok(conf) = serde_json::from_slice::<serde_json::Value>(payload) {
+                    if let Some(pi) = conf.get("PingInterval").and_then(|v| v.as_u64()) {
+                        if pi > 0 {
+                            *ping_interval_dur = Duration::from_secs(pi);
+                        }
+                    }
+                }
+            }
         }
-        return None;
+        slog!(info, "feishu_ws", "control_frame", msg_type,);
+        return (None, None);
     }
 
     if frame.method != FRAME_METHOD_DATA {
         slog!(info, "feishu_ws", "unknown_method", method = frame.method,);
-        return None;
+        return (None, None);
     }
 
     let msg_type = frame.get_header("type").unwrap_or("").to_string();
@@ -628,15 +667,20 @@ async fn handle_pb_frame(
             msg_cache.remove(&msg_id);
             combined
         } else {
-            return None;
+            return (None, None);
         }
     } else {
         payload_bytes
     };
 
-    let payload_str = String::from_utf8_lossy(&full_payload);
+    let payload_str = String::from_utf8_lossy(&full_payload).to_string();
 
-    if msg_type == "event" {
+    // Build response frame immediately
+    let resp = serde_json::json!({"code": 200});
+    let mut resp_frame = frame.clone();
+    resp_frame.payload = Some(resp.to_string().into_bytes());
+
+    let event_payload = if msg_type == "event" {
         *last_recv = tokio::time::Instant::now();
         slog!(
             info,
@@ -644,9 +688,9 @@ async fn handle_pb_frame(
             "event_received",
             msg_id,
             trace_id,
-            app_id = config.app_id.as_str(),
+            app_id,
         );
-        handle_event_payload(&payload_str, config, event_tx, client).await;
+        Some(payload_str)
     } else {
         slog!(
             info,
@@ -656,13 +700,10 @@ async fn handle_pb_frame(
             msg_id,
             trace_id,
         );
-    }
+        None
+    };
 
-    // Build response frame
-    let resp = serde_json::json!({"code": 200});
-    let mut resp_frame = frame.clone();
-    resp_frame.payload = Some(resp.to_string().into_bytes());
-    Some(resp_frame)
+    (Some(resp_frame), event_payload)
 }
 
 async fn handle_event_payload(
