@@ -12,6 +12,8 @@ use crate::kernel::trace::TraceSpan;
 use crate::kernel::Message;
 use crate::kernel::OperationMeta;
 use crate::llm::message::ToolCall;
+use crate::observability::log::run_log;
+use crate::observability::log::slog;
 use crate::observability::server_log;
 
 /// Max bytes for span error messages stored in trace DB.
@@ -42,7 +44,11 @@ impl Engine {
     ) -> HashMap<String, TraceSpan> {
         let mut spans = HashMap::new();
         for p in parsed_calls {
-            tracing::debug!(tool = %p.call.name, tool_call_id = %p.call.id, arguments = %truncate_for_log(&p.arguments.to_string()), "tool call started");
+            slog!(info, "tool", "started",
+                tool = %p.call.name,
+                tool_call_id = %p.call.id,
+                arguments = %truncate_for_log(&p.arguments.to_string()),
+            );
             let span = self.trace.start_span(
                 p.kind.as_str(),
                 &p.call.name,
@@ -68,21 +74,18 @@ impl Engine {
                 arguments: p.arguments.clone(),
             })
             .await;
-            server_log::info(
-                &server_log::ServerCtx::new(
-                    &self.ctx.trace_id,
-                    &self.ctx.run_id,
-                    &self.ctx.session_id,
-                    &self.ctx.agent_id,
-                    self.iteration.load(std::sync::atomic::Ordering::Relaxed),
-                ),
-                "tool",
-                "started",
-                server_log::ServerFields::default()
-                    .bytes(p.arguments.to_string().len() as u64)
-                    .detail("tool_call_id", p.call.id.clone())
-                    .detail("tool_name", p.call.name.clone())
-                    .detail("tool_kind", p.kind.as_str()),
+            let tool_ctx = server_log::ServerCtx::new(
+                &self.ctx.trace_id,
+                &self.ctx.run_id,
+                &self.ctx.session_id,
+                &self.ctx.agent_id,
+                self.iteration.load(std::sync::atomic::Ordering::Relaxed),
+            );
+            run_log!(info, tool_ctx, "tool", "started",
+                bytes = p.arguments.to_string().len() as u64,
+                tool_call_id = %p.call.id,
+                tool_name = %p.call.name,
+                tool_kind = %p.kind.as_str(),
             );
             let turn = self.iteration.load(std::sync::atomic::Ordering::Relaxed);
             let mut payload = self.audit_payload(turn);
@@ -115,13 +118,20 @@ impl Engine {
                 ToolCallResult::Success(out, _) => (out.clone(), true, None),
                 ToolCallResult::ToolError(msg, _) | ToolCallResult::InfraError(msg, _) => {
                     if matches!(&outcome.result, ToolCallResult::InfraError(..)) {
-                        tracing::error!(tool = %p.call.name, error = %msg, "tool infrastructure error");
+                        slog!(error, "tool", "infra_error",
+                            tool = %p.call.name,
+                            error = %msg,
+                        );
                     }
                     (format!("Error: {msg}"), false, Some(msg.clone()))
                 }
             };
 
-            tracing::debug!(tool = %p.call.name, tool_call_id = %p.call.id, success, output = %truncate_for_log(&output), "tool call completed");
+            slog!(info, "tool", "completed",
+                tool = %p.call.name,
+                tool_call_id = %p.call.id,
+                output = %truncate_for_log(&output),
+            );
 
             if let Some(span) = spans.get(&p.call.id) {
                 self.record_tool_span(span, p, &meta, success, error_text.as_deref())
@@ -136,46 +146,31 @@ impl Engine {
                 operation: meta.clone(),
             })
             .await;
+            let result_ctx = server_log::ServerCtx::new(
+                &self.ctx.trace_id,
+                &self.ctx.run_id,
+                &self.ctx.session_id,
+                &self.ctx.agent_id,
+                self.iteration.load(std::sync::atomic::Ordering::Relaxed),
+            );
             if success {
-                server_log::info(
-                    &server_log::ServerCtx::new(
-                        &self.ctx.trace_id,
-                        &self.ctx.run_id,
-                        &self.ctx.session_id,
-                        &self.ctx.agent_id,
-                        self.iteration.load(std::sync::atomic::Ordering::Relaxed),
-                    ),
-                    "tool",
-                    "completed",
-                    server_log::ServerFields::default()
-                        .elapsed_ms(meta.duration_ms)
-                        .bytes(output.len() as u64)
-                        .detail("tool_call_id", p.call.id.clone())
-                        .detail("tool_name", p.call.name.clone())
-                        .detail("tool_kind", p.kind.as_str())
-                        .detail("success", success)
-                        .detail("summary", meta.summary.clone()),
+                run_log!(info, result_ctx, "tool", "completed",
+                    elapsed_ms = meta.duration_ms,
+                    bytes = output.len() as u64,
+                    tool_call_id = %p.call.id,
+                    tool_name = %p.call.name,
+                    tool_kind = %p.kind.as_str(),
+                    summary = %meta.summary,
                 );
             } else {
-                server_log::error(
-                    &server_log::ServerCtx::new(
-                        &self.ctx.trace_id,
-                        &self.ctx.run_id,
-                        &self.ctx.session_id,
-                        &self.ctx.agent_id,
-                        self.iteration.load(std::sync::atomic::Ordering::Relaxed),
-                    ),
-                    "tool",
-                    "failed",
-                    server_log::ServerFields::default()
-                        .elapsed_ms(meta.duration_ms)
-                        .bytes(output.len() as u64)
-                        .detail("tool_call_id", p.call.id.clone())
-                        .detail("tool_name", p.call.name.clone())
-                        .detail("tool_kind", p.kind.as_str())
-                        .detail("success", success)
-                        .detail("summary", meta.summary.clone())
-                        .detail("error", error_text.clone()),
+                run_log!(error, result_ctx, "tool", "failed",
+                    elapsed_ms = meta.duration_ms,
+                    bytes = output.len() as u64,
+                    tool_call_id = %p.call.id,
+                    tool_name = %p.call.name,
+                    tool_kind = %p.kind.as_str(),
+                    error = %error_text.as_deref().unwrap_or(""),
+                    summary = %meta.summary,
                 );
             }
             let turn = self.iteration.load(std::sync::atomic::Ordering::Relaxed);

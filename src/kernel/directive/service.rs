@@ -6,6 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::base::Result;
 use crate::client::DirectiveClient;
+use crate::observability::log::slog;
 
 /// Runtime-owned directive cache.
 /// Keeps prompt reads off the request path and refreshes in the background.
@@ -40,23 +41,31 @@ impl DirectiveService {
         *cache = prompt.clone();
 
         match (&prompt, changed) {
-            (Some(text), true) => tracing::info!(
+            (Some(text), true) => slog!(
+                info,
+                "directive",
+                "refreshed",
                 size = text.len(),
                 elapsed_ms = started.elapsed().as_millis() as u64,
-                "directive cache refreshed"
             ),
-            (Some(text), false) => tracing::debug!(
+            (Some(text), false) => slog!(
+                info,
+                "directive",
+                "unchanged",
                 size = text.len(),
                 elapsed_ms = started.elapsed().as_millis() as u64,
-                "directive cache unchanged"
             ),
-            (None, true) => tracing::info!(
+            (None, true) => slog!(
+                info,
+                "directive",
+                "cleared",
                 elapsed_ms = started.elapsed().as_millis() as u64,
-                "directive cache cleared"
             ),
-            (None, false) => tracing::debug!(
+            (None, false) => slog!(
+                info,
+                "directive",
+                "empty",
                 elapsed_ms = started.elapsed().as_millis() as u64,
-                "directive cache remains empty"
             ),
         }
 
@@ -73,19 +82,21 @@ impl DirectiveService {
         crate::base::spawn_named("directive_refresh_loop", async move {
             let mut interval = tokio::time::interval(interval_duration);
             interval.tick().await;
-            tracing::info!(
+            slog!(
+                info,
+                "directive",
+                "loop_started",
                 refresh_interval_ms = interval_duration.as_millis() as u64,
-                "directive refresh loop started"
             );
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
                         if let Err(e) = service.refresh().await {
-                            tracing::warn!(error = %e, "directive refresh failed");
+                            slog!(warn, "directive", "refresh_failed", error = %e,);
                         }
                     }
                     _ = cancel.cancelled() => {
-                        tracing::info!("directive refresh loop stopped");
+                        slog!(info, "directive", "loop_stopped",);
                         break;
                     }
                 }

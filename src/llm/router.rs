@@ -13,6 +13,7 @@ use super::stream::ResponseStream;
 use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::llm::config::ProviderEndpoint;
+use crate::observability::log::slog;
 
 /// Weighted provider pool with circuit-breaker failover.
 ///
@@ -121,7 +122,11 @@ impl LLMProvider for LLMRouter {
 
         for slot in &self.slots {
             if !slot.breaker.is_available() {
-                tracing::debug!(name = %slot.name, provider = %slot.provider_name, model = %slot.model, "slot tripped, skipping");
+                slog!(info, "llm", "slot_skipped",
+                    name = %slot.name,
+                    provider = %slot.provider_name,
+                    model = %slot.model,
+                );
                 continue;
             }
 
@@ -138,26 +143,24 @@ impl LLMProvider for LLMRouter {
                         .as_ref()
                         .map(|u| (u.prompt_tokens, u.completion_tokens))
                         .unwrap_or((0, 0));
-                    tracing::info!(
+                    slog!(info, "llm", "completed",
                         provider = %slot.provider_name,
                         model = %slot.model,
                         latency_ms,
                         prompt_tokens,
                         completion_tokens,
                         finish_reason = ?resp.finish_reason,
-                        "llm request completed"
                     );
                     return Ok(resp);
                 }
                 Err(e) => {
                     slot.breaker.record_failure_if_transient(&e);
-                    tracing::warn!(
+                    slog!(warn, "llm", "provider_failed",
                         name = %slot.name,
                         provider = %slot.provider_name,
                         model = %slot.model,
                         error = %e,
                         failures = slot.breaker.failure_count(),
-                        "provider failed"
                     );
                     last_error = Some(e);
                 }
@@ -184,10 +187,9 @@ impl LLMProvider for LLMRouter {
 
         for slot in &self.slots {
             if slot.breaker.is_available() {
-                tracing::debug!(
+                slog!(info, "llm", "stream_started",
                     provider = %slot.provider_name,
                     model = %slot.model,
-                    "llm stream started"
                 );
                 return slot
                     .provider
@@ -196,9 +198,13 @@ impl LLMProvider for LLMRouter {
         }
 
         // All tripped — use the first slot anyway (best effort)
-        tracing::warn!("all providers tripped, using first slot as fallback");
+        slog!(warn, "llm", "all_tripped",);
         let slot = &self.slots[0];
-        tracing::warn!(name = %slot.name, provider = %slot.provider_name, model = %slot.model, "falling back to first slot");
+        slog!(warn, "llm", "fallback",
+            name = %slot.name,
+            provider = %slot.provider_name,
+            model = %slot.model,
+        );
         slot.provider
             .chat_stream(&slot.model, messages, tools, slot.temperature)
     }

@@ -6,6 +6,7 @@ use crate::kernel::channel::send_text_to_account;
 use crate::kernel::channel::ChannelRegistry;
 use crate::kernel::runtime::Runtime;
 use crate::kernel::task::execution;
+use crate::observability::log::slog;
 use crate::storage::dal::channel_account::repo::ChannelAccountRepo;
 use crate::storage::dal::task::TaskDelivery;
 use crate::storage::dal::task::TaskRecord;
@@ -59,12 +60,14 @@ pub async fn execute_task(
     )
     .await?;
 
-    tracing::info!(
+    slog!(
+        info,
+        "task",
+        "executed",
         agent_id,
         task_id = task.id,
         status,
         duration_ms,
-        "task executed"
     );
     Ok(())
 }

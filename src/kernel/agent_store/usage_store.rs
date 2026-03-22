@@ -7,6 +7,7 @@ use crate::kernel::run::usage::CostSummary;
 use crate::kernel::run::usage::UsageEvent;
 use crate::kernel::run::usage::UsageScope;
 use crate::llm::provider::LLMProvider;
+use crate::observability::log::slog;
 use crate::storage::dal::usage::record::UsageRecord;
 use crate::storage::dal::usage::repo::UsageRepo;
 use crate::storage::time::now;
@@ -32,15 +33,18 @@ impl UsageStore {
 
     pub async fn record(&self, event: UsageEvent) -> Result<()> {
         let record = self.event_to_record(event);
-        tracing::debug!(
-            stage = "usage_store",
-            action = "record",
-            status = "buffered",
-            user_id = %record.user_id, session_id = %record.session_id,
-            run_id = %record.run_id, provider = %record.provider, model = %record.model, model_role = %record.model_role,
-            prompt_tokens = record.prompt_tokens, completion_tokens = record.completion_tokens,
-            reasoning_tokens = record.reasoning_tokens, ttft_ms = record.ttft_ms,
-            cost = record.cost, "usage recorded"
+        slog!(info, "usage", "recorded",
+            user_id = %record.user_id,
+            session_id = %record.session_id,
+            run_id = %record.run_id,
+            provider = %record.provider,
+            model = %record.model,
+            model_role = %record.model_role,
+            prompt_tokens = record.prompt_tokens,
+            completion_tokens = record.completion_tokens,
+            reasoning_tokens = record.reasoning_tokens,
+            ttft_ms = record.ttft_ms,
+            cost = record.cost,
         );
         let should_flush = {
             let mut buf = self.usage_buffer.lock().await;
@@ -74,12 +78,16 @@ impl UsageStore {
         if records.is_empty() {
             return Ok(());
         }
-        tracing::debug!(count = records.len(), "flushing usage records");
+        slog!(info, "usage", "flushing", count = records.len(),);
         for attempt in 1..=MAX_RETRIES {
             match self.usage_repo.save_batch(&records).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
-                    tracing::warn!(stage = "usage_store", action = "flush", status = "retrying", error = %e, count = records.len(), attempt, "usage flush failed");
+                    slog!(warn, "usage", "flush_retry",
+                        error = %e,
+                        count = records.len(),
+                        attempt,
+                    );
                     if attempt < MAX_RETRIES {
                         tokio::time::sleep(std::time::Duration::from_millis(
                             (attempt as u64) * 100,
@@ -92,13 +100,7 @@ impl UsageStore {
         let mut buf = self.usage_buffer.lock().await;
         records.append(&mut *buf);
         *buf = records;
-        tracing::warn!(
-            stage = "usage_store",
-            action = "flush",
-            status = "requeued",
-            count = buf.len(),
-            "usage flush failed after retries; re-queued"
-        );
+        slog!(warn, "usage", "flush_requeued", count = buf.len(),);
         Ok(())
     }
 

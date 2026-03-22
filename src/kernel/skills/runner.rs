@@ -12,6 +12,7 @@ use crate::kernel::skills::executor::SkillExecutor;
 use crate::kernel::skills::executor::SkillOutput;
 use crate::kernel::skills::skill::Skill;
 use crate::kernel::skills::store::SkillStore;
+use crate::observability::log::slog;
 use crate::storage::dal::variable::VariableRepo;
 use crate::storage::pool::Pool;
 
@@ -114,11 +115,10 @@ impl SkillRunner {
         let mut cmd_args = vec![script_path];
         cmd_args.extend(args.iter().cloned());
 
-        tracing::debug!(
+        slog!(info, "skill", "executing",
             skill = skill_name,
             program = %program,
             args = ?cmd_args,
-            "executing skill"
         );
 
         let mut command = self.workspace.command(&program);
@@ -151,12 +151,11 @@ impl SkillRunner {
 
         if exit_code != 0 {
             let latency_ms = start.elapsed().as_millis() as u64;
-            tracing::warn!(
+            slog!(warn, "skill", "failed",
                 skill = skill_name,
                 latency_ms,
                 exit_code,
                 stderr = %stderr,
-                "skill exited with error"
             );
             return Ok(SkillOutput {
                 data: None,
@@ -165,12 +164,14 @@ impl SkillRunner {
         }
 
         let latency_ms = start.elapsed().as_millis() as u64;
-        tracing::info!(
+        slog!(
+            info,
+            "skill",
+            "completed",
             skill = skill_name,
             latency_ms,
             exit_code,
             stdout_len = stdout.len(),
-            "skill execution completed"
         );
 
         match serde_json::from_str::<SkillOutput>(&stdout) {

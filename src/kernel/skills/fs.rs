@@ -15,6 +15,7 @@ use crate::kernel::skills::skill::SkillParameter;
 use crate::kernel::skills::skill::SkillRequirements;
 use crate::kernel::skills::skill::SkillScope;
 use crate::kernel::skills::skill::SkillSource;
+use crate::observability::log::slog;
 
 // ── LoadedSkill ───────────────────────────────────────────────────────────────
 
@@ -72,7 +73,7 @@ pub fn load_skills(skills_dir: &Path) -> Vec<LoadedSkill> {
     let entries = match std::fs::read_dir(skills_dir) {
         Ok(e) => e,
         Err(e) => {
-            tracing::warn!(dir = %skills_dir.display(), error = %e, "cannot read skills directory");
+            slog!(warn, "skill", "dir_read_failed", dir = %skills_dir.display(), error = %e,);
             return Vec::new();
         }
     };
@@ -92,7 +93,7 @@ pub fn load_skills(skills_dir: &Path) -> Vec<LoadedSkill> {
         }
     }
 
-    tracing::debug!(count = skills.len(), "skills loaded");
+    slog!(info, "skill", "loaded", count = skills.len(),);
     skills
 }
 

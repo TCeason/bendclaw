@@ -13,6 +13,8 @@ use crate::kernel::run::result::Reason;
 use crate::kernel::run::result::Result as AgentResult;
 use crate::kernel::trace::TraceRecorder;
 use crate::observability::audit;
+use crate::observability::log::run_log;
+use crate::observability::log::slog;
 use crate::observability::server_log;
 use crate::storage::dal::run::record::RunMetrics;
 use crate::storage::dal::run::record::RunStatus;
@@ -157,13 +159,12 @@ impl TurnPersister {
         let duration_ms = self.start.elapsed().as_millis() as u64;
         let error_text = format!("{error}");
 
-        tracing::error!(
+        slog!(error, "run", "failed",
             agent_id = %self.agent_id,
             session_id = %self.session_id,
             run_id = %self.run_id,
-            duration_ms,
+            elapsed_ms = duration_ms,
             error = %error_text,
-            "run failed"
         );
 
         let mut all_events = events.to_vec();
@@ -212,15 +213,13 @@ impl TurnPersister {
 
         let event_records = self.build_event_records(&all_events);
 
-        server_log::warn(
-            &self.ops_ctx(0),
+        run_log!(
+            warn,
+            self.ops_ctx(0),
             "run",
             "cancelled",
-            server_log::ServerFields::default()
-                .elapsed_ms(duration_ms)
-                .detail("status", RunStatus::Cancelled.as_str())
-                .detail("error", "cancelled")
-                .detail("event_count", all_events.len()),
+            elapsed_ms = duration_ms,
+            event_count = all_events.len(),
         );
 
         self.writer.send(PersistOp::RunCancelled {

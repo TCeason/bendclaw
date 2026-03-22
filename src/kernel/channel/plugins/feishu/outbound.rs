@@ -222,7 +222,15 @@ pub async fn add_reaction(
     {
         Ok(resp) => {
             let status = resp.status();
-            if !status.is_success() {
+            if status.is_success() {
+                slog!(
+                    debug,
+                    "feishu_outbound",
+                    "reaction_sent",
+                    message_id,
+                    emoji_type,
+                );
+            } else {
                 let body = resp.text().await.unwrap_or_default();
                 slog!(warn, "feishu_outbound", "reaction_failed", http_status = %status, body, message_id, emoji_type,);
             }

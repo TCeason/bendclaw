@@ -12,7 +12,8 @@ use crate::kernel::trace::SpanMeta;
 use crate::kernel::Message;
 use crate::kernel::OpType;
 use crate::kernel::OperationMeta;
-use crate::observability::server_log;
+use crate::observability::log::run_log;
+use crate::observability::log::slog;
 
 impl Engine {
     pub(super) async fn call_llm(
@@ -51,21 +52,14 @@ impl Engine {
         let request_bytes = serde_json::to_vec(&request_payload)
             .map(|body| body.len() as u64)
             .unwrap_or(0);
-        server_log::debug(
-            &self.ops_ctx(iteration),
-            "llm",
-            "request",
-            server_log::ServerFields::default()
-                .rows(chat_messages.len() as u64)
-                .bytes(request_bytes)
-                .attempt(iteration)
-                .detail("model", self.ctx.model.to_string())
-                .detail("temperature", self.ctx.temperature)
-                .detail(
-                    "tool_strategy",
-                    format!("{:?}", self.ctx.tool_view.strategy()),
-                )
-                .detail("tool_count", active_tools.len()),
+        run_log!(info, self.ops_ctx(iteration), "llm", "request",
+            rows = chat_messages.len() as u64,
+            bytes = request_bytes,
+            attempt = iteration,
+            model = %self.ctx.model.to_string(),
+            temperature = self.ctx.temperature,
+            tool_strategy = %format!("{:?}", self.ctx.tool_view.strategy()),
+            tool_count = active_tools.len(),
         );
         self.emit_audit("llm.request", request_payload).await;
 
@@ -145,22 +139,18 @@ impl Engine {
                 serde_json::json!(turn.chunk_count() as u64),
             );
             payload.insert("bytes".to_string(), serde_json::json!(turn.bytes()));
-            server_log::error(
-                &self.ops_ctx(iteration),
-                "llm",
-                "failed",
-                server_log::ServerFields::default()
-                    .elapsed_ms(ms)
-                    .tokens(turn.usage().total_tokens)
-                    .bytes(turn.bytes())
-                    .attempt(iteration)
-                    .detail("model", turn.model().unwrap_or(self.ctx.model.as_ref()))
-                    .detail("provider", turn.provider())
-                    .detail("finish_reason", turn.finish_reason())
-                    .detail("error", err.clone())
-                    .detail("tool_calls", turn.tool_calls().len())
-                    .detail("chunk_count", turn.chunk_count())
-                    .detail("ttft_ms", ttft_ms),
+            run_log!(error, self.ops_ctx(iteration), "llm", "failed",
+                elapsed_ms = ms,
+                tokens = turn.usage().total_tokens,
+                bytes = turn.bytes(),
+                attempt = iteration,
+                model = %turn.model().unwrap_or(self.ctx.model.as_ref()),
+                provider = %turn.provider().unwrap_or(""),
+                finish_reason = %turn.finish_reason(),
+                error = %err,
+                tool_calls = turn.tool_calls().len(),
+                chunk_count = turn.chunk_count(),
+                ttft_ms,
             );
             self.emit_audit("llm.error", payload).await;
             Some(err)
@@ -219,21 +209,17 @@ impl Engine {
                 serde_json::json!(turn.chunk_count() as u64),
             );
             payload.insert("bytes".to_string(), serde_json::json!(turn.bytes()));
-            server_log::info(
-                &self.ops_ctx(iteration),
-                "llm",
-                "completed",
-                server_log::ServerFields::default()
-                    .elapsed_ms(ms)
-                    .tokens(turn.usage().total_tokens)
-                    .bytes(turn.bytes())
-                    .attempt(iteration)
-                    .detail("model", turn.model().unwrap_or(self.ctx.model.as_ref()))
-                    .detail("provider", turn.provider())
-                    .detail("finish_reason", turn.finish_reason())
-                    .detail("tool_calls", turn.tool_calls().len())
-                    .detail("chunk_count", turn.chunk_count())
-                    .detail("ttft_ms", ttft_ms),
+            run_log!(info, self.ops_ctx(iteration), "llm", "completed",
+                elapsed_ms = ms,
+                tokens = turn.usage().total_tokens,
+                bytes = turn.bytes(),
+                attempt = iteration,
+                model = %turn.model().unwrap_or(self.ctx.model.as_ref()),
+                provider = %turn.provider().unwrap_or(""),
+                finish_reason = %turn.finish_reason(),
+                tool_calls = turn.tool_calls().len(),
+                chunk_count = turn.chunk_count(),
+                ttft_ms,
             );
             self.emit_audit("llm.response", payload).await;
             None
@@ -291,14 +277,14 @@ impl Engine {
                     }
                 }
                 _ = self.cancel.cancelled() => {
-                    tracing::info!("LLM stream cancelled");
+                    slog!(info, "llm", "cancelled",);
                     resp.mark_cancelled();
                     break;
                 }
             }
         }
         resp.set_stream_stats(chunk_count, bytes);
-        tracing::debug!(
+        slog!(info, "llm", "collected",
             tool_calls = resp.tool_calls().len(),
             prompt_tokens = resp.usage().prompt_tokens,
             completion_tokens = resp.usage().completion_tokens,
@@ -307,7 +293,6 @@ impl Engine {
             ttft_ms = resp.ttft_ms().unwrap_or(0),
             chunk_count,
             bytes,
-            "llm response collected"
         );
         resp
     }

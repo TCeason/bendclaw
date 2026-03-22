@@ -1,3 +1,5 @@
+use crate::observability::log::slog;
+
 pub const BENDCLAW_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const BENDCLAW_GIT_SHA: &str = env!("BENDCLAW_GIT_SHA");
 pub const BENDCLAW_GIT_BRANCH: &str = env!("BENDCLAW_GIT_BRANCH");
@@ -20,13 +22,12 @@ pub fn log_version() {
     } else {
         BENDCLAW_GIT_TAG.to_string()
     };
-    tracing::info!(
+    slog!(info, "server", "started",
         version = %tag,
         commit = BENDCLAW_GIT_SHA,
         branch = BENDCLAW_GIT_BRANCH,
         built = BENDCLAW_BUILD_TIMESTAMP,
         rustc = BENDCLAW_RUSTC_VERSION,
         profile = BENDCLAW_BUILD_PROFILE,
-        "starting BendClaw"
     );
 }

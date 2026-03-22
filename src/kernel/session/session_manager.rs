@@ -5,6 +5,7 @@ use parking_lot::RwLock;
 use serde::Serialize;
 
 use crate::kernel::session::Session;
+use crate::observability::log::slog;
 
 pub struct SessionManager {
     sessions: RwLock<HashMap<String, Arc<Session>>>,
@@ -62,7 +63,7 @@ impl SessionManager {
             session.close().await;
         }
         self.sessions.write().clear();
-        tracing::info!(closed = all.len(), "all sessions closed");
+        slog!(info, "session", "all_closed", closed = all.len(),);
     }
 
     pub fn stats(&self) -> SessionStats {

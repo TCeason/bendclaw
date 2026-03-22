@@ -42,6 +42,8 @@ use crate::kernel::Message;
 use crate::llm::provider::LLMProvider;
 use crate::llm::tool::ToolSchema;
 use crate::observability::audit;
+use crate::observability::log::run_log;
+use crate::observability::log::slog;
 use crate::observability::server_log;
 
 const USAGE_PROVIDER_UNKNOWN: &str = "unknown";
@@ -111,11 +113,10 @@ impl Session {
         {
             let state = self.state.lock();
             if let SessionState::Running { run_id, .. } = &*state {
-                tracing::warn!(
+                slog!(warn, "session", "run_rejected",
                     session_id = %self.id,
                     agent_id = %self.agent_id,
                     active_run_id = %run_id,
-                    "rejected new run: session already has a running run"
                 );
                 return Err(ErrorCode::denied(format!(
                     "session already has a running run: {run_id}"
@@ -164,16 +165,12 @@ impl Session {
             &self.agent_id,
             run_index,
         );
-        server_log::info(
-            &run_ctx,
-            "run",
-            "started",
-            server_log::ServerFields::default()
-                .bytes(user_message.len() as u64)
-                .detail("user_id", self.user_id.to_string())
-                .detail("run_index", run_index)
-                .detail("parent_run_id", parent_run_id)
-                .detail("input_preview", server_log::preview_text(user_message)),
+        run_log!(info, run_ctx, "run", "started",
+            bytes = user_message.len() as u64,
+            user_id = %self.user_id,
+            run_index,
+            parent_run_id = %parent_run_id.unwrap_or(""),
+            input_preview = %server_log::preview_text(user_message),
         );
 
         let full_prompt = {
@@ -193,15 +190,11 @@ impl Session {
             pb.build(&self.agent_id, &self.user_id, &self.id).await?
         };
 
-        server_log::debug(
-            &run_ctx,
-            "prompt",
-            "built",
-            server_log::ServerFields::default()
-                .bytes(full_prompt.len() as u64)
-                .detail("user_id", self.user_id.to_string())
-                .detail("tool_count", self.res.tools.len())
-                .detail("history_messages", history.len()),
+        run_log!(info, run_ctx, "prompt", "built",
+            bytes = full_prompt.len() as u64,
+            user_id = %self.user_id,
+            tool_count = self.res.tools.len(),
+            history_messages = history.len(),
         );
 
         let initial_events = vec![

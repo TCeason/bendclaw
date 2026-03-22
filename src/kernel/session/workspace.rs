@@ -10,6 +10,7 @@ use std::time::Duration;
 use tokio::io::AsyncReadExt;
 
 use crate::base::truncate_head_tail;
+use crate::observability::log::slog;
 use crate::storage::dal::variable::record::VariableRecord;
 
 // ── Path resolver ──
@@ -303,10 +304,10 @@ impl Workspace {
             Err(_) => {
                 // Total timeout exceeded — force kill and reap.
                 if let Err(e) = child.kill().await {
-                    tracing::warn!(error = %e, "failed to kill child after total timeout");
+                    slog!(warn, "session", "kill_failed", error = %e,);
                 }
                 if let Err(e) = child.wait().await {
-                    tracing::warn!(error = %e, "failed to reap child after total timeout");
+                    slog!(warn, "session", "reap_failed", error = %e,);
                 }
                 CommandOutput {
                     exit_code: -1,

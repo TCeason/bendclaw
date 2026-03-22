@@ -6,6 +6,7 @@ use std::time::Instant;
 use parking_lot::Mutex;
 
 use crate::base::ErrorCode;
+use crate::observability::log::slog;
 
 /// Whether an error is transient (network, rate-limit, server) and should
 /// count toward the circuit breaker threshold. Non-transient errors (auth,
@@ -78,7 +79,7 @@ impl CircuitBreaker {
         self.consecutive_failures.store(0, Ordering::Relaxed);
         let mut guard = self.tripped_at.lock();
         if guard.is_some() {
-            tracing::info!(previous_failures = prev, "circuit breaker recovered");
+            slog!(info, "llm", "circuit_recovered", previous_failures = prev,);
         }
         *guard = None;
     }
@@ -89,11 +90,13 @@ impl CircuitBreaker {
         if prev + 1 >= self.threshold {
             let mut guard = self.tripped_at.lock();
             if guard.is_none() {
-                tracing::warn!(
+                slog!(
+                    warn,
+                    "llm",
+                    "circuit_tripped",
                     failures = prev + 1,
                     threshold = self.threshold,
                     cooldown_secs = self.cooldown.as_secs(),
-                    "circuit breaker tripped"
                 );
             }
             *guard = Some(Instant::now());

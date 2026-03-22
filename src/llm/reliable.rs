@@ -15,6 +15,7 @@ use super::stream::StreamEvent;
 use super::tool::ToolSchema;
 use crate::base::ErrorCode;
 use crate::base::Result;
+use crate::observability::log::slog;
 
 const DEFAULT_MAX_RETRIES: u32 = 3;
 const DEFAULT_BASE_BACKOFF_MS: u64 = 1000;
@@ -80,7 +81,11 @@ impl LLMProvider for ReliableProvider {
         op.retry(self.backoff_builder())
             .when(is_retryable)
             .notify(|e: &ErrorCode, dur: Duration| {
-                tracing::warn!(model, error = %e, delay_ms = dur.as_millis() as u64, "LLM call failed, retrying");
+                slog!(warn, "llm", "retry",
+                    model,
+                    error = %e,
+                    delay_ms = dur.as_millis() as u64,
+                );
             })
             .await
     }
@@ -136,11 +141,10 @@ impl LLMProvider for ReliableProvider {
 
                     match delays.next() {
                         Some(delay) => {
-                            tracing::warn!(
+                            slog!(warn, "llm", "stream_retry",
                                 model = %model,
                                 delay_ms = delay.as_millis() as u64,
                                 error = %error_msg,
-                                "LLM stream failed, retrying"
                             );
                             tokio::time::sleep(delay).await;
                         }

@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::base::Result;
+use crate::observability::log::slog;
 
 // ── Output types ──────────────────────────────────────────────────────────────
 
@@ -43,7 +44,7 @@ pub fn parse_skill_args(skill_name: &str, arguments: &str) -> Vec<String> {
     let parsed: serde_json::Value = match serde_json::from_str(arguments) {
         Ok(v) => v,
         Err(e) => {
-            tracing::warn!(skill = skill_name, error = %e, "failed to parse tool arguments");
+            slog!(warn, "skill", "args_parse_failed", skill = skill_name, error = %e,);
             return vec![];
         }
     };

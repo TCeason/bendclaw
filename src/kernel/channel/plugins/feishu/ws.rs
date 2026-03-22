@@ -497,24 +497,30 @@ async fn handle_event_payload(
         }
     };
 
-    // FIX #1: add_reaction in fire-and-forget spawn instead of blocking WS read
+    let event_type = json
+        .pointer("/header/event_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+
     let feishu_msg_id = json
         .pointer("/event/message/message_id")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+
     if !feishu_msg_id.is_empty() {
         let client = client.clone();
         let tc = token_cache.clone();
         let app_id = config.app_id.clone();
         let app_secret = config.app_secret.clone();
+        let msg_id_for_reaction = feishu_msg_id.clone();
         spawn_fire_and_forget("feishu_reaction", async move {
             add_reaction(
                 &client,
                 &tc,
                 &app_id,
                 &app_secret,
-                &feishu_msg_id,
+                &msg_id_for_reaction,
                 "THUMBSUP",
             )
             .await;
@@ -525,14 +531,19 @@ async fn handle_event_payload(
         use crate::kernel::channel::delivery::backpressure::BackpressureResult;
         match event_tx.send(inbound) {
             BackpressureResult::Accepted => {
-                slog!(info, "feishu_ws", "message_queued",);
+                slog!(info, "feishu_ws", "message_queued",
+                    event_type,
+                    msg_id = %feishu_msg_id,
+                );
             }
             BackpressureResult::Busy => {
-                slog!(warn, "feishu_ws", "channel_busy",);
+                slog!(warn, "feishu_ws", "channel_busy", event_type,);
             }
             BackpressureResult::Rejected => {
-                slog!(warn, "feishu_ws", "channel_full",);
+                slog!(warn, "feishu_ws", "channel_full", event_type,);
             }
         }
+    } else {
+        slog!(debug, "feishu_ws", "event_skipped", event_type,);
     }
 }

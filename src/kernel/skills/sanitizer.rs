@@ -3,6 +3,8 @@
 //! Detects and removes prompt-injection patterns before skill content
 //! is exposed to the LLM (via tool descriptions or `skill_read` output).
 
+use crate::observability::log::slog;
+
 /// A single detected suspicious pattern.
 #[derive(Debug, Clone)]
 pub struct SanitizeWarning {
@@ -99,11 +101,13 @@ fn sanitize(input: &str) -> SanitizeResult {
             continue;
         }
 
-        tracing::info!(
+        slog!(
+            info,
+            "skill",
+            "sanitizer_detected",
             pattern = p.label,
             description = p.description,
             needle = p.needle,
-            "sanitizer: detected suspicious pattern"
         );
 
         warnings.push(SanitizeWarning {
@@ -131,22 +135,23 @@ fn sanitize(input: &str) -> SanitizeResult {
         result.push_str(&content[search_start..]);
         content = result;
 
-        tracing::info!(
+        slog!(
+            info,
+            "skill",
+            "sanitizer_replaced",
             pattern = p.label,
             occurrences = match_count,
-            "sanitizer: pattern replaced"
         );
     }
 
     if warnings.is_empty() {
-        tracing::info!(input_size, "sanitizer: content clean, no patterns detected");
+        slog!(info, "skill", "sanitizer_clean", input_size,);
     } else {
         let labels: Vec<&str> = warnings.iter().map(|w| w.pattern).collect();
-        tracing::info!(
+        slog!(info, "skill", "sanitizer_sanitized",
             input_size,
             output_size = content.len(),
             patterns = ?labels,
-            "sanitizer: content sanitized"
         );
     }
 

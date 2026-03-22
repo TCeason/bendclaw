@@ -2,9 +2,9 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use tracing;
 
 use crate::base::Result;
+use crate::observability::log::slog;
 use crate::storage::pool::Pool;
 use crate::storage::sql;
 use crate::storage::sql::SqlVal;
@@ -188,10 +188,10 @@ impl DatabendMemoryStore {
             ])
             .await
             .map_err(|e| {
-                tracing::error!(user_id, key = %entry.key, scope = %scope_value, error = %e, "memory write failed");
+                slog!(error, "memory", "write_failed", user_id, key = %entry.key, scope = %scope_value, error = %e,);
                 e
             })?;
-        tracing::debug!(user_id, key = %entry.key, scope = %scope_value, "memory written");
+        slog!(info, "memory", "written", user_id, key = %entry.key, scope = %scope_value,);
         Ok(())
     }
 
@@ -217,11 +217,13 @@ impl DatabendMemoryStore {
             .map(|(r, _)| r)
             .collect::<Vec<_>>();
 
-        tracing::debug!(
+        slog!(
+            info,
+            "memory",
+            "search",
             user_id,
             query,
             results = results.len(),
-            "memory search completed"
         );
         Ok(results)
     }
@@ -237,7 +239,14 @@ impl DatabendMemoryStore {
         .limit(1);
         let row = self.entries.pool().query_row(&builder.build()).await?;
         let result = row.as_ref().map(|r| EntryMapper.parse(r)).transpose()?;
-        tracing::debug!(user_id, key, found = result.is_some(), "memory get");
+        slog!(
+            info,
+            "memory",
+            "get",
+            user_id,
+            key,
+            found = result.is_some(),
+        );
         Ok(result)
     }
 
@@ -261,10 +270,10 @@ impl DatabendMemoryStore {
             ])
             .await
             .map_err(|e| {
-                tracing::error!(user_id, id, error = %e, "memory delete failed");
+                slog!(error, "memory", "delete_failed", user_id, id, error = %e,);
                 e
             })?;
-        tracing::debug!(user_id, id, "memory deleted");
+        slog!(info, "memory", "deleted", user_id, id,);
         Ok(())
     }
 
@@ -282,7 +291,7 @@ impl DatabendMemoryStore {
             .iter()
             .map(|r| EntryMapper.parse(r))
             .collect::<crate::base::Result<Vec<_>>>()?;
-        tracing::debug!(user_id, count = results.len(), "memory list completed");
+        slog!(info, "memory", "list", user_id, count = results.len(),);
         Ok(results)
     }
 }

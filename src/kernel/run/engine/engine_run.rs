@@ -13,7 +13,8 @@ use crate::kernel::run::run_loop::RunLoopConfig;
 use crate::kernel::run::run_loop::RunLoopState;
 use crate::kernel::run::transition::apply_turn_result;
 use crate::kernel::run::transition::TurnTransition;
-use crate::observability::server_log;
+use crate::observability::log::run_log;
+use crate::observability::log::slog;
 
 pub(super) enum StepOutcome {
     Continue,
@@ -70,17 +71,10 @@ impl Engine {
         self.emit(Event::TurnStart { iteration }).await;
         let payload = self.audit_payload(iteration);
         self.emit_audit("turn.started", payload).await;
-        server_log::debug(
-            &self.ops_ctx(iteration),
-            "turn",
-            "started",
-            server_log::ServerFields::default()
-                .detail("message_count", self.ctx.messages.len())
-                .detail("max_context_tokens", state.max_context_tokens())
-                .detail(
-                    "tool_strategy",
-                    format!("{:?}", self.ctx.tool_view.strategy()),
-                ),
+        run_log!(info, self.ops_ctx(iteration), "turn", "started",
+            message_count = self.ctx.messages.len(),
+            max_context_tokens = state.max_context_tokens(),
+            tool_strategy = %format!("{:?}", self.ctx.tool_view.strategy()),
         );
 
         self.emit(Event::ReasonStart).await;
@@ -126,17 +120,13 @@ impl Engine {
                     serde_json::json!(turn.tool_calls().len() as u64),
                 );
                 self.emit_audit("turn.completed", payload).await;
-                server_log::error(
-                    &self.ops_ctx(iteration),
-                    "turn",
-                    "failed",
-                    server_log::ServerFields::default()
-                        .tokens(turn.usage().total_tokens)
-                        .bytes(turn.bytes())
-                        .detail("finish_reason", turn.finish_reason())
-                        .detail("tool_calls", turn.tool_calls().len())
-                        .detail("error", err)
-                        .detail("chunk_count", turn.chunk_count()),
+                run_log!(error, self.ops_ctx(iteration), "turn", "failed",
+                    tokens = turn.usage().total_tokens,
+                    bytes = turn.bytes(),
+                    finish_reason = %turn.finish_reason(),
+                    tool_calls = turn.tool_calls().len(),
+                    error = %err,
+                    chunk_count = turn.chunk_count(),
                 );
 
                 self.emit(Event::TurnEnd { iteration }).await;
@@ -155,14 +145,10 @@ impl Engine {
                 );
                 payload.insert("reason".to_string(), serde_json::json!(reason.as_str()));
                 self.emit_audit("turn.completed", payload).await;
-                server_log::warn(
-                    &self.ops_ctx(iteration),
-                    "turn",
-                    "aborted",
-                    server_log::ServerFields::default()
-                        .detail("finish_reason", turn.finish_reason())
-                        .detail("tool_calls", turn.tool_calls().len())
-                        .detail("reason", reason.as_str()),
+                run_log!(warn, self.ops_ctx(iteration), "turn", "aborted",
+                    finish_reason = %turn.finish_reason(),
+                    tool_calls = turn.tool_calls().len(),
+                    reason = %reason.as_str(),
                 );
                 self.emit(Event::TurnEnd { iteration }).await;
                 Ok(StepOutcome::Abort(reason))
@@ -180,17 +166,12 @@ impl Engine {
                     serde_json::json!(turn.tool_calls().len() as u64),
                 );
                 self.emit_audit("turn.completed", payload).await;
-                server_log::info(
-                    &self.ops_ctx(iteration),
-                    "turn",
-                    "completed",
-                    server_log::ServerFields::default()
-                        .tokens(turn.usage().total_tokens)
-                        .bytes(turn.bytes())
-                        .detail("status", "tool_dispatch")
-                        .detail("finish_reason", turn.finish_reason())
-                        .detail("tool_calls", turn.tool_calls().len())
-                        .detail("chunk_count", turn.chunk_count()),
+                run_log!(info, self.ops_ctx(iteration), "turn", "tool_dispatch",
+                    tokens = turn.usage().total_tokens,
+                    bytes = turn.bytes(),
+                    finish_reason = %turn.finish_reason(),
+                    tool_calls = turn.tool_calls().len(),
+                    chunk_count = turn.chunk_count(),
                 );
 
                 self.emit(Event::TurnEnd { iteration }).await;
@@ -208,17 +189,12 @@ impl Engine {
                     serde_json::json!(turn.tool_calls().len() as u64),
                 );
                 self.emit_audit("turn.completed", payload).await;
-                server_log::info(
-                    &self.ops_ctx(iteration),
-                    "turn",
-                    "completed",
-                    server_log::ServerFields::default()
-                        .tokens(turn.usage().total_tokens)
-                        .bytes(turn.bytes())
-                        .detail("status", "done")
-                        .detail("finish_reason", turn.finish_reason())
-                        .detail("tool_calls", turn.tool_calls().len())
-                        .detail("chunk_count", turn.chunk_count()),
+                run_log!(info, self.ops_ctx(iteration), "turn", "done",
+                    tokens = turn.usage().total_tokens,
+                    bytes = turn.bytes(),
+                    finish_reason = %turn.finish_reason(),
+                    tool_calls = turn.tool_calls().len(),
+                    chunk_count = turn.chunk_count(),
                 );
 
                 self.emit(Event::TurnEnd { iteration }).await;
@@ -268,9 +244,13 @@ impl Engine {
         })
         .await;
         let dur = self.start_time.elapsed().as_millis() as u64;
-        tracing::info!(
-            "[engine] finished duration={dur}ms iters={iterations} prompt={} completion={} ttft={}ms stop={stop_reason}",
-            usage.prompt_tokens, usage.completion_tokens, usage.ttft_ms
+        slog!(info, "run", "finished",
+            elapsed_ms = dur,
+            iterations,
+            prompt_tokens = usage.prompt_tokens,
+            completion_tokens = usage.completion_tokens,
+            ttft_ms = usage.ttft_ms,
+            stop_reason = %stop_reason,
         );
         Ok(AgentResult {
             content,
@@ -283,14 +263,20 @@ impl Engine {
 
     fn log_abort(&self, signal: AbortSignal, state: &RunLoopState) {
         match signal {
-            AbortSignal::MaxIterations => tracing::warn!(
+            AbortSignal::MaxIterations => slog!(
+                warn,
+                "run",
+                "aborted",
+                reason = "max_iterations",
                 iterations = state.iterations(),
                 max = self.ctx.max_iterations,
-                "max iterations reached"
             ),
-            AbortSignal::Timeout => tracing::warn!(
+            AbortSignal::Timeout => slog!(
+                warn,
+                "run",
+                "aborted",
+                reason = "timeout",
                 max_duration_secs = self.ctx.max_duration.as_secs(),
-                "session timeout"
             ),
             _ => {}
         }

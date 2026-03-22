@@ -17,6 +17,7 @@ use crate::kernel::skills::manifest::SkillManifest;
 use crate::kernel::skills::skill::Skill;
 use crate::kernel::skills::skill::SkillParameter;
 use crate::kernel::skills::skill::SkillRequirements;
+use crate::observability::log::slog;
 
 /// Metadata persisted alongside SKILL.md so that scope, source, agent_id,
 /// etc. survive a round-trip through the filesystem mirror.
@@ -85,7 +86,7 @@ pub fn write_skill(workspace_root: &Path, agent_id: &str, skill: &Skill) -> Opti
         }
         let rel = std::path::Path::new(&f.path);
         if !is_safe_relative_path(rel) {
-            tracing::warn!(skill = %skill.name, path = %f.path, "unsafe skill file path rejected");
+            slog!(warn, "skill", "unsafe_path", skill = %skill.name, path = %f.path,);
             continue;
         }
         let file_path = tmp_dir.join(rel);

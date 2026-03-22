@@ -1,5 +1,6 @@
 use crate::base::new_id;
 use crate::base::Result;
+use crate::observability::log::slog;
 use crate::storage::dal::task::TaskRecord;
 use crate::storage::dal::task::TaskRepo;
 use crate::storage::dal::task::TaskSchedule;
@@ -43,7 +44,7 @@ pub async fn finish_execution(
     };
     let history_repo = TaskHistoryRepo::new(pool.clone());
     if let Err(e) = history_repo.insert(&history).await {
-        tracing::error!(task_id = task.id, error = %e, "failed to write task history");
+        slog!(error, "task", "history_failed", task_id = task.id, error = %e,);
     }
 
     // 2. Compute next_run_at from schedule
@@ -63,7 +64,7 @@ pub async fn finish_execution(
 
     // 4. Auto-delete one-shot tasks
     if task.delete_after_run && matches!(task.schedule, TaskSchedule::At { .. }) {
-        tracing::info!(task_id = task.id, "deleting one-shot task after run");
+        slog!(info, "task", "deleted", task_id = task.id,);
         task_repo.delete(&task.id).await?;
     }
 

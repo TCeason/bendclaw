@@ -93,3 +93,37 @@ macro_rules! channel_log {
     };
 }
 pub(crate) use channel_log;
+
+/// Run-scoped log. Pre-fills `run_id`, `session_id`, `agent_id`, `turn` from a `ServerCtx`.
+///
+/// ```ignore
+/// run_log!(info, &self.ops_ctx(iteration), "llm", "completed",
+///     elapsed_ms = ms, tokens = total, model = %model,
+/// );
+/// ```
+macro_rules! run_log {
+    ($level:ident, $ctx:expr, $stage:expr, $status:expr, $($rest:tt)*) => {
+        tracing::$level!(
+            stage = $stage,
+            status = $status,
+            run_id = $ctx.run_id,
+            session_id = $ctx.session_id,
+            agent_id = $ctx.agent_id,
+            turn = $ctx.turn,
+            $($rest)*
+            concat!($stage, " ", $status)
+        )
+    };
+    ($level:ident, $ctx:expr, $stage:expr, $status:expr $(,)?) => {
+        tracing::$level!(
+            stage = $stage,
+            status = $status,
+            run_id = $ctx.run_id,
+            session_id = $ctx.session_id,
+            agent_id = $ctx.agent_id,
+            turn = $ctx.turn,
+            concat!($stage, " ", $status)
+        )
+    };
+}
+pub(crate) use run_log;

@@ -8,6 +8,7 @@ use crate::kernel::lease::types::LeaseResource;
 use crate::kernel::lease::types::ReleaseFn;
 use crate::kernel::lease::types::ResourceEntry;
 use crate::kernel::runtime::Runtime;
+use crate::observability::log::slog;
 use crate::storage::dal::task::repo::TaskRepo;
 use crate::storage::pool::Pool;
 
@@ -75,7 +76,7 @@ impl LeaseResource for TaskLeaseResource {
             let pool = match self.runtime.databases().agent_pool(agent_id) {
                 Ok(p) => p,
                 Err(e) => {
-                    tracing::warn!(agent_id, error = %e, "skip agent for task lease discover");
+                    slog!(warn, "task", "discover_skip", agent_id, error = %e,);
                     continue;
                 }
             };
@@ -84,7 +85,7 @@ impl LeaseResource for TaskLeaseResource {
             let tasks = match repo.list_active().await {
                 Ok(t) => t,
                 Err(e) => {
-                    tracing::warn!(agent_id, error = %e, "failed to list due tasks");
+                    slog!(warn, "task", "list_failed", agent_id, error = %e,);
                     continue;
                 }
             };
@@ -143,19 +144,20 @@ impl LeaseResource for TaskLeaseResource {
             .await;
             match result {
                 Ok(Err(e)) => {
-                    tracing::error!(
+                    slog!(error, "task", "execution_failed",
                         task_id = task.id,
                         agent_id,
                         error = %e,
-                        "task execution failed"
                     );
                 }
                 Err(_) => {
-                    tracing::error!(
+                    slog!(
+                        error,
+                        "task",
+                        "execution_timeout",
                         task_id = task.id,
                         agent_id,
                         timeout_secs = TASK_EXECUTION_TIMEOUT.as_secs(),
-                        "task execution timed out"
                     );
                 }
                 Ok(Ok(())) => {}
@@ -168,10 +170,9 @@ impl LeaseResource for TaskLeaseResource {
     async fn on_released(&self, resource_id: &str, pool: &Pool) {
         let repo = TaskRepo::new(pool.clone());
         if let Err(e) = repo.reset_status_if_running(resource_id).await {
-            tracing::warn!(
+            slog!(warn, "task", "reset_status_failed",
                 task_id = %resource_id,
                 error = %e,
-                "failed to reset task status on lease release"
             );
         }
     }
