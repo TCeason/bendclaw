@@ -404,6 +404,17 @@ async fn get_ws_endpoint(
         )));
     }
 
+    let client_config = &json["data"]["ClientConfig"];
+    slog!(
+        info,
+        "feishu_ws",
+        "endpoint_response",
+        code,
+        reconnect_count = client_config["ReconnectCount"].as_i64().unwrap_or(0),
+        reconnect_interval = client_config["ReconnectInterval"].as_i64().unwrap_or(0),
+        ping_interval = client_config["PingInterval"].as_i64().unwrap_or(0),
+    );
+
     let ws_url = json["data"]["URL"]
         .as_str()
         .ok_or_else(|| ErrorCode::internal("feishu ws endpoint: missing URL"))?
