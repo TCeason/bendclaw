@@ -85,7 +85,7 @@ impl Tool for KnowledgeSearchTool {
 
         match self.store.knowledge().search(query, max_results).await {
             Ok(results) => {
-                slog!(info, "recall", "completed", query, results = results.len(),);
+                slog!(debug, "recall", "completed", query, results = results.len(),);
                 if results.is_empty() {
                     return Ok(ToolResult::ok("No knowledge entries found."));
                 }

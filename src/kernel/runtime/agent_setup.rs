@@ -24,7 +24,7 @@ impl Runtime {
                 .await?;
         }
 
-        slog!(info, "runtime", "initialized", agent_id, database = %db_name,);
+        slog!(debug, "runtime", "initialized", agent_id, database = %db_name,);
         Ok(())
     }
 

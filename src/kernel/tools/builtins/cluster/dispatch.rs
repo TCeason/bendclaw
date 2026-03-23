@@ -105,7 +105,7 @@ impl Tool for ClusterDispatchTool {
             _ => return Ok(ToolResult::error("Missing or empty 'task' parameter")),
         };
         let started = std::time::Instant::now();
-        slog!(info, "cluster", "started",
+        slog!(debug, "cluster", "started",
             user_id = %ctx.user_id,
             agent_id = %ctx.agent_id,
             run_id = %ctx.run_id,
@@ -148,7 +148,7 @@ impl Tool for ClusterDispatchTool {
         {
             Ok(dispatch_id) => {
                 let result = json!({ "dispatch_id": dispatch_id });
-                slog!(info, "cluster", "completed",
+                slog!(debug, "cluster", "completed",
                     user_id = %ctx.user_id,
                     agent_id = %ctx.agent_id,
                     run_id = %ctx.run_id,

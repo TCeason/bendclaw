@@ -213,7 +213,7 @@ impl Tool for WebSearchTool {
         // Check cache first
         let cache_key = WebCache::search_key(query, count);
         if let Some(cached) = self.cache.get(&cache_key) {
-            slog!(info, "web", "cache_hit", query, count,);
+            slog!(debug, "web", "cache_hit", query, count,);
             return Ok(ToolResult::ok(cached));
         }
 
@@ -284,7 +284,7 @@ impl Tool for WebSearchTool {
             }
         };
 
-        slog!(info, "web", "completed", query, count,);
+        slog!(debug, "web", "completed", query, count,);
 
         // Touch secret variable last-used timestamp
         if let Some(key) = brave_key {

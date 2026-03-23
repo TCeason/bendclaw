@@ -150,7 +150,7 @@ where
     .await
     {
         Ok(msg_id) => {
-            channel_log!(info, "outbound", "sent",
+            channel_log!(debug, "outbound", "sent",
                 channel_type = %channel_type,
                 account_id = %account_id,
                 chat_id,

@@ -99,7 +99,7 @@ impl<M: RowMapper> DatabendTable<M> {
     fn invalidate_cache(&self) {
         if let Some(c) = &self.cache {
             c.clear();
-            slog!(info, "storage", "cache_cleared", table = %self.table,);
+            slog!(debug, "storage", "cache_cleared", table = %self.table,);
         }
     }
 

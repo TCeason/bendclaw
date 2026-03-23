@@ -63,7 +63,7 @@ impl SessionManager {
             session.close().await;
         }
         self.sessions.write().clear();
-        slog!(info, "session", "all_closed", closed = all.len(),);
+        slog!(debug, "session", "all_closed", closed = all.len(),);
     }
 
     pub fn stats(&self) -> SessionStats {

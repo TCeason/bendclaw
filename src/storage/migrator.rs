@@ -59,7 +59,7 @@ async fn run_one_file(pool: &Pool, sql: &str, scope: &str) {
     for stmt in sql.split(';').filter(|s| !s.trim().is_empty()) {
         let stmt = stmt.trim();
         if let Err(e) = pool.exec(stmt).await {
-            slog!(info, "storage", "migration_skipped", scope, error = %e,);
+            slog!(debug, "storage", "migration_skipped", scope, error = %e,);
         }
     }
 }

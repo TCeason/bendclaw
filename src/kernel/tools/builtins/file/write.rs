@@ -95,7 +95,7 @@ impl Tool for FileWriteTool {
 
         match tokio::fs::write(&full_path, content).await {
             Ok(()) => {
-                slog!(info, "file", "completed", path, bytes = content.len(),);
+                slog!(debug, "file", "completed", path, bytes = content.len(),);
                 Ok(ToolResult::ok(format!(
                     "Written {} bytes to {path}",
                     content.len()

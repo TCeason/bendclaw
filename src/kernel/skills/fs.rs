@@ -93,7 +93,7 @@ pub fn load_skills(skills_dir: &Path) -> Vec<LoadedSkill> {
         }
     }
 
-    slog!(info, "skill", "loaded", count = skills.len(),);
+    slog!(debug, "skill", "loaded", count = skills.len(),);
     skills
 }
 

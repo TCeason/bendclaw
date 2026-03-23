@@ -235,7 +235,7 @@ impl SkillRepository for DatabendSkillRepository {
             self.files.insert_batch(columns, &rows).await?;
         }
 
-        slog!(info, "skill", "saved",
+        slog!(debug, "skill", "saved",
             skill = %skill.name,
             version = %skill.version,
             scope = %skill.scope,
@@ -255,7 +255,7 @@ impl SkillRepository for DatabendSkillRepository {
         let skill_cond = format!("name = '{}' AND {}", sql::escape(name), ownership);
         self.skills.delete_where(&skill_cond).await?;
 
-        slog!(info, "skill", "removed", skill = %name, agent_id = ?agent_id,);
+        slog!(debug, "skill", "removed", skill = %name, agent_id = ?agent_id,);
         Ok(())
     }
 

@@ -61,7 +61,7 @@ pub async fn sync(databases: &Arc<AgentDatabases>, workspace_root: &std::path::P
     }
 
     if written > 0 {
-        slog!(info, "skill_sync", "completed", written, skipped,);
+        slog!(debug, "skill_sync", "completed", written, skipped,);
     }
 
     // Remove stale skill dirs that are no longer in DB
@@ -108,7 +108,7 @@ fn evict_stale(workspace_root: &std::path::Path, live_keys: &HashSet<(String, St
         }
     }
     if removed > 0 {
-        slog!(info, "skill_sync", "evicted_stale", count = removed,);
+        slog!(debug, "skill_sync", "evicted_stale", count = removed,);
     }
 }
 
@@ -174,7 +174,7 @@ pub fn spawn_sync_task(
         let mut next_sleep = std::time::Duration::ZERO;
         loop {
             tokio::select! {
-                _ = cancel.cancelled() => { slog!(info, "skill_sync", "cancelled",); break; }
+                _ = cancel.cancelled() => { slog!(debug, "skill_sync", "cancelled",); break; }
                 _ = tokio::time::sleep(next_sleep) => {
                     if let Err(e) = store.refresh().await {
                         consecutive_errors += 1;
@@ -186,7 +186,7 @@ pub fn spawn_sync_task(
                         next_sleep = std::time::Duration::from_secs(secs);
                     } else {
                         if consecutive_errors > 0 {
-                            slog!(info, "skill_sync", "recovered", consecutive_errors,);
+                            slog!(debug, "skill_sync", "recovered", consecutive_errors,);
                         }
                         consecutive_errors = 0;
                         next_sleep = base_interval;

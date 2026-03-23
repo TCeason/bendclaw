@@ -66,7 +66,7 @@ impl Tool for ClusterNodesTool {
         _args: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolResult> {
-        slog!(info, "cluster", "started",
+        slog!(debug, "cluster", "started",
             user_id = %ctx.user_id,
             agent_id = %ctx.agent_id,
             run_id = %ctx.run_id,
@@ -75,7 +75,7 @@ impl Tool for ClusterNodesTool {
             Ok(nodes) => {
                 let json =
                     serde_json::to_string_pretty(&nodes).unwrap_or_else(|_| "[]".to_string());
-                slog!(info, "cluster", "completed",
+                slog!(debug, "cluster", "completed",
                     user_id = %ctx.user_id,
                     agent_id = %ctx.agent_id,
                     run_id = %ctx.run_id,

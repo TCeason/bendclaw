@@ -102,7 +102,7 @@ impl LeaseServiceHandle {
         let mut futs = Vec::new();
         for (i, resource) in self.resources.iter().enumerate() {
             if !resource.safe_to_release() {
-                slog!(info, "lease", "release_skipped", table = resource.table(),);
+                slog!(debug, "lease", "release_skipped", table = resource.table(),);
                 continue;
             }
             let held = self.held_maps[i].lock().await;
@@ -195,7 +195,7 @@ fn spawn_scan_loop(
 
             tokio::select! {
                 _ = cancel.cancelled() => {
-                    slog!(info, "lease", "scan_cancelled", table = resource.table(),);
+                    slog!(debug, "lease", "scan_cancelled", table = resource.table(),);
                     break;
                 }
                 _ = tokio::time::sleep(sleep_dur) => {}
@@ -265,7 +265,7 @@ async fn scan_once(
                 held_map.remove(&entry.id);
             }
         } else if is_held_by_other(node_id, entry) {
-            slog!(info, "lease", "held_by_other",
+            slog!(debug, "lease", "held_by_other",
                 table,
                 resource_id = %entry.id,
                 context = %entry.context,

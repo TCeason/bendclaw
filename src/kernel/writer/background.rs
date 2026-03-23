@@ -98,7 +98,7 @@ impl<Op: Send + 'static> BackgroundWriter<Op> {
     /// Graceful shutdown: signal the drain loop and wait (with timeout).
     pub async fn shutdown(&self) {
         self.inner.shutting_down.store(true, Ordering::Relaxed);
-        slog!(info, "writer", "shutting_down", writer = self.inner.name,);
+        slog!(debug, "writer", "shutting_down", writer = self.inner.name,);
 
         let Some(mut handle) = self.inner.handle.lock().take() else {
             return;
@@ -138,12 +138,12 @@ where
         match rx.recv().await {
             Some(op) => {
                 if !handler(op).await {
-                    slog!(info, "writer", "stopped", writer = name,);
+                    slog!(debug, "writer", "stopped", writer = name,);
                     return;
                 }
             }
             None => {
-                slog!(info, "writer", "stopped", writer = name,);
+                slog!(debug, "writer", "stopped", writer = name,);
                 return;
             }
         }

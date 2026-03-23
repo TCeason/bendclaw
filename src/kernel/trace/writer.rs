@@ -91,7 +91,7 @@ async fn trace_drain_loop(mut rx: tokio::sync::mpsc::Receiver<TraceOp>) {
                 match op {
                     Some(TraceOp::Shutdown) => {
                         let dropped = drop_pending(&mut rx, &mut span_batches);
-                        slog!(info, "trace", "stopped", dropped,);
+                        slog!(debug, "trace", "stopped", dropped,);
                         return;
                     }
                     Some(op) => {
@@ -103,7 +103,7 @@ async fn trace_drain_loop(mut rx: tokio::sync::mpsc::Receiver<TraceOp>) {
                     }
                     None => {
                         flush_spans(&mut span_batches).await;
-                        slog!(info, "trace", "stopped",);
+                        slog!(debug, "trace", "stopped",);
                         return;
                     }
                 }

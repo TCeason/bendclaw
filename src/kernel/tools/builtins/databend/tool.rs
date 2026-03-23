@@ -121,12 +121,12 @@ impl Tool for DatabendTool {
         };
 
         let sql = action.to_sql();
-        slog!(info, "databend", "executing", sql = %sql,);
+        slog!(debug, "databend", "executing", sql = %sql,);
 
         if action.returns_rows() {
             match self.pool.query_all(&sql).await {
                 Ok(rows) => {
-                    slog!(info, "databend", "completed", rows = rows.len(),);
+                    slog!(debug, "databend", "completed", rows = rows.len(),);
                     Ok(ToolResult::ok(format_rows(&rows)))
                 }
                 Err(e) => Ok(ToolResult::error(e.to_string())),

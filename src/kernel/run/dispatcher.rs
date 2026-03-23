@@ -171,7 +171,7 @@ impl ToolDispatcher {
                             }
                         }
                         _ = cancel.cancelled() => {
-                            slog!(info, "tool", "cancelled", tool = %name,);
+                            slog!(debug, "tool", "cancelled", tool = %name,);
                             ToolCallResult::InfraError("cancelled".into(), tracker.finish())
                         }
                     };

@@ -118,7 +118,7 @@ pub fn decode_frame(
     }
 
     if frame.method != FRAME_METHOD_DATA {
-        slog!(info, "feishu_ws", "unknown_method", method = frame.method,);
+        slog!(debug, "feishu_ws", "unknown_method", method = frame.method,);
         return DecodedFrame {
             response: None,
             event_payload: None,
@@ -398,7 +398,7 @@ pub async fn ws_receive_loop(
             biased;
 
             _ = cancel.cancelled() => {
-                slog!(info, "feishu_ws", "closing_gracefully",);
+                slog!(debug, "feishu_ws", "closing_gracefully",);
                 let _ = futures::SinkExt::send(&mut write, tokio_tungstenite::tungstenite::Message::Close(None)).await;
                 break Ok(());
             }
@@ -427,7 +427,7 @@ pub async fn ws_receive_loop(
                         // FIX #4: rebuild timer if ping interval changed
                         if let Some(new_dur) = decoded.updated_ping_interval {
                             if new_dur != ping_interval_dur {
-                                slog!(info, "feishu_ws", "ping_interval_updated",
+                                slog!(debug, "feishu_ws", "ping_interval_updated",
                                     old_secs = ping_interval_dur.as_secs(),
                                     new_secs = new_dur.as_secs(),
                                 );
@@ -457,7 +457,7 @@ pub async fn ws_receive_loop(
                         let _ = futures::SinkExt::send(&mut write, tokio_tungstenite::tungstenite::Message::Pong(data)).await;
                     }
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => {
-                        slog!(info, "feishu_ws", "closed_by_server",);
+                        slog!(debug, "feishu_ws", "closed_by_server",);
                         break Ok(());
                     }
                     Some(Err(e)) => {
@@ -535,7 +535,7 @@ async fn handle_event_payload(
         use crate::kernel::channel::delivery::backpressure::BackpressureResult;
         match event_tx.send(inbound) {
             BackpressureResult::Accepted => {
-                slog!(info, "feishu_ws", "message_queued",
+                slog!(debug, "feishu_ws", "message_queued",
                     event_type,
                     msg_id = %feishu_msg_id,
                 );

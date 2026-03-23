@@ -304,7 +304,7 @@ impl Compactor {
             return None;
         }
 
-        slog!(info, "compaction", "checkpoint_started", total_tokens,);
+        slog!(debug, "compaction", "checkpoint_started", total_tokens,);
         let usage = self.run_checkpoint(messages, memory_tools).await;
         self.checkpoint_done = true;
         usage
@@ -342,7 +342,7 @@ impl Compactor {
         tokio::select! {
             usage = collect_turn_usage(stream) => Some(usage),
             _ = self.cancel.cancelled() => {
-                slog!(info, "compaction", "checkpoint_cancelled",);
+                slog!(debug, "compaction", "checkpoint_cancelled",);
                 None
             }
         }
@@ -404,7 +404,7 @@ impl Compactor {
                 }
             }
             _ = self.cancel.cancelled() => {
-                slog!(info, "compaction", "summarize_cancelled",);
+                slog!(debug, "compaction", "summarize_cancelled",);
                 (None, TokenUsage::default())
             }
         }

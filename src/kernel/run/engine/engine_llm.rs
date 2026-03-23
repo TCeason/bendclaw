@@ -277,7 +277,7 @@ impl Engine {
                     }
                 }
                 _ = self.cancel.cancelled() => {
-                    slog!(info, "llm", "cancelled",);
+                    slog!(debug, "llm", "cancelled",);
                     resp.mark_cancelled();
                     break;
                 }

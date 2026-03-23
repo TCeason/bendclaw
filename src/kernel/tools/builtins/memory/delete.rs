@@ -77,7 +77,7 @@ impl Tool for MemoryDeleteTool {
 
         match self.storage.delete(&ctx.user_id, id).await {
             Ok(()) => {
-                slog!(info, "memory", "completed", id,);
+                slog!(debug, "memory", "completed", id,);
                 Ok(ToolResult::ok(format!("Memory '{}' deleted.", id)))
             }
             Err(e) => {

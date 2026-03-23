@@ -153,7 +153,7 @@ impl AgentProcess {
 
                             if self.session_id.is_none() {
                                 if let Some(sid) = agent.parse_session_id(&msg) {
-                                    slog!(info, "cli_agent", "started", agent = %self.agent_type, session_id = %sid,);
+                                    slog!(debug, "cli_agent", "started", agent = %self.agent_type, session_id = %sid,);
                                     self.session_id = Some(sid);
                                 }
                             }
@@ -169,7 +169,7 @@ impl AgentProcess {
                     }
                 }
                 _ = cancel.cancelled() => {
-                    slog!(info, "cli_agent", "cancelled", agent = %self.agent_type,);
+                    slog!(debug, "cli_agent", "cancelled", agent = %self.agent_type,);
                     return Err(anyhow::anyhow!("interrupted").into());
                 }
             }

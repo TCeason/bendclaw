@@ -161,7 +161,7 @@ impl Tool for SkillCreateTool {
 
         self.store.insert(&skill, &ctx.agent_id);
 
-        slog!(info, "skill", "completed", skill = %name, version = %version,);
+        slog!(debug, "skill", "completed", skill = %name, version = %version,);
         Ok(ToolResult::ok(format!(
             "Skill '{name}' created (v{version})"
         )))

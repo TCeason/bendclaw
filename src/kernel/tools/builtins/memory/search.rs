@@ -103,7 +103,7 @@ impl Tool for MemorySearchTool {
 
         match self.storage.search(query, &ctx.user_id, opts).await {
             Ok(results) => {
-                slog!(info, "memory", "completed", query, results = results.len(),);
+                slog!(debug, "memory", "completed", query, results = results.len(),);
                 if results.is_empty() {
                     return Ok(ToolResult::ok("No memories found."));
                 }

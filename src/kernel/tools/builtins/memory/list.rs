@@ -72,7 +72,7 @@ impl Tool for MemoryListTool {
 
         match self.storage.list(&ctx.user_id, limit).await {
             Ok(entries) => {
-                slog!(info, "memory", "completed", count = entries.len(),);
+                slog!(debug, "memory", "completed", count = entries.len(),);
                 if entries.is_empty() {
                     return Ok(ToolResult::ok("No memories found."));
                 }

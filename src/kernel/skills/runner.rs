@@ -115,7 +115,7 @@ impl SkillRunner {
         let mut cmd_args = vec![script_path];
         cmd_args.extend(args.iter().cloned());
 
-        slog!(info, "skill", "executing",
+        slog!(debug, "skill", "executing",
             skill = skill_name,
             program = %program,
             args = ?cmd_args,

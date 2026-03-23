@@ -124,7 +124,7 @@ impl Tool for WebFetchTool {
         };
 
         let text = String::from_utf8_lossy(&body);
-        slog!(info, "web", "completed", url, http_status = %status, body_len = body.len(),);
+        slog!(debug, "web", "completed", url, http_status = %status, body_len = body.len(),);
 
         if status.is_success() {
             let output = if content_type.contains("text/html") {

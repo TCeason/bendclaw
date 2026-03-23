@@ -85,7 +85,7 @@ impl Tool for LearningSearchTool {
 
         match self.store.learnings().search(query, max_results).await {
             Ok(results) => {
-                slog!(info, "recall", "completed", query, results = results.len(),);
+                slog!(debug, "recall", "completed", query, results = results.len(),);
                 if results.is_empty() {
                     return Ok(ToolResult::ok("No learnings found."));
                 }

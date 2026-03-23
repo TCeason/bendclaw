@@ -111,7 +111,7 @@ async fn log_http_request(mut req: Request<Body>, next: Next) -> Response {
     } else if status.is_client_error() {
         slog!(warn, "service", "http_request", code, method = %method, path = %path, elapsed_ms, content_length, trace_id = %trace_id, user_id = %user_id,);
     } else {
-        slog!(info, "service", "http_request", code, method = %method, path = %path, elapsed_ms, content_length, trace_id = %trace_id, user_id = %user_id,);
+        slog!(debug, "service", "http_request", code, method = %method, path = %path, elapsed_ms, content_length, trace_id = %trace_id, user_id = %user_id,);
     }
 
     response

@@ -77,7 +77,7 @@ impl Tool for MemoryReadTool {
 
         match self.storage.get(&ctx.user_id, key).await {
             Ok(Some(entry)) => {
-                slog!(info, "memory", "completed", key, scope = %entry.scope,);
+                slog!(debug, "memory", "completed", key, scope = %entry.scope,);
                 Ok(ToolResult::ok(format!(
                     "[{}] {}\n\n{}",
                     entry.scope, entry.key, entry.content

@@ -84,7 +84,7 @@ async fn dispatch_loop(
             handle_queued_message(msg, max_attempts, &cfg, &tx).await;
         });
     }
-    slog!(info, "channel", "stopped",);
+    slog!(debug, "channel", "stopped",);
 }
 
 async fn handle_queued_message(
@@ -118,7 +118,7 @@ async fn handle_queued_message(
 
     match result {
         Ok(msg_id) => {
-            slog!(info, "channel", "delivered",
+            slog!(debug, "channel", "delivered",
                 message_id = %msg_id,
                 attempt = msg.attempt,
             );

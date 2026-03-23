@@ -101,7 +101,7 @@ impl Tool for SkillRemoveTool {
 
         self.store.evict(&name, &ctx.agent_id);
 
-        slog!(info, "skill", "completed", skill = %name,);
+        slog!(debug, "skill", "completed", skill = %name,);
         Ok(ToolResult::ok(format!("Skill '{name}' removed")))
     }
 }

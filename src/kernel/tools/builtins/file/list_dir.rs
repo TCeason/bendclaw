@@ -108,7 +108,7 @@ impl Tool for ListDirTool {
 
         entries.sort();
         let output = entries.join("\n");
-        slog!(info, "file", "completed", path, count = entries.len(),);
+        slog!(debug, "file", "completed", path, count = entries.len(),);
         Ok(ToolResult::ok(output))
     }
 }

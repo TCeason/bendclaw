@@ -75,12 +75,12 @@ impl Tool for SkillReadTool {
         ctx: &ToolContext,
     ) -> Result<ToolResult> {
         let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-        slog!(info, "skill", "started", path,);
+        slog!(debug, "skill", "started", path,);
 
         match self.store.read_skill(&ctx.agent_id, path) {
             Some(content) => {
                 let raw_size = content.len();
-                slog!(info, "skill", "loaded", path, raw_size,);
+                slog!(debug, "skill", "loaded", path, raw_size,);
 
                 let sanitized = sanitize_skill_content(&content);
                 let sanitized_size = sanitized.content.len();
@@ -93,7 +93,7 @@ impl Tool for SkillReadTool {
                         patterns = ?labels,
                     );
                 } else {
-                    slog!(info, "skill", "clean", path, sanitized_size,);
+                    slog!(debug, "skill", "clean", path, sanitized_size,);
                 }
 
                 let output = if sanitized_size > MAX_SKILL_CONTENT_BYTES {
@@ -118,7 +118,7 @@ impl Tool for SkillReadTool {
                     sanitized.content
                 };
 
-                slog!(info, "skill", "completed", path, output_size = output.len(),);
+                slog!(debug, "skill", "completed", path, output_size = output.len(),);
                 Ok(ToolResult::ok(output))
             }
             None => {

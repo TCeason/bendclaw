@@ -113,7 +113,7 @@ impl Tool for FileEditTool {
 
         match tokio::fs::write(&full_path, &new_content).await {
             Ok(()) => {
-                slog!(info, "file", "completed", path,);
+                slog!(debug, "file", "completed", path,);
                 Ok(ToolResult::ok(format!("Edited {path} successfully")))
             }
             Err(e) => {

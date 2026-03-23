@@ -137,7 +137,7 @@ impl LLMProvider for OpenAIProvider {
         })?;
 
         let result = parse_response(&data)?;
-        slog!(info, "llm", "completed",
+        slog!(debug, "llm", "completed",
             provider = "openai",
             model,
             request_id = %request_id,
@@ -205,7 +205,7 @@ async fn drive_stream(
     writer: &StreamWriter,
     model: &str,
 ) -> std::result::Result<(), String> {
-    slog!(info, "llm", "stream_request",
+    slog!(debug, "llm", "stream_request",
         provider = "openai",
         model = %model,
         url = %url,
@@ -234,7 +234,7 @@ async fn drive_stream(
             request_id = %request_id,
             response_bytes = text.len(),
         );
-        slog!(info, "llm", "stream_api_error_detail",
+        slog!(debug, "llm", "stream_api_error_detail",
             provider = "openai",
             model = %model,
             response = %truncate_for_log(&text),
@@ -252,7 +252,7 @@ async fn drive_stream(
         .unwrap_or("")
         .to_string();
 
-    slog!(info, "llm", "stream_response",
+    slog!(debug, "llm", "stream_response",
         provider = "openai",
         model = %model,
         request_id = %request_id,

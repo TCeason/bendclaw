@@ -64,7 +64,7 @@ pub async fn finish_execution(
 
     // 4. Auto-delete one-shot tasks
     if task.delete_after_run && matches!(task.schedule, TaskSchedule::At { .. }) {
-        slog!(info, "task", "deleted", task_id = task.id,);
+        slog!(debug, "task", "deleted", task_id = task.id,);
         task_repo.delete(&task.id).await?;
     }
 

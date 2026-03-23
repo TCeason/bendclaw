@@ -151,7 +151,7 @@ impl LLMProvider for AnthropicProvider {
         })?;
 
         let result = parse_response(&data)?;
-        slog!(info, "llm", "completed",
+        slog!(debug, "llm", "completed",
             provider = "anthropic",
             model,
             request_id = %request_id,
@@ -244,7 +244,7 @@ async fn drive_stream(
             request_id = %request_id,
             response_bytes = text.len(),
         );
-        slog!(info, "llm", "stream_api_error_detail",
+        slog!(debug, "llm", "stream_api_error_detail",
             provider = "anthropic",
             model = %model,
             response = %truncate_for_log(&text),

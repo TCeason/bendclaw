@@ -232,7 +232,7 @@ async fn construct(
         .as_ref()
         .map(|c| c.cluster_id.as_str())
         .unwrap_or("");
-    slog!(info, "runtime", "ready",
+    slog!(debug, "runtime", "ready",
         total_ms = t0.elapsed().as_millis() as u64,
         node_id = %config.node_id,
         cluster_id,

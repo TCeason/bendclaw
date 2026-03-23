@@ -122,7 +122,7 @@ impl LLMProvider for LLMRouter {
 
         for slot in &self.slots {
             if !slot.breaker.is_available() {
-                slog!(info, "llm", "slot_skipped",
+                slog!(debug, "llm", "slot_skipped",
                     name = %slot.name,
                     provider = %slot.provider_name,
                     model = %slot.model,
@@ -143,7 +143,7 @@ impl LLMProvider for LLMRouter {
                         .as_ref()
                         .map(|u| (u.prompt_tokens, u.completion_tokens))
                         .unwrap_or((0, 0));
-                    slog!(info, "llm", "completed",
+                    slog!(debug, "llm", "completed",
                         provider = %slot.provider_name,
                         model = %slot.model,
                         latency_ms,

@@ -189,7 +189,7 @@ impl Runtime {
 
     pub fn reload_llm(&self, new_llm: Arc<dyn LLMProvider>) {
         *self.llm.write() = new_llm;
-        slog!(info, "runtime", "reloaded",);
+        slog!(debug, "runtime", "reloaded",);
     }
 
     /// Resolve the LLM provider for a specific agent.

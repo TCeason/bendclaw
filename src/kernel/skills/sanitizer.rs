@@ -145,10 +145,10 @@ fn sanitize(input: &str) -> SanitizeResult {
     }
 
     if warnings.is_empty() {
-        slog!(info, "skill", "sanitizer_clean", input_size,);
+        slog!(debug, "skill", "sanitizer_clean", input_size,);
     } else {
         let labels: Vec<&str> = warnings.iter().map(|w| w.pattern).collect();
-        slog!(info, "skill", "sanitizer_sanitized",
+        slog!(debug, "skill", "sanitizer_sanitized",
             input_size,
             output_size = content.len(),
             patterns = ?labels,

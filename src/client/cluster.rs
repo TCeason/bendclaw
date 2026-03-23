@@ -121,7 +121,7 @@ impl ClusterClient {
                 "register failed: HTTP {status}: {text}"
             )));
         }
-        slog!(info, "cluster", "registered", node_id = %self.node_id,);
+        slog!(debug, "cluster", "registered", node_id = %self.node_id,);
         Ok(())
     }
 
@@ -206,7 +206,7 @@ impl ClusterClient {
                 body = %text,
             );
         } else {
-            slog!(info, "cluster", "deregistered", node_id = %self.node_id,);
+            slog!(debug, "cluster", "deregistered", node_id = %self.node_id,);
         }
         Ok(())
     }

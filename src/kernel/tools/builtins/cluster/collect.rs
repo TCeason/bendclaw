@@ -104,7 +104,7 @@ impl Tool for ClusterCollectTool {
             .unwrap_or(120);
         let timeout = Duration::from_secs(timeout_secs);
         let started = std::time::Instant::now();
-        slog!(info, "cluster", "started",
+        slog!(debug, "cluster", "started",
             user_id = %ctx.user_id,
             agent_id = %ctx.agent_id,
             run_id = %ctx.run_id,
@@ -132,7 +132,7 @@ impl Tool for ClusterCollectTool {
                             .map(|error| format!("{}:{}", entry.dispatch_id, error))
                     })
                     .collect();
-                slog!(info, "cluster", "completed",
+                slog!(debug, "cluster", "completed",
                     user_id = %ctx.user_id,
                     agent_id = %ctx.agent_id,
                     run_id = %ctx.run_id,
