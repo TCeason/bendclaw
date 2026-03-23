@@ -284,7 +284,7 @@ impl Engine {
             }
         }
         resp.set_stream_stats(chunk_count, bytes);
-        slog!(info, "llm", "collected",
+        slog!(debug, "llm", "collected",
             tool_calls = resp.tool_calls().len(),
             prompt_tokens = resp.usage().prompt_tokens,
             completion_tokens = resp.usage().completion_tokens,

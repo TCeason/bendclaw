@@ -288,7 +288,7 @@ impl PromptBuilder {
         self.append_runtime(&mut prompt, session_id);
 
         slog!(
-            info,
+            debug,
             "prompt",
             "completed",
             agent_id,

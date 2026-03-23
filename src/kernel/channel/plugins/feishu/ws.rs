@@ -176,7 +176,11 @@ pub fn decode_frame(
     resp_frame.payload = Some(resp.to_string().into_bytes());
 
     let event_payload = if msg_type == "event" {
-        slog!(info, "feishu_ws", "event_received", msg_id, trace_id,);
+        let event_type = serde_json::from_str::<serde_json::Value>(&payload_str)
+            .ok()
+            .and_then(|v| v.get("header").and_then(|h| h.get("event_type")).and_then(|t| t.as_str()).map(|s| s.to_string()))
+            .unwrap_or_default();
+        slog!(info, "feishu_ws", "event_received", msg_id, trace_id, event_type = %event_type,);
         Some(payload_str)
     } else {
         None

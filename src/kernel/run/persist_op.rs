@@ -355,7 +355,7 @@ async fn persist_event_records(
     let result = storage.run_events_insert_batch(records).await;
     match &result {
         Ok(_) => run_log!(
-            info,
+            debug,
             ctx,
             "persist",
             "run_events_saved",

@@ -96,7 +96,7 @@ impl UsageRepo {
         }
         result?;
         slog!(
-            info,
+            debug,
             "storage",
             "batch_saved",
             repo = "usage",

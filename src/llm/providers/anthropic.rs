@@ -214,7 +214,7 @@ async fn drive_stream(
     writer: &StreamWriter,
     model: &str,
 ) -> std::result::Result<(), String> {
-    slog!(info, "llm", "stream_request",
+    slog!(debug, "llm", "stream_request",
         provider = "anthropic",
         model = %model,
         url = %url,
@@ -263,7 +263,7 @@ async fn drive_stream(
         .unwrap_or("")
         .to_string();
 
-    slog!(info, "llm", "stream_response",
+    slog!(debug, "llm", "stream_response",
         provider = "anthropic",
         model = %model,
         request_id = %request_id,

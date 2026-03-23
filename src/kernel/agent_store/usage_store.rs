@@ -33,7 +33,7 @@ impl UsageStore {
 
     pub async fn record(&self, event: UsageEvent) -> Result<()> {
         let record = self.event_to_record(event);
-        slog!(info, "usage", "recorded",
+        slog!(debug, "usage", "recorded",
             user_id = %record.user_id,
             session_id = %record.session_id,
             run_id = %record.run_id,
@@ -78,7 +78,7 @@ impl UsageStore {
         if records.is_empty() {
             return Ok(());
         }
-        slog!(info, "usage", "flushing", count = records.len(),);
+        slog!(debug, "usage", "flushing", count = records.len(),);
         for attempt in 1..=MAX_RETRIES {
             match self.usage_repo.save_batch(&records).await {
                 Ok(()) => return Ok(()),

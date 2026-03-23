@@ -151,7 +151,7 @@ async fn try_dispatch_inbound(
         .get_or_create_session(&account.agent_id, &session_key, &account.user_id)
         .await?;
 
-    slog!(info, "channel", "session_ready",
+    slog!(debug, "channel", "session_ready",
         channel_type = %account.channel_type,
         chat_id,
         session_id = %session_key,
@@ -191,6 +191,14 @@ async fn try_dispatch_inbound(
         let _ = run_stream.finish().await;
         return Ok(());
     };
+
+    channel_log!(info, "outbound", "sent",
+        channel_type = %account.channel_type,
+        account_id = %account.channel_account_id,
+        chat_id,
+        message_id = %platform_msg_id,
+        output_bytes = output_text.len(),
+    );
 
     // Record outbound message (fire-and-forget via background writer).
     runtime

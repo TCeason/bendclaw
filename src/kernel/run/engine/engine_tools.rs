@@ -19,10 +19,6 @@ use crate::observability::server_log;
 /// Max bytes for span error messages stored in trace DB.
 const MAX_SPAN_ERROR: usize = 2_000;
 
-fn truncate_for_log(text: &str) -> String {
-    crate::base::truncate_bytes_on_char_boundary(text, 512)
-}
-
 impl Engine {
     pub(super) async fn dispatch_tools(&mut self, tool_calls: &[ToolCall], state: &RunLoopState) {
         let parsed_calls = self.dispatcher.parse_calls(tool_calls);
@@ -44,11 +40,6 @@ impl Engine {
     ) -> HashMap<String, TraceSpan> {
         let mut spans = HashMap::new();
         for p in parsed_calls {
-            slog!(info, "tool", "started",
-                tool = %p.call.name,
-                tool_call_id = %p.call.id,
-                arguments = %truncate_for_log(&p.arguments.to_string()),
-            );
             let span = self.trace.start_span(
                 p.kind.as_str(),
                 &p.call.name,
@@ -126,12 +117,6 @@ impl Engine {
                     (format!("Error: {msg}"), false, Some(msg.clone()))
                 }
             };
-
-            slog!(info, "tool", "completed",
-                tool = %p.call.name,
-                tool_call_id = %p.call.id,
-                output = %truncate_for_log(&output),
-            );
 
             if let Some(span) = spans.get(&p.call.id) {
                 self.record_tool_span(span, p, &meta, success, error_text.as_deref())

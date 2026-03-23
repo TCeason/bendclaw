@@ -244,7 +244,7 @@ impl Engine {
         })
         .await;
         let dur = self.start_time.elapsed().as_millis() as u64;
-        slog!(info, "run", "finished",
+        slog!(debug, "run", "finished",
             elapsed_ms = dur,
             iterations,
             prompt_tokens = usage.prompt_tokens,

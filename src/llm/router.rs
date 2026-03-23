@@ -187,7 +187,7 @@ impl LLMProvider for LLMRouter {
 
         for slot in &self.slots {
             if slot.breaker.is_available() {
-                slog!(info, "llm", "stream_started",
+                slog!(debug, "llm", "stream_started",
                     provider = %slot.provider_name,
                     model = %slot.model,
                 );
