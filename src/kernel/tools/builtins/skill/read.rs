@@ -118,7 +118,13 @@ impl Tool for SkillReadTool {
                     sanitized.content
                 };
 
-                slog!(debug, "skill", "completed", path, output_size = output.len(),);
+                slog!(
+                    debug,
+                    "skill",
+                    "completed",
+                    path,
+                    output_size = output.len(),
+                );
                 Ok(ToolResult::ok(output))
             }
             None => {

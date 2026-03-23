@@ -178,7 +178,12 @@ pub fn decode_frame(
     let event_payload = if msg_type == "event" {
         let event_type = serde_json::from_str::<serde_json::Value>(&payload_str)
             .ok()
-            .and_then(|v| v.get("header").and_then(|h| h.get("event_type")).and_then(|t| t.as_str()).map(|s| s.to_string()))
+            .and_then(|v| {
+                v.get("header")
+                    .and_then(|h| h.get("event_type"))
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.to_string())
+            })
             .unwrap_or_default();
         slog!(info, "feishu_ws", "event_received", msg_id, trace_id, event_type = %event_type,);
         Some(payload_str)
@@ -290,7 +295,7 @@ pub async fn get_ws_endpoint(
 
     let client_config = &json["data"]["ClientConfig"];
     slog!(
-        info,
+        debug,
         "feishu_ws",
         "endpoint_response",
         code,
@@ -349,7 +354,7 @@ pub async fn ws_receive_loop(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     slog!(
-        info,
+        debug,
         "feishu_ws",
         "handshake",
         status = ws_resp.status().as_u16(),

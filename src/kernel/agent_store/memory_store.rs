@@ -215,7 +215,10 @@ impl DatabendMemoryStore {
         user_id: &str,
         opts: SearchOpts,
     ) -> Result<Vec<MemoryResult>> {
-        let cache_key = format!("{user_id}:{query}:{}:{}", opts.max_results, opts.include_shared);
+        let cache_key = format!(
+            "{user_id}:{query}:{}:{}",
+            opts.max_results, opts.include_shared
+        );
         if let Some(cached) = self.search_cache.get(&cache_key) {
             return Ok(cached);
         }

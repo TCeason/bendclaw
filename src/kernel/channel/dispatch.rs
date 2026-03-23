@@ -98,6 +98,7 @@ async fn try_dispatch_inbound(
         sender_id = event_sender_id(event).unwrap_or(""),
         message_id = event_message_id(event).unwrap_or(""),
         input_bytes = input.len(),
+        input_preview = %crate::base::truncate_bytes_on_char_boundary(&input, 100),
     );
 
     // Record inbound message (fire-and-forget via background writer).
@@ -198,6 +199,7 @@ async fn try_dispatch_inbound(
         chat_id,
         message_id = %platform_msg_id,
         output_bytes = output_text.len(),
+        output_preview = %crate::base::truncate_bytes_on_char_boundary(&output_text, 100),
     );
 
     // Record outbound message (fire-and-forget via background writer).

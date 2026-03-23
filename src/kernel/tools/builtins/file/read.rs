@@ -73,7 +73,13 @@ impl Tool for FileReadTool {
 
         match tokio::fs::read_to_string(&full_path).await {
             Ok(contents) => {
-                slog!(debug, "file", "completed", path, size_bytes = contents.len(),);
+                slog!(
+                    debug,
+                    "file",
+                    "completed",
+                    path,
+                    size_bytes = contents.len(),
+                );
                 Ok(ToolResult::ok(contents))
             }
             Err(e) => {
