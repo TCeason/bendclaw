@@ -53,13 +53,13 @@ impl Engine {
             .map(|body| body.len() as u64)
             .unwrap_or(0);
         run_log!(info, self.ops_ctx(iteration), "llm", "request",
-            rows = chat_messages.len() as u64,
-            bytes = request_bytes,
-            attempt = iteration,
             model = %self.ctx.model.to_string(),
-            temperature = self.ctx.temperature,
             tool_strategy = %format!("{:?}", self.ctx.tool_view.strategy()),
             tool_count = active_tools.len(),
+            temperature = self.ctx.temperature,
+            attempt = iteration,
+            rows = chat_messages.len() as u64,
+            bytes = request_bytes,
         );
         self.emit_audit("llm.request", request_payload).await;
 
@@ -140,17 +140,17 @@ impl Engine {
             );
             payload.insert("bytes".to_string(), serde_json::json!(turn.bytes()));
             run_log!(error, self.ops_ctx(iteration), "llm", "failed",
-                elapsed_ms = ms,
-                tokens = turn.usage().total_tokens,
-                bytes = turn.bytes(),
-                attempt = iteration,
                 model = %turn.model().unwrap_or(self.ctx.model.as_ref()),
                 provider = %turn.provider().unwrap_or(""),
                 finish_reason = %turn.finish_reason(),
                 error = %err,
                 tool_calls = turn.tool_calls().len(),
-                chunk_count = turn.chunk_count(),
+                elapsed_ms = ms,
+                tokens = turn.usage().total_tokens,
                 ttft_ms,
+                attempt = iteration,
+                bytes = turn.bytes(),
+                chunk_count = turn.chunk_count(),
             );
             self.emit_audit("llm.error", payload).await;
             Some(err)
@@ -210,16 +210,16 @@ impl Engine {
             );
             payload.insert("bytes".to_string(), serde_json::json!(turn.bytes()));
             run_log!(info, self.ops_ctx(iteration), "llm", "completed",
-                elapsed_ms = ms,
-                tokens = turn.usage().total_tokens,
-                bytes = turn.bytes(),
-                attempt = iteration,
                 model = %turn.model().unwrap_or(self.ctx.model.as_ref()),
                 provider = %turn.provider().unwrap_or(""),
                 finish_reason = %turn.finish_reason(),
                 tool_calls = turn.tool_calls().len(),
-                chunk_count = turn.chunk_count(),
+                elapsed_ms = ms,
+                tokens = turn.usage().total_tokens,
                 ttft_ms,
+                attempt = iteration,
+                bytes = turn.bytes(),
+                chunk_count = turn.chunk_count(),
             );
             self.emit_audit("llm.response", payload).await;
             None

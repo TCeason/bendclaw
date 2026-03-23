@@ -70,7 +70,11 @@ impl Runtime {
                         })
                     })
                     .collect();
-                futures::future::join_all(futs).await;
+                crate::base::runtime::join_bounded(
+                    futs,
+                    crate::base::runtime::CONCURRENCY_SHUTDOWN,
+                )
+                .await;
             }
         };
 
@@ -85,7 +89,7 @@ impl Runtime {
         }
 
         self.supervisor.stop_all().await;
-        if let Some(ref svc) = self.cluster {
+        if let Some(ref svc) = *self.cluster.read() {
             svc.deregister().await;
         }
 

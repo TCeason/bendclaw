@@ -72,9 +72,9 @@ impl Engine {
         let payload = self.audit_payload(iteration);
         self.emit_audit("turn.started", payload).await;
         run_log!(info, self.ops_ctx(iteration), "turn", "started",
-            message_count = self.ctx.messages.len(),
-            max_context_tokens = state.max_context_tokens(),
             tool_strategy = %format!("{:?}", self.ctx.tool_view.strategy()),
+            max_context_tokens = state.max_context_tokens(),
+            message_count = self.ctx.messages.len(),
         );
 
         self.emit(Event::ReasonStart).await;
@@ -121,11 +121,11 @@ impl Engine {
                 );
                 self.emit_audit("turn.completed", payload).await;
                 run_log!(error, self.ops_ctx(iteration), "turn", "failed",
+                    finish_reason = %turn.finish_reason(),
+                    error = %err,
+                    tool_calls = turn.tool_calls().len(),
                     tokens = turn.usage().total_tokens,
                     bytes = turn.bytes(),
-                    finish_reason = %turn.finish_reason(),
-                    tool_calls = turn.tool_calls().len(),
-                    error = %err,
                     chunk_count = turn.chunk_count(),
                 );
 
@@ -146,9 +146,9 @@ impl Engine {
                 payload.insert("reason".to_string(), serde_json::json!(reason.as_str()));
                 self.emit_audit("turn.completed", payload).await;
                 run_log!(warn, self.ops_ctx(iteration), "turn", "aborted",
+                    reason = %reason.as_str(),
                     finish_reason = %turn.finish_reason(),
                     tool_calls = turn.tool_calls().len(),
-                    reason = %reason.as_str(),
                 );
                 self.emit(Event::TurnEnd { iteration }).await;
                 Ok(StepOutcome::Abort(reason))
@@ -167,10 +167,10 @@ impl Engine {
                 );
                 self.emit_audit("turn.completed", payload).await;
                 run_log!(info, self.ops_ctx(iteration), "turn", "tool_dispatch",
-                    tokens = turn.usage().total_tokens,
-                    bytes = turn.bytes(),
                     finish_reason = %turn.finish_reason(),
                     tool_calls = turn.tool_calls().len(),
+                    tokens = turn.usage().total_tokens,
+                    bytes = turn.bytes(),
                     chunk_count = turn.chunk_count(),
                 );
 
@@ -190,10 +190,10 @@ impl Engine {
                 );
                 self.emit_audit("turn.completed", payload).await;
                 run_log!(info, self.ops_ctx(iteration), "turn", "done",
-                    tokens = turn.usage().total_tokens,
-                    bytes = turn.bytes(),
                     finish_reason = %turn.finish_reason(),
                     tool_calls = turn.tool_calls().len(),
+                    tokens = turn.usage().total_tokens,
+                    bytes = turn.bytes(),
                     chunk_count = turn.chunk_count(),
                 );
 

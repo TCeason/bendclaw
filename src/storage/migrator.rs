@@ -27,11 +27,10 @@ const ALTER_MIGRATIONS: &[&str] = &[
 /// Run all agent migrations against the pool's current database.
 pub async fn run_agent(pool: &Pool) {
     // Phase 1: base tables — files run in parallel (no cross-dependencies).
-    let futs: Vec<_> = BASE_MIGRATIONS
+    let futs = BASE_MIGRATIONS
         .iter()
-        .map(|sql| run_one_file(pool, sql, "base"))
-        .collect();
-    futures::future::join_all(futs).await;
+        .map(|sql| run_one_file(pool, sql, "base"));
+    crate::base::runtime::join_bounded(futs, crate::base::runtime::CONCURRENCY_DB).await;
     slog!(
         info,
         "storage",

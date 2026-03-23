@@ -211,17 +211,17 @@ async fn handle_op(op: PersistOp) {
             }
 
             run_log!(info, ctx, "run", "completed",
+                model = %model,
+                provider = %provider,
+                status = %status.as_str(),
+                stop_reason = %stop_reason,
+                iterations,
                 elapsed_ms = duration_ms,
                 tokens = usage.total_tokens,
-                status = %status.as_str(),
-                provider = %provider,
-                model = %model,
-                iterations,
-                stop_reason = %stop_reason,
-                event_count = event_records.len(),
                 prompt_tokens = usage.prompt_tokens,
                 completion_tokens = usage.completion_tokens,
                 ttft_ms = usage.ttft_ms,
+                event_count = event_records.len(),
             );
 
             if let Some(recall) = recall {

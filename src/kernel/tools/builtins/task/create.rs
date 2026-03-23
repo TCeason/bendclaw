@@ -13,6 +13,7 @@ use crate::kernel::tools::Impact;
 use crate::kernel::tools::OpType;
 use crate::kernel::tools::ToolId;
 use crate::storage::dal::task::TaskDelivery;
+use crate::storage::TaskSchedule;
 
 pub struct TaskCreateTool {
     node_id: String,
@@ -48,7 +49,9 @@ impl Tool for TaskCreateTool {
     }
 
     fn description(&self) -> &str {
-        "Create a new scheduled task. Supports cron expressions, fixed intervals (every N seconds), or one-shot (at a specific time). When called from a channel (e.g. Feishu/Telegram), task results are automatically delivered back to the current chat."
+        "Create a new scheduled task. Supports cron expressions, fixed intervals (every N seconds), or one-shot (at a specific time). \
+         Always set schedule.tz to the user's timezone from Runtime context. \
+         When called from a channel (e.g. Feishu/Telegram), task results are automatically delivered back to the current chat."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -76,6 +79,15 @@ impl Tool for TaskCreateTool {
                     channel_account_id: ch.account_id,
                     chat_id: ch.chat_id,
                 };
+            }
+        }
+
+        // Auto-fill timezone from server local time if not set by the LLM.
+        if let TaskSchedule::Cron { tz, .. } = &mut spec.schedule {
+            if tz.is_none() {
+                if let Ok(local_tz) = iana_time_zone::get_timezone() {
+                    *tz = Some(local_tz);
+                }
             }
         }
 

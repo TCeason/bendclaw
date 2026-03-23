@@ -255,51 +255,9 @@ async fn construct(
     );
     let tool_writer = crate::kernel::writer::tool_op::spawn_tool_writer();
 
-    // Directive cache (opt-in)
-    let (directive, directive_handle) = if let Some(dc) = directive_config {
-        let client = Arc::new(DirectiveClient::new(&dc.api_base, &dc.token)?);
-        let service = Arc::new(DirectiveService::new(
-            client,
-            DirectiveService::DEFAULT_REFRESH_INTERVAL,
-        ));
-        if let Err(e) = service.refresh().await {
-            slog!(warn, "runtime", "directive_init_failed", error = %e,);
-        }
-        let handle = service.spawn_refresh_loop(sync_cancel.clone());
-        (Some(service), Some(handle))
-    } else {
-        (None, None)
-    };
-
-    // Cluster initialization (opt-in)
-    let (cluster_service, heartbeat_handle) = if let Some(cc) = cluster_config {
-        let cluster_client = Arc::new(ClusterClient::new(
-            &cc.registry_url,
-            &cc.registry_token,
-            &config.node_id,
-            &cc.advertise_url,
-            &cc.cluster_id,
-        ));
-        let bendclaw_client = Arc::new(BendclawClient::new(
-            &auth_key,
-            std::time::Duration::from_secs(300),
-        ));
-        let svc = Arc::new(ClusterService::with_options(
-            cluster_client,
-            bendclaw_client,
-            cluster_options,
-        ));
-
-        if let Err(e) = svc.register_and_discover().await {
-            slog!(warn, "runtime", "cluster_init_failed", error = %e,);
-            (None, None)
-        } else {
-            let hb_handle = svc.spawn_heartbeat(sync_cancel.clone());
-            (Some(svc), Some(hb_handle))
-        }
-    } else {
-        (None, None)
-    };
+    // Directive and cluster start as None — initialized in background after lease.
+    let (directive, directive_handle) = (None, None);
+    let (cluster_service, heartbeat_handle) = (None, None);
 
     // Use Arc::new_cyclic so the supervisor's event_handler can capture a Weak<Runtime>.
     let runtime = Arc::new_cyclic(|weak: &std::sync::Weak<Runtime>| {
@@ -327,9 +285,9 @@ async fn construct(
             sync_cancel: sync_cancel.clone(),
             sync_handle: RwLock::new(Some(sync_handle)),
             lease_handle: RwLock::new(None),
-            cluster: cluster_service,
+            cluster: RwLock::new(cluster_service),
             heartbeat_handle: RwLock::new(heartbeat_handle),
-            directive,
+            directive: RwLock::new(directive),
             directive_handle: RwLock::new(directive_handle),
             activity_tracker,
             trace_writer,
@@ -368,8 +326,64 @@ async fn construct(
             runtime.supervisor().clone(),
             HealthMonitorConfig::default(),
         ));
-        let handle = monitor.spawn(vec![], sync_cancel);
+        let handle = monitor.spawn(vec![], sync_cancel.clone());
         *runtime.health_monitor_handle.write() = Some(handle);
+    }
+
+    // Initialize directive and cluster in background — lease is already running.
+    if let Some(dc) = directive_config {
+        let rt = runtime.clone();
+        let cancel = sync_cancel.clone();
+        crate::base::spawn_fire_and_forget("directive_init", async move {
+            let client = match DirectiveClient::new(&dc.api_base, &dc.token) {
+                Ok(c) => Arc::new(c),
+                Err(e) => {
+                    slog!(warn, "runtime", "directive_init_failed", error = %e,);
+                    return;
+                }
+            };
+            let service = Arc::new(DirectiveService::new(
+                client,
+                DirectiveService::DEFAULT_REFRESH_INTERVAL,
+            ));
+            if let Err(e) = service.refresh().await {
+                slog!(warn, "runtime", "directive_init_failed", error = %e,);
+            }
+            let handle = service.spawn_refresh_loop(cancel);
+            *rt.directive.write() = Some(service);
+            *rt.directive_handle.write() = Some(handle);
+        });
+    }
+
+    if let Some(cc) = cluster_config {
+        let rt = runtime.clone();
+        let cancel = sync_cancel;
+        crate::base::spawn_fire_and_forget("cluster_init", async move {
+            let cluster_client = Arc::new(ClusterClient::new(
+                &cc.registry_url,
+                &cc.registry_token,
+                &rt.config().node_id,
+                &cc.advertise_url,
+                &cc.cluster_id,
+            ));
+            let bendclaw_client = Arc::new(BendclawClient::new(
+                &auth_key,
+                std::time::Duration::from_secs(300),
+            ));
+            let svc = Arc::new(ClusterService::with_options(
+                cluster_client,
+                bendclaw_client,
+                cluster_options,
+            ));
+
+            if let Err(e) = svc.register_and_discover().await {
+                slog!(warn, "runtime", "cluster_init_failed", error = %e,);
+                return;
+            }
+            let hb_handle = svc.spawn_heartbeat(cancel);
+            *rt.cluster.write() = Some(svc);
+            *rt.heartbeat_handle.write() = Some(hb_handle);
+        });
     }
 
     Ok(runtime)

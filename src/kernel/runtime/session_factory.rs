@@ -121,7 +121,7 @@ impl Runtime {
         );
 
         // Conditionally register cluster tools
-        if let Some(ref svc) = self.cluster {
+        if let Some(ref svc) = *self.cluster.read() {
             let dt = svc.create_dispatch_table();
             register_cluster_tools(&mut tool_registry, svc.clone(), dt);
         }
@@ -162,8 +162,8 @@ impl Runtime {
                 config: Arc::new(self.config.clone()),
                 variables: variable_records,
                 recall: Some(recall_store),
-                cluster_client: self.cluster.clone(),
-                directive: self.directive.clone(),
+                cluster_client: self.cluster.read().clone(),
+                directive: self.directive.read().clone(),
                 trace_writer: self.trace_writer.clone(),
                 persist_writer: self.persist_writer.clone(),
                 tool_writer: self.tool_writer.clone(),

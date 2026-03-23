@@ -39,11 +39,12 @@ pub fn format_results(results: &[DdgResult]) -> String {
     if results.is_empty() {
         return "No results found.".to_string();
     }
-    results
+    let items: Vec<String> = results
         .iter()
-        .map(|r| format!("{}\n{}\n{}", r.title, r.url, r.snippet))
-        .collect::<Vec<_>>()
-        .join("\n\n")
+        .enumerate()
+        .map(|(i, r)| format!("{}. {}\n{}\n{}", i + 1, r.title, r.url, r.snippet))
+        .collect();
+    format!("Found {} results:\n\n{}", results.len(), items.join("\n\n"))
 }
 
 /// Expose `parse_results` for integration tests.

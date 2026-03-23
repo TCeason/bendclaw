@@ -244,15 +244,15 @@ pub fn debug(ctx: &ServerCtx<'_>, stage: &str, status: &str, fields: ServerField
     tracing::debug!(
         stage,
         status,
-        run_id = ctx.run_id,
-        session_id = ctx.session_id,
-        agent_id = ctx.agent_id,
-        turn = ctx.turn,
         elapsed_ms = fields.elapsed_ms,
         tokens = fields.tokens,
         rows = fields.rows,
         bytes = fields.bytes,
         payload = %fields.format_payload(),
+        run_id = ctx.run_id,
+        session_id = ctx.session_id,
+        agent_id = ctx.agent_id,
+        turn = ctx.turn,
         "{stage} {status}"
     );
 }
@@ -261,15 +261,15 @@ pub fn info(ctx: &ServerCtx<'_>, stage: &str, status: &str, fields: ServerFields
     tracing::info!(
         stage,
         status,
-        run_id = ctx.run_id,
-        session_id = ctx.session_id,
-        agent_id = ctx.agent_id,
-        turn = ctx.turn,
         elapsed_ms = fields.elapsed_ms,
         tokens = fields.tokens,
         rows = fields.rows,
         bytes = fields.bytes,
         payload = %fields.format_payload(),
+        run_id = ctx.run_id,
+        session_id = ctx.session_id,
+        agent_id = ctx.agent_id,
+        turn = ctx.turn,
         "{stage} {status}"
     );
 }
@@ -278,15 +278,15 @@ pub fn warn(ctx: &ServerCtx<'_>, stage: &str, status: &str, fields: ServerFields
     tracing::warn!(
         stage,
         status,
-        run_id = ctx.run_id,
-        session_id = ctx.session_id,
-        agent_id = ctx.agent_id,
-        turn = ctx.turn,
         elapsed_ms = fields.elapsed_ms,
         tokens = fields.tokens,
         rows = fields.rows,
         bytes = fields.bytes,
         payload = %fields.format_payload(),
+        run_id = ctx.run_id,
+        session_id = ctx.session_id,
+        agent_id = ctx.agent_id,
+        turn = ctx.turn,
         "{stage} {status}"
     );
 }
@@ -295,15 +295,15 @@ pub fn error(ctx: &ServerCtx<'_>, stage: &str, status: &str, fields: ServerField
     tracing::error!(
         stage,
         status,
-        run_id = ctx.run_id,
-        session_id = ctx.session_id,
-        agent_id = ctx.agent_id,
-        turn = ctx.turn,
         elapsed_ms = fields.elapsed_ms,
         tokens = fields.tokens,
         rows = fields.rows,
         bytes = fields.bytes,
         payload = %fields.format_payload(),
+        run_id = ctx.run_id,
+        session_id = ctx.session_id,
+        agent_id = ctx.agent_id,
+        turn = ctx.turn,
         "{stage} {status}"
     );
 }

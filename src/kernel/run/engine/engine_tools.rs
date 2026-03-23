@@ -73,10 +73,10 @@ impl Engine {
                 self.iteration.load(std::sync::atomic::Ordering::Relaxed),
             );
             run_log!(info, tool_ctx, "tool", "started",
-                bytes = p.arguments.to_string().len() as u64,
-                tool_call_id = %p.call.id,
                 tool_name = %p.call.name,
                 tool_kind = %p.kind.as_str(),
+                bytes = p.arguments.to_string().len() as u64,
+                tool_call_id = %p.call.id,
             );
             let turn = self.iteration.load(std::sync::atomic::Ordering::Relaxed);
             let mut payload = self.audit_payload(turn);
@@ -140,22 +140,22 @@ impl Engine {
             );
             if success {
                 run_log!(info, result_ctx, "tool", "completed",
-                    elapsed_ms = meta.duration_ms,
-                    bytes = output.len() as u64,
-                    tool_call_id = %p.call.id,
                     tool_name = %p.call.name,
                     tool_kind = %p.kind.as_str(),
                     summary = %meta.summary,
-                );
-            } else {
-                run_log!(error, result_ctx, "tool", "failed",
                     elapsed_ms = meta.duration_ms,
                     bytes = output.len() as u64,
                     tool_call_id = %p.call.id,
+                );
+            } else {
+                run_log!(error, result_ctx, "tool", "failed",
                     tool_name = %p.call.name,
                     tool_kind = %p.kind.as_str(),
                     error = %error_text.as_deref().unwrap_or(""),
                     summary = %meta.summary,
+                    elapsed_ms = meta.duration_ms,
+                    bytes = output.len() as u64,
+                    tool_call_id = %p.call.id,
                 );
             }
             let turn = self.iteration.load(std::sync::atomic::Ordering::Relaxed);

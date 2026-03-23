@@ -1,8 +1,11 @@
 //! Unified access to all agent databases.
 
+use std::time::Duration;
+
 use crate::base::validate_agent_id;
 use crate::base::ErrorCode;
 use crate::base::Result;
+use crate::storage::cache::TtlCache;
 use crate::storage::pool::Pool;
 
 /// Only allow alphanumeric, underscore, and hyphen in DB prefix.
@@ -29,6 +32,7 @@ fn validate_prefix(prefix: &str) -> Result<()> {
 pub struct AgentDatabases {
     pool: Pool,
     prefix: String,
+    agent_ids_cache: TtlCache<Vec<String>>,
 }
 
 impl AgentDatabases {
@@ -37,6 +41,7 @@ impl AgentDatabases {
         Ok(Self {
             pool,
             prefix: prefix.to_string(),
+            agent_ids_cache: TtlCache::new("agent_ids", 1, Duration::from_secs(30)),
         })
     }
 
@@ -49,14 +54,18 @@ impl AgentDatabases {
         &self.prefix
     }
 
-    /// List all agent IDs by scanning databases with the configured prefix.
+    /// List all agent IDs, with a short-lived cache to avoid repeated SHOW DATABASES.
     pub async fn list_agent_ids(&self) -> Result<Vec<String>> {
+        if let Some(ids) = self.agent_ids_cache.get("all") {
+            return Ok(ids);
+        }
         let dbs = self.list_databases().await?;
         let mut ids: Vec<String> = dbs
             .iter()
             .filter_map(|db| db.strip_prefix(&self.prefix).map(String::from))
             .collect();
         ids.sort();
+        self.agent_ids_cache.put("all".to_string(), ids.clone());
         Ok(ids)
     }
 

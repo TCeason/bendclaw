@@ -125,7 +125,8 @@ impl LeaseServiceHandle {
             }
             self.lease_counts[i].store(0, Ordering::Relaxed);
         }
-        futures::future::join_all(futs).await;
+        crate::base::runtime::join_bounded(futs, crate::base::runtime::CONCURRENCY_SHUTDOWN)
+            .await;
     }
 
     /// Wait for all scan loops to finish (call after cancellation).
@@ -214,13 +215,16 @@ async fn scan_once(
     if cancel.is_cancelled() {
         return Ok(());
     }
+    let scan_start = std::time::Instant::now();
     let entries = resource.discover().await?;
+    let discover_ms = scan_start.elapsed().as_millis() as u64;
     slog!(
-        debug,
+        info,
         "lease",
         "resources_discovered",
         table = resource.table(),
         count = entries.len(),
+        discover_ms,
     );
     let mut seen_ids = HashSet::new();
     let lease_secs = resource.lease_secs();
@@ -406,6 +410,9 @@ fn is_held_by_other(node_id: &str, entry: &ResourceEntry) -> bool {
 
 // ── SQL helpers ──────────────────────────────────────────────────────────────
 
+/// Timeout for individual lease SQL operations (claim, renew).
+const LEASE_SQL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Atomically claim a single resource row. Only sets lease columns.
 async fn claim_sql(
     pool: &Pool,
@@ -434,7 +441,9 @@ async fn claim_sql(
     if let Some(cond) = extra_cond {
         update = update.where_raw(cond);
     }
-    pool.exec(&update.build()).await?;
+    tokio::time::timeout(LEASE_SQL_TIMEOUT, pool.exec(&update.build()))
+        .await
+        .map_err(|_| crate::base::ErrorCode::timeout("claim update timed out"))??;
 
     let check = sql::Sql::select("COUNT(*)")
         .from(table)
@@ -442,7 +451,9 @@ async fn claim_sql(
         .where_eq("lease_token", token)
         .where_eq("lease_node_id", node_id)
         .build();
-    let row = pool.query_row(&check).await?;
+    let row = tokio::time::timeout(LEASE_SQL_TIMEOUT, pool.query_row(&check))
+        .await
+        .map_err(|_| crate::base::ErrorCode::timeout("claim check timed out"))??;
     let count = row
         .as_ref()
         .and_then(|r| r.as_array())
@@ -470,7 +481,9 @@ async fn renew_sql(
         .where_eq("id", id)
         .where_eq("lease_token", token)
         .build();
-    pool.exec(&update).await
+    tokio::time::timeout(LEASE_SQL_TIMEOUT, pool.exec(&update))
+        .await
+        .map_err(|_| crate::base::ErrorCode::timeout("renew timed out"))?
 }
 
 /// Release a single lease. Only clears lease columns.

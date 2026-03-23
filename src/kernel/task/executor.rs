@@ -92,8 +92,12 @@ async fn run_task_prompt(
             )
         }
     };
+
+    // Enrich prompt with channel delivery context so the LLM knows where to send.
+    let prompt = enrich_prompt_with_delivery(&task.prompt, &task.delivery, runtime, agent_id).await;
+
     let stream = match session
-        .run(&task.prompt, &task.id, None, "", "", false)
+        .run(&prompt, &task.id, None, "", "", false)
         .await
     {
         Ok(s) => s,
@@ -110,6 +114,42 @@ async fn run_task_prompt(
     match stream.finish().await {
         Ok(output) => ("ok".to_string(), Some(run_id), Some(output), None),
         Err(e) => ("error".to_string(), Some(run_id), None, Some(e.to_string())),
+    }
+}
+
+/// If the task has channel delivery, append channel context to the prompt
+/// so the LLM can use `channel_send` with the correct parameters.
+async fn enrich_prompt_with_delivery(
+    prompt: &str,
+    delivery: &TaskDelivery,
+    runtime: &Arc<Runtime>,
+    agent_id: &str,
+) -> String {
+    match delivery {
+        TaskDelivery::Channel {
+            channel_account_id,
+            chat_id,
+        } => {
+            let channel_type = match runtime.databases().agent_pool(agent_id) {
+                Ok(pool) => {
+                    let repo = ChannelAccountRepo::new(pool);
+                    repo.load(channel_account_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|a| a.channel_type)
+                        .unwrap_or_default()
+                }
+                Err(_) => String::new(),
+            };
+
+            format!(
+                "{prompt}\n\n\
+                 [Channel context] When you need to send results, use channel_send with: \
+                 channel_type=\"{channel_type}\", chat_id=\"{chat_id}\"."
+            )
+        }
+        _ => prompt.to_string(),
     }
 }
 

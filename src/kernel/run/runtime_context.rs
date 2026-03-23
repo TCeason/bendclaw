@@ -17,8 +17,8 @@ pub fn build_runtime_context(
     // Current time + timezone
     let now = Local::now();
     let time_str = now.format("%Y-%m-%d %H:%M (%A)").to_string();
-    let tz = now.format("%Z").to_string();
-    let _ = writeln!(buf, "Current Time: {time_str} ({tz})");
+    let tz = now.format("%:z").to_string();
+    let _ = writeln!(buf, "Current Time: {time_str} (UTC{tz})");
 
     // OS / arch
     let os = std::env::consts::OS;

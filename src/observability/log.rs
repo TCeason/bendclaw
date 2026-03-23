@@ -106,11 +106,11 @@ macro_rules! run_log {
         tracing::$level!(
             stage = $stage,
             status = $status,
+            $($rest)*
             run_id = $ctx.run_id,
             session_id = $ctx.session_id,
             agent_id = $ctx.agent_id,
             turn = $ctx.turn,
-            $($rest)*
             concat!($stage, " ", $status)
         )
     };
