@@ -88,7 +88,7 @@ async fn try_dispatch_inbound(
         );
         if let Some(ref ob) = outbound {
             let _ = ob
-                .send_text(&account.config, chat_id, "新会话已开始。")
+                .send_text(&account.config, chat_id, "New conversation started.")
                 .await;
         }
         return Ok(());
