@@ -50,7 +50,7 @@ impl Tool for ClaudeCodeTool {
     }
 
     fn hint(&self) -> &str {
-        "run Claude Code for coding tasks"
+        "delegate multi-file edits or refactors — use file_edit for single-file changes"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

@@ -1,16 +1,23 @@
 //! Memory storage with FTS search.
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use serde::Deserialize;
 use serde::Serialize;
 
 use crate::base::Result;
 use crate::observability::log::slog;
+use crate::storage::cache::TtlCache;
 use crate::storage::pool::Pool;
 use crate::storage::sql;
 use crate::storage::sql::SqlVal;
 use crate::storage::table::DatabendTable;
 use crate::storage::table::RowMapper;
 use crate::storage::table::Where;
+
+const SEARCH_CACHE_TTL: Duration = Duration::from_secs(120);
+const SEARCH_CACHE_CAPACITY: usize = 128;
 
 /// Memory scope: user private, shared across users, or session temporary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,6 +165,7 @@ impl RowMapper for ResultMapper {
 pub struct DatabendMemoryStore {
     entries: DatabendTable<EntryMapper>,
     search_table: DatabendTable<ResultMapper>,
+    search_cache: Arc<TtlCache<Vec<MemoryResult>>>,
 }
 
 impl DatabendMemoryStore {
@@ -165,6 +173,11 @@ impl DatabendMemoryStore {
         Self {
             entries: DatabendTable::new(pool.clone(), "memories", EntryMapper),
             search_table: DatabendTable::new(pool, "memories", ResultMapper),
+            search_cache: Arc::new(TtlCache::new(
+                "memories_search",
+                SEARCH_CACHE_CAPACITY,
+                SEARCH_CACHE_TTL,
+            )),
         }
     }
 
@@ -191,6 +204,7 @@ impl DatabendMemoryStore {
                 slog!(error, "memory", "write_failed", user_id, key = %entry.key, scope = %scope_value, error = %e,);
                 e
             })?;
+        self.search_cache.clear();
         slog!(info, "memory", "written", user_id, key = %entry.key, scope = %scope_value,);
         Ok(())
     }
@@ -201,6 +215,10 @@ impl DatabendMemoryStore {
         user_id: &str,
         opts: SearchOpts,
     ) -> Result<Vec<MemoryResult>> {
+        let cache_key = format!("{user_id}:{query}:{}:{}", opts.max_results, opts.include_shared);
+        if let Some(cached) = self.search_cache.get(&cache_key) {
+            return Ok(cached);
+        }
         let extra = build_search_extra_where(user_id, &opts);
 
         let results = self
@@ -217,6 +235,7 @@ impl DatabendMemoryStore {
             .map(|(r, _)| r)
             .collect::<Vec<_>>();
 
+        self.search_cache.put(cache_key, results.clone());
         slog!(
             info,
             "memory",
@@ -273,6 +292,7 @@ impl DatabendMemoryStore {
                 slog!(error, "memory", "delete_failed", user_id, id, error = %e,);
                 e
             })?;
+        self.search_cache.clear();
         slog!(info, "memory", "deleted", user_id, id,);
         Ok(())
     }

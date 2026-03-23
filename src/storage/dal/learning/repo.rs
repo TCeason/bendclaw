@@ -1,7 +1,9 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use super::record::LearningRecord;
 use crate::base::Result;
+use crate::storage::cache::TtlCache;
 use crate::storage::dal::logging::repo_error;
 use crate::storage::pool::Pool;
 use crate::storage::sql;
@@ -13,6 +15,8 @@ use crate::storage::table::Where;
 
 const REPO: &str = "learnings";
 const CACHE_TTL: Duration = Duration::from_secs(60);
+const SEARCH_CACHE_TTL: Duration = Duration::from_secs(120);
+const SEARCH_CACHE_CAPACITY: usize = 64;
 
 #[derive(Clone)]
 struct LearningMapper;
@@ -77,12 +81,18 @@ impl RowMapper for LearningMapper {
 #[derive(Clone)]
 pub struct LearningRepo {
     table: DatabendTable<LearningMapper>,
+    search_cache: Arc<TtlCache<Vec<LearningRecord>>>,
 }
 
 impl LearningRepo {
     pub fn new(pool: Pool) -> Self {
         Self {
             table: DatabendTable::new(pool, "learnings", LearningMapper).with_ttl_cache(CACHE_TTL),
+            search_cache: Arc::new(TtlCache::new(
+                "learnings_search",
+                SEARCH_CACHE_CAPACITY,
+                SEARCH_CACHE_TTL,
+            )),
         }
     }
 
@@ -121,6 +131,9 @@ impl LearningRepo {
             cols.push(("strategy", SqlVal::Str(sj)));
         }
         let result = self.table.insert(&cols).await;
+        if result.is_ok() {
+            self.search_cache.clear();
+        }
         if let Err(error) = &result {
             repo_error(
                 REPO,
@@ -195,12 +208,19 @@ impl LearningRepo {
     }
 
     pub async fn search(&self, query: &str, limit: u32) -> Result<Vec<LearningRecord>> {
+        let cache_key = format!("{query}:{limit}");
+        if let Some(cached) = self.search_cache.get(&cache_key) {
+            return Ok(cached);
+        }
         let q = sql::escape_query(query);
         let cond = format!("QUERY('content:{q}')");
         let result = self
             .table
             .list_where(&cond, "SCORE() DESC", limit as u64)
             .await;
+        if let Ok(ref records) = result {
+            self.search_cache.put(cache_key, records.clone());
+        }
         if let Err(error) = &result {
             repo_error(REPO, "search", serde_json::json!({"query": query}), error);
         }

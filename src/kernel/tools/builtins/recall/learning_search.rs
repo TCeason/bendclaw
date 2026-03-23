@@ -47,7 +47,7 @@ impl Tool for LearningSearchTool {
     }
 
     fn hint(&self) -> &str {
-        "search agent learnings"
+        "search past corrections and workflow patterns — call before starting a task"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

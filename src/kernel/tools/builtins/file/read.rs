@@ -40,7 +40,7 @@ impl Tool for FileReadTool {
     }
 
     fn hint(&self) -> &str {
-        "read file contents"
+        "read file contents — call before file_edit or file_write on existing files"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

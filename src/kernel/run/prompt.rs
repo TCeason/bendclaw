@@ -376,9 +376,10 @@ impl PromptBuilder {
              \nWhen a first-class tool exists for an action, use the tool directly instead of shell.\
              \nUse `web_search` to find current information, news, documentation, or any topic beyond your training data. Be specific with queries for better results.\
              \nWhen `web_search` or `web_fetch` returns content, you MUST include the relevant data in your response — quote specific facts, numbers, or passages. Never say you searched without sharing what you found.\
-             \nUse memory_write for user or session preferences.\
-             \nUse learning_write for reusable agent-level lessons.\
-             \nSearch memory, knowledge, or learning when prior context may help.\
+             \nUse memory_search/memory_write for user or session preferences and facts.\
+             \nUse learning_search/learning_write for agent-level corrections and workflow patterns.\
+             \nUse knowledge_search for known schemas, data sources, and discovered facts.\
+             \nCall memory_search or learning_search at the start of a task to retrieve relevant prior context.\
              \nTo self-upgrade, run `bendclaw update && bendclaw restart` via shell. Warn the user that the session will be interrupted.\n",
         );
 

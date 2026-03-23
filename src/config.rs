@@ -445,17 +445,18 @@ impl BendClawConfig {
         }
     }
 
-    /// Log the full config with sensitive fields redacted.
+    /// Log key config fields with sensitive fields redacted.
     pub fn log_non_defaults(&self) {
-        match serde_json::to_value(self) {
-            Ok(v) => {
-                let redacted = crate::observability::redaction::redact(v);
-                slog!(info, "server", "config", config = %redacted,);
-            }
-            Err(e) => {
-                slog!(warn, "server", "config_serialize_failed", error = %e,);
-            }
-        }
+        let providers: Vec<&str> = self.llm.providers.iter().map(|p| p.name.as_str()).collect();
+        slog!(info, "server", "config",
+            node_id = %self.node_id,
+            bind_addr = %self.server.bind_addr,
+            model = %self.llm.providers.first().map(|p| p.model.as_str()).unwrap_or(""),
+            providers = ?providers,
+            storage_url = %self.storage.databend_api_base_url,
+            log_level = %self.log.level,
+            workspace = %self.workspace.root_dir,
+        );
     }
 
     /// Validate that all required fields are present. Call after all layers applied.

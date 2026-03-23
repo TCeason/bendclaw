@@ -41,11 +41,11 @@ impl Tool for FileEditTool {
     }
 
     fn description(&self) -> &str {
-        "Apply a search-and-replace edit to a file. Accepts absolute paths or paths relative to the working directory."
+        "Apply a search-and-replace edit to a file. old_string must match exactly and appear exactly once."
     }
 
     fn hint(&self) -> &str {
-        "edit a file by string replacement"
+        "edit a file — old_string must be unique; call file_read first"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

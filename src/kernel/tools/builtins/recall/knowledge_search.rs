@@ -47,7 +47,7 @@ impl Tool for KnowledgeSearchTool {
     }
 
     fn hint(&self) -> &str {
-        "search knowledge base"
+        "search known schemas and data sources — call before querying DB or unfamiliar files"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

@@ -55,7 +55,7 @@ impl Tool for WebFetchTool {
     }
 
     fn hint(&self) -> &str {
-        "fetch a URL and return content as markdown"
+        "fetch full page content — use after web_search to read a specific URL"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

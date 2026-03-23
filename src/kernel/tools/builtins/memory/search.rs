@@ -49,7 +49,7 @@ impl Tool for MemorySearchTool {
     }
 
     fn hint(&self) -> &str {
-        "search memory for relevant context"
+        "search user/session memory — call at task start for prior preferences or facts"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

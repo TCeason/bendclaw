@@ -9,7 +9,6 @@ use crate::llm::message::ChatMessage;
 use crate::llm::message::Content;
 use crate::llm::message::ToolCall;
 use crate::llm::provider::mask_api_key;
-use crate::llm::provider::response_headers_value;
 use crate::llm::provider::response_request_id;
 use crate::llm::provider::LLMProvider;
 use crate::llm::provider::LLMResponse;
@@ -118,7 +117,6 @@ impl LLMProvider for OpenAIProvider {
                 api_key = %mask_api_key(&self.api_key),
                 status = %status,
                 request_id = %request_id,
-                headers = %response_headers_value(&headers),
                 response = %truncate_for_log(&text),
             );
             return Err(ErrorCode::llm_request(format!(
@@ -133,7 +131,6 @@ impl LLMProvider for OpenAIProvider {
                 base_url = %self.base_url,
                 api_key = %mask_api_key(&self.api_key),
                 request_id = %request_id,
-                headers = %response_headers_value(&headers),
                 error = %e,
             );
             ErrorCode::llm_request(format!("response parse failed: {e}"))
@@ -144,7 +141,6 @@ impl LLMProvider for OpenAIProvider {
             provider = "openai",
             model,
             request_id = %request_id,
-            headers = %response_headers_value(&headers),
             prompt_tokens = result.usage.as_ref().map(|u| u.prompt_tokens).unwrap_or(0),
             completion_tokens = result.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0),
             finish_reason = ?result.finish_reason,
@@ -241,7 +237,6 @@ async fn drive_stream(
         slog!(info, "llm", "stream_api_error_detail",
             provider = "openai",
             model = %model,
-            headers = %response_headers_value(&headers),
             response = %truncate_for_log(&text),
         );
         return Err(format!("OpenAI API error {status}: {text}"));
@@ -261,7 +256,6 @@ async fn drive_stream(
         provider = "openai",
         model = %model,
         request_id = %request_id,
-        headers = %response_headers_value(&headers),
         content_type = %content_type,
     );
 

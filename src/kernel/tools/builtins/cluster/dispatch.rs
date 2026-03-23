@@ -56,7 +56,7 @@ impl Tool for ClusterDispatchTool {
     }
 
     fn hint(&self) -> &str {
-        "dispatch a subtask to a peer node"
+        "dispatch subtask to peer node — call cluster_nodes first; no nested dispatch"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

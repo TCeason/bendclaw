@@ -41,11 +41,11 @@ impl Tool for FileWriteTool {
     }
 
     fn description(&self) -> &str {
-        "Write contents to a file. Accepts absolute paths or paths relative to the working directory."
+        "Write contents to a file. Overwrites the entire file. For partial changes, use file_edit."
     }
 
     fn hint(&self) -> &str {
-        "create or overwrite a file"
+        "overwrite a file — use file_edit for partial changes"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

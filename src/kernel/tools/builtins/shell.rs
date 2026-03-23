@@ -79,7 +79,7 @@ impl Tool for ShellTool {
     }
 
     fn hint(&self) -> &str {
-        "execute a shell command"
+        "execute shell commands — NOT for file search/read; use grep/glob/file_read instead"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
