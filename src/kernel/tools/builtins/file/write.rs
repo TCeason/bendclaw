@@ -9,6 +9,7 @@ use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 /// Write file contents to the session workspace.
 pub struct FileWriteTool;
@@ -94,20 +95,14 @@ impl Tool for FileWriteTool {
 
         match tokio::fs::write(&full_path, content).await {
             Ok(()) => {
-                tracing::info!(
-                    stage = "file_write",
-                    status = "completed",
-                    path,
-                    bytes = content.len(),
-                    "file_write completed"
-                );
+                slog!(info, "file", "completed", path, bytes = content.len(),);
                 Ok(ToolResult::ok(format!(
                     "Written {} bytes to {path}",
                     content.len()
                 )))
             }
             Err(e) => {
-                tracing::warn!(stage = "file_write", status = "failed", path, error = %e, "file_write failed");
+                slog!(warn, "file", "failed", path, error = %e,);
                 Ok(ToolResult::error(format!("Failed to write file: {e}")))
             }
         }

@@ -12,6 +12,7 @@ use crate::kernel::tools::ToolContext;
 use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 /// List all memories.
 pub struct MemoryListTool {
@@ -71,12 +72,7 @@ impl Tool for MemoryListTool {
 
         match self.storage.list(&ctx.user_id, limit).await {
             Ok(entries) => {
-                tracing::info!(
-                    stage = "memory_list",
-                    status = "completed",
-                    count = entries.len(),
-                    "memory_list completed"
-                );
+                slog!(info, "memory", "completed", count = entries.len(),);
                 if entries.is_empty() {
                     return Ok(ToolResult::ok("No memories found."));
                 }
@@ -95,7 +91,7 @@ impl Tool for MemoryListTool {
                 Ok(ToolResult::ok(output.trim()))
             }
             Err(e) => {
-                tracing::warn!(stage = "memory_list", status = "failed", error = %e, "memory_list failed");
+                slog!(warn, "memory", "failed", error = %e,);
                 Ok(ToolResult::error(format!("Failed to list memories: {e}")))
             }
         }

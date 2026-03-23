@@ -19,6 +19,7 @@ use crate::kernel::channel::plugin::ChannelPlugin;
 use crate::kernel::channel::plugin::InboundEventSender;
 use crate::kernel::channel::plugin::InboundKind;
 use crate::kernel::channel::plugin::ReceiverFactory;
+use crate::observability::log::slog;
 
 pub const TELEGRAM_CHANNEL_TYPE: &str = "telegram";
 const TELEGRAM_API: &str = "https://api.telegram.org";
@@ -121,12 +122,15 @@ impl ReceiverFactory for TelegramReceiverFactory {
             loop {
                 tokio::select! {
                     _ = cancel.cancelled() => {
-                        tracing::info!(account_id = %account_id, "telegram receiver cancelled");
+                        slog!(info, "channel", "cancelled", account_id = %account_id,);
                         return;
                     }
                     result = poll_updates(&client, &config, &mut offset, &event_tx) => {
                         if let Err(e) = result {
-                            tracing::error!(account_id = %account_id, error = %e, "telegram poll error, retrying");
+                            slog!(error, "channel", "poll_error",
+                                account_id = %account_id,
+                                error = %e,
+                            );
                             tokio::select! {
                                 _ = cancel.cancelled() => return,
                                 _ = tokio::time::sleep(Duration::from_secs(RETRY_DELAY_SECS)) => {}
@@ -258,12 +262,14 @@ impl ChannelOutbound for TelegramOutbound {
             .send()
             .await
             .map_err(|e| ErrorCode::internal(format!("telegram setMessageReaction: {e}")))?;
-        tracing::info!(
+        slog!(
+            info,
+            "channel",
+            "sent",
             channel_type = "telegram",
             chat_id,
             message_id = msg_id,
             emoji,
-            "reaction sent"
         );
         Ok(())
     }
@@ -394,10 +400,7 @@ async fn poll_updates(
                 username: None,
             });
             if !is_allowed(&config.allow_from, &user) {
-                tracing::warn!(
-                    sender_id = user.id,
-                    "telegram: sender not in allow_from, denied"
-                );
+                slog!(warn, "channel", "denied", sender_id = user.id,);
                 continue;
             }
 
@@ -423,7 +426,7 @@ async fn poll_updates(
             if let crate::kernel::channel::delivery::backpressure::BackpressureResult::Rejected =
                 event_tx.send(event)
             {
-                tracing::warn!("telegram: event receiver dropped");
+                slog!(warn, "channel", "dropped",);
             }
         }
     }
@@ -453,7 +456,7 @@ async fn send_reaction(
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        tracing::warn!(status = %status, body, "telegram setMessageReaction failed");
+        slog!(warn, "channel", "reaction_failed", status = %status, body,);
     }
     Ok(())
 }

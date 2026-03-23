@@ -1,6 +1,7 @@
 //! Background writer for channel messages — fire-and-forget persistence.
 
 use crate::kernel::writer::BackgroundWriter;
+use crate::observability::log::slog;
 use crate::storage::dal::channel_message::record::ChannelMessageRecord;
 use crate::storage::dal::channel_message::repo::ChannelMessageRepo;
 
@@ -18,7 +19,7 @@ pub fn spawn_channel_message_writer() -> ChannelMessageWriter {
         match op {
             ChannelMessageOp::Insert { repo, record } => {
                 if let Err(e) = repo.insert(&record).await {
-                    tracing::warn!(error = %e, "channel_message writer: insert failed");
+                    slog!(warn, "channel", "insert_failed", error = %e,);
                 }
             }
         }

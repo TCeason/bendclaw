@@ -8,6 +8,7 @@ use crate::kernel::tools::ToolContext;
 use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 const MAX_RESULTS: usize = 500;
 
@@ -122,13 +123,13 @@ impl Tool for GlobTool {
         if truncated {
             output.push_str(&format!("\n\n(truncated at {MAX_RESULTS} results)"));
         }
-        tracing::info!(
-            stage = "glob",
-            status = "completed",
+        slog!(
+            info,
+            "search",
+            "completed",
             pattern,
             path,
             files = result.len(),
-            "glob completed"
         );
         Ok(ToolResult::ok(output))
     }

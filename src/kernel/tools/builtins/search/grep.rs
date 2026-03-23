@@ -8,6 +8,7 @@ use crate::kernel::tools::ToolContext;
 use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 const MAX_MATCHES: usize = 200;
 const MAX_FILE_SIZE: u64 = 1_048_576; // 1MB
@@ -154,13 +155,13 @@ impl Tool for GrepTool {
         if truncated {
             output.push_str(&format!("\n\n(truncated at {MAX_MATCHES} matches)"));
         }
-        tracing::info!(
-            stage = "grep",
-            status = "completed",
+        slog!(
+            info,
+            "search",
+            "completed",
             pattern,
             path,
             matches = result.len(),
-            "grep completed"
         );
         Ok(ToolResult::ok(output))
     }

@@ -16,6 +16,7 @@ use super::http::RunsQuery;
 use super::stream;
 use crate::kernel::run::event::Delta;
 use crate::kernel::run::event::Event;
+use crate::observability::log::slog;
 use crate::service::context::RequestContext;
 use crate::service::error::Result;
 use crate::service::error::ServiceError;
@@ -122,10 +123,8 @@ pub async fn execute_run(
     continue_from_run_id: Option<String>,
     is_remote_dispatch: bool,
 ) -> Result<Response> {
-    tracing::info!(
-        stage = "service",
+    slog!(info, "service", "started",
         action = "execute_run",
-        status = "started",
         trace_id = %ctx.trace_id,
         agent_id = %agent_id,
         session_id = %session_id,
@@ -134,7 +133,6 @@ pub async fn execute_run(
         stream_output,
         has_parent_run = parent_run_id.is_some(),
         has_continue_from = continue_from_run_id.is_some(),
-        "service command"
     );
 
     let session = state
@@ -158,9 +156,8 @@ pub async fn execute_run(
                 parent_run_id
             }
             None => {
-                tracing::info!(
+                slog!(info, "service", "parent_run_external",
                     parent_run_id = %prid,
-                    "parent_run_id not found in local agent database, preserving external lineage"
                 );
                 parent_run_id
             }
@@ -181,16 +178,13 @@ pub async fn execute_run(
         .await?;
     let run_id = run_stream.run_id().to_string();
 
-    tracing::info!(
-        stage = "service",
+    slog!(info, "service", "run_created",
         action = "execute_run",
-        status = "run_created",
         trace_id = %ctx.trace_id,
         agent_id = %agent_id,
         session_id = %session_id,
         run_id = %run_id,
         stream_output,
-        "service command"
     );
 
     if !stream_output {
@@ -221,15 +215,12 @@ pub async fn execute_run(
             {
                 return;
             }
-            tracing::info!(
-                stage = "service",
+            slog!(info, "service", "run_continued",
                 action = "execute_run",
-                status = "continued",
                 agent_id = %spawned_agent_id,
                 session_id = %spawned_session_id,
                 run_id = %spawned_run_id,
                 from_run_id = %from,
-                "service command"
             );
         }
 
@@ -241,14 +232,11 @@ pub async fn execute_run(
                 &event,
             ) {
                 if tx.send(Ok(sse_event)).await.is_err() {
-                    tracing::warn!(
-                        stage = "service",
+                    slog!(warn, "service", "sse_client_closed",
                         action = "execute_run",
-                        status = "sse_client_closed",
                         agent_id = %spawned_agent_id,
                         session_id = %spawned_session_id,
                         run_id = %spawned_run_id,
-                        "service command"
                     );
                     break;
                 }
@@ -264,15 +252,12 @@ pub async fn execute_run(
             );
             payload["content"] = serde_json::Value::String(err.to_string());
             let _ = tx.send(Ok(stream::encode_sse("RunError", payload))).await;
-            tracing::error!(
-                stage = "service",
+            slog!(error, "service", "stream_failed",
                 action = "execute_run",
-                status = "stream_failed",
                 agent_id = %spawned_agent_id,
                 session_id = %spawned_session_id,
                 run_id = %spawned_run_id,
                 error = %err,
-                "service command"
             );
         }
     });

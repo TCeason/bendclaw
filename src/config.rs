@@ -34,6 +34,8 @@ use anyhow::Context;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::observability::log::slog;
+
 /// Dot-directory name under `$HOME` for all bendclaw state, config, and logs.
 pub const EVOTAI_DIR_NAME: &str = ".evotai";
 
@@ -448,10 +450,10 @@ impl BendClawConfig {
         match serde_json::to_value(self) {
             Ok(v) => {
                 let redacted = crate::observability::redaction::redact(v);
-                tracing::debug!("config: {redacted}");
+                slog!(info, "server", "config", config = %redacted,);
             }
             Err(e) => {
-                tracing::warn!("failed to serialize config: {e}");
+                slog!(warn, "server", "config_serialize_failed", error = %e,);
             }
         }
     }

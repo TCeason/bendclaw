@@ -12,6 +12,7 @@ use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 /// Discover available peer nodes in the cluster.
 pub struct ClusterNodesTool {
@@ -65,38 +66,29 @@ impl Tool for ClusterNodesTool {
         _args: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolResult> {
-        tracing::info!(
-            stage = "cluster_nodes",
-            status = "started",
+        slog!(info, "cluster", "started",
             user_id = %ctx.user_id,
             agent_id = %ctx.agent_id,
             run_id = %ctx.run_id,
-            "cluster_nodes started"
         );
         match self.service.refresh_peers().await {
             Ok(nodes) => {
                 let json =
                     serde_json::to_string_pretty(&nodes).unwrap_or_else(|_| "[]".to_string());
-                tracing::info!(
-                    stage = "cluster_nodes",
-                    status = "completed",
+                slog!(info, "cluster", "completed",
                     user_id = %ctx.user_id,
                     agent_id = %ctx.agent_id,
                     run_id = %ctx.run_id,
                     node_count = nodes.len(),
-                    "cluster_nodes completed"
                 );
                 Ok(ToolResult::ok(json))
             }
             Err(e) => {
-                tracing::warn!(
-                    stage = "cluster_nodes",
-                    status = "failed",
+                slog!(warn, "cluster", "failed",
                     user_id = %ctx.user_id,
                     agent_id = %ctx.agent_id,
                     run_id = %ctx.run_id,
                     error = %e,
-                    "cluster_nodes failed"
                 );
                 Ok(ToolResult::error(format!("Failed to discover nodes: {e}")))
             }

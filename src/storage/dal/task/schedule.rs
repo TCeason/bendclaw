@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use crate::base::ErrorCode;
 use crate::base::Result as BaseResult;
+use crate::observability::log::slog;
 use crate::storage::sql;
 
 /// Parse a cron expression, auto-padding 5-field user input to the 7-field
@@ -72,7 +73,7 @@ impl TaskSchedule {
                 let schedule = match parse_cron(expr) {
                     Ok(s) => s,
                     Err(e) => {
-                        tracing::warn!(cron_expr = expr, error = %e, "invalid cron expression");
+                        slog!(warn, "task", "invalid_cron", cron_expr = expr, error = %e,);
                         return None;
                     }
                 };

@@ -8,6 +8,7 @@ use crate::base::Result;
 use crate::kernel::channel::plugin::ChannelOutbound;
 use crate::kernel::run::event::Delta;
 use crate::kernel::run::event::Event;
+use crate::observability::log::slog;
 
 pub struct StreamDeliveryConfig {
     /// Minimum interval between edits (ms).
@@ -70,7 +71,7 @@ impl StreamDelivery {
                                 last_edit = Instant::now();
                             }
                             Err(e) => {
-                                tracing::warn!(error = %e, "send_draft failed");
+                                slog!(warn, "channel", "send_draft_failed", error = %e,);
                             }
                         }
                     } else if draft_msg_id.is_some()
@@ -124,7 +125,7 @@ impl StreamDelivery {
                     .finalize_draft(&self.channel_config, &self.chat_id, msg_id, &final_text)
                     .await
                 {
-                    tracing::warn!(error = %e, "finalize_draft failed");
+                    slog!(warn, "channel", "finalize_draft_failed", error = %e,);
                 }
             }
         }
@@ -148,7 +149,7 @@ impl StreamDelivery {
             .update_draft(&self.channel_config, &self.chat_id, msg_id, &display)
             .await
         {
-            tracing::warn!(error = %e, "update_draft failed");
+            slog!(warn, "channel", "update_draft_failed", error = %e,);
             *last_edit = Instant::now();
             return Err(());
         }

@@ -9,6 +9,7 @@ use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 /// Search-and-replace edit within a file in the session workspace.
 pub struct FileEditTool;
@@ -112,16 +113,11 @@ impl Tool for FileEditTool {
 
         match tokio::fs::write(&full_path, &new_content).await {
             Ok(()) => {
-                tracing::info!(
-                    stage = "file_edit",
-                    status = "completed",
-                    path,
-                    "file_edit completed"
-                );
+                slog!(info, "file", "completed", path,);
                 Ok(ToolResult::ok(format!("Edited {path} successfully")))
             }
             Err(e) => {
-                tracing::warn!(stage = "file_edit", status = "failed", path, error = %e, "file_edit failed");
+                slog!(warn, "file", "failed", path, error = %e,);
                 Ok(ToolResult::error(format!("Failed to write file: {e}")))
             }
         }

@@ -21,6 +21,7 @@ use super::routes;
 use super::state::AppState;
 use super::v1;
 use crate::config::AuthConfig;
+use crate::observability::log::slog;
 
 const TRACE_HEADER: &str = "x-request-id";
 const USER_HEADER: &str = "x-user-id";
@@ -106,13 +107,11 @@ async fn log_http_request(mut req: Request<Body>, next: Next) -> Response {
     let code = status.as_u16();
 
     if status.is_server_error() {
-        tracing::error!(code, %method, %path, elapsed_ms, content_length, %trace_id, %user_id, "http request");
+        slog!(error, "service", "http_request", code, method = %method, path = %path, elapsed_ms, content_length, trace_id = %trace_id, user_id = %user_id,);
     } else if status.is_client_error() {
-        tracing::warn!(code, %method, %path, elapsed_ms, content_length, %trace_id, %user_id, "http request");
-    } else if elapsed_ms >= 1000 {
-        tracing::info!(code, %method, %path, elapsed_ms, content_length, %trace_id, %user_id, "http request");
+        slog!(warn, "service", "http_request", code, method = %method, path = %path, elapsed_ms, content_length, trace_id = %trace_id, user_id = %user_id,);
     } else {
-        tracing::debug!(code, %method, %path, elapsed_ms, content_length, %trace_id, %user_id, "http request");
+        slog!(info, "service", "http_request", code, method = %method, path = %path, elapsed_ms, content_length, trace_id = %trace_id, user_id = %user_id,);
     }
 
     response

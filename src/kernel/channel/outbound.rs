@@ -4,6 +4,7 @@ use super::ChannelRegistry;
 use crate::base::truncate_bytes_on_char_boundary;
 use crate::base::ErrorCode;
 use crate::base::Result;
+use crate::observability::log::slog;
 use crate::storage::ChannelAccountRecord;
 
 pub async fn send_text_to_account(
@@ -36,7 +37,7 @@ pub async fn send_text_to_account(
     let started = Instant::now();
     let result = outbound.send_text(&account.config, chat_id, &payload).await;
     match &result {
-        Ok(message_id) => tracing::info!(
+        Ok(message_id) => slog!(info, "channel", "sent",
             channel_type = %account.channel_type,
             account_id = %account.id,
             external_account_id = %account.account_id,
@@ -45,9 +46,8 @@ pub async fn send_text_to_account(
             message_id,
             output_bytes = payload.len(),
             elapsed_ms = started.elapsed().as_millis() as u64,
-            "channel outbound sent"
         ),
-        Err(error) => tracing::warn!(
+        Err(error) => slog!(warn, "channel", "failed",
             channel_type = %account.channel_type,
             account_id = %account.id,
             external_account_id = %account.account_id,
@@ -56,7 +56,6 @@ pub async fn send_text_to_account(
             output_bytes = payload.len(),
             elapsed_ms = started.elapsed().as_millis() as u64,
             error = %error,
-            "channel outbound failed"
         ),
     }
     result

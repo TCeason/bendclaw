@@ -12,6 +12,7 @@ use crate::kernel::tools::ToolContext;
 use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 /// Maximum skill content size returned to the LLM (64 KiB).
 /// Matches ironclaw's `MAX_PROMPT_FILE_SIZE`.
@@ -74,45 +75,25 @@ impl Tool for SkillReadTool {
         ctx: &ToolContext,
     ) -> Result<ToolResult> {
         let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-        tracing::info!(
-            stage = "skill_read",
-            status = "started",
-            path,
-            "skill_read started"
-        );
+        slog!(info, "skill", "started", path,);
 
         match self.store.read_skill(&ctx.agent_id, path) {
             Some(content) => {
                 let raw_size = content.len();
-                tracing::info!(
-                    stage = "skill_read",
-                    status = "loaded",
-                    path,
-                    raw_size,
-                    "skill_read loaded"
-                );
+                slog!(info, "skill", "loaded", path, raw_size,);
 
                 let sanitized = sanitize_skill_content(&content);
                 let sanitized_size = sanitized.content.len();
                 if !sanitized.warnings.is_empty() {
                     let labels: Vec<&str> = sanitized.warnings.iter().map(|w| w.pattern).collect();
-                    tracing::warn!(
-                        stage = "skill_read",
-                        status = "sanitized",
+                    slog!(warn, "skill", "sanitized",
                         path,
                         raw_size,
                         sanitized_size,
                         patterns = ?labels,
-                        "skill_read sanitized"
                     );
                 } else {
-                    tracing::info!(
-                        stage = "skill_read",
-                        status = "clean",
-                        path,
-                        sanitized_size,
-                        "skill_read clean"
-                    );
+                    slog!(info, "skill", "clean", path, sanitized_size,);
                 }
 
                 let output = if sanitized_size > MAX_SKILL_CONTENT_BYTES {
@@ -122,37 +103,26 @@ impl Tool for SkillReadTool {
                     }
                     let truncated = &sanitized.content[..end];
                     let dropped = sanitized_size - end;
-                    tracing::warn!(
-                        stage = "skill_read",
-                        status = "truncated",
+                    slog!(
+                        warn,
+                        "skill",
+                        "truncated",
                         path,
                         original_size = sanitized_size,
                         truncated_size = end,
                         dropped_bytes = dropped,
                         max = MAX_SKILL_CONTENT_BYTES,
-                        "skill_read truncated"
                     );
                     format!("{truncated}\n\n[... truncated at {end}/{sanitized_size} bytes ...]")
                 } else {
                     sanitized.content
                 };
 
-                tracing::info!(
-                    stage = "skill_read",
-                    status = "completed",
-                    path,
-                    output_size = output.len(),
-                    "skill_read completed"
-                );
+                slog!(info, "skill", "completed", path, output_size = output.len(),);
                 Ok(ToolResult::ok(output))
             }
             None => {
-                tracing::warn!(
-                    stage = "skill_read",
-                    status = "not_found",
-                    path,
-                    "skill_read not_found"
-                );
+                slog!(warn, "skill", "not_found", path,);
                 Ok(ToolResult::ok(format!("Skill not found: {path}")))
             }
         }

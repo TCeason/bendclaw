@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::kernel::channel::account::ChannelAccount;
 use crate::kernel::channel::supervisor::ChannelSupervisor;
+use crate::observability::log::slog;
 
 pub struct HealthMonitorConfig {
     pub poll_interval: Duration,
@@ -51,10 +52,9 @@ impl ChannelHealthMonitor {
 
             let count = restart_counts.entry(id.clone()).or_insert(0);
             if *count >= self.config.max_restarts {
-                tracing::error!(
+                slog!(error, "channel", "max_restarts_exceeded",
                     channel_account_id = %id,
                     restarts = *count,
-                    "health_monitor: max restarts exceeded, giving up"
                 );
                 continue;
             }
@@ -66,10 +66,9 @@ impl ChannelHealthMonitor {
                 }
             }
 
-            tracing::warn!(
+            slog!(warn, "channel", "restarting",
                 channel_account_id = %id,
                 attempt = *count + 1,
-                "health_monitor: receiver dead, restarting"
             );
 
             match self.supervisor.start(account).await {
@@ -78,10 +77,9 @@ impl ChannelHealthMonitor {
                     last_restart.insert(id.clone(), now);
                 }
                 Err(e) => {
-                    tracing::error!(
+                    slog!(error, "channel", "restart_failed",
                         channel_account_id = %id,
                         error = %e,
-                        "health_monitor: restart failed"
                     );
                     *count += 1;
                     last_restart.insert(id.clone(), now);
@@ -103,7 +101,7 @@ impl ChannelHealthMonitor {
             loop {
                 tokio::select! {
                     _ = cancel.cancelled() => {
-                        tracing::info!("health_monitor: cancelled");
+                        slog!(info, "channel", "cancelled",);
                         return;
                     }
                     _ = tokio::time::sleep(self.config.poll_interval) => {

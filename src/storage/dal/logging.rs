@@ -1,3 +1,5 @@
+use crate::observability::log::slog;
+
 pub fn repo_error(
     repo: &str,
     action: &str,
@@ -5,13 +7,10 @@ pub fn repo_error(
     error: &impl std::fmt::Display,
 ) {
     let payload_str = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string());
-    tracing::error!(
-        stage = "storage_repo",
+    slog!(error, "storage", "failed",
         repo,
         action,
-        status = "failed",
         error = %error,
         payload = %payload_str,
-        "storage repo"
     );
 }

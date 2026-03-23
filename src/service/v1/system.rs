@@ -5,6 +5,7 @@ use axum::Json;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::observability::log::slog;
 use crate::service::state::AppState;
 
 #[derive(Deserialize, Default)]
@@ -43,10 +44,16 @@ pub async fn upgrade(
 
     let download_url = format!("{base_url}/{target}");
 
-    tracing::info!(%download_url, %target, "upgrade: downloading binary");
+    slog!(info, "server", "upgrade_downloading",
+        download_url = %download_url,
+        target = %target,
+    );
 
     let archive = download_binary(&download_url).await.map_err(|e| {
-        tracing::error!(%download_url, error = %e, "upgrade: download failed");
+        slog!(error, "server", "upgrade_download_failed",
+            download_url = %download_url,
+            error = %e,
+        );
         (
             StatusCode::BAD_GATEWAY,
             format!("download failed from {download_url}: {e}"),
@@ -74,10 +81,12 @@ pub async fn upgrade(
         )
     })?;
 
-    tracing::info!(
+    slog!(
+        info,
+        "server",
+        "upgrade_completed",
         from = from_version.trim_start_matches('v'),
         to = to_version.trim_start_matches('v'),
-        "upgrade: binary replaced, scheduling shutdown"
     );
 
     let shutdown_token = state.shutdown_token.clone();

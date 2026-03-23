@@ -13,6 +13,7 @@ use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 /// Fetch the contents of a URL.
 pub struct WebFetchTool;
@@ -101,7 +102,7 @@ impl Tool for WebFetchTool {
         let resp = match client.get(url).send().await {
             Ok(r) => r,
             Err(e) => {
-                tracing::warn!(stage = "web_fetch", status = "failed", url, error = %e, "web_fetch failed");
+                slog!(warn, "web", "failed", url, error = %e,);
                 return Ok(ToolResult::error(format!("Request failed: {e}")));
             }
         };
@@ -123,7 +124,7 @@ impl Tool for WebFetchTool {
         };
 
         let text = String::from_utf8_lossy(&body);
-        tracing::info!(stage = "web_fetch", status = "completed", url, http_status = %status, body_len = body.len(), "web_fetch completed");
+        slog!(info, "web", "completed", url, http_status = %status, body_len = body.len(),);
 
         if status.is_success() {
             let output = if content_type.contains("text/html") {

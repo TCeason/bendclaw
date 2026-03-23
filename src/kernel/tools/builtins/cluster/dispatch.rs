@@ -13,6 +13,7 @@ use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 /// Dispatch a subtask to a remote bendclaw node.
 pub struct ClusterDispatchTool {
@@ -104,31 +105,25 @@ impl Tool for ClusterDispatchTool {
             _ => return Ok(ToolResult::error("Missing or empty 'task' parameter")),
         };
         let started = std::time::Instant::now();
-        tracing::info!(
-            stage = "cluster_dispatch",
-            status = "started",
+        slog!(info, "cluster", "started",
             user_id = %ctx.user_id,
             agent_id = %ctx.agent_id,
             run_id = %ctx.run_id,
             node_id,
             remote_agent_id = agent_id,
             task_bytes = task.len(),
-            "cluster_dispatch started"
         );
 
         // Resolve node_id to endpoint from trusted peer cache
         let endpoint = match self.service.resolve_endpoint(node_id) {
             Ok(ep) => ep,
             Err(e) => {
-                tracing::warn!(
-                    stage = "cluster_dispatch",
-                    status = "resolve_failed",
+                slog!(warn, "cluster", "resolve_failed",
                     user_id = %ctx.user_id,
                     agent_id = %ctx.agent_id,
                     run_id = %ctx.run_id,
                     node_id,
                     error = %e,
-                    "cluster_dispatch resolve_failed"
                 );
                 return Ok(ToolResult::error(format!("{e}")));
             }
@@ -153,9 +148,7 @@ impl Tool for ClusterDispatchTool {
         {
             Ok(dispatch_id) => {
                 let result = json!({ "dispatch_id": dispatch_id });
-                tracing::info!(
-                    stage = "cluster_dispatch",
-                    status = "completed",
+                slog!(info, "cluster", "completed",
                     user_id = %ctx.user_id,
                     agent_id = %ctx.agent_id,
                     run_id = %ctx.run_id,
@@ -164,14 +157,11 @@ impl Tool for ClusterDispatchTool {
                     remote_agent_id = agent_id,
                     dispatch_id = %result["dispatch_id"].as_str().unwrap_or_default(),
                     elapsed_ms = started.elapsed().as_millis() as u64,
-                    "cluster_dispatch completed"
                 );
                 Ok(ToolResult::ok(result.to_string()))
             }
             Err(e) => {
-                tracing::warn!(
-                    stage = "cluster_dispatch",
-                    status = "failed",
+                slog!(warn, "cluster", "failed",
                     user_id = %ctx.user_id,
                     agent_id = %ctx.agent_id,
                     run_id = %ctx.run_id,
@@ -180,7 +170,6 @@ impl Tool for ClusterDispatchTool {
                     remote_agent_id = agent_id,
                     elapsed_ms = started.elapsed().as_millis() as u64,
                     error = %e,
-                    "cluster_dispatch failed"
                 );
                 Ok(ToolResult::error(format!("Dispatch failed: {e}")))
             }

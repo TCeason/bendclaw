@@ -1,9 +1,8 @@
-use tracing;
-
 use super::record::UsageRecord;
 use super::types::CostSummary;
 use super::types::DailyUsage;
 use crate::base::Result;
+use crate::observability::log::slog;
 use crate::storage::pool::Pool;
 use crate::storage::sql;
 use crate::storage::sql::SqlVal;
@@ -89,10 +88,20 @@ impl UsageRepo {
 
         let result = self.table.insert_batch(columns, &rows).await;
         if let Err(error) = &result {
-            tracing::error!(count = records.len(), error = %error, "usage batch save failed");
+            slog!(error, "storage", "batch_save_failed",
+                repo = "usage",
+                count = records.len(),
+                error = %error,
+            );
         }
         result?;
-        tracing::debug!(count = records.len(), "usage batch saved");
+        slog!(
+            info,
+            "storage",
+            "batch_saved",
+            repo = "usage",
+            count = records.len(),
+        );
         Ok(())
     }
 
@@ -143,11 +152,14 @@ impl UsageRepo {
              COALESCE(SUM(cost), 0), COUNT(*)";
         let row = self.table.aggregate(select, condition).await?;
         let summary = parse_cost_summary(row)?;
-        tracing::info!(
+        slog!(
+            info,
+            "storage",
+            "summary_queried",
+            repo = "usage",
             records = summary.record_count,
             total_tokens = summary.total_tokens,
             total_cost = summary.total_cost,
-            "usage summary queried"
         );
         Ok(summary)
     }

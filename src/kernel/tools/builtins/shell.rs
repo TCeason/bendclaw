@@ -12,6 +12,7 @@ use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 use crate::storage::dal::variable::VariableRepo;
 
 /// Execute a shell command in the session workspace directory.
@@ -115,15 +116,15 @@ impl Tool for ShellTool {
             });
         }
 
-        tracing::info!(
-            stage = "shell",
-            status = "completed",
+        slog!(
+            info,
+            "shell",
+            "completed",
             command,
             exit_code = output.exit_code,
             stdout_len = output.stdout.len(),
             stderr_len = output.stderr.len(),
             variable_count = ctx.workspace.build_env().len(),
-            "shell completed"
         );
 
         Ok(ToolResult {

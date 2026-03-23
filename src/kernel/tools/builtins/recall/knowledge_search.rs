@@ -11,6 +11,7 @@ use crate::kernel::tools::ToolContext;
 use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 pub struct KnowledgeSearchTool {
     store: Arc<RecallStore>,
@@ -84,13 +85,7 @@ impl Tool for KnowledgeSearchTool {
 
         match self.store.knowledge().search(query, max_results).await {
             Ok(results) => {
-                tracing::info!(
-                    stage = "knowledge_search",
-                    status = "completed",
-                    query,
-                    results = results.len(),
-                    "knowledge_search completed"
-                );
+                slog!(info, "recall", "completed", query, results = results.len(),);
                 if results.is_empty() {
                     return Ok(ToolResult::ok("No knowledge entries found."));
                 }
@@ -104,7 +99,7 @@ impl Tool for KnowledgeSearchTool {
                 Ok(ToolResult::ok(output.trim()))
             }
             Err(e) => {
-                tracing::warn!(stage = "knowledge_search", status = "failed", query, error = %e, "knowledge_search failed");
+                slog!(warn, "recall", "failed", query, error = %e,);
                 Ok(ToolResult::error(format!("Search failed: {e}")))
             }
         }

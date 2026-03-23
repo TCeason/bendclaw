@@ -15,6 +15,7 @@ use crate::kernel::tools::ToolContext;
 use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 pub struct SkillRemoveTool {
     store_factory: Arc<DatabendSkillRepositoryFactory>,
@@ -100,7 +101,7 @@ impl Tool for SkillRemoveTool {
 
         self.store.evict(&name, &ctx.agent_id);
 
-        tracing::info!(stage = "skill_remove", status = "completed", skill = %name, "skill_remove completed");
+        slog!(info, "skill", "completed", skill = %name,);
         Ok(ToolResult::ok(format!("Skill '{name}' removed")))
     }
 }

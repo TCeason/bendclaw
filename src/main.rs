@@ -203,20 +203,20 @@ async fn cmd_run(
     // Graceful shutdown with 60s hard deadline; second Ctrl+C forces exit.
     let force_exit = tokio::spawn(async {
         let _ = tokio::signal::ctrl_c().await;
-        tracing::warn!("second Ctrl+C received, forcing exit");
+        tracing::warn!(stage = "server", status = "force_exit", "server force_exit");
         std::process::exit(1);
     });
 
     let shutdown_deadline = std::time::Duration::from_secs(60);
     if tokio::time::timeout(shutdown_deadline, async {
         if let Err(e) = runtime.shutdown().await {
-            tracing::warn!(error = %e, "runtime shutdown error");
+            tracing::warn!(stage = "server", status = "shutdown_error", error = %e, "server shutdown_error");
         }
     })
     .await
     .is_err()
     {
-        tracing::error!("shutdown exceeded 60s deadline, forcing exit");
+        tracing::error!(stage = "server", status = "shutdown_timeout", "server shutdown_timeout");
         std::process::exit(1);
     }
 

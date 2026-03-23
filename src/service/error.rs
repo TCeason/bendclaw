@@ -4,6 +4,8 @@ use axum::response::Response;
 use axum::Json;
 use serde_json::json;
 
+use crate::observability::log::slog;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
     #[error("agent not found: {0}")]
@@ -31,31 +33,30 @@ impl From<crate::base::ErrorCode> for ServiceError {
 
         match e.code {
             ErrorCode::NOT_FOUND | ErrorCode::SKILL_NOT_FOUND => {
-                tracing::warn!(code = e.code, name = e.name, error = %e, "resource not found");
+                slog!(warn, "service", "not_found", code = e.code, name = e.name, error = %e,);
                 Self::AgentNotFound(e.message)
             }
             ErrorCode::INVALID_INPUT
             | ErrorCode::SKILL_VALIDATION
             | ErrorCode::SKILL_REQUIREMENTS => {
-                tracing::warn!(code = e.code, name = e.name, error = %e, "bad request");
+                slog!(warn, "service", "bad_request", code = e.code, name = e.name, error = %e,);
                 Self::BadRequest(e.message)
             }
             ErrorCode::DENIED => {
-                tracing::warn!(code = e.code, name = e.name, error = %e, "forbidden");
+                slog!(warn, "service", "forbidden", code = e.code, name = e.name, error = %e,);
                 Self::Forbidden(e.message)
             }
             ErrorCode::LLM_RATE_LIMIT | ErrorCode::QUOTA_EXCEEDED => {
-                tracing::warn!(code = e.code, name = e.name, error = %e, "rate limited");
+                slog!(warn, "service", "rate_limited", code = e.code, name = e.name, error = %e,);
                 Self::RateLimited(e.message)
             }
             _ => {
                 let display = format!("[{}] {}: {}", e.code, e.name, e.message);
-                tracing::error!(
+                slog!(error, "service", "internal_error",
                     code = e.code,
                     name = e.name,
                     error = %e,
                     span_trace = %tracing_error::SpanTrace::capture(),
-                    "internal error"
                 );
                 Self::Internal(display)
             }
@@ -68,7 +69,7 @@ impl IntoResponse for ServiceError {
         let (status, msg) = match &self {
             Self::AgentNotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
             Self::BadRequest(m) => {
-                tracing::warn!(error = %m, "bad request");
+                slog!(warn, "service", "bad_request", error = %m,);
                 (StatusCode::BAD_REQUEST, self.to_string())
             }
             Self::Forbidden(_) => (StatusCode::FORBIDDEN, self.to_string()),

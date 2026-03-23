@@ -14,6 +14,8 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use crate::observability::log::slog;
+
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(500);
 
 struct Inner<Op> {
@@ -89,17 +91,14 @@ impl<Op: Send + 'static> BackgroundWriter<Op> {
             return;
         }
         if self.inner.tx.try_send(op).is_err() {
-            tracing::warn!(
-                writer = self.inner.name,
-                "background writer queue full, dropping op"
-            );
+            slog!(warn, "writer", "queue_full", writer = self.inner.name,);
         }
     }
 
     /// Graceful shutdown: signal the drain loop and wait (with timeout).
     pub async fn shutdown(&self) {
         self.inner.shutting_down.store(true, Ordering::Relaxed);
-        tracing::info!(writer = self.inner.name, "background writer shutting down");
+        slog!(info, "writer", "shutting_down", writer = self.inner.name,);
 
         let Some(mut handle) = self.inner.handle.lock().take() else {
             return;
@@ -113,10 +112,12 @@ impl<Op: Send + 'static> BackgroundWriter<Op> {
             .await
             .is_err()
         {
-            tracing::warn!(
+            slog!(
+                warn,
+                "writer",
+                "shutdown_timeout",
                 writer = self.inner.name,
                 timeout_ms = DEFAULT_SHUTDOWN_TIMEOUT.as_millis() as u64,
-                "background writer shutdown timed out, aborting"
             );
             handle.abort();
             let _ = handle.await;
@@ -137,12 +138,12 @@ where
         match rx.recv().await {
             Some(op) => {
                 if !handler(op).await {
-                    tracing::info!(writer = name, "background writer stopped by handler");
+                    slog!(info, "writer", "stopped", writer = name,);
                     return;
                 }
             }
             None => {
-                tracing::info!(writer = name, "background writer channel closed, stopping");
+                slog!(info, "writer", "stopped", writer = name,);
                 return;
             }
         }

@@ -12,6 +12,7 @@ use crate::kernel::tools::ToolContext;
 use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 /// Search memories by query.
 pub struct MemorySearchTool {
@@ -102,13 +103,7 @@ impl Tool for MemorySearchTool {
 
         match self.storage.search(query, &ctx.user_id, opts).await {
             Ok(results) => {
-                tracing::info!(
-                    stage = "memory_search",
-                    status = "completed",
-                    query,
-                    results = results.len(),
-                    "memory_search completed"
-                );
+                slog!(info, "memory", "completed", query, results = results.len(),);
                 if results.is_empty() {
                     return Ok(ToolResult::ok("No memories found."));
                 }
@@ -122,7 +117,7 @@ impl Tool for MemorySearchTool {
                 Ok(ToolResult::ok(output.trim()))
             }
             Err(e) => {
-                tracing::warn!(stage = "memory_search", status = "failed", query, error = %e, "memory_search failed");
+                slog!(warn, "memory", "failed", query, error = %e,);
                 Ok(ToolResult::error(format!("Search failed: {e}")))
             }
         }

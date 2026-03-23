@@ -189,7 +189,7 @@ impl Runtime {
 
     pub fn reload_llm(&self, new_llm: Arc<dyn LLMProvider>) {
         *self.llm.write() = new_llm;
-        tracing::info!("LLM provider hot-reloaded");
+        slog!(info, "runtime", "reloaded",);
     }
 
     /// Resolve the LLM provider for a specific agent.
@@ -249,11 +249,13 @@ impl Runtime {
         self.agent_llms.write().remove(agent_id);
         let result = self.sessions.invalidate_by_agent(agent_id);
         if result.evicted_idle > 0 || result.marked_running > 0 {
-            tracing::info!(
+            slog!(
+                info,
+                "runtime",
+                "invalidated",
                 agent_id,
                 evicted_idle = result.evicted_idle,
                 marked_running = result.marked_running,
-                "invalidated sessions after LLM config change"
             );
         }
     }
@@ -284,3 +286,4 @@ impl Runtime {
 }
 
 pub use crate::kernel::validate_agent_id;
+use crate::observability::log::slog;

@@ -13,6 +13,7 @@ use super::sql;
 use super::sql::Sql;
 use super::sql::SqlVal;
 use crate::base::Result;
+use crate::observability::log::slog;
 
 const DEFAULT_CACHE_CAPACITY: usize = 128;
 
@@ -73,11 +74,10 @@ impl<M: RowMapper> DatabendTable<M> {
             return None;
         }
         let rows = self.cache.as_ref().and_then(|c| c.get(sql));
-        tracing::debug!(
+        slog!(info, "storage", "cache_lookup",
             table = %self.table,
             sql_len = sql.len(),
             hit = rows.is_some(),
-            "storage table cache lookup"
         );
         rows
     }
@@ -88,11 +88,10 @@ impl<M: RowMapper> DatabendTable<M> {
         }
         if let Some(c) = &self.cache {
             c.put(sql.to_string(), rows.to_vec());
-            tracing::debug!(
+            slog!(info, "storage", "cache_store",
                 table = %self.table,
                 sql_len = sql.len(),
                 rows = rows.len(),
-                "storage table cache store"
             );
         }
     }
@@ -100,7 +99,7 @@ impl<M: RowMapper> DatabendTable<M> {
     fn invalidate_cache(&self) {
         if let Some(c) = &self.cache {
             c.clear();
-            tracing::debug!(table = %self.table, "storage table cache cleared");
+            slog!(info, "storage", "cache_cleared", table = %self.table,);
         }
     }
 

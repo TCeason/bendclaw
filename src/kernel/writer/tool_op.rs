@@ -4,6 +4,7 @@ use crate::kernel::agent_store::memory_store::MemoryEntry;
 use crate::kernel::recall::RecallStore;
 use crate::kernel::tools::builtins::memory::MemoryBackend;
 use crate::kernel::writer::BackgroundWriter;
+use crate::observability::log::slog;
 use crate::storage::dal::learning::LearningRecord;
 
 pub enum ToolWriteOp {
@@ -30,13 +31,13 @@ pub fn spawn_tool_writer() -> ToolWriter {
             } => {
                 let key = entry.key.clone();
                 if let Err(e) = storage.write(&user_id, entry).await {
-                    tracing::warn!(key = %key, error = %e, "tool_writer: memory write failed");
+                    slog!(warn, "writer", "failed", key = %key, error = %e,);
                 }
             }
             ToolWriteOp::LearningWrite { store, record } => {
                 let title = record.title.clone();
                 if let Err(e) = store.learnings().insert(&record).await {
-                    tracing::warn!(title = %title, error = %e, "tool_writer: learning write failed");
+                    slog!(warn, "writer", "failed", title = %title, error = %e,);
                 }
             }
         }

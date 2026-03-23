@@ -22,6 +22,8 @@ fn runtime_payload(payload: serde_json::Value) -> String {
     serde_json::to_string(&redaction::redact(payload)).unwrap_or_else(|_| "{}".to_string())
 }
 
+use crate::observability::log::slog;
+
 fn log_runtime_info(
     command: &str,
     status: &str,
@@ -29,14 +31,12 @@ fn log_runtime_info(
     elapsed_ms: u64,
     payload: serde_json::Value,
 ) {
-    tracing::info!(
-        stage = "runtime",
+    slog!(info, "runtime", "completed",
         command,
         status,
         agent_id,
         elapsed_ms,
         payload = %runtime_payload(payload),
-        "runtime command"
     );
 }
 
@@ -47,15 +47,12 @@ fn log_runtime_error(
     error: &impl std::fmt::Display,
     payload: serde_json::Value,
 ) {
-    tracing::error!(
-        stage = "runtime",
+    slog!(error, "runtime", "failed",
         command,
-        status = "failed",
         agent_id,
         elapsed_ms,
         error = %error,
         payload = %runtime_payload(payload),
-        "runtime command"
     );
 }
 

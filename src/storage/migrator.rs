@@ -1,6 +1,5 @@
-use tracing;
-
 use super::pool::Pool;
+use crate::observability::log::slog;
 
 /// Base migrations — independent CREATE TABLE IF NOT EXISTS files.
 /// Files have no cross-dependencies and can run in parallel.
@@ -33,14 +32,26 @@ pub async fn run_agent(pool: &Pool) {
         .map(|sql| run_one_file(pool, sql, "base"))
         .collect();
     futures::future::join_all(futs).await;
-    tracing::info!(count = BASE_MIGRATIONS.len(), "base migrations completed");
+    slog!(
+        info,
+        "storage",
+        "migrations_completed",
+        scope = "base",
+        count = BASE_MIGRATIONS.len(),
+    );
 
     // Phase 2: alter — strict sequential for ordering guarantees.
     if !ALTER_MIGRATIONS.is_empty() {
         for sql in ALTER_MIGRATIONS {
             run_one_file(pool, sql, "alter").await;
         }
-        tracing::info!(count = ALTER_MIGRATIONS.len(), "alter migrations completed");
+        slog!(
+            info,
+            "storage",
+            "migrations_completed",
+            scope = "alter",
+            count = ALTER_MIGRATIONS.len(),
+        );
     }
 }
 
@@ -48,7 +59,7 @@ async fn run_one_file(pool: &Pool, sql: &str, scope: &str) {
     for stmt in sql.split(';').filter(|s| !s.trim().is_empty()) {
         let stmt = stmt.trim();
         if let Err(e) = pool.exec(stmt).await {
-            tracing::info!(scope, error = %e, "migration statement skipped (may already exist)");
+            slog!(info, "storage", "migration_skipped", scope, error = %e,);
         }
     }
 }

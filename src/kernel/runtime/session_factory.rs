@@ -16,6 +16,7 @@ use crate::kernel::session::SessionResources;
 use crate::kernel::skills::remote::repository::DatabendSkillRepositoryFactory;
 use crate::kernel::tools::registry::create_session_tools;
 use crate::kernel::tools::registry::register_cluster_tools;
+use crate::observability::log::slog;
 use crate::storage::dal::variable::VariableRepo;
 
 impl Runtime {
@@ -29,41 +30,24 @@ impl Runtime {
 
         if let Some(session) = self.sessions.get(session_id) {
             if !session.belongs_to(agent_id, user_id) {
-                tracing::error!(
-                    stage = "runtime",
-                    action = "get_or_create_session",
-                    status = "denied",
-                    agent_id,
-                    user_id,
-                    session_id,
-                    "runtime session"
-                );
+                slog!(error, "runtime", "denied", agent_id, user_id, session_id,);
                 return Err(ErrorCode::denied(format!(
                     "session '{session_id}' belongs to a different agent/user"
                 )));
             }
             if session.is_stale() && !session.is_running() {
                 self.sessions.remove(session_id);
-                tracing::info!(
-                    stage = "runtime",
-                    action = "get_or_create_session",
-                    status = "recreated",
+                slog!(
+                    info,
+                    "runtime",
+                    "recreated",
                     reason = "stale_llm_config",
                     agent_id,
                     user_id,
                     session_id,
-                    "runtime session"
                 );
             } else {
-                tracing::info!(
-                    stage = "runtime",
-                    action = "get_or_create_session",
-                    status = "reused",
-                    agent_id,
-                    user_id,
-                    session_id,
-                    "runtime session"
-                );
+                slog!(info, "runtime", "reused", agent_id, user_id, session_id,);
                 return Ok(session);
             }
         }
@@ -189,16 +173,12 @@ impl Runtime {
 
         self.sessions.insert(session.clone());
 
-        tracing::info!(
-            stage = "runtime",
-            action = "get_or_create_session",
-            status = "created",
+        slog!(info, "runtime", "created",
             agent_id,
             user_id,
             session_id,
             workspace_dir = %self.config.workspace.session_dir(user_id, agent_id, session_id).display(),
             tool_count,
-            "runtime session"
         );
 
         Ok(session)

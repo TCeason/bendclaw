@@ -9,6 +9,7 @@ use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 /// List directory contents within the session workspace.
 pub struct ListDirTool;
@@ -78,7 +79,7 @@ impl Tool for ListDirTool {
         let mut read_dir = match tokio::fs::read_dir(&full_path).await {
             Ok(rd) => rd,
             Err(e) => {
-                tracing::warn!(stage = "list_dir", status = "failed", path, error = %e, "list_dir failed");
+                slog!(warn, "file", "failed", path, error = %e,);
                 return Ok(ToolResult::error(format!("Failed to read directory: {e}")));
             }
         };
@@ -107,13 +108,7 @@ impl Tool for ListDirTool {
 
         entries.sort();
         let output = entries.join("\n");
-        tracing::info!(
-            stage = "list_dir",
-            status = "completed",
-            path,
-            count = entries.len(),
-            "list_dir completed"
-        );
+        slog!(info, "file", "completed", path, count = entries.len(),);
         Ok(ToolResult::ok(output))
     }
 }

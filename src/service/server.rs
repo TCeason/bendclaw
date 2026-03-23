@@ -4,6 +4,8 @@ use std::future::IntoFuture;
 use anyhow::Context;
 use tokio_util::sync::CancellationToken;
 
+use crate::observability::log::slog;
+
 enum ServerExit {
     Api(std::io::Result<()>),
     Admin(std::io::Result<()>),
@@ -38,7 +40,7 @@ where
         exit = &mut api_server => exit,
         exit = &mut admin_server => exit,
         _ = &mut shutdown_signal => {
-            tracing::info!("shutdown signal received");
+            slog!(info, "server", "shutdown_signal",);
             ServerExit::Signal
         }
     };

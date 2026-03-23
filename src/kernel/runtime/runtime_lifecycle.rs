@@ -3,6 +3,7 @@ use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
 use crate::kernel::runtime::Runtime;
 use crate::kernel::runtime::RuntimeStatus;
+use crate::observability::log::slog;
 
 impl Runtime {
     pub fn status(&self) -> RuntimeStatus {
@@ -20,7 +21,7 @@ impl Runtime {
     }
 
     pub async fn shutdown(&self) -> Result<()> {
-        tracing::info!(status = ?self.status(), "runtime shutting down");
+        slog!(info, "runtime", "shutting_down", status = ?self.status(),);
         let t0 = std::time::Instant::now();
         *self.status.write() = RuntimeStatus::ShuttingDown;
 
@@ -61,7 +62,10 @@ impl Runtime {
                         let id = agent_id.clone();
                         Some(async move {
                             if let Err(e) = store.usage_flush().await {
-                                tracing::warn!(agent_id = %id, error = %e, "failed to flush usage on shutdown");
+                                slog!(warn, "runtime", "flush_failed",
+                                    agent_id = %id,
+                                    error = %e,
+                                );
                             }
                         })
                     })
@@ -77,7 +81,7 @@ impl Runtime {
         .await
         .is_err()
         {
-            tracing::warn!("lease release / usage flush timed out after 2s, skipping");
+            slog!(warn, "runtime", "shutdown_timeout",);
         }
 
         self.supervisor.stop_all().await;
@@ -94,9 +98,11 @@ impl Runtime {
         );
 
         *self.status.write() = RuntimeStatus::Stopped;
-        tracing::info!(
+        slog!(
+            info,
+            "runtime",
+            "stopped",
             elapsed_ms = t0.elapsed().as_millis() as u64,
-            "runtime stopped"
         );
         Ok(())
     }

@@ -1,5 +1,6 @@
 use super::RecallStore;
 use crate::kernel::run::event::Event;
+use crate::observability::log::slog;
 use crate::storage::dal::knowledge::KnowledgeRecord;
 
 /// Process tool events from a completed run and extract knowledge.
@@ -40,11 +41,10 @@ pub async fn process_run_events(
             }
             let args = tool_args.get(tool_call_id);
             if let Err(e) = process_tool_success(store, run_id, user_id, name, args).await {
-                tracing::warn!(
+                slog!(warn, "recall", "skipped",
                     run_id,
                     tool = %name,
                     error = %e,
-                    "recall: failed to process tool event, skipping"
                 );
             }
         }

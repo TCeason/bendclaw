@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::observability::log::slog;
+
 /// Configuration for a token bucket rate limiter.
 pub struct RateLimitConfig {
     /// Maximum burst size (bucket capacity).
@@ -98,11 +100,13 @@ impl OutboundRateLimiter {
             match self.check(channel_type, account_id) {
                 RateLimitResult::Allowed => return,
                 RateLimitResult::RetryAfter(dur) => {
-                    tracing::debug!(
+                    slog!(
+                        info,
+                        "channel",
+                        "rate_limited",
                         channel_type,
                         account_id,
                         wait_ms = dur.as_millis() as u64,
-                        "rate limiter: waiting"
                     );
                     tokio::time::sleep(dur).await;
                 }

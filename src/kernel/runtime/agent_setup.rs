@@ -1,5 +1,6 @@
 use crate::base::Result;
 use crate::kernel::runtime::Runtime;
+use crate::observability::log::slog;
 
 impl Runtime {
     pub fn agent_config_store(&self, agent_id: &str) -> Result<crate::storage::AgentConfigStore> {
@@ -23,7 +24,7 @@ impl Runtime {
                 .await?;
         }
 
-        tracing::info!(agent_id, database = %db_name, "agent database initialized");
+        slog!(info, "runtime", "initialized", agent_id, database = %db_name,);
         Ok(())
     }
 

@@ -173,6 +173,8 @@ impl Builder {
     }
 }
 
+use crate::observability::log::slog;
+
 #[allow(clippy::too_many_arguments)]
 async fn construct(
     config: AgentConfig,
@@ -199,7 +201,12 @@ async fn construct(
         pool.clone(),
         &config.db_prefix,
     )?);
-    tracing::debug!(elapsed_ms = t0.elapsed().as_millis() as u64, "pool created");
+    slog!(
+        info,
+        "runtime",
+        "pool_created",
+        elapsed_ms = t0.elapsed().as_millis() as u64,
+    );
 
     let sync_cancel = CancellationToken::new();
 
@@ -213,22 +220,23 @@ async fn construct(
         sync_cancel.clone(),
     )
     .await;
-    tracing::info!(
+    slog!(
+        info,
+        "runtime",
+        "skills_ready",
         elapsed_ms = t2.elapsed().as_millis() as u64,
         skills = skill_count,
-        "skill catalog ready"
     );
 
     let cluster_id = cluster_config
         .as_ref()
         .map(|c| c.cluster_id.as_str())
         .unwrap_or("");
-    tracing::info!(
+    slog!(info, "runtime", "ready",
         total_ms = t0.elapsed().as_millis() as u64,
         node_id = %config.node_id,
         cluster_id,
         skills = skill_count,
-        "runtime ready"
     );
 
     let sessions = Arc::new(SessionManager::new());
@@ -255,7 +263,7 @@ async fn construct(
             DirectiveService::DEFAULT_REFRESH_INTERVAL,
         ));
         if let Err(e) = service.refresh().await {
-            tracing::warn!(error = %e, "directive init failed, starting with empty cache");
+            slog!(warn, "runtime", "directive_init_failed", error = %e,);
         }
         let handle = service.spawn_refresh_loop(sync_cancel.clone());
         (Some(service), Some(handle))
@@ -283,7 +291,7 @@ async fn construct(
         ));
 
         if let Err(e) = svc.register_and_discover().await {
-            tracing::warn!(error = %e, "cluster init failed, continuing without cluster");
+            slog!(warn, "runtime", "cluster_init_failed", error = %e,);
             (None, None)
         } else {
             let hb_handle = svc.spawn_heartbeat(sync_cancel.clone());

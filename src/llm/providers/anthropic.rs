@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::json;
 use tokio_stream::StreamExt;
-use tracing;
 
 use crate::base::ErrorCode;
 use crate::base::Result;
@@ -23,6 +22,7 @@ use crate::llm::stream::StreamWriter;
 use crate::llm::stream::ToolCallAccumulator;
 use crate::llm::tool::ToolSchema;
 use crate::llm::usage::TokenUsage;
+use crate::observability::log::slog;
 
 const MAX_TOKENS: u32 = 8192;
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -90,11 +90,13 @@ impl LLMProvider for AnthropicProvider {
         tools: &[ToolSchema],
         temperature: f64,
     ) -> Result<LLMResponse> {
-        tracing::info!(
+        slog!(
+            info,
+            "llm",
+            "request",
             provider = "anthropic",
             model,
             msg_count = messages.len(),
-            "llm chat request started"
         );
         let (body, url) = self.build_body(model, messages, tools, temperature, false);
 
@@ -108,13 +110,12 @@ impl LLMProvider for AnthropicProvider {
             .send()
             .await
             .map_err(|e| {
-                tracing::error!(
+                slog!(error, "llm", "request_failed",
                     provider = "anthropic",
                     model,
                     base_url = %self.base_url,
                     api_key = %mask_api_key(&self.api_key),
                     error = %e,
-                    "llm chat request failed"
                 );
                 ErrorCode::llm_request(format!("request failed: {e}"))
             })?;
@@ -124,7 +125,7 @@ impl LLMProvider for AnthropicProvider {
         let request_id = response_request_id(&headers);
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            tracing::error!(
+            slog!(error, "llm", "api_error",
                 provider = "anthropic",
                 model,
                 base_url = %self.base_url,
@@ -133,7 +134,6 @@ impl LLMProvider for AnthropicProvider {
                 request_id = %request_id,
                 headers = %response_headers_value(&headers),
                 response = %truncate_for_log(&text),
-                "llm chat api error"
             );
             return Err(ErrorCode::llm_request(format!(
                 "Anthropic API error {status}: {text}"
@@ -141,7 +141,7 @@ impl LLMProvider for AnthropicProvider {
         }
 
         let data: serde_json::Value = resp.json().await.map_err(|e| {
-            tracing::error!(
+            slog!(error, "llm", "parse_failed",
                 provider = "anthropic",
                 model,
                 base_url = %self.base_url,
@@ -149,13 +149,12 @@ impl LLMProvider for AnthropicProvider {
                 request_id = %request_id,
                 headers = %response_headers_value(&headers),
                 error = %e,
-                "llm chat response parse failed"
             );
             ErrorCode::llm_request(format!("response parse failed: {e}"))
         })?;
 
         let result = parse_response(&data)?;
-        tracing::info!(
+        slog!(info, "llm", "completed",
             provider = "anthropic",
             model,
             request_id = %request_id,
@@ -163,7 +162,6 @@ impl LLMProvider for AnthropicProvider {
             prompt_tokens = result.usage.as_ref().map(|u| u.prompt_tokens).unwrap_or(0),
             completion_tokens = result.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0),
             finish_reason = ?result.finish_reason,
-            "llm chat request completed"
         );
         Ok(result)
     }
@@ -196,11 +194,10 @@ impl LLMProvider for AnthropicProvider {
             )
             .await
             {
-                tracing::warn!(
+                slog!(warn, "llm", "stream_failed",
                     provider = "anthropic",
                     model = %model_owned,
                     error = %msg,
-                    "llm stream failed"
                 );
                 writer.error(msg).await;
             }
@@ -221,13 +218,12 @@ async fn drive_stream(
     writer: &StreamWriter,
     model: &str,
 ) -> std::result::Result<(), String> {
-    tracing::debug!(
+    slog!(info, "llm", "stream_request",
         provider = "anthropic",
         model = %model,
         url = %url,
         api_key = %masked_api_key,
         body_bytes = body.to_string().len(),
-        "llm stream request"
     );
 
     let resp = client
@@ -245,15 +241,19 @@ async fn drive_stream(
         let headers = resp.headers().clone();
         let request_id = response_request_id(&headers);
         let text = resp.text().await.unwrap_or_default();
-        tracing::error!(
+        slog!(error, "llm", "stream_api_error",
             provider = "anthropic",
             model = %model,
             status = %status,
             request_id = %request_id,
             response_bytes = text.len(),
-            "llm stream api error"
         );
-        tracing::debug!(provider = "anthropic", model = %model, headers = %response_headers_value(&headers), response = %truncate_for_log(&text), "llm stream api error detail");
+        slog!(info, "llm", "stream_api_error_detail",
+            provider = "anthropic",
+            model = %model,
+            headers = %response_headers_value(&headers),
+            response = %truncate_for_log(&text),
+        );
         return Err(format!("Anthropic API error {status}: {text}"));
     }
 
@@ -268,14 +268,12 @@ async fn drive_stream(
         .unwrap_or("")
         .to_string();
 
-    tracing::debug!(
+    slog!(info, "llm", "stream_response",
         provider = "anthropic",
         model = %model,
         request_id = %request_id,
         headers = %response_headers_value(&headers),
-        status = %resp.status(),
         content_type = %content_type,
-        "llm stream response"
     );
 
     if !content_type.contains("stream") && !content_type.contains("event-stream") {
@@ -286,10 +284,12 @@ async fn drive_stream(
         let data: serde_json::Value = serde_json::from_str(&body)
             .map_err(|e| format!("non-streaming response parse failed: {e}"))?;
 
-        tracing::warn!(
+        slog!(
+            warn,
+            "llm",
+            "stream_fallback",
             provider = "anthropic",
             content_type,
-            "backend returned non-streaming response, falling back to JSON parse"
         );
 
         if let Some(blocks) = data.get("content").and_then(|c| c.as_array()) {

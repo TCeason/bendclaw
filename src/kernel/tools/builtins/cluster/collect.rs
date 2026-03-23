@@ -13,6 +13,7 @@ use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 /// Collect results from previously dispatched subtasks.
 pub struct ClusterCollectTool {
@@ -103,15 +104,12 @@ impl Tool for ClusterCollectTool {
             .unwrap_or(120);
         let timeout = Duration::from_secs(timeout_secs);
         let started = std::time::Instant::now();
-        tracing::info!(
-            stage = "cluster_collect",
-            status = "started",
+        slog!(info, "cluster", "started",
             user_id = %ctx.user_id,
             agent_id = %ctx.agent_id,
             run_id = %ctx.run_id,
             dispatch_count = dispatch_ids.len(),
             timeout_ms = timeout.as_millis() as u64,
-            "cluster_collect started"
         );
 
         match self.dispatch_table.collect(&dispatch_ids, timeout).await {
@@ -134,9 +132,7 @@ impl Tool for ClusterCollectTool {
                             .map(|error| format!("{}:{}", entry.dispatch_id, error))
                     })
                     .collect();
-                tracing::info!(
-                    stage = "cluster_collect",
-                    status = "completed",
+                slog!(info, "cluster", "completed",
                     user_id = %ctx.user_id,
                     agent_id = %ctx.agent_id,
                     run_id = %ctx.run_id,
@@ -147,33 +143,26 @@ impl Tool for ClusterCollectTool {
                     pending = ?pending,
                     error_details = ?error_details,
                     elapsed_ms = started.elapsed().as_millis() as u64,
-                    "cluster_collect completed"
                 );
                 if !pending.is_empty() {
-                    tracing::warn!(
-                        stage = "cluster_collect",
-                        status = "pending",
+                    slog!(warn, "cluster", "pending",
                         user_id = %ctx.user_id,
                         agent_id = %ctx.agent_id,
                         run_id = %ctx.run_id,
                         pending = ?pending,
                         elapsed_ms = started.elapsed().as_millis() as u64,
-                        "cluster_collect pending"
                     );
                 }
                 Ok(ToolResult::ok(json))
             }
             Err(e) => {
-                tracing::warn!(
-                    stage = "cluster_collect",
-                    status = "failed",
+                slog!(warn, "cluster", "failed",
                     user_id = %ctx.user_id,
                     agent_id = %ctx.agent_id,
                     run_id = %ctx.run_id,
                     dispatch_count = dispatch_ids.len(),
                     elapsed_ms = started.elapsed().as_millis() as u64,
                     error = %e,
-                    "cluster_collect failed"
                 );
                 Ok(ToolResult::error(format!("Collect failed: {e}")))
             }

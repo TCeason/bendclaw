@@ -11,6 +11,7 @@ use crate::kernel::tools::ToolContext;
 use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 /// Read a specific memory by key.
 pub struct MemoryReadTool {
@@ -76,7 +77,7 @@ impl Tool for MemoryReadTool {
 
         match self.storage.get(&ctx.user_id, key).await {
             Ok(Some(entry)) => {
-                tracing::info!(stage = "memory_read", status = "completed", key, scope = %entry.scope, "memory_read completed");
+                slog!(info, "memory", "completed", key, scope = %entry.scope,);
                 Ok(ToolResult::ok(format!(
                     "[{}] {}\n\n{}",
                     entry.scope, entry.key, entry.content
@@ -84,7 +85,7 @@ impl Tool for MemoryReadTool {
             }
             Ok(None) => Ok(ToolResult::ok(format!("Memory '{}' not found.", key))),
             Err(e) => {
-                tracing::warn!(stage = "memory_read", status = "failed", key, error = %e, "memory_read failed");
+                slog!(warn, "memory", "failed", key, error = %e,);
                 Ok(ToolResult::error(format!("Failed to read memory: {e}")))
             }
         }

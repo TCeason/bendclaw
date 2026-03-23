@@ -16,6 +16,7 @@ use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 static AGENT: ClaudeCodeAgent = ClaudeCodeAgent;
 
@@ -106,7 +107,7 @@ impl Tool for ClaudeCodeTool {
                         .await;
                 }
                 Err(e) => {
-                    tracing::warn!(stage = "cli_agent", status = "resume_failed", agent = "claude", error = %e, "cli_agent resume_failed");
+                    slog!(warn, "cli_agent", "resume_failed", agent = "claude", error = %e,);
                 }
             }
         }

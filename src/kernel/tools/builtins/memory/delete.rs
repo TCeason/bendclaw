@@ -11,6 +11,7 @@ use crate::kernel::tools::ToolContext;
 use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 /// Delete a memory by ID.
 pub struct MemoryDeleteTool {
@@ -76,16 +77,11 @@ impl Tool for MemoryDeleteTool {
 
         match self.storage.delete(&ctx.user_id, id).await {
             Ok(()) => {
-                tracing::info!(
-                    stage = "memory_delete",
-                    status = "completed",
-                    id,
-                    "memory_delete completed"
-                );
+                slog!(info, "memory", "completed", id,);
                 Ok(ToolResult::ok(format!("Memory '{}' deleted.", id)))
             }
             Err(e) => {
-                tracing::warn!(stage = "memory_delete", status = "failed", id, error = %e, "memory_delete failed");
+                slog!(warn, "memory", "failed", id, error = %e,);
                 Ok(ToolResult::error(format!("Failed to delete memory: {e}")))
             }
         }

@@ -9,6 +9,7 @@ use crate::kernel::channel::plugin::ChannelOutbound;
 use crate::kernel::channel::stream_delivery::StreamDelivery;
 use crate::kernel::channel::stream_delivery::StreamDeliveryConfig;
 use crate::kernel::run::event::Event;
+use crate::observability::log::slog;
 
 /// How the message was ultimately delivered.
 pub enum DeliveryMethod {
@@ -88,9 +89,9 @@ impl FallbackDelivery {
 
         if !sent || !finalized {
             if !sent {
-                tracing::warn!("send_draft failed, falling back to send_text");
+                slog!(warn, "channel", "send_draft_failed",);
             } else {
-                tracing::warn!("finalize_draft failed, falling back to send_text");
+                slog!(warn, "channel", "finalize_draft_failed",);
             }
             return self.fallback_send_text(&text).await;
         }

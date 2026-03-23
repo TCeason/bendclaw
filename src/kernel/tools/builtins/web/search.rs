@@ -14,6 +14,7 @@ use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 /// Which search backend to use.
 #[derive(Clone, Debug, Default)]
@@ -212,13 +213,7 @@ impl Tool for WebSearchTool {
         // Check cache first
         let cache_key = WebCache::search_key(query, count);
         if let Some(cached) = self.cache.get(&cache_key) {
-            tracing::info!(
-                stage = "web_search",
-                status = "cache_hit",
-                query,
-                count,
-                "web_search cache_hit"
-            );
+            slog!(info, "web", "cache_hit", query, count,);
             return Ok(ToolResult::ok(cached));
         }
 
@@ -229,12 +224,7 @@ impl Tool for WebSearchTool {
                 let key = match &brave_key {
                     Some(k) => k,
                     None => {
-                        tracing::warn!(
-                            stage = "web_search",
-                            status = "no_api_key",
-                            provider = "brave",
-                            "web_search no_api_key"
-                        );
+                        slog!(warn, "web", "no_api_key", provider = "brave",);
                         return Ok(ToolResult::error(
                             "No BRAVE_API_KEY variable configured. \
                              Add it via the variables API or set the BRAVE_API_KEY env var.",
@@ -244,7 +234,7 @@ impl Tool for WebSearchTool {
                 match self.brave_search(query, count, &key.value).await {
                     Ok(output) => output,
                     Err(e) => {
-                        tracing::warn!(stage = "web_search", status = "failed", provider = "brave", query, error = %e, "web_search failed");
+                        slog!(warn, "web", "failed", provider = "brave", query, error = %e,);
                         return Ok(ToolResult::error(e));
                     }
                 }
@@ -253,7 +243,7 @@ impl Tool for WebSearchTool {
                 match duckduckgo::search(&self.client, query, count).await {
                     Ok(results) => duckduckgo::format_results(&results),
                     Err(e) => {
-                        tracing::warn!(stage = "web_search", status = "failed", provider = "duckduckgo", query, error = %e, "web_search failed");
+                        slog!(warn, "web", "failed", provider = "duckduckgo", query, error = %e,);
                         return Ok(ToolResult::error(e));
                     }
                 }
@@ -263,11 +253,11 @@ impl Tool for WebSearchTool {
                     match self.brave_search(query, count, &key.value).await {
                         Ok(output) => output,
                         Err(e) => {
-                            tracing::warn!(stage = "web_search", status = "fallback", provider = "brave->duckduckgo", query, error = %e, "web_search fallback");
+                            slog!(warn, "web", "fallback", provider = "brave->duckduckgo", query, error = %e,);
                             match duckduckgo::search(&self.client, query, count).await {
                                 Ok(results) => duckduckgo::format_results(&results),
                                 Err(e2) => {
-                                    tracing::warn!(stage = "web_search", status = "failed", provider = "brave+duckduckgo", query, error = %e2, "web_search failed");
+                                    slog!(warn, "web", "failed", provider = "brave+duckduckgo", query, error = %e2,);
                                     return Ok(ToolResult::error(format!(
                                         "Brave: {e}; DuckDuckGo: {e2}"
                                     )));
@@ -276,17 +266,17 @@ impl Tool for WebSearchTool {
                         }
                     }
                 } else {
-                    tracing::info!(
-                        stage = "web_search",
-                        status = "no_api_key",
+                    slog!(
+                        info,
+                        "web",
+                        "no_api_key",
                         provider = "auto->duckduckgo",
                         query,
-                        "web_search no_api_key"
                     );
                     match duckduckgo::search(&self.client, query, count).await {
                         Ok(results) => duckduckgo::format_results(&results),
                         Err(e) => {
-                            tracing::warn!(stage = "web_search", status = "failed", provider = "duckduckgo", query, error = %e, "web_search failed");
+                            slog!(warn, "web", "failed", provider = "duckduckgo", query, error = %e,);
                             return Ok(ToolResult::error(e));
                         }
                     }
@@ -294,13 +284,7 @@ impl Tool for WebSearchTool {
             }
         };
 
-        tracing::info!(
-            stage = "web_search",
-            status = "completed",
-            query,
-            count,
-            "web_search completed"
-        );
+        slog!(info, "web", "completed", query, count,);
 
         // Touch secret variable last-used timestamp
         if let Some(key) = brave_key {

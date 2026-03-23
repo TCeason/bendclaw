@@ -15,6 +15,7 @@ use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 static AGENT: CodexAgent = CodexAgent;
 
@@ -94,7 +95,7 @@ impl Tool for CodexExecTool {
             match AgentProcess::resume(&AGENT, cwd.as_ref(), &sid, prompt, &opts).await {
                 Ok(p) => p,
                 Err(e) => {
-                    tracing::warn!(stage = "cli_agent", status = "resume_failed", agent = "codex", error = %e, "cli_agent resume_failed");
+                    slog!(warn, "cli_agent", "resume_failed", agent = "codex", error = %e,);
                     match AgentProcess::spawn(&AGENT, cwd.as_ref(), prompt, &opts).await {
                         Ok(p) => p,
                         Err(e) => return Ok(ToolResult::error(format!("{e}"))),

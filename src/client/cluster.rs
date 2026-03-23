@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use crate::base::ErrorCode;
 use crate::base::Result;
+use crate::observability::log::slog;
 
 /// Client for the evot-ai cluster registry API.
 /// Handles node registration, heartbeat, discovery, and deregistration.
@@ -120,7 +121,7 @@ impl ClusterClient {
                 "register failed: HTTP {status}: {text}"
             )));
         }
-        tracing::info!(node_id = %self.node_id, "registered with cluster");
+        slog!(info, "cluster", "registered", node_id = %self.node_id,);
         Ok(())
     }
 
@@ -199,12 +200,13 @@ impl ClusterClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            tracing::warn!(
+            slog!(warn, "cluster", "deregister_failed",
                 node_id = %self.node_id,
-                "deregister failed: HTTP {status}: {text}"
+                http_status = %status,
+                body = %text,
             );
         } else {
-            tracing::info!(node_id = %self.node_id, "deregistered from cluster");
+            slog!(info, "cluster", "deregistered", node_id = %self.node_id,);
         }
         Ok(())
     }

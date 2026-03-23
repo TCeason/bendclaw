@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 use crate::kernel::channel::delivery::retry::send_with_retry;
 use crate::kernel::channel::delivery::retry::RetryConfig;
 use crate::kernel::channel::plugin::ChannelOutbound;
+use crate::observability::log::slog;
 
 /// A message queued for delayed retry after immediate retries failed.
 pub struct QueuedMessage {
@@ -49,7 +50,7 @@ impl OutboundQueue {
     /// Enqueue a message for delayed retry. Non-blocking; drops on full.
     pub fn enqueue(&self, msg: QueuedMessage) {
         if self.tx.try_send(msg).is_err() {
-            tracing::warn!("outbound_queue: queue full, dropping message");
+            slog!(warn, "channel", "queue_full",);
         }
     }
 }
@@ -83,7 +84,7 @@ async fn dispatch_loop(
             handle_queued_message(msg, max_attempts, &cfg, &tx).await;
         });
     }
-    tracing::info!("outbound_queue: channel closed, stopping");
+    slog!(info, "channel", "stopped",);
 }
 
 async fn handle_queued_message(
@@ -117,19 +118,17 @@ async fn handle_queued_message(
 
     match result {
         Ok(msg_id) => {
-            tracing::info!(
+            slog!(info, "channel", "delivered",
                 message_id = %msg_id,
                 attempt = msg.attempt,
-                "outbound_queue: delivered on retry"
             );
         }
         Err(e) if msg.attempt < max_attempts => {
             let backoff = Duration::from_secs(2u64.pow(msg.attempt as u32).min(60));
-            tracing::warn!(
+            slog!(warn, "channel", "retry",
                 error = %e,
                 attempt = msg.attempt,
                 next_backoff_secs = backoff.as_secs(),
-                "outbound_queue: retry failed, re-enqueuing"
             );
             let next = QueuedMessage {
                 outbound: msg.outbound,
@@ -140,15 +139,14 @@ async fn handle_queued_message(
                 next_attempt_at: Instant::now() + backoff,
             };
             if re_enqueue_tx.try_send(next).is_err() {
-                tracing::error!("outbound_queue: re-enqueue failed, queue full — dead letter");
+                slog!(error, "channel", "dead_letter",);
             }
         }
         Err(e) => {
-            tracing::error!(
+            slog!(error, "channel", "dead_letter",
                 error = %e,
                 attempt = msg.attempt,
                 chat_id = %msg.chat_id,
-                "outbound_queue: dead letter — max attempts exceeded"
             );
         }
     }

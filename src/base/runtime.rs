@@ -4,6 +4,8 @@ use std::panic::AssertUnwindSafe;
 use futures::FutureExt;
 use tokio::task::JoinHandle;
 
+use crate::observability::log::slog;
+
 /// Spawn a named tokio task that catches panics and logs them instead of
 /// propagating. Inspired by databend's `spawn_named` + `catch_unwind`.
 pub fn spawn_named<F>(name: &'static str, fut: F) -> JoinHandle<()>
@@ -17,7 +19,7 @@ where F: Future<Output = ()> + Send + 'static {
                     None => "unknown panic payload".to_string(),
                 },
             };
-            tracing::error!(task = name, panic = %msg, "task panicked");
+            slog!(error, "runtime", "panicked", task = name, panic = %msg,);
         }
     })
 }

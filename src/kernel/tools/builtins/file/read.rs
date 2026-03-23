@@ -8,6 +8,7 @@ use crate::kernel::tools::ToolContext;
 use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::OpType;
+use crate::observability::log::slog;
 
 /// Read file contents from the session workspace.
 pub struct FileReadTool;
@@ -72,17 +73,11 @@ impl Tool for FileReadTool {
 
         match tokio::fs::read_to_string(&full_path).await {
             Ok(contents) => {
-                tracing::info!(
-                    stage = "file_read",
-                    status = "completed",
-                    path,
-                    size_bytes = contents.len(),
-                    "file_read completed"
-                );
+                slog!(info, "file", "completed", path, size_bytes = contents.len(),);
                 Ok(ToolResult::ok(contents))
             }
             Err(e) => {
-                tracing::warn!(stage = "file_read", status = "failed", path, error = %e, "file_read failed");
+                slog!(warn, "file", "failed", path, error = %e,);
                 Ok(ToolResult::error(format!("Failed to read file: {e}")))
             }
         }

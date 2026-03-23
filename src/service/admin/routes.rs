@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use super::state::AdminState;
 use crate::kernel::runtime::SuspendStatus;
+use crate::observability::log::slog;
 
 pub async fn can_suspend(State(state): State<AdminState>) -> Json<SuspendStatus> {
     Json(state.runtime.suspend_status())
@@ -94,10 +95,12 @@ pub async fn upgrade(
         )
     })?;
 
-    tracing::info!(
+    slog!(
+        info,
+        "server",
+        "upgrade_completed",
         from = from_version.trim_start_matches('v'),
         to = to_version.trim_start_matches('v'),
-        "upgrade: binary replaced, scheduling shutdown"
     );
 
     // Schedule graceful shutdown after response is sent.

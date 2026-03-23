@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use super::record::VariableRecord;
 use crate::base::Result;
+use crate::observability::log::slog;
 use crate::storage::dal::logging::repo_error;
 use crate::storage::pool::Pool;
 use crate::storage::sql;
@@ -106,9 +107,13 @@ impl VariableRepo {
             .await;
         if let Ok(ref records) = result {
             if records.len() as u64 >= MAX_LIST_LIMIT {
-                tracing::warn!(
+                slog!(
+                    warn,
+                    "storage",
+                    "list_truncated",
+                    repo = "variable",
+                    op = "list_all",
                     limit = MAX_LIST_LIMIT,
-                    "variable list_all hit limit, results may be truncated"
                 );
             }
         }
@@ -138,9 +143,13 @@ impl VariableRepo {
             .await;
         if let Ok(ref records) = result {
             if records.len() as u64 >= MAX_LIST_LIMIT {
-                tracing::warn!(
+                slog!(
+                    warn,
+                    "storage",
+                    "list_truncated",
+                    repo = "variable",
+                    op = "list_all_active",
                     limit = MAX_LIST_LIMIT,
-                    "variable list_all_active hit limit, results may be truncated"
                 );
             }
         }

@@ -18,6 +18,7 @@ use super::event::AgentEvent;
 use super::protocol::CliAgent;
 use crate::base::Result;
 use crate::kernel::run::event::Event;
+use crate::observability::log::slog;
 
 #[derive(Debug, Clone, Default)]
 pub struct AgentOptions {
@@ -138,7 +139,7 @@ impl AgentProcess {
                 line = self.stdout_lines.next_line() => {
                     match line {
                         Err(e) => {
-                            tracing::warn!(stage = "cli_agent", status = "stdout_error", agent = %self.agent_type, error = %e, "cli_agent stdout_error");
+                            slog!(warn, "cli_agent", "stdout_error", agent = %self.agent_type, error = %e,);
                             break;
                         }
                         Ok(None) => break,
@@ -152,7 +153,7 @@ impl AgentProcess {
 
                             if self.session_id.is_none() {
                                 if let Some(sid) = agent.parse_session_id(&msg) {
-                                    tracing::debug!(agent = %self.agent_type, session_id = %sid, "session started");
+                                    slog!(info, "cli_agent", "started", agent = %self.agent_type, session_id = %sid,);
                                     self.session_id = Some(sid);
                                 }
                             }
@@ -168,7 +169,7 @@ impl AgentProcess {
                     }
                 }
                 _ = cancel.cancelled() => {
-                    tracing::info!(stage = "cli_agent", status = "cancelled", agent = %self.agent_type, "cli_agent cancelled");
+                    slog!(info, "cli_agent", "cancelled", agent = %self.agent_type,);
                     return Err(anyhow::anyhow!("interrupted").into());
                 }
             }
@@ -233,7 +234,7 @@ fn spawn_stderr_task(
                     if line.is_empty() {
                         continue;
                     }
-                    tracing::warn!(stage = "cli_agent", status = "stderr", agent = %agent_type, stderr = %line, "cli_agent stderr");
+                    slog!(warn, "cli_agent", "stderr", agent = %agent_type, stderr = %line,);
                     let mut tail = stderr_tail.lock().await;
                     if tail.len() >= 20 {
                         tail.pop_front();
@@ -242,7 +243,7 @@ fn spawn_stderr_task(
                 }
                 Ok(None) => break,
                 Err(e) => {
-                    tracing::warn!(stage = "cli_agent", status = "stderr_error", agent = %agent_type, error = %e, "cli_agent stderr_error");
+                    slog!(warn, "cli_agent", "stderr_error", agent = %agent_type, error = %e,);
                     break;
                 }
             }
