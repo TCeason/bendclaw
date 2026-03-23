@@ -413,7 +413,7 @@ impl BendClawConfig {
                 temperature: std::env::var("BENDCLAW_LLM_TEMPERATURE")
                     .ok()
                     .and_then(|v| v.parse().ok())
-                    .unwrap_or(0.7),
+                    .unwrap_or(1.0),
                 input_price: 0.0,
                 output_price: 0.0,
             }];

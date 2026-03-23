@@ -55,7 +55,7 @@ fn default_weight() -> u32 {
 }
 
 fn default_temperature() -> f64 {
-    0.7
+    1.0
 }
 
 fn default_max_retries() -> u32 {

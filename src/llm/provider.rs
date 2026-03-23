@@ -103,6 +103,6 @@ pub trait LLMProvider: Send + Sync {
 
     /// Default sampling temperature for the primary model.
     fn default_temperature(&self) -> f64 {
-        0.7
+        1.0
     }
 }
