@@ -2,6 +2,7 @@ use bendclaw::kernel::runtime::pending_decision::clarification_template;
 use bendclaw::kernel::runtime::pending_decision::resolve_decision;
 use bendclaw::kernel::runtime::pending_decision::DecisionResolution;
 use bendclaw::kernel::runtime::turn_coordinator_state::TurnCoordinatorState;
+use bendclaw::kernel::runtime::turn_relation::LLMClassifier;
 use bendclaw::kernel::runtime::turn_relation::RunRisk;
 use bendclaw::kernel::runtime::turn_relation::RunSnapshot;
 use bendclaw::kernel::runtime::turn_relation::StubClassifier;
@@ -29,20 +30,172 @@ fn snapshot_from_input_short_input() {
 
 // ── StubClassifier ────────────────────────────────────────────────────────────
 
-#[test]
-fn stub_classifier_always_fork_or_ask() {
+#[tokio::test]
+async fn stub_classifier_always_fork_or_ask() {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use bendclaw::llm::message::ChatMessage;
+    use bendclaw::llm::provider::LLMProvider;
+    use bendclaw::llm::provider::LLMResponse;
+    use bendclaw::llm::stream::ResponseStream;
+    use bendclaw::llm::tool::ToolSchema;
+
+    struct NoopLLM;
+    #[async_trait]
+    impl LLMProvider for NoopLLM {
+        async fn chat(
+            &self,
+            _model: &str,
+            _messages: &[ChatMessage],
+            _tools: &[ToolSchema],
+            _temperature: f64,
+        ) -> bendclaw::base::Result<LLMResponse> {
+            Err(bendclaw::base::ErrorCode::internal("noop"))
+        }
+        fn chat_stream(
+            &self,
+            _model: &str,
+            _messages: &[ChatMessage],
+            _tools: &[ToolSchema],
+            _temperature: f64,
+        ) -> ResponseStream {
+            let (_tx, stream) = ResponseStream::channel(1);
+            stream
+        }
+    }
+
+    let llm: Arc<dyn LLMProvider> = Arc::new(NoopLLM);
     let snap = RunSnapshot::from_input("s1", "r1", "clean test_ databases");
     assert_eq!(
-        StubClassifier.classify(&snap, "also clean xx_ databases"),
-        TurnRelation::ForkOrAsk
-    );
-    assert_eq!(
-        StubClassifier.classify(&snap, "stop"),
+        StubClassifier
+            .classify(&llm, "model", &snap, "also clean xx_")
+            .await,
         TurnRelation::ForkOrAsk
     );
 }
 
-// ── TurnCoordinatorState ──────────────────────────────────────────────────────
+// ── LLMClassifier ─────────────────────────────────────────────────────────────
+
+mod llm_classifier {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use bendclaw::base::ErrorCode;
+    use bendclaw::kernel::runtime::turn_relation::LLMClassifier;
+    use bendclaw::kernel::runtime::turn_relation::RunSnapshot;
+    use bendclaw::kernel::runtime::turn_relation::TurnRelation;
+    use bendclaw::kernel::runtime::turn_relation::TurnRelationClassifier;
+    use bendclaw::llm::message::ChatMessage;
+    use bendclaw::llm::provider::LLMProvider;
+    use bendclaw::llm::provider::LLMResponse;
+    use bendclaw::llm::stream::ResponseStream;
+    use bendclaw::llm::tool::ToolSchema;
+
+    struct FakeLLM(String);
+
+    #[async_trait]
+    impl LLMProvider for FakeLLM {
+        async fn chat(
+            &self,
+            _model: &str,
+            _messages: &[ChatMessage],
+            _tools: &[ToolSchema],
+            _temperature: f64,
+        ) -> bendclaw::base::Result<LLMResponse> {
+            Ok(LLMResponse {
+                content: Some(self.0.clone()),
+                tool_calls: vec![],
+                finish_reason: Some("stop".to_string()),
+                usage: None,
+                model: None,
+            })
+        }
+
+        fn chat_stream(
+            &self,
+            _model: &str,
+            _messages: &[ChatMessage],
+            _tools: &[ToolSchema],
+            _temperature: f64,
+        ) -> ResponseStream {
+            let (_tx, stream) = ResponseStream::channel(1);
+            stream
+        }
+    }
+
+    struct ErrorLLM;
+
+    #[async_trait]
+    impl LLMProvider for ErrorLLM {
+        async fn chat(
+            &self,
+            _model: &str,
+            _messages: &[ChatMessage],
+            _tools: &[ToolSchema],
+            _temperature: f64,
+        ) -> bendclaw::base::Result<LLMResponse> {
+            Err(ErrorCode::internal("llm error"))
+        }
+
+        fn chat_stream(
+            &self,
+            _model: &str,
+            _messages: &[ChatMessage],
+            _tools: &[ToolSchema],
+            _temperature: f64,
+        ) -> ResponseStream {
+            let (_tx, stream) = ResponseStream::channel(1);
+            stream
+        }
+    }
+
+    #[tokio::test]
+    async fn llm_classifier_append() {
+        let llm: Arc<dyn LLMProvider> = Arc::new(FakeLLM("append".to_string()));
+        let snap = RunSnapshot::from_input("s1", "r1", "list databases");
+        assert_eq!(
+            LLMClassifier
+                .classify(&llm, "m", &snap, "also show sizes")
+                .await,
+            TurnRelation::Append
+        );
+    }
+
+    #[tokio::test]
+    async fn llm_classifier_revise() {
+        let llm: Arc<dyn LLMProvider> = Arc::new(FakeLLM("revise".to_string()));
+        let snap = RunSnapshot::from_input("s1", "r1", "clean test_ databases");
+        assert_eq!(
+            LLMClassifier
+                .classify(&llm, "m", &snap, "also clean xx_ databases")
+                .await,
+            TurnRelation::Revise
+        );
+    }
+
+    #[tokio::test]
+    async fn llm_classifier_fork_on_ambiguous_response() {
+        let llm: Arc<dyn LLMProvider> = Arc::new(FakeLLM("I cannot determine".to_string()));
+        let snap = RunSnapshot::from_input("s1", "r1", "clean test_ databases");
+        assert_eq!(
+            LLMClassifier
+                .classify(&llm, "m", &snap, "check warehouse slowness")
+                .await,
+            TurnRelation::ForkOrAsk
+        );
+    }
+
+    #[tokio::test]
+    async fn llm_classifier_fork_on_error() {
+        let llm: Arc<dyn LLMProvider> = Arc::new(ErrorLLM);
+        let snap = RunSnapshot::from_input("s1", "r1", "clean test_ databases");
+        assert_eq!(
+            LLMClassifier.classify(&llm, "m", &snap, "anything").await,
+            TurnRelation::ForkOrAsk
+        );
+    }
+}
 
 #[test]
 fn coordinator_state_snapshot_roundtrip() {

@@ -9,9 +9,7 @@ use crate::kernel::runtime::pending_decision::DecisionOption;
 use crate::kernel::runtime::pending_decision::DecisionResolution;
 use crate::kernel::runtime::pending_decision::PendingDecision;
 use crate::kernel::runtime::turn_relation::RunSnapshot;
-use crate::kernel::runtime::turn_relation::StubClassifier;
 use crate::kernel::runtime::turn_relation::TurnRelation;
-use crate::kernel::runtime::turn_relation::TurnRelationClassifier;
 use crate::kernel::runtime::Runtime;
 use crate::kernel::session::session_stream::Stream;
 use crate::kernel::session::Session;
@@ -109,7 +107,14 @@ impl Runtime {
 
         // Session is running — classify the relation to the active task.
         let relation = match self.turn_coordinator.get_snapshot(session_id) {
-            Some(ref snap) => StubClassifier.classify(snap, input),
+            Some(ref snap) => {
+                let llm = self.llm();
+                let model = self.model();
+                self.turn_coordinator
+                    .classifier()
+                    .classify(&llm, &model, snap, input)
+                    .await
+            }
             None => TurnRelation::ForkOrAsk,
         };
 
