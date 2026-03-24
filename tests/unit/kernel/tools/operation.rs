@@ -124,16 +124,9 @@ fn op_type_display() {
     assert_eq!(format!("{}", OpType::Edit), "EDIT");
     assert_eq!(format!("{}", OpType::FileRead), "FILE_READ");
     assert_eq!(format!("{}", OpType::FileWrite), "FILE_WRITE");
-    assert_eq!(format!("{}", OpType::MemoryWrite), "MEMORY_WRITE");
-    assert_eq!(format!("{}", OpType::MemoryRead), "MEMORY_READ");
-    assert_eq!(format!("{}", OpType::MemorySearch), "MEMORY_SEARCH");
-    assert_eq!(format!("{}", OpType::MemoryDelete), "MEMORY_DELETE");
-    assert_eq!(format!("{}", OpType::MemoryList), "MEMORY_LIST");
     assert_eq!(format!("{}", OpType::SkillRun), "SKILL_RUN");
     assert_eq!(format!("{}", OpType::Compaction), "COMPACTION");
-    assert_eq!(format!("{}", OpType::Checkpoint), "CHECKPOINT");
     assert_eq!(format!("{}", OpType::Databend), "DATABEND");
-    assert_eq!(format!("{}", OpType::LearningWrite), "LEARNING_WRITE");
 }
 
 #[test]
@@ -144,16 +137,9 @@ fn op_type_serde_roundtrip() -> Result<()> {
         OpType::Edit,
         OpType::FileRead,
         OpType::FileWrite,
-        OpType::MemoryWrite,
-        OpType::MemoryRead,
-        OpType::MemorySearch,
-        OpType::MemoryDelete,
-        OpType::MemoryList,
         OpType::SkillRun,
         OpType::Compaction,
-        OpType::Checkpoint,
         OpType::Databend,
-        OpType::LearningWrite,
     ] {
         let json = serde_json::to_string(&op)?;
         let back: OpType = serde_json::from_str(&json)?;

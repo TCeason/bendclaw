@@ -5,17 +5,12 @@ use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::kernel::run::compaction_rules::plan_compaction_split;
-use crate::kernel::run::compaction_rules::should_checkpoint;
-use crate::kernel::run::result::Usage;
-use crate::kernel::runtime::agent_config::CheckpointConfig;
 use crate::kernel::Message;
 use crate::kernel::OpType;
 use crate::kernel::OperationMeta;
 use crate::llm::message::ChatMessage;
 use crate::llm::provider::LLMProvider;
-use crate::llm::stream::ResponseStream;
 use crate::llm::tokens::count_tokens;
-use crate::llm::tool::ToolSchema;
 use crate::llm::usage::TokenUsage;
 use crate::observability::log::slog;
 
@@ -32,42 +27,30 @@ pub struct CompactionResult {
     pub summary_len: usize,
     /// Tokens consumed by compaction LLM calls.
     pub token_usage: TokenUsage,
-    /// Tokens consumed by checkpoint (if ran).
-    pub checkpoint_usage: Option<Usage>,
     /// Duration of the compaction in milliseconds.
     pub duration_ms: u64,
 }
 
-/// LLM-powered context compactor with checkpoint support.
+/// LLM-powered context compactor.
 ///
 /// Workflow:
-/// 1. Checkpoint: If approaching threshold, prompt agent to persist memories
-/// 2. Summarize: LLM summarizes old messages
-/// 3. Truncate: Replace old messages with summary
+/// 1. Summarize: LLM summarizes old messages
+/// 2. Truncate: Replace old messages with summary
 pub struct Compactor {
     llm: Arc<dyn LLMProvider>,
     model: Arc<str>,
-    checkpoint: Arc<CheckpointConfig>,
     cancel: CancellationToken,
-    checkpoint_done: bool,
     compaction_failures: u32,
     last_compaction_at: Option<Instant>,
     last_error: Option<String>,
 }
 
 impl Compactor {
-    pub fn new(
-        llm: Arc<dyn LLMProvider>,
-        model: Arc<str>,
-        checkpoint: Arc<CheckpointConfig>,
-        cancel: CancellationToken,
-    ) -> Self {
+    pub fn new(llm: Arc<dyn LLMProvider>, model: Arc<str>, cancel: CancellationToken) -> Self {
         Self {
             llm,
             model,
-            checkpoint,
             cancel,
-            checkpoint_done: false,
             compaction_failures: 0,
             last_compaction_at: None,
             last_error: None,
@@ -81,7 +64,6 @@ impl Compactor {
         &mut self,
         messages: &mut Vec<Message>,
         max_context_tokens: usize,
-        memory_tools: &[ToolSchema],
     ) -> Option<CompactionResult> {
         let compact_tracker = OperationMeta::begin(OpType::Compaction);
         let compact_start = compact_tracker.start_time();
@@ -90,22 +72,7 @@ impl Compactor {
         let msg_tokens: Vec<usize> = messages.iter().map(|m| count_tokens(&m.text())).collect();
         let total_tokens: usize = msg_tokens.iter().sum();
 
-        // 1. Checkpoint at 80% capacity
-        let checkpoint_usage = if should_checkpoint(
-            self.checkpoint.enabled,
-            self.checkpoint_done,
-            !memory_tools.is_empty(),
-            total_tokens,
-            max_context_tokens,
-            self.checkpoint.threshold,
-        ) {
-            self.maybe_checkpoint(total_tokens, max_context_tokens, messages, memory_tools)
-                .await
-        } else {
-            None
-        };
-
-        // 2. Skip compaction if too many consecutive failures
+        // Skip compaction if too many consecutive failures
         if self.compaction_failures >= 3 {
             slog!(
                 warn,
@@ -114,31 +81,11 @@ impl Compactor {
                 failures = self.compaction_failures,
                 last_error = self.last_error.as_deref().unwrap_or("unknown"),
             );
-            if checkpoint_usage.is_some() {
-                return Some(CompactionResult {
-                    messages_before,
-                    messages_after: messages.len(),
-                    summary_len: 0,
-                    token_usage: TokenUsage::default(),
-                    checkpoint_usage,
-                    duration_ms: compact_start.elapsed().as_millis() as u64,
-                });
-            }
             return None;
         }
 
-        // 3. Check if compaction needed
+        // Check if compaction needed
         if total_tokens <= max_context_tokens {
-            if checkpoint_usage.is_some() {
-                return Some(CompactionResult {
-                    messages_before,
-                    messages_after: messages.len(),
-                    summary_len: 0,
-                    token_usage: TokenUsage::default(),
-                    checkpoint_usage,
-                    duration_ms: compact_start.elapsed().as_millis() as u64,
-                });
-            }
             return None;
         }
 
@@ -150,7 +97,7 @@ impl Compactor {
             max_context_tokens,
         );
 
-        // 4. Cooldown: skip expensive summarization if recent compaction was ineffective
+        // Cooldown: skip expensive summarization if recent compaction was ineffective
         if self.compaction_failures > 0 {
             if let Some(last) = self.last_compaction_at {
                 if last.elapsed() < COMPACTION_COOLDOWN {
@@ -161,16 +108,6 @@ impl Compactor {
                         elapsed_secs = last.elapsed().as_secs(),
                         failures = self.compaction_failures,
                     );
-                    if checkpoint_usage.is_some() {
-                        return Some(CompactionResult {
-                            messages_before,
-                            messages_after: messages.len(),
-                            summary_len: 0,
-                            token_usage: TokenUsage::default(),
-                            checkpoint_usage,
-                            duration_ms: compact_start.elapsed().as_millis() as u64,
-                        });
-                    }
                     return None;
                 }
             }
@@ -277,75 +214,8 @@ impl Compactor {
             messages_after,
             summary_len,
             token_usage,
-            checkpoint_usage,
             duration_ms: compact_start.elapsed().as_millis() as u64,
         })
-    }
-
-    async fn maybe_checkpoint(
-        &mut self,
-        total_tokens: usize,
-        max_context_tokens: usize,
-        messages: &[Message],
-        memory_tools: &[ToolSchema],
-    ) -> Option<Usage> {
-        if !self.checkpoint.enabled || self.checkpoint_done || memory_tools.is_empty() {
-            return None;
-        }
-
-        if !should_checkpoint(
-            self.checkpoint.enabled,
-            self.checkpoint_done,
-            !memory_tools.is_empty(),
-            total_tokens,
-            max_context_tokens,
-            self.checkpoint.threshold,
-        ) {
-            return None;
-        }
-
-        slog!(debug, "compaction", "checkpoint_started", total_tokens,);
-        let usage = self.run_checkpoint(messages, memory_tools).await;
-        self.checkpoint_done = true;
-        usage
-    }
-
-    async fn run_checkpoint(
-        &self,
-        messages: &[Message],
-        memory_tools: &[ToolSchema],
-    ) -> Option<Usage> {
-        let recent: Vec<_> = messages
-            .iter()
-            .rev()
-            .take(10)
-            .rev()
-            .map(|m| m.text())
-            .collect();
-
-        let context = if recent.is_empty() {
-            String::new()
-        } else {
-            format!("\n\nRecent context:\n{}", recent.join("\n"))
-        };
-
-        let system_msg = ChatMessage::system(
-            "Checkpoint: The conversation is about to be summarized. \
-             Use memory_write to persist important information.",
-        );
-        let user_msg = ChatMessage::user(format!("{}{}", self.checkpoint.prompt, context));
-        let chat_messages = vec![system_msg, user_msg];
-
-        let stream = self
-            .llm
-            .chat_stream(&self.model, &chat_messages, memory_tools, 0.3);
-        tokio::select! {
-            usage = collect_turn_usage(stream) => Some(usage),
-            _ = self.cancel.cancelled() => {
-                slog!(debug, "compaction", "checkpoint_cancelled",);
-                None
-            }
-        }
     }
 
     async fn summarize(&self, dropped: &[&Message]) -> (Option<String>, TokenUsage) {
@@ -449,16 +319,4 @@ impl Compactor {
 
         chunks
     }
-}
-
-async fn collect_turn_usage(mut stream: ResponseStream) -> Usage {
-    use tokio_stream::StreamExt;
-
-    let mut usage = Usage::default();
-    while let Some(event) = stream.next().await {
-        if let crate::llm::stream::StreamEvent::Usage(u) = event {
-            usage.add(&u);
-        }
-    }
-    usage
 }

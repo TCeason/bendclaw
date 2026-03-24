@@ -21,7 +21,6 @@ fn make_ctx(workspace_dir: std::path::PathBuf) -> bendclaw::kernel::tools::ToolC
         runtime: bendclaw::kernel::tools::ToolRuntime {
             event_tx: None,
             cancel: tokio_util::sync::CancellationToken::new(),
-            cli_agent_state: bendclaw::kernel::tools::cli_agent::new_shared_state(),
             tool_call_id: None,
         },
         tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),

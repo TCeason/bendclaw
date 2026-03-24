@@ -1,11 +1,10 @@
-use bendclaw::kernel::tools::id::CHECKPOINT_MEMORY_TOOLS;
 use bendclaw::kernel::tools::ToolId;
 
 #[test]
 fn tool_id_debug() {
     assert_eq!(format!("{:?}", ToolId::Shell), "Shell");
     assert_eq!(format!("{:?}", ToolId::Databend), "Databend");
-    assert_eq!(format!("{:?}", ToolId::MemoryWrite), "MemoryWrite");
+    assert_eq!(format!("{:?}", ToolId::FileRead), "FileRead");
 }
 
 #[test]
@@ -15,13 +14,6 @@ fn tool_id_clone_and_copy() {
     let c = a; // also Copy (ToolId is Copy)
     assert_eq!(a, b);
     assert_eq!(a, c);
-}
-
-#[test]
-fn checkpoint_memory_tools_contents() {
-    assert!(CHECKPOINT_MEMORY_TOOLS.contains(&ToolId::MemoryWrite));
-    assert!(CHECKPOINT_MEMORY_TOOLS.contains(&ToolId::MemorySearch));
-    assert!(CHECKPOINT_MEMORY_TOOLS.contains(&ToolId::MemoryRead));
 }
 
 #[test]
@@ -39,11 +31,6 @@ fn all_variants_have_unique_str() {
 
 #[test]
 fn tool_id_as_str() {
-    assert_eq!(ToolId::MemoryWrite.as_str(), "memory_write");
-    assert_eq!(ToolId::MemorySearch.as_str(), "memory_search");
-    assert_eq!(ToolId::MemoryRead.as_str(), "memory_read");
-    assert_eq!(ToolId::MemoryDelete.as_str(), "memory_delete");
-    assert_eq!(ToolId::MemoryList.as_str(), "memory_list");
     assert_eq!(ToolId::SkillRead.as_str(), "skill_read");
     assert_eq!(ToolId::SkillCreate.as_str(), "create_skill");
     assert_eq!(ToolId::SkillRemove.as_str(), "remove_skill");
@@ -52,7 +39,6 @@ fn tool_id_as_str() {
     assert_eq!(ToolId::FileEdit.as_str(), "file_edit");
     assert_eq!(ToolId::Shell.as_str(), "shell");
     assert_eq!(ToolId::Databend.as_str(), "databend");
-    assert_eq!(ToolId::LearningWrite.as_str(), "learning_write");
 }
 
 #[test]
@@ -63,12 +49,4 @@ fn tool_id_eq_and_hash() {
     set.insert(ToolId::Shell);
     assert_eq!(set.len(), 1);
     assert!(set.contains(&ToolId::Shell));
-}
-
-#[test]
-fn checkpoint_memory_tools_count() {
-    assert_eq!(
-        bendclaw::kernel::tools::id::CHECKPOINT_MEMORY_TOOLS.len(),
-        3
-    );
 }

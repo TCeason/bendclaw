@@ -9,7 +9,6 @@ use tokio_util::sync::CancellationToken;
 use crate::base::Result;
 use crate::kernel::run::event::Event;
 use crate::kernel::session::workspace::Workspace;
-use crate::kernel::tools::cli_agent::SharedAgentState;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
 use crate::storage::pool::Pool;
@@ -19,7 +18,6 @@ use crate::storage::pool::Pool;
 pub struct ToolRuntime {
     pub event_tx: Option<mpsc::Sender<Event>>,
     pub cancel: CancellationToken,
-    pub cli_agent_state: SharedAgentState,
     pub tool_call_id: Option<Arc<str>>,
 }
 

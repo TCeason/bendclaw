@@ -5,7 +5,6 @@ use std::time::Instant;
 
 use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
-use crate::kernel::recall::RecallStore;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::persist_op::PersistOp;
 use crate::kernel::run::persist_op::PersistWriter;
@@ -28,7 +27,6 @@ pub struct TurnPersister {
     run_id: String,
     user_id: Arc<str>,
     start: Instant,
-    recall: Option<Arc<RecallStore>>,
     writer: PersistWriter,
 }
 
@@ -42,7 +40,6 @@ impl TurnPersister {
         run_id: impl Into<String>,
         user_id: Arc<str>,
         start: Instant,
-        recall: Option<Arc<RecallStore>>,
         writer: PersistWriter,
     ) -> Self {
         Self {
@@ -53,7 +50,6 @@ impl TurnPersister {
             run_id: run_id.into(),
             user_id,
             start,
-            recall,
             writer,
         }
     }
@@ -132,7 +128,6 @@ impl TurnPersister {
         self.writer.send(PersistOp::RunSuccess {
             storage: self.storage,
             trace: Box::new(self.trace),
-            recall: self.recall,
             run_id: self.run_id,
             session_id: self.session_id,
             agent_id: self.agent_id,

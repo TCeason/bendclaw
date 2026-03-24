@@ -299,7 +299,7 @@ fn reasoning_turn_preview_includes_error() {
     assert!(preview.contains("[error] fail"));
 }
 
-// ── RunLoopState — merge_usage, apply_checkpoint_usage, set_ttft ──
+// ── RunLoopState — merge_usage, set_ttft ──
 
 #[test]
 fn turn_loop_state_merge_usage_accumulates() {
@@ -317,25 +317,6 @@ fn turn_loop_state_merge_usage_accumulates() {
     assert_eq!(state.usage().prompt_tokens, 13);
     assert_eq!(state.usage().completion_tokens, 7);
     assert_eq!(state.usage().total_tokens, 20);
-}
-
-#[test]
-fn turn_loop_state_apply_checkpoint_usage_some() {
-    let mut state = RunLoopState::default();
-    let checkpoint = bendclaw::kernel::run::result::Usage {
-        prompt_tokens: 7,
-        total_tokens: 7,
-        ..Default::default()
-    };
-    state.apply_checkpoint_usage(Some(&checkpoint));
-    assert_eq!(state.usage().prompt_tokens, 7);
-}
-
-#[test]
-fn turn_loop_state_apply_checkpoint_usage_none_is_noop() {
-    let mut state = RunLoopState::default();
-    state.apply_checkpoint_usage(None);
-    assert_eq!(state.usage().total_tokens, 0);
 }
 
 #[test]

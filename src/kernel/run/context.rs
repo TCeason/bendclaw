@@ -3,7 +3,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::kernel::runtime::agent_config::CheckpointConfig;
 use crate::kernel::tools::progressive::ProgressiveToolView;
 use crate::kernel::Message;
 use crate::llm::provider::LLMProvider;
@@ -30,7 +29,6 @@ pub(crate) struct Context {
     pub max_iterations: u32,
     pub max_context_tokens: usize,
     pub max_duration: Duration,
-    pub checkpoint: Arc<CheckpointConfig>,
 
     // ── Data ──
     pub tool_view: ProgressiveToolView,

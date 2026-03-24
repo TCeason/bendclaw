@@ -4,11 +4,9 @@ use std::sync::Arc;
 use super::Tool;
 use super::ToolId;
 use super::ToolSpec;
-use crate::kernel::agent_store::AgentStore;
 use crate::kernel::channel::registry::ChannelRegistry;
 use crate::kernel::cluster::ClusterService;
 use crate::kernel::cluster::DispatchTable;
-use crate::kernel::recall::RecallStore;
 use crate::kernel::skills::remote::repository::DatabendSkillRepositoryFactory;
 use crate::kernel::skills::store::SkillStore;
 use crate::llm::tool::ToolSchema;
@@ -94,38 +92,13 @@ impl Default for ToolRegistry {
 
 /// Create a per-session tool registry with all dependencies injected.
 pub fn create_session_tools(
-    storage: Arc<AgentStore>,
     skill_store: Arc<SkillStore>,
     skill_store_factory: Arc<DatabendSkillRepositoryFactory>,
     databend_pool: crate::storage::Pool,
     channels: Arc<ChannelRegistry>,
     node_id: String,
-    recall_store: Arc<RecallStore>,
 ) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
-
-    // Memory tools
-    let memory_backend: Arc<dyn super::memory::MemoryBackend> = storage.clone();
-    registry.register_builtin(
-        ToolId::MemoryWrite,
-        Arc::new(super::memory::MemoryWriteTool::new(memory_backend.clone())),
-    );
-    registry.register_builtin(
-        ToolId::MemorySearch,
-        Arc::new(super::memory::MemorySearchTool::new(memory_backend.clone())),
-    );
-    registry.register_builtin(
-        ToolId::MemoryRead,
-        Arc::new(super::memory::MemoryReadTool::new(memory_backend.clone())),
-    );
-    registry.register_builtin(
-        ToolId::MemoryDelete,
-        Arc::new(super::memory::MemoryDeleteTool::new(memory_backend.clone())),
-    );
-    registry.register_builtin(
-        ToolId::MemoryList,
-        Arc::new(super::memory::MemoryListTool::new(memory_backend)),
-    );
 
     // Skill tools
     registry.register_builtin(
@@ -209,32 +182,6 @@ pub fn create_session_tools(
         Arc::new(super::task::TaskHistoryTool::new(node_id)),
     );
     registry.register_builtin(ToolId::TaskRun, Arc::new(super::task::TaskRunTool));
-
-    // Recall tools
-    registry.register_builtin(
-        ToolId::LearningWrite,
-        Arc::new(super::recall::LearningWriteTool::new(recall_store.clone())),
-    );
-    registry.register_builtin(
-        ToolId::KnowledgeSearch,
-        Arc::new(super::recall::KnowledgeSearchTool::new(
-            recall_store.clone(),
-        )),
-    );
-    registry.register_builtin(
-        ToolId::LearningSearch,
-        Arc::new(super::recall::LearningSearchTool::new(recall_store)),
-    );
-
-    // Coding agent tools
-    registry.register_builtin(
-        ToolId::ClaudeCode,
-        Arc::new(super::coding_agent::ClaudeCodeTool),
-    );
-    registry.register_builtin(
-        ToolId::CodexExec,
-        Arc::new(super::coding_agent::CodexExecTool),
-    );
 
     registry
 }

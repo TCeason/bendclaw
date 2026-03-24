@@ -6,16 +6,13 @@ use std::sync::Arc;
 use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
 use crate::kernel::cluster::ClusterService;
-use crate::kernel::recall::RecallStore;
 use crate::kernel::run::default_identity;
 use crate::kernel::run::runtime_context;
 use crate::kernel::skills::store::SkillStore;
 use crate::llm::tool::ToolSchema;
 use crate::observability::log::slog;
-use crate::storage::dal::learning::LearningRecord;
 use crate::storage::dal::variable::record::VariableRecord;
 
-const LEARNINGS_LIMIT: u32 = 20;
 const RECENT_ERRORS_LIMIT: u32 = 5;
 
 // Per-layer max sizes (bytes). Prevents any single layer from bloating the prompt.
@@ -25,8 +22,6 @@ pub const MAX_SOUL_BYTES: usize = 16_384;
 pub const MAX_SYSTEM_BYTES: usize = 65_536;
 pub const MAX_SKILLS_BYTES: usize = 32_768;
 pub const MAX_TOOLS_BYTES: usize = 32_768;
-pub const MAX_LEARNINGS_BYTES: usize = 32_768;
-pub const MAX_RECALL_BYTES: usize = 32_768;
 pub const MAX_ERRORS_BYTES: usize = 8_192;
 pub const MAX_VARIABLES_BYTES: usize = 16_384;
 pub const MAX_RUNTIME_BYTES: usize = 4_096;
@@ -77,11 +72,9 @@ pub struct PromptBuilder {
     soul: Option<String>,
     runtime: Option<String>,
     cwd: Option<std::path::PathBuf>,
-    learnings: Option<String>,
     recent_errors: Option<String>,
     tools: Option<Arc<Vec<ToolSchema>>>,
     variables: Option<Vec<VariableRecord>>,
-    recall: Option<Arc<RecallStore>>,
     cluster_client: Option<Arc<ClusterService>>,
     directive_prompt: Option<String>,
     cached_config: Option<crate::storage::dal::agent_config::record::AgentConfigRecord>,
@@ -96,11 +89,9 @@ impl PromptBuilder {
             soul: None,
             runtime: None,
             cwd: None,
-            learnings: None,
             recent_errors: None,
             tools: None,
             variables: None,
-            recall: None,
             cluster_client: None,
             directive_prompt: None,
             cached_config: None,
@@ -144,14 +135,6 @@ impl PromptBuilder {
         self
     }
 
-    pub fn with_learnings(mut self, s: impl Into<String>) -> Self {
-        let s = s.into();
-        if !s.is_empty() {
-            self.learnings = Some(s);
-        }
-        self
-    }
-
     pub fn with_recent_errors(mut self, s: impl Into<String>) -> Self {
         let s = s.into();
         if !s.is_empty() {
@@ -172,11 +155,6 @@ impl PromptBuilder {
         self
     }
 
-    pub fn with_recall(mut self, store: Arc<RecallStore>) -> Self {
-        self.recall = Some(store);
-        self
-    }
-
     pub fn with_cluster_client(mut self, client: Arc<ClusterService>) -> Self {
         self.cluster_client = Some(client);
         self
@@ -192,7 +170,7 @@ impl PromptBuilder {
         slog!(debug, "prompt", "started", agent_id, user_id, session_id,);
 
         // Phase 1: Fire all independent DB queries in parallel.
-        let (config, recall_hints, variables_text, errors_text, state) =
+        let (config, variables_text, errors_text, state) =
             self.fetch_all(agent_id, session_id).await;
 
         let config = config?;
@@ -271,7 +249,6 @@ impl PromptBuilder {
         self.append_directive(&mut prompt);
 
         // 6-8. Append pre-fetched async layers
-        prompt.push_str(&recall_hints);
         prompt.push_str(&variables_text);
         prompt.push_str(&errors_text);
 
@@ -294,14 +271,13 @@ impl PromptBuilder {
     }
 
     /// Fetch all independent data sources in parallel.
-    /// Returns (config, recall_hints_text, variables_text, errors_text, session_state).
+    /// Returns (config, variables_text, errors_text, session_state).
     async fn fetch_all(
         &self,
         agent_id: &str,
         session_id: &str,
     ) -> (
         Result<Option<crate::storage::dal::agent_config::record::AgentConfigRecord>>,
-        String,
         String,
         String,
         Result<serde_json::Value>,
@@ -314,12 +290,11 @@ impl PromptBuilder {
                 self.storage.config_get(agent_id).await
             }
         };
-        let recall_fut = self.build_recall_hints(agent_id);
         let vars_fut = self.build_variables_text();
         let errors_fut = self.build_errors_text(session_id);
         let state_fut = self.storage.session_get_state(session_id);
 
-        tokio::join!(config_fut, recall_fut, vars_fut, errors_fut, state_fut)
+        tokio::join!(config_fut, vars_fut, errors_fut, state_fut)
     }
 
     fn append_skills(&self, prompt: &mut String, agent_id: &str) {
@@ -357,23 +332,6 @@ impl PromptBuilder {
             "\nCall tools when they would help accomplish the task.\
              \nTo self-upgrade, run `bendclaw update && bendclaw restart` via shell. Warn the user that the session will be interrupted.\n",
         );
-
-        let has_claude = tools.iter().any(|t| t.function.name == "claude_code");
-        let has_codex = tools.iter().any(|t| t.function.name == "codex_exec");
-        if has_claude || has_codex {
-            buf.push_str("\n### Coding-agent orchestration\n\n");
-            buf.push_str("Coding-agent tools can continue work across multiple rounds in the same agent session. You decide the higher-level workflow: when to implement, review, switch agents, or stop.\n");
-            if has_claude && has_codex {
-                buf.push_str(
-                    "You may use one coding agent to implement and the other to review.\n",
-                );
-            }
-            buf.push_str("It is normal to do multiple fix/review rounds. Decide whether to continue or stop based on the remaining issues and the task goal.\n\n");
-        } else {
-            buf.push('\n');
-        }
-
-        buf.push('\n');
 
         let buf = truncate_layer("tools", &buf, MAX_TOOLS_BYTES, "registry");
         prompt.push_str(&buf);
@@ -426,84 +384,6 @@ impl PromptBuilder {
         buf.push_str("\n\n");
         let buf = truncate_layer("directive", &buf, MAX_DIRECTIVE_BYTES, "platform");
         prompt.push_str(&buf);
-    }
-
-    /// Build recall hints text. Returns formatted section string (may be empty).
-    async fn build_recall_hints(&self, _agent_id: &str) -> String {
-        // If text was injected directly, use it (backwards compat for tests)
-        if let Some(ref s) = self.learnings {
-            if s.is_empty() {
-                return String::new();
-            }
-            let mut buf = String::from("## Learnings\n\n");
-            buf.push_str(s);
-            buf.push_str("\n\n");
-            return truncate_layer("learnings", &buf, MAX_LEARNINGS_BYTES, "injected");
-        }
-
-        // If a RecallStore is available, build recall hints from it
-        if let Some(ref recall) = self.recall {
-            let mut buf = String::new();
-
-            match recall.learnings().list(10).await {
-                Ok(records) if !records.is_empty() => {
-                    let filtered: Vec<_> = records
-                        .iter()
-                        .filter(|r| r.confidence >= 0.7 && r.status == "active")
-                        .collect();
-                    if !filtered.is_empty() {
-                        buf.push_str("### Learnings\n\n");
-                        for r in &filtered {
-                            let _ = writeln!(buf, "- [{}] **{}**: {}", r.kind, r.title, r.content);
-                        }
-                        buf.push('\n');
-                    }
-                }
-                Err(e) => slog!(warn, "prompt", "recall_learnings_failed", error = %e,),
-                _ => {}
-            }
-
-            match recall.knowledge().list_active(5).await {
-                Ok(records) if !records.is_empty() => {
-                    let filtered: Vec<_> = records.iter().filter(|r| r.confidence >= 0.7).collect();
-                    if !filtered.is_empty() {
-                        buf.push_str("### Known Context\n\n");
-                        for r in &filtered {
-                            let _ = writeln!(buf, "- [{}] {} ({})", r.kind, r.title, r.locator);
-                        }
-                        buf.push('\n');
-                    }
-                }
-                Err(e) => slog!(warn, "prompt", "recall_knowledge_failed", error = %e,),
-                _ => {}
-            }
-
-            if !buf.is_empty() {
-                let mut section = String::from("## Recall Hints\n\n");
-                section.push_str(&buf);
-                return truncate_layer("recall_hints", &section, MAX_RECALL_BYTES, "recall_store");
-            }
-            return String::new();
-        }
-
-        // Fallback: load old-style learnings from DB
-        match self.storage.learning_list(LEARNINGS_LIMIT).await {
-            Ok(records) if !records.is_empty() => {
-                let text = format_learnings(&records);
-                if text.is_empty() {
-                    return String::new();
-                }
-                let mut buf = String::from("## Learnings\n\n");
-                buf.push_str(&text);
-                buf.push_str("\n\n");
-                truncate_layer("learnings", &buf, MAX_LEARNINGS_BYTES, "db")
-            }
-            Ok(_) => String::new(),
-            Err(e) => {
-                slog!(warn, "prompt", "learnings_db_failed", error = %e,);
-                String::new()
-            }
-        }
     }
 
     /// Build variables text. Returns formatted section string (may be empty).
@@ -615,18 +495,6 @@ impl PromptBuilder {
         buf.push_str("\n\n");
         truncate_layer("recent_errors", &buf, MAX_ERRORS_BYTES, src)
     }
-}
-
-pub fn format_learnings(records: &[LearningRecord]) -> String {
-    let mut out = String::new();
-    for r in records {
-        if !r.title.is_empty() {
-            let _ = writeln!(out, "- **{}**: {}", r.title, r.content);
-        } else {
-            let _ = writeln!(out, "- {}", r.content);
-        }
-    }
-    out
 }
 
 /// Replace `{key}` placeholders with values from session state.

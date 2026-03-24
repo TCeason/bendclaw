@@ -3,7 +3,6 @@ use serde::Serialize;
 
 use crate::kernel::run::result::Reason;
 use crate::kernel::run::result::Usage;
-use crate::kernel::tools::cli_agent::AgentEvent;
 use crate::kernel::OperationMeta;
 use crate::llm::stream::StreamEvent;
 use crate::llm::usage::TokenUsage;
@@ -51,12 +50,6 @@ pub enum Event {
         arguments: serde_json::Value,
     },
 
-    /// Partial output from a running tool.
-    ToolUpdate {
-        tool_call_id: String,
-        event: AgentEvent,
-    },
-
     /// A tool execution has finished.
     ToolEnd {
         tool_call_id: String,
@@ -71,12 +64,6 @@ pub enum Event {
         messages_before: usize,
         messages_after: usize,
         summary_len: usize,
-    },
-
-    /// Pre-compaction checkpoint (memory persistence) completed.
-    CheckpointDone {
-        prompt_tokens: u64,
-        completion_tokens: u64,
     },
 
     /// The loop was aborted (timeout, max iterations, or cancellation).
@@ -123,10 +110,8 @@ impl Event {
             Self::ReasonEnd { .. } => "ReasonEnd".to_string(),
             Self::ReasonError { .. } => "ReasonError".to_string(),
             Self::ToolStart { .. } => "ToolStart".to_string(),
-            Self::ToolUpdate { .. } => "ToolUpdate".to_string(),
             Self::ToolEnd { .. } => "ToolEnd".to_string(),
             Self::CompactionDone { .. } => "CompactionDone".to_string(),
-            Self::CheckpointDone { .. } => "CheckpointDone".to_string(),
             Self::Aborted { .. } => "Aborted".to_string(),
             Self::Error { .. } => "Error".to_string(),
             Self::Audit { name, .. } => name.clone(),

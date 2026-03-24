@@ -6,7 +6,6 @@ use parking_lot::RwLock;
 use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
-use crate::kernel::recall::RecallStore;
 use crate::kernel::runtime::Runtime;
 use crate::kernel::session::workspace::OpenResolver;
 use crate::kernel::session::workspace::SandboxResolver;
@@ -77,8 +76,6 @@ impl Runtime {
 
         let storage = Arc::new(AgentStore::new(pool.clone(), agent_llm.clone()));
 
-        let recall_store = Arc::new(RecallStore::new(pool.clone()));
-
         let resolver: Arc<dyn crate::kernel::session::workspace::PathResolver> =
             if self.config.workspace.sandbox {
                 Arc::new(SandboxResolver)
@@ -111,13 +108,11 @@ impl Runtime {
         let skill_store_factory =
             Arc::new(DatabendSkillRepositoryFactory::new(self.databases.clone()));
         let mut tool_registry = create_session_tools(
-            storage.clone(),
             self.skills.clone(),
             skill_store_factory,
             pool.clone(),
             self.channels.clone(),
             self.config.node_id.clone(),
-            recall_store.clone(),
         );
 
         // Conditionally register cluster tools
@@ -161,7 +156,6 @@ impl Runtime {
                 llm: Arc::new(RwLock::new(agent_llm)),
                 config: Arc::new(self.config.clone()),
                 variables: variable_records,
-                recall: Some(recall_store),
                 cluster_client: self.cluster.read().clone(),
                 directive: self.directive.read().clone(),
                 trace_writer: self.trace_writer.clone(),

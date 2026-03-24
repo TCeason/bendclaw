@@ -3,7 +3,6 @@ mod channel;
 mod cluster;
 mod directive;
 mod lease;
-mod recall;
 mod run;
 mod runtime;
 mod session;

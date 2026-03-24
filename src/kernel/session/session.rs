@@ -17,7 +17,6 @@ use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
 use crate::kernel::directive::DirectiveService;
-use crate::kernel::recall::RecallStore;
 use crate::kernel::run::compactor::Compactor;
 use crate::kernel::run::context::Context;
 use crate::kernel::run::dispatcher::ToolDispatcher;
@@ -68,7 +67,6 @@ pub struct SessionResources {
     pub llm: Arc<RwLock<Arc<dyn LLMProvider>>>,
     pub config: Arc<AgentConfig>,
     pub variables: Vec<crate::storage::dal::variable::record::VariableRecord>,
-    pub recall: Option<Arc<RecallStore>>,
     pub cluster_client: Option<Arc<crate::kernel::cluster::ClusterService>>,
     pub directive: Option<Arc<DirectiveService>>,
     pub tool_writer: crate::kernel::writer::tool_op::ToolWriter,
@@ -187,9 +185,6 @@ impl Session {
                 .with_variables(self.res.variables.clone())
                 .with_cached_config(self.res.cached_config.clone())
                 .with_cwd(self.res.workspace.cwd().to_path_buf());
-            if let Some(ref recall) = self.res.recall {
-                pb = pb.with_recall(recall.clone());
-            }
             if let Some(ref cc) = self.res.cluster_client {
                 pb = pb.with_cluster_client(cc.clone());
             }
@@ -266,7 +261,6 @@ impl Session {
                 run_id,
                 self.user_id.clone(),
                 start,
-                self.res.recall.clone(),
                 self.res.persist_writer.clone(),
             ),
             USAGE_PROVIDER_UNKNOWN.to_string(),
@@ -336,7 +330,6 @@ impl Session {
             llm: llm.clone(),
             model: llm.default_model().into(),
             temperature: llm.default_temperature(),
-            checkpoint: Arc::new(self.res.config.checkpoint.clone()),
             max_iterations: self.res.config.max_iterations,
             max_context_tokens: self.res.config.max_context_tokens,
             max_duration: Duration::from_secs(self.res.config.max_duration_secs),
@@ -348,12 +341,7 @@ impl Session {
         let cancel = CancellationToken::new();
         let iteration = Arc::new(AtomicU32::new(0));
 
-        let compactor = Compactor::new(
-            ctx.llm.clone(),
-            ctx.model.clone(),
-            ctx.checkpoint.clone(),
-            cancel.clone(),
-        );
+        let compactor = Compactor::new(ctx.llm.clone(), ctx.model.clone(), cancel.clone());
         let skill_executor = Arc::new(crate::kernel::skills::runner::SkillRunner::new(
             &self.agent_id,
             &self.user_id,
@@ -378,7 +366,6 @@ impl Session {
                 runtime: ToolRuntime {
                     event_tx: None,
                     cancel: cancel.clone(),
-                    cli_agent_state: crate::kernel::tools::cli_agent::new_shared_state(),
                     tool_call_id: None,
                 },
                 tool_writer: self.res.tool_writer.clone(),

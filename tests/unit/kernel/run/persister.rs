@@ -49,7 +49,6 @@ fn make_persister(client: &FakeDatabend, writer: &PersistWriter) -> TurnPersiste
         "run-1",
         Arc::<str>::from("user-1"),
         Instant::now(),
-        None,
         writer.clone(),
     )
 }

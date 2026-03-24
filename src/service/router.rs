@@ -200,19 +200,6 @@ pub fn api_router(state: AppState, _log_level: &str, auth: &AuthConfig) -> Route
             "/v1/agents/{agent_id}/runs/{run_id}/continue",
             post(v1::runs::continue_run),
         )
-        // Memory
-        .route(
-            "/v1/agents/{agent_id}/memories",
-            get(v1::memories::list_memories).post(v1::memories::create_memory),
-        )
-        .route(
-            "/v1/agents/{agent_id}/memories/{memory_id}",
-            get(v1::memories::get_memory).delete(v1::memories::delete_memory),
-        )
-        .route(
-            "/v1/agents/{agent_id}/memories/search",
-            post(v1::memories::search_memories),
-        )
         // Skills
         .route(
             "/v1/agents/{agent_id}/skills",
@@ -245,32 +232,6 @@ pub fn api_router(state: AppState, _log_level: &str, auth: &AuthConfig) -> Route
         .route(
             "/v1/agents/{agent_id}/config/rollback",
             post(v1::config::rollback_config),
-        )
-        // Learnings
-        .route(
-            "/v1/agents/{agent_id}/learnings",
-            get(v1::learnings::list_learnings).post(v1::learnings::create_learning),
-        )
-        .route(
-            "/v1/agents/{agent_id}/learnings/{learning_id}",
-            get(v1::learnings::get_learning).delete(v1::learnings::delete_learning),
-        )
-        .route(
-            "/v1/agents/{agent_id}/learnings/search",
-            post(v1::learnings::search_learnings),
-        )
-        // Knowledge
-        .route(
-            "/v1/agents/{agent_id}/knowledge",
-            get(v1::knowledge::list_knowledge).post(v1::knowledge::create_knowledge),
-        )
-        .route(
-            "/v1/agents/{agent_id}/knowledge/{knowledge_id}",
-            get(v1::knowledge::get_knowledge).delete(v1::knowledge::delete_knowledge),
-        )
-        .route(
-            "/v1/agents/{agent_id}/knowledge/search",
-            post(v1::knowledge::search_knowledge),
         )
         // Traces
         .route("/v1/agents/{agent_id}/traces", get(v1::traces::list_traces))

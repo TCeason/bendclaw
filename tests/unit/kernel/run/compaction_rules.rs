@@ -1,22 +1,7 @@
 use bendclaw::kernel::run::compaction_rules::keep_budget;
 use bendclaw::kernel::run::compaction_rules::plan_compaction_split;
-use bendclaw::kernel::run::compaction_rules::should_checkpoint;
 use bendclaw::kernel::run::compaction_rules::SUMMARY_RESERVE;
 use bendclaw::kernel::Message;
-
-#[test]
-fn should_checkpoint_respects_budget_percentage_threshold() {
-    assert!(!should_checkpoint(true, false, true, 7_900, 10_000, 20));
-    assert!(should_checkpoint(true, false, true, 8_000, 10_000, 20));
-    assert!(should_checkpoint(true, false, true, 9_500, 10_000, 5));
-}
-
-#[test]
-fn should_checkpoint_short_circuits_when_disabled_done_or_no_tools() {
-    assert!(!should_checkpoint(false, false, true, 9_500, 10_000, 5));
-    assert!(!should_checkpoint(true, true, true, 9_500, 10_000, 5));
-    assert!(!should_checkpoint(true, false, false, 9_500, 10_000, 5));
-}
 
 #[test]
 fn keep_budget_reserves_summary_space() {

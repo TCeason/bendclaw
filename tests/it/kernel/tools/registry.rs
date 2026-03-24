@@ -5,7 +5,6 @@ use bendclaw::kernel::tools::registry::create_session_tools;
 use bendclaw::kernel::tools::registry::ToolRegistry;
 use bendclaw::kernel::tools::ToolId;
 
-use crate::mocks::llm::MockLLMProvider;
 use crate::mocks::skill::test_skill_store;
 
 fn make_registry() -> ToolRegistry {
@@ -17,22 +16,13 @@ fn make_registry() -> ToolRegistry {
     let _ = std::fs::create_dir_all(&dir);
     let skill_store = test_skill_store(databases.clone(), dir);
     let factory = Arc::new(DatabendSkillRepositoryFactory::new(databases));
-    let llm: Arc<dyn bendclaw::llm::provider::LLMProvider> =
-        Arc::new(MockLLMProvider::with_text("ok"));
-    let storage = Arc::new(bendclaw::kernel::agent_store::AgentStore::new(
-        pool.clone(),
-        llm,
-    ));
-    let recall_store = Arc::new(bendclaw::kernel::recall::RecallStore::new(pool.clone()));
     let channels = Arc::new(bendclaw::kernel::channel::registry::ChannelRegistry::new());
     create_session_tools(
-        storage,
         skill_store,
         factory,
         pool,
         channels,
         "test_instance".to_string(),
-        recall_store,
     )
 }
 

@@ -41,7 +41,6 @@ async fn session_belongs_to_matches_exact_agent_and_user() -> Result<()> {
         llm: Arc::new(RwLock::new(llm)),
         config: Arc::new(AgentConfig::default()),
         variables: vec![],
-        recall: None,
         cluster_client: None,
         directive: None,
         trace_writer: bendclaw::kernel::trace::TraceWriter::spawn(),

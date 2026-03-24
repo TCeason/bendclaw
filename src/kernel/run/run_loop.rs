@@ -310,12 +310,6 @@ impl RunLoopState {
         self.usage.ttft_ms = ms;
     }
 
-    pub fn apply_checkpoint_usage(&mut self, usage: Option<&Usage>) {
-        if let Some(u) = usage {
-            self.usage.merge(u);
-        }
-    }
-
     pub fn record_final_response(&mut self, content: Vec<ContentBlock>) {
         self.final_content = content;
         self.has_tool_calls = false;

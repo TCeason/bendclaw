@@ -128,9 +128,6 @@ pub fn fake_run_exec_databend(state: RunExecState, session_id: &str) -> FakeData
         {
             return Ok(paged_rows(&[], None, None));
         }
-        if sql.contains("FROM learnings") || sql.contains("FROM knowledge") {
-            return Ok(paged_rows(&[], None, None));
-        }
         if sql.contains("FROM spans") && sql.contains("status = 'failed'") {
             return Ok(paged_rows(&[], None, None));
         }

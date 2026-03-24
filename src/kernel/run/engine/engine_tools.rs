@@ -6,7 +6,6 @@ use crate::kernel::run::dispatcher::ParsedToolCall;
 use crate::kernel::run::dispatcher::ToolCallResult;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::run_loop::RunLoopState;
-use crate::kernel::tools::id::CHECKPOINT_MEMORY_TOOLS;
 use crate::kernel::trace::SpanMeta;
 use crate::kernel::trace::TraceSpan;
 use crate::kernel::Message;
@@ -257,27 +256,12 @@ impl Engine {
     }
 
     pub(super) async fn try_compact(&mut self, state: &mut RunLoopState) {
-        let memory_tools = self
-            .dispatcher
-            .memory_tool_schemas(&CHECKPOINT_MEMORY_TOOLS);
         if let Some(info) = self
             .compactor
-            .compact(
-                &mut self.ctx.messages,
-                state.max_context_tokens(),
-                &memory_tools,
-            )
+            .compact(&mut self.ctx.messages, state.max_context_tokens())
             .await
         {
             state.add_token_usage(&info.token_usage);
-            state.apply_checkpoint_usage(info.checkpoint_usage.as_ref());
-            if let Some(cp) = &info.checkpoint_usage {
-                self.emit(Event::CheckpointDone {
-                    prompt_tokens: cp.prompt_tokens,
-                    completion_tokens: cp.completion_tokens,
-                })
-                .await;
-            }
             self.emit(Event::CompactionDone {
                 messages_before: info.messages_before,
                 messages_after: info.messages_after,

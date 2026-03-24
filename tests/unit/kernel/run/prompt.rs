@@ -1,5 +1,5 @@
 //! Tests for prompt construction helpers: truncate_layer, substitute_template,
-//! format_learnings, and layer size constants.
+//! and layer size constants.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -8,13 +8,11 @@ use anyhow::Context as _;
 use anyhow::Result;
 use async_trait::async_trait;
 use bendclaw::kernel::agent_store::AgentStore;
-use bendclaw::kernel::run::prompt::format_learnings;
 use bendclaw::kernel::run::prompt::substitute_template;
 use bendclaw::kernel::run::prompt::truncate_layer;
 use bendclaw::kernel::run::prompt::PromptBuilder;
 use bendclaw::kernel::run::prompt::MAX_ERRORS_BYTES;
 use bendclaw::kernel::run::prompt::MAX_IDENTITY_BYTES;
-use bendclaw::kernel::run::prompt::MAX_LEARNINGS_BYTES;
 use bendclaw::kernel::run::prompt::MAX_RUNTIME_BYTES;
 use bendclaw::kernel::run::prompt::MAX_SKILLS_BYTES;
 use bendclaw::kernel::run::prompt::MAX_SOUL_BYTES;
@@ -28,7 +26,6 @@ use bendclaw::llm::provider::LLMProvider;
 use bendclaw::llm::provider::LLMResponse;
 use bendclaw::llm::stream::ResponseStream;
 use bendclaw::llm::tool::ToolSchema;
-use bendclaw::storage::dal::learning::LearningRecord;
 use bendclaw::storage::AgentDatabases;
 use bendclaw::storage::VariableRecord;
 
@@ -186,36 +183,11 @@ fn substitute_template_cases() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// format_learnings
-// ═══════════════════════════════════════════════════════════════════════════════
-
-fn make_learning(title: &str, content: &str) -> LearningRecord {
-    LearningRecord {
-        id: "1".into(),
-        kind: "pattern".into(),
-        subject: "".into(),
-        title: title.into(),
-        content: content.into(),
-        conditions: None,
-        strategy: None,
-        priority: 0,
-        confidence: 1.0,
-        status: "active".into(),
-        supersedes_id: "".into(),
-        user_id: "".into(),
-        scope: "shared".into(),
-        created_by: "".into(),
-        source_run_id: "".into(),
-        success_count: 0,
-        failure_count: 0,
-        last_applied_at: None,
-        created_at: "".into(),
-        updated_at: "".into(),
-    }
-}
-
 struct NoopLLM;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PromptBuilder integration
+// ═══════════════════════════════════════════════════════════════════════════════
 
 #[async_trait]
 impl LLMProvider for NoopLLM {
@@ -279,37 +251,6 @@ fn write_hub_skill(workspace_root: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn format_learnings_empty() {
-    let result = format_learnings(&[]);
-    assert_eq!(result, "");
-}
-
-#[test]
-fn format_learnings_with_title() {
-    let records = vec![make_learning("Tip", "Use indexes")];
-    let result = format_learnings(&records);
-    assert_eq!(result, "- **Tip**: Use indexes\n");
-}
-
-#[test]
-fn format_learnings_without_title() {
-    let records = vec![make_learning("", "Always check errors")];
-    let result = format_learnings(&records);
-    assert_eq!(result, "- Always check errors\n");
-}
-
-#[test]
-fn format_learnings_mixed() {
-    let records = vec![
-        make_learning("SQL", "Use EXPLAIN"),
-        make_learning("", "Check logs first"),
-    ];
-    let result = format_learnings(&records);
-    assert!(result.contains("- **SQL**: Use EXPLAIN\n"));
-    assert!(result.contains("- Check logs first\n"));
-}
-
 #[tokio::test]
 async fn prompt_builder_build_uses_injected_layers_in_order_and_substitutes_state() -> Result<()> {
     let (builder, fake, workspace_root) = make_prompt_builder(|sql, _database| {
@@ -371,7 +312,6 @@ async fn prompt_builder_build_uses_injected_layers_in_order_and_substitutes_stat
     let prompt = builder
         .with_identity("Identity for {name}")
         .with_soul("Helpful soul")
-        .with_learnings("- learned for {name}\n")
         .with_recent_errors("- `bad_tool`: failed before\n")
         .with_tools(tools)
         .with_variables(variables)
@@ -383,7 +323,6 @@ async fn prompt_builder_build_uses_injected_layers_in_order_and_substitutes_stat
     assert!(prompt.contains("## Soul\n\nHelpful soul"));
     assert!(prompt.contains("<skill name=\"demo-skill\">Demo skill</skill>"));
     assert!(prompt.contains("- `shell`: Run shell commands"));
-    assert!(prompt.contains("## Learnings\n\n- learned for Alice"));
     assert!(prompt.contains("- `PLAIN_KEY` = `plain-value`"));
     assert!(prompt.contains("[SECRET] (available as env var `$SECRET_KEY`)"));
     assert!(prompt.contains("## Recent Errors"));
@@ -395,11 +334,10 @@ async fn prompt_builder_build_uses_injected_layers_in_order_and_substitutes_stat
         .find("## Available Skills")
         .context("missing skills")?;
     let tools = prompt.find("## Available Tools").context("missing tools")?;
-    let learnings = prompt.find("## Learnings").context("missing learnings")?;
     let variables = prompt.find("## Variables").context("missing variables")?;
     let errors = prompt.find("## Recent Errors").context("missing errors")?;
     let runtime = prompt.find("## Runtime").context("missing runtime")?;
-    assert!(soul < skills && skills < tools && tools < learnings && learnings < variables);
+    assert!(soul < skills && skills < tools && tools < variables);
     assert!(variables < errors && errors < runtime);
 
     let calls = fake.calls();
@@ -409,9 +347,6 @@ async fn prompt_builder_build_uses_injected_layers_in_order_and_substitutes_stat
         |call| matches!(call, FakeDatabendCall::Query { sql, .. } if sql.contains("FROM variables"))
     ));
     assert!(!calls.iter().any(|call| matches!(call, FakeDatabendCall::Query { sql, .. } if sql.contains("FROM spans WHERE status = 'failed'"))));
-    assert!(!calls.iter().any(
-        |call| matches!(call, FakeDatabendCall::Query { sql, .. } if sql.contains("FROM learnings"))
-    ));
     Ok(())
 }
 
@@ -447,34 +382,6 @@ async fn prompt_builder_build_falls_back_to_db_layers() -> Result<()> {
                     "Prompt Session",
                     "private",
                     r#"{"name":"Bob"}"#,
-                    "",
-                    "2026-03-10T00:00:00Z",
-                    "2026-03-10T00:00:00Z",
-                ]],
-                None,
-                None,
-            ));
-        }
-        if sql.contains("FROM learnings") && !sql.contains("agent_id") {
-            return Ok(paged_rows(
-                &[&[
-                    "learn-1",
-                    "pattern",
-                    "",
-                    "SQL",
-                    "Use indexes",
-                    "",
-                    "",
-                    "0",
-                    "1.0",
-                    "active",
-                    "",
-                    "user-1",
-                    "shared", // scope
-                    "",       // created_by
-                    "",
-                    "0",
-                    "0",
                     "",
                     "2026-03-10T00:00:00Z",
                     "2026-03-10T00:00:00Z",
@@ -536,8 +443,6 @@ async fn prompt_builder_build_falls_back_to_db_layers() -> Result<()> {
     assert!(prompt.contains("Identity for Bob"));
     assert!(prompt.contains("## Soul\n\nSoul from db"));
     assert!(prompt.contains("System for Bob"));
-    assert!(prompt.contains("## Learnings"));
-    assert!(prompt.contains("- **SQL**: Use indexes"));
     assert!(prompt.contains("## Variables"));
     assert!(prompt.contains("`API_KEY`: [SECRET]"));
     assert!(prompt.contains("## Recent Errors"));
@@ -545,9 +450,6 @@ async fn prompt_builder_build_falls_back_to_db_layers() -> Result<()> {
     assert!(prompt.contains("## Runtime"));
 
     let calls = fake.calls();
-    assert!(calls.iter().any(
-        |call| matches!(call, FakeDatabendCall::Query { sql, .. } if sql.contains("FROM learnings"))
-    ));
     assert!(calls.iter().any(
         |call| matches!(call, FakeDatabendCall::Query { sql, .. } if sql.contains("FROM variables"))
     ));
@@ -567,7 +469,6 @@ fn max_sizes_are_reasonable() {
         assert!(MAX_SYSTEM_BYTES >= 32768);
         assert!(MAX_SKILLS_BYTES >= 16384);
         assert!(MAX_TOOLS_BYTES >= 16384);
-        assert!(MAX_LEARNINGS_BYTES >= 16384);
         assert!(MAX_ERRORS_BYTES >= 4096);
         assert!(MAX_RUNTIME_BYTES >= 2048);
     }
@@ -581,7 +482,6 @@ fn total_max_under_200kb() {
             + MAX_SYSTEM_BYTES
             + MAX_SKILLS_BYTES
             + MAX_TOOLS_BYTES
-            + MAX_LEARNINGS_BYTES
             + MAX_VARIABLES_BYTES
             + MAX_ERRORS_BYTES
             + MAX_RUNTIME_BYTES;
@@ -637,21 +537,6 @@ fn tools_layer_many_tools() {
 }
 
 #[test]
-fn learnings_layer_truncation() {
-    let mut text = String::from("## Learnings\n\n");
-    for i in 0..500 {
-        text.push_str(&format!(
-            "- Learning {i}: Always remember to do thing {i} correctly.\n"
-        ));
-    }
-    let result = truncate_layer("learnings", &text, MAX_LEARNINGS_BYTES, "db");
-    assert!(result.starts_with("## Learnings"));
-    if text.len() > MAX_LEARNINGS_BYTES {
-        assert!(result.contains("[... truncated at"));
-    }
-}
-
-#[test]
 fn errors_layer_within_limit() {
     let mut buf = String::from("## Recent Errors\n\n");
     for i in 0..5 {
@@ -700,25 +585,6 @@ fn substitute_object_value_uses_json_repr() {
 fn substitute_null_value_uses_json_repr() {
     let result = substitute_template("v={x}", &serde_json::json!({"x": null}));
     assert_eq!(result, "v=null");
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// format_learnings — ordering
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn format_learnings_preserves_order() -> Result<()> {
-    let records = vec![
-        make_learning("First", "aaa"),
-        make_learning("Second", "bbb"),
-        make_learning("Third", "ccc"),
-    ];
-    let result = format_learnings(&records);
-    let first = result.find("First").context("First not found")?;
-    let second = result.find("Second").context("Second not found")?;
-    let third = result.find("Third").context("Third not found")?;
-    assert!(first < second && second < third);
-    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

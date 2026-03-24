@@ -10,7 +10,6 @@ use crate::kernel::skills::remote::repository::SkillRepository;
 use crate::kernel::skills::skill::Skill;
 use crate::llm::config::LLMConfig;
 use crate::observability::redaction;
-use crate::storage::dal::learning::record::LearningRecord;
 
 /// Validate that an LLMConfig can actually produce a working LLMRouter.
 /// Called before persisting to avoid storing broken configs.
@@ -61,64 +60,6 @@ impl Runtime {
         self.require_ready()?;
         let pool = self.databases.agent_pool(agent_id)?;
         Ok(Arc::new(AgentStore::new(pool, self.llm.read().clone())))
-    }
-
-    pub async fn create_learning(&self, agent_id: &str, record: LearningRecord) -> Result<()> {
-        let started = Instant::now();
-        let payload = serde_json::json!({
-            "learning_id": record.id.clone(),
-            "user_id": record.user_id.clone(),
-            "kind": record.kind.clone(),
-            "subject": record.subject.clone(),
-            "title": record.title.clone(),
-            "content": record.content.clone(),
-        });
-        log_runtime_info("create_learning", "started", agent_id, 0, payload.clone());
-        let result = self.agent_store(agent_id)?.learning_insert(&record).await;
-        match &result {
-            Ok(_) => log_runtime_info(
-                "create_learning",
-                "completed",
-                agent_id,
-                started.elapsed().as_millis() as u64,
-                payload,
-            ),
-            Err(error) => log_runtime_error(
-                "create_learning",
-                agent_id,
-                started.elapsed().as_millis() as u64,
-                error,
-                payload,
-            ),
-        }
-        result
-    }
-
-    pub async fn delete_learning(&self, agent_id: &str, learning_id: &str) -> Result<()> {
-        let started = Instant::now();
-        let payload = serde_json::json!({"learning_id": learning_id});
-        log_runtime_info("delete_learning", "started", agent_id, 0, payload.clone());
-        let result = self
-            .agent_store(agent_id)?
-            .learning_delete(learning_id)
-            .await;
-        match &result {
-            Ok(_) => log_runtime_info(
-                "delete_learning",
-                "completed",
-                agent_id,
-                started.elapsed().as_millis() as u64,
-                payload,
-            ),
-            Err(error) => log_runtime_error(
-                "delete_learning",
-                agent_id,
-                started.elapsed().as_millis() as u64,
-                error,
-                payload,
-            ),
-        }
-        result
     }
 
     pub async fn delete_session(&self, agent_id: &str, session_id: &str) -> Result<()> {

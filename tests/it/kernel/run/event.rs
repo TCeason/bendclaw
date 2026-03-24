@@ -566,29 +566,6 @@ fn event_tool_start_serde() -> Result<()> {
 }
 
 #[test]
-fn event_tool_update_serde() -> Result<()> {
-    let e = Event::ToolUpdate {
-        tool_call_id: "tc_1".into(),
-        event: bendclaw::kernel::tools::cli_agent::AgentEvent::Text {
-            content: "partial".into(),
-        },
-    };
-    let json = serde_json::to_string(&e)?;
-    let back: Event = serde_json::from_str(&json)?;
-    match back {
-        Event::ToolUpdate {
-            tool_call_id,
-            event: bendclaw::kernel::tools::cli_agent::AgentEvent::Text { content },
-        } => {
-            assert_eq!(tool_call_id, "tc_1");
-            assert_eq!(content, "partial");
-        }
-        _ => bail!("expected ToolUpdate"),
-    }
-    Ok(())
-}
-
-#[test]
 fn event_tool_end_serde() -> Result<()> {
     let e = Event::ToolEnd {
         tool_call_id: "tc_1".into(),
@@ -613,27 +590,6 @@ fn event_tool_end_serde() -> Result<()> {
             assert_eq!(output, "ok");
         }
         _ => bail!("expected ToolEnd"),
-    }
-    Ok(())
-}
-
-#[test]
-fn event_checkpoint_done_serde() -> Result<()> {
-    let e = Event::CheckpointDone {
-        prompt_tokens: 500,
-        completion_tokens: 200,
-    };
-    let json = serde_json::to_string(&e)?;
-    let back: Event = serde_json::from_str(&json)?;
-    match back {
-        Event::CheckpointDone {
-            prompt_tokens,
-            completion_tokens,
-        } => {
-            assert_eq!(prompt_tokens, 500);
-            assert_eq!(completion_tokens, 200);
-        }
-        _ => bail!("expected CheckpointDone"),
     }
     Ok(())
 }
@@ -699,16 +655,6 @@ fn event_name_all_variants() {
         "ToolStart"
     );
     assert_eq!(
-        Event::ToolUpdate {
-            tool_call_id: "tc1".into(),
-            event: bendclaw::kernel::tools::cli_agent::AgentEvent::Text {
-                content: "out".into()
-            }
-        }
-        .name(),
-        "ToolUpdate"
-    );
-    assert_eq!(
         Event::ToolEnd {
             tool_call_id: "tc1".into(),
             name: "shell".into(),
@@ -727,14 +673,6 @@ fn event_name_all_variants() {
         }
         .name(),
         "CompactionDone"
-    );
-    assert_eq!(
-        Event::CheckpointDone {
-            prompt_tokens: 10,
-            completion_tokens: 5
-        }
-        .name(),
-        "CheckpointDone"
     );
     assert_eq!(
         Event::Aborted {

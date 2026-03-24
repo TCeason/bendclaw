@@ -238,15 +238,8 @@ fn op_type_display_all_variants() {
     assert_eq!(OpType::Edit.to_string(), "EDIT");
     assert_eq!(OpType::FileRead.to_string(), "FILE_READ");
     assert_eq!(OpType::FileWrite.to_string(), "FILE_WRITE");
-    assert_eq!(OpType::MemoryWrite.to_string(), "MEMORY_WRITE");
-    assert_eq!(OpType::MemoryRead.to_string(), "MEMORY_READ");
-    assert_eq!(OpType::MemorySearch.to_string(), "MEMORY_SEARCH");
-    assert_eq!(OpType::MemoryDelete.to_string(), "MEMORY_DELETE");
-    assert_eq!(OpType::MemoryList.to_string(), "MEMORY_LIST");
     assert_eq!(OpType::SkillRun.to_string(), "SKILL_RUN");
     assert_eq!(OpType::Compaction.to_string(), "COMPACTION");
-    assert_eq!(OpType::Checkpoint.to_string(), "CHECKPOINT");
-    assert_eq!(OpType::LearningWrite.to_string(), "LEARNING_WRITE");
     assert_eq!(OpType::Databend.to_string(), "DATABEND");
     assert_eq!(OpType::TaskWrite.to_string(), "TASK_WRITE");
     assert_eq!(OpType::TaskRead.to_string(), "TASK_READ");

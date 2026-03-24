@@ -330,8 +330,6 @@ pub(super) fn should_skip_event(event: &Event) -> bool {
         Event::Aborted { .. }
             | Event::TurnStart { .. }
             | Event::TurnEnd { .. }
-            | Event::ToolUpdate { .. }
-            | Event::CheckpointDone { .. }
             | Event::AppData(_)
             | Event::StreamDelta(
                 Delta::ToolCallStart { .. }

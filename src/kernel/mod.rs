@@ -3,7 +3,6 @@ pub mod channel;
 pub mod cluster;
 pub mod directive;
 pub mod lease;
-pub mod recall;
 pub mod run;
 pub mod runtime;
 pub mod session;

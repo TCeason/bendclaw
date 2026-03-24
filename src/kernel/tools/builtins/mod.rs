@@ -1,10 +1,7 @@
 pub mod channel;
 pub mod cluster;
-pub mod coding_agent;
 pub mod databend;
 pub mod file;
-pub mod memory;
-pub mod recall;
 pub mod search;
 pub mod shell;
 pub mod skill;

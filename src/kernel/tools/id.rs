@@ -1,10 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ToolId {
-    MemoryWrite,
-    MemorySearch,
-    MemoryRead,
-    MemoryDelete,
-    MemoryList,
     SkillRead,
     SkillCreate,
     SkillRemove,
@@ -25,14 +20,9 @@ pub enum ToolId {
     TaskToggle,
     TaskHistory,
     TaskRun,
-    LearningWrite,
-    KnowledgeSearch,
-    LearningSearch,
     ClusterNodes,
     ClusterDispatch,
     ClusterCollect,
-    ClaudeCode,
-    CodexExec,
     Grep,
     Glob,
 }
@@ -40,11 +30,6 @@ pub enum ToolId {
 impl ToolId {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::MemoryWrite => "memory_write",
-            Self::MemorySearch => "memory_search",
-            Self::MemoryRead => "memory_read",
-            Self::MemoryDelete => "memory_delete",
-            Self::MemoryList => "memory_list",
             Self::SkillRead => "skill_read",
             Self::SkillCreate => "create_skill",
             Self::SkillRemove => "remove_skill",
@@ -65,35 +50,18 @@ impl ToolId {
             Self::TaskToggle => "task_toggle",
             Self::TaskHistory => "task_history",
             Self::TaskRun => "task_run",
-            Self::LearningWrite => "learning_write",
-            Self::KnowledgeSearch => "knowledge_search",
-            Self::LearningSearch => "learning_search",
             Self::ClusterNodes => "cluster_nodes",
             Self::ClusterDispatch => "cluster_dispatch",
             Self::ClusterCollect => "cluster_collect",
-            Self::ClaudeCode => "claude_code",
-            Self::CodexExec => "codex_exec",
             Self::Grep => "grep",
             Self::Glob => "glob",
         }
     }
 }
 
-pub const CHECKPOINT_MEMORY_TOOLS: [ToolId; 3] = [
-    ToolId::MemoryWrite,
-    ToolId::MemorySearch,
-    ToolId::MemoryRead,
-];
-
 impl ToolId {
     /// Every `ToolId` variant, grouped by category.
     pub const ALL: &[ToolId] = &[
-        // Memory
-        ToolId::MemoryWrite,
-        ToolId::MemorySearch,
-        ToolId::MemoryRead,
-        ToolId::MemoryDelete,
-        ToolId::MemoryList,
         // Skills
         ToolId::SkillRead,
         ToolId::SkillCreate,
@@ -122,13 +90,6 @@ impl ToolId {
         ToolId::TaskToggle,
         ToolId::TaskHistory,
         ToolId::TaskRun,
-        // Recall
-        ToolId::LearningWrite,
-        ToolId::KnowledgeSearch,
-        ToolId::LearningSearch,
-        // Coding agents
-        ToolId::ClaudeCode,
-        ToolId::CodexExec,
     ];
 
     /// Cluster tools, registered conditionally when cluster config is present.

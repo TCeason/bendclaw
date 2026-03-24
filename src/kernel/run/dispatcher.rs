@@ -85,7 +85,6 @@ impl ToolDispatcher {
         tool_context.runtime = ToolRuntime {
             event_tx: Some(event_tx),
             cancel: cancel.clone(),
-            cli_agent_state: tool_context.runtime.cli_agent_state.clone(),
             tool_call_id: None,
         };
         Self {
@@ -94,13 +93,6 @@ impl ToolDispatcher {
             tool_context,
             cancel,
         }
-    }
-
-    pub fn memory_tool_schemas(
-        &self,
-        ids: &[crate::kernel::tools::id::ToolId],
-    ) -> Vec<crate::llm::tool::ToolSchema> {
-        self.tool_registry.get_by_ids(ids)
     }
 
     pub fn parse_calls(&self, calls: &[ToolCall]) -> Vec<ParsedToolCall> {

@@ -3,8 +3,6 @@ pub mod channel_account;
 pub mod channel_message;
 pub mod config_version;
 pub mod feedback;
-pub mod knowledge;
-pub mod learning;
 pub mod logging;
 pub mod run;
 pub mod run_event;

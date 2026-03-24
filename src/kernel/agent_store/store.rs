@@ -15,8 +15,6 @@ use crate::storage::dal::agent_config::record::AgentConfigRecord;
 use crate::storage::dal::agent_config::repo::AgentConfigStore;
 use crate::storage::dal::config_version::record::ConfigVersionRecord;
 use crate::storage::dal::config_version::repo::ConfigVersionRepo;
-use crate::storage::dal::learning::record::LearningRecord;
-use crate::storage::dal::learning::repo::LearningRepo;
 use crate::storage::dal::run::record::RunRecord;
 use crate::storage::dal::run::record::RunStatus;
 use crate::storage::dal::run::repo::RunRepo;
@@ -222,23 +220,6 @@ impl AgentStore {
         let repo = SpanRepo::new(self.pool.clone());
         repo.list_where(&cond, "created_at DESC", limit as u64)
             .await
-    }
-
-    // ── Learnings ──────────────────────────────────────────────────────────
-
-    pub async fn learning_list(&self, limit: u32) -> Result<Vec<LearningRecord>> {
-        let repo = LearningRepo::new(self.pool.clone());
-        repo.list(limit).await
-    }
-
-    pub async fn learning_insert(&self, record: &LearningRecord) -> Result<()> {
-        let repo = LearningRepo::new(self.pool.clone());
-        repo.insert(record).await
-    }
-
-    pub async fn learning_delete(&self, learning_id: &str) -> Result<()> {
-        let repo = LearningRepo::new(self.pool.clone());
-        repo.delete(learning_id).await
     }
 
     // ── Config ────────────────────────────────────────────────────────────

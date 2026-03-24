@@ -1,16 +1,12 @@
 pub mod builtins;
-pub mod cli_agent;
 pub mod id;
 pub mod operation;
 pub mod progressive;
 pub mod registry;
 pub mod tool;
 
-pub use builtins::coding_agent;
 pub use builtins::databend;
 pub use builtins::file;
-pub use builtins::memory;
-pub use builtins::recall;
 pub use builtins::shell;
 pub use builtins::skill;
 pub use builtins::task;

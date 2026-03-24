@@ -35,7 +35,7 @@ struct MockTool {
 
 impl OperationClassifier for MockTool {
     fn op_type(&self) -> OpType {
-        OpType::MemoryRead
+        OpType::FileRead
     }
 
     fn classify_impact(&self, _args: &serde_json::Value) -> Option<Impact> {
@@ -153,7 +153,6 @@ fn dispatcher(
             runtime: bendclaw::kernel::tools::ToolRuntime {
                 event_tx: None,
                 cancel: cancel.clone(),
-                cli_agent_state: bendclaw::kernel::tools::cli_agent::new_shared_state(),
                 tool_call_id: None,
             },
             tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),
@@ -242,14 +241,14 @@ async fn execute_calls_handles_tool_success_and_tool_error() -> Result<()> {
     match &outcomes[0].result {
         ToolCallResult::Success(out, meta) => {
             assert_eq!(out, "done");
-            assert_eq!(meta.op_type, OpType::MemoryRead);
+            assert_eq!(meta.op_type, OpType::FileRead);
         }
         _ => anyhow::bail!("expected success"),
     }
     match &outcomes[1].result {
         ToolCallResult::ToolError(msg, meta) => {
             assert_eq!(msg, "bad args");
-            assert_eq!(meta.op_type, OpType::MemoryRead);
+            assert_eq!(meta.op_type, OpType::FileRead);
         }
         _ => anyhow::bail!("expected tool error"),
     }
@@ -470,37 +469,4 @@ async fn execute_calls_truncates_large_skill_output() -> Result<()> {
         _ => anyhow::bail!("expected success"),
     }
     Ok(())
-}
-
-#[test]
-fn memory_tool_schemas_filters_by_ids() {
-    let d = dispatcher(
-        vec![
-            Arc::new(MockTool {
-                name: "memory_read".to_string(),
-                behavior: MockToolBehavior::Ok("ok".to_string()),
-            }),
-            Arc::new(MockTool {
-                name: "memory_search".to_string(),
-                behavior: MockToolBehavior::Ok("ok".to_string()),
-            }),
-            Arc::new(MockTool {
-                name: "other_tool".to_string(),
-                behavior: MockToolBehavior::Ok("ok".to_string()),
-            }),
-        ],
-        Arc::new(MockSkillExecutor::new(MockSkillBehavior::OkString(
-            "ok".to_string(),
-        ))),
-        CancellationToken::new(),
-    );
-
-    let schemas = d.memory_tool_schemas(&[
-        bendclaw::kernel::tools::ToolId::MemoryRead,
-        bendclaw::kernel::tools::ToolId::MemorySearch,
-    ]);
-    assert_eq!(schemas.len(), 2);
-    let names: Vec<_> = schemas.iter().map(|s| s.function.name.as_str()).collect();
-    assert!(names.contains(&"memory_read"));
-    assert!(names.contains(&"memory_search"));
 }

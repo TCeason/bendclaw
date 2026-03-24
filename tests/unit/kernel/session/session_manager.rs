@@ -93,7 +93,6 @@ fn test_session(session_id: &str, agent_id: &str) -> Arc<Session> {
             llm: Arc::new(RwLock::new(llm)),
             config: Arc::new(AgentConfig::default()),
             variables: vec![],
-            recall: None,
             cluster_client: None,
             directive: None,
             trace_writer: bendclaw::kernel::trace::TraceWriter::noop(),

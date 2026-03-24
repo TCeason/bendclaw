@@ -9,23 +9,6 @@ pub struct CompactionPlan {
     pub kept_tokens: usize,
 }
 
-pub fn should_checkpoint(
-    enabled: bool,
-    already_done: bool,
-    has_memory_tools: bool,
-    total_tokens: usize,
-    max_context_tokens: usize,
-    remaining_budget_percent: usize,
-) -> bool {
-    if !enabled || already_done || !has_memory_tools || max_context_tokens == 0 {
-        return false;
-    }
-
-    let threshold = remaining_budget_percent.min(100);
-    let remaining = max_context_tokens.saturating_sub(total_tokens);
-    remaining * 100 <= max_context_tokens * threshold
-}
-
 pub fn keep_budget(max_context_tokens: usize) -> usize {
     POST_COMPACTION_TARGET
         .saturating_sub(SUMMARY_RESERVE)

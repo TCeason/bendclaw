@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use crate::kernel::agent_store::AgentStore;
-use crate::kernel::recall::RecallStore;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::result::Reason;
 use crate::kernel::run::usage::ModelRole;
@@ -34,7 +33,6 @@ pub enum PersistOp {
     RunSuccess {
         storage: Arc<AgentStore>,
         trace: Box<TraceRecorder>,
-        recall: Option<Arc<RecallStore>>,
         run_id: String,
         session_id: String,
         agent_id: Arc<str>,
@@ -139,11 +137,10 @@ async fn handle_op(op: PersistOp) {
         PersistOp::RunSuccess {
             storage,
             trace,
-            recall,
             run_id,
             session_id,
             agent_id,
-            user_id,
+            user_id: _,
             response_text,
             error_text,
             status,
@@ -155,7 +152,7 @@ async fn handle_op(op: PersistOp) {
             provider,
             model,
             event_records,
-            events,
+            events: _,
         } => {
             let ctx = server_log::ServerCtx::new(
                 &trace.trace_id,
@@ -231,17 +228,6 @@ async fn handle_op(op: PersistOp) {
                 ttft_ms = usage.ttft_ms,
                 event_count = event_records.len(),
             );
-
-            if let Some(recall) = recall {
-                let run_id = run_id.clone();
-                let user_id = user_id.to_string();
-                crate::base::spawn_fire_and_forget("recall_post_run_events", async move {
-                    crate::kernel::recall::post_run::process_run_events(
-                        &recall, &run_id, &user_id, &events,
-                    )
-                    .await;
-                });
-            }
         }
         PersistOp::RunError {
             storage,

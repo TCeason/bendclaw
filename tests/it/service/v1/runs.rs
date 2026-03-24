@@ -262,12 +262,6 @@ async fn fake_execute_runs_app(state: RunExecState) -> Result<axum::Router> {
         {
             return Ok(paged_rows(&[], None, None));
         }
-        if sql.contains("FROM learnings") {
-            return Ok(paged_rows(&[], None, None));
-        }
-        if sql.contains("FROM knowledge") {
-            return Ok(paged_rows(&[], None, None));
-        }
         if sql.contains("FROM spans") && sql.contains("status = 'failed'") {
             return Ok(paged_rows(&[], None, None));
         }
