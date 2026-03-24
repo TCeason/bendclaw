@@ -173,7 +173,6 @@ impl Builder {
     }
 }
 
-use crate::kernel::runtime::turn_relation::LLMClassifier;
 use crate::observability::log::slog;
 
 #[allow(clippy::too_many_arguments)]
@@ -301,10 +300,6 @@ async fn construct(
             channel_session_keys: RwLock::new(HashMap::new()),
         })
     });
-
-    runtime
-        .turn_coordinator()
-        .set_classifier(Arc::new(LLMClassifier));
 
     let http_client = reqwest::Client::new();
     let mut lease_builder =

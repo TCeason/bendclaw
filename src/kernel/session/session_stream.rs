@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context as TaskContext;
@@ -28,14 +27,12 @@ pub struct FinishedRunOutput {
 pub struct Stream {
     task: JoinHandle<Result<AgentResult>>,
     events: mpsc::Receiver<Event>,
-    injected: mpsc::Receiver<Event>,
     state: Arc<Mutex<SessionState>>,
     history: Arc<Mutex<Vec<Message>>>,
     persister: TurnPersister,
     usage_provider: String,
     usage_model: String,
     collected_events: Vec<Event>,
-    yield_first: VecDeque<Event>,
 }
 
 impl Stream {
@@ -43,7 +40,6 @@ impl Stream {
     pub(crate) fn new(
         task: JoinHandle<Result<AgentResult>>,
         events: mpsc::Receiver<Event>,
-        injected: mpsc::Receiver<Event>,
         state: Arc<Mutex<SessionState>>,
         history: Arc<Mutex<Vec<Message>>>,
         persister: TurnPersister,
@@ -54,25 +50,17 @@ impl Stream {
         Self {
             task,
             events,
-            injected,
             state,
             history,
             persister,
             usage_provider,
             usage_model,
             collected_events: initial_events,
-            yield_first: VecDeque::new(),
         }
     }
 
     pub fn run_id(&self) -> &str {
         self.persister.run_id()
-    }
-
-    /// Prepend an event to be yielded before any engine events.
-    /// The event is also added to collected_events for persistence.
-    pub(crate) fn prepend_event(&mut self, event: Event) {
-        self.yield_first.push_back(event);
     }
 
     pub async fn finish(self) -> Result<String> {
@@ -82,10 +70,6 @@ impl Stream {
     pub async fn finish_output(mut self) -> Result<FinishedRunOutput> {
         while let Some(event) = self.events.recv().await {
             self.collect_runtime_info(&event);
-            self.collected_events.push(event);
-        }
-        // Drain any injected events that arrived before the stream closed.
-        while let Ok(event) = self.injected.try_recv() {
             self.collected_events.push(event);
         }
         *self.state.lock() = SessionState::Idle;
@@ -149,15 +133,6 @@ impl tokio_stream::Stream for Stream {
     type Item = Event;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
-        if let Some(event) = self.yield_first.pop_front() {
-            self.collected_events.push(event.clone());
-            return Poll::Ready(Some(event));
-        }
-        // Drain any externally injected events (e.g. DecisionRequired) before engine events.
-        if let Poll::Ready(Some(event)) = self.injected.poll_recv(cx) {
-            self.collected_events.push(event.clone());
-            return Poll::Ready(Some(event));
-        }
         match self.events.poll_recv(cx) {
             Poll::Ready(Some(event)) => {
                 self.collect_runtime_info(&event);
