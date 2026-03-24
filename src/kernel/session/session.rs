@@ -86,6 +86,7 @@ pub struct Session {
     history: Arc<Mutex<Vec<Message>>>,
     last_active: Mutex<Instant>,
     stale: AtomicBool,
+    queued_followup: Mutex<Option<String>>,
 }
 
 impl Session {
@@ -99,6 +100,7 @@ impl Session {
             history: Arc::new(Mutex::new(Vec::new())),
             last_active: Mutex::new(Instant::now()),
             stale: AtomicBool::new(false),
+            queued_followup: Mutex::new(None),
         }
     }
 
@@ -574,6 +576,20 @@ impl Session {
 
     pub fn is_stale(&self) -> bool {
         self.stale.load(Ordering::Relaxed)
+    }
+
+    pub fn queue_followup(&self, input: String) {
+        let mut q = self.queued_followup.lock();
+        *q = Some(match q.take() {
+            Some(existing) if !existing.trim().is_empty() => {
+                format!("{existing}\n\n{}", input.trim())
+            }
+            _ => input,
+        });
+    }
+
+    pub fn take_followup(&self) -> Option<String> {
+        self.queued_followup.lock().take()
     }
 
     pub fn info(&self) -> SessionInfo {

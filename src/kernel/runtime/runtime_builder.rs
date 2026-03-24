@@ -298,7 +298,6 @@ async fn construct(
             health_monitor_handle: RwLock::new(None),
             tool_writer,
             channel_session_keys: RwLock::new(HashMap::new()),
-            turn_states: tokio::sync::Mutex::new(HashMap::new()),
         })
     });
 

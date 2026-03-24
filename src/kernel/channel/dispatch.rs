@@ -7,7 +7,7 @@ use crate::kernel::channel::dispatcher::ChannelDispatcher;
 use crate::kernel::channel::message::InboundEvent;
 use crate::kernel::channel::writer::ChannelMessageOp;
 use crate::kernel::runtime::Runtime;
-use crate::kernel::runtime::SubmitTurnResult;
+use crate::kernel::runtime::SubmitResult;
 use crate::observability::log::channel_log;
 use crate::observability::log::slog;
 use crate::storage::dal::channel_message::record::ChannelMessageRecord;
@@ -203,7 +203,7 @@ async fn try_dispatch_inbound(
                 &account.agent_id,
                 &session_key,
                 &account.user_id,
-                pending_input.take().unwrap_or_default(),
+                &pending_input.take().unwrap_or_default(),
                 &trace_id,
                 None,
                 "",
@@ -213,12 +213,7 @@ async fn try_dispatch_inbound(
             .await?;
 
         match submit {
-            SubmitTurnResult::StatusReply { message }
-            | SubmitTurnResult::CancelledCurrent { message }
-            | SubmitTurnResult::WaitingForDecision { message, .. }
-            | SubmitTurnResult::FollowupQueued { message }
-            | SubmitTurnResult::MessageInjected { message }
-            | SubmitTurnResult::ContinuedCurrent { message } => {
+            SubmitResult::Control { message } => {
                 send_control_reply(
                     runtime,
                     outbound.as_ref(),
@@ -231,10 +226,12 @@ async fn try_dispatch_inbound(
                 .await;
                 break;
             }
-            SubmitTurnResult::Started {
+            SubmitResult::Injected | SubmitResult::Queued => {
+                break;
+            }
+            SubmitResult::Started {
                 mut stream,
                 preamble,
-                ..
             } => {
                 if let Some(ref text) = preamble {
                     if let Some(ref ob) = outbound {
@@ -261,20 +258,22 @@ async fn try_dispatch_inbound(
                     match result {
                         Some(r) => (r.text, r.platform_message_id),
                         None => {
-                            let next = runtime.complete_turn(&session_key, &run_id).await;
-                            if let Some(next_input) = next {
-                                pending_input = Some(next_input);
-                                continue;
+                            if let Some(session) = runtime.sessions().get(&session_key) {
+                                if let Some(next_input) = session.take_followup() {
+                                    pending_input = Some(next_input);
+                                    continue;
+                                }
                             }
                             break;
                         }
                     }
                 } else {
                     let _ = stream.finish().await;
-                    let next = runtime.complete_turn(&session_key, &run_id).await;
-                    if let Some(next_input) = next {
-                        pending_input = Some(next_input);
-                        continue;
+                    if let Some(session) = runtime.sessions().get(&session_key) {
+                        if let Some(next_input) = session.take_followup() {
+                            pending_input = Some(next_input);
+                            continue;
+                        }
                     }
                     break;
                 };
@@ -309,10 +308,11 @@ async fn try_dispatch_inbound(
                         },
                     });
 
-                let next = runtime.complete_turn(&session_key, &run_id).await;
-                if let Some(next_input) = next {
-                    pending_input = Some(next_input);
-                    continue;
+                if let Some(session) = runtime.sessions().get(&session_key) {
+                    if let Some(next_input) = session.take_followup() {
+                        pending_input = Some(next_input);
+                        continue;
+                    }
                 }
                 break;
             }

@@ -17,7 +17,7 @@ use super::http::RunsQuery;
 use super::stream;
 use crate::kernel::run::event::Delta;
 use crate::kernel::run::event::Event;
-use crate::kernel::runtime::SubmitTurnResult;
+use crate::kernel::runtime::SubmitResult;
 use crate::observability::log::slog;
 use crate::service::context::RequestContext;
 use crate::service::error::Result;
@@ -169,7 +169,7 @@ pub async fn execute_run(
             &agent_id,
             &session_id,
             &ctx.user_id,
-            input.clone(),
+            &input,
             &ctx.trace_id,
             parent_run_id.as_deref(),
             &ctx.parent_trace_id,
@@ -178,60 +178,28 @@ pub async fn execute_run(
         )
         .await?;
     let mut run_stream = match submit {
-        SubmitTurnResult::Started { stream, .. } => stream,
-        SubmitTurnResult::StatusReply { message } => {
+        SubmitResult::Started { stream, .. } => stream,
+        SubmitResult::Control { message } => {
             let payload = serde_json::json!({
-                "state": "status_reply",
+                "state": "control",
                 "message": message,
                 "session_id": session_id,
             });
             return Ok((StatusCode::OK, Json(payload)).into_response());
         }
-        SubmitTurnResult::CancelledCurrent { message } => {
-            let payload = serde_json::json!({
-                "state": "cancelled_current",
-                "message": message,
-                "session_id": session_id,
-            });
-            return Ok((StatusCode::OK, Json(payload)).into_response());
-        }
-        SubmitTurnResult::WaitingForDecision {
-            question_id,
-            message,
-            options,
-        } => {
-            let payload = serde_json::json!({
-                "state": "waiting_for_decision",
-                "question_id": question_id,
-                "message": message,
-                "options": options,
-                "session_id": session_id,
-            });
-            return Ok((StatusCode::ACCEPTED, Json(payload)).into_response());
-        }
-        SubmitTurnResult::FollowupQueued { message } => {
-            let payload = serde_json::json!({
-                "state": "followup_queued",
-                "message": message,
-                "session_id": session_id,
-            });
-            return Ok((StatusCode::ACCEPTED, Json(payload)).into_response());
-        }
-        SubmitTurnResult::MessageInjected { message } => {
+        SubmitResult::Injected => {
             let payload = serde_json::json!({
                 "state": "message_injected",
-                "message": message,
                 "session_id": session_id,
             });
             return Ok((StatusCode::ACCEPTED, Json(payload)).into_response());
         }
-        SubmitTurnResult::ContinuedCurrent { message } => {
+        SubmitResult::Queued => {
             let payload = serde_json::json!({
-                "state": "continued_current",
-                "message": message,
+                "state": "followup_queued",
                 "session_id": session_id,
             });
-            return Ok((StatusCode::OK, Json(payload)).into_response());
+            return Ok((StatusCode::ACCEPTED, Json(payload)).into_response());
         }
     };
     let run_id = run_stream.run_id().to_string();
@@ -248,7 +216,6 @@ pub async fn execute_run(
     if !stream_output {
         while run_stream.next().await.is_some() {}
         run_stream.finish().await?;
-        let _ = state.runtime.complete_turn(&session_id, &run_id).await;
         // Wait for background persist to complete before reading back.
         state.runtime.flush_persist().await;
         let run = get_run(&state, &agent_id, &run_id).await?;
@@ -319,10 +286,6 @@ pub async fn execute_run(
                 error = %err,
             );
         }
-        let _ = state
-            .runtime
-            .complete_turn(&spawned_session_id, &spawned_run_id)
-            .await;
     });
 
     let stream = ReceiverStream::new(rx);

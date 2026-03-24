@@ -14,7 +14,6 @@ use crate::kernel::cluster::ClusterService;
 use crate::kernel::directive::DirectiveService;
 use crate::kernel::lease::LeaseServiceHandle;
 use crate::kernel::runtime::agent_config::AgentConfig;
-use crate::kernel::runtime::turn_coordinator::TurnStateStore;
 use crate::kernel::session::SessionManager;
 use crate::kernel::skills::store::SkillStore;
 use crate::llm::provider::LLMProvider;
@@ -54,7 +53,6 @@ pub struct Runtime {
     pub(crate) health_monitor_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) tool_writer: crate::kernel::writer::tool_op::ToolWriter,
     pub(crate) channel_session_keys: RwLock<HashMap<String, String>>,
-    pub(crate) turn_states: TurnStateStore,
 }
 
 pub struct RuntimeParts {
@@ -83,7 +81,6 @@ pub struct RuntimeParts {
     pub health_monitor_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     pub tool_writer: crate::kernel::writer::tool_op::ToolWriter,
     pub channel_session_keys: RwLock<HashMap<String, String>>,
-    pub turn_states: TurnStateStore,
 }
 
 impl Runtime {
@@ -133,7 +130,6 @@ impl Runtime {
             health_monitor_handle: parts.health_monitor_handle,
             tool_writer: parts.tool_writer,
             channel_session_keys: parts.channel_session_keys,
-            turn_states: parts.turn_states,
         }
     }
 
