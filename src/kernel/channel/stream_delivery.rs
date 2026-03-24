@@ -108,6 +108,17 @@ impl StreamDelivery {
                         draft_broken = true;
                     }
                 }
+                Event::Progress { message, .. } if self.config.show_tool_progress => {
+                    tool_status = format!("\u{23F3} {message}");
+                    if !draft_broken
+                        && self
+                            .try_update(&draft_msg_id, &text_buf, &tool_status, &mut last_edit)
+                            .await
+                            .is_err()
+                    {
+                        draft_broken = true;
+                    }
+                }
                 Event::ReasonStart => {
                     tool_status.clear();
                 }

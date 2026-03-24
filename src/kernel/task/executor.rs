@@ -2,9 +2,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::kernel::run::result::Reason;
 use crate::kernel::channel::send_text_to_account;
 use crate::kernel::channel::ChannelRegistry;
 use crate::kernel::runtime::Runtime;
+use crate::kernel::session::session_stream::FinishedRunOutput;
 use crate::kernel::task::execution;
 use crate::observability::log::slog;
 use crate::storage::dal::channel_account::repo::ChannelAccountRepo;
@@ -14,6 +16,12 @@ use crate::storage::dal::task::TaskSchedule;
 use crate::storage::Pool;
 
 const WEBHOOK_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelDeliveryContext {
+    pub channel_type: String,
+    pub chat_id: String,
+}
 
 /// Execute a single claimed task: run prompt, deliver result,
 /// then delegate to execution service for history + state update.
@@ -43,6 +51,8 @@ pub async fn execute_task(
         error.as_deref(),
     )
     .await;
+    let delivery_status_log = delivery_status.as_deref().unwrap_or("n/a").to_string();
+    let delivery_error_log = delivery_error.as_deref().unwrap_or("").to_string();
 
     // 3. Delegate to execution service for history + state update
     execution::finish_execution(
@@ -68,6 +78,8 @@ pub async fn execute_task(
         task_id = task.id,
         status,
         duration_ms,
+        delivery_status = %delivery_status_log,
+        delivery_error = %delivery_error_log,
     );
     Ok(())
 }
@@ -111,9 +123,34 @@ async fn run_task_prompt(
         }
     };
     let run_id = stream.run_id().to_string();
-    match stream.finish().await {
-        Ok(output) => ("ok".to_string(), Some(run_id), Some(output), None),
+    match stream.finish_output().await {
+        Ok(finished) => {
+            let (status, output, error) = classify_task_run_output(finished);
+            (status, Some(run_id), output, error)
+        }
         Err(e) => ("error".to_string(), Some(run_id), None, Some(e.to_string())),
+    }
+}
+
+pub fn classify_task_run_output(
+    finished: FinishedRunOutput,
+) -> (String, Option<String>, Option<String>) {
+    let text = if finished.text.trim().is_empty() {
+        None
+    } else {
+        Some(finished.text)
+    };
+
+    match finished.stop_reason {
+        Reason::EndTurn => ("ok".to_string(), text, None),
+        reason => (
+            "error".to_string(),
+            text,
+            Some(format!(
+                "agent stopped before completing the task: {}",
+                reason.as_str()
+            )),
+        ),
     }
 }
 
@@ -130,27 +167,48 @@ async fn enrich_prompt_with_delivery(
             channel_account_id,
             chat_id,
         } => {
-            let channel_type = match runtime.databases().agent_pool(agent_id) {
-                Ok(pool) => {
-                    let repo = ChannelAccountRepo::new(pool);
-                    repo.load(channel_account_id)
-                        .await
-                        .ok()
-                        .flatten()
-                        .map(|a| a.channel_type)
-                        .unwrap_or_default()
+            match resolve_channel_delivery_context(runtime, agent_id, channel_account_id, chat_id).await
+            {
+                Some(ctx) => format!(
+                    "{prompt}\n\n\
+                     [Channel context] When you need to send results, use channel_send with: \
+                     channel_type=\"{}\", chat_id=\"{}\".",
+                    ctx.channel_type, ctx.chat_id
+                ),
+                None => {
+                    slog!(warn, "task", "channel_context_unavailable",
+                        agent_id,
+                        channel_account_id,
+                        chat_id,
+                    );
+                    format!(
+                        "{prompt}\n\n\
+                         [Channel context] Automatic delivery is configured by the system. \
+                         If direct channel tools are unavailable, produce a final response and the system will deliver it."
+                    )
                 }
-                Err(_) => String::new(),
-            };
-
-            format!(
-                "{prompt}\n\n\
-                 [Channel context] When you need to send results, use channel_send with: \
-                 channel_type=\"{channel_type}\", chat_id=\"{chat_id}\"."
-            )
+            }
         }
         _ => prompt.to_string(),
     }
+}
+
+pub async fn resolve_channel_delivery_context(
+    runtime: &Arc<Runtime>,
+    agent_id: &str,
+    channel_account_id: &str,
+    chat_id: &str,
+) -> Option<ChannelDeliveryContext> {
+    let pool = runtime.databases().agent_pool(agent_id).ok()?;
+    let repo = ChannelAccountRepo::new(pool);
+    let account = repo.load(channel_account_id).await.ok().flatten()?;
+    if account.channel_type.trim().is_empty() {
+        return None;
+    }
+    Some(ChannelDeliveryContext {
+        channel_type: account.channel_type,
+        chat_id: chat_id.to_string(),
+    })
 }
 
 pub async fn deliver_result(

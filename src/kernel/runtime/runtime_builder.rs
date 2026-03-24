@@ -41,6 +41,7 @@ pub struct Builder {
     hub_config: Option<crate::config::HubConfig>,
     skills_sync_interval_secs: u64,
     max_iterations: u32,
+    max_tool_calls: u32,
     max_context_tokens: usize,
     max_duration_secs: u64,
     workspace: WorkspaceConfig,
@@ -70,6 +71,7 @@ impl Builder {
             hub_config: None,
             skills_sync_interval_secs: 30,
             max_iterations: 20,
+            max_tool_calls: 200,
             max_context_tokens: 250_000,
             max_duration_secs: 300,
             workspace: WorkspaceConfig::default(),
@@ -95,6 +97,12 @@ impl Builder {
     #[must_use]
     pub fn with_max_iterations(mut self, n: u32) -> Self {
         self.max_iterations = n;
+        self
+    }
+
+    #[must_use]
+    pub fn with_max_tool_calls(mut self, n: u32) -> Self {
+        self.max_tool_calls = n;
         self
     }
 
@@ -153,6 +161,7 @@ impl Builder {
             databend_warehouse: self.warehouse,
             db_prefix: self.db_prefix,
             max_iterations: self.max_iterations,
+            max_tool_calls: self.max_tool_calls,
             max_context_tokens: self.max_context_tokens,
             max_duration_secs: self.max_duration_secs,
             workspace: self.workspace,

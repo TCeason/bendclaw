@@ -49,6 +49,19 @@ impl ToolContext {
             None => &self.run_id,
         }
     }
+
+    /// Send a progress notification to external subscribers (SSE, channels, etc.).
+    /// This does NOT inject into LLM messages — it only broadcasts via the event channel.
+    pub async fn notify_progress(&self, message: &str) {
+        if let Some(ref tx) = self.runtime.event_tx {
+            let _ = tx
+                .send(Event::Progress {
+                    tool_call_id: self.runtime.tool_call_id.as_ref().map(|s| s.to_string()),
+                    message: message.to_string(),
+                })
+                .await;
+        }
+    }
 }
 
 /// Result of an in-process tool execution.

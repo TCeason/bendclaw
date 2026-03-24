@@ -17,6 +17,9 @@ use bendclaw::kernel::channel::plugin::InboundEventSender;
 use bendclaw::kernel::channel::plugin::InboundKind;
 use bendclaw::kernel::channel::plugin::ReceiverFactory;
 use bendclaw::kernel::channel::ChannelRegistry;
+use bendclaw::kernel::run::result::Reason;
+use bendclaw::kernel::session::session_stream::FinishedRunOutput;
+use bendclaw::kernel::task::executor::classify_task_run_output;
 use bendclaw::kernel::task::executor::compute_next_run;
 use bendclaw::kernel::task::executor::deliver_channel;
 use bendclaw::kernel::task::executor::deliver_result;
@@ -277,6 +280,30 @@ fn render_delivery_text_includes_output_and_error() {
     assert!(text.contains("nightly-report"));
     assert!(text.contains("partial"));
     assert!(text.contains("Error: boom"));
+}
+
+#[test]
+fn classify_task_run_output_marks_completed_runs_ok() {
+    let (status, output, error) = classify_task_run_output(FinishedRunOutput {
+        text: "done".to_string(),
+        stop_reason: Reason::EndTurn,
+    });
+    assert_eq!(status, "ok");
+    assert_eq!(output.as_deref(), Some("done"));
+    assert!(error.is_none());
+}
+
+#[test]
+fn classify_task_run_output_marks_paused_runs_error() {
+    let (status, output, error) = classify_task_run_output(FinishedRunOutput {
+        text: "partial summary".to_string(),
+        stop_reason: Reason::MaxIterations,
+    });
+    assert_eq!(status, "error");
+    assert_eq!(output.as_deref(), Some("partial summary"));
+    assert!(error
+        .as_deref()
+        .is_some_and(|value| value.contains("max_iterations")));
 }
 
 #[tokio::test]

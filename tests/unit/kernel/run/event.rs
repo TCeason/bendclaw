@@ -643,6 +643,14 @@ fn event_name_all_variants() {
         "Error"
     );
     assert_eq!(Event::AppData(serde_json::json!({})).name(), "AppData");
+    assert_eq!(
+        Event::Progress {
+            tool_call_id: None,
+            message: "hi".into()
+        }
+        .name(),
+        "Progress"
+    );
 }
 
 #[test]
@@ -668,6 +676,50 @@ fn event_audit_serde() -> Result<()> {
             assert_eq!(payload["model"], "gpt-4.1-mini");
         }
         _ => bail!("expected Audit"),
+    }
+    Ok(())
+}
+
+// ── Progress event ──
+
+#[test]
+fn event_progress_serde_roundtrip() -> Result<()> {
+    let e = Event::Progress {
+        tool_call_id: Some("tc_1".into()),
+        message: "processing".into(),
+    };
+    let json = serde_json::to_string(&e)?;
+    let back: Event = serde_json::from_str(&json)?;
+    match back {
+        Event::Progress {
+            tool_call_id,
+            message,
+        } => {
+            assert_eq!(tool_call_id.as_deref(), Some("tc_1"));
+            assert_eq!(message, "processing");
+        }
+        _ => bail!("expected Progress"),
+    }
+    Ok(())
+}
+
+#[test]
+fn event_progress_serde_no_tool_call_id() -> Result<()> {
+    let e = Event::Progress {
+        tool_call_id: None,
+        message: "starting".into(),
+    };
+    let json = serde_json::to_string(&e)?;
+    let back: Event = serde_json::from_str(&json)?;
+    match back {
+        Event::Progress {
+            tool_call_id,
+            message,
+        } => {
+            assert!(tool_call_id.is_none());
+            assert_eq!(message, "starting");
+        }
+        _ => bail!("expected Progress"),
     }
     Ok(())
 }

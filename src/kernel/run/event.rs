@@ -93,6 +93,12 @@ pub enum Event {
 
     /// Application-specific data (plan updates, step results, etc.).
     AppData(serde_json::Value),
+
+    /// Progress notification from a running tool, broadcast to external subscribers.
+    Progress {
+        tool_call_id: Option<String>,
+        message: String,
+    },
 }
 
 impl Event {
@@ -122,6 +128,7 @@ impl Event {
             Self::Error { .. } => "Error".to_string(),
             Self::Audit { name, .. } => name.clone(),
             Self::AppData(_) => "AppData".to_string(),
+            Self::Progress { .. } => "Progress".to_string(),
         }
     }
 }

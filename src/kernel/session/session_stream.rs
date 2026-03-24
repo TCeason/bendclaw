@@ -12,10 +12,17 @@ use crate::base::Result;
 use crate::kernel::run::event::Delta;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::persister::TurnPersister;
+use crate::kernel::run::result::Reason;
 use crate::kernel::run::result::Result as AgentResult;
 use crate::kernel::session::session::SessionState;
 use crate::kernel::ErrorSource;
 use crate::kernel::Message;
+
+#[derive(Debug, Clone)]
+pub struct FinishedRunOutput {
+    pub text: String,
+    pub stop_reason: Reason,
+}
 
 pub struct Stream {
     task: JoinHandle<Result<AgentResult>>,
@@ -56,7 +63,11 @@ impl Stream {
         self.persister.run_id()
     }
 
-    pub async fn finish(mut self) -> Result<String> {
+    pub async fn finish(self) -> Result<String> {
+        Ok(self.finish_output().await?.text)
+    }
+
+    pub async fn finish_output(mut self) -> Result<FinishedRunOutput> {
         while let Some(event) = self.events.recv().await {
             self.collect_runtime_info(&event);
             self.collected_events.push(event);
@@ -65,29 +76,40 @@ impl Stream {
         let task_result = (&mut self.task).await;
         match task_result {
             Ok(Ok(result)) => {
+                let stop_reason = result.stop_reason.clone();
                 *self.history.lock() = result.messages.clone();
-                self.persister.persist_success(
+                let text = self.persister.persist_success(
                     result,
                     &self.usage_provider,
                     &self.usage_model,
                     &self.collected_events,
-                )
+                )?;
+                Ok(FinishedRunOutput { text, stop_reason })
             }
             Ok(Err(e)) => {
                 let text = Message::error(ErrorSource::Internal, format!("{e}")).text();
                 self.persister.persist_error(&e, &self.collected_events);
-                Ok(text)
+                Ok(FinishedRunOutput {
+                    text,
+                    stop_reason: Reason::Error,
+                })
             }
             Err(e) if e.is_cancelled() => {
                 let text = AgentResult::aborted().text();
                 self.persister.persist_cancelled(&self.collected_events);
-                Ok(text)
+                Ok(FinishedRunOutput {
+                    text,
+                    stop_reason: Reason::Aborted,
+                })
             }
             Err(e) => {
                 let err = ErrorCode::internal(format!("agent task failed: {e}"));
                 let text = Message::error(ErrorSource::Internal, format!("{err}")).text();
                 self.persister.persist_error(&err, &self.collected_events);
-                Ok(text)
+                Ok(FinishedRunOutput {
+                    text,
+                    stop_reason: Reason::Error,
+                })
             }
         }
     }

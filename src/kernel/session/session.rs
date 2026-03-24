@@ -334,6 +334,7 @@ impl Session {
             temperature: llm.default_temperature(),
             checkpoint: Arc::new(self.res.config.checkpoint.clone()),
             max_iterations: self.res.config.max_iterations,
+            max_tool_calls: self.res.config.max_tool_calls,
             max_context_tokens: self.res.config.max_context_tokens,
             max_duration: Duration::from_secs(self.res.config.max_duration_secs),
             tool_view,

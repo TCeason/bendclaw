@@ -9,7 +9,10 @@ use crate::kernel::run::compactor::Compactor;
 use crate::kernel::run::context::Context;
 use crate::kernel::run::dispatcher::ToolDispatcher;
 use crate::kernel::run::event::Event;
+use crate::kernel::run::loop_guard::LoopGuard;
 use crate::kernel::run::run_loop::AbortPolicy;
+use crate::kernel::run::tool_call_limit::ToolCallLimitTracker;
+use crate::kernel::run::tool_outcome_guard::ToolOutcomeGuard;
 use crate::kernel::trace::Trace;
 use crate::kernel::trace::TraceRecorder;
 use crate::observability::audit;
@@ -27,6 +30,9 @@ pub(crate) struct Engine {
     pub(super) tx: mpsc::Sender<Event>,
     pub(super) trace: Trace,
     pub(super) abort_policy: AbortPolicy,
+    pub(super) loop_guard: LoopGuard,
+    pub(super) tool_call_limit: ToolCallLimitTracker,
+    pub(super) tool_outcome_guard: ToolOutcomeGuard,
     pub(super) loop_span_id: String,
 }
 
@@ -46,9 +52,12 @@ impl Engine {
         iteration: Arc<AtomicU32>,
         trace_recorder: TraceRecorder,
         tx: mpsc::Sender<Event>,
-    ) -> Self {
+        ) -> Self {
         Self {
-            abort_policy: AbortPolicy::new(ctx.max_iterations),
+            abort_policy: AbortPolicy::new(ctx.max_iterations, ctx.max_tool_calls),
+            loop_guard: LoopGuard::default(),
+            tool_call_limit: ToolCallLimitTracker::new(ctx.max_tool_calls),
+            tool_outcome_guard: ToolOutcomeGuard::default(),
             ctx,
             compactor,
             dispatcher,

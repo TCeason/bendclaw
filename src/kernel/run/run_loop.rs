@@ -19,6 +19,7 @@ pub enum AbortSignal {
     Aborted,
     Timeout,
     MaxIterations,
+    MaxToolCalls,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,11 +31,19 @@ pub struct LoopDecision {
 #[derive(Debug, Clone, Copy)]
 pub struct AbortPolicy {
     max_iterations: u32,
+    max_tool_calls: u32,
 }
 
 impl AbortPolicy {
-    pub fn new(max_iterations: u32) -> Self {
-        Self { max_iterations }
+    pub fn new(max_iterations: u32, max_tool_calls: u32) -> Self {
+        Self {
+            max_iterations,
+            max_tool_calls,
+        }
+    }
+
+    pub fn max_tool_calls(&self) -> u32 {
+        self.max_tool_calls
     }
 
     pub fn check(
@@ -59,6 +68,7 @@ impl AbortPolicy {
                 AbortSignal::Aborted => Some(Reason::Aborted),
                 AbortSignal::Timeout => Some(Reason::Timeout),
                 AbortSignal::MaxIterations => Some(Reason::MaxIterations),
+                AbortSignal::MaxToolCalls => Some(Reason::MaxToolCalls),
             },
             signal,
         }
@@ -257,9 +267,13 @@ pub struct RunLoopState {
     config: RunLoopConfig,
     deadline: Instant,
     iterations: u32,
+    tool_calls_count: u32,
     usage: Usage,
     final_content: Vec<ContentBlock>,
     has_tool_calls: bool,
+    consecutive_max_tokens: u32,
+    finalizing: bool,
+    stop_reason: Option<Reason>,
 }
 
 impl RunLoopState {
@@ -268,9 +282,13 @@ impl RunLoopState {
             deadline: started_at + config.max_duration,
             config,
             iterations: 0,
+            tool_calls_count: 0,
             usage: Usage::default(),
             final_content: Vec::new(),
             has_tool_calls: true,
+            consecutive_max_tokens: 0,
+            finalizing: false,
+            stop_reason: None,
         }
     }
 
@@ -291,6 +309,12 @@ impl RunLoopState {
     }
     pub fn final_content(&self) -> &[ContentBlock] {
         &self.final_content
+    }
+    pub fn stop_reason(&self) -> Option<&Reason> {
+        self.stop_reason.as_ref()
+    }
+    pub fn is_finalizing(&self) -> bool {
+        self.finalizing
     }
 
     pub fn begin_iteration(&mut self) -> u32 {
@@ -317,10 +341,45 @@ impl RunLoopState {
     pub fn record_final_response(&mut self, content: Vec<ContentBlock>) {
         self.final_content = content;
         self.has_tool_calls = false;
+        self.finalizing = false;
     }
 
     pub fn record_error(&mut self, err: &str) {
         self.record_final_response(vec![ContentBlock::text(format!("LLM error: {err}"))]);
+    }
+
+    /// Re-enter the LLM loop without tool dispatch (e.g. max_tokens continuation).
+    pub fn force_continue(&mut self) {
+        self.has_tool_calls = true;
+    }
+
+    pub fn should_attempt_finalization(&self, reason: &Reason) -> bool {
+        matches!(reason, Reason::MaxIterations | Reason::MaxToolCalls)
+            && !self.finalizing
+            && self.final_content.is_empty()
+    }
+
+    pub fn begin_finalization(&mut self, reason: Reason) {
+        self.stop_reason = Some(reason);
+        self.finalizing = true;
+        self.has_tool_calls = true;
+    }
+
+    pub fn increment_max_tokens_streak(&mut self) -> u32 {
+        self.consecutive_max_tokens += 1;
+        self.consecutive_max_tokens
+    }
+
+    pub fn reset_max_tokens_streak(&mut self) {
+        self.consecutive_max_tokens = 0;
+    }
+
+    pub fn add_tool_calls(&mut self, n: u32) {
+        self.tool_calls_count += n;
+    }
+
+    pub fn tool_calls_count(&self) -> u32 {
+        self.tool_calls_count
     }
 
     pub fn check_abort(&self, policy: &AbortPolicy, cancelled: bool, now: Instant) -> LoopDecision {

@@ -145,3 +145,116 @@ fn apply_turn_result_returns_abort_and_appends_aborted_tool_results() {
     ));
     assert!(state.should_continue());
 }
+
+fn max_tokens_turn() -> LLMResponse {
+    let mut turn = LLMResponse::new();
+    turn.apply_stream_event(StreamEvent::ContentDelta("partial output".to_string()));
+    turn.apply_stream_event(StreamEvent::Usage(TokenUsage::new(10, 100)));
+    turn.apply_stream_event(StreamEvent::Done {
+        finish_reason: "max_tokens".to_string(),
+        provider: None,
+        model: None,
+    });
+    turn
+}
+
+#[test]
+fn max_tokens_triggers_continue_with_continuation_message() {
+    let mut messages = Vec::new();
+    let mut state = run_loop_state();
+    let turn = max_tokens_turn();
+
+    let transition = apply_turn_result(
+        &mut messages,
+        &mut state,
+        &turn,
+        None,
+        None,
+        "mock-model",
+        Duration::from_secs(60),
+    );
+
+    assert_eq!(transition, TurnTransition::Continue);
+    assert!(state.should_continue());
+    // assistant message + user continuation prompt
+    assert_eq!(messages.len(), 2);
+    assert!(matches!(&messages[1], Message::User { .. }));
+}
+
+#[test]
+fn max_tokens_fifth_consecutive_triggers_done() {
+    let mut messages = Vec::new();
+    let mut state = run_loop_state();
+
+    for i in 0..5 {
+        messages.clear();
+        let turn = max_tokens_turn();
+        let transition = apply_turn_result(
+            &mut messages,
+            &mut state,
+            &turn,
+            None,
+            None,
+            "mock-model",
+            Duration::from_secs(60),
+        );
+        if i < 4 {
+            assert_eq!(transition, TurnTransition::Continue, "iteration {i}");
+        } else {
+            assert_eq!(transition, TurnTransition::Done, "iteration {i}");
+        }
+    }
+}
+
+#[test]
+fn non_max_tokens_turn_resets_streak() {
+    let mut messages = Vec::new();
+    let mut state = run_loop_state();
+
+    // Two max_tokens continuations
+    for _ in 0..2 {
+        let turn = max_tokens_turn();
+        apply_turn_result(
+            &mut messages,
+            &mut state,
+            &turn,
+            None,
+            None,
+            "mock-model",
+            Duration::from_secs(60),
+        );
+    }
+
+    // Normal tool turn resets streak
+    let turn = tool_turn();
+    let transition = apply_turn_result(
+        &mut messages,
+        &mut state,
+        &turn,
+        None,
+        None,
+        "mock-model",
+        Duration::from_secs(60),
+    );
+    assert_eq!(transition, TurnTransition::DispatchTools);
+
+    // Now 5 more max_tokens should all continue (streak was reset)
+    for i in 0..5 {
+        messages.clear();
+        let turn = max_tokens_turn();
+        let transition = apply_turn_result(
+            &mut messages,
+            &mut state,
+            &turn,
+            None,
+            None,
+            "mock-model",
+            Duration::from_secs(60),
+        );
+        if i < 4 {
+            assert_eq!(transition, TurnTransition::Continue, "iteration {i}");
+        } else {
+            assert_eq!(transition, TurnTransition::Done, "iteration {i}");
+        }
+    }
+}

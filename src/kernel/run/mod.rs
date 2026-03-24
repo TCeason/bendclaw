@@ -6,6 +6,7 @@ pub mod dispatcher;
 pub(crate) mod engine;
 pub mod event;
 pub mod fmt;
+pub mod loop_guard;
 pub mod orchestration;
 pub mod persist_op;
 pub mod persister;
@@ -14,6 +15,8 @@ pub mod result;
 pub mod run_loop;
 pub(crate) mod run_record;
 pub mod runtime_context;
+pub mod tool_call_limit;
+pub mod tool_outcome_guard;
 pub mod transition;
 pub mod usage;
 

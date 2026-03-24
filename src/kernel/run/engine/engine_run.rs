@@ -39,8 +39,19 @@ impl Engine {
         self.loop_span_id = loop_span.span_id.clone();
 
         while state.should_continue() {
-            if let Some(reason) = self.check_abort(&state) {
-                return self.abort(state, reason).await;
+            if !state.is_finalizing() {
+                if let Some(reason) = self.check_abort(&state) {
+                    if state.should_attempt_finalization(&reason) {
+                        run_log!(warn, self.ops_ctx(state.iterations()), "run", "finalizing",
+                            msg = "budget reached, running one final no-tool completion turn".to_string(),
+                            reason = %reason.as_str(),
+                            iterations = state.iterations(),
+                        );
+                        state.begin_finalization(reason);
+                        continue;
+                    }
+                    return self.abort(state, reason).await;
+                }
             }
             self.try_compact(&mut state).await;
             match self.step(&mut state).await? {
@@ -60,8 +71,9 @@ impl Engine {
             }
         }
 
+        let stop_reason = state.stop_reason().cloned().unwrap_or(Reason::EndTurn);
         let (content, iterations, usage) = state.into_finish();
-        self.finish(content, iterations, usage, Reason::EndTurn)
+        self.finish(content, iterations, usage, stop_reason)
             .await
     }
 
@@ -157,7 +169,20 @@ impl Engine {
                 Ok(StepOutcome::Abort(reason))
             }
             TurnTransition::DispatchTools => {
-                self.dispatch_tools(turn.tool_calls(), state).await;
+                if let Some(reason) = self.dispatch_tools(turn.tool_calls(), state).await {
+                    let mut payload = self.audit_payload(iteration);
+                    payload.insert("status".to_string(), serde_json::json!("aborted"));
+                    payload.insert("reason".to_string(), serde_json::json!(reason.as_str()));
+                    self.emit_audit("turn.completed", payload).await;
+                    run_log!(warn, self.ops_ctx(iteration), "turn", "aborted",
+                        msg = format!("  iter-{iteration} aborted"),
+                        reason = %reason.as_str(),
+                        finish_reason = %turn.finish_reason(),
+                        tool_calls = turn.tool_calls().len(),
+                    );
+                    self.emit(Event::TurnEnd { iteration }).await;
+                    return Ok(StepOutcome::Abort(reason));
+                }
                 let mut payload = self.audit_payload(iteration);
                 payload.insert("status".to_string(), serde_json::json!("tool_dispatch"));
                 payload.insert(
@@ -173,6 +198,25 @@ impl Engine {
                     msg = format!("  iter-{iteration} dispatched"),
                     finish_reason = %turn.finish_reason(),
                     tool_calls = turn.tool_calls().len(),
+                    tokens = turn.usage().total_tokens,
+                    bytes = turn.bytes(),
+                    chunk_count = turn.chunk_count(),
+                );
+
+                self.emit(Event::TurnEnd { iteration }).await;
+                Ok(StepOutcome::Continue)
+            }
+            TurnTransition::Continue => {
+                let mut payload = self.audit_payload(iteration);
+                payload.insert("status".to_string(), serde_json::json!("continue"));
+                payload.insert(
+                    "finish_reason".to_string(),
+                    serde_json::json!(turn.finish_reason()),
+                );
+                self.emit_audit("turn.completed", payload).await;
+                run_log!(info, self.ops_ctx(iteration), "turn", "continue",
+                    msg = format!("  iter-{iteration} max_tokens continuation"),
+                    finish_reason = %turn.finish_reason(),
                     tokens = turn.usage().total_tokens,
                     bytes = turn.bytes(),
                     chunk_count = turn.chunk_count(),
@@ -282,6 +326,14 @@ impl Engine {
                 "aborted",
                 reason = "timeout",
                 max_duration_secs = self.ctx.max_duration.as_secs(),
+            ),
+            AbortSignal::MaxToolCalls => slog!(
+                warn,
+                "run",
+                "aborted",
+                reason = "max_tool_calls",
+                tool_calls = state.tool_calls_count(),
+                max = self.ctx.max_tool_calls,
             ),
             _ => {}
         }

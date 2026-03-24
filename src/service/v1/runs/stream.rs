@@ -97,6 +97,17 @@ pub fn map_event_to_sse(
             }
             (event_name, payload)
         }
+        Event::Progress {
+            tool_call_id,
+            message,
+        } => {
+            let mut payload = base_event_payload(agent_id, session_id, run_id, "Progress");
+            if let Some(ref id) = tool_call_id {
+                payload["tool_call_id"] = serde_json::Value::String(id.clone());
+            }
+            payload["message"] = serde_json::Value::String(message.clone());
+            ("Progress", payload)
+        }
         Event::CompactionDone {
             messages_before,
             messages_after,
@@ -205,7 +216,7 @@ pub fn map_event_to_sse(
         } => {
             let event_name = match stop_reason.as_str() {
                 "end_turn" => "RunCompleted",
-                "timeout" | "max_iterations" => "RunPaused",
+                "timeout" | "max_iterations" | "max_tool_calls" => "RunPaused",
                 "aborted" => "RunCancelled",
                 _ => "RunError",
             };
