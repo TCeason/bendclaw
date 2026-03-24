@@ -28,6 +28,22 @@ pub enum SubmitResult {
     },
 }
 
+impl std::fmt::Debug for SubmitResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Started { preamble, .. } => f
+                .debug_struct("Started")
+                .field("preamble", preamble)
+                .finish(),
+            Self::Injected => write!(f, "Injected"),
+            Self::Queued => write!(f, "Queued"),
+            Self::Control { message } => {
+                f.debug_struct("Control").field("message", message).finish()
+            }
+        }
+    }
+}
+
 impl Runtime {
     pub async fn submit_turn(
         self: &Arc<Self>,

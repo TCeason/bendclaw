@@ -274,6 +274,10 @@ impl Runtime {
         &self.sessions
     }
 
+    pub fn turn_coordinator(&self) -> &TurnCoordinatorState {
+        &self.turn_coordinator
+    }
+
     pub fn channels(&self) -> &Arc<ChannelRegistry> {
         &self.channels
     }
