@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use crate::base::new_id;
 use crate::base::Result;
+use crate::kernel::run::event::Event;
 use crate::kernel::runtime::pending_decision::clarification_template;
 use crate::kernel::runtime::pending_decision::resolve_decision;
 use crate::kernel::runtime::pending_decision::DecisionOption;
@@ -144,7 +145,7 @@ impl Runtime {
                         old_run_id = %old_run_id,
                     );
                 }
-                let stream = session
+                let mut stream = session
                     .run(
                         input,
                         trace_id,
@@ -163,6 +164,10 @@ impl Runtime {
                     old_run_id = %old_run_id,
                     new_run_id = %stream.run_id(),
                 );
+                stream.prepend_event(Event::TaskRevised {
+                    previous_run_id: old_run_id,
+                    message: "Task revised: restarting with updated request.".to_string(),
+                });
                 Ok(SubmitResult::Started {
                     stream,
                     preamble: Some(

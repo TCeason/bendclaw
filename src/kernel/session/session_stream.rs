@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context as TaskContext;
@@ -33,6 +34,7 @@ pub struct Stream {
     usage_provider: String,
     usage_model: String,
     collected_events: Vec<Event>,
+    yield_first: VecDeque<Event>,
 }
 
 impl Stream {
@@ -56,11 +58,18 @@ impl Stream {
             usage_provider,
             usage_model,
             collected_events: initial_events,
+            yield_first: VecDeque::new(),
         }
     }
 
     pub fn run_id(&self) -> &str {
         self.persister.run_id()
+    }
+
+    /// Prepend an event to be yielded before any engine events.
+    /// The event is also added to collected_events for persistence.
+    pub(crate) fn prepend_event(&mut self, event: Event) {
+        self.yield_first.push_back(event);
     }
 
     pub async fn finish(self) -> Result<String> {
@@ -133,6 +142,10 @@ impl tokio_stream::Stream for Stream {
     type Item = Event;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
+        if let Some(event) = self.yield_first.pop_front() {
+            self.collected_events.push(event.clone());
+            return Poll::Ready(Some(event));
+        }
         match self.events.poll_recv(cx) {
             Poll::Ready(Some(event)) => {
                 self.collect_runtime_info(&event);
