@@ -6,15 +6,11 @@ fn agent_config_record_token_limits() {
     let rec = AgentConfigRecord {
         agent_id: "a1".into(),
         system_prompt: "".into(),
-        display_name: "".into(),
-        description: "".into(),
         identity: "".into(),
         soul: "".into(),
         token_limit_total: Some(500000),
         token_limit_daily: Some(50000),
         llm_config: None,
-        created_by: String::new(),
-        created_at: "".into(),
         updated_at: "".into(),
     };
     assert_eq!(rec.token_limit_total, Some(500000));
@@ -26,15 +22,11 @@ fn agent_config_record_token_limits_none() {
     let rec = AgentConfigRecord {
         agent_id: "a1".into(),
         system_prompt: "".into(),
-        display_name: "".into(),
-        description: "".into(),
         identity: "".into(),
         soul: "".into(),
         token_limit_total: None,
         token_limit_daily: None,
         llm_config: None,
-        created_by: String::new(),
-        created_at: "".into(),
         updated_at: "".into(),
     };
     assert!(rec.token_limit_total.is_none());
@@ -46,15 +38,11 @@ fn agent_config_record_serde_roundtrip() -> Result<()> {
     let rec = AgentConfigRecord {
         agent_id: "a1".into(),
         system_prompt: "you are helpful".into(),
-        display_name: "Agent 1".into(),
-        description: "test agent".into(),
         identity: "You are a coding assistant".into(),
         soul: "Be concise and helpful".into(),
         token_limit_total: Some(1_000_000),
         token_limit_daily: None,
         llm_config: None,
-        created_by: String::new(),
-        created_at: "2026-01-01".into(),
         updated_at: "2026-01-02".into(),
     };
     let json = serde_json::to_string(&rec)?;

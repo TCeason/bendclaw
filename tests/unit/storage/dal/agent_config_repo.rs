@@ -8,14 +8,11 @@ fn config_row(agent_id: &str) -> Vec<serde_json::Value> {
     vec![
         agent_id,
         "You are helpful.",
-        "Bot",
-        "A bot",
         "assistant",
         "friendly",
         "",
         "",
         "",
-        "2026-03-11T00:00:00Z",
         "2026-03-11T00:00:00Z",
     ]
     .into_iter()
@@ -57,7 +54,7 @@ async fn agent_config_get_any_generates_valid_sql() -> Result<()> {
     });
     let store = AgentConfigStore::new(fake.pool());
     let cfg = store.get_any().await?.expect("should exist");
-    assert_eq!(cfg.display_name, "Bot");
+    assert_eq!(cfg.system_prompt, "You are helpful.");
     Ok(())
 }
 
@@ -75,8 +72,6 @@ async fn agent_config_upsert_generates_valid_sql() -> Result<()> {
         .upsert(
             "a-1",
             Some("You are helpful."),
-            Some("Bot"),
-            Some("A bot"),
             Some("assistant"),
             Some("friendly"),
             Some(Some(100000)),
@@ -97,7 +92,7 @@ async fn agent_config_upsert_null_limits_generates_valid_sql() -> Result<()> {
     });
     let store = AgentConfigStore::new(fake.pool());
     store
-        .upsert("a-1", None, None, None, None, None, None, None, None)
+        .upsert("a-1", None, None, None, None, None, None)
         .await?;
     Ok(())
 }

@@ -50,23 +50,17 @@ fn agent_config_record_serde_roundtrip() -> Result<()> {
     let record = AgentConfigRecord {
         agent_id: "agent-1".into(),
         system_prompt: "You are helpful".into(),
-        display_name: "TestBot".into(),
-        description: "A test agent".into(),
         identity: String::new(),
         soul: String::new(),
         token_limit_total: None,
         token_limit_daily: None,
         llm_config: None,
-        created_by: String::new(),
-        created_at: "2026-01-01T00:00:00Z".into(),
         updated_at: "2026-01-01T00:00:00Z".into(),
     };
     let json = serde_json::to_string(&record)?;
     let parsed: AgentConfigRecord = serde_json::from_str(&json)?;
     assert_eq!(parsed.agent_id, "agent-1");
     assert_eq!(parsed.system_prompt, "You are helpful");
-    assert_eq!(parsed.display_name, "TestBot");
-    assert_eq!(parsed.description, "A test agent");
     Ok(())
 }
 
