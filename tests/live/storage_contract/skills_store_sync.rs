@@ -59,12 +59,29 @@ async fn setup_databases(prefix: &str, agent_ids: &[&str]) -> Result<Arc<AgentDa
     let root = Pool::new(&base_url, &token, &warehouse)?;
     let databases = Arc::new(AgentDatabases::new(root.clone(), prefix)?);
 
+    // Ensure evotai_meta registry exists
+    root.exec("CREATE DATABASE IF NOT EXISTS evotai_meta")
+        .await?;
+    let meta_pool = root.with_database("evotai_meta")?;
+    meta_pool
+        .exec(include_str!("../../../migrations/base/registry.sql"))
+        .await?;
+
     for agent_id in agent_ids {
         let db_name = databases.agent_database_name(agent_id)?;
         root.exec(&format!("CREATE DATABASE IF NOT EXISTS `{db_name}`"))
             .await?;
         let pool = root.with_database(&db_name)?;
         run_migration(&pool, SKILLS_MIGRATION).await?;
+
+        // Register agent in evotai_meta
+        meta_pool
+            .exec(&format!(
+                "INSERT INTO evotai_agents (agent_id, database_name, status) \
+             VALUES ('{agent_id}', '{db_name}', 'active') \
+             ON DUPLICATE KEY UPDATE status = 'active'"
+            ))
+            .await?;
     }
 
     Ok(databases)

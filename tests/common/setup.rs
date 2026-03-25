@@ -195,6 +195,9 @@ pub async fn spawn_test_node(mut options: TestNodeOptions) -> anyhow::Result<Tes
     let addr = listener.local_addr()?;
     let base_url = format!("http://{addr}");
 
+    // Ensure evotai_meta registry exists for list_agent_ids()
+    ensure_registry(&options.root_pool).await?;
+
     if let Some(cluster) = options.cluster.as_mut() {
         cluster.advertise_url = base_url.clone();
     }
@@ -262,6 +265,9 @@ pub async fn app_with_root_pool_and_llm(
 ) -> anyhow::Result<axum::Router> {
     use bendclaw::service::state::AppState;
 
+    // Ensure evotai_meta registry exists for list_agent_ids()
+    ensure_registry(&root_pool).await?;
+
     let workspace = bendclaw::config::WorkspaceConfig {
         root_dir: std::env::temp_dir()
             .join(format!("bendclaw-test-workspace-{}", Ulid::new()))
@@ -308,6 +314,10 @@ async fn create_pool() -> anyhow::Result<Pool> {
     for sql in ALL_MIGRATIONS {
         run_migration(&pool, sql).await?;
     }
+
+    // Ensure evotai_meta registry exists for list_agent_ids()
+    ensure_registry(&root).await?;
+
     Ok(pool)
 }
 
@@ -432,6 +442,8 @@ const ALL_MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/base/recall.sql"),
 ];
 
+const REGISTRY_MIGRATION: &str = include_str!("../../migrations/base/registry.sql");
+
 async fn run_migration(pool: &Pool, sql: &str) -> anyhow::Result<()> {
     for stmt in sql.split(';') {
         let stmt = stmt.trim();
@@ -445,6 +457,14 @@ async fn run_migration(pool: &Pool, sql: &str) -> anyhow::Result<()> {
             .await
             .with_context(|| format!("migration statement failed:\n{stmt}"))?;
     }
+    Ok(())
+}
+
+pub async fn ensure_registry(root: &Pool) -> anyhow::Result<()> {
+    root.exec("CREATE DATABASE IF NOT EXISTS evotai_meta")
+        .await?;
+    let meta = root.with_database("evotai_meta")?;
+    run_migration(&meta, REGISTRY_MIGRATION).await?;
     Ok(())
 }
 
