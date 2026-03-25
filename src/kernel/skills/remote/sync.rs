@@ -140,7 +140,7 @@ async fn fetch_all(databases: &Arc<AgentDatabases>, agent_ids: &[String]) -> Vec
                 }
             }
             Err(e) => {
-                slog!(warn, "skill_sync", "skill_list_failed", db = %db_name, error = %e,);
+                slog!(warn, "skill_sync", "skill_list_failed", agent_id = %agent_id, error = %e,);
             }
         }
     }
