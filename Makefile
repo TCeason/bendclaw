@@ -10,17 +10,32 @@ COVERAGE_CMD := $(CARGO) llvm-cov nextest $(COVERAGE_TARGETS)
 .PHONY: setup check build run test test-fast test-unit test-it test-contract test-live test-live-storage test-live-e2e test-all coverage coverage-report coverage-core-check snapshot-review dev-env test-down ci
 
 setup:
-	@echo "==> checking protoc..."
-	@if command -v protoc >/dev/null 2>&1; then \
-		echo "    protoc found: $$(protoc --version)"; \
-	else \
-		echo "    installing protoc..."; \
-		if [ "$$(uname -s)" = "Darwin" ]; then brew install protobuf; \
-		else sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler; fi; \
-	fi
-	@if [ "$$(uname -s)" = "Darwin" ]; then \
+	@set -e; \
+	export PATH="$$HOME/.cargo/bin:$$PATH"; \
+	need_cmd() { command -v "$$1" >/dev/null 2>&1; }; \
+	need_fetch() { \
+		if need_cmd curl; then \
+			curl -fsSL "$$1"; \
+		elif need_cmd wget; then \
+			wget -qO- "$$1"; \
+		else \
+			echo "    error: neither curl nor wget is available" >&2; \
+			exit 1; \
+		fi; \
+	}; \
+	ensure_rustup() { \
+		if need_cmd cargo; then \
+			return 0; \
+		fi; \
+		echo "==> installing rustup..."; \
+		need_fetch https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none; \
+		export PATH="$$HOME/.cargo/bin:$$PATH"; \
+		need_cmd cargo || { echo "    error: rustup installation failed" >&2; exit 1; }; \
+	}; \
+	ensure_rustup; \
+	if [ "$$(uname -s)" = "Darwin" ]; then \
 		echo "==> pre-compiling unit tests..."; \
-		cargo test --test unit --no-run 2>/dev/null; \
+		cargo test --test unit --no-run 2>/dev/null || true; \
 	fi
 	@echo "==> installing git hooks..."
 	@mkdir -p .git/hooks

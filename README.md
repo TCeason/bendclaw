@@ -145,7 +145,7 @@ curl -fsSL https://app.evot.ai/api/setup | sh -s -- <BASE64_CONFIG>
 ## Development
 
 ```bash
-make setup    # install protoc, git hooks
+make setup    # install Rust toolchain, git hooks
 make check    # fmt + clippy
 make test     # unit + integration + contract (no credentials needed)
 make coverage   # generate HTML coverage report
