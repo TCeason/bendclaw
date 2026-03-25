@@ -5,6 +5,9 @@ use bendclaw::kernel::channel::account::ChannelAccount;
 use bendclaw::kernel::channel::capabilities::ChannelCapabilities;
 use bendclaw::kernel::channel::capabilities::ChannelKind;
 use bendclaw::kernel::channel::capabilities::InboundMode;
+use bendclaw::kernel::channel::chat_router::ChatRouter;
+use bendclaw::kernel::channel::chat_router::ChatRouterConfig;
+use bendclaw::kernel::channel::debouncer::DebounceConfig;
 use bendclaw::kernel::channel::lease::ChannelLeaseResource;
 use bendclaw::kernel::channel::plugin::ChannelOutbound;
 use bendclaw::kernel::channel::plugin::ChannelPlugin;
@@ -169,10 +172,12 @@ fn build_resource(
     registry.register(Arc::new(WebhookOnlyPlugin));
     let registry = Arc::new(registry);
 
-    let supervisor = Arc::new(ChannelSupervisor::new(
-        registry.clone(),
-        Arc::new(|_, _| {}),
+    let router = Arc::new(ChatRouter::new(
+        ChatRouterConfig::default(),
+        DebounceConfig::default(),
+        Arc::new(|_| Box::pin(async {})),
     ));
+    let supervisor = Arc::new(ChannelSupervisor::new(registry.clone(), router));
 
     let resource = ChannelLeaseResource::new(databases, registry, supervisor.clone());
     (resource, supervisor)

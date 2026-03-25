@@ -6,6 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::base::Result;
 use crate::kernel::channel::account::ChannelAccount;
+use crate::kernel::channel::chat_router::ChatRouter;
 use crate::kernel::channel::delivery::backpressure::BackpressureConfig;
 use crate::kernel::channel::delivery::backpressure::BackpressureSender;
 use crate::kernel::channel::message::InboundEvent;
@@ -20,18 +21,15 @@ struct ReceiverSlot {
 pub struct ChannelSupervisor {
     registry: Arc<ChannelRegistry>,
     receivers: Mutex<HashMap<String, ReceiverSlot>>,
-    event_handler: Arc<dyn Fn(ChannelAccount, InboundEvent) + Send + Sync>,
+    router: Arc<ChatRouter>,
 }
 
 impl ChannelSupervisor {
-    pub fn new(
-        registry: Arc<ChannelRegistry>,
-        event_handler: Arc<dyn Fn(ChannelAccount, InboundEvent) + Send + Sync>,
-    ) -> Self {
+    pub fn new(registry: Arc<ChannelRegistry>, router: Arc<ChatRouter>) -> Self {
         Self {
             registry,
             receivers: Mutex::new(HashMap::new()),
-            event_handler,
+            router,
         }
     }
 
@@ -57,17 +55,13 @@ impl ChannelSupervisor {
 
         let handle = factory.spawn(account, bp_sender, cancel.clone()).await?;
 
-        // Spawn consumer that dispatches events to the handler.
-        let handler = self.event_handler.clone();
+        // Spawn consumer that sequentially routes events through ChatRouter.
+        // Sequential await on route() preserves per-account event ordering.
+        let router = self.router.clone();
         let account_clone = account.clone();
         crate::base::spawn_fire_and_forget("channel_event_consumer", async move {
             while let Some(event) = event_rx.recv().await {
-                let h = handler.clone();
-                let a = account_clone.clone();
-                crate::base::spawn_fire_and_forget(
-                    "channel_event_handler",
-                    async move { h(a, event) },
-                );
+                router.route(account_clone.clone(), event).await;
             }
         });
 

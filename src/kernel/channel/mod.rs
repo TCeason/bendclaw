@@ -1,6 +1,8 @@
 pub mod account;
 pub mod capabilities;
+pub mod chat_router;
 pub mod context;
+pub mod debouncer;
 pub mod delivery;
 pub mod dispatch;
 pub mod dispatcher;
@@ -12,12 +14,13 @@ pub mod plugins;
 pub mod registry;
 pub mod stream_delivery;
 pub mod supervisor;
+pub mod typing_keepalive;
 pub mod writer;
 
 pub use capabilities::ChannelCapabilities;
 pub use capabilities::ChannelKind;
 pub use capabilities::InboundMode;
-pub use dispatch::dispatch_inbound;
+pub use dispatch::dispatch_debounced;
 pub use dispatcher::ChannelDispatcher;
 pub use message::Direction;
 pub use message::InboundEvent;

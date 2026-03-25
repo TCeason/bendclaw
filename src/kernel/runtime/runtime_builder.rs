@@ -12,9 +12,11 @@ use crate::client::DirectiveClient;
 use crate::config::ClusterConfig;
 use crate::config::DirectiveConfig;
 use crate::config::WorkspaceConfig;
-use crate::kernel::channel::account::ChannelAccount;
-use crate::kernel::channel::dispatch::dispatch_inbound;
-use crate::kernel::channel::message::InboundEvent;
+use crate::kernel::channel::chat_router::ChatHandler;
+use crate::kernel::channel::chat_router::ChatRouter;
+use crate::kernel::channel::chat_router::ChatRouterConfig;
+use crate::kernel::channel::debouncer::DebounceConfig;
+use crate::kernel::channel::dispatch::dispatch_debounced;
 use crate::kernel::channel::supervisor::ChannelSupervisor;
 use crate::kernel::cluster::ClusterOptions;
 use crate::kernel::cluster::ClusterService;
@@ -245,9 +247,6 @@ async fn construct(
     let trace_writer = crate::kernel::trace::TraceWriter::spawn();
     let persist_writer = crate::kernel::run::persist_op::spawn_persist_writer();
     let channel_message_writer = crate::kernel::channel::spawn_channel_message_writer();
-    let outbound_queue = crate::kernel::channel::delivery::outbound_queue::spawn_outbound_queue(
-        crate::kernel::channel::delivery::outbound_queue::OutboundQueueConfig::default(),
-    );
     let rate_limiter = Arc::new(
         crate::kernel::channel::delivery::rate_limit::OutboundRateLimiter::new(
             crate::kernel::channel::delivery::rate_limit::RateLimitConfig::default(),
@@ -259,23 +258,32 @@ async fn construct(
     let (directive, directive_handle) = (None, None);
     let (cluster_service, heartbeat_handle) = (None, None);
 
-    // Use Arc::new_cyclic so the supervisor's event_handler can capture a Weak<Runtime>.
+    // Use Arc::new_cyclic so the ChatRouter handler can capture a Weak<Runtime>.
     let runtime = Arc::new_cyclic(|weak: &std::sync::Weak<Runtime>| {
-        let weak = weak.clone();
-        let event_handler: Arc<dyn Fn(ChannelAccount, InboundEvent) + Send + Sync> =
-            Arc::new(move |account, event| {
+        let weak_for_handler = weak.clone();
+        let handler: ChatHandler = Arc::new(move |input| {
+            let weak = weak_for_handler.clone();
+            Box::pin(async move {
                 if let Some(runtime) = weak.upgrade() {
-                    crate::base::spawn_fire_and_forget("inbound_event_dispatch", async move {
-                        dispatch_inbound(&runtime, account, event).await;
-                    });
+                    dispatch_debounced(&runtime, input).await;
                 }
-            });
-        let supervisor = Arc::new(ChannelSupervisor::new(channels.clone(), event_handler));
+            })
+        });
+        let chat_router = Arc::new(ChatRouter::new(
+            ChatRouterConfig::default(),
+            DebounceConfig::default(),
+            handler,
+        ));
+        let supervisor = Arc::new(ChannelSupervisor::new(
+            channels.clone(),
+            chat_router.clone(),
+        ));
 
         Runtime::from_parts(RuntimeParts {
             sessions,
             channels,
             supervisor,
+            chat_router,
             config,
             databases,
             llm: RwLock::new(llm),
@@ -293,7 +301,6 @@ async fn construct(
             trace_writer,
             persist_writer,
             channel_message_writer,
-            outbound_queue,
             rate_limiter,
             health_monitor_handle: RwLock::new(None),
             tool_writer,

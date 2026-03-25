@@ -2,6 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use bendclaw::kernel::channel::chat_router::ChatRouter;
+use bendclaw::kernel::channel::chat_router::ChatRouterConfig;
+use bendclaw::kernel::channel::debouncer::DebounceConfig;
 use bendclaw::kernel::channel::registry::ChannelRegistry;
 use bendclaw::kernel::channel::supervisor::ChannelSupervisor;
 use bendclaw::kernel::runtime::agent_config::AgentConfig;
@@ -57,9 +60,14 @@ pub fn test_runtime(fake: FakeDatabend) -> Arc<Runtime> {
     let _ = std::fs::create_dir_all(&workspace_root);
     let skills = Arc::new(SkillStore::new(databases.clone(), workspace_root, None));
     let channels = Arc::new(ChannelRegistry::new());
+    let chat_router = Arc::new(ChatRouter::new(
+        ChatRouterConfig::default(),
+        DebounceConfig::default(),
+        Arc::new(|_| Box::pin(async {})),
+    ));
     let supervisor = Arc::new(ChannelSupervisor::new(
         channels.clone(),
-        Arc::new(|_, _| {}),
+        chat_router.clone(),
     ));
 
     Arc::new(Runtime::from_parts(RuntimeParts {
@@ -71,6 +79,7 @@ pub fn test_runtime(fake: FakeDatabend) -> Arc<Runtime> {
         sessions: Arc::new(SessionManager::new()),
         channels,
         supervisor,
+        chat_router,
         status: RwLock::new(RuntimeStatus::Ready),
         sync_cancel: tokio_util::sync::CancellationToken::new(),
         sync_handle: RwLock::new(None),
@@ -83,7 +92,6 @@ pub fn test_runtime(fake: FakeDatabend) -> Arc<Runtime> {
         trace_writer: bendclaw::kernel::trace::TraceWriter::noop(),
         persist_writer: bendclaw::kernel::writer::BackgroundWriter::noop("persist"),
         channel_message_writer: bendclaw::kernel::writer::BackgroundWriter::noop("channel_message"),
-        outbound_queue: bendclaw::kernel::channel::delivery::outbound_queue::OutboundQueue::noop(),
         rate_limiter: std::sync::Arc::new(
             bendclaw::kernel::channel::delivery::rate_limit::OutboundRateLimiter::new(
                 bendclaw::kernel::channel::delivery::rate_limit::RateLimitConfig::default(),

@@ -2,9 +2,13 @@ use std::sync::Arc;
 
 use crate::base::new_id;
 use crate::kernel::channel::account::ChannelAccount;
+use crate::kernel::channel::debouncer::DebouncedInput;
 use crate::kernel::channel::delivery;
 use crate::kernel::channel::dispatcher::ChannelDispatcher;
 use crate::kernel::channel::message::InboundEvent;
+use crate::kernel::channel::plugin::ChannelOutbound;
+use crate::kernel::channel::typing_keepalive::TypingKeepalive;
+use crate::kernel::channel::typing_keepalive::TypingKeepaliveConfig;
 use crate::kernel::channel::writer::ChannelMessageOp;
 use crate::kernel::runtime::Runtime;
 use crate::kernel::runtime::SubmitResult;
@@ -13,14 +17,11 @@ use crate::observability::log::slog;
 use crate::storage::dal::channel_message::record::ChannelMessageRecord;
 use crate::storage::dal::channel_message::repo::ChannelMessageRepo;
 
-/// Dispatch a single inbound event through the full conversation pipeline.
-/// Kernel-layer function — no service-layer dependencies.
-pub async fn dispatch_inbound(
-    runtime: &Arc<Runtime>,
-    account: ChannelAccount,
-    event: InboundEvent,
-) {
-    if let Err(e) = try_dispatch_inbound(runtime, &account, &event).await {
+/// Dispatch a debounced input through the full conversation pipeline.
+/// Called by ChatRouter after per-chat serialization and debounce.
+pub async fn dispatch_debounced(runtime: &Arc<Runtime>, input: DebouncedInput) {
+    let account = input.account.clone();
+    if let Err(e) = try_dispatch_debounced(runtime, input).await {
         slog!(error, "channel", "dispatch_failed",
             agent_id = %account.agent_id,
             channel_type = %account.channel_type,
@@ -30,16 +31,18 @@ pub async fn dispatch_inbound(
     }
 }
 
-async fn try_dispatch_inbound(
-    runtime: &Arc<Runtime>,
-    account: &ChannelAccount,
-    event: &InboundEvent,
-) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let (input, reply_ctx) = ChannelDispatcher::extract_input(event);
-    let chat_id = reply_ctx.as_ref().map(|r| r.chat_id.as_str()).unwrap_or("");
+// ── Pipeline stages ─────────────────────────────────────────────────────────
 
-    // Centralized sender trust check — reads allow_from from account config JSON.
-    // Works for all channel types. Empty/absent allow_from = allow all.
+/// Stage 1: Extract input and validate sender trust.
+struct ValidatedInput {
+    text: String,
+    chat_id: String,
+}
+
+fn extract_and_validate(account: &ChannelAccount, event: &InboundEvent) -> Option<ValidatedInput> {
+    let (text, reply_ctx) = ChannelDispatcher::extract_input(event);
+
+    // Sender trust check.
     if let Some(sender_id) = event_sender_id(event) {
         if !is_sender_allowed(&account.config, sender_id) {
             slog!(debug, "channel", "sender_denied",
@@ -47,55 +50,47 @@ async fn try_dispatch_inbound(
                 account_id = %account.channel_account_id,
                 sender_id,
             );
-            return Ok(());
+            return None;
         }
     }
 
-    if input.trim().is_empty() {
-        return Ok(());
+    if text.trim().is_empty() {
+        return None;
     }
 
+    let chat_id = reply_ctx
+        .as_ref()
+        .map(|r| r.chat_id.clone())
+        .unwrap_or_default();
+
+    Some(ValidatedInput { text, chat_id })
+}
+
+/// Stage 2: Resolve dispatch context (session key, outbound, repo, capabilities).
+struct DispatchContext {
+    session_key: String,
+    base_key: String,
+    outbound: Option<Arc<dyn ChannelOutbound>>,
+    msg_repo: ChannelMessageRepo,
+    max_message_len: usize,
+}
+
+async fn resolve_dispatch_context(
+    runtime: &Arc<Runtime>,
+    account: &ChannelAccount,
+    chat_id: &str,
+) -> std::result::Result<DispatchContext, Box<dyn std::error::Error + Send + Sync>> {
     let base_key = ChannelDispatcher::session_key(
         &account.channel_type,
         &account.external_account_id,
         chat_id,
     );
 
-    // Get outbound interface (needed for both commands and normal flow).
     let outbound = runtime
         .channels()
         .get(&account.channel_type)
         .map(|e| e.plugin.outbound());
 
-    // Handle channel slash commands before session dispatch.
-    let trimmed = input.trim();
-    if trimmed == "/new" || trimmed == "/clear" {
-        // Close old session if it exists in memory.
-        let old_key = runtime
-            .resolve_channel_session_key(&base_key, &account.agent_id)
-            .await;
-        if let Some(session) = runtime.sessions().get(&old_key) {
-            session.close().await;
-            runtime.sessions().remove(&old_key);
-        }
-        // Rotate to a new session key.
-        let new_key = runtime.rotate_channel_session_key(&base_key);
-        channel_log!(info, "command", "new_session",
-            channel_type = %account.channel_type,
-            account_id = %account.channel_account_id,
-            chat_id,
-            old_session = %old_key,
-            new_session = %new_key,
-        );
-        if let Some(ref ob) = outbound {
-            let _ = ob
-                .send_text(&account.config, chat_id, "New conversation started.")
-                .await;
-        }
-        return Ok(());
-    }
-
-    // Resolve current session key for this chat (may have #timestamp suffix).
     let session_key = runtime
         .resolve_channel_session_key(&base_key, &account.agent_id)
         .await;
@@ -103,105 +98,147 @@ async fn try_dispatch_inbound(
     let pool = runtime.databases().agent_pool(&account.agent_id)?;
     let msg_repo = ChannelMessageRepo::new(pool.clone());
 
-    // Dedup: skip if this platform message was already processed.
-    if let InboundEvent::Message(msg) = event {
-        if !msg.message_id.is_empty()
-            && msg_repo
-                .exists_by_platform_message_id(
-                    &account.channel_type,
-                    &account.external_account_id,
-                    &msg.chat_id,
-                    &msg.message_id,
-                )
-                .await
-                .unwrap_or_else(|e| {
-                    slog!(warn, "channel", "dedup_check_failed",
-                        message_id = %msg.message_id,
-                        channel_type = %account.channel_type,
-                        error = %e,
-                    );
-                    false
-                })
-        {
-            slog!(info, "channel", "dedup_skipped",
-                message_id = %msg.message_id,
-                channel_type = %account.channel_type,
-            );
-            return Ok(());
-        }
-    }
-
-    channel_log!(info, "inbound", "accepted",
-        msg = format!("channel \u{2190} {}", account.channel_type),
-        input_preview = %crate::base::truncate_bytes_on_char_boundary(&input, 100),
-        input_bytes = input.len(),
-        channel_type = %account.channel_type,
-        account_id = %account.channel_account_id,
-        chat_id,
-        sender_id = event_sender_id(event).unwrap_or(""),
-        message_id = event_message_id(event).unwrap_or(""),
-    );
-
-    // Record inbound message (fire-and-forget via background writer).
-    if let InboundEvent::Message(msg) = event {
-        runtime
-            .channel_message_writer
-            .send(ChannelMessageOp::Insert {
-                repo: msg_repo.clone(),
-                record: ChannelMessageRecord {
-                    id: new_id(),
-                    channel_type: account.channel_type.clone(),
-                    account_id: account.external_account_id.clone(),
-                    chat_id: msg.chat_id.clone(),
-                    session_id: session_key.clone(),
-                    direction: "inbound".into(),
-                    sender_id: msg.sender_id.clone(),
-                    text: msg.text.clone(),
-                    platform_message_id: msg.message_id.clone(),
-                    run_id: String::new(),
-                    attachments: "[]".into(),
-                    created_at: String::new(),
-                },
-            });
-    }
-
-    // Send typing indicator.
-    if let Some(ref ob) = outbound {
-        match ob.send_typing(&account.config, chat_id).await {
-            Ok(()) => channel_log!(debug, "typing", "sent",
-                channel_type = %account.channel_type,
-                account_id = %account.channel_account_id,
-                chat_id,
-            ),
-            Err(error) => channel_log!(warn, "typing", "failed",
-                channel_type = %account.channel_type,
-                account_id = %account.channel_account_id,
-                chat_id,
-                error = %error,
-            ),
-        }
-    }
-
-    slog!(debug, "channel", "session_ready",
-        channel_type = %account.channel_type,
-        chat_id,
-        session_id = %session_key,
-    );
-
     let caps = runtime
         .channels()
         .get(&account.channel_type)
         .map(|e| e.plugin.capabilities());
-    let supports_edit = caps.as_ref().map(|c| c.supports_edit).unwrap_or(false);
-    let max_len = caps.as_ref().map(|c| c.max_message_len).unwrap_or(4096);
+    let max_message_len = caps.as_ref().map(|c| c.max_message_len).unwrap_or(4096);
 
-    let mut pending_input = Some(input);
+    Ok(DispatchContext {
+        session_key,
+        base_key,
+        outbound,
+        msg_repo,
+        max_message_len,
+    })
+}
+
+/// Stage 3: Handle slash commands (/new, /clear). Returns true if handled.
+async fn handle_slash_command(
+    runtime: &Arc<Runtime>,
+    account: &ChannelAccount,
+    ctx: &mut DispatchContext,
+    chat_id: &str,
+    input: &str,
+) -> bool {
+    let trimmed = input.trim();
+    if trimmed != "/new" && trimmed != "/clear" {
+        return false;
+    }
+
+    // Close old session.
+    let old_key = runtime
+        .resolve_channel_session_key(&ctx.base_key, &account.agent_id)
+        .await;
+    if let Some(session) = runtime.sessions().get(&old_key) {
+        session.close().await;
+        runtime.sessions().remove(&old_key);
+    }
+
+    // Rotate to new session key.
+    let new_key = runtime.rotate_channel_session_key(&ctx.base_key);
+    ctx.session_key = new_key.clone();
+
+    channel_log!(info, "command", "new_session",
+        channel_type = %account.channel_type,
+        account_id = %account.channel_account_id,
+        chat_id,
+        old_session = %old_key,
+        new_session = %new_key,
+    );
+
+    if let Some(ref ob) = ctx.outbound {
+        let _ = ob
+            .send_text(&account.config, chat_id, "New conversation started.")
+            .await;
+    }
+
+    true
+}
+
+/// Stage 4: Dedup check. Returns true if ANY event in the batch is a duplicate.
+async fn is_duplicate(
+    msg_repo: &ChannelMessageRepo,
+    account: &ChannelAccount,
+    events: &[InboundEvent],
+) -> bool {
+    for event in events {
+        if let InboundEvent::Message(msg) = event {
+            if !msg.message_id.is_empty()
+                && msg_repo
+                    .exists_by_platform_message_id(
+                        &account.channel_type,
+                        &account.external_account_id,
+                        &msg.chat_id,
+                        &msg.message_id,
+                    )
+                    .await
+                    .unwrap_or_else(|e| {
+                        slog!(warn, "channel", "dedup_check_failed",
+                            message_id = %msg.message_id,
+                            channel_type = %account.channel_type,
+                            error = %e,
+                        );
+                        false
+                    })
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Record all inbound messages (fire-and-forget).
+fn record_inbound(
+    runtime: &Runtime,
+    msg_repo: &ChannelMessageRepo,
+    account: &ChannelAccount,
+    session_key: &str,
+    events: &[InboundEvent],
+) {
+    for event in events {
+        if let InboundEvent::Message(msg) = event {
+            runtime
+                .channel_message_writer
+                .send(ChannelMessageOp::Insert {
+                    repo: msg_repo.clone(),
+                    record: ChannelMessageRecord {
+                        id: new_id(),
+                        channel_type: account.channel_type.clone(),
+                        account_id: account.external_account_id.clone(),
+                        chat_id: msg.chat_id.clone(),
+                        session_id: session_key.to_string(),
+                        direction: "inbound".into(),
+                        sender_id: msg.sender_id.clone(),
+                        text: msg.text.clone(),
+                        platform_message_id: msg.message_id.clone(),
+                        run_id: String::new(),
+                        attachments: "[]".into(),
+                        created_at: String::new(),
+                    },
+                });
+        }
+    }
+}
+
+/// Stage 5: Submit turn and deliver response (with followup loop).
+#[allow(clippy::too_many_arguments)]
+async fn submit_and_deliver(
+    runtime: &Arc<Runtime>,
+    account: &ChannelAccount,
+    ctx: &DispatchContext,
+    chat_id: &str,
+    input: &str,
+) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut pending_input = Some(input.to_string());
+
     loop {
         let trace_id = new_id();
         let submit = runtime
             .submit_turn(
                 &account.agent_id,
-                &session_key,
+                &ctx.session_key,
                 &account.user_id,
                 &pending_input.take().unwrap_or_default(),
                 &trace_id,
@@ -216,10 +253,10 @@ async fn try_dispatch_inbound(
             SubmitResult::Control { message } => {
                 send_control_reply(
                     runtime,
-                    outbound.as_ref(),
-                    &msg_repo,
+                    ctx.outbound.as_ref(),
+                    &ctx.msg_repo,
                     account,
-                    &session_key,
+                    &ctx.session_key,
                     chat_id,
                     &message,
                 )
@@ -229,51 +266,41 @@ async fn try_dispatch_inbound(
             SubmitResult::Injected | SubmitResult::Queued => {
                 break;
             }
-            SubmitResult::Started {
-                mut stream,
-                preamble,
-            } => {
+            SubmitResult::Started { stream, preamble } => {
                 if let Some(ref text) = preamble {
-                    if let Some(ref ob) = outbound {
+                    if let Some(ref ob) = ctx.outbound {
                         let _ = ob.send_text(&account.config, chat_id, text).await;
                     }
                 }
 
                 let run_id = stream.run_id().to_string();
-                let (output_text, platform_msg_id) = if let Some(ref ob) = outbound {
+                let (output_text, platform_msg_id) = if let Some(ref ob) = ctx.outbound {
                     let result = delivery::deliver_outbound(
                         ob,
                         &runtime.rate_limiter,
-                        &runtime.outbound_queue,
                         &account.channel_type,
                         &account.external_account_id,
                         &account.config,
                         chat_id,
-                        supports_edit,
-                        max_len,
-                        &mut stream,
+                        ctx.max_message_len,
+                        stream,
                     )
                     .await?;
-                    let _ = stream.finish().await;
                     match result {
                         Some(r) => (r.text, r.platform_message_id),
                         None => {
-                            if let Some(session) = runtime.sessions().get(&session_key) {
-                                if let Some(next_input) = session.take_followup() {
-                                    pending_input = Some(next_input);
-                                    continue;
-                                }
+                            if let Some(next) = take_followup(runtime, &ctx.session_key) {
+                                pending_input = Some(next);
+                                continue;
                             }
                             break;
                         }
                     }
                 } else {
-                    let _ = stream.finish().await;
-                    if let Some(session) = runtime.sessions().get(&session_key) {
-                        if let Some(next_input) = session.take_followup() {
-                            pending_input = Some(next_input);
-                            continue;
-                        }
+                    let _ = stream.finish_output().await?;
+                    if let Some(next) = take_followup(runtime, &ctx.session_key) {
+                        pending_input = Some(next);
+                        continue;
                     }
                     break;
                 };
@@ -291,13 +318,13 @@ async fn try_dispatch_inbound(
                 runtime
                     .channel_message_writer
                     .send(ChannelMessageOp::Insert {
-                        repo: msg_repo.clone(),
+                        repo: ctx.msg_repo.clone(),
                         record: ChannelMessageRecord {
                             id: new_id(),
                             channel_type: account.channel_type.clone(),
                             account_id: account.external_account_id.clone(),
                             chat_id: chat_id.to_string(),
-                            session_id: session_key.clone(),
+                            session_id: ctx.session_key.clone(),
                             direction: "outbound".into(),
                             sender_id: "agent".into(),
                             text: output_text,
@@ -308,11 +335,9 @@ async fn try_dispatch_inbound(
                         },
                     });
 
-                if let Some(session) = runtime.sessions().get(&session_key) {
-                    if let Some(next_input) = session.take_followup() {
-                        pending_input = Some(next_input);
-                        continue;
-                    }
+                if let Some(next) = take_followup(runtime, &ctx.session_key) {
+                    pending_input = Some(next);
+                    continue;
                 }
                 break;
             }
@@ -322,10 +347,90 @@ async fn try_dispatch_inbound(
     Ok(())
 }
 
+fn take_followup(runtime: &Runtime, session_key: &str) -> Option<String> {
+    runtime
+        .sessions()
+        .get(session_key)
+        .and_then(|session| session.take_followup())
+}
+
+// ── Orchestrator ────────────────────────────────────────────────────────────
+
+async fn try_dispatch_debounced(
+    runtime: &Arc<Runtime>,
+    input: DebouncedInput,
+) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let account = &input.account;
+    let validated = match extract_and_validate(account, &input.primary_event) {
+        Some(v) => v,
+        None => return Ok(()),
+    };
+
+    // Use debounced text if messages were merged, otherwise use extracted text.
+    let text = if input.merged_count > 1 {
+        &input.text
+    } else {
+        &validated.text
+    };
+
+    let mut ctx = resolve_dispatch_context(runtime, account, &validated.chat_id).await?;
+
+    if handle_slash_command(runtime, account, &mut ctx, &validated.chat_id, text).await {
+        return Ok(());
+    }
+
+    if is_duplicate(&ctx.msg_repo, account, &input.all_events).await {
+        slog!(info, "channel", "dedup_skipped",
+            channel_type = %account.channel_type,
+        );
+        return Ok(());
+    }
+
+    channel_log!(info, "inbound", "accepted",
+        msg = format!("channel \u{2190} {}", account.channel_type),
+        input_preview = %crate::base::truncate_bytes_on_char_boundary(text, 100),
+        input_bytes = text.len(),
+        channel_type = %account.channel_type,
+        account_id = %account.channel_account_id,
+        chat_id = %validated.chat_id,
+        sender_id = event_sender_id(&input.primary_event).unwrap_or(""),
+        message_id = event_message_id(&input.primary_event).unwrap_or(""),
+        merged_count = input.merged_count,
+    );
+
+    record_inbound(
+        runtime,
+        &ctx.msg_repo,
+        account,
+        &ctx.session_key,
+        &input.all_events,
+    );
+
+    // Start typing keepalive for the full dispatch lifecycle.
+    let typing = ctx.outbound.as_ref().map(|ob| {
+        TypingKeepalive::start(
+            ob.clone(),
+            account.config.clone(),
+            validated.chat_id.clone(),
+            TypingKeepaliveConfig::default(),
+        )
+    });
+
+    let result = submit_and_deliver(runtime, account, &ctx, &validated.chat_id, text).await;
+
+    if let Some(t) = typing {
+        t.stop();
+    }
+
+    result
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
 #[allow(clippy::too_many_arguments)]
 async fn send_control_reply(
     runtime: &Arc<Runtime>,
-    outbound: Option<&Arc<dyn crate::kernel::channel::plugin::ChannelOutbound>>,
+    outbound: Option<&Arc<dyn ChannelOutbound>>,
     msg_repo: &ChannelMessageRepo,
     account: &ChannelAccount,
     session_key: &str,

@@ -5,6 +5,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bendclaw::base::Result;
 use bendclaw::kernel::channel::account::ChannelAccount;
+use bendclaw::kernel::channel::chat_router::ChatRouter;
+use bendclaw::kernel::channel::chat_router::ChatRouterConfig;
+use bendclaw::kernel::channel::debouncer::DebounceConfig;
 use bendclaw::kernel::channel::delivery::health::ChannelHealthMonitor;
 use bendclaw::kernel::channel::delivery::health::HealthMonitorConfig;
 use bendclaw::kernel::channel::plugin::ChannelOutbound;
@@ -16,7 +19,6 @@ use bendclaw::kernel::channel::ChannelCapabilities;
 use bendclaw::kernel::channel::ChannelKind;
 use bendclaw::kernel::channel::ChannelRegistry;
 use bendclaw::kernel::channel::ChannelSupervisor;
-use bendclaw::kernel::channel::InboundEvent;
 use bendclaw::kernel::channel::InboundMode;
 use tokio_util::sync::CancellationToken;
 
@@ -102,8 +104,12 @@ async fn check_once_restarts_dead_receiver() {
     registry.register(Arc::new(DyingPlugin));
     let registry = Arc::new(registry);
 
-    let handler: Arc<dyn Fn(ChannelAccount, InboundEvent) + Send + Sync> = Arc::new(|_, _| {});
-    let supervisor = Arc::new(ChannelSupervisor::new(registry, handler));
+    let router = Arc::new(ChatRouter::new(
+        ChatRouterConfig::default(),
+        DebounceConfig::default(),
+        Arc::new(|_| Box::pin(async {})),
+    ));
+    let supervisor = Arc::new(ChannelSupervisor::new(registry, router));
 
     let account = make_account();
     supervisor.start(&account).await.unwrap();
@@ -133,8 +139,12 @@ async fn check_once_respects_max_restarts() {
     registry.register(Arc::new(DyingPlugin));
     let registry = Arc::new(registry);
 
-    let handler: Arc<dyn Fn(ChannelAccount, InboundEvent) + Send + Sync> = Arc::new(|_, _| {});
-    let supervisor = Arc::new(ChannelSupervisor::new(registry, handler));
+    let router = Arc::new(ChatRouter::new(
+        ChatRouterConfig::default(),
+        DebounceConfig::default(),
+        Arc::new(|_| Box::pin(async {})),
+    ));
+    let supervisor = Arc::new(ChannelSupervisor::new(registry, router));
 
     let account = make_account();
     supervisor.start(&account).await.unwrap();
