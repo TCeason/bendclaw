@@ -16,8 +16,6 @@ pub(super) async fn get_config(state: &AppState, agent_id: &str) -> Result<Confi
         Some(r) => ConfigResponse {
             agent_id: r.agent_id,
             system_prompt: r.system_prompt,
-            display_name: r.display_name,
-            description: r.description,
             identity: r.identity,
             soul: r.soul,
             token_limit_total: r.token_limit_total,
@@ -27,8 +25,6 @@ pub(super) async fn get_config(state: &AppState, agent_id: &str) -> Result<Confi
         None => ConfigResponse {
             agent_id: agent_id.to_string(),
             system_prompt: String::new(),
-            display_name: String::new(),
-            description: String::new(),
             identity: String::new(),
             soul: String::new(),
             token_limit_total: None,
@@ -49,8 +45,6 @@ pub(super) async fn update_config(
         .update_config_with_version(
             agent_id,
             req.system_prompt.as_deref(),
-            req.display_name.as_deref(),
-            req.description.as_deref(),
             req.identity.as_deref(),
             req.soul.as_deref(),
             req.token_limit_total,
@@ -73,8 +67,6 @@ pub(super) async fn rollback_config(
         .upsert_config(
             agent_id,
             Some(&record.system_prompt),
-            Some(&record.display_name),
-            Some(&record.description),
             Some(&record.identity),
             Some(&record.soul),
             Some(record.token_limit_total),
@@ -134,8 +126,6 @@ fn to_version_response(r: ConfigVersionRecord) -> VersionResponse {
         label: r.label,
         stage: r.stage,
         system_prompt: r.system_prompt,
-        display_name: r.display_name,
-        description: r.description,
         identity: r.identity,
         soul: r.soul,
         token_limit_total: r.token_limit_total,

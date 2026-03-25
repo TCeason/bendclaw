@@ -15,8 +15,8 @@ impl RowMapper for VersionMapper {
     type Entity = ConfigVersionRecord;
 
     fn columns(&self) -> &str {
-        "id, agent_id, version, label, `stage`, system_prompt, display_name, description, \
-         identity, soul, token_limit_total, token_limit_daily, llm_config, notes, created_by, TO_VARCHAR(created_at)"
+        "id, agent_id, version, label, `stage`, system_prompt, \
+         identity, soul, token_limit_total, token_limit_daily, llm_config, notes, TO_VARCHAR(created_at)"
     }
 
     fn parse(&self, row: &serde_json::Value) -> crate::base::Result<ConfigVersionRecord> {
@@ -27,19 +27,16 @@ impl RowMapper for VersionMapper {
             label: sql::col(row, 3),
             stage: sql::col(row, 4),
             system_prompt: sql::col(row, 5),
-            display_name: sql::col(row, 6),
-            description: sql::col(row, 7),
-            identity: sql::col(row, 8),
-            soul: sql::col(row, 9),
-            token_limit_total: parse_optional_u64(&sql::col(row, 10)),
-            token_limit_daily: parse_optional_u64(&sql::col(row, 11)),
+            identity: sql::col(row, 6),
+            soul: sql::col(row, 7),
+            token_limit_total: parse_optional_u64(&sql::col(row, 8)),
+            token_limit_daily: parse_optional_u64(&sql::col(row, 9)),
             llm_config: parse_optional_json::<LLMConfig>(
-                &sql::col(row, 12),
+                &sql::col(row, 10),
                 "agent_config_versions.llm_config",
             )?,
-            notes: sql::col(row, 13),
-            created_by: sql::col(row, 14),
-            created_at: sql::col(row, 15),
+            notes: sql::col(row, 11),
+            created_at: sql::col(row, 12),
         })
     }
 }
@@ -80,15 +77,12 @@ impl ConfigVersionRepo {
                 ("label", SqlVal::Str(&record.label)),
                 ("`stage`", SqlVal::Str(&record.stage)),
                 ("system_prompt", SqlVal::Str(&record.system_prompt)),
-                ("display_name", SqlVal::Str(&record.display_name)),
-                ("description", SqlVal::Str(&record.description)),
                 ("identity", SqlVal::Str(&record.identity)),
                 ("soul", SqlVal::Str(&record.soul)),
                 ("token_limit_total", SqlVal::Raw(&total_str)),
                 ("token_limit_daily", SqlVal::Raw(&daily_str)),
                 ("llm_config", SqlVal::Raw(&llm_expr)),
                 ("notes", SqlVal::Str(&record.notes)),
-                ("created_by", SqlVal::Str(&record.created_by)),
                 ("created_at", SqlVal::Raw("NOW()")),
             ])
             .await

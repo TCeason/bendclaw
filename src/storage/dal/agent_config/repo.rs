@@ -21,28 +21,24 @@ impl RowMapper for ConfigMapper {
     type Entity = AgentConfigRecord;
 
     fn columns(&self) -> &str {
-        "agent_id, system_prompt, display_name, description, \
+        "agent_id, system_prompt, \
          identity, soul, token_limit_total, token_limit_daily, \
-         llm_config, created_by, TO_VARCHAR(created_at), TO_VARCHAR(updated_at)"
+         llm_config, TO_VARCHAR(updated_at)"
     }
 
     fn parse(&self, row: &serde_json::Value) -> crate::base::Result<AgentConfigRecord> {
         Ok(AgentConfigRecord {
             agent_id: sql::col(row, 0),
             system_prompt: sql::col(row, 1),
-            display_name: sql::col(row, 2),
-            description: sql::col(row, 3),
-            identity: sql::col(row, 4),
-            soul: sql::col(row, 5),
-            token_limit_total: parse_optional_u64(&sql::col(row, 6)),
-            token_limit_daily: parse_optional_u64(&sql::col(row, 7)),
+            identity: sql::col(row, 2),
+            soul: sql::col(row, 3),
+            token_limit_total: parse_optional_u64(&sql::col(row, 4)),
+            token_limit_daily: parse_optional_u64(&sql::col(row, 5)),
             llm_config: parse_optional_json::<LLMConfig>(
-                &sql::col(row, 8),
+                &sql::col(row, 6),
                 "agent_config.llm_config",
             )?,
-            created_by: sql::col(row, 9),
-            created_at: sql::col(row, 10),
-            updated_at: sql::col(row, 11),
+            updated_at: sql::col(row, 7),
         })
     }
 }
@@ -88,8 +84,6 @@ impl AgentConfigStore {
         &self,
         agent_id: &str,
         system_prompt: Option<&str>,
-        display_name: Option<&str>,
-        description: Option<&str>,
         identity: Option<&str>,
         soul: Option<&str>,
         token_limit_total: Option<Option<u64>>,
@@ -115,15 +109,11 @@ impl AgentConfigStore {
                 &[
                     ("agent_id", SqlVal::Str(agent_id)),
                     ("system_prompt", SqlVal::Str(system_prompt.unwrap_or(""))),
-                    ("display_name", SqlVal::Str(display_name.unwrap_or(""))),
-                    ("description", SqlVal::Str(description.unwrap_or(""))),
                     ("identity", SqlVal::Str(identity.unwrap_or(""))),
                     ("soul", SqlVal::Str(soul.unwrap_or(""))),
                     ("token_limit_total", SqlVal::Raw(&total_str)),
                     ("token_limit_daily", SqlVal::Raw(&daily_str)),
                     ("llm_config", SqlVal::Raw(&llm_expr)),
-                    ("created_by", SqlVal::Str("")),
-                    ("created_at", SqlVal::Raw("NOW()")),
                     ("updated_at", SqlVal::Raw("NOW()")),
                 ],
                 "agent_id",

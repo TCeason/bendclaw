@@ -17,8 +17,6 @@ use crate::service::v1::common::Paginated;
 pub struct ConfigResponse {
     pub agent_id: String,
     pub system_prompt: String,
-    pub display_name: String,
-    pub description: String,
     pub identity: String,
     pub soul: String,
     pub token_limit_total: Option<u64>,
@@ -29,8 +27,6 @@ pub struct ConfigResponse {
 #[derive(Deserialize)]
 pub struct UpdateConfigRequest {
     pub system_prompt: Option<String>,
-    pub display_name: Option<String>,
-    pub description: Option<String>,
     pub identity: Option<String>,
     pub soul: Option<String>,
     pub token_limit_total: Option<Option<u64>>,
@@ -47,8 +43,6 @@ pub struct VersionResponse {
     pub label: String,
     pub stage: String,
     pub system_prompt: String,
-    pub display_name: String,
-    pub description: String,
     pub identity: String,
     pub soul: String,
     pub token_limit_total: Option<u64>,

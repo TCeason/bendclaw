@@ -140,8 +140,6 @@ impl Runtime {
         &self,
         agent_id: &str,
         system_prompt: Option<&str>,
-        display_name: Option<&str>,
-        description: Option<&str>,
         identity: Option<&str>,
         soul: Option<&str>,
         token_limit_total: Option<Option<u64>>,
@@ -152,8 +150,6 @@ impl Runtime {
     ) -> Result<u32> {
         let started = Instant::now();
         let payload = serde_json::json!({
-            "display_name": display_name,
-            "description": description,
             "system_prompt": system_prompt,
             "identity": identity,
             "soul": soul,
@@ -178,8 +174,6 @@ impl Runtime {
             .config_update_with_version(
                 agent_id,
                 system_prompt,
-                display_name,
-                description,
                 identity,
                 soul,
                 token_limit_total,
@@ -418,8 +412,6 @@ impl Runtime {
         &self,
         agent_id: &str,
         system_prompt: Option<&str>,
-        display_name: Option<&str>,
-        description: Option<&str>,
         identity: Option<&str>,
         soul: Option<&str>,
         token_limit_total: Option<Option<u64>>,
@@ -429,8 +421,6 @@ impl Runtime {
         let started = Instant::now();
         let payload = serde_json::json!({
             "system_prompt": system_prompt,
-            "display_name": display_name,
-            "description": description,
             "identity": identity,
             "soul": soul,
             "token_limit_total": token_limit_total,
@@ -446,8 +436,6 @@ impl Runtime {
             .config_upsert(
                 agent_id,
                 system_prompt,
-                display_name,
-                description,
                 identity,
                 soul,
                 token_limit_total,

@@ -17,6 +17,9 @@ const BASE_MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/base/recall.sql"),
 ];
 
+/// Org-level migrations — registry tables in evotai_meta database.
+const ORG_MIGRATIONS: &[&str] = &[include_str!("../../migrations/base/registry.sql")];
+
 /// Run all agent migrations against the pool's current database.
 pub async fn run_agent(pool: &Pool) {
     let futs = BASE_MIGRATIONS
@@ -29,6 +32,21 @@ pub async fn run_agent(pool: &Pool) {
         "migrations_completed",
         scope = "base",
         count = BASE_MIGRATIONS.len(),
+    );
+}
+
+/// Run org-level migrations (evotai_meta database).
+pub async fn run_org(pool: &Pool) {
+    let futs = ORG_MIGRATIONS
+        .iter()
+        .map(|sql| run_one_file(pool, sql, "org"));
+    crate::base::runtime::join_bounded(futs, crate::base::runtime::CONCURRENCY_DB).await;
+    slog!(
+        info,
+        "storage",
+        "org_migrations_completed",
+        scope = "org",
+        count = ORG_MIGRATIONS.len(),
     );
 }
 
