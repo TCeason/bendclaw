@@ -188,8 +188,8 @@ fn build_resource(
 #[tokio::test]
 async fn discover_returns_enabled_receiver_accounts_only() {
     let (resource, _) = build_resource(|sql, _db| {
-        if sql.starts_with("SHOW DATABASES") {
-            return Ok(paged_rows(&[&["test_agent1"]], None, None));
+        if sql.contains("evotai_meta.evotai_agents") {
+            return Ok(paged_rows(&[&["agent1"]], None, None));
         }
         // list_by_agent returns 3 accounts:
         // 1. enabled receiver → should be included
@@ -219,8 +219,8 @@ async fn discover_returns_enabled_receiver_accounts_only() {
 #[tokio::test]
 async fn discover_returns_empty_when_no_receiver_accounts() {
     let (resource, _) = build_resource(|sql, _db| {
-        if sql.starts_with("SHOW DATABASES") {
-            return Ok(paged_rows(&[&["test_agent1"]], None, None));
+        if sql.contains("evotai_meta.evotai_agents") {
+            return Ok(paged_rows(&[&["agent1"]], None, None));
         }
         Ok(QueryResponse {
             id: String::new(),
@@ -240,8 +240,8 @@ async fn discover_returns_empty_when_no_receiver_accounts() {
 #[tokio::test]
 async fn on_acquired_starts_supervisor() {
     let (resource, supervisor) = build_resource(|sql, _db| {
-        if sql.starts_with("SHOW DATABASES") {
-            return Ok(paged_rows(&[&["test_agent1"]], None, None));
+        if sql.contains("evotai_meta.evotai_agents") {
+            return Ok(paged_rows(&[&["agent1"]], None, None));
         }
         // load() query for on_acquired
         Ok(QueryResponse {
@@ -280,8 +280,8 @@ async fn on_acquired_starts_supervisor() {
 #[tokio::test]
 async fn on_released_stops_supervisor() {
     let (resource, supervisor) = build_resource(|sql, _db| {
-        if sql.starts_with("SHOW DATABASES") {
-            return Ok(paged_rows(&[&["test_agent1"]], None, None));
+        if sql.contains("evotai_meta.evotai_agents") {
+            return Ok(paged_rows(&[&["agent1"]], None, None));
         }
         Ok(QueryResponse {
             id: String::new(),
@@ -324,8 +324,8 @@ async fn on_released_stops_supervisor() {
 #[tokio::test]
 async fn is_healthy_reflects_supervisor_state() {
     let (resource, supervisor) = build_resource(|sql, _db| {
-        if sql.starts_with("SHOW DATABASES") {
-            return Ok(paged_rows(&[&["test_agent1"]], None, None));
+        if sql.contains("evotai_meta.evotai_agents") {
+            return Ok(paged_rows(&[&["agent1"]], None, None));
         }
         Ok(QueryResponse {
             id: String::new(),

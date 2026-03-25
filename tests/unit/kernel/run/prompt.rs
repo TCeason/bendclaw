@@ -361,15 +361,11 @@ async fn prompt_builder_build_falls_back_to_db_layers() -> Result<()> {
                 &[&[
                     "agent-1",
                     "System for {name}",
-                    "Prompt Agent",
-                    "Prompt agent description",
                     "Identity for {name}",
                     "Soul from db",
                     "",
                     "",
                     "",
-                    "", // created_by
-                    "2026-03-10T00:00:00Z",
                     "2026-03-10T00:00:00Z",
                 ]],
                 None,

@@ -63,8 +63,8 @@ async fn discover_carries_agent_id_in_context() {
     use crate::common::task_rows::TaskRow;
 
     let fake = FakeDatabend::new(|sql, _db| {
-        if sql.starts_with("SHOW DATABASES") {
-            return Ok(paged_rows(&[&["test_agent1"]], None, None));
+        if sql.contains("evotai_meta.evotai_agents") {
+            return Ok(paged_rows(&[&["agent1"]], None, None));
         }
         // list_active query
         if sql.contains("WHERE") && sql.contains("next_run_at") {

@@ -185,7 +185,7 @@ fn run_event_rows(run_id: &str) -> bendclaw::storage::pool::QueryResponse {
 
 async fn fake_runs_app() -> Result<axum::Router> {
     let fake = FakeDatabend::new(|sql, _database| {
-        if sql.starts_with("SHOW DATABASES LIKE ") {
+        if sql.contains("evotai_meta.evotai_agents") {
             return Ok(paged_rows(&[], None, None));
         }
         if sql.starts_with("SELECT COUNT(*) FROM runs WHERE session_id = 'session-1'") {
@@ -223,10 +223,10 @@ async fn fake_runs_app() -> Result<axum::Router> {
 async fn fake_execute_runs_app(state: RunExecState) -> Result<axum::Router> {
     let fake_state = state.clone();
     let fake = FakeDatabend::new(move |sql, _database| {
-        if sql.starts_with("SHOW DATABASES LIKE ") {
+        if sql.contains("evotai_meta.evotai_agents") {
             return Ok(paged_rows(&[], None, None));
         }
-        if sql.starts_with("SELECT agent_id, system_prompt, display_name, description, identity, soul, token_limit_total, token_limit_daily, llm_config, created_by, TO_VARCHAR(created_at), TO_VARCHAR(updated_at) FROM agent_config WHERE agent_id = ") {
+        if sql.starts_with("SELECT agent_id, system_prompt, identity, soul, token_limit_total, token_limit_daily, llm_config, TO_VARCHAR(updated_at) FROM agent_config WHERE agent_id = ") {
             return Ok(paged_rows(&[], None, None));
         }
         if sql.starts_with("SELECT id, key, value, secret, revoked, user_id, scope, created_by, TO_VARCHAR(last_used_at), TO_VARCHAR(created_at), TO_VARCHAR(updated_at) FROM variables WHERE revoked = FALSE") {

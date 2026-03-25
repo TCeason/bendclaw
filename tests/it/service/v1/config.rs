@@ -15,7 +15,7 @@ use crate::mocks::llm::MockLLMProvider;
 #[tokio::test]
 async fn put_config_rejects_invalid_llm_config() -> Result<()> {
     let fake = FakeDatabend::new(|sql, _database| {
-        if sql.starts_with("SHOW DATABASES LIKE ") {
+        if sql.contains("evotai_meta.evotai_agents") {
             return Ok(paged_rows(&[], None, None));
         }
         panic!("unexpected SQL for invalid llm_config request: {sql}");

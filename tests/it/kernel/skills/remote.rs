@@ -156,13 +156,17 @@ fn fake_pool(state: &RemoteState, prefix: &str) -> bendclaw::storage::Pool {
         let db_name = database.unwrap_or_default().to_string();
         let mut databases = state.databases.lock().expect("remote state");
 
-        if sql.starts_with("SHOW DATABASES LIKE ") {
+        if sql.contains("evotai_meta.evotai_agents") {
             let mut names: Vec<_> = databases.keys().cloned().collect();
             names.sort();
             let rows: Vec<Vec<serde_json::Value>> = names
                 .into_iter()
                 .filter(|name| name.starts_with(&prefix))
-                .map(|name| vec![serde_json::Value::String(name)])
+                .map(|name| {
+                    vec![serde_json::Value::String(
+                        name.strip_prefix(&prefix).unwrap_or(&name).to_string(),
+                    )]
+                })
                 .collect();
             return Ok(bendclaw::storage::pool::QueryResponse {
                 id: String::new(),

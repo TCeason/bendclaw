@@ -83,10 +83,10 @@ pub fn fake_run_exec_databend(state: RunExecState, session_id: &str) -> FakeData
     let session_id = session_id.to_string();
     let fake_state = state;
     FakeDatabend::new(move |sql, _database| {
-        if sql.starts_with("SHOW DATABASES LIKE ") {
+        if sql.contains("evotai_meta.evotai_agents") {
             return Ok(paged_rows(&[], None, None));
         }
-        if sql.starts_with("SELECT agent_id, system_prompt, display_name, description, identity, soul, token_limit_total, token_limit_daily, llm_config, TO_VARCHAR(created_at), TO_VARCHAR(updated_at) FROM agent_config WHERE agent_id = ") {
+        if sql.starts_with("SELECT agent_id, system_prompt, identity, soul, token_limit_total, token_limit_daily, llm_config, TO_VARCHAR(updated_at) FROM agent_config WHERE agent_id = ") {
             return Ok(paged_rows(&[], None, None));
         }
         if sql.starts_with("SELECT id, key, value, secret, revoked, TO_VARCHAR(last_used_at), TO_VARCHAR(created_at), TO_VARCHAR(updated_at) FROM variables WHERE revoked = FALSE") {

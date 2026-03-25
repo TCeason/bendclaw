@@ -17,7 +17,7 @@ use crate::mocks::llm::MockLLMProvider;
 #[tokio::test]
 async fn create_skill_overwrites_same_name_within_agent_fast() -> Result<()> {
     let fake = FakeDatabend::new(|sql, _database| {
-        if sql.contains("FROM agent_config") || sql.contains("SHOW DATABASES LIKE") {
+        if sql.contains("FROM agent_config") || sql.contains("evotai_meta.evotai_agents") {
             return Ok(paged_rows(&[], None, None));
         }
         Ok(paged_rows(&[], None, None))
