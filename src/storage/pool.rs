@@ -441,15 +441,23 @@ fn backoff_builder() -> ExponentialBuilder {
 }
 
 fn is_retryable(e: &ErrorCode) -> bool {
+    let msg = e.message.to_lowercase();
+
+    // Permanent errors — never retry
+    if msg.contains("storageproxyerror")
+        || msg.contains("authentication")
+        || msg.contains("unauthorized")
+    {
+        return false;
+    }
+
     matches!(e.code, ErrorCode::STORAGE_CONNECTION | ErrorCode::TIMEOUT) || {
-        let msg = e.message.to_lowercase();
         msg.contains("timeout")
             || msg.contains("connection")
             || msg.contains("broken pipe")
             || msg.contains("reset by peer")
             || msg.contains("temporarily unavailable")
             || msg.contains("unknown database")
-            || msg.contains("http 500")
             || msg.contains("http 502")
             || msg.contains("http 503")
     }
