@@ -117,19 +117,35 @@ async fn handle_slash_command(
     input: &str,
 ) -> bool {
     let trimmed = input.trim();
-    if trimmed != "/new" && trimmed != "/clear" {
+
+    // /clear — clear in-memory history only, keep DB session intact
+    if trimmed == "/clear" {
+        if let Some(session) = runtime.sessions().get(&ctx.session_id) {
+            session.clear_history();
+        }
+        channel_log!(info, "command", "clear_history",
+            channel_type = %account.channel_type,
+            account_id = %account.channel_account_id,
+            chat_id,
+            session = %ctx.session_id,
+        );
+        if let Some(ref ob) = ctx.outbound {
+            let _ = ob
+                .send_text(&account.config, chat_id, "Conversation history cleared.")
+                .await;
+        }
+        return true;
+    }
+
+    // /new — create a new DB session, replace the old one
+    if trimmed != "/new" {
         return false;
     }
 
     let old_session_id = ctx.session_id.clone();
     let new_session = match runtime
         .session_lifecycle()
-        .start_new(
-            &account.agent_id,
-            &account.user_id,
-            &ctx.base_key,
-            trimmed.trim_start_matches('/'),
-        )
+        .start_new(&account.agent_id, &account.user_id, &ctx.base_key, "new")
         .await
     {
         Ok(session) => session,

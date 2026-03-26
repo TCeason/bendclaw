@@ -243,6 +243,39 @@ impl SessionLifecycle {
         Ok(updated)
     }
 
+    /// Reset a session by its ID: load the record, derive the base_key, and
+    /// delegate to `start_new` so the old session is properly replaced.
+    pub async fn reset_by_id(
+        &self,
+        agent_id: &str,
+        user_id: &str,
+        session_id: &str,
+        reset_reason: &str,
+    ) -> Result<SessionRecord> {
+        let current = self.load_session(agent_id, session_id).await?;
+        let base_key = current.map(|r| r.base_key.clone()).unwrap_or_default();
+        if base_key.is_empty() {
+            // No base_key — just close the live session and create a fresh one
+            self.close_live_session(session_id).await;
+            let repo = self.repo(agent_id)?;
+            let record = self.make_record(SessionDraft {
+                session_id: new_session_id(),
+                agent_id: agent_id.to_string(),
+                user_id: user_id.to_string(),
+                title: String::new(),
+                base_key: String::new(),
+                session_state: serde_json::Value::Null,
+                meta: serde_json::Value::Null,
+            });
+            self.remember_session(record.clone());
+            self.stage_upsert(&repo, &record);
+            diagnostics::log_session_started("", &record.id, reset_reason);
+            return Ok(record);
+        }
+        self.start_new(agent_id, user_id, &base_key, reset_reason)
+            .await
+    }
+
     pub async fn delete_session(&self, agent_id: &str, session_id: &str) -> Result<()> {
         let record = match self.lookup_session(session_id) {
             Some(record) => Some(record),

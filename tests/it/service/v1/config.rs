@@ -54,7 +54,7 @@ async fn put_config_rejects_invalid_llm_config() -> Result<()> {
 
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body = json_body(resp).await?;
-    assert!(body["error"]
+    assert!(body["error"]["message"]
         .as_str()
         .is_some_and(|error| error.contains("llm_config.providers must not be empty")));
     Ok(())

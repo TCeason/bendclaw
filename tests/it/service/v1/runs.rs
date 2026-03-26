@@ -411,7 +411,7 @@ async fn continue_run_rejects_non_paused_run_fast() -> Result<()> {
 
     assert_eq!(resp.status(), StatusCode::CONFLICT);
     let body = json_body(resp).await?;
-    assert!(body["error"]
+    assert!(body["error"]["message"]
         .as_str()
         .is_some_and(|msg| msg.contains("run is not paused")));
     Ok(())

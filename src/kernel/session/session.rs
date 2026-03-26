@@ -134,6 +134,11 @@ impl Session {
         }
     }
 
+    /// Clear in-memory conversation history without creating a new DB session.
+    pub fn clear_history(&self) {
+        self.history.lock().clear();
+    }
+
     pub async fn close(&self) {
         self.cancel_current();
         self.set_idle();

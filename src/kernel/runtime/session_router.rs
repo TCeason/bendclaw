@@ -19,6 +19,41 @@ pub enum SubmitResult {
     },
 }
 
+// ── Control command classification ──────────────────────────────────────────
+
+#[derive(Clone, Copy)]
+enum ControlCommand {
+    Cancel,
+    Status,
+    NewSession,
+    ClearSession,
+}
+
+impl ControlCommand {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Cancel => "cancel",
+            Self::Status => "status",
+            Self::NewSession => "/new",
+            Self::ClearSession => "/clear",
+        }
+    }
+}
+
+/// Classify normalized input into a known control command.
+/// Returns `None` for regular messages (including unknown slash commands).
+fn classify_control_command(normalized: &str) -> Option<ControlCommand> {
+    match normalized {
+        "stop" | "cancel" | "abort" => Some(ControlCommand::Cancel),
+        "status" | "progress" => Some(ControlCommand::Status),
+        "/new" => Some(ControlCommand::NewSession),
+        "/clear" => Some(ControlCommand::ClearSession),
+        _ => None,
+    }
+}
+
+// ── submit_turn ─────────────────────────────────────────────────────────────
+
 impl Runtime {
     #[allow(clippy::too_many_arguments)]
     pub async fn submit_turn(
@@ -33,7 +68,8 @@ impl Runtime {
         origin_node_id: &str,
         is_remote_dispatch: bool,
     ) -> Result<SubmitResult> {
-        let normalized = normalize_control_input(input);
+        let normalized = input.trim().to_lowercase();
+
         if let Some(command) = classify_control_command(&normalized) {
             diagnostics::log_control_command_classified(diagnostics::ControlCommandInfo {
                 agent_id,
@@ -42,33 +78,27 @@ impl Runtime {
                 input,
                 normalized: &normalized,
                 command: command.name(),
-                handled: command.is_handled(),
-                handler: command.handler(),
+                handled: true,
+                handler: "runtime.submit_turn",
             });
+
+            return self
+                .handle_control_command(command, agent_id, session_id, user_id)
+                .await;
         }
 
-        // Cancel commands
-        if is_cancel_command(&normalized) {
-            let session = self.sessions().get(session_id);
-            if let Some(ref s) = session {
-                s.cancel_current();
-            }
-            return Ok(SubmitResult::Control {
-                message: "Run cancelled.".to_string(),
+        // Log unknown slash commands for diagnostics (not handled).
+        if normalized.starts_with('/') {
+            diagnostics::log_control_command_classified(diagnostics::ControlCommandInfo {
+                agent_id,
+                user_id,
+                session_id,
+                input,
+                normalized: &normalized,
+                command: "slash_unknown",
+                handled: false,
+                handler: "none",
             });
-        }
-
-        // Status commands
-        if is_status_command(&normalized) {
-            let session = self.sessions().get(session_id);
-            let message = match session {
-                Some(ref s) => {
-                    let info = s.info();
-                    format!("status={} session={}", info.status, info.id)
-                }
-                None => "No active session.".to_string(),
-            };
-            return Ok(SubmitResult::Control { message });
         }
 
         let session = self
@@ -76,7 +106,6 @@ impl Runtime {
             .await?;
 
         if session.is_running() {
-            // Try to inject; if channel full, queue as followup
             if session.inject_message(input) {
                 return Ok(SubmitResult::Injected);
             }
@@ -84,7 +113,6 @@ impl Runtime {
             return Ok(SubmitResult::Queued);
         }
 
-        // Session is idle — start a new run
         let stream = session
             .run(
                 input,
@@ -101,7 +129,46 @@ impl Runtime {
             preamble: None,
         })
     }
+
+    async fn handle_control_command(
+        self: &Arc<Self>,
+        command: ControlCommand,
+        agent_id: &str,
+        session_id: &str,
+        user_id: &str,
+    ) -> Result<SubmitResult> {
+        let message = match command {
+            ControlCommand::Cancel => {
+                if let Some(session) = self.sessions().get(session_id) {
+                    session.cancel_current();
+                }
+                "Run cancelled.".to_string()
+            }
+            ControlCommand::Status => match self.sessions().get(session_id) {
+                Some(ref s) => {
+                    let info = s.info();
+                    format!("status={} session={}", info.status, info.id)
+                }
+                None => "No active session.".to_string(),
+            },
+            ControlCommand::ClearSession => {
+                if let Some(session) = self.sessions().get(session_id) {
+                    session.clear_history();
+                }
+                "Conversation history cleared.".to_string()
+            }
+            ControlCommand::NewSession => {
+                self.session_lifecycle()
+                    .reset_by_id(agent_id, user_id, session_id, "new")
+                    .await?;
+                "New conversation started.".to_string()
+            }
+        };
+        Ok(SubmitResult::Control { message })
+    }
 }
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Wait until the session becomes idle, polling at the given interval.
 pub async fn wait_until_idle(
@@ -143,69 +210,7 @@ pub async fn merge_followup(
         .run(&followup, trace_id, None, "", "", false)
         .await
         .ok()?;
-    let _ = agent_id; // used for context, session already resolved
+    let _ = agent_id;
     let _ = user_id;
     Some(stream)
-}
-
-fn normalize_control_input(input: &str) -> String {
-    input.trim().to_lowercase()
-}
-
-#[derive(Clone, Copy)]
-enum ControlCommand {
-    Cancel,
-    Status,
-    NewSession,
-    ClearSession,
-    SlashUnknown,
-}
-
-impl ControlCommand {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Cancel => "cancel",
-            Self::Status => "status",
-            Self::NewSession => "/new",
-            Self::ClearSession => "/clear",
-            Self::SlashUnknown => "slash_unknown",
-        }
-    }
-
-    fn is_handled(self) -> bool {
-        matches!(self, Self::Cancel | Self::Status)
-    }
-
-    fn handler(self) -> &'static str {
-        match self {
-            Self::Cancel | Self::Status => "runtime.submit_turn",
-            Self::NewSession | Self::ClearSession | Self::SlashUnknown => "none",
-        }
-    }
-}
-
-fn classify_control_command(normalized: &str) -> Option<ControlCommand> {
-    if is_cancel_command(normalized) {
-        return Some(ControlCommand::Cancel);
-    }
-    if is_status_command(normalized) {
-        return Some(ControlCommand::Status);
-    }
-    match normalized {
-        "/new" => Some(ControlCommand::NewSession),
-        "/clear" => Some(ControlCommand::ClearSession),
-        value if value.starts_with('/') => Some(ControlCommand::SlashUnknown),
-        _ => None,
-    }
-}
-
-fn is_cancel_command(normalized: &str) -> bool {
-    matches!(
-        normalized,
-        "stop" | "cancel" | "abort" | "停止" | "取消" | "中止"
-    )
-}
-
-fn is_status_command(normalized: &str) -> bool {
-    matches!(normalized, "status" | "progress" | "状态" | "进度")
 }
