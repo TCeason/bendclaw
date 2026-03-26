@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::base::Result;
-use crate::observability::log::slog;
+use crate::kernel::agent_store::memory_diagnostics;
 use crate::storage::cache::TtlCache;
 use crate::storage::pool::Pool;
 use crate::storage::sql;
@@ -200,9 +200,8 @@ impl DatabendMemoryStore {
                 ("updated_at", SqlVal::Raw("NOW()")),
             ])
             .await
-            .map_err(|e| {
-                slog!(error, "memory", "write_failed", user_id, key = %entry.key, scope = %scope_value, error = %e,);
-                e
+            .inspect_err(|e| {
+                memory_diagnostics::log_memory_write_failed(user_id, &entry.key, &scope_value, e);
             })?;
         self.search_cache.clear();
 
@@ -239,14 +238,7 @@ impl DatabendMemoryStore {
             .collect::<Vec<_>>();
 
         self.search_cache.put(cache_key, results.clone());
-        slog!(
-            info,
-            "memory",
-            "search",
-            user_id,
-            query,
-            results = results.len(),
-        );
+        memory_diagnostics::log_memory_search(user_id, query, results.len());
         Ok(results)
     }
 
@@ -261,14 +253,7 @@ impl DatabendMemoryStore {
         .limit(1);
         let row = self.entries.pool().query_row(&builder.build()).await?;
         let result = row.as_ref().map(|r| EntryMapper.parse(r)).transpose()?;
-        slog!(
-            info,
-            "memory",
-            "get",
-            user_id,
-            key,
-            found = result.is_some(),
-        );
+        memory_diagnostics::log_memory_get(user_id, key, result.is_some());
         Ok(result)
     }
 
@@ -291,9 +276,8 @@ impl DatabendMemoryStore {
                 Where("user_id", SqlVal::Str(user_id)),
             ])
             .await
-            .map_err(|e| {
-                slog!(error, "memory", "delete_failed", user_id, id, error = %e,);
-                e
+            .inspect_err(|e| {
+                memory_diagnostics::log_memory_delete_failed(user_id, id, e);
             })?;
         self.search_cache.clear();
 

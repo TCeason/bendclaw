@@ -3,11 +3,11 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::base::Result;
+use crate::kernel::agent_store::diagnostics;
 use crate::kernel::run::usage::CostSummary;
 use crate::kernel::run::usage::UsageEvent;
 use crate::kernel::run::usage::UsageScope;
 use crate::llm::provider::LLMProvider;
-use crate::observability::log::slog;
 use crate::storage::dal::usage::record::UsageRecord;
 use crate::storage::dal::usage::repo::UsageRepo;
 use crate::storage::time::now;
@@ -71,11 +71,7 @@ impl UsageStore {
             match self.usage_repo.save_batch(&records).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
-                    slog!(warn, "usage", "flush_retry",
-                        error = %e,
-                        count = records.len(),
-                        attempt,
-                    );
+                    diagnostics::log_usage_flush_retry(&e, records.len(), attempt);
                     if attempt < MAX_RETRIES {
                         tokio::time::sleep(std::time::Duration::from_millis(
                             (attempt as u64) * 100,
@@ -88,7 +84,7 @@ impl UsageStore {
         let mut buf = self.usage_buffer.lock().await;
         records.append(&mut *buf);
         *buf = records;
-        slog!(warn, "usage", "flush_requeued", count = buf.len(),);
+        diagnostics::log_usage_flush_requeued(buf.len());
         Ok(())
     }
 

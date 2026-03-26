@@ -79,7 +79,7 @@ pub async fn skill_credentials(
     _ctx: RequestContext,
     Path(skill_name): Path<String>,
 ) -> Result<Json<Vec<CredentialResponse>>> {
-    let creds = service::skill_credentials(&state, &skill_name)?;
+    let creds = service::skill_credentials(&state, &skill_name);
     Ok(Json(
         creds
             .into_iter()

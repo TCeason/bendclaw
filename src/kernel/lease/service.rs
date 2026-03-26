@@ -9,10 +9,10 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use super::diagnostics;
 use super::types::LeaseResource;
 use super::types::ResourceEntry;
 use crate::base::id::new_id;
-use crate::observability::log::slog;
 use crate::storage::pool::Pool;
 use crate::storage::sql;
 
@@ -113,11 +113,7 @@ impl LeaseServiceHandle {
                 let resource = resource.clone();
                 futs.push(async move {
                     if let Err(e) = release_sql(&pool, &table, &id, &token).await {
-                        slog!(warn, "lease", "release_failed",
-                            table,
-                            resource_id = %id,
-                            error = %e,
-                        );
+                        diagnostics::log_lease_release_failed(&table, &id, &e);
                     }
                     resource.on_released(&id, &pool).await;
                 });
@@ -160,24 +156,14 @@ fn spawn_scan_loop(
             match scan_once(&node_id, &resource, &held, &lease_count, &cancel).await {
                 Ok(()) => {
                     if consecutive_errors > 0 {
-                        slog!(
-                            info,
-                            "lease",
-                            "scan_recovered",
-                            table = resource.table(),
-                            consecutive_errors,
-                        );
+                        diagnostics::log_lease_scan_recovered(resource.table(), consecutive_errors);
                     }
                     consecutive_errors = 0;
                 }
                 Err(e) => {
                     consecutive_errors += 1;
                     if consecutive_errors == 1 || consecutive_errors.is_multiple_of(20) {
-                        slog!(warn, "lease", "scan_error",
-                            table = resource.table(),
-                            error = %e,
-                            consecutive_errors,
-                        );
+                        diagnostics::log_lease_scan_error(resource.table(), &e, consecutive_errors);
                     }
                 }
             }
@@ -217,22 +203,13 @@ async fn scan_once(
     let entries = resource.discover().await?;
     let discover_ms = scan_start.elapsed().as_millis() as u64;
     if entries.is_empty() {
-        slog!(
-            debug,
-            "lease",
-            "resources_discovered",
-            table = resource.table(),
-            count = 0u64,
-            discover_ms,
-        );
+        diagnostics::log_lease_resources_discovered(resource.table(), 0u64, discover_ms, true);
     } else {
-        slog!(
-            info,
-            "lease",
-            "resources_discovered",
-            table = resource.table(),
-            count = entries.len(),
+        diagnostics::log_lease_resources_discovered(
+            resource.table(),
+            entries.len() as u64,
             discover_ms,
+            false,
         );
     }
     let mut seen_ids = HashSet::new();
@@ -251,10 +228,7 @@ async fn scan_once(
             let healthy = resource.is_healthy(&entry.id).await;
             held_map = held.lock().await;
             if !healthy {
-                slog!(warn, "lease", "unhealthy_released",
-                    table,
-                    resource_id = %entry.id,
-                );
+                diagnostics::log_lease_unhealthy_released(table, &entry.id);
                 if let Some(lease) = held_map.remove(&entry.id) {
                     let _ = release_sql(&lease.pool, table, &entry.id, &lease.token).await;
                     drop(held_map);
@@ -270,11 +244,7 @@ async fn scan_once(
             // We hold this lease — renew it.
             let token = &held_map[&entry.id].token;
             if let Err(e) = renew_sql(&entry.pool, table, &entry.id, token, lease_secs).await {
-                slog!(warn, "lease", "renew_failed",
-                    table,
-                    resource_id = %entry.id,
-                    error = %e,
-                );
+                diagnostics::log_lease_renew_failed(table, &entry.id, &e);
                 held_map.remove(&entry.id);
             }
         } else if is_held_by_other(node_id, entry) {
@@ -295,12 +265,7 @@ async fn scan_once(
             .await
             {
                 Ok(true) => {
-                    slog!(info, "lease", "claimed",
-                        table,
-                        resource_id = %entry.id,
-                        context = %entry.context,
-                        node_id,
-                    );
+                    diagnostics::log_lease_claimed(table, &entry.id, &entry.context, node_id);
                     held_map.insert(entry.id.clone(), HeldLease {
                         token: token.clone(),
                         pool: entry.pool.clone(),
@@ -342,11 +307,7 @@ async fn scan_once(
                     // Drop lock before callback to avoid holding it during potentially slow I/O.
                     drop(held_map);
                     if let Err(e) = resource.on_acquired(&claimed_entry).await {
-                        slog!(warn, "lease", "on_acquired_failed",
-                            table,
-                            resource_id = %entry.id,
-                            error = %e,
-                        );
+                        diagnostics::log_lease_on_acquired_failed(table, &entry.id, &e);
                         let mut map = held.lock().await;
                         if let Some(lease) = map.remove(&entry.id) {
                             let _ = release_sql(&lease.pool, table, &entry.id, &lease.token).await;
@@ -358,11 +319,7 @@ async fn scan_once(
                 }
                 Ok(false) => {}
                 Err(e) => {
-                    slog!(warn, "lease", "claim_failed",
-                        table,
-                        resource_id = %entry.id,
-                        error = %e,
-                    );
+                    diagnostics::log_lease_claim_failed(table, &entry.id, &e);
                 }
             }
         }

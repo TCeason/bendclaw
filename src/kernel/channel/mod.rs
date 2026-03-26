@@ -4,6 +4,7 @@ pub mod chat_router;
 pub mod context;
 pub mod debouncer;
 pub mod delivery;
+pub(crate) mod diagnostics;
 pub mod dispatch;
 pub mod dispatcher;
 pub mod lease;

@@ -8,7 +8,7 @@ use crate::kernel::lease::types::LeaseResource;
 use crate::kernel::lease::types::ReleaseFn;
 use crate::kernel::lease::types::ResourceEntry;
 use crate::kernel::runtime::Runtime;
-use crate::observability::log::slog;
+use crate::kernel::task::diagnostics;
 use crate::storage::dal::task::repo::TaskRepo;
 use crate::storage::pool::Pool;
 
@@ -76,7 +76,7 @@ impl LeaseResource for TaskLeaseResource {
             let pool = match self.runtime.databases().agent_pool(agent_id) {
                 Ok(p) => p,
                 Err(e) => {
-                    slog!(warn, "task", "discover_skip", agent_id, error = %e,);
+                    diagnostics::log_task_discover_skip(agent_id, &e);
                     continue;
                 }
             };
@@ -85,7 +85,7 @@ impl LeaseResource for TaskLeaseResource {
             let tasks = match repo.list_active().await {
                 Ok(t) => t,
                 Err(e) => {
-                    slog!(warn, "task", "list_failed", agent_id, error = %e,);
+                    diagnostics::log_task_list_failed(agent_id, &e);
                     continue;
                 }
             };
@@ -144,20 +144,13 @@ impl LeaseResource for TaskLeaseResource {
             .await;
             match result {
                 Ok(Err(e)) => {
-                    slog!(error, "task", "execution_failed",
-                        task_id = task.id,
-                        agent_id,
-                        error = %e,
-                    );
+                    diagnostics::log_task_execution_failed(&task.id, &agent_id, &e);
                 }
                 Err(_) => {
-                    slog!(
-                        error,
-                        "task",
-                        "execution_timeout",
-                        task_id = task.id,
-                        agent_id,
-                        timeout_secs = TASK_EXECUTION_TIMEOUT.as_secs(),
+                    diagnostics::log_task_execution_timeout(
+                        &task.id,
+                        &agent_id,
+                        TASK_EXECUTION_TIMEOUT.as_secs(),
                     );
                 }
                 Ok(Ok(())) => {}
@@ -170,10 +163,7 @@ impl LeaseResource for TaskLeaseResource {
     async fn on_released(&self, resource_id: &str, pool: &Pool) {
         let repo = TaskRepo::new(pool.clone());
         if let Err(e) = repo.reset_status_if_running(resource_id).await {
-            slog!(warn, "task", "reset_status_failed",
-                task_id = %resource_id,
-                error = %e,
-            );
+            diagnostics::log_task_reset_status_failed(resource_id, &e);
         }
     }
 

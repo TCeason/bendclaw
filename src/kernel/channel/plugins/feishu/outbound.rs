@@ -8,8 +8,8 @@ use super::token::is_token_error;
 use super::token::TokenCache;
 use crate::base::ErrorCode;
 use crate::base::Result;
+use crate::kernel::channel::diagnostics;
 use crate::kernel::channel::plugin::ChannelOutbound;
-use crate::observability::log::slog;
 
 // ── Outbound ──
 
@@ -104,7 +104,7 @@ impl ChannelOutbound for FeishuOutbound {
         let code = json["code"].as_i64().unwrap_or(-1);
         if code != 0 {
             let msg = json["msg"].as_str().unwrap_or("unknown");
-            slog!(warn, "feishu_outbound", "send_failed", code, msg,);
+            diagnostics::log_feishu_send_failed(code, msg);
         }
 
         let msg_id = json["data"]["message_id"]
@@ -151,7 +151,7 @@ impl ChannelOutbound for FeishuOutbound {
                         .unwrap_or(false)
                     {
                         let body_text = resp.text().await.unwrap_or_default();
-                        slog!(warn, "feishu_outbound", "edit_failed", http_status = status, body = %body_text,);
+                        diagnostics::log_feishu_edit_failed(status, &body_text);
                         return Err(ErrorCode::channel_send(format!(
                             "feishu edit_message failed: HTTP {status}: {body_text}"
                         )));
@@ -204,7 +204,7 @@ pub async fn add_reaction(
     let token = match get_token(client, app_id, app_secret, token_cache).await {
         Ok(t) => t,
         Err(e) => {
-            slog!(warn, "feishu_outbound", "reaction_token_failed", error = %e,);
+            diagnostics::log_feishu_reaction_token_failed(&e);
             return;
         }
     };
@@ -222,20 +222,14 @@ pub async fn add_reaction(
         Ok(resp) => {
             let status = resp.status();
             if status.is_success() {
-                slog!(
-                    debug,
-                    "feishu_outbound",
-                    "reaction_sent",
-                    message_id,
-                    emoji_type,
-                );
+                diagnostics::log_feishu_reaction_sent(message_id, emoji_type);
             } else {
                 let body = resp.text().await.unwrap_or_default();
-                slog!(warn, "feishu_outbound", "reaction_failed", http_status = %status, body, message_id, emoji_type,);
+                diagnostics::log_feishu_reaction_failed(status, &body, message_id, emoji_type);
             }
         }
         Err(e) => {
-            slog!(warn, "feishu_outbound", "reaction_request_failed", error = %e, message_id,);
+            diagnostics::log_feishu_reaction_request_failed(&e, message_id);
         }
     }
 }

@@ -3,8 +3,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::kernel::trace::diagnostics;
 use crate::kernel::writer::BackgroundWriter;
-use crate::observability::log::slog;
 use crate::storage::dal::trace::record::SpanRecord;
 use crate::storage::dal::trace::record::TraceRecord;
 use crate::storage::dal::trace::repo::SpanRepo;
@@ -133,7 +133,7 @@ async fn process_op(op: TraceOp, span_batches: &mut Vec<SpanBatch>) {
     match op {
         TraceOp::InsertTrace { repo, record } => {
             if let Err(e) = repo.insert(&record).await {
-                slog!(warn, "trace", "insert_failed", error = %e,);
+                diagnostics::log_trace_insert_failed(&e);
             }
         }
         TraceOp::UpdateTraceCompleted {
@@ -154,7 +154,7 @@ async fn process_op(op: TraceOp, span_batches: &mut Vec<SpanBatch>) {
                 )
                 .await
             {
-                slog!(warn, "trace", "update_failed", error = %e,);
+                diagnostics::log_trace_update_failed(&e);
             }
         }
         TraceOp::UpdateTraceFailed {
@@ -163,7 +163,7 @@ async fn process_op(op: TraceOp, span_batches: &mut Vec<SpanBatch>) {
             duration_ms,
         } => {
             if let Err(e) = repo.update_failed(&trace_id, duration_ms).await {
-                slog!(warn, "trace", "update_failed", error = %e,);
+                diagnostics::log_trace_update_failed(&e);
             }
         }
         TraceOp::AppendSpan { repo, record } => {
@@ -187,7 +187,7 @@ async fn flush_spans(batches: &mut Vec<SpanBatch>) {
     for batch in batches.drain(..) {
         for record in &batch.records {
             if let Err(e) = batch.repo.append(record).await {
-                slog!(warn, "trace", "append_failed", error = %e,);
+                diagnostics::log_trace_append_failed(&e);
             }
         }
     }

@@ -103,6 +103,12 @@ pub struct LLMResponse {
     model: Option<String>,
     chunk_count: u32,
     bytes: u64,
+    stream_event_summary: String,
+    stream_event_sequence: String,
+    text_fingerprint: String,
+    thinking_fingerprint: String,
+    tool_call_fingerprint: String,
+    response_fingerprint: String,
 }
 
 impl LLMResponse {
@@ -119,6 +125,12 @@ impl LLMResponse {
             model: None,
             chunk_count: 0,
             bytes: 0,
+            stream_event_summary: String::new(),
+            stream_event_sequence: String::new(),
+            text_fingerprint: String::new(),
+            thinking_fingerprint: String::new(),
+            tool_call_fingerprint: String::new(),
+            response_fingerprint: String::new(),
         }
     }
 
@@ -190,12 +202,57 @@ impl LLMResponse {
         self.bytes = bytes;
     }
 
+    pub fn set_stream_event_summary(&mut self, stream_event_summary: impl Into<String>) {
+        self.stream_event_summary = stream_event_summary.into();
+    }
+
     pub fn chunk_count(&self) -> u32 {
         self.chunk_count
     }
 
     pub fn bytes(&self) -> u64 {
         self.bytes
+    }
+
+    pub fn stream_event_summary(&self) -> &str {
+        &self.stream_event_summary
+    }
+
+    pub fn set_debug_fingerprints(
+        &mut self,
+        stream_event_summary: impl Into<String>,
+        stream_event_sequence: impl Into<String>,
+        text_fingerprint: impl Into<String>,
+        thinking_fingerprint: impl Into<String>,
+        tool_call_fingerprint: impl Into<String>,
+        response_fingerprint: impl Into<String>,
+    ) {
+        self.stream_event_summary = stream_event_summary.into();
+        self.stream_event_sequence = stream_event_sequence.into();
+        self.text_fingerprint = text_fingerprint.into();
+        self.thinking_fingerprint = thinking_fingerprint.into();
+        self.tool_call_fingerprint = tool_call_fingerprint.into();
+        self.response_fingerprint = response_fingerprint.into();
+    }
+
+    pub fn stream_event_sequence(&self) -> &str {
+        &self.stream_event_sequence
+    }
+
+    pub fn text_fingerprint(&self) -> &str {
+        &self.text_fingerprint
+    }
+
+    pub fn thinking_fingerprint(&self) -> &str {
+        &self.thinking_fingerprint
+    }
+
+    pub fn tool_call_fingerprint(&self) -> &str {
+        &self.tool_call_fingerprint
+    }
+
+    pub fn response_fingerprint(&self) -> &str {
+        &self.response_fingerprint
     }
 
     pub fn provider(&self) -> Option<&str> {

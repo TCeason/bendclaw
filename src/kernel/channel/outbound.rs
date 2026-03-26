@@ -4,8 +4,8 @@ use super::ChannelRegistry;
 use crate::base::truncate_bytes_on_char_boundary;
 use crate::base::ErrorCode;
 use crate::base::Result;
-use crate::observability::log::slog;
-use crate::storage::ChannelAccountRecord;
+use crate::kernel::channel::diagnostics;
+use crate::storage::dal::channel_account::record::ChannelAccountRecord;
 
 pub async fn send_text_to_account(
     channels: &ChannelRegistry,
@@ -37,25 +37,25 @@ pub async fn send_text_to_account(
     let started = Instant::now();
     let result = outbound.send_text(&account.config, chat_id, &payload).await;
     match &result {
-        Ok(message_id) => slog!(info, "channel", "sent",
-            output_bytes = payload.len(),
-            elapsed_ms = started.elapsed().as_millis() as u64,
-            channel_type = %account.channel_type,
-            account_id = %account.id,
-            external_account_id = %account.account_id,
+        Ok(message_id) => diagnostics::log_channel_sent(
+            payload.len(),
+            started.elapsed().as_millis() as u64,
+            &account.channel_type,
+            &account.id,
+            &account.account_id,
             chat_id,
-            send_type = "text",
+            "text",
             message_id,
         ),
-        Err(error) => slog!(warn, "channel", "failed",
-            output_bytes = payload.len(),
-            elapsed_ms = started.elapsed().as_millis() as u64,
-            error = %error,
-            channel_type = %account.channel_type,
-            account_id = %account.id,
-            external_account_id = %account.account_id,
+        Err(error) => diagnostics::log_channel_failed(
+            payload.len(),
+            started.elapsed().as_millis() as u64,
+            error,
+            &account.channel_type,
+            &account.id,
+            &account.account_id,
             chat_id,
-            send_type = "text",
+            "text",
         ),
     }
     result

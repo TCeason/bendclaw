@@ -1,9 +1,9 @@
 use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
+use crate::kernel::runtime::diagnostics;
 use crate::kernel::runtime::Runtime;
 use crate::kernel::runtime::RuntimeStatus;
-use crate::observability::log::slog;
 
 impl Runtime {
     pub fn status(&self) -> RuntimeStatus {
@@ -61,10 +61,7 @@ impl Runtime {
                         let id = agent_id.clone();
                         Some(async move {
                             if let Err(e) = store.usage_flush().await {
-                                slog!(warn, "runtime", "flush_failed",
-                                    agent_id = %id,
-                                    error = %e,
-                                );
+                                diagnostics::log_runtime_flush_failed(&id, &e);
                             }
                         })
                     })
@@ -84,7 +81,7 @@ impl Runtime {
         .await
         .is_err()
         {
-            slog!(warn, "runtime", "shutdown_timeout",);
+            diagnostics::log_runtime_shutdown_timeout();
         }
 
         self.supervisor.stop_all().await;
@@ -102,12 +99,7 @@ impl Runtime {
         );
 
         *self.status.write() = RuntimeStatus::Stopped;
-        slog!(
-            info,
-            "runtime",
-            "stopped",
-            elapsed_ms = t0.elapsed().as_millis() as u64,
-        );
+        diagnostics::log_runtime_stopped(t0.elapsed().as_millis() as u64);
         Ok(())
     }
 }

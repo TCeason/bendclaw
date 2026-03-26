@@ -6,6 +6,9 @@ use parking_lot::RwLock;
 use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
+use crate::kernel::run::prompt::PromptConfig;
+use crate::kernel::run::prompt::PromptVariable;
+use crate::kernel::runtime::diagnostics;
 use crate::kernel::runtime::Runtime;
 use crate::kernel::session::workspace::OpenResolver;
 use crate::kernel::session::workspace::SandboxResolver;
@@ -15,7 +18,6 @@ use crate::kernel::session::SessionResources;
 use crate::kernel::skills::remote::repository::DatabendSkillRepositoryFactory;
 use crate::kernel::tools::registry::create_session_tools;
 use crate::kernel::tools::registry::register_cluster_tools;
-use crate::observability::log::slog;
 use crate::storage::dal::variable::VariableRepo;
 
 impl Runtime {
@@ -29,24 +31,16 @@ impl Runtime {
 
         if let Some(session) = self.sessions.get(session_id) {
             if !session.belongs_to(agent_id, user_id) {
-                slog!(error, "runtime", "denied", agent_id, user_id, session_id,);
+                diagnostics::log_runtime_denied(agent_id, user_id, session_id);
                 return Err(ErrorCode::denied(format!(
                     "session '{session_id}' belongs to a different agent/user"
                 )));
             }
             if session.is_stale() && !session.is_running() {
                 self.sessions.remove(session_id);
-                slog!(
-                    info,
-                    "runtime",
-                    "recreated",
-                    reason = "stale_llm_config",
-                    agent_id,
-                    user_id,
-                    session_id,
-                );
+                diagnostics::log_runtime_recreated(agent_id, user_id, session_id);
             } else {
-                slog!(info, "runtime", "reused", agent_id, user_id, session_id,);
+                diagnostics::log_runtime_reused(agent_id, user_id, session_id);
                 return Ok(session);
             }
         }
@@ -73,6 +67,12 @@ impl Runtime {
         let (agent_llm, cached_config) = llm_config_result?;
         let variable_records = vars_result
             .map_err(|e| ErrorCode::internal(format!("failed to load variables: {e}")))?;
+        let prompt_variables = variable_records
+            .clone()
+            .into_iter()
+            .map(PromptVariable::from)
+            .collect();
+        let prompt_config = cached_config.clone().map(PromptConfig::from);
 
         let storage = Arc::new(AgentStore::new(pool.clone(), agent_llm.clone()));
 
@@ -155,23 +155,28 @@ impl Runtime {
                 storage,
                 llm: Arc::new(RwLock::new(agent_llm)),
                 config: Arc::new(self.config.clone()),
-                variables: variable_records,
+                prompt_variables,
                 cluster_client: self.cluster.read().clone(),
                 directive: self.directive.read().clone(),
                 trace_writer: self.trace_writer.clone(),
                 persist_writer: self.persist_writer.clone(),
                 tool_writer: self.tool_writer.clone(),
-                cached_config,
+                prompt_config,
             },
         ));
 
         self.sessions.insert(session.clone());
 
-        slog!(info, "runtime", "created",
+        diagnostics::log_runtime_session_created(
             agent_id,
             user_id,
             session_id,
-            workspace_dir = %self.config.workspace.session_dir(user_id, agent_id, session_id).display(),
+            &self
+                .config
+                .workspace
+                .session_dir(user_id, agent_id, session_id)
+                .display()
+                .to_string(),
             tool_count,
         );
 

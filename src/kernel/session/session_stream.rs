@@ -14,7 +14,7 @@ use crate::kernel::run::event::Event;
 use crate::kernel::run::persister::TurnPersister;
 use crate::kernel::run::result::Reason;
 use crate::kernel::run::result::Result as AgentResult;
-use crate::kernel::session::session::SessionState;
+use crate::kernel::session::state::SessionState;
 use crate::kernel::ErrorSource;
 use crate::kernel::Message;
 

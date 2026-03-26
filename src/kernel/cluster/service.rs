@@ -3,6 +3,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use tokio_util::sync::CancellationToken;
 
+use super::diagnostics;
 use super::ClusterOptions;
 use super::DispatchTable;
 use crate::base::ErrorCode;
@@ -10,7 +11,6 @@ use crate::base::Result;
 use crate::client::BendclawClient;
 use crate::client::ClusterClient;
 use crate::client::NodeEntry;
-use crate::observability::log::slog;
 
 /// Unified cluster abstraction owning registration, peer cache, and node-to-node client.
 /// Runtime holds a single `Arc<ClusterService>` instead of scattered fields.
@@ -58,20 +58,14 @@ impl ClusterService {
         let changed = *peers != nodes;
         *peers = nodes.clone();
         if changed {
-            slog!(
-                info,
-                "cluster",
-                "peers_refreshed",
-                peer_count = nodes.len(),
-                elapsed_ms = started.elapsed().as_millis() as u64,
+            diagnostics::log_cluster_peers_refreshed(
+                nodes.len(),
+                started.elapsed().as_millis() as u64,
             );
         } else {
-            slog!(
-                debug,
-                "cluster",
-                "peers_unchanged",
-                peer_count = nodes.len(),
-                elapsed_ms = started.elapsed().as_millis() as u64,
+            diagnostics::log_cluster_peers_unchanged(
+                nodes.len(),
+                started.elapsed().as_millis() as u64,
             );
         }
         Ok(nodes)
@@ -106,15 +100,10 @@ impl ClusterService {
 
         match self.refresh_peers().await {
             Ok(nodes) => {
-                slog!(
-                    info,
-                    "cluster",
-                    "discovery_completed",
-                    peer_count = nodes.len(),
-                );
+                diagnostics::log_cluster_discovery_completed(nodes.len());
             }
             Err(e) => {
-                slog!(warn, "cluster", "discovery_failed", error = %e,);
+                diagnostics::log_cluster_discovery_failed(&e);
             }
         }
         Ok(())
@@ -129,20 +118,15 @@ impl ClusterService {
         let interval_duration = self.options.heartbeat_interval;
         crate::base::spawn_named("cluster_heartbeat", async move {
             let mut interval = tokio::time::interval(interval_duration);
-            slog!(
-                info,
-                "cluster",
-                "heartbeat_started",
-                heartbeat_interval_ms = interval_duration.as_millis() as u64,
-            );
+            diagnostics::log_cluster_heartbeat_started(interval_duration.as_millis() as u64);
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
                         if let Err(e) = svc.cluster_client.heartbeat().await {
-                            slog!(warn, "cluster", "heartbeat_failed", error = %e,);
+                            diagnostics::log_cluster_heartbeat_failed(&e);
                         }
                         if let Err(e) = svc.refresh_peers().await {
-                            slog!(warn, "cluster", "refresh_failed", error = %e,);
+                            diagnostics::log_cluster_refresh_failed(&e);
                         }
                     }
                     _ = cancel.cancelled() => {
@@ -157,7 +141,7 @@ impl ClusterService {
     /// Deregister from the cluster registry.
     pub async fn deregister(&self) {
         if let Err(e) = self.cluster_client.deregister().await {
-            slog!(warn, "cluster", "deregistration_failed", error = %e,);
+            diagnostics::log_cluster_deregistration_failed(&e);
         }
     }
 }

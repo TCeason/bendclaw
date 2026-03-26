@@ -3,14 +3,16 @@ use reqwest::Client;
 use serde_json::json;
 use tokio_stream::StreamExt;
 
+use super::common;
+use crate::base::http;
 use crate::base::ErrorCode;
 use crate::base::Result;
+use crate::llm::http_adapter;
 use crate::llm::message::CacheControl;
 use crate::llm::message::ChatMessage;
 use crate::llm::message::Content;
 use crate::llm::message::Role;
 use crate::llm::message::ToolCall;
-use crate::llm::provider::mask_api_key;
 use crate::llm::provider::response_request_id;
 use crate::llm::provider::LLMProvider;
 use crate::llm::provider::LLMResponse;
@@ -21,7 +23,6 @@ use crate::llm::stream::StreamWriter;
 use crate::llm::stream::ToolCallAccumulator;
 use crate::llm::tool::ToolSchema;
 use crate::llm::usage::TokenUsage;
-use crate::observability::log::slog;
 
 const MAX_TOKENS: u32 = 8192;
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -34,16 +35,13 @@ pub struct AnthropicProvider {
 }
 
 impl AnthropicProvider {
-    pub fn new(base_url: &str, api_key: &str) -> Self {
-        Self {
-            client: Client::builder()
-                .connect_timeout(std::time::Duration::from_secs(30))
-                .timeout(std::time::Duration::from_secs(300))
-                .build()
-                .expect("failed to build HTTP client"),
+    pub fn new(base_url: &str, api_key: &str) -> crate::base::Result<Self> {
+        let client = common::build_http_client()?;
+        Ok(Self {
+            client,
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key: api_key.to_string(),
-        }
+        })
     }
 
     fn build_body(
@@ -89,66 +87,53 @@ impl LLMProvider for AnthropicProvider {
         tools: &[ToolSchema],
         temperature: f64,
     ) -> Result<LLMResponse> {
-        slog!(
-            info,
-            "llm",
-            "request",
-            provider = "anthropic",
-            model,
-            msg_count = messages.len(),
-        );
+        common::log_request("anthropic", model, messages.len());
         let (body, url) = self.build_body(model, messages, tools, temperature, false);
-
-        let resp = self
-            .client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                slog!(error, "llm", "request_failed",
-                    provider = "anthropic",
-                    model,
-                    base_url = %self.base_url,
-                    api_key = %mask_api_key(&self.api_key),
-                    error = %e,
-                );
-                ErrorCode::llm_request(format!("request failed: {e}"))
-            })?;
+        let resp = http::send(
+            self.client
+                .post(&url)
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", ANTHROPIC_VERSION)
+                .header("Content-Type", "application/json")
+                .json(&body),
+            http::HttpRequestContext::new("llm", "request_send")
+                .with_endpoint("anthropic")
+                .with_model(model.to_string())
+                .with_url(url.clone()),
+        )
+        .await
+        .map_err(http_adapter::to_llm_error)?;
 
         let status = resp.status();
         let headers = resp.headers().clone();
         let request_id = response_request_id(&headers);
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            slog!(error, "llm", "api_error",
-                provider = "anthropic",
+            common::log_api_error(
+                "anthropic",
                 model,
-                base_url = %self.base_url,
-                api_key = %mask_api_key(&self.api_key),
-                status = %status,
-                request_id = %request_id,
-                response = %truncate_for_log(&text),
+                &self.base_url,
+                &self.api_key,
+                status,
+                &request_id,
+                &text,
             );
-            return Err(ErrorCode::llm_request(format!(
-                "Anthropic API error {status}: {text}"
+            return Err(ErrorCode::llm_request(common::api_error_message(
+                "Anthropic",
+                status,
+                &text,
             )));
         }
 
-        let data: serde_json::Value = resp.json().await.map_err(|e| {
-            slog!(error, "llm", "parse_failed",
-                provider = "anthropic",
-                model,
-                base_url = %self.base_url,
-                api_key = %mask_api_key(&self.api_key),
-                request_id = %request_id,
-                error = %e,
-            );
-            ErrorCode::llm_request(format!("response parse failed: {e}"))
-        })?;
+        let data: serde_json::Value = http::read_json(
+            resp,
+            http::HttpRequestContext::new("llm", "decode_response")
+                .with_endpoint("anthropic")
+                .with_model(model.to_string())
+                .with_url(url.clone()),
+        )
+        .await
+        .map_err(http_adapter::to_llm_error)?;
 
         let result = parse_response(&data)?;
 
@@ -166,28 +151,15 @@ impl LLMProvider for AnthropicProvider {
         let (body, url) = self.build_body(model, messages, tools, temperature, true);
         let client = self.client.clone();
         let api_key = self.api_key.clone();
-        let base_url = self.base_url.clone();
-        let masked_api_key = mask_api_key(&self.api_key);
         let model_owned = model.to_string();
 
         crate::base::spawn_fire_and_forget("anthropic_stream_driver", async move {
-            if let Err(msg) = drive_stream(
-                &client,
-                &url,
-                &api_key,
-                &base_url,
-                &masked_api_key,
-                &body,
-                &writer,
-                &model_owned,
-            )
-            .await
-            {
-                slog!(warn, "llm", "stream_failed",
-                    provider = "anthropic",
-                    model = %model_owned,
-                    error = %msg,
-                );
+            let request_ctx = http::HttpRequestContext::new("llm", "stream_open")
+                .with_endpoint("anthropic")
+                .with_model(model_owned.clone())
+                .with_url(url.clone());
+            if let Err(msg) = drive_stream(&client, &api_key, &body, &writer, request_ctx).await {
+                common::log_stream_failed("anthropic", &model_owned, &msg);
                 writer.error(msg).await;
             }
         });
@@ -199,39 +171,41 @@ impl LLMProvider for AnthropicProvider {
 #[allow(clippy::too_many_arguments)]
 async fn drive_stream(
     client: &Client,
-    url: &str,
     api_key: &str,
-    _base_url: &str,
-    _masked_api_key: &str,
     body: &serde_json::Value,
     writer: &StreamWriter,
-    model: &str,
+    request_ctx: http::HttpRequestContext,
 ) -> std::result::Result<(), String> {
-    let resp = client
-        .post(url)
-        .header("x-api-key", api_key)
-        .header("anthropic-version", ANTHROPIC_VERSION)
-        .header("Content-Type", "application/json")
-        .json(body)
-        .send()
-        .await
-        .map_err(|e| format!("request failed: {e}"))?;
+    let resp = http::open_stream(
+        client
+            .post(&request_ctx.url)
+            .header("x-api-key", api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .header("Content-Type", "application/json")
+            .json(body),
+        request_ctx.clone(),
+    )
+    .await
+    .map_err(http_adapter::to_stream_error)?;
 
     let resp_headers = resp.headers().clone();
     let request_id = response_request_id(&resp_headers);
 
     if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        slog!(error, "llm", "stream_api_error",
-            provider = "anthropic",
-            model = %model,
-            status = %status,
-            request_id = %request_id,
-            response_bytes = text.len(),
+        let error = common::read_stream_error(resp, "anthropic", &request_ctx).await;
+        common::log_stream_api_error(
+            "anthropic",
+            &request_ctx,
+            &request_id,
+            error.status,
+            error.text.len(),
         );
 
-        return Err(format!("Anthropic API error {status}: {text}"));
+        return Err(common::api_error_message(
+            "Anthropic",
+            error.status,
+            &error.text,
+        ));
     }
 
     // Fallback: if backend doesn't support streaming, parse as JSON response
@@ -242,20 +216,15 @@ async fn drive_stream(
         .unwrap_or("")
         .to_string();
 
-    if !content_type.contains("stream") && !content_type.contains("event-stream") {
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| format!("body read error: {e}"))?;
-        let data: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| format!("non-streaming response parse failed: {e}"))?;
+    if !common::is_streaming_content_type(&content_type) {
+        let fallback = common::read_stream_fallback_body(resp, "anthropic", &request_ctx).await?;
+        let data = fallback.data;
 
-        slog!(
-            warn,
-            "llm",
-            "stream_fallback",
-            provider = "anthropic",
-            content_type,
+        common::log_stream_fallback(
+            "anthropic",
+            request_ctx.model.as_deref().unwrap_or(""),
+            None,
+            &content_type,
         );
 
         if let Some(blocks) = data.get("content").and_then(|c| c.as_array()) {
@@ -295,13 +264,7 @@ async fn drive_stream(
             .get("stop_reason")
             .and_then(|s| s.as_str())
             .unwrap_or("end_turn");
-        writer
-            .done_with_provider(
-                reason,
-                Some("anthropic".to_string()),
-                Some(model.to_string()),
-            )
-            .await;
+        common::stream_done(writer, reason, "anthropic", request_ctx.model.clone()).await;
         return Ok(());
     }
 
@@ -313,19 +276,27 @@ async fn drive_stream(
     let mut byte_stream = resp.bytes_stream();
 
     while let Some(chunk) = byte_stream.next().await {
-        let chunk = chunk.map_err(|e| format!("stream read error: {e}"))?;
+        let chunk = chunk.map_err(|e| {
+            http_adapter::to_stream_error(http::stream_read_error(
+                e,
+                http::HttpRequestContext::new("llm", "stream_read")
+                    .with_endpoint("anthropic")
+                    .with_model(request_ctx.model.clone().unwrap_or_default())
+                    .with_url(request_ctx.url.clone()),
+            ))
+        })?;
 
         for data in parser.feed(&chunk) {
             let parsed = match data {
                 SseData::Json(v) => v,
                 SseData::Done => {
-                    writer
-                        .done_with_provider(
-                            &finish_reason,
-                            Some("anthropic".to_string()),
-                            Some(model.to_string()),
-                        )
-                        .await;
+                    common::stream_done(
+                        writer,
+                        &finish_reason,
+                        "anthropic",
+                        request_ctx.model.clone(),
+                    )
+                    .await;
                     return Ok(());
                 }
             };
@@ -416,13 +387,13 @@ async fn drive_stream(
                 }
 
                 "message_stop" => {
-                    writer
-                        .done_with_provider(
-                            &finish_reason,
-                            Some("anthropic".to_string()),
-                            Some(model.to_string()),
-                        )
-                        .await;
+                    common::stream_done(
+                        writer,
+                        &finish_reason,
+                        "anthropic",
+                        request_ctx.model.clone(),
+                    )
+                    .await;
                     return Ok(());
                 }
 
@@ -441,13 +412,13 @@ async fn drive_stream(
     }
 
     // Stream ended without message_stop — still signal done
-    writer
-        .done_with_provider(
-            &finish_reason,
-            Some("anthropic".to_string()),
-            Some(model.to_string()),
-        )
-        .await;
+    common::stream_done(
+        writer,
+        &finish_reason,
+        "anthropic",
+        request_ctx.model.clone(),
+    )
+    .await;
     Ok(())
 }
 
@@ -568,10 +539,6 @@ fn to_anthropic_tools(tools: &[ToolSchema]) -> Vec<serde_json::Value> {
             })
         })
         .collect()
-}
-
-fn truncate_for_log(text: &str) -> String {
-    crate::base::truncate_bytes_on_char_boundary(text, 512)
 }
 
 fn parse_response(data: &serde_json::Value) -> Result<LLMResponse> {

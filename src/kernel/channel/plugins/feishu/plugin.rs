@@ -17,12 +17,12 @@ use crate::kernel::channel::account::ChannelAccount;
 use crate::kernel::channel::capabilities::ChannelCapabilities;
 use crate::kernel::channel::capabilities::ChannelKind;
 use crate::kernel::channel::capabilities::InboundMode;
+use crate::kernel::channel::diagnostics;
 use crate::kernel::channel::plugin::ChannelOutbound;
 use crate::kernel::channel::plugin::ChannelPlugin;
 use crate::kernel::channel::plugin::InboundEventSender;
 use crate::kernel::channel::plugin::InboundKind;
 use crate::kernel::channel::plugin::ReceiverFactory;
-use crate::observability::log::slog;
 
 // ── Plugin ──
 
@@ -112,14 +112,14 @@ impl ReceiverFactory for FeishuReceiverFactory {
         let account_id = account.channel_account_id.clone();
 
         let handle = crate::base::spawn_named("feishu_receiver", async move {
-            slog!(info, "feishu_ws", "receiver_started", account_id = %account_id,);
+            diagnostics::log_feishu_receiver_started(&account_id);
             let mut reconnect_config = ReconnectConfig::default();
             let mut attempt: u64 = 0;
 
             loop {
                 tokio::select! {
                     _ = cancel.cancelled() => {
-                        slog!(info, "feishu_ws", "receiver_cancelled", account_id = %account_id,);
+                        diagnostics::log_feishu_receiver_cancelled(&account_id);
                         return;
                     }
                     result = ws_receive_loop(
@@ -128,19 +128,17 @@ impl ReceiverFactory for FeishuReceiverFactory {
                     ) => {
                         match result {
                             Ok(()) => {
-                                slog!(info, "feishu_ws", "closed_reconnecting", account_id = %account_id,);
+                                diagnostics::log_feishu_closed_reconnecting(&account_id);
                                 attempt = 0;
                             }
                             Err(e) => {
                                 // FIX #9: classify errors
                                 if e.code == ErrorCode::CONFIG {
-                                    slog!(error, "feishu_ws", "client_error_stopping",
-                                        account_id = %account_id, error = %e,);
+                                    diagnostics::log_feishu_client_error_stopping(&account_id, &e);
                                     return;
                                 }
                                 attempt += 1;
-                                slog!(error, "feishu_ws", "error_reconnecting",
-                                    account_id = %account_id, attempt, error = %e,);
+                                diagnostics::log_feishu_error_reconnecting(&account_id, attempt, &e);
                             }
                         }
                     }
@@ -150,9 +148,9 @@ impl ReceiverFactory for FeishuReceiverFactory {
                 if reconnect_config.reconnect_count > 0
                     && attempt >= reconnect_config.reconnect_count
                 {
-                    slog!(error, "feishu_ws", "reconnect_limit_reached",
-                        account_id = %account_id,
-                        limit = reconnect_config.reconnect_count,
+                    diagnostics::log_feishu_reconnect_limit_reached(
+                        &account_id,
+                        reconnect_config.reconnect_count,
                     );
                     return;
                 }

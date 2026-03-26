@@ -43,7 +43,9 @@ fn registry_unknown_provider_returns_llm_request_error() {
 fn registry_custom_factory() -> Result<()> {
     let mut registry = ProviderRegistry::new();
     registry.register("custom", |_base_url: &str, _api_key: &str| {
-        std::sync::Arc::new(crate::mocks::llm::MockLLMProvider::with_text("custom"))
+        Ok(std::sync::Arc::new(
+            crate::mocks::llm::MockLLMProvider::with_text("custom"),
+        ))
     });
     let ep = test_endpoint("test-custom", "custom", 100);
     let provider = registry.create(&ep).context("provider build")?;

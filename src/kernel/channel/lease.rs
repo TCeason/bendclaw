@@ -4,12 +4,12 @@ use async_trait::async_trait;
 
 use crate::base::Result;
 use crate::kernel::channel::account::ChannelAccount;
+use crate::kernel::channel::diagnostics;
 use crate::kernel::channel::plugin::InboundKind;
 use crate::kernel::channel::registry::ChannelRegistry;
 use crate::kernel::channel::supervisor::ChannelSupervisor;
 use crate::kernel::lease::types::LeaseResource;
 use crate::kernel::lease::types::ResourceEntry;
-use crate::observability::log::slog;
 use crate::storage::dal::channel_account::repo::ChannelAccountRepo;
 use crate::storage::pool::Pool;
 use crate::storage::AgentDatabases;
@@ -59,10 +59,7 @@ impl LeaseResource for ChannelLeaseResource {
             let pool = match self.databases.agent_pool(agent_id) {
                 Ok(p) => p,
                 Err(e) => {
-                    slog!(warn, "channel", "discover_skipped",
-                        agent_id,
-                        error = %e,
-                    );
+                    diagnostics::log_channel_discover_skipped(agent_id, &e);
                     continue;
                 }
             };
@@ -71,10 +68,7 @@ impl LeaseResource for ChannelLeaseResource {
             let accounts = match repo.list_by_agent(agent_id).await {
                 Ok(a) => a,
                 Err(e) => {
-                    slog!(warn, "channel", "list_failed",
-                        agent_id,
-                        error = %e,
-                    );
+                    diagnostics::log_channel_list_failed(agent_id, &e);
                     continue;
                 }
             };

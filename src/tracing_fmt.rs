@@ -135,7 +135,6 @@ const META_KEYS: &[&str] = &[
     "resource_id",
     "node_id",
 ];
-const INDENT: &str = "               ";
 const WIDTH: usize = 110;
 
 #[derive(Clone, Debug)]
@@ -743,6 +742,8 @@ where
             Level::WARN | Level::ERROR => ANSI_BOLD,
             _ => "",
         };
+        let plain_prefix = format!("{timestamp} {level_text}  ");
+        let indent = " ".repeat(plain_prefix.chars().count());
 
         write!(writer, "{}", paint(&timestamp, ANSI_DIM, ansi_enabled))?;
         write!(
@@ -760,7 +761,7 @@ where
         } else {
             writeln!(writer)?;
             for line in rendered.lines {
-                writeln!(writer, "{INDENT}{line}")?;
+                writeln!(writer, "{indent}{line}")?;
             }
             Ok(())
         }

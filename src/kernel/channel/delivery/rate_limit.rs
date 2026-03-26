@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::observability::log::slog;
+use crate::kernel::channel::diagnostics;
 
 /// Configuration for a token bucket rate limiter.
 pub struct RateLimitConfig {
@@ -100,13 +100,10 @@ impl OutboundRateLimiter {
             match self.check(channel_type, account_id) {
                 RateLimitResult::Allowed => return,
                 RateLimitResult::RetryAfter(dur) => {
-                    slog!(
-                        info,
-                        "channel",
-                        "rate_limited",
+                    diagnostics::log_channel_rate_limited(
                         channel_type,
                         account_id,
-                        wait_ms = dur.as_millis() as u64,
+                        dur.as_millis() as u64,
                     );
                     tokio::time::sleep(dur).await;
                 }

@@ -12,6 +12,7 @@ use crate::kernel::channel::account::ChannelAccount;
 use crate::kernel::channel::capabilities::ChannelCapabilities;
 use crate::kernel::channel::capabilities::ChannelKind;
 use crate::kernel::channel::capabilities::InboundMode;
+use crate::kernel::channel::diagnostics;
 use crate::kernel::channel::message::InboundEvent;
 use crate::kernel::channel::message::InboundMessage;
 use crate::kernel::channel::plugin::ChannelOutbound;
@@ -19,7 +20,6 @@ use crate::kernel::channel::plugin::ChannelPlugin;
 use crate::kernel::channel::plugin::InboundEventSender;
 use crate::kernel::channel::plugin::InboundKind;
 use crate::kernel::channel::plugin::ReceiverFactory;
-use crate::observability::log::slog;
 
 pub const TELEGRAM_CHANNEL_TYPE: &str = "telegram";
 const TELEGRAM_API: &str = "https://api.telegram.org";
@@ -127,10 +127,7 @@ impl ReceiverFactory for TelegramReceiverFactory {
                     }
                     result = poll_updates(&client, &config, &mut offset, &event_tx) => {
                         if let Err(e) = result {
-                            slog!(error, "channel", "poll_error",
-                                account_id = %account_id,
-                                error = %e,
-                            );
+                            diagnostics::log_channel_poll_error(&account_id, &e);
                             tokio::select! {
                                 _ = cancel.cancelled() => return,
                                 _ = tokio::time::sleep(Duration::from_secs(RETRY_DELAY_SECS)) => {}
@@ -262,15 +259,7 @@ impl ChannelOutbound for TelegramOutbound {
             .send()
             .await
             .map_err(|e| ErrorCode::internal(format!("telegram setMessageReaction: {e}")))?;
-        slog!(
-            info,
-            "channel",
-            "sent",
-            channel_type = "telegram",
-            chat_id,
-            message_id = msg_id,
-            emoji,
-        );
+        diagnostics::log_channel_sent_reaction("telegram", chat_id, msg_id, emoji);
         Ok(())
     }
 
@@ -400,7 +389,7 @@ async fn poll_updates(
                 username: None,
             });
             if !is_allowed(&config.allow_from, &user) {
-                slog!(warn, "channel", "denied", sender_id = user.id,);
+                diagnostics::log_channel_denied(user.id);
                 continue;
             }
 
@@ -426,7 +415,7 @@ async fn poll_updates(
             if let crate::kernel::channel::delivery::backpressure::BackpressureResult::Rejected =
                 event_tx.send(event)
             {
-                slog!(warn, "channel", "dropped",);
+                diagnostics::log_channel_dropped();
             }
         }
     }
@@ -456,7 +445,7 @@ async fn send_reaction(
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        slog!(warn, "channel", "reaction_failed", status = %status, body,);
+        diagnostics::log_channel_reaction_failed(status, &body);
     }
     Ok(())
 }

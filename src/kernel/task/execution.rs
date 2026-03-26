@@ -1,6 +1,6 @@
 use crate::base::new_id;
 use crate::base::Result;
-use crate::observability::log::slog;
+use crate::kernel::task::diagnostics;
 use crate::storage::dal::task::TaskRecord;
 use crate::storage::dal::task::TaskRepo;
 use crate::storage::dal::task::TaskSchedule;
@@ -44,7 +44,7 @@ pub async fn finish_execution(
     };
     let history_repo = TaskHistoryRepo::new(pool.clone());
     if let Err(e) = history_repo.insert(&history).await {
-        slog!(error, "task", "history_failed", task_id = task.id, error = %e,);
+        diagnostics::log_task_history_failed(&task.id, &e);
     }
 
     // 2. Compute next_run_at from schedule

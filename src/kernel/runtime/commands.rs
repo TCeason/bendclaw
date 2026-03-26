@@ -4,6 +4,7 @@ use std::time::Instant;
 use crate::base::Result;
 use crate::kernel::agent_store::memory_store::MemoryEntry;
 use crate::kernel::agent_store::AgentStore;
+use crate::kernel::runtime::diagnostics;
 use crate::kernel::runtime::Runtime;
 use crate::kernel::skills::remote::repository::DatabendSkillRepository;
 use crate::kernel::skills::remote::repository::SkillRepository;
@@ -22,8 +23,6 @@ fn runtime_payload(payload: serde_json::Value) -> String {
     serde_json::to_string(&redaction::redact(payload)).unwrap_or_else(|_| "{}".to_string())
 }
 
-use crate::observability::log::slog;
-
 fn log_runtime_info(
     command: &str,
     status: &str,
@@ -31,13 +30,8 @@ fn log_runtime_info(
     elapsed_ms: u64,
     payload: serde_json::Value,
 ) {
-    slog!(info, "runtime", "completed",
-        command,
-        status,
-        agent_id,
-        elapsed_ms,
-        payload = %runtime_payload(payload),
-    );
+    let payload = runtime_payload(payload);
+    diagnostics::log_runtime_command_completed(command, status, agent_id, elapsed_ms, &payload);
 }
 
 fn log_runtime_error(
@@ -47,13 +41,8 @@ fn log_runtime_error(
     error: &impl std::fmt::Display,
     payload: serde_json::Value,
 ) {
-    slog!(error, "runtime", "failed",
-        command,
-        agent_id,
-        elapsed_ms,
-        error = %error,
-        payload = %runtime_payload(payload),
-    );
+    let payload = runtime_payload(payload);
+    diagnostics::log_runtime_command_failed(command, agent_id, elapsed_ms, error, &payload);
 }
 
 impl Runtime {
@@ -100,15 +89,15 @@ impl Runtime {
         log_runtime_info("cancel_run", "started", agent_id, 0, payload.clone());
         self.require_ready()?;
         let pool = self.databases.agent_pool(agent_id)?;
-        let repo = crate::storage::RunRepo::new(pool);
+        let repo = crate::storage::dal::run::repo::RunRepo::new(pool);
 
         let result = async {
             if let Some(record) = repo.load(run_id).await? {
                 if let Some(session) = self.sessions.get(&record.session_id) {
                     let _ = session.cancel_run(run_id);
                 }
-                if record.status == crate::storage::RunStatus::Pending.as_str() {
-                    repo.update_status(run_id, crate::storage::RunStatus::Cancelled)
+                if record.status == crate::storage::dal::run::RunStatus::Pending.as_str() {
+                    repo.update_status(run_id, crate::storage::dal::run::RunStatus::Cancelled)
                         .await?;
                 }
             }

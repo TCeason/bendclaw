@@ -16,8 +16,8 @@ use super::token::TokenCache;
 use crate::base::spawn_fire_and_forget;
 use crate::base::ErrorCode;
 use crate::base::Result;
+use crate::kernel::channel::diagnostics;
 use crate::kernel::channel::plugin::InboundEventSender;
-use crate::observability::log::slog;
 
 // ── Protobuf (pbbp2) ──
 
@@ -80,7 +80,7 @@ pub fn decode_frame(
     let frame = match PbFrame::decode(data) {
         Ok(f) => f,
         Err(e) => {
-            slog!(warn, "feishu_ws", "decode_failed", error = %e,);
+            diagnostics::log_feishu_decode_failed(&e);
             return DecodedFrame {
                 response: None,
                 event_payload: None,
@@ -151,7 +151,8 @@ pub fn decode_frame(
         if buf.iter().all(|p| p.is_some()) {
             let combined: Vec<u8> = buf
                 .iter()
-                .flat_map(|p| p.as_ref().unwrap().clone())
+                .filter_map(|p| p.as_ref())
+                .flat_map(|p| p.clone())
                 .collect();
             msg_cache.remove(&msg_id);
             combined
@@ -184,7 +185,7 @@ pub fn decode_frame(
                     .map(|s| s.to_string())
             })
             .unwrap_or_default();
-        slog!(info, "feishu_ws", "event_received", msg_id, trace_id, event_type = %event_type,);
+        diagnostics::log_feishu_event_received(&msg_id, &trace_id, &event_type);
         Some(payload_str)
     } else {
         None
@@ -293,14 +294,11 @@ pub async fn get_ws_endpoint(
     }
 
     let client_config = &json["data"]["ClientConfig"];
-    slog!(
-        debug,
-        "feishu_ws",
-        "endpoint_response",
+    diagnostics::log_feishu_endpoint_response(
         code,
-        reconnect_count = client_config["ReconnectCount"].as_i64().unwrap_or(0),
-        reconnect_interval = client_config["ReconnectInterval"].as_i64().unwrap_or(0),
-        ping_interval = client_config["PingInterval"].as_i64().unwrap_or(0),
+        client_config["ReconnectCount"].as_i64().unwrap_or(0),
+        client_config["ReconnectInterval"].as_i64().unwrap_or(0),
+        client_config["PingInterval"].as_i64().unwrap_or(0),
     );
 
     let ws_url = json["data"]["URL"]
@@ -334,7 +332,7 @@ pub async fn ws_receive_loop(
     *reconnect_config = endpoint_rc;
 
     let redacted_url = redact_ws_url(&ws_url);
-    slog!(info, "feishu_ws", "connecting", url = %redacted_url, ping_interval = ping_interval_secs,);
+    diagnostics::log_feishu_connecting(&redacted_url, ping_interval_secs);
 
     let connector = build_native_tls_connector()?;
     let (ws_stream, ws_resp) =
@@ -352,14 +350,7 @@ pub async fn ws_receive_loop(
         .get("Handshake-Msg")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    slog!(
-        debug,
-        "feishu_ws",
-        "handshake",
-        status = ws_resp.status().as_u16(),
-        hs_status,
-        hs_msg,
-    );
+    diagnostics::log_feishu_handshake(ws_resp.status().as_u16(), hs_status, hs_msg);
 
     let (mut write, mut read) = futures::StreamExt::split(ws_stream);
 
@@ -379,7 +370,7 @@ pub async fn ws_receive_loop(
     let mut timeout_check = tokio::time::interval(Duration::from_secs(10));
     timeout_check.tick().await;
 
-    slog!(info, "feishu_ws", "connected", service_id,);
+    diagnostics::log_feishu_connected(service_id);
 
     let initial_ping = build_ping_frame(service_id);
     if futures::SinkExt::send(
@@ -408,9 +399,9 @@ pub async fn ws_receive_loop(
             }
             _ = timeout_check.tick() => {
                 if last_recv.elapsed() > heartbeat_timeout {
-                    slog!(warn, "feishu_ws", "heartbeat_timeout",
-                        elapsed_secs = last_recv.elapsed().as_secs(),
-                        timeout_secs = heartbeat_timeout.as_secs(),
+                    diagnostics::log_feishu_heartbeat_timeout(
+                        last_recv.elapsed().as_secs(),
+                        heartbeat_timeout.as_secs(),
                     );
                     break Err(ErrorCode::internal("feishu ws: heartbeat timeout, reconnecting"));
                 }
@@ -465,7 +456,7 @@ pub async fn ws_receive_loop(
                         break Err(ErrorCode::internal(format!("feishu ws read: {e}")));
                     }
                     Some(Ok(other)) => {
-                        slog!(warn, "feishu_ws", "unexpected_ws_msg", msg_type = %format!("{:?}", std::mem::discriminant(&other)),);
+                        diagnostics::log_feishu_unexpected_ws_msg(&format!("{:?}", std::mem::discriminant(&other)));
                     }
                 }
             }
@@ -497,7 +488,7 @@ async fn handle_event_payload(
     let json: serde_json::Value = match serde_json::from_str(payload) {
         Ok(v) => v,
         Err(e) => {
-            slog!(warn, "feishu_ws", "invalid_json", error = %e,);
+            diagnostics::log_feishu_invalid_json(&e);
             return;
         }
     };
@@ -537,10 +528,10 @@ async fn handle_event_payload(
         match event_tx.send(inbound) {
             BackpressureResult::Accepted => {}
             BackpressureResult::Busy => {
-                slog!(warn, "feishu_ws", "channel_busy", event_type,);
+                diagnostics::log_feishu_channel_busy(event_type);
             }
             BackpressureResult::Rejected => {
-                slog!(warn, "feishu_ws", "channel_full", event_type,);
+                diagnostics::log_feishu_channel_full(event_type);
             }
         }
     }

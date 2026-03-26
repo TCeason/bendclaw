@@ -3,8 +3,8 @@ use serde_json::json;
 
 use super::admin::CreateTaskParams;
 use super::admin::UpdateTaskParams;
-use crate::storage::TaskDelivery;
-use crate::storage::TaskSchedule;
+use crate::storage::dal::task::TaskDelivery;
+use crate::storage::dal::task::TaskSchedule;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

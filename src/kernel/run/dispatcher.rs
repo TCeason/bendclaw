@@ -5,6 +5,7 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::kernel::run::dispatcher_diagnostics;
 use crate::kernel::run::event::Event;
 use crate::kernel::skills::executor::parse_skill_args;
 use crate::kernel::skills::executor::SkillExecutor;
@@ -16,7 +17,6 @@ use crate::kernel::OpType;
 use crate::kernel::OperationMeta;
 use crate::kernel::OperationTracker;
 use crate::llm::message::ToolCall;
-use crate::observability::log::slog;
 
 /// Hard upper limit on any tool/skill output (~64K tokens).
 const MAX_TOOL_OUTPUT: usize = 256_000;
@@ -107,7 +107,12 @@ impl ToolDispatcher {
                 let arguments = match serde_json::from_str(&tc.arguments) {
                     Ok(arguments) => arguments,
                     Err(error) => {
-                        slog!(warn, "tool", "parse_failed", tool_name = %tc.name, tool_call_id = %tc.id, raw_arguments = %tc.arguments, error = %error,);
+                        dispatcher_diagnostics::log_tool_parse_failed(
+                            &tc.name,
+                            &tc.id,
+                            &tc.arguments,
+                            &error,
+                        );
                         serde_json::Value::Object(serde_json::Map::new())
                     }
                 };
@@ -154,7 +159,7 @@ impl ToolDispatcher {
                             match result {
                                 Ok(r) => r,
                                 Err(_) => {
-                                    slog!(warn, "tool", "timed_out", tool = %name, tool_call_id = %parsed.call.id,);
+                                    dispatcher_diagnostics::log_tool_timed_out(&name, &parsed.call.id);
                                     ToolCallResult::InfraError(
                                         format!("tool '{name}' timed out"),
                                         tracker.finish(),

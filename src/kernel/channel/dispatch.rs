@@ -5,6 +5,7 @@ use crate::kernel::channel::account::ChannelAccount;
 use crate::kernel::channel::context::ChannelContext;
 use crate::kernel::channel::debouncer::DebouncedInput;
 use crate::kernel::channel::delivery;
+use crate::kernel::channel::diagnostics;
 use crate::kernel::channel::dispatcher::ChannelDispatcher;
 use crate::kernel::channel::message::InboundEvent;
 use crate::kernel::channel::plugin::ChannelOutbound;
@@ -14,7 +15,6 @@ use crate::kernel::channel::writer::ChannelMessageOp;
 use crate::kernel::runtime::Runtime;
 use crate::kernel::runtime::SubmitResult;
 use crate::observability::log::channel_log;
-use crate::observability::log::slog;
 use crate::storage::dal::channel_message::record::ChannelMessageRecord;
 use crate::storage::dal::channel_message::repo::ChannelMessageRepo;
 
@@ -23,11 +23,11 @@ use crate::storage::dal::channel_message::repo::ChannelMessageRepo;
 pub async fn dispatch_debounced(runtime: &Arc<Runtime>, input: DebouncedInput) {
     let account = input.account.clone();
     if let Err(e) = try_dispatch_debounced(runtime, input).await {
-        slog!(error, "channel", "dispatch_failed",
-            agent_id = %account.agent_id,
-            channel_type = %account.channel_type,
-            account_id = %account.channel_account_id,
-            error = %e,
+        diagnostics::log_channel_dispatch_failed(
+            &account.agent_id,
+            &account.channel_type,
+            &account.channel_account_id,
+            &e,
         );
     }
 }
@@ -134,12 +134,12 @@ async fn handle_slash_command(
     {
         Ok(session) => session,
         Err(error) => {
-            slog!(warn, "channel", "session_reset_failed",
-                agent_id = %account.agent_id,
-                channel_type = %account.channel_type,
-                account_id = %account.channel_account_id,
+            diagnostics::log_channel_session_reset_failed(
+                &account.agent_id,
+                &account.channel_type,
+                &account.channel_account_id,
                 chat_id,
-                error = %error,
+                &error,
             );
             if let Some(ref ob) = ctx.outbound {
                 let _ = ob
@@ -190,10 +190,10 @@ async fn is_duplicate(
                     )
                     .await
                     .unwrap_or_else(|e| {
-                        slog!(warn, "channel", "dedup_check_failed",
-                            message_id = %msg.message_id,
-                            channel_type = %account.channel_type,
-                            error = %e,
+                        diagnostics::log_channel_dedup_check_failed(
+                            &msg.message_id,
+                            &account.channel_type,
+                            &e,
                         );
                         false
                     })
@@ -396,9 +396,7 @@ async fn try_dispatch_debounced(
     }
 
     if is_duplicate(&ctx.msg_repo, account, &input.all_events).await {
-        slog!(info, "channel", "dedup_skipped",
-            channel_type = %account.channel_type,
-        );
+        diagnostics::log_channel_dedup_skipped(&account.channel_type);
         return Ok(());
     }
 

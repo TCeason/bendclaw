@@ -6,8 +6,8 @@ use tokio::sync::mpsc;
 
 use crate::kernel::channel::delivery::retry::send_with_retry;
 use crate::kernel::channel::delivery::retry::RetryConfig;
+use crate::kernel::channel::diagnostics;
 use crate::kernel::channel::plugin::ChannelOutbound;
-use crate::observability::log::slog;
 
 /// A message queued for delayed retry after immediate retries failed.
 pub struct QueuedMessage {
@@ -50,7 +50,7 @@ impl OutboundQueue {
     /// Enqueue a message for delayed retry. Non-blocking; drops on full.
     pub fn enqueue(&self, msg: QueuedMessage) {
         if self.tx.try_send(msg).is_err() {
-            slog!(warn, "channel", "queue_full",);
+            diagnostics::log_channel_queue_full();
         }
     }
 }
@@ -119,11 +119,7 @@ async fn handle_queued_message(
         Ok(_) => {}
         Err(e) if msg.attempt < max_attempts => {
             let backoff = Duration::from_secs(2u64.pow(msg.attempt as u32).min(60));
-            slog!(warn, "channel", "retry",
-                error = %e,
-                attempt = msg.attempt,
-                next_backoff_secs = backoff.as_secs(),
-            );
+            diagnostics::log_channel_retry(&e, msg.attempt, backoff.as_secs());
             let next = QueuedMessage {
                 outbound: msg.outbound,
                 config: msg.config,
@@ -133,15 +129,11 @@ async fn handle_queued_message(
                 next_attempt_at: Instant::now() + backoff,
             };
             if re_enqueue_tx.try_send(next).is_err() {
-                slog!(error, "channel", "dead_letter",);
+                diagnostics::log_channel_dead_letter();
             }
         }
         Err(e) => {
-            slog!(error, "channel", "dead_letter",
-                error = %e,
-                attempt = msg.attempt,
-                chat_id = %msg.chat_id,
-            );
+            diagnostics::log_channel_dead_letter_failed(&e, msg.attempt, &msg.chat_id);
         }
     }
 }

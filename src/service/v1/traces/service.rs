@@ -59,7 +59,7 @@ pub async fn get_trace(
 pub async fn traces_summary(
     state: &AppState,
     agent_id: &str,
-) -> Result<crate::storage::AgentTraceSummary> {
+) -> Result<crate::storage::dal::trace::AgentTraceSummary> {
     let pool = state.runtime.databases().agent_pool(agent_id)?;
     let repo = TraceRepo::new(pool);
     Ok(repo.summary_for_agent(agent_id).await?)
@@ -69,7 +69,7 @@ pub async fn list_spans(
     state: &AppState,
     agent_id: &str,
     trace_id: &str,
-) -> Result<Vec<crate::storage::SpanRecord>> {
+) -> Result<Vec<crate::storage::dal::trace::record::SpanRecord>> {
     let pool = state.runtime.databases().agent_pool(agent_id)?;
     let span_repo = SpanRepo::new(pool);
     Ok(span_repo.list_by_trace(trace_id).await?)

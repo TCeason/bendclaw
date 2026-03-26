@@ -66,7 +66,7 @@ pub async fn list_runs(
         } else {
             None
         };
-        data.push(to_response(record, events)?);
+        data.push(to_response(record, events).map_err(ServiceError::from)?);
     }
 
     Ok(Paginated::new(data, &q.list, total))
@@ -81,7 +81,7 @@ pub async fn get_run(state: &AppState, agent_id: &str, run_id: &str) -> Result<R
         .await?
         .ok_or_else(|| ServiceError::AgentNotFound(format!("run '{run_id}' not found")))?;
     let events = load_run_events(&events_repo, run_id).await?;
-    to_response(record, Some(events))
+    to_response(record, Some(events)).map_err(ServiceError::from)
 }
 
 pub async fn load_run_record(state: &AppState, agent_id: &str, run_id: &str) -> Result<RunRecord> {
@@ -341,7 +341,10 @@ pub(super) fn should_skip_event(event: &Event) -> bool {
     )
 }
 
-fn to_response(record: RunRecord, events: Option<Vec<RunEventResponse>>) -> Result<RunResponse> {
+fn to_response(
+    record: RunRecord,
+    events: Option<Vec<RunEventResponse>>,
+) -> std::result::Result<RunResponse, crate::base::ErrorCode> {
     let metrics = record.metrics_json()?;
     Ok(RunResponse {
         id: record.id,

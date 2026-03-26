@@ -1,7 +1,7 @@
 use tokio::sync::mpsc;
 
+use crate::kernel::channel::diagnostics;
 use crate::kernel::channel::message::InboundEvent;
-use crate::observability::log::slog;
 
 pub struct BackpressureConfig {
     /// When remaining capacity drops below this, reply "busy".
@@ -46,24 +46,18 @@ impl BackpressureSender {
             match self.inner.try_send(event) {
                 Ok(()) => BackpressureResult::Busy,
                 Err(_) => {
-                    slog!(warn, "channel", "rejected",);
+                    diagnostics::log_channel_rejected();
                     BackpressureResult::Rejected
                 }
             }
         } else if remaining <= self.busy_threshold {
             match self.inner.try_send(event) {
                 Ok(()) => {
-                    slog!(
-                        info,
-                        "channel",
-                        "busy",
-                        remaining,
-                        threshold = self.busy_threshold,
-                    );
+                    diagnostics::log_channel_busy(remaining, self.busy_threshold);
                     BackpressureResult::Busy
                 }
                 Err(_) => {
-                    slog!(warn, "channel", "rejected",);
+                    diagnostics::log_channel_rejected();
                     BackpressureResult::Rejected
                 }
             }

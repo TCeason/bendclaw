@@ -1,4 +1,5 @@
 pub mod cache;
+pub(crate) mod diagnostics;
 pub mod executor;
 pub mod fs;
 pub mod hub;

@@ -5,7 +5,7 @@ use crate::service::error::Result;
 use crate::service::state::AppState;
 use crate::storage::dal::usage::repo::UsageRepo;
 
-fn to_summary(s: crate::storage::CostSummary) -> UsageSummaryResponse {
+fn to_summary(s: crate::storage::dal::usage::CostSummary) -> UsageSummaryResponse {
     UsageSummaryResponse {
         total_prompt_tokens: s.total_prompt_tokens,
         total_completion_tokens: s.total_completion_tokens,
@@ -49,7 +49,7 @@ pub async fn usage_daily(
 
 pub async fn global_usage_summary(state: &AppState) -> Result<UsageSummaryResponse> {
     let agent_ids = state.runtime.databases().list_agent_ids().await?;
-    let mut total = crate::storage::CostSummary::default();
+    let mut total = crate::storage::dal::usage::CostSummary::default();
     for agent_id in &agent_ids {
         if let Ok(pool) = state.runtime.databases().agent_pool(agent_id) {
             let repo = UsageRepo::new(pool);

@@ -19,16 +19,26 @@ impl Engine {
         state: &mut RunLoopState,
         iteration: u32,
     ) -> (LLMResponse, Option<String>) {
-        let prepared = self.prepare_llm_request(iteration);
+        let llm_call_id = format!("llm_{}", crate::base::new_id());
+        let mut prepared = self.prepare_llm_request(iteration);
         let prepared_summary = diagnostics::summarize_prepared_llm_request(&prepared);
-        diagnostics::log_llm_context(self.ops_ctx(iteration), &prepared_summary);
+        diagnostics::log_llm_context_with_call_id(
+            self.ops_ctx(iteration),
+            &llm_call_id,
+            &prepared_summary,
+        );
         diagnostics::log_llm_request(
             self.ops_ctx(iteration),
+            &llm_call_id,
             self.ctx.model.as_ref(),
             &format!("{:?}", self.ctx.tool_view.strategy()),
             self.ctx.temperature,
             prepared.request_bytes,
             &prepared_summary,
+        );
+        prepared.request_payload.insert(
+            "llm_call_id".to_string(),
+            serde_json::json!(llm_call_id.clone()),
         );
         self.emit_audit("llm.request", prepared.request_payload.clone())
             .await;
@@ -67,11 +77,11 @@ impl Engine {
 
         let llm_error = if turn.has_error() {
             let err = turn.take_error().unwrap_or_default();
-            self.handle_llm_error(iteration, &llm_span, &turn, &err, ttft_ms)
+            self.handle_llm_error(iteration, &llm_call_id, &llm_span, &turn, &err, ttft_ms)
                 .await;
             Some(err)
         } else {
-            self.handle_llm_success(iteration, &llm_span, &turn, ttft_ms)
+            self.handle_llm_success(iteration, &llm_call_id, &llm_span, &turn, ttft_ms)
                 .await;
             None
         };
@@ -82,6 +92,7 @@ impl Engine {
     async fn handle_llm_error(
         &mut self,
         iteration: u32,
+        llm_call_id: &str,
         llm_span: &crate::kernel::trace::TraceSpan,
         turn: &LLMResponse,
         err: &str,
@@ -108,6 +119,7 @@ impl Engine {
 
         let mut payload = diagnostics::build_llm_response_payload(
             self.audit_payload(iteration),
+            llm_call_id,
             self.ctx.model.as_ref(),
             turn,
             ttft_ms,
@@ -115,6 +127,7 @@ impl Engine {
         payload.insert("error".to_string(), serde_json::json!(err));
         diagnostics::log_llm_failure(
             self.ops_ctx(iteration),
+            llm_call_id,
             self.ctx.model.as_ref(),
             turn,
             err,
@@ -127,6 +140,7 @@ impl Engine {
     async fn handle_llm_success(
         &mut self,
         iteration: u32,
+        llm_call_id: &str,
         llm_span: &crate::kernel::trace::TraceSpan,
         turn: &LLMResponse,
         ttft_ms: u64,
@@ -162,16 +176,18 @@ impl Engine {
 
         diagnostics::log_llm_success(
             self.ops_ctx(iteration),
+            llm_call_id,
             self.ctx.model.as_ref(),
             turn,
             ms,
             ttft_ms,
         );
-        diagnostics::log_llm_final_output(self.ops_ctx(iteration), turn);
+        diagnostics::log_llm_final_output(self.ops_ctx(iteration), llm_call_id, turn);
         self.emit_audit(
             "llm.response",
             diagnostics::build_llm_response_payload(
                 self.audit_payload(iteration),
+                llm_call_id,
                 self.ctx.model.as_ref(),
                 turn,
                 ttft_ms,
@@ -187,12 +203,30 @@ impl Engine {
         let stream_start = Instant::now();
         let mut chunk_count = 0u32;
         let mut bytes = 0u64;
+        let mut content_events = 0u32;
+        let mut thinking_events = 0u32;
+        let mut tool_start_events = 0u32;
+        let mut tool_delta_events = 0u32;
+        let mut tool_end_events = 0u32;
+        let mut usage_events = 0u32;
+        let mut done_events = 0u32;
+        let mut error_events = 0u32;
         loop {
             tokio::select! {
                 event = stream.next() => {
                     match event {
                         Some(event) => {
                             chunk_count += 1;
+                            match &event {
+                                crate::llm::stream::StreamEvent::ContentDelta(_) => content_events += 1,
+                                crate::llm::stream::StreamEvent::ThinkingDelta(_) => thinking_events += 1,
+                                crate::llm::stream::StreamEvent::ToolCallStart { .. } => tool_start_events += 1,
+                                crate::llm::stream::StreamEvent::ToolCallDelta { .. } => tool_delta_events += 1,
+                                crate::llm::stream::StreamEvent::ToolCallEnd { .. } => tool_end_events += 1,
+                                crate::llm::stream::StreamEvent::Usage(_) => usage_events += 1,
+                                crate::llm::stream::StreamEvent::Done { .. } => done_events += 1,
+                                crate::llm::stream::StreamEvent::Error(_) => error_events += 1,
+                            }
                             bytes += match &event {
                                 crate::llm::stream::StreamEvent::ContentDelta(chunk)
                                 | crate::llm::stream::StreamEvent::ThinkingDelta(chunk)
@@ -236,6 +270,11 @@ impl Engine {
             }
         }
         resp.set_stream_stats(chunk_count, bytes);
+        resp.set_stream_event_summary(
+            format!(
+                "content:{content_events},thinking:{thinking_events},tool_start:{tool_start_events},tool_delta:{tool_delta_events},tool_end:{tool_end_events},usage:{usage_events},done:{done_events},error:{error_events}"
+            ),
+        );
         resp
     }
 }

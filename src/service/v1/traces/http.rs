@@ -9,7 +9,7 @@ use super::service;
 use crate::service::context::RequestContext;
 use crate::service::error::Result;
 use crate::service::state::AppState;
-use crate::storage::SpanRecord;
+use crate::storage::dal::trace::record::SpanRecord;
 
 #[derive(Serialize)]
 pub struct TraceResponse {
@@ -70,7 +70,7 @@ pub async fn traces_summary(
     State(state): State<AppState>,
     _ctx: RequestContext,
     Path(agent_id): Path<String>,
-) -> Result<Json<crate::storage::AgentTraceSummary>> {
+) -> Result<Json<crate::storage::dal::trace::AgentTraceSummary>> {
     Ok(Json(service::traces_summary(&state, &agent_id).await?))
 }
 

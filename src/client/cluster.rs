@@ -3,9 +3,11 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::base::http;
 use crate::base::ErrorCode;
 use crate::base::Result;
-use crate::observability::log::slog;
+use crate::client::cluster_diagnostics;
+use crate::client::http_adapter;
 
 /// Client for the evot-ai cluster registry API.
 /// Handles node registration, heartbeat, discovery, and deregistration.
@@ -103,20 +105,28 @@ impl ClusterClient {
             cluster_id: &self.cluster_id,
             data: serde_json::to_value(&meta).unwrap_or_default(),
         };
-        let resp = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.api_token)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                ErrorCode::cluster_registration(format!("register request failed: {e}"))
-            })?;
+        let resp = http::send(
+            self.client
+                .post(&url)
+                .bearer_auth(&self.api_token)
+                .json(&body),
+            http::HttpRequestContext::new("client", "cluster_registration")
+                .with_endpoint("cluster_registry")
+                .with_url(url.clone()),
+        )
+        .await
+        .map_err(|err| http_adapter::to_cluster_registration("cluster_registration", err))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
+            let text = http::read_text(
+                resp,
+                http::HttpRequestContext::new("client", "cluster_registration_read_error")
+                    .with_endpoint("cluster_registry")
+                    .with_url(url.clone()),
+            )
+            .await
+            .unwrap_or_default();
             return Err(ErrorCode::cluster_registration(format!(
                 "register failed: HTTP {status}: {text}"
             )));
@@ -131,19 +141,25 @@ impl ClusterClient {
             "{}/v1/cluster/nodes/{}/heartbeat",
             self.base_url, self.node_id
         );
-        let resp = self
-            .client
-            .put(&url)
-            .bearer_auth(&self.api_token)
-            .send()
-            .await
-            .map_err(|e| {
-                ErrorCode::cluster_registration(format!("heartbeat request failed: {e}"))
-            })?;
+        let resp = http::send(
+            self.client.put(&url).bearer_auth(&self.api_token),
+            http::HttpRequestContext::new("client", "cluster_registration")
+                .with_endpoint("cluster_registry")
+                .with_url(url.clone()),
+        )
+        .await
+        .map_err(|err| http_adapter::to_cluster_registration("cluster_registration", err))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
+            let text = http::read_text(
+                resp,
+                http::HttpRequestContext::new("client", "cluster_registration_read_error")
+                    .with_endpoint("cluster_registry")
+                    .with_url(url.clone()),
+            )
+            .await
+            .unwrap_or_default();
             return Err(ErrorCode::cluster_registration(format!(
                 "heartbeat failed: HTTP {status}: {text}"
             )));
@@ -157,26 +173,38 @@ impl ClusterClient {
             "{}/v1/cluster/nodes?cluster_id={}",
             self.base_url, self.cluster_id
         );
-        let resp = self
-            .client
-            .get(&url)
-            .bearer_auth(&self.api_token)
-            .send()
-            .await
-            .map_err(|e| ErrorCode::cluster_discovery(format!("discover request failed: {e}")))?;
+        let resp = http::send(
+            self.client.get(&url).bearer_auth(&self.api_token),
+            http::HttpRequestContext::new("client", "cluster_discovery")
+                .with_endpoint("cluster_registry")
+                .with_url(url.clone()),
+        )
+        .await
+        .map_err(|err| http_adapter::to_cluster_discovery("cluster_discovery", err))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
+            let text = http::read_text(
+                resp,
+                http::HttpRequestContext::new("client", "cluster_discovery_read_error")
+                    .with_endpoint("cluster_registry")
+                    .with_url(url.clone()),
+            )
+            .await
+            .unwrap_or_default();
             return Err(ErrorCode::cluster_discovery(format!(
                 "discover failed: HTTP {status}: {text}"
             )));
         }
 
-        let nodes: Vec<NodeEntry> = resp
-            .json()
-            .await
-            .map_err(|e| ErrorCode::cluster_discovery(format!("failed to parse nodes: {e}")))?;
+        let nodes: Vec<NodeEntry> = http::read_json(
+            resp,
+            http::HttpRequestContext::new("client", "cluster_discovery_decode")
+                .with_endpoint("cluster_registry")
+                .with_url(url.clone()),
+        )
+        .await
+        .map_err(|err| http_adapter::to_cluster_discovery("cluster_discovery_decode", err))?;
 
         Ok(nodes
             .into_iter()
@@ -187,24 +215,26 @@ impl ClusterClient {
     /// Deregister this node from the cluster registry.
     pub async fn deregister(&self) -> Result<()> {
         let url = format!("{}/v1/cluster/nodes/{}", self.base_url, self.node_id);
-        let resp = self
-            .client
-            .delete(&url)
-            .bearer_auth(&self.api_token)
-            .send()
-            .await
-            .map_err(|e| {
-                ErrorCode::cluster_registration(format!("deregister request failed: {e}"))
-            })?;
+        let resp = http::send(
+            self.client.delete(&url).bearer_auth(&self.api_token),
+            http::HttpRequestContext::new("client", "cluster_registration")
+                .with_endpoint("cluster_registry")
+                .with_url(url.clone()),
+        )
+        .await
+        .map_err(|err| http_adapter::to_cluster_registration("cluster_registration", err))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            slog!(warn, "cluster", "deregister_failed",
-                node_id = %self.node_id,
-                http_status = %status,
-                body = %text,
-            );
+            let text = http::read_text(
+                resp,
+                http::HttpRequestContext::new("client", "cluster_registration_read_error")
+                    .with_endpoint("cluster_registry")
+                    .with_url(url.clone()),
+            )
+            .await
+            .unwrap_or_default();
+            cluster_diagnostics::log_cluster_client_deregister_failed(&self.node_id, status, &text);
         }
         Ok(())
     }

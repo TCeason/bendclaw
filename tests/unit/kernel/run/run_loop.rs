@@ -53,6 +53,27 @@ fn reasoning_turn_cancel_sets_error_state() {
     assert_eq!(err.as_deref(), Some("cancelled"));
     assert!(!turn.has_error());
 }
+
+#[test]
+fn reasoning_turn_exposes_debug_fingerprints() {
+    let mut turn = LLMResponse::new();
+
+    turn.set_debug_fingerprints(
+        "content:1,done:1",
+        "text>done",
+        "text-hash",
+        "thinking-hash",
+        "tool-hash",
+        "response-hash",
+    );
+
+    assert_eq!(turn.stream_event_summary(), "content:1,done:1");
+    assert_eq!(turn.stream_event_sequence(), "text>done");
+    assert_eq!(turn.text_fingerprint(), "text-hash");
+    assert_eq!(turn.thinking_fingerprint(), "thinking-hash");
+    assert_eq!(turn.tool_call_fingerprint(), "tool-hash");
+    assert_eq!(turn.response_fingerprint(), "response-hash");
+}
 // ── RunLoopState ──
 
 #[test]

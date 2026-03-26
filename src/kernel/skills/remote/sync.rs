@@ -10,28 +10,22 @@ use super::repository::DatabendSkillRepository;
 use super::repository::SkillRepository;
 use super::writer;
 use crate::base::Result;
+use crate::kernel::skills::diagnostics;
 use crate::kernel::skills::skill::Skill;
-use crate::observability::log::slog;
 use crate::storage::AgentDatabases;
 
 pub async fn sync(databases: &Arc<AgentDatabases>, workspace_root: &std::path::Path) -> Result<()> {
     let agent_ids = match databases.list_agent_ids().await {
         Ok(ids) => ids,
         Err(e) => {
-            slog!(warn, "skill_sync", "db_list_failed", error = %e,);
+            diagnostics::log_skill_sync_db_list_failed(&e);
             return Ok(());
         }
     };
 
     let all_skills = fetch_all(databases, &agent_ids).await;
 
-    slog!(
-        debug,
-        "skill_sync",
-        "fetched",
-        agents = agent_ids.len(),
-        skills = all_skills.len(),
-    );
+    diagnostics::log_skill_sync_fetched(agent_ids.len(), all_skills.len());
 
     // Collect live keys so we can detect stale dirs
     let mut live_keys: HashSet<(String, String)> = HashSet::new();
@@ -107,7 +101,7 @@ async fn fetch_all(databases: &Arc<AgentDatabases>, agent_ids: &[String]) -> Vec
         let pool = match databases.agent_pool(agent_id) {
             Ok(p) => p,
             Err(e) => {
-                slog!(warn, "skill_sync", "db_skipped", agent_id = %agent_id, error = %e,);
+                diagnostics::log_skill_sync_db_skipped(agent_id, &e);
                 continue;
             }
         };
@@ -132,7 +126,7 @@ async fn fetch_all(databases: &Arc<AgentDatabases>, agent_ids: &[String]) -> Vec
                             all_skills.push(skill);
                         }
                         Err(e) => {
-                            slog!(warn, "skill_sync", "skill_fetch_failed", skill = %skill.name, error = %e,);
+                            diagnostics::log_skill_sync_fetch_failed(&skill.name, &e);
                             seen.insert(key);
                             all_skills.push(skill);
                         }
@@ -140,7 +134,7 @@ async fn fetch_all(databases: &Arc<AgentDatabases>, agent_ids: &[String]) -> Vec
                 }
             }
             Err(e) => {
-                slog!(warn, "skill_sync", "skill_list_failed", agent_id = %agent_id, error = %e,);
+                diagnostics::log_skill_sync_list_failed(agent_id, &e);
             }
         }
     }
@@ -166,7 +160,7 @@ pub fn spawn_sync_task(
                     if let Err(e) = store.refresh().await {
                         consecutive_errors += 1;
                         if consecutive_errors == 1 || consecutive_errors.is_multiple_of(20) {
-                            slog!(error, "skill_sync", "failed", error = %e, consecutive_errors,);
+                            diagnostics::log_skill_sync_failed(&e, consecutive_errors);
                         }
                         // Exponential backoff: 60s, 120s, 240s, capped at 300s
                         let secs = (60u64 << (consecutive_errors - 1).min(3)).min(300);

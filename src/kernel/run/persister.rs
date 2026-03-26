@@ -8,12 +8,12 @@ use crate::kernel::agent_store::AgentStore;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::persist_op::PersistOp;
 use crate::kernel::run::persist_op::PersistWriter;
+use crate::kernel::run::persister_diagnostics;
 use crate::kernel::run::result::Reason;
 use crate::kernel::run::result::Result as AgentResult;
 use crate::kernel::trace::TraceRecorder;
 use crate::observability::audit;
 use crate::observability::log::run_log;
-use crate::observability::log::slog;
 use crate::observability::server_log;
 use crate::storage::dal::run::record::RunMetrics;
 use crate::storage::dal::run::record::RunStatus;
@@ -179,12 +179,12 @@ impl TurnPersister {
         let duration_ms = self.start.elapsed().as_millis() as u64;
         let error_text = format!("{error}");
 
-        slog!(error, "run", "failed",
-            agent_id = %self.agent_id,
-            session_id = %self.session_id,
-            run_id = %self.run_id,
-            elapsed_ms = duration_ms,
-            error = %error_text,
+        persister_diagnostics::log_run_failed(
+            &self.agent_id,
+            &self.session_id,
+            &self.run_id,
+            duration_ms,
+            &error_text,
         );
 
         let mut all_events = events.to_vec();

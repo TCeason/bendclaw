@@ -4,12 +4,9 @@ use crate::observability::server_log;
 pub(crate) struct ContextPreview {
     pub(crate) previous_user: String,
     pub(crate) previous_assistant: String,
-    pub(crate) history_tail: String,
     pub(crate) role_counts: String,
     pub(crate) source_counts: String,
     pub(crate) repeated_input_count: usize,
-    pub(crate) repeated_input_run_ids: String,
-    pub(crate) provenance_tail: String,
 }
 
 pub(crate) struct HistoryLoadSummary {
@@ -24,20 +21,18 @@ pub(crate) struct HistoryLoadSummary {
 
 impl ContextPreview {
     pub(crate) fn from_history(
+        prior_history: &[Message],
         history: &[Message],
         current_input: &str,
         current_run_id: &str,
     ) -> Self {
         let repeated_inputs = repeated_prior_input_run_ids(history, current_input, current_run_id);
         Self {
-            previous_user: last_role_preview(history, crate::base::Role::User),
-            previous_assistant: last_role_preview(history, crate::base::Role::Assistant),
-            history_tail: history_tail_summary(history, 6),
+            previous_user: last_role_preview(prior_history, crate::base::Role::User),
+            previous_assistant: last_role_preview(prior_history, crate::base::Role::Assistant),
             role_counts: role_count_summary(history),
             source_counts: source_count_summary(history, current_run_id),
             repeated_input_count: repeated_inputs.len(),
-            repeated_input_run_ids: repeated_inputs.join(","),
-            provenance_tail: provenance_tail_summary(history, current_run_id, 8),
         }
     }
 }
@@ -116,9 +111,6 @@ pub(crate) fn log_context_prepared(
         role_counts = %preview.role_counts,
         source_counts = %preview.source_counts,
         repeated_input_count = preview.repeated_input_count as u64,
-        repeated_input_run_ids = %preview.repeated_input_run_ids,
-        provenance_tail = %preview.provenance_tail,
-        history_tail = %preview.history_tail,
     );
 }
 
@@ -171,6 +163,50 @@ pub(crate) fn log_run_rejected(session_id: &str, agent_id: &str, active_run_id: 
     );
 }
 
+pub(crate) fn log_session_resolved(
+    session_id: &str,
+    base_key: &str,
+    source: &str,
+    mode: Option<&str>,
+) {
+    crate::observability::log::slog!(info, "session", "resolved",
+        session_id = %session_id,
+        base_key,
+        source,
+        mode = %mode.unwrap_or(""),
+    );
+}
+
+pub(crate) fn log_session_replaced(
+    base_key: &str,
+    previous_session_id: &str,
+    session_id: &str,
+    reset_reason: &str,
+) {
+    crate::observability::log::slog!(info, "session", "replaced",
+        base_key,
+        previous_session_id = %previous_session_id,
+        session_id = %session_id,
+        reset_reason,
+    );
+}
+
+pub(crate) fn log_session_started(base_key: &str, session_id: &str, reset_reason: &str) {
+    crate::observability::log::slog!(info, "session", "started",
+        base_key,
+        session_id = %session_id,
+        reset_reason,
+    );
+}
+
+pub(crate) fn log_session_created(session_id: &str, user_id: &str) {
+    crate::observability::log::slog!(info, "session", "created",
+        session_id = %session_id,
+        user_id,
+        base_key = "",
+    );
+}
+
 fn last_role_preview(history: &[Message], role: crate::base::Role) -> String {
     history
         .iter()
@@ -178,27 +214,6 @@ fn last_role_preview(history: &[Message], role: crate::base::Role) -> String {
         .find(|msg| msg.role() == Some(role.clone()))
         .map(|msg| server_log::preview_text(&msg.text()))
         .unwrap_or_default()
-}
-
-fn history_tail_summary(history: &[Message], limit: usize) -> String {
-    let start = history.len().saturating_sub(limit);
-    history[start..]
-        .iter()
-        .filter_map(|msg| {
-            let role = msg.role()?;
-            let label = match role {
-                crate::base::Role::System => "system",
-                crate::base::Role::User => "user",
-                crate::base::Role::Assistant => "assistant",
-                crate::base::Role::Tool => "tool",
-            };
-            Some(format!(
-                "{label}: {}",
-                server_log::preview_text(&msg.text())
-            ))
-        })
-        .collect::<Vec<_>>()
-        .join(" | ")
 }
 
 fn role_count_summary(history: &[Message]) -> String {
@@ -241,34 +256,6 @@ fn source_count_summary(history: &[Message], current_run_id: &str) -> String {
     format!(
         "checkpoint:{checkpoint},history_replay:{history_replay},current_run:{current_run},tool_result:{tool_result},runtime:{runtime}"
     )
-}
-
-fn provenance_tail_summary(history: &[Message], current_run_id: &str, limit: usize) -> String {
-    let start = history.len().saturating_sub(limit);
-    history[start..]
-        .iter()
-        .map(|msg| {
-            let role = msg
-                .role()
-                .map(|role| role.to_string())
-                .unwrap_or_else(|| "meta".to_string());
-            let source = message_source(msg, current_run_id);
-            let run_id = msg
-                .origin_run_id()
-                .map(server_log::short_run_id)
-                .unwrap_or("");
-            let run_suffix = if run_id.is_empty() {
-                String::new()
-            } else {
-                format!(" run={run_id}")
-            };
-            format!(
-                "{role}[{source}{run_suffix}]: {}",
-                server_log::preview_text(&msg.text())
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" | ")
 }
 
 fn repeated_prior_input_run_ids(

@@ -9,10 +9,12 @@ use backon::Retryable;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::base::http;
 use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::observability::log::slog;
 use crate::observability::log::storage_log;
+use crate::storage::http_adapter;
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(60);
 const SQL_LOG_MAX_LEN: usize = 200;
@@ -82,45 +84,62 @@ impl DatabendClient for HttpDatabendClient {
             session,
         };
 
-        let resp = self
-            .client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .header("X-DatabendCloud-Token", &self.token)
-            .header("X-DatabendCloud-Warehouse", &self.warehouse)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| classify_reqwest_error(e, "query"))?;
+        let resp = http::send(
+            self.client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .header("X-DatabendCloud-Token", &self.token)
+                .header("X-DatabendCloud-Warehouse", &self.warehouse)
+                .json(&body),
+            http::HttpRequestContext::new("storage", "query")
+                .with_endpoint("storage_proxy")
+                .with_warehouse(self.warehouse.clone())
+                .with_url(url.clone()),
+        )
+        .await
+        .map_err(|err| http_adapter::to_storage_error("query", err))?;
 
-        parse_response(resp, "query").await
+        parse_response(resp, "query", &self.warehouse).await
     }
 
     async fn page(&self, uri: &str) -> Result<QueryResponse> {
         let url = resolve_url(&self.base_url, uri);
-        let resp = self
-            .client
-            .get(&url)
-            .header("X-DatabendCloud-Token", &self.token)
-            .header("X-DatabendCloud-Warehouse", &self.warehouse)
-            .send()
-            .await
-            .map_err(|e| classify_reqwest_error(e, "page"))?;
+        let resp = http::send(
+            self.client
+                .get(&url)
+                .header("X-DatabendCloud-Token", &self.token)
+                .header("X-DatabendCloud-Warehouse", &self.warehouse),
+            http::HttpRequestContext::new("storage", "page")
+                .with_endpoint("storage_proxy")
+                .with_warehouse(self.warehouse.clone())
+                .with_url(url.clone()),
+        )
+        .await
+        .map_err(|err| http_adapter::to_storage_error("page", err))?;
 
-        parse_response(resp, "page").await
+        parse_response(resp, "page", &self.warehouse).await
     }
 
     async fn finalize(&self, uri: &str) -> Result<()> {
         let url = resolve_url(&self.base_url, uri);
-        if let Err(error) = self
-            .client
-            .get(&url)
-            .header("X-DatabendCloud-Token", &self.token)
-            .header("X-DatabendCloud-Warehouse", &self.warehouse)
-            .send()
-            .await
+        if let Err(error) = http::send(
+            self.client
+                .get(&url)
+                .header("X-DatabendCloud-Token", &self.token)
+                .header("X-DatabendCloud-Warehouse", &self.warehouse),
+            http::HttpRequestContext::new("storage", "finalize")
+                .with_endpoint("storage_proxy")
+                .with_warehouse(self.warehouse.clone())
+                .with_url(url.clone()),
+        )
+        .await
+        .map_err(|err| http_adapter::to_storage_error("finalize", err))
         {
-            slog!(warn, "storage", "finalize_failed", url = %url, error = %error,);
+            slog!(warn, "storage", "finalize_failed",
+                url = %url,
+                warehouse = %self.warehouse,
+                error = %error,
+            );
         }
         Ok(())
     }
@@ -394,12 +413,36 @@ fn resolve_url(base_url: &str, uri: &str) -> String {
     format!("{base_url}{uri}")
 }
 
-async fn parse_response(resp: reqwest::Response, context: &str) -> Result<QueryResponse> {
+async fn parse_response(
+    resp: reqwest::Response,
+    context: &str,
+    warehouse: &str,
+) -> Result<QueryResponse> {
     let status = resp.status();
     if !status.is_success() {
+        let url = resp.url().to_string();
         let body = resp.text().await.unwrap_or_default();
         let code = status.as_u16();
         let lower = body.to_lowercase();
+        let proxy_error = parse_storage_proxy_error(&body);
+
+        match &proxy_error {
+            Some(error) => slog!(error, "storage", "upstream_failed",
+                operation = context,
+                warehouse,
+                upstream_status = code,
+                upstream_error = %error.error,
+                upstream_message = %error.message,
+                url = %url,
+            ),
+            None => slog!(error, "storage", "upstream_failed",
+                operation = context,
+                warehouse,
+                upstream_status = code,
+                upstream_body = %body,
+                url = %url,
+            ),
+        }
 
         // Database not found — permanent, no retry
         if lower.contains("unknown database")
@@ -426,19 +469,16 @@ async fn parse_response(resp: reqwest::Response, context: &str) -> Result<QueryR
             "{context}: HTTP {status}: {body}"
         )));
     }
-    resp.json::<QueryResponse>()
-        .await
-        .map_err(|e| ErrorCode::storage_exec(format!("{context}: failed to parse response: {e}")))
-}
-
-fn classify_reqwest_error(e: reqwest::Error, context: &str) -> ErrorCode {
-    if e.is_timeout() {
-        ErrorCode::timeout(format!("{context}: request timed out"))
-    } else if e.is_connect() {
-        ErrorCode::storage_connection(format!("{context}: connection failed: {e}"))
-    } else {
-        ErrorCode::storage_exec(format!("{context}: {e}"))
-    }
+    let url = resp.url().to_string();
+    http::read_json(
+        resp,
+        http::HttpRequestContext::new("storage", format!("{context}_decode"))
+            .with_endpoint("storage_proxy")
+            .with_warehouse(warehouse.to_string())
+            .with_url(url),
+    )
+    .await
+    .map_err(|err| http_adapter::to_storage_error(context, err))
 }
 
 fn classify_api_error(e: &ApiError) -> ErrorCode {
@@ -449,6 +489,22 @@ fn classify_api_error(e: &ApiError) -> ErrorCode {
         return ErrorCode::not_found(e.message.clone());
     }
     ErrorCode::storage_exec(format!("code {}: {}", e.code, e.message))
+}
+
+#[derive(Debug, Deserialize)]
+struct StorageProxyError {
+    #[serde(default)]
+    error: String,
+    #[serde(default)]
+    message: String,
+}
+
+fn parse_storage_proxy_error(body: &str) -> Option<StorageProxyError> {
+    let parsed = serde_json::from_str::<StorageProxyError>(body).ok()?;
+    if parsed.error.is_empty() && parsed.message.is_empty() {
+        return None;
+    }
+    Some(parsed)
 }
 
 fn backoff_builder() -> ExponentialBuilder {

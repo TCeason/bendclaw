@@ -10,13 +10,13 @@ use crate::base::Result;
 use crate::kernel::channel::capabilities::ChannelCapabilities;
 use crate::kernel::channel::capabilities::ChannelKind;
 use crate::kernel::channel::capabilities::InboundMode;
+use crate::kernel::channel::diagnostics;
 use crate::kernel::channel::message::InboundEvent;
 use crate::kernel::channel::message::ReplyContext;
 use crate::kernel::channel::plugin::ChannelOutbound;
 use crate::kernel::channel::plugin::ChannelPlugin;
 use crate::kernel::channel::plugin::InboundKind;
 use crate::kernel::channel::plugin::WebhookHandler;
-use crate::observability::log::slog;
 
 pub const GITHUB_CHANNEL_TYPE: &str = "github";
 const GITHUB_API: &str = "https://api.github.com";
@@ -181,15 +181,7 @@ impl ChannelOutbound for GitHubOutbound {
             .send()
             .await
             .map_err(|e| ErrorCode::internal(format!("github reaction: {e}")))?;
-        slog!(
-            info,
-            "channel",
-            "sent",
-            channel_type = "github",
-            chat_id,
-            message_id = msg_id,
-            emoji,
-        );
+        diagnostics::log_channel_sent_github_reaction(chat_id, msg_id, emoji);
         Ok(())
     }
 }

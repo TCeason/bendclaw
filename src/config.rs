@@ -306,6 +306,19 @@ impl Default for HubConfig {
 }
 
 impl BendClawConfig {
+    pub fn llm_slot_summaries(&self) -> Vec<String> {
+        self.llm
+            .providers
+            .iter()
+            .map(|provider| {
+                format!(
+                    "{}|{}|{}|{}",
+                    provider.name, provider.provider, provider.model, provider.base_url
+                )
+            })
+            .collect()
+    }
+
     /// Load from a TOML file, then apply env-var overrides.
     pub fn load(path: &str) -> anyhow::Result<Self> {
         let content = fs::read_to_string(path)
@@ -447,12 +460,14 @@ impl BendClawConfig {
 
     /// Log key config fields with sensitive fields redacted.
     pub fn log_non_defaults(&self) {
-        let providers: Vec<&str> = self.llm.providers.iter().map(|p| p.name.as_str()).collect();
+        let llm_slots = self.llm_slot_summaries();
         slog!(info, "server", "config",
             node_id = %self.node_id,
             bind_addr = %self.server.bind_addr,
             model = %self.llm.providers.first().map(|p| p.model.as_str()).unwrap_or(""),
-            providers = ?providers,
+            llm_provider = %self.llm.providers.first().map(|p| p.provider.as_str()).unwrap_or(""),
+            llm_base_url = %self.llm.providers.first().map(|p| p.base_url.as_str()).unwrap_or(""),
+            llm_slots = ?llm_slots,
             storage_url = %self.storage.databend_api_base_url,
             log_level = %self.log.level,
             workspace = %self.workspace.root_dir,

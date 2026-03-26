@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use bendclaw::base::ErrorCode;
 use bendclaw::kernel::agent_store::AgentStore;
 use bendclaw::kernel::runtime::agent_config::AgentConfig;
-use bendclaw::kernel::session::session::SessionState;
+use bendclaw::kernel::session::state::SessionState;
 use bendclaw::kernel::session::workspace::SandboxResolver;
 use bendclaw::kernel::session::workspace::Workspace;
 use bendclaw::kernel::session::Session;
@@ -92,13 +92,13 @@ fn test_session(session_id: &str, agent_id: &str) -> Arc<Session> {
             storage: Arc::new(AgentStore::new(pool, llm.clone())),
             llm: Arc::new(RwLock::new(llm)),
             config: Arc::new(AgentConfig::default()),
-            variables: vec![],
+            prompt_variables: vec![],
             cluster_client: None,
             directive: None,
             trace_writer: bendclaw::kernel::trace::TraceWriter::noop(),
             persist_writer: bendclaw::kernel::writer::BackgroundWriter::noop("persist"),
             tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),
-            cached_config: None,
+            prompt_config: None,
         },
     ))
 }

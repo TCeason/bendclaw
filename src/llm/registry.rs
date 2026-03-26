@@ -7,7 +7,7 @@ use crate::base::Result;
 use crate::llm::config::ProviderEndpoint;
 
 /// Factory function type for creating LLM providers.
-type ProviderFactoryFn = dyn Fn(&str, &str) -> Arc<dyn LLMProvider> + Send + Sync;
+type ProviderFactoryFn = dyn Fn(&str, &str) -> Result<Arc<dyn LLMProvider>> + Send + Sync;
 
 /// Registry of LLM provider factories, keyed by name.
 ///
@@ -30,21 +30,23 @@ impl ProviderRegistry {
     pub fn with_builtins() -> Self {
         let mut r = Self::new();
         r.register("openai", |base_url: &str, api_key: &str| {
-            Arc::new(super::providers::openai::OpenAIProvider::new(
+            Ok(Arc::new(super::providers::openai::OpenAIProvider::new(
                 base_url, api_key,
-            )) as Arc<dyn LLMProvider>
+            )?) as Arc<dyn LLMProvider>)
         });
         r.register("anthropic", |base_url: &str, api_key: &str| {
-            Arc::new(super::providers::anthropic::AnthropicProvider::new(
-                base_url, api_key,
-            )) as Arc<dyn LLMProvider>
+            Ok(
+                Arc::new(super::providers::anthropic::AnthropicProvider::new(
+                    base_url, api_key,
+                )?) as Arc<dyn LLMProvider>,
+            )
         });
         r
     }
 
     /// Register a provider factory by name.
     pub fn register<F>(&mut self, name: &str, factory: F)
-    where F: Fn(&str, &str) -> Arc<dyn LLMProvider> + Send + Sync + 'static {
+    where F: Fn(&str, &str) -> Result<Arc<dyn LLMProvider>> + Send + Sync + 'static {
         self.factories.insert(name.to_string(), Arc::new(factory));
     }
 
@@ -62,7 +64,7 @@ impl ProviderRegistry {
             ))
         })?;
 
-        Ok(factory(&endpoint.base_url, &endpoint.api_key))
+        factory(&endpoint.base_url, &endpoint.api_key)
     }
 }
 

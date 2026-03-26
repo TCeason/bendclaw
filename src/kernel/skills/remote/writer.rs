@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use super::paths;
+use crate::kernel::skills::diagnostics;
 use crate::kernel::skills::fs::is_safe_relative_path;
 use crate::kernel::skills::fs::load_skill_from_dir;
 use crate::kernel::skills::fs::load_skill_with_meta;
@@ -17,7 +18,6 @@ use crate::kernel::skills::manifest::SkillManifest;
 use crate::kernel::skills::skill::Skill;
 use crate::kernel::skills::skill::SkillParameter;
 use crate::kernel::skills::skill::SkillRequirements;
-use crate::observability::log::slog;
 
 /// Metadata persisted alongside SKILL.md so that scope, source, agent_id,
 /// etc. survive a round-trip through the filesystem mirror.
@@ -86,7 +86,7 @@ pub fn write_skill(workspace_root: &Path, agent_id: &str, skill: &Skill) -> Opti
         }
         let rel = std::path::Path::new(&f.path);
         if !is_safe_relative_path(rel) {
-            slog!(warn, "skill", "unsafe_path", skill = %skill.name, path = %f.path,);
+            diagnostics::log_skill_unsafe_path(&skill.name, &f.path);
             continue;
         }
         let file_path = tmp_dir.join(rel);

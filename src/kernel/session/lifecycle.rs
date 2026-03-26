@@ -8,8 +8,8 @@ use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::run::persist_op::PersistOp;
 use crate::kernel::run::persist_op::PersistWriter;
+use crate::kernel::session::diagnostics;
 use crate::kernel::session::SessionManager;
-use crate::observability::log::slog;
 use crate::storage::dal::session::record::SessionRecord;
 use crate::storage::dal::session::repo::SessionRepo;
 use crate::storage::dal::session::repo::SessionWrite;
@@ -66,11 +66,7 @@ impl SessionLifecycle {
         if let Some(record) = repo.load_active_by_base_key(base_key).await? {
             self.ensure_owner(&record, agent_id, user_id)?;
             self.remember_session(record.clone());
-            slog!(info, "session", "resolved",
-                base_key,
-                session_id = %record.id,
-                source = "db",
-            );
+            diagnostics::log_session_resolved(&record.id, base_key, "db", None);
             return Ok(record);
         }
 
@@ -85,11 +81,7 @@ impl SessionLifecycle {
         });
         self.remember_session(record.clone());
         self.stage_upsert(&repo, &record);
-        slog!(info, "session", "resolved",
-            base_key,
-            session_id = %record.id,
-            source = "created",
-        );
+        diagnostics::log_session_resolved(&record.id, base_key, "created", None);
         Ok(record)
     }
 
@@ -133,20 +125,11 @@ impl SessionLifecycle {
                 reset_reason: reset_reason.to_string(),
             });
             self.close_live_session(&previous.id).await;
-            slog!(info, "session", "replaced",
-                base_key,
-                previous_session_id = %previous.id,
-                session_id = %record.id,
-                reset_reason,
-            );
+            diagnostics::log_session_replaced(base_key, &previous.id, &record.id, reset_reason);
         } else {
             self.remember_session(record.clone());
             self.stage_upsert(&repo, &record);
-            slog!(info, "session", "started",
-                base_key,
-                session_id = %record.id,
-                reset_reason,
-            );
+            diagnostics::log_session_started(base_key, &record.id, reset_reason);
         }
 
         Ok(record)
@@ -172,11 +155,7 @@ impl SessionLifecycle {
         });
         self.remember_session(record.clone());
         self.stage_upsert(&repo, &record);
-        slog!(info, "session", "created",
-            session_id = %record.id,
-            user_id,
-            base_key = "",
-        );
+        diagnostics::log_session_created(&record.id, user_id);
         Ok(record)
     }
 
@@ -188,12 +167,7 @@ impl SessionLifecycle {
     ) -> Result<SessionRecord> {
         if let Some(record) = self.lookup_session(session_id) {
             self.ensure_owner(&record, agent_id, user_id)?;
-            slog!(info, "session", "resolved",
-                session_id = %record.id,
-                base_key = "",
-                source = "memory",
-                mode = "ensure_direct",
-            );
+            diagnostics::log_session_resolved(&record.id, "", "memory", Some("ensure_direct"));
             return Ok(record);
         }
 
@@ -201,12 +175,7 @@ impl SessionLifecycle {
         if let Some(record) = repo.load(session_id).await? {
             self.ensure_owner(&record, agent_id, user_id)?;
             self.remember_session(record.clone());
-            slog!(info, "session", "resolved",
-                session_id = %record.id,
-                base_key = "",
-                source = "db",
-                mode = "ensure_direct",
-            );
+            diagnostics::log_session_resolved(&record.id, "", "db", Some("ensure_direct"));
             return Ok(record);
         }
 
@@ -221,12 +190,7 @@ impl SessionLifecycle {
         });
         self.remember_session(record.clone());
         self.stage_upsert(&repo, &record);
-        slog!(info, "session", "resolved",
-            session_id = %record.id,
-            base_key = "",
-            source = "created",
-            mode = "ensure_direct",
-        );
+        diagnostics::log_session_resolved(&record.id, "", "created", Some("ensure_direct"));
         Ok(record)
     }
 

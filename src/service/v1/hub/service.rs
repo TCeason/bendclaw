@@ -1,6 +1,5 @@
 use crate::kernel::skills::manifest::CredentialSpec;
 use crate::kernel::skills::skill::Skill;
-use crate::service::error::Result;
 use crate::service::state::AppState;
 
 pub(super) fn list_hub_skills(state: &AppState) -> Vec<Skill> {
@@ -36,12 +35,12 @@ pub(super) fn hub_status(state: &AppState) -> HubStatus {
     }
 }
 
-pub(super) fn skill_credentials(state: &AppState, skill_name: &str) -> Result<Vec<CredentialSpec>> {
+pub(super) fn skill_credentials(state: &AppState, skill_name: &str) -> Vec<CredentialSpec> {
     let skill = state.runtime.skills().get_hub(skill_name);
-    Ok(skill
+    skill
         .and_then(|s| s.manifest)
         .map(|m| m.credentials)
-        .unwrap_or_default())
+        .unwrap_or_default()
 }
 
 pub struct HubStatus {

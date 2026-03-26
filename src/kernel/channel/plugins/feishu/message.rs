@@ -4,16 +4,18 @@ use regex::Regex;
 
 use super::config::is_sender_allowed;
 use super::config::FeishuConfig;
+use crate::kernel::channel::diagnostics;
 use crate::kernel::channel::message::InboundEvent;
 use crate::kernel::channel::message::InboundMessage;
-use crate::observability::log::slog;
 
 // ── At-placeholder stripping ──
 
 /// Remove `@_user_N` placeholders injected by Feishu for @mentions.
 pub fn strip_at_placeholders(text: &str) -> String {
-    let re = Regex::new(r"@_user_\d+").unwrap_or_else(|_| Regex::new(r"$^").unwrap());
-    re.replace_all(text, "").trim().to_string()
+    // Regex is static and valid, but use a safe fallback on any unexpected failure
+    static RE: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"@_user_\d+").expect("static regex is valid"));
+    RE.replace_all(text, "").trim().to_string()
 }
 
 // ── Post (rich text) parsing ──
@@ -178,7 +180,7 @@ pub fn parse_event(
 
     // Sender allow-list check
     if !is_sender_allowed(&config.allow_from, sender_id) {
-        slog!(warn, "feishu_ws", "sender_denied", sender_id,);
+        diagnostics::log_feishu_sender_denied(sender_id);
         return None;
     }
 
@@ -191,7 +193,7 @@ pub fn parse_event(
     let content: serde_json::Value = match serde_json::from_str(content_str) {
         Ok(v) => v,
         Err(e) => {
-            slog!(warn, "feishu_ws", "content_parse_failed", msg_id, error = %e,);
+            diagnostics::log_feishu_content_parse_failed(msg_id, &e);
             return None;
         }
     };
@@ -207,7 +209,7 @@ pub fn parse_event(
             (parsed.text, parsed.mentioned_open_ids)
         }
         _ => {
-            slog!(warn, "feishu_ws", "unsupported_msg_type", msg_type, msg_id,);
+            diagnostics::log_feishu_unsupported_msg_type(msg_type, msg_id);
             return None;
         }
     };

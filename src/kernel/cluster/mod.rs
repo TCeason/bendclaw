@@ -1,3 +1,4 @@
+pub(crate) mod diagnostics;
 pub mod dispatch_table;
 pub mod options;
 pub mod service;

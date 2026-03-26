@@ -21,14 +21,13 @@ pub(super) struct PreparedLlmRequest {
 pub(super) struct PreparedLlmRequestSummary {
     pub(super) rows: u64,
     pub(super) tool_count: usize,
+    pub(super) input_bytes: u64,
     pub(super) last_role: String,
     pub(super) last_user: String,
     pub(super) last_assistant: String,
     pub(super) role_counts: String,
     pub(super) tool_result_messages: usize,
     pub(super) assistant_tool_call_messages: usize,
-    pub(super) message_shape_tail: String,
-    pub(super) chat_tail: String,
 }
 
 impl Engine {
@@ -79,6 +78,7 @@ pub(super) fn summarize_prepared_llm_request(
     PreparedLlmRequestSummary {
         rows: prepared.chat_messages.len() as u64,
         tool_count: prepared.active_tools.len(),
+        input_bytes: prepared.request_bytes,
         last_role: prepared
             .chat_messages
             .last()
@@ -97,14 +97,17 @@ pub(super) fn summarize_prepared_llm_request(
             .iter()
             .filter(|msg| msg.role == crate::base::Role::Assistant && !msg.tool_calls.is_empty())
             .count(),
-        message_shape_tail: chat_shape_tail_summary(&prepared.chat_messages, 8),
-        chat_tail: chat_tail_summary(&prepared.chat_messages, 6),
     }
 }
 
-pub(super) fn log_llm_context(ctx: server_log::ServerCtx<'_>, summary: &PreparedLlmRequestSummary) {
+pub(super) fn log_llm_context_with_call_id(
+    ctx: server_log::ServerCtx<'_>,
+    llm_call_id: &str,
+    summary: &PreparedLlmRequestSummary,
+) {
     crate::observability::log::run_log!(info, ctx, "context", "llm_prepared",
         msg = "llm context prepared",
+        llm_call_id = %llm_call_id,
         rows = summary.rows,
         tool_count = summary.tool_count,
         last_role = %summary.last_role,
@@ -113,13 +116,13 @@ pub(super) fn log_llm_context(ctx: server_log::ServerCtx<'_>, summary: &Prepared
         role_counts = %summary.role_counts,
         tool_result_messages = summary.tool_result_messages,
         assistant_tool_call_messages = summary.assistant_tool_call_messages,
-        message_shape_tail = %summary.message_shape_tail,
-        chat_tail = %summary.chat_tail,
+        input_bytes = summary.input_bytes,
     );
 }
 
 pub(super) fn log_llm_request(
     ctx: server_log::ServerCtx<'_>,
+    llm_call_id: &str,
     model: &str,
     tool_strategy: &str,
     temperature: f64,
@@ -128,6 +131,7 @@ pub(super) fn log_llm_request(
 ) {
     crate::observability::log::run_log!(info, ctx, "llm", "request",
         msg = format!("    llm \u{2192} {model}"),
+        llm_call_id = %llm_call_id,
         model = %model,
         tool_strategy = %tool_strategy,
         tool_count = summary.tool_count,
@@ -140,10 +144,12 @@ pub(super) fn log_llm_request(
 
 pub(super) fn build_llm_response_payload(
     mut payload: Map<String, Value>,
+    llm_call_id: &str,
     model_fallback: &str,
     turn: &LLMResponse,
     ttft_ms: u64,
 ) -> Map<String, Value> {
+    payload.insert("llm_call_id".to_string(), serde_json::json!(llm_call_id));
     payload.insert(
         "model".to_string(),
         serde_json::json!(turn.model().unwrap_or(model_fallback)),
@@ -174,6 +180,7 @@ pub(super) fn build_llm_response_payload(
 
 pub(super) fn log_llm_failure(
     ctx: server_log::ServerCtx<'_>,
+    llm_call_id: &str,
     model_fallback: &str,
     turn: &LLMResponse,
     error: &str,
@@ -182,6 +189,7 @@ pub(super) fn log_llm_failure(
 ) {
     crate::observability::log::run_log!(error, ctx, "llm", "failed",
         msg = format!("    llm \u{2717} {} {elapsed_ms}ms", turn.finish_reason()),
+        llm_call_id = %llm_call_id,
         model = %turn.model().unwrap_or(model_fallback),
         provider = %turn.provider().unwrap_or(""),
         finish_reason = %turn.finish_reason(),
@@ -198,6 +206,7 @@ pub(super) fn log_llm_failure(
 
 pub(super) fn log_llm_success(
     ctx: server_log::ServerCtx<'_>,
+    llm_call_id: &str,
     model_fallback: &str,
     turn: &LLMResponse,
     elapsed_ms: u64,
@@ -205,6 +214,7 @@ pub(super) fn log_llm_success(
 ) {
     crate::observability::log::run_log!(info, ctx, "llm", "completed",
         msg = format!("    llm \u{2190} {} {elapsed_ms}ms", turn.finish_reason()),
+        llm_call_id = %llm_call_id,
         model = %turn.model().unwrap_or(model_fallback),
         provider = %turn.provider().unwrap_or(""),
         finish_reason = %turn.finish_reason(),
@@ -218,7 +228,11 @@ pub(super) fn log_llm_success(
     );
 }
 
-pub(super) fn log_llm_final_output(ctx: server_log::ServerCtx<'_>, turn: &LLMResponse) {
+pub(super) fn log_llm_final_output(
+    ctx: server_log::ServerCtx<'_>,
+    llm_call_id: &str,
+    turn: &LLMResponse,
+) {
     let tool_names = turn
         .tool_calls()
         .iter()
@@ -238,12 +252,14 @@ pub(super) fn log_llm_final_output(ctx: server_log::ServerCtx<'_>, turn: &LLMRes
 
     crate::observability::log::run_log!(info, ctx, "llm", "final_output",
         msg = "llm final output prepared",
+        llm_call_id = %llm_call_id,
         finish_reason = %turn.finish_reason(),
         tool_calls = turn.tool_calls().len(),
         tool_names = %tool_names,
         text_preview = %server_log::preview_text(turn.text()),
         text_bytes = turn.text().len() as u64,
         thinking_preview = %thinking_preview,
+        stream_event_summary = %turn.stream_event_summary(),
         content_blocks = content_blocks.len(),
     );
 }
@@ -441,21 +457,6 @@ pub(super) fn build_tool_result_payload(
     payload
 }
 
-fn chat_tail_summary(messages: &[ChatMessage], limit: usize) -> String {
-    let start = messages.len().saturating_sub(limit);
-    messages[start..]
-        .iter()
-        .map(|msg| {
-            let mut text = server_log::preview_text(&msg.text());
-            if msg.role == crate::base::Role::Assistant && !msg.tool_calls.is_empty() {
-                text = format!("{text} [tool_calls:{}]", msg.tool_calls.len());
-            }
-            format!("{}: {}", msg.role, text)
-        })
-        .collect::<Vec<_>>()
-        .join(" | ")
-}
-
 fn chat_role_count_summary(messages: &[ChatMessage]) -> String {
     let system = messages
         .iter()
@@ -474,38 +475,6 @@ fn chat_role_count_summary(messages: &[ChatMessage]) -> String {
         .filter(|msg| msg.role == crate::base::Role::Tool)
         .count();
     format!("system:{system},user:{user},assistant:{assistant},tool:{tool}")
-}
-
-fn chat_shape_tail_summary(messages: &[ChatMessage], limit: usize) -> String {
-    let start = messages.len().saturating_sub(limit);
-    messages[start..]
-        .iter()
-        .map(|msg| {
-            let mut tags = Vec::new();
-            if msg.cache_control.is_some() {
-                tags.push("cached".to_string());
-            }
-            if !msg.tool_calls.is_empty() {
-                let ids: Vec<&str> = msg.tool_calls.iter().map(|tc| tc.id.as_str()).collect();
-                tags.push(format!("tool_use[{}]", ids.join(",")));
-            }
-            if let Some(ref id) = msg.tool_call_id {
-                tags.push(format!("tool_result[{id}]"));
-            }
-            let suffix = if tags.is_empty() {
-                String::new()
-            } else {
-                format!(" [{}]", tags.join(","))
-            };
-            format!(
-                "{}{}: {}",
-                msg.role,
-                suffix,
-                server_log::preview_text(&msg.text())
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" | ")
 }
 
 fn last_chat_preview(messages: &[ChatMessage], role: crate::base::Role) -> String {

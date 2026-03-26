@@ -3,8 +3,10 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::base::http;
 use crate::base::ErrorCode;
 use crate::base::Result;
+use crate::client::http_adapter;
 
 /// Client for calling another bendclaw instance's REST API.
 /// Uses the shared `auth.api_key` for node-to-node authentication.
@@ -77,21 +79,38 @@ impl BendclawClient {
         if let Some(onid) = origin_node_id {
             req = req.header("x-origin-node-id", onid);
         }
-        let resp = req.json(&body).send().await.map_err(|e| {
-            ErrorCode::cluster_dispatch(format!("create_run request to {endpoint} failed: {e}"))
-        })?;
+        let resp = http::send(
+            req.json(&body),
+            http::HttpRequestContext::new("client", "cluster_dispatch")
+                .with_endpoint("bendclaw")
+                .with_url(url.clone()),
+        )
+        .await
+        .map_err(|err| http_adapter::to_cluster_dispatch("cluster_dispatch", err))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
+            let text = http::read_text(
+                resp,
+                http::HttpRequestContext::new("client", "cluster_dispatch_read_error")
+                    .with_endpoint("bendclaw")
+                    .with_url(url.clone()),
+            )
+            .await
+            .unwrap_or_default();
             return Err(ErrorCode::cluster_dispatch(format!(
                 "create_run failed on {endpoint}: HTTP {status}: {text}"
             )));
         }
 
-        resp.json().await.map_err(|e| {
-            ErrorCode::cluster_dispatch(format!("failed to parse create_run response: {e}"))
-        })
+        http::read_json(
+            resp,
+            http::HttpRequestContext::new("client", "cluster_dispatch_decode")
+                .with_endpoint("bendclaw")
+                .with_url(url.clone()),
+        )
+        .await
+        .map_err(|err| http_adapter::to_cluster_dispatch("cluster_dispatch_decode", err))
     }
 
     /// Get the status of a run on a remote bendclaw node.
@@ -108,27 +127,40 @@ impl BendclawClient {
             agent_id,
             run_id
         );
-        let resp = self
-            .client
-            .get(&url)
-            .bearer_auth(&self.auth_token)
-            .header("x-user-id", user_id)
-            .send()
-            .await
-            .map_err(|e| {
-                ErrorCode::cluster_collect(format!("get_run request to {endpoint} failed: {e}"))
-            })?;
+        let resp = http::send(
+            self.client
+                .get(&url)
+                .bearer_auth(&self.auth_token)
+                .header("x-user-id", user_id),
+            http::HttpRequestContext::new("client", "cluster_collect")
+                .with_endpoint("bendclaw")
+                .with_url(url.clone()),
+        )
+        .await
+        .map_err(|err| http_adapter::to_cluster_collect("cluster_collect", err))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
+            let text = http::read_text(
+                resp,
+                http::HttpRequestContext::new("client", "cluster_collect_read_error")
+                    .with_endpoint("bendclaw")
+                    .with_url(url.clone()),
+            )
+            .await
+            .unwrap_or_default();
             return Err(ErrorCode::cluster_collect(format!(
                 "get_run failed on {endpoint}: HTTP {status}: {text}"
             )));
         }
 
-        resp.json().await.map_err(|e| {
-            ErrorCode::cluster_collect(format!("failed to parse get_run response: {e}"))
-        })
+        http::read_json(
+            resp,
+            http::HttpRequestContext::new("client", "cluster_collect_decode")
+                .with_endpoint("bendclaw")
+                .with_url(url.clone()),
+        )
+        .await
+        .map_err(|err| http_adapter::to_cluster_collect("cluster_collect_decode", err))
     }
 }

@@ -7,8 +7,8 @@ use crate::kernel::channel::ChannelRegistry;
 use crate::kernel::run::result::Reason;
 use crate::kernel::runtime::Runtime;
 use crate::kernel::session::session_stream::FinishedRunOutput;
+use crate::kernel::task::diagnostics;
 use crate::kernel::task::execution;
-use crate::observability::log::slog;
 use crate::storage::dal::channel_account::repo::ChannelAccountRepo;
 use crate::storage::dal::task::TaskDelivery;
 use crate::storage::dal::task::TaskRecord;
@@ -70,16 +70,13 @@ pub async fn execute_task(
     )
     .await?;
 
-    slog!(
-        info,
-        "task",
-        "executed",
+    diagnostics::log_task_executed(
         agent_id,
-        task_id = task.id,
-        status,
+        &task.id,
+        &status,
         duration_ms,
-        delivery_status = %delivery_status_log,
-        delivery_error = %delivery_error_log,
+        &delivery_status_log,
+        &delivery_error_log,
     );
     Ok(())
 }
@@ -180,10 +177,7 @@ async fn enrich_prompt_with_delivery(
                     ctx.channel_type, ctx.chat_id
                 ),
                 None => {
-                    slog!(
-                        warn,
-                        "task",
-                        "channel_context_unavailable",
+                    diagnostics::log_channel_context_unavailable(
                         agent_id,
                         channel_account_id,
                         chat_id,

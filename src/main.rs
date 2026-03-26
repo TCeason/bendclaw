@@ -74,8 +74,13 @@ async fn cmd_run(
         .unwrap_or_else(|_| EnvFilter::new("info,tower_http=warn"));
 
     let file_layer = if !config.log.dir.is_empty() {
-        let writer = tracing_fmt::LocalDailyWriter::new(&config.log.dir, "bendclaw.log")
-            .expect("failed to create log file writer");
+        let writer = match tracing_fmt::LocalDailyWriter::new(&config.log.dir, "bendclaw.log") {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("failed to create log file writer: {e}");
+                std::process::exit(1);
+            }
+        };
         let file_filter = EnvFilter::builder()
             .parse(format!("{},tower_http=warn", &config.log.level))
             .unwrap_or_else(|_| EnvFilter::new("info,tower_http=warn"));
@@ -291,6 +296,14 @@ fn print_banner(config: &BendClawConfig) {
         config.storage.databend_api_base_url
     );
     let _ = writeln!(buf, "  api:          {}", config.server.bind_addr);
+
+    for (index, provider) in config.llm.providers.iter().enumerate() {
+        let _ = writeln!(
+            buf,
+            "  llm[{index}]:      {} | {} | {} | {}",
+            provider.name, provider.provider, provider.model, provider.base_url
+        );
+    }
 
     if let Some(ref admin) = config.admin {
         let _ = writeln!(buf, "  admin:        {}", admin.bind_addr);

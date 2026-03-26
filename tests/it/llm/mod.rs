@@ -1,3 +1,4 @@
+mod openai;
 mod provider;
 mod registry;
 mod reliable;

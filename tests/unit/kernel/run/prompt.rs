@@ -317,7 +317,7 @@ async fn prompt_builder_build_uses_injected_layers_in_order_and_substitutes_stat
         .with_soul("Helpful soul")
         .with_recent_errors("- `bad_tool`: failed before\n")
         .with_tools(tools)
-        .with_variables(variables)
+        .with_variables(variables.into_iter().map(Into::into).collect())
         .with_runtime("Runtime for {name}")
         .build("agent-1", "user-1", "session-1")
         .await?;

@@ -1,5 +1,6 @@
 pub mod circuit_breaker;
 pub mod config;
+pub mod http_adapter;
 pub mod message;
 pub mod provider;
 pub mod providers;
@@ -10,4 +11,5 @@ pub mod sse;
 pub mod stream;
 pub mod tokens;
 pub mod tool;
+pub mod tracing;
 pub mod usage;

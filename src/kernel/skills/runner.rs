@@ -8,11 +8,11 @@ use serde_json::json;
 use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::session::workspace::Workspace;
+use crate::kernel::skills::diagnostics;
 use crate::kernel::skills::executor::SkillExecutor;
 use crate::kernel::skills::executor::SkillOutput;
 use crate::kernel::skills::skill::Skill;
 use crate::kernel::skills::store::SkillStore;
-use crate::observability::log::slog;
 use crate::storage::dal::variable::VariableRepo;
 use crate::storage::pool::Pool;
 
@@ -145,12 +145,7 @@ impl SkillRunner {
 
         if exit_code != 0 {
             let latency_ms = start.elapsed().as_millis() as u64;
-            slog!(warn, "skill", "failed",
-                skill = skill_name,
-                latency_ms,
-                exit_code,
-                stderr = %stderr,
-            );
+            diagnostics::log_skill_failed(skill_name, latency_ms, exit_code, &stderr);
             return Ok(SkillOutput {
                 data: None,
                 error: Some(format!("exit code {exit_code}: {stderr}")),
@@ -158,15 +153,7 @@ impl SkillRunner {
         }
 
         let latency_ms = start.elapsed().as_millis() as u64;
-        slog!(
-            info,
-            "skill",
-            "completed",
-            skill = skill_name,
-            latency_ms,
-            exit_code,
-            stdout_len = stdout.len(),
-        );
+        diagnostics::log_skill_completed(skill_name, latency_ms, exit_code, stdout.len());
 
         match serde_json::from_str::<SkillOutput>(&stdout) {
             Ok(out) => Ok(out),

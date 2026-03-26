@@ -1,9 +1,9 @@
 use serde::Serialize;
 
-use crate::storage::TaskDelivery;
-use crate::storage::TaskHistoryRecord;
-use crate::storage::TaskRecord;
-use crate::storage::TaskSchedule;
+use crate::storage::dal::task::TaskDelivery;
+use crate::storage::dal::task::TaskRecord;
+use crate::storage::dal::task::TaskSchedule;
+use crate::storage::dal::task_history::TaskHistoryRecord;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskView {

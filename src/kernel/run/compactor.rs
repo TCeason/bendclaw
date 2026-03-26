@@ -5,6 +5,7 @@ use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::kernel::run::checkpoint::CompactionCheckpoint;
+use crate::kernel::run::compaction_diagnostics;
 use crate::kernel::run::compaction_rules::plan_compaction_split;
 use crate::kernel::Message;
 use crate::kernel::OpType;
@@ -13,7 +14,6 @@ use crate::llm::message::ChatMessage;
 use crate::llm::provider::LLMProvider;
 use crate::llm::tokens::count_tokens;
 use crate::llm::usage::TokenUsage;
-use crate::observability::log::slog;
 
 /// Maximum characters per chunk for staged summarization (~10K tokens).
 const CHUNK_SIZE: usize = 40_000;
@@ -78,12 +78,9 @@ impl Compactor {
 
         // Skip compaction if too many consecutive failures
         if self.compaction_failures >= 3 {
-            slog!(
-                warn,
-                "compaction",
-                "skipped",
-                failures = self.compaction_failures,
-                last_error = self.last_error.as_deref().unwrap_or("unknown"),
+            compaction_diagnostics::log_compaction_skipped(
+                self.compaction_failures,
+                self.last_error.as_deref().unwrap_or("unknown"),
             );
             return None;
         }
@@ -93,24 +90,15 @@ impl Compactor {
             return None;
         }
 
-        slog!(
-            info,
-            "compaction",
-            "triggered",
-            total_tokens,
-            max_context_tokens,
-        );
+        compaction_diagnostics::log_compaction_triggered(total_tokens, max_context_tokens);
 
         // Cooldown: skip expensive summarization if recent compaction was ineffective
         if self.compaction_failures > 0 {
             if let Some(last) = self.last_compaction_at {
                 if last.elapsed() < COMPACTION_COOLDOWN {
-                    slog!(
-                        info,
-                        "compaction",
-                        "cooldown_active",
-                        elapsed_secs = last.elapsed().as_secs(),
-                        failures = self.compaction_failures,
+                    compaction_diagnostics::log_compaction_cooldown_active(
+                        last.elapsed().as_secs(),
+                        self.compaction_failures,
                     );
                     return None;
                 }
@@ -189,13 +177,10 @@ impl Compactor {
             self.last_error = Some(format!(
                 "compaction did not reduce: {messages_before} -> {messages_after}"
             ));
-            slog!(
-                warn,
-                "compaction",
-                "ineffective",
+            compaction_diagnostics::log_compaction_ineffective(
                 messages_before,
                 messages_after,
-                consecutive_failures = self.compaction_failures,
+                self.compaction_failures,
             );
         } else {
             self.compaction_failures = 0;
@@ -206,13 +191,7 @@ impl Compactor {
         if post_tokens > total_tokens * 9 / 10 {
             self.compaction_failures += 1;
             self.last_compaction_at = Some(Instant::now());
-            slog!(
-                warn,
-                "compaction",
-                "tokens_barely_reduced",
-                pre_tokens = total_tokens,
-                post_tokens,
-            );
+            compaction_diagnostics::log_compaction_tokens_barely_reduced(total_tokens, post_tokens);
         }
 
         Some(CompactionResult {
@@ -275,7 +254,7 @@ impl Compactor {
                         (content, usage)
                     }
                     Err(e) => {
-                        slog!(warn, "compaction", "summarize_failed", error = %e,);
+                        compaction_diagnostics::log_compaction_summarize_failed(&e);
                         (None, TokenUsage::default())
                     }
                 }

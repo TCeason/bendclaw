@@ -9,6 +9,7 @@ use super::provider::LLMResponse;
 use super::registry::ProviderRegistry;
 use super::reliable::ReliableProvider;
 use super::stream::ResponseStream;
+use super::tracing::TracingProvider;
 use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::llm::config::ProviderEndpoint;
@@ -80,11 +81,16 @@ impl LLMRouter {
                         .max_retries(max_retries)
                         .base_backoff_ms(base_backoff_ms),
                 );
+                let traced: Arc<dyn LLMProvider> = Arc::new(TracingProvider::wrap(
+                    reliable,
+                    ep.name.clone(),
+                    ep.provider.clone(),
+                ));
                 Ok((
                     Slot {
                         name: ep.name.clone(),
                         provider_name: ep.provider.clone(),
-                        provider: reliable,
+                        provider: traced,
                         model: ep.model.clone(),
                         temperature: ep.temperature,
                         breaker: CircuitBreaker::new(failure_threshold, cooldown),

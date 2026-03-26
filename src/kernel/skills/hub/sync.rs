@@ -7,7 +7,7 @@ use std::time::Duration;
 use std::time::SystemTime;
 
 use super::paths;
-use crate::observability::log::slog;
+use crate::kernel::skills::diagnostics;
 
 const DEFAULT_REPO_URL: &str = "https://github.com/EvotAI/skills";
 
@@ -71,7 +71,8 @@ fn git_clone(url: &str, target: &Path) -> Option<()> {
     if out.status.success() {
         Some(())
     } else {
-        slog!(warn, "skill", "hub_clone_failed", stderr = %String::from_utf8_lossy(&out.stderr),);
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        diagnostics::log_skill_hub_clone_failed(&stderr);
         None
     }
 }

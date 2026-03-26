@@ -104,13 +104,13 @@ pub async fn test_session(llm: Arc<dyn LLMProvider>) -> Result<Session> {
             storage,
             llm: Arc::new(RwLock::new(llm)),
             config,
-            variables: vec![],
+            prompt_variables: vec![],
             cluster_client: None,
             directive: None,
             trace_writer: bendclaw::kernel::trace::TraceWriter::spawn(),
             persist_writer: bendclaw::kernel::writer::BackgroundWriter::noop("persist"),
             tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),
-            cached_config: None,
+            prompt_config: None,
         },
     ))
 }

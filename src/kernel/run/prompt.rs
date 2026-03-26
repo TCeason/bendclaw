@@ -7,11 +7,10 @@ use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
 use crate::kernel::cluster::ClusterService;
 use crate::kernel::run::default_identity;
+use crate::kernel::run::prompt_diagnostics;
 use crate::kernel::run::runtime_context;
 use crate::kernel::skills::store::SkillStore;
 use crate::llm::tool::ToolSchema;
-use crate::observability::log::slog;
-use crate::storage::dal::variable::record::VariableRecord;
 
 const RECENT_ERRORS_LIMIT: u32 = 5;
 
@@ -44,16 +43,8 @@ pub fn truncate_layer(layer: &str, content: &str, max_bytes: usize, source: &str
     }
     let truncated = &content[..end];
     let dropped = original - end;
-    slog!(
-        warn,
-        "prompt",
-        "layer_truncated",
-        layer,
-        original_size = original,
-        truncated_size = end,
-        dropped_bytes = dropped,
-        max = max_bytes,
-        source,
+    prompt_diagnostics::log_prompt_layer_truncated(
+        layer, original, end, dropped, max_bytes, source,
     );
     format!("{truncated}\n[... truncated at {end}/{original} bytes ...]")
 }
@@ -64,6 +55,44 @@ pub fn truncate_layer(layer: &str, content: &str, max_bytes: usize, source: &str
 ///
 /// Layer order:
 ///   Identity → Soul → System Prompt → Skills → Tools → Learnings → Variables → Recent Errors → Runtime
+#[derive(Debug, Clone)]
+pub struct PromptVariable {
+    pub key: String,
+    pub value: String,
+    pub secret: bool,
+}
+
+impl From<crate::storage::dal::variable::record::VariableRecord> for PromptVariable {
+    fn from(value: crate::storage::dal::variable::record::VariableRecord) -> Self {
+        Self {
+            key: value.key,
+            value: value.value,
+            secret: value.secret,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PromptConfig {
+    pub system_prompt: String,
+    pub identity: String,
+    pub soul: String,
+    pub token_limit_total: Option<u64>,
+    pub token_limit_daily: Option<u64>,
+}
+
+impl From<crate::storage::dal::agent_config::record::AgentConfigRecord> for PromptConfig {
+    fn from(value: crate::storage::dal::agent_config::record::AgentConfigRecord) -> Self {
+        Self {
+            system_prompt: value.system_prompt,
+            identity: value.identity,
+            soul: value.soul,
+            token_limit_total: value.token_limit_total,
+            token_limit_daily: value.token_limit_daily,
+        }
+    }
+}
+
 pub struct PromptBuilder {
     storage: Arc<AgentStore>,
     skills: Arc<SkillStore>,
@@ -74,10 +103,10 @@ pub struct PromptBuilder {
     cwd: Option<std::path::PathBuf>,
     recent_errors: Option<String>,
     tools: Option<Arc<Vec<ToolSchema>>>,
-    variables: Option<Vec<VariableRecord>>,
+    variables: Option<Vec<PromptVariable>>,
     cluster_client: Option<Arc<ClusterService>>,
     directive_prompt: Option<String>,
-    cached_config: Option<crate::storage::dal::agent_config::record::AgentConfigRecord>,
+    cached_config: Option<PromptConfig>,
 }
 
 impl PromptBuilder {
@@ -98,10 +127,7 @@ impl PromptBuilder {
         }
     }
 
-    pub fn with_cached_config(
-        mut self,
-        config: Option<crate::storage::dal::agent_config::record::AgentConfigRecord>,
-    ) -> Self {
+    pub fn with_cached_config(mut self, config: Option<PromptConfig>) -> Self {
         self.cached_config = config;
         self
     }
@@ -148,7 +174,7 @@ impl PromptBuilder {
         self
     }
 
-    pub fn with_variables(mut self, vars: Vec<VariableRecord>) -> Self {
+    pub fn with_variables(mut self, vars: Vec<PromptVariable>) -> Self {
         if !vars.is_empty() {
             self.variables = Some(vars);
         }
@@ -263,7 +289,7 @@ impl PromptBuilder {
         agent_id: &str,
         session_id: &str,
     ) -> (
-        Result<Option<crate::storage::dal::agent_config::record::AgentConfigRecord>>,
+        Result<Option<PromptConfig>>,
         String,
         String,
         Result<serde_json::Value>,
@@ -274,7 +300,10 @@ impl PromptBuilder {
             if let Some(ref record) = self.cached_config {
                 Ok(Some(record.clone()))
             } else {
-                self.storage.config_get(agent_id).await
+                self.storage
+                    .config_get(agent_id)
+                    .await
+                    .map(|config| config.map(Into::into))
             }
         };
         let vars_fut = self.build_variables_text();
@@ -376,7 +405,7 @@ impl PromptBuilder {
 
     /// Build variables text. Returns formatted section string (may be empty).
     async fn build_variables_text(&self) -> String {
-        let records: Vec<&VariableRecord>;
+        let records: Vec<&PromptVariable>;
         let fetched;
 
         if let Some(ref vars) = self.variables {
@@ -387,12 +416,15 @@ impl PromptBuilder {
         } else {
             match self.storage.variable_list().await {
                 Ok(r) if !r.is_empty() => {
-                    fetched = r;
+                    fetched = r
+                        .into_iter()
+                        .map(Into::into)
+                        .collect::<Vec<PromptVariable>>();
                     records = fetched.iter().collect();
                 }
                 Ok(_) => return String::new(),
                 Err(e) => {
-                    slog!(warn, "prompt", "variables_db_failed", error = %e,);
+                    prompt_diagnostics::log_prompt_variables_db_failed(&e);
                     return String::new();
                 }
             }
@@ -473,7 +505,7 @@ impl PromptBuilder {
                 }
                 Ok(_) => return String::new(),
                 Err(e) => {
-                    slog!(warn, "prompt", "recent_errors_db_failed", error = %e,);
+                    prompt_diagnostics::log_prompt_recent_errors_db_failed(&e);
                     return String::new();
                 }
             }

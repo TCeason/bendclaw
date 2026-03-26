@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+use crate::kernel::skills::diagnostics;
 use crate::kernel::skills::manifest::SkillManifest;
 use crate::kernel::skills::remote::writer::SkillMeta;
 use crate::kernel::skills::skill::Skill;
@@ -15,7 +16,6 @@ use crate::kernel::skills::skill::SkillParameter;
 use crate::kernel::skills::skill::SkillRequirements;
 use crate::kernel::skills::skill::SkillScope;
 use crate::kernel::skills::skill::SkillSource;
-use crate::observability::log::slog;
 
 // ── LoadedSkill ───────────────────────────────────────────────────────────────
 
@@ -73,7 +73,7 @@ pub fn load_skills(skills_dir: &Path) -> Vec<LoadedSkill> {
     let entries = match std::fs::read_dir(skills_dir) {
         Ok(e) => e,
         Err(e) => {
-            slog!(warn, "skill", "dir_read_failed", dir = %skills_dir.display(), error = %e,);
+            diagnostics::log_skill_dir_read_failed(skills_dir, &e);
             return Vec::new();
         }
     };

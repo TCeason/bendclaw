@@ -5,10 +5,10 @@ use tokio_stream::StreamExt;
 
 use crate::base::truncate_bytes_on_char_boundary;
 use crate::base::Result;
+use crate::kernel::channel::diagnostics;
 use crate::kernel::channel::plugin::ChannelOutbound;
 use crate::kernel::run::event::Delta;
 use crate::kernel::run::event::Event;
-use crate::observability::log::slog;
 
 pub struct StreamDeliveryConfig {
     /// Minimum interval between edits (ms).
@@ -71,7 +71,7 @@ impl StreamDelivery {
                                 last_edit = Instant::now();
                             }
                             Err(e) => {
-                                slog!(warn, "channel", "send_draft_failed", error = %e,);
+                                diagnostics::log_channel_send_draft_failed(Some(&e));
                             }
                         }
                     } else if draft_msg_id.is_some()
@@ -136,7 +136,7 @@ impl StreamDelivery {
                     .finalize_draft(&self.channel_config, &self.chat_id, msg_id, &final_text)
                     .await
                 {
-                    slog!(warn, "channel", "finalize_draft_failed", error = %e,);
+                    diagnostics::log_channel_finalize_draft_failed(Some(&e));
                 }
             }
         }
@@ -160,7 +160,7 @@ impl StreamDelivery {
             .update_draft(&self.channel_config, &self.chat_id, msg_id, &display)
             .await
         {
-            slog!(warn, "channel", "update_draft_failed", error = %e,);
+            diagnostics::log_channel_update_draft_failed(&e);
             *last_edit = Instant::now();
             return Err(());
         }

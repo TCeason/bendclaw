@@ -23,6 +23,7 @@ use crate::kernel::cluster::ClusterService;
 use crate::kernel::directive::DirectiveService;
 use crate::kernel::runtime::agent_config::AgentConfig;
 use crate::kernel::runtime::agent_config::CheckpointConfig;
+use crate::kernel::runtime::diagnostics;
 use crate::kernel::runtime::runtime::Runtime;
 use crate::kernel::runtime::runtime::RuntimeParts;
 use crate::kernel::runtime::runtime::RuntimeStatus;
@@ -176,8 +177,6 @@ impl Builder {
     }
 }
 
-use crate::observability::log::slog;
-
 #[allow(clippy::too_many_arguments)]
 async fn construct(
     config: AgentConfig,
@@ -204,12 +203,7 @@ async fn construct(
         pool.clone(),
         &config.db_prefix,
     )?);
-    slog!(
-        info,
-        "runtime",
-        "pool_created",
-        elapsed_ms = t0.elapsed().as_millis() as u64,
-    );
+    diagnostics::log_runtime_pool_created(t0.elapsed().as_millis() as u64);
 
     let sync_cancel = CancellationToken::new();
 
@@ -223,13 +217,7 @@ async fn construct(
         sync_cancel.clone(),
     )
     .await;
-    slog!(
-        info,
-        "runtime",
-        "skills_ready",
-        elapsed_ms = t2.elapsed().as_millis() as u64,
-        skills = skill_count,
-    );
+    diagnostics::log_runtime_skills_ready(t2.elapsed().as_millis() as u64, skill_count);
 
     let sessions = Arc::new(SessionManager::new());
     let channels = Arc::new(build_channel_registry());
@@ -340,7 +328,7 @@ async fn construct(
             let client = match DirectiveClient::new(&dc.api_base, &dc.token) {
                 Ok(c) => Arc::new(c),
                 Err(e) => {
-                    slog!(warn, "runtime", "directive_init_failed", error = %e,);
+                    diagnostics::log_runtime_directive_init_failed(&e);
                     return;
                 }
             };
@@ -349,7 +337,7 @@ async fn construct(
                 DirectiveService::DEFAULT_REFRESH_INTERVAL,
             ));
             if let Err(e) = service.refresh().await {
-                slog!(warn, "runtime", "directive_init_failed", error = %e,);
+                diagnostics::log_runtime_directive_init_failed(&e);
             }
             let handle = service.spawn_refresh_loop(cancel);
             *rt.directive.write() = Some(service);
@@ -379,7 +367,7 @@ async fn construct(
             ));
 
             if let Err(e) = svc.register_and_discover().await {
-                slog!(warn, "runtime", "cluster_init_failed", error = %e,);
+                diagnostics::log_runtime_cluster_init_failed(&e);
                 return;
             }
             let hb_handle = svc.spawn_heartbeat(cancel);

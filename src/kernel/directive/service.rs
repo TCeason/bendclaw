@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::base::Result;
 use crate::client::DirectiveClient;
-use crate::observability::log::slog;
+use crate::kernel::directive::diagnostics;
 
 /// Runtime-owned directive cache.
 /// Keeps prompt reads off the request path and refreshes in the background.
@@ -40,34 +40,11 @@ impl DirectiveService {
         let changed = *cache != prompt;
         *cache = prompt.clone();
 
-        match (&prompt, changed) {
-            (Some(text), true) => slog!(
-                info,
-                "directive",
-                "refreshed",
-                size = text.len(),
-                elapsed_ms = started.elapsed().as_millis() as u64,
-            ),
-            (Some(text), false) => slog!(
-                info,
-                "directive",
-                "unchanged",
-                size = text.len(),
-                elapsed_ms = started.elapsed().as_millis() as u64,
-            ),
-            (None, true) => slog!(
-                info,
-                "directive",
-                "cleared",
-                elapsed_ms = started.elapsed().as_millis() as u64,
-            ),
-            (None, false) => slog!(
-                info,
-                "directive",
-                "empty",
-                elapsed_ms = started.elapsed().as_millis() as u64,
-            ),
-        }
+        diagnostics::log_refresh(
+            prompt.as_deref(),
+            changed,
+            started.elapsed().as_millis() as u64,
+        );
 
         Ok(prompt)
     }
@@ -82,17 +59,12 @@ impl DirectiveService {
         crate::base::spawn_named("directive_refresh_loop", async move {
             let mut interval = tokio::time::interval(interval_duration);
             interval.tick().await;
-            slog!(
-                info,
-                "directive",
-                "loop_started",
-                refresh_interval_ms = interval_duration.as_millis() as u64,
-            );
+            diagnostics::log_loop_started(interval_duration.as_millis() as u64);
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
                         if let Err(e) = service.refresh().await {
-                            slog!(warn, "directive", "refresh_failed", error = %e,);
+                            diagnostics::log_refresh_failed(&e);
                         }
                     }
                     _ = cancel.cancelled() => {

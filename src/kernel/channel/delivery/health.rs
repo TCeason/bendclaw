@@ -7,8 +7,8 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::kernel::channel::account::ChannelAccount;
+use crate::kernel::channel::diagnostics;
 use crate::kernel::channel::supervisor::ChannelSupervisor;
-use crate::observability::log::slog;
 
 pub struct HealthMonitorConfig {
     pub poll_interval: Duration,
@@ -52,10 +52,7 @@ impl ChannelHealthMonitor {
 
             let count = restart_counts.entry(id.clone()).or_insert(0);
             if *count >= self.config.max_restarts {
-                slog!(error, "channel", "max_restarts_exceeded",
-                    channel_account_id = %id,
-                    restarts = *count,
-                );
+                diagnostics::log_channel_max_restarts_exceeded(id, *count);
                 continue;
             }
 
@@ -66,10 +63,7 @@ impl ChannelHealthMonitor {
                 }
             }
 
-            slog!(warn, "channel", "restarting",
-                channel_account_id = %id,
-                attempt = *count + 1,
-            );
+            diagnostics::log_channel_restarting(id, *count + 1);
 
             match self.supervisor.start(account).await {
                 Ok(()) => {
@@ -77,10 +71,7 @@ impl ChannelHealthMonitor {
                     last_restart.insert(id.clone(), now);
                 }
                 Err(e) => {
-                    slog!(error, "channel", "restart_failed",
-                        channel_account_id = %id,
-                        error = %e,
-                    );
+                    diagnostics::log_channel_restart_failed(id, &e);
                     *count += 1;
                     last_restart.insert(id.clone(), now);
                 }

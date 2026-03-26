@@ -63,6 +63,10 @@ impl SseParser {
 
         results
     }
+
+    pub fn take_remaining(&mut self) -> String {
+        std::mem::take(&mut self.buffer)
+    }
 }
 
 impl Default for SseParser {

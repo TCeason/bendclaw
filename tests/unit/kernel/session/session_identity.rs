@@ -40,13 +40,13 @@ async fn session_belongs_to_matches_exact_agent_and_user() -> Result<()> {
         storage: Arc::new(AgentStore::new(pool, llm.clone())),
         llm: Arc::new(RwLock::new(llm)),
         config: Arc::new(AgentConfig::default()),
-        variables: vec![],
+        prompt_variables: vec![],
         cluster_client: None,
         directive: None,
         trace_writer: bendclaw::kernel::trace::TraceWriter::spawn(),
         persist_writer: bendclaw::kernel::writer::BackgroundWriter::noop("persist"),
         tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),
-        cached_config: None,
+        prompt_config: None,
     });
 
     assert!(session.belongs_to("a1", "u1"));

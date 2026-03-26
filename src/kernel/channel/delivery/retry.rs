@@ -6,7 +6,7 @@ use backon::Retryable;
 
 use crate::base::ErrorCode;
 use crate::base::Result;
-use crate::observability::log::slog;
+use crate::kernel::channel::diagnostics;
 
 /// Retry configuration for channel delivery operations.
 pub struct RetryConfig {
@@ -78,10 +78,7 @@ where
         .retry(backoff_builder(config))
         .when(|e: &ErrorCode| is_channel_retryable(e))
         .notify(|e: &ErrorCode, dur: Duration| {
-            slog!(warn, "channel", "retry",
-                error = %e,
-                retry_after_ms = dur.as_millis() as u64,
-            );
+            diagnostics::log_channel_retry_after(e, dur.as_millis() as u64);
         })
         .await
 }

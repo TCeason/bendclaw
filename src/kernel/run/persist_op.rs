@@ -4,13 +4,13 @@ use std::sync::Arc;
 
 use crate::kernel::agent_store::AgentStore;
 use crate::kernel::run::event::Event;
+use crate::kernel::run::persist_diagnostics;
 use crate::kernel::run::result::Reason;
 use crate::kernel::run::usage::ModelRole;
 use crate::kernel::run::usage::UsageEvent;
 use crate::kernel::trace::TraceRecorder;
 use crate::kernel::writer::BackgroundWriter;
 use crate::observability::log::run_log;
-use crate::observability::log::slog;
 use crate::observability::server_log;
 use crate::storage::dal::run::record::RunKind;
 use crate::storage::dal::run::record::RunRecord;
@@ -110,9 +110,7 @@ async fn handle_op(op: PersistOp) {
         }
         PersistOp::SessionUpsert { repo, record } => {
             if let Err(error) = repo.upsert(record).await {
-                slog!(warn, "persist", "session_upsert_failed",
-                    error = %error,
-                );
+                persist_diagnostics::log_session_upsert_failed(&error);
             }
         }
         PersistOp::SessionMarkReplaced {
@@ -125,19 +123,16 @@ async fn handle_op(op: PersistOp) {
                 .mark_replaced(&session_id, &replaced_by_session_id, &reset_reason)
                 .await
             {
-                slog!(warn, "persist", "session_mark_replaced_failed",
-                    session_id = %session_id,
-                    replaced_by_session_id = %replaced_by_session_id,
-                    error = %error,
+                persist_diagnostics::log_session_mark_replaced_failed(
+                    &session_id,
+                    &replaced_by_session_id,
+                    &error,
                 );
             }
         }
         PersistOp::SessionDelete { repo, session_id } => {
             if let Err(error) = repo.delete_by_id(&session_id).await {
-                slog!(warn, "persist", "session_delete_failed",
-                    session_id = %session_id,
-                    error = %error,
-                );
+                persist_diagnostics::log_session_delete_failed(&session_id, &error);
             }
         }
         PersistOp::InitRun {
@@ -171,8 +166,11 @@ async fn handle_op(op: PersistOp) {
                     })
                     .await
                 {
-                    slog!(warn, "persist", "session_upsert_failed",
-                        run_id = %run_id, session_id = %session_id, agent_id = %agent_id, error = %e,
+                    persist_diagnostics::log_run_session_upsert_failed(
+                        &run_id,
+                        &session_id,
+                        &agent_id,
+                        &e,
                     );
                 }
             }
@@ -198,9 +196,7 @@ async fn handle_op(op: PersistOp) {
                 })
                 .await
             {
-                slog!(warn, "persist", "run_insert_failed",
-                    run_id = %run_id, session_id = %session_id, agent_id = %agent_id, error = %e,
-                );
+                persist_diagnostics::log_run_insert_failed(&run_id, &session_id, &agent_id, &e);
             }
         }
         PersistOp::RunSuccess {
@@ -247,18 +243,18 @@ async fn handle_op(op: PersistOp) {
             let (usage_res, events_res, run_res) = tokio::join!(usage_fut, events_fut, run_fut);
 
             if let Err(e) = usage_res {
-                slog!(warn, "persist", "usage_failed",
-                    run_id = %run_id, session_id = %session_id, agent_id = %*agent_id, error = %e,
-                );
+                persist_diagnostics::log_usage_failed(&run_id, &session_id, &agent_id, &e);
             }
             if let Err(e) = events_res {
-                slog!(error, "persist", "run_events_failed",
-                    run_id = %run_id, session_id = %session_id, agent_id = %*agent_id, error = %e,
-                );
+                persist_diagnostics::log_run_events_failed(&run_id, &session_id, &agent_id, &e);
             }
             if let Err(e) = run_res {
-                slog!(error, "persist", "run_update_failed",
-                    run_id = %run_id, session_id = %session_id, agent_id = %*agent_id, error = %e,
+                persist_diagnostics::log_run_update_failed(
+                    "error",
+                    &run_id,
+                    &session_id,
+                    &agent_id,
+                    &e,
                 );
             }
 
@@ -325,13 +321,15 @@ async fn handle_op(op: PersistOp) {
             );
 
             if let Err(e) = events_res {
-                slog!(error, "persist", "run_events_failed",
-                    run_id = %run_id, session_id = %session_id, agent_id = %*agent_id, error = %e,
-                );
+                persist_diagnostics::log_run_events_failed(&run_id, &session_id, &agent_id, &e);
             }
             if let Err(e) = run_res {
-                slog!(warn, "persist", "run_update_failed",
-                    run_id = %run_id, session_id = %session_id, agent_id = %*agent_id, error = %e,
+                persist_diagnostics::log_run_update_failed(
+                    "warn",
+                    &run_id,
+                    &session_id,
+                    &agent_id,
+                    &e,
                 );
             }
 
@@ -357,9 +355,7 @@ async fn handle_op(op: PersistOp) {
                     .run_events_insert_batch(std::slice::from_ref(record))
                     .await
                 {
-                    slog!(error, "persist", "cancel_event_failed",
-                        run_id = %run_id, error = %e,
-                    );
+                    persist_diagnostics::log_cancel_event_failed(&run_id, &e);
                 }
             }
 
@@ -367,9 +363,7 @@ async fn handle_op(op: PersistOp) {
                 .run_update_status(&run_id, RunStatus::Cancelled)
                 .await
             {
-                slog!(warn, "persist", "cancel_status_failed",
-                    run_id = %run_id, error = %e,
-                );
+                persist_diagnostics::log_cancel_status_failed(&run_id, &e);
             }
 
             trace.fail_trace(duration_ms);
@@ -405,9 +399,7 @@ async fn handle_op(op: PersistOp) {
                 })
                 .await
             {
-                slog!(warn, "persist", "checkpoint_insert_failed",
-                    run_id = %run_id, session_id = %session_id, error = %e,
-                );
+                persist_diagnostics::log_checkpoint_insert_failed(&run_id, &session_id, &e);
             }
         }
     }
