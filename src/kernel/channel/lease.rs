@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use tokio::sync::Mutex;
 
 use crate::base::Result;
 use crate::kernel::channel::account::ChannelAccount;
@@ -18,6 +20,7 @@ pub struct ChannelLeaseResource {
     databases: Arc<AgentDatabases>,
     channels: Arc<ChannelRegistry>,
     supervisor: Arc<ChannelSupervisor>,
+    discovered_configs: Mutex<HashMap<String, serde_json::Value>>,
 }
 
 impl ChannelLeaseResource {
@@ -30,6 +33,7 @@ impl ChannelLeaseResource {
             databases,
             channels,
             supervisor,
+            discovered_configs: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -54,6 +58,7 @@ impl LeaseResource for ChannelLeaseResource {
     async fn discover(&self) -> Result<Vec<ResourceEntry>> {
         let agent_ids = self.databases.list_agent_ids().await?;
         let mut entries = Vec::new();
+        let mut configs = HashMap::new();
 
         for agent_id in &agent_ids {
             let pool = match self.databases.agent_pool(agent_id) {
@@ -86,6 +91,7 @@ impl LeaseResource for ChannelLeaseResource {
                     continue;
                 }
 
+                configs.insert(account.id.clone(), account.config.clone());
                 entries.push(ResourceEntry {
                     id: account.id.clone(),
                     pool: pool.clone(),
@@ -98,6 +104,7 @@ impl LeaseResource for ChannelLeaseResource {
             }
         }
 
+        *self.discovered_configs.lock().await = configs;
         Ok(entries)
     }
 
@@ -130,6 +137,19 @@ impl LeaseResource for ChannelLeaseResource {
     }
 
     async fn is_healthy(&self, resource_id: &str) -> bool {
-        self.supervisor.is_alive(resource_id).await
+        if !self.supervisor.is_alive(resource_id).await {
+            return false;
+        }
+        let running_config = self.supervisor.get_config(resource_id).await;
+        let db_config = self
+            .discovered_configs
+            .lock()
+            .await
+            .get(resource_id)
+            .cloned();
+        match (running_config, db_config) {
+            (Some(running), Some(db)) => running == db,
+            _ => true,
+        }
     }
 }

@@ -22,6 +22,8 @@ use bendclaw::storage::AgentDatabases;
 use crate::common::fake_databend::paged_rows;
 use crate::common::fake_databend::FakeDatabend;
 
+type QueryHandler = Arc<dyn Fn(&str, Option<&str>) -> Result<QueryResponse, String> + Send + Sync>;
+
 // ── Fake channel plugin with Receiver inbound ───────────────────────────────
 
 struct FakeReceiverFactory;
@@ -136,6 +138,15 @@ impl ChannelPlugin for WebhookOnlyPlugin {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 fn account_row(id: &str, channel_type: &str, enabled: bool) -> Vec<serde_json::Value> {
+    account_row_with_config(id, channel_type, enabled, r#"{"token":"abc"}"#)
+}
+
+fn account_row_with_config(
+    id: &str,
+    channel_type: &str,
+    enabled: bool,
+    config: &str,
+) -> Vec<serde_json::Value> {
     vec![
         id.to_string(),
         channel_type.to_string(),
@@ -145,7 +156,7 @@ fn account_row(id: &str, channel_type: &str, enabled: bool) -> Vec<serde_json::V
         "private".to_string(), // scope
         String::new(),         // node_id
         String::new(),         // created_by
-        r#"{"token":"abc"}"#.to_string(),
+        config.to_string(),
         if enabled { "1" } else { "0" }.to_string(),
         String::new(), // lease_node_id
         String::new(), // lease_token
@@ -161,8 +172,15 @@ fn account_row(id: &str, channel_type: &str, enabled: bool) -> Vec<serde_json::V
 fn build_resource(
     query_handler: impl Fn(&str, Option<&str>) -> Result<QueryResponse, String> + Send + Sync + 'static,
 ) -> (ChannelLeaseResource, Arc<ChannelSupervisor>) {
+    build_resource_inner(Arc::new(move |sql, db| query_handler(sql, db)))
+}
+
+fn build_resource_inner(
+    query_handler: QueryHandler,
+) -> (ChannelLeaseResource, Arc<ChannelSupervisor>) {
+    let handler = query_handler.clone();
     let fake = FakeDatabend::new(move |sql, db| {
-        query_handler(sql, db).map_err(|e| bendclaw::base::ErrorCode::internal(e))
+        handler(sql, db).map_err(|e| bendclaw::base::ErrorCode::internal(e))
     });
     let pool = fake.pool();
     let databases = Arc::new(AgentDatabases::new(pool, "test_").unwrap());
@@ -374,4 +392,105 @@ async fn is_healthy_reflects_supervisor_state() {
 async fn claim_condition_requires_enabled() {
     let (resource, _) = build_resource(|_, _| Ok(paged_rows(&[], None, None)));
     assert_eq!(resource.claim_condition(), Some("enabled = true"));
+}
+
+#[tokio::test]
+async fn is_healthy_returns_false_when_config_changed() {
+    use std::sync::Mutex;
+
+    let config = Arc::new(Mutex::new(r#"{"token":"abc"}"#.to_string()));
+    let config_clone = config.clone();
+
+    let handler: QueryHandler = Arc::new(move |sql, _db| {
+        if sql.contains("evotai_meta.evotai_agents") {
+            return Ok(paged_rows(&[&["agent1"]], None, None));
+        }
+        let cfg = config_clone.lock().unwrap().clone();
+        Ok(QueryResponse {
+            id: String::new(),
+            state: "Succeeded".into(),
+            error: None,
+            data: vec![account_row_with_config(
+                "acct-1",
+                "fake_receiver",
+                true,
+                &cfg,
+            )],
+            next_uri: None,
+            final_uri: None,
+            schema: Vec::new(),
+        })
+    });
+
+    let (resource, _supervisor) = build_resource_inner(handler);
+
+    let pool = {
+        let entries = resource.discover().await.unwrap();
+        entries[0].pool.clone()
+    };
+
+    let entry = bendclaw::kernel::lease::ResourceEntry {
+        id: "acct-1".to_string(),
+        pool,
+        lease_token: Some("tok-1".to_string()),
+        lease_node_id: Some("inst-1".to_string()),
+        lease_expires_at: None,
+        context: String::new(),
+        release_fn: None,
+    };
+
+    resource.on_acquired(&entry).await.unwrap();
+    assert!(
+        resource.is_healthy("acct-1").await,
+        "same config should be healthy"
+    );
+
+    *config.lock().unwrap() = r#"{"token":"xyz"}"#.to_string();
+    resource.discover().await.unwrap();
+
+    assert!(
+        !resource.is_healthy("acct-1").await,
+        "changed config should be unhealthy"
+    );
+}
+
+#[tokio::test]
+async fn is_healthy_returns_true_when_config_unchanged() {
+    let (resource, _supervisor) = build_resource(|sql, _db| {
+        if sql.contains("evotai_meta.evotai_agents") {
+            return Ok(paged_rows(&[&["agent1"]], None, None));
+        }
+        Ok(QueryResponse {
+            id: String::new(),
+            state: "Succeeded".into(),
+            error: None,
+            data: vec![account_row("acct-1", "fake_receiver", true)],
+            next_uri: None,
+            final_uri: None,
+            schema: Vec::new(),
+        })
+    });
+
+    let pool = {
+        let entries = resource.discover().await.unwrap();
+        entries[0].pool.clone()
+    };
+
+    let entry = bendclaw::kernel::lease::ResourceEntry {
+        id: "acct-1".to_string(),
+        pool,
+        lease_token: Some("tok-1".to_string()),
+        lease_node_id: Some("inst-1".to_string()),
+        lease_expires_at: None,
+        context: String::new(),
+        release_fn: None,
+    };
+
+    resource.on_acquired(&entry).await.unwrap();
+
+    resource.discover().await.unwrap();
+    assert!(
+        resource.is_healthy("acct-1").await,
+        "unchanged config should remain healthy"
+    );
 }

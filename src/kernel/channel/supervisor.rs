@@ -16,6 +16,7 @@ use crate::kernel::channel::registry::ChannelRegistry;
 struct ReceiverSlot {
     cancel: CancellationToken,
     handle: tokio::task::JoinHandle<()>,
+    config: serde_json::Value,
 }
 
 pub struct ChannelSupervisor {
@@ -71,6 +72,7 @@ impl ChannelSupervisor {
             .insert(account.channel_account_id.clone(), ReceiverSlot {
                 cancel,
                 handle,
+                config: account.config.clone(),
             });
 
         Ok(())
@@ -101,6 +103,14 @@ impl ChannelSupervisor {
             Some(slot) => !slot.handle.is_finished(),
             None => false,
         }
+    }
+
+    pub async fn get_config(&self, channel_account_id: &str) -> Option<serde_json::Value> {
+        self.receivers
+            .lock()
+            .await
+            .get(channel_account_id)
+            .map(|slot| slot.config.clone())
     }
 
     /// Return the IDs of all tracked channel accounts.
