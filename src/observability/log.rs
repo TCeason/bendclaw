@@ -141,7 +141,7 @@ macro_rules! channel_log {
 }
 pub(crate) use channel_log;
 
-/// Run-scoped log. Pre-fills `run_id`, `session_id`, `agent_id`, `turn` from a `ServerCtx`.
+/// Run-scoped log. Pre-fills `trace_id`, `run_id`, `session_id`, `agent_id`, `turn` from a `ServerCtx`.
 ///
 /// ```ignore
 /// run_log!(info, &self.ops_ctx(iteration), "llm", "completed",
@@ -158,6 +158,7 @@ macro_rules! run_log {
             stage = $stage,
             status = $status,
             $($rest)*
+            trace_id = $ctx.trace_id,
             run_id = $ctx.run_id,
             session_id = $ctx.session_id,
             agent_id = $ctx.agent_id,
@@ -169,6 +170,7 @@ macro_rules! run_log {
         tracing::$level!(
             stage = $stage,
             status = $status,
+            trace_id = $ctx.trace_id,
             run_id = $ctx.run_id,
             session_id = $ctx.session_id,
             agent_id = $ctx.agent_id,
@@ -181,6 +183,7 @@ macro_rules! run_log {
             stage = $stage,
             status = $status,
             $($rest)*
+            trace_id = $ctx.trace_id,
             run_id = $ctx.run_id,
             session_id = $ctx.session_id,
             agent_id = $ctx.agent_id,
@@ -192,6 +195,7 @@ macro_rules! run_log {
         tracing::$level!(
             stage = $stage,
             status = $status,
+            trace_id = $ctx.trace_id,
             run_id = $ctx.run_id,
             session_id = $ctx.session_id,
             agent_id = $ctx.agent_id,
