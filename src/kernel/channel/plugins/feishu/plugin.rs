@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
@@ -116,7 +117,10 @@ impl ReceiverFactory for FeishuReceiverFactory {
             let mut reconnect_config = ReconnectConfig::default();
             let mut attempt: u64 = 0;
 
+            const STABLE_CONNECTION_THRESHOLD: Duration = Duration::from_secs(60);
+
             loop {
+                let connected_at = Instant::now();
                 tokio::select! {
                     _ = cancel.cancelled() => {
                         diagnostics::log_feishu_receiver_cancelled(&account_id);
@@ -132,10 +136,12 @@ impl ReceiverFactory for FeishuReceiverFactory {
                                 attempt = 0;
                             }
                             Err(e) => {
-                                // FIX #9: classify errors
                                 if e.code == ErrorCode::CONFIG {
                                     diagnostics::log_feishu_client_error_stopping(&account_id, &e);
                                     return;
+                                }
+                                if connected_at.elapsed() >= STABLE_CONNECTION_THRESHOLD {
+                                    attempt = 0;
                                 }
                                 attempt += 1;
                                 diagnostics::log_feishu_error_reconnecting(&account_id, attempt, &e);
@@ -144,7 +150,6 @@ impl ReceiverFactory for FeishuReceiverFactory {
                     }
                 }
 
-                // FIX #8: respect server reconnect_count limit
                 if reconnect_config.reconnect_count > 0
                     && attempt >= reconnect_config.reconnect_count
                 {
