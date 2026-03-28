@@ -93,6 +93,8 @@ impl From<crate::storage::dal::agent_config::record::AgentConfigRecord> for Prom
     }
 }
 
+use crate::kernel::memory::MemoryService;
+
 pub struct PromptBuilder {
     storage: Arc<AgentStore>,
     skills: Arc<SkillStore>,
@@ -107,6 +109,8 @@ pub struct PromptBuilder {
     cluster_client: Option<Arc<ClusterService>>,
     directive_prompt: Option<String>,
     cached_config: Option<PromptConfig>,
+    memory_service: Option<Arc<MemoryService>>,
+    memory_recall_budget: usize,
 }
 
 impl PromptBuilder {
@@ -124,6 +128,8 @@ impl PromptBuilder {
             cluster_client: None,
             directive_prompt: None,
             cached_config: None,
+            memory_service: None,
+            memory_recall_budget: 2000,
         }
     }
 
@@ -191,8 +197,18 @@ impl PromptBuilder {
         self
     }
 
+    pub fn with_memory_service(
+        mut self,
+        memory: Option<Arc<MemoryService>>,
+        recall_budget: usize,
+    ) -> Self {
+        self.memory_service = memory;
+        self.memory_recall_budget = recall_budget;
+        self
+    }
+
     /// Build the full system prompt.
-    pub async fn build(&self, agent_id: &str, _user_id: &str, session_id: &str) -> Result<String> {
+    pub async fn build(&self, agent_id: &str, user_id: &str, session_id: &str) -> Result<String> {
         // Phase 1: Fire all independent DB queries in parallel.
         let (config, variables_text, errors_text, state, session_record) =
             self.fetch_all(agent_id, session_id).await;
@@ -200,7 +216,7 @@ impl PromptBuilder {
         let config = config?;
         let state = state?;
         let session_record = session_record?;
-        // Phase 2: Assemble prompt (CPU-only, no I/O).
+        // Phase 2: Assemble prompt (mostly CPU, memory recall is async).
         let mut prompt = String::with_capacity(4096);
 
         // 1. Identity (with default fallback)
@@ -277,6 +293,9 @@ impl PromptBuilder {
 
         // 9. Runtime (sync)
         self.append_runtime(&mut prompt, session_record.as_ref());
+
+        // 10. Memory (async recall from shared store)
+        self.append_memory(&mut prompt, user_id, agent_id).await;
 
         // Template substitution (state was fetched in parallel)
         Ok(substitute_template(&prompt, &state))
@@ -401,6 +420,23 @@ impl PromptBuilder {
         buf.push_str("\n\n");
         let buf = truncate_layer("directive", &buf, MAX_DIRECTIVE_BYTES, "platform");
         prompt.push_str(&buf);
+    }
+
+    async fn append_memory(&self, prompt: &mut String, user_id: &str, agent_id: &str) {
+        let mem = match &self.memory_service {
+            Some(m) => m,
+            None => return,
+        };
+        let budget = self.memory_recall_budget;
+        if budget < 20 {
+            return;
+        }
+        let fetch_limit = (budget / 80).clamp(5, 50) as u32;
+        let entries = mem.recall(user_id, agent_id, fetch_limit).await;
+        if let Some(buf) = crate::kernel::memory::format::format_for_prompt(&entries, budget) {
+            prompt.push_str(&buf);
+            prompt.push_str("\n\n");
+        }
     }
 
     /// Build variables text. Returns formatted section string (may be empty).

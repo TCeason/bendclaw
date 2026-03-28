@@ -2,6 +2,7 @@ pub mod channel;
 pub mod cluster;
 pub mod databend;
 pub mod file;
+pub mod memory;
 pub mod search;
 pub mod shell;
 pub mod skill;

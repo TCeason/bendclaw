@@ -47,6 +47,7 @@ async fn session_belongs_to_matches_exact_agent_and_user() -> Result<()> {
         persist_writer: bendclaw::kernel::writer::BackgroundWriter::noop("persist"),
         tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),
         prompt_config: None,
+        memory: None,
     });
 
     assert!(session.belongs_to("a1", "u1"));

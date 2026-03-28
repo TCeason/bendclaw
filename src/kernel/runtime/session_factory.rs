@@ -6,6 +6,8 @@ use parking_lot::RwLock;
 use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
+use crate::kernel::memory::MemoryService;
+use crate::kernel::memory::SharedMemoryStore;
 use crate::kernel::run::prompt::PromptConfig;
 use crate::kernel::run::prompt::PromptVariable;
 use crate::kernel::runtime::diagnostics;
@@ -18,6 +20,7 @@ use crate::kernel::session::SessionResources;
 use crate::kernel::skills::remote::repository::DatabendSkillRepositoryFactory;
 use crate::kernel::tools::registry::create_session_tools;
 use crate::kernel::tools::registry::register_cluster_tools;
+use crate::kernel::tools::registry::register_memory_tools;
 use crate::storage::dal::variable::VariableRepo;
 
 impl Runtime {
@@ -121,6 +124,22 @@ impl Runtime {
             register_cluster_tools(&mut tool_registry, svc.clone(), dt);
         }
 
+        // Build shared MemoryService if memory is enabled.
+        let memory = if self.config.memory.enabled {
+            let meta_pool = self.databases.root_pool().with_database("evotai_meta")?;
+            let store = Arc::new(SharedMemoryStore::new(meta_pool));
+            let llm = agent_llm.clone();
+            let model: Arc<str> = llm.default_model().into();
+            Some(Arc::new(MemoryService::new(store, llm, model)))
+        } else {
+            None
+        };
+
+        // Conditionally register memory tools
+        if let Some(ref mem) = memory {
+            register_memory_tools(&mut tool_registry, mem.clone());
+        }
+
         let tool_registry = Arc::new(tool_registry);
 
         let mut tools = tool_registry.tool_schemas();
@@ -162,6 +181,7 @@ impl Runtime {
                 persist_writer: self.persist_writer.clone(),
                 tool_writer: self.tool_writer.clone(),
                 prompt_config,
+                memory,
             },
         ));
 

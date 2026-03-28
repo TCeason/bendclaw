@@ -104,6 +104,11 @@ pub fn map_event_to_sse(
             payload["summary_len"] = serde_json::json!(summary_len);
             ("CompressionCompleted", payload)
         }
+        Event::MemoryExtracted { facts_written } => {
+            let mut payload = base_event_payload(agent_id, session_id, run_id, "MemoryExtracted");
+            payload["facts_written"] = serde_json::json!(facts_written);
+            ("MemoryExtracted", payload)
+        }
         Event::ReasonError { error } | Event::Error { message: error } => {
             let mut payload = base_event_payload(agent_id, session_id, run_id, "RunError");
             payload["content"] = serde_json::Value::String(error.clone());

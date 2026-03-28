@@ -25,6 +25,8 @@ pub enum ToolId {
     ClusterCollect,
     Grep,
     Glob,
+    MemorySearch,
+    MemorySave,
 }
 
 impl ToolId {
@@ -55,6 +57,8 @@ impl ToolId {
             Self::ClusterCollect => "cluster_collect",
             Self::Grep => "grep",
             Self::Glob => "glob",
+            Self::MemorySearch => "memory_search",
+            Self::MemorySave => "memory_save",
         }
     }
 }

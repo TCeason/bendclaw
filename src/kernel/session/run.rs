@@ -131,6 +131,13 @@ impl<'a> SessionRunCoordinator<'a> {
                 pb = pb.with_cluster_client(cc.clone());
             }
             pb = pb.with_directive_prompt(directive_prompt);
+            let recall_memory = self
+                .resources
+                .memory
+                .as_ref()
+                .filter(|_| self.resources.config.memory.recall)
+                .cloned();
+            pb = pb.with_memory_service(recall_memory, self.resources.config.memory.recall_budget);
             pb.build(self.agent_id, self.user_id, self.session_id)
                 .await?
         };
@@ -311,6 +318,12 @@ impl<'a> SessionRunCoordinator<'a> {
 
         let (inbox_tx, inbox_rx) = Engine::create_inbox();
 
+        let extract_memory = self
+            .resources
+            .memory
+            .as_ref()
+            .filter(|_| self.resources.config.memory.extract)
+            .cloned();
         let mut engine = Engine::from_tx(
             ctx,
             dispatcher,
@@ -320,6 +333,7 @@ impl<'a> SessionRunCoordinator<'a> {
             trace,
             tx,
             inbox_rx,
+            extract_memory,
         );
         let events = rx;
         let task = tokio::spawn(async move { engine.run().await });

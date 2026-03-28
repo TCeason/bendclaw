@@ -4,6 +4,7 @@ use parking_lot::RwLock;
 
 use crate::kernel::agent_store::AgentStore;
 use crate::kernel::directive::DirectiveService;
+use crate::kernel::memory::MemoryService;
 use crate::kernel::run::prompt::PromptConfig;
 use crate::kernel::run::prompt::PromptVariable;
 use crate::kernel::runtime::agent_config::AgentConfig;
@@ -28,4 +29,5 @@ pub struct SessionResources {
     pub trace_writer: crate::kernel::trace::TraceWriter,
     pub persist_writer: crate::kernel::run::persist_op::PersistWriter,
     pub prompt_config: Option<PromptConfig>,
+    pub memory: Option<Arc<MemoryService>>,
 }

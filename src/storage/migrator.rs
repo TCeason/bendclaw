@@ -7,7 +7,6 @@ const BASE_MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/base/sessions.sql"),
     include_str!("../../migrations/base/runs.sql"),
     include_str!("../../migrations/base/agent.sql"),
-    include_str!("../../migrations/base/memory.sql"),
     include_str!("../../migrations/base/skills.sql"),
     include_str!("../../migrations/base/traces.sql"),
     include_str!("../../migrations/base/variables.sql"),
@@ -18,7 +17,10 @@ const BASE_MIGRATIONS: &[&str] = &[
 ];
 
 /// Org-level migrations — registry tables in evotai_meta database.
-const ORG_MIGRATIONS: &[&str] = &[include_str!("../../migrations/base/registry.sql")];
+const ORG_MIGRATIONS: &[&str] = &[
+    include_str!("../../migrations/org/agents.sql"),
+    include_str!("../../migrations/org/memory.sql"),
+];
 
 /// Run all agent migrations against the pool's current database.
 pub async fn run_agent(pool: &Pool) {

@@ -64,7 +64,7 @@ async fn setup_databases(prefix: &str, agent_ids: &[&str]) -> Result<Arc<AgentDa
         .await?;
     let meta_pool = root.with_database("evotai_meta")?;
     meta_pool
-        .exec(include_str!("../../../migrations/base/registry.sql"))
+        .exec(include_str!("../../../migrations/org/agents.sql"))
         .await?;
 
     for agent_id in agent_ids {

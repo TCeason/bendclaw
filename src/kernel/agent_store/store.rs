@@ -3,10 +3,6 @@ use std::sync::Arc;
 use super::usage_store::UsageStore;
 use crate::base::ErrorCode;
 use crate::base::Result;
-use crate::kernel::agent_store::memory_store::DatabendMemoryStore;
-use crate::kernel::agent_store::memory_store::MemoryEntry;
-use crate::kernel::agent_store::memory_store::MemoryResult;
-use crate::kernel::agent_store::memory_store::SearchOpts;
 use crate::kernel::run::usage::UsageEvent;
 use crate::kernel::run::usage::UsageScope;
 use crate::llm::config::LLMConfig;
@@ -34,7 +30,6 @@ use crate::storage::pool::Pool;
 
 pub struct AgentStore {
     pool: Pool,
-    memory: DatabendMemoryStore,
     sessions: SessionRepo,
     runs: RunRepo,
     run_events: RunEventRepo,
@@ -47,7 +42,6 @@ pub struct AgentStore {
 impl AgentStore {
     pub fn new(pool: Pool, llm: Arc<dyn LLMProvider>) -> Self {
         Self {
-            memory: DatabendMemoryStore::new(pool.clone()),
             sessions: SessionRepo::new(pool.clone()),
             runs: RunRepo::new(pool.clone()),
             run_events: RunEventRepo::new(pool.clone()),
@@ -69,37 +63,6 @@ impl AgentStore {
 
     pub fn span_repo(&self) -> Arc<SpanRepo> {
         Arc::new(self.spans.clone())
-    }
-
-    // ── Memory ────────────────────────────────────────────────────────────
-
-    pub async fn memory_write(&self, user_id: &str, entry: MemoryEntry) -> Result<()> {
-        self.memory.write(user_id, entry).await
-    }
-
-    pub async fn memory_search(
-        &self,
-        query: &str,
-        user_id: &str,
-        opts: SearchOpts,
-    ) -> Result<Vec<MemoryResult>> {
-        self.memory.search(query, user_id, opts).await
-    }
-
-    pub async fn memory_get(&self, user_id: &str, key: &str) -> Result<Option<MemoryEntry>> {
-        self.memory.get(user_id, key).await
-    }
-
-    pub async fn memory_get_by_id(&self, user_id: &str, id: &str) -> Result<Option<MemoryEntry>> {
-        self.memory.get_by_id(user_id, id).await
-    }
-
-    pub async fn memory_delete(&self, user_id: &str, id: &str) -> Result<()> {
-        self.memory.delete(user_id, id).await
-    }
-
-    pub async fn memory_list(&self, user_id: &str, limit: u32) -> Result<Vec<MemoryEntry>> {
-        self.memory.list(user_id, limit).await
     }
 
     // ── Sessions ──────────────────────────────────────────────────────────

@@ -278,6 +278,13 @@ impl Compactor {
         transcript
     }
 
+    /// Build a transcript string from a slice of owned messages.
+    /// Used by memory extractor before compaction.
+    pub fn build_transcript_from(messages: &[Message]) -> String {
+        let refs: Vec<&Message> = messages.iter().collect();
+        Self::build_transcript(&refs)
+    }
+
     pub fn split_chunks(text: &str, max_chars: usize) -> Vec<&str> {
         if text.len() <= max_chars {
             return vec![text];

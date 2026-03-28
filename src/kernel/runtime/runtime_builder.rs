@@ -161,6 +161,7 @@ impl Builder {
             max_duration_secs: self.max_duration_secs,
             workspace: self.workspace,
             checkpoint: CheckpointConfig::default(),
+            memory: crate::kernel::runtime::agent_config::MemoryConfig::default(),
         };
         construct(
             config,

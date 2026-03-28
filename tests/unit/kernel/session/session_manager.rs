@@ -99,6 +99,7 @@ fn test_session(session_id: &str, agent_id: &str) -> Arc<Session> {
             persist_writer: bendclaw::kernel::writer::BackgroundWriter::noop("persist"),
             tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),
             prompt_config: None,
+            memory: None,
         },
     ))
 }

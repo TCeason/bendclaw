@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::kernel::memory::MemoryService;
 use crate::kernel::run::checkpoint::CompactionCheckpoint;
 use crate::kernel::run::compactor::Compactor;
 use crate::kernel::run::context::Context;
@@ -31,6 +32,7 @@ pub(crate) struct Engine {
     pub(super) inbox: mpsc::Receiver<Message>,
     pub(super) loop_span_id: String,
     pub(super) latest_checkpoint: Option<CompactionCheckpoint>,
+    pub(super) memory: Option<Arc<MemoryService>>,
 }
 
 impl Engine {
@@ -56,6 +58,7 @@ impl Engine {
         trace_recorder: TraceRecorder,
         tx: mpsc::Sender<Event>,
         inbox: mpsc::Receiver<Message>,
+        memory: Option<Arc<MemoryService>>,
     ) -> Self {
         Self {
             abort_policy: AbortPolicy::new(ctx.max_iterations),
@@ -69,6 +72,7 @@ impl Engine {
             inbox,
             loop_span_id: String::new(),
             latest_checkpoint: None,
+            memory,
         }
     }
     pub(super) fn ops_ctx(&self, turn: u32) -> server_log::ServerCtx<'_> {

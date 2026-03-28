@@ -2,7 +2,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::base::Result;
-use crate::kernel::agent_store::memory_store::MemoryEntry;
 use crate::kernel::agent_store::AgentStore;
 use crate::kernel::runtime::diagnostics;
 use crate::kernel::runtime::Runtime;
@@ -185,80 +184,6 @@ impl Runtime {
             }
             Err(error) => log_runtime_error(
                 "update_config_with_version",
-                agent_id,
-                started.elapsed().as_millis() as u64,
-                error,
-                payload,
-            ),
-        }
-        result
-    }
-
-    pub async fn create_memory(
-        &self,
-        agent_id: &str,
-        user_id: &str,
-        entry: MemoryEntry,
-    ) -> Result<()> {
-        let started = Instant::now();
-        let payload = serde_json::json!({
-            "memory_id": entry.id.clone(),
-            "user_id": user_id,
-            "scope": format!("{:?}", entry.scope),
-            "session_id": entry.session_id.clone(),
-            "key": entry.key.clone(),
-            "content": entry.content.clone(),
-        });
-        log_runtime_info("create_memory", "started", agent_id, 0, payload.clone());
-        let result = self
-            .agent_store(agent_id)?
-            .memory_write(user_id, entry)
-            .await;
-        match &result {
-            Ok(_) => log_runtime_info(
-                "create_memory",
-                "completed",
-                agent_id,
-                started.elapsed().as_millis() as u64,
-                payload,
-            ),
-            Err(error) => log_runtime_error(
-                "create_memory",
-                agent_id,
-                started.elapsed().as_millis() as u64,
-                error,
-                payload,
-            ),
-        }
-        result
-    }
-
-    pub async fn delete_memory(
-        &self,
-        agent_id: &str,
-        user_id: &str,
-        memory_id: &str,
-    ) -> Result<()> {
-        let started = Instant::now();
-        let payload = serde_json::json!({
-            "memory_id": memory_id,
-            "user_id": user_id,
-        });
-        log_runtime_info("delete_memory", "started", agent_id, 0, payload.clone());
-        let result = self
-            .agent_store(agent_id)?
-            .memory_delete(user_id, memory_id)
-            .await;
-        match &result {
-            Ok(_) => log_runtime_info(
-                "delete_memory",
-                "completed",
-                agent_id,
-                started.elapsed().as_millis() as u64,
-                payload,
-            ),
-            Err(error) => log_runtime_error(
-                "delete_memory",
                 agent_id,
                 started.elapsed().as_millis() as u64,
                 error,

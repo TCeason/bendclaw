@@ -429,7 +429,6 @@ const ALL_MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/base/sessions.sql"),
     include_str!("../../migrations/base/runs.sql"),
     include_str!("../../migrations/base/agent.sql"),
-    include_str!("../../migrations/base/memory.sql"),
     include_str!("../../migrations/base/skills.sql"),
     include_str!("../../migrations/base/traces.sql"),
     include_str!("../../migrations/base/variables.sql"),
@@ -439,7 +438,7 @@ const ALL_MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/base/recall.sql"),
 ];
 
-const REGISTRY_MIGRATION: &str = include_str!("../../migrations/base/registry.sql");
+const REGISTRY_MIGRATION: &str = include_str!("../../migrations/org/agents.sql");
 
 async fn run_migration(pool: &Pool, sql: &str) -> anyhow::Result<()> {
     for stmt in sql.split(';') {

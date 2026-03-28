@@ -40,6 +40,8 @@ pub enum OpType {
     ClusterNodes,
     ClusterDispatch,
     ClusterCollect,
+    MemorySearch,
+    MemorySave,
 }
 
 impl fmt::Display for OpType {
@@ -61,6 +63,8 @@ impl fmt::Display for OpType {
             Self::ClusterNodes => write!(f, "CLUSTER_NODES"),
             Self::ClusterDispatch => write!(f, "CLUSTER_DISPATCH"),
             Self::ClusterCollect => write!(f, "CLUSTER_COLLECT"),
+            Self::MemorySearch => write!(f, "MEMORY_SEARCH"),
+            Self::MemorySave => write!(f, "MEMORY_SAVE"),
         }
     }
 }

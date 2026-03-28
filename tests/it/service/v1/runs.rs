@@ -312,6 +312,9 @@ async fn fake_execute_runs_app(state: RunExecState) -> Result<axum::Router> {
             let run_id = quoted_values(sql).first().cloned().unwrap_or_default();
             return Ok(run_event_rows(&run_id));
         }
+        if sql.contains("FROM evotai_meta.memory") {
+            return Ok(paged_rows(&[], None, None));
+        }
         panic!("unexpected SQL in execute runs fast test: {sql}");
     });
     let prefix = format!(

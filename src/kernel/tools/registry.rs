@@ -186,8 +186,22 @@ pub fn create_session_tools(
     registry
 }
 
-/// Register cluster tools into an existing registry. Called conditionally
-/// when cluster config is present.
+use crate::kernel::memory::MemoryService;
+
+/// Register memory tools into an existing registry. Called conditionally
+/// when memory service is available.
+pub fn register_memory_tools(registry: &mut ToolRegistry, memory: Arc<MemoryService>) {
+    registry.register_builtin(
+        ToolId::MemorySearch,
+        Arc::new(super::builtins::memory::search::MemorySearchTool::new(
+            memory.clone(),
+        )),
+    );
+    registry.register_builtin(
+        ToolId::MemorySave,
+        Arc::new(super::builtins::memory::save::MemorySaveTool::new(memory)),
+    );
+}
 pub fn register_cluster_tools(
     registry: &mut ToolRegistry,
     service: Arc<ClusterService>,

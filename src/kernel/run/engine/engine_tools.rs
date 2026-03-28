@@ -2,6 +2,9 @@ use std::collections::HashMap;
 
 use super::diagnostics;
 use super::engine::Engine;
+use crate::kernel::memory::pressure;
+use crate::kernel::memory::pressure::PressureLevel;
+use crate::kernel::run::compactor::Compactor;
 use crate::kernel::run::dispatcher::DispatchOutcome;
 use crate::kernel::run::dispatcher::ParsedToolCall;
 use crate::kernel::run::dispatcher::ToolCallResult;
@@ -12,6 +15,7 @@ use crate::kernel::trace::TraceSpan;
 use crate::kernel::Message;
 use crate::kernel::OperationMeta;
 use crate::llm::message::ToolCall;
+use crate::llm::tokens::count_tokens;
 use crate::observability::server_log;
 
 /// Max bytes for span error messages stored in trace DB.
@@ -218,24 +222,54 @@ impl Engine {
     }
 
     pub(super) async fn try_compact(&mut self, state: &mut RunLoopState) {
-        if let Some(info) = self
-            .compactor
-            .compact(
-                &mut self.ctx.messages,
-                state.max_context_tokens(),
-                self.ctx.run_id.as_ref(),
-            )
-            .await
-        {
-            state.add_token_usage(&info.token_usage);
-            self.emit(Event::CompactionDone {
-                messages_before: info.messages_before,
-                messages_after: info.messages_after,
-                summary_len: info.summary_len,
-            })
-            .await;
-            if let Some(checkpoint) = info.checkpoint {
-                self.latest_checkpoint = Some(checkpoint);
+        let total_tokens: usize = self
+            .ctx
+            .messages
+            .iter()
+            .map(|m| count_tokens(&m.text()))
+            .sum();
+        let max_tokens = state.max_context_tokens();
+        let level = pressure::assess(total_tokens, max_tokens);
+
+        // Elevated / High: extract memories before compaction
+        if matches!(level, PressureLevel::Elevated | PressureLevel::High) {
+            if let Some(ref mem) = self.memory {
+                let transcript = Compactor::build_transcript_from(&self.ctx.messages);
+                let result = mem
+                    .extract_and_save(
+                        &transcript,
+                        &self.ctx.user_id,
+                        &self.ctx.agent_id,
+                        self.cancel.clone(),
+                    )
+                    .await;
+                if result.facts_written > 0 {
+                    self.emit(Event::MemoryExtracted {
+                        facts_written: result.facts_written,
+                    })
+                    .await;
+                }
+                state.add_token_usage(&result.token_usage);
+            }
+        }
+
+        // High / Critical: run compaction
+        if matches!(level, PressureLevel::High | PressureLevel::Critical) {
+            if let Some(info) = self
+                .compactor
+                .compact(&mut self.ctx.messages, max_tokens, self.ctx.run_id.as_ref())
+                .await
+            {
+                state.add_token_usage(&info.token_usage);
+                self.emit(Event::CompactionDone {
+                    messages_before: info.messages_before,
+                    messages_after: info.messages_after,
+                    summary_len: info.summary_len,
+                })
+                .await;
+                if let Some(checkpoint) = info.checkpoint {
+                    self.latest_checkpoint = Some(checkpoint);
+                }
             }
         }
     }

@@ -66,6 +66,9 @@ pub enum Event {
         summary_len: usize,
     },
 
+    /// Pre-compaction memory extraction completed.
+    MemoryExtracted { facts_written: usize },
+
     /// The loop was aborted (timeout, max iterations, or cancellation).
     Aborted { reason: Reason },
 
@@ -112,6 +115,7 @@ impl Event {
             Self::ToolStart { .. } => "ToolStart".to_string(),
             Self::ToolEnd { .. } => "ToolEnd".to_string(),
             Self::CompactionDone { .. } => "CompactionDone".to_string(),
+            Self::MemoryExtracted { .. } => "MemoryExtracted".to_string(),
             Self::Aborted { .. } => "Aborted".to_string(),
             Self::Error { .. } => "Error".to_string(),
             Self::Audit { name, .. } => name.clone(),

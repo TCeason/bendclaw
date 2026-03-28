@@ -19,6 +19,7 @@ pub struct AgentConfig {
     pub max_duration_secs: u64,
     pub workspace: WorkspaceConfig,
     pub checkpoint: CheckpointConfig,
+    pub memory: MemoryConfig,
 }
 
 impl Default for AgentConfig {
@@ -34,6 +35,7 @@ impl Default for AgentConfig {
             max_duration_secs: 300,
             workspace: WorkspaceConfig::default(),
             checkpoint: CheckpointConfig::default(),
+            memory: MemoryConfig::default(),
         }
     }
 }
@@ -72,6 +74,47 @@ impl Default for CheckpointConfig {
             enabled: default_checkpoint_enabled(),
             threshold: default_checkpoint_threshold(),
             prompt: default_checkpoint_prompt(),
+        }
+    }
+}
+
+/// Configuration for the shared memory system.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryConfig {
+    /// Whether the memory system is enabled.
+    #[serde(default = "default_memory_enabled")]
+    pub enabled: bool,
+    /// Enable pre-compaction memory extraction.
+    #[serde(default = "default_memory_extract")]
+    pub extract: bool,
+    /// Enable memory recall injection into prompts.
+    #[serde(default = "default_memory_recall")]
+    pub recall: bool,
+    /// Max characters for prompt recall injection.
+    #[serde(default = "default_memory_recall_budget")]
+    pub recall_budget: usize,
+}
+
+fn default_memory_enabled() -> bool {
+    true
+}
+fn default_memory_extract() -> bool {
+    true
+}
+fn default_memory_recall() -> bool {
+    true
+}
+fn default_memory_recall_budget() -> usize {
+    2000
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_memory_enabled(),
+            extract: default_memory_extract(),
+            recall: default_memory_recall(),
+            recall_budget: default_memory_recall_budget(),
         }
     }
 }
