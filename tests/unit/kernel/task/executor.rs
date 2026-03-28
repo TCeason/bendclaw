@@ -97,6 +97,7 @@ impl ChannelPlugin for RecordingPlugin {
             supports_threads: false,
             supports_reactions: false,
             max_message_len: 4096,
+            stale_event_threshold: None,
         }
     }
 

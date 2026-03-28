@@ -12,30 +12,38 @@ use crate::kernel::channel::delivery::backpressure::BackpressureSender;
 use crate::kernel::channel::message::InboundEvent;
 use crate::kernel::channel::plugin::InboundKind;
 use crate::kernel::channel::registry::ChannelRegistry;
+use crate::kernel::channel::status::ChannelStatus;
 
 struct ReceiverSlot {
     cancel: CancellationToken,
     handle: tokio::task::JoinHandle<()>,
-    config: serde_json::Value,
 }
 
 pub struct ChannelSupervisor {
     registry: Arc<ChannelRegistry>,
     receivers: Mutex<HashMap<String, ReceiverSlot>>,
     router: Arc<ChatRouter>,
+    status: Arc<ChannelStatus>,
 }
 
 impl ChannelSupervisor {
-    pub fn new(registry: Arc<ChannelRegistry>, router: Arc<ChatRouter>) -> Self {
+    pub fn new(
+        registry: Arc<ChannelRegistry>,
+        router: Arc<ChatRouter>,
+        status: Arc<ChannelStatus>,
+    ) -> Self {
         Self {
             registry,
             receivers: Mutex::new(HashMap::new()),
             router,
+            status,
         }
     }
 
-    /// Idempotent: stops any existing receiver for this account, then starts a new one.
-    /// No-op for non-Receiver inbound kinds.
+    pub fn status(&self) -> &Arc<ChannelStatus> {
+        &self.status
+    }
+
     pub async fn start(&self, account: &ChannelAccount) -> Result<()> {
         let entry = match self.registry.get(&account.channel_type) {
             Some(e) => e,
@@ -47,17 +55,30 @@ impl ChannelSupervisor {
             _ => return Ok(()),
         };
 
-        // Stop any existing slot first.
         self.stop(&account.channel_account_id).await;
 
         let cancel = CancellationToken::new();
         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<InboundEvent>(1024);
-        let bp_sender = BackpressureSender::new(event_tx, BackpressureConfig::default());
+        let bp_sender = BackpressureSender::new(
+            event_tx,
+            BackpressureConfig::default(),
+            self.status.clone(),
+            account.channel_account_id.clone(),
+        );
+
+        let stale_threshold = entry
+            .plugin
+            .capabilities()
+            .stale_event_threshold
+            .unwrap_or_else(ChannelStatus::default_stale_threshold);
+        self.status.reset(
+            &account.channel_account_id,
+            account.config.clone(),
+            stale_threshold,
+        );
 
         let handle = factory.spawn(account, bp_sender, cancel.clone()).await?;
 
-        // Spawn consumer that sequentially routes events through ChatRouter.
-        // Sequential await on route() preserves per-account event ordering.
         let router = self.router.clone();
         let account_clone = account.clone();
         crate::base::spawn_fire_and_forget("channel_event_consumer", async move {
@@ -72,7 +93,6 @@ impl ChannelSupervisor {
             .insert(account.channel_account_id.clone(), ReceiverSlot {
                 cancel,
                 handle,
-                config: account.config.clone(),
             });
 
         Ok(())
@@ -83,13 +103,15 @@ impl ChannelSupervisor {
             slot.cancel.cancel();
             slot.handle.abort();
         }
+        self.status.clear(channel_account_id);
     }
 
     pub async fn stop_all(&self) {
         let mut map = self.receivers.lock().await;
-        for (_, slot) in map.drain() {
+        for (id, slot) in map.drain() {
             slot.cancel.cancel();
             slot.handle.abort();
+            self.status.clear(&id);
         }
     }
 
@@ -97,7 +119,6 @@ impl ChannelSupervisor {
         self.receivers.lock().await.contains_key(channel_account_id)
     }
 
-    /// Check if the receiver task is still alive (not finished/panicked).
     pub async fn is_alive(&self, channel_account_id: &str) -> bool {
         match self.receivers.lock().await.get(channel_account_id) {
             Some(slot) => !slot.handle.is_finished(),
@@ -105,15 +126,6 @@ impl ChannelSupervisor {
         }
     }
 
-    pub async fn get_config(&self, channel_account_id: &str) -> Option<serde_json::Value> {
-        self.receivers
-            .lock()
-            .await
-            .get(channel_account_id)
-            .map(|slot| slot.config.clone())
-    }
-
-    /// Return the IDs of all tracked channel accounts.
     pub async fn tracked_account_ids(&self) -> Vec<String> {
         self.receivers.lock().await.keys().cloned().collect()
     }

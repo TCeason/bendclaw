@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 /// The fundamental nature of a channel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChannelKind {
@@ -37,4 +39,5 @@ pub struct ChannelCapabilities {
     /// Emoji reactions (GitHub, Slack).
     pub supports_reactions: bool,
     pub max_message_len: usize,
+    pub stale_event_threshold: Option<Duration>,
 }

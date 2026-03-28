@@ -1,9 +1,9 @@
 #![cfg(any(test, doctest))]
 
 use std::sync::Arc;
-use std::sync::Mutex;
 
 use async_trait::async_trait;
+use parking_lot::Mutex;
 
 use super::pool::DatabendClient;
 use super::pool::QueryResponse;
@@ -36,7 +36,7 @@ impl RecordingClient {
     }
 
     pub fn sqls(&self) -> Vec<String> {
-        self.sqls.lock().expect("recording sqls lock").clone()
+        self.sqls.lock().clone()
     }
 
     pub fn pool(&self) -> Pool {
@@ -47,10 +47,7 @@ impl RecordingClient {
 #[async_trait]
 impl DatabendClient for RecordingClient {
     async fn query(&self, sql: &str, database: Option<&str>) -> Result<QueryResponse> {
-        self.sqls
-            .lock()
-            .expect("recording sqls lock")
-            .push(sql.to_string());
+        self.sqls.lock().push(sql.to_string());
         (self.query)(sql, database)
     }
 

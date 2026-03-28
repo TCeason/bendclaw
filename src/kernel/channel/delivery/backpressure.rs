@@ -1,10 +1,12 @@
+use std::sync::Arc;
+
 use tokio::sync::mpsc;
 
 use crate::kernel::channel::diagnostics;
 use crate::kernel::channel::message::InboundEvent;
+use crate::kernel::channel::status::ChannelStatus;
 
 pub struct BackpressureConfig {
-    /// When remaining capacity drops below this, reply "busy".
     pub busy_threshold: usize,
 }
 
@@ -14,37 +16,43 @@ impl Default for BackpressureConfig {
     }
 }
 
-/// Result of attempting to send through the backpressure layer.
 pub enum BackpressureResult {
-    /// Message accepted into the queue.
     Accepted,
-    /// Queue is nearly full — a "busy" reply should be sent.
     Busy,
-    /// Queue is completely full — message was dropped.
     Rejected,
 }
 
-/// Wraps an mpsc::Sender with capacity-aware backpressure.
 pub struct BackpressureSender {
     inner: mpsc::Sender<InboundEvent>,
     busy_threshold: usize,
+    status: Arc<ChannelStatus>,
+    account_id: String,
 }
 
 impl BackpressureSender {
-    pub fn new(inner: mpsc::Sender<InboundEvent>, config: BackpressureConfig) -> Self {
+    pub fn new(
+        inner: mpsc::Sender<InboundEvent>,
+        config: BackpressureConfig,
+        status: Arc<ChannelStatus>,
+        account_id: String,
+    ) -> Self {
         Self {
             inner,
             busy_threshold: config.busy_threshold,
+            status,
+            account_id,
         }
     }
 
-    /// Try to send an event with backpressure awareness.
     pub fn send(&self, event: InboundEvent) -> BackpressureResult {
         let remaining = self.inner.capacity();
 
         if remaining == 0 {
             match self.inner.try_send(event) {
-                Ok(()) => BackpressureResult::Busy,
+                Ok(()) => {
+                    self.touch();
+                    BackpressureResult::Busy
+                }
                 Err(_) => {
                     diagnostics::log_channel_rejected();
                     BackpressureResult::Rejected
@@ -53,6 +61,7 @@ impl BackpressureSender {
         } else if remaining <= self.busy_threshold {
             match self.inner.try_send(event) {
                 Ok(()) => {
+                    self.touch();
                     diagnostics::log_channel_busy(remaining, self.busy_threshold);
                     BackpressureResult::Busy
                 }
@@ -63,14 +72,24 @@ impl BackpressureSender {
             }
         } else {
             match self.inner.try_send(event) {
-                Ok(()) => BackpressureResult::Accepted,
+                Ok(()) => {
+                    self.touch();
+                    BackpressureResult::Accepted
+                }
                 Err(_) => BackpressureResult::Rejected,
             }
         }
     }
 
-    /// Returns the underlying sender's available capacity.
     pub fn remaining_capacity(&self) -> usize {
         self.inner.capacity()
+    }
+
+    pub fn set_connected(&self, connected: bool) {
+        self.status.set_connected(&self.account_id, connected);
+    }
+
+    fn touch(&self) {
+        self.status.touch_event(&self.account_id);
     }
 }

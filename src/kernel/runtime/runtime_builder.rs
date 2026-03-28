@@ -252,9 +252,11 @@ async fn construct(
             DebounceConfig::default(),
             handler,
         ));
+        let channel_status = Arc::new(crate::kernel::channel::status::ChannelStatus::new());
         let supervisor = Arc::new(ChannelSupervisor::new(
             channels.clone(),
             chat_router.clone(),
+            channel_status,
         ));
 
         Runtime::from_parts(RuntimeParts {
@@ -281,7 +283,6 @@ async fn construct(
             persist_writer,
             channel_message_writer,
             rate_limiter,
-            health_monitor_handle: RwLock::new(None),
             tool_writer,
         })
     });
@@ -301,19 +302,6 @@ async fn construct(
     ));
     let lease_handle = lease_builder.spawn(sync_cancel.clone());
     *runtime.lease_handle.write() = Some(lease_handle);
-
-    // Spawn channel health monitor.
-    {
-        use crate::kernel::channel::delivery::health::ChannelHealthMonitor;
-        use crate::kernel::channel::delivery::health::HealthMonitorConfig;
-
-        let monitor = Arc::new(ChannelHealthMonitor::new(
-            runtime.supervisor().clone(),
-            HealthMonitorConfig::default(),
-        ));
-        let handle = monitor.spawn(vec![], sync_cancel.clone());
-        *runtime.health_monitor_handle.write() = Some(handle);
-    }
 
     // Initialize directive and cluster in background — lease is already running.
     if let Some(dc) = directive_config {

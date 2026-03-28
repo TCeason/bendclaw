@@ -62,6 +62,7 @@ impl ChannelPlugin for FeishuChannel {
             supports_threads: false,
             supports_reactions: false,
             max_message_len: FEISHU_MAX_MESSAGE_LEN,
+            stale_event_threshold: Some(Duration::from_secs(600)),
         }
     }
 
@@ -130,6 +131,7 @@ impl ReceiverFactory for FeishuReceiverFactory {
                         &client, &config, &token_cache, &event_tx, &cancel,
                         &mut reconnect_config,
                     ) => {
+                        event_tx.set_connected(false);
                         match result {
                             Ok(()) => {
                                 diagnostics::log_feishu_closed_reconnecting(&account_id);

@@ -19,6 +19,18 @@ pub struct FeishuOutbound {
 }
 
 impl FeishuOutbound {
+    fn check_api_error(body: &serde_json::Value) -> Result<()> {
+        let code = body["code"].as_i64().unwrap_or(0);
+        if code != 0 {
+            let msg = body["msg"].as_str().unwrap_or("unknown");
+            diagnostics::log_feishu_send_failed(code, msg);
+            return Err(ErrorCode::channel_send(format!(
+                "feishu API error: code={code}, msg={msg}"
+            )));
+        }
+        Ok(())
+    }
+
     fn extract_credentials(config: &serde_json::Value) -> Result<(String, String)> {
         let app_id = config
             .get("app_id")
@@ -56,8 +68,10 @@ impl FeishuOutbound {
                     "feishu token retry failed: HTTP {status2}"
                 )));
             }
+            Self::check_api_error(&body2)?;
             return Ok(body2);
         }
+        Self::check_api_error(&body)?;
         Ok(body)
     }
 }
@@ -100,12 +114,6 @@ impl ChannelOutbound for FeishuOutbound {
                 }
             })
             .await?;
-
-        let code = json["code"].as_i64().unwrap_or(-1);
-        if code != 0 {
-            let msg = json["msg"].as_str().unwrap_or("unknown");
-            diagnostics::log_feishu_send_failed(code, msg);
-        }
 
         let msg_id = json["data"]["message_id"]
             .as_str()

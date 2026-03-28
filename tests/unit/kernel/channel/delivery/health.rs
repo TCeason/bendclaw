@@ -71,6 +71,7 @@ impl ChannelPlugin for DyingPlugin {
             supports_threads: false,
             supports_reactions: false,
             max_message_len: 4096,
+            stale_event_threshold: None,
         }
     }
     fn validate_config(&self, _: &serde_json::Value) -> Result<()> {
@@ -109,7 +110,11 @@ async fn check_once_restarts_dead_receiver() {
         DebounceConfig::default(),
         Arc::new(|_| Box::pin(async {})),
     ));
-    let supervisor = Arc::new(ChannelSupervisor::new(registry, router));
+    let supervisor = Arc::new(ChannelSupervisor::new(
+        registry,
+        router,
+        Arc::new(bendclaw::kernel::channel::status::ChannelStatus::new()),
+    ));
 
     let account = make_account();
     supervisor.start(&account).await.unwrap();
@@ -144,7 +149,11 @@ async fn check_once_respects_max_restarts() {
         DebounceConfig::default(),
         Arc::new(|_| Box::pin(async {})),
     ));
-    let supervisor = Arc::new(ChannelSupervisor::new(registry, router));
+    let supervisor = Arc::new(ChannelSupervisor::new(
+        registry,
+        router,
+        Arc::new(bendclaw::kernel::channel::status::ChannelStatus::new()),
+    ));
 
     let account = make_account();
     supervisor.start(&account).await.unwrap();

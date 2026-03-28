@@ -69,6 +69,7 @@ pub fn test_runtime(fake: FakeDatabend) -> Arc<Runtime> {
     let supervisor = Arc::new(ChannelSupervisor::new(
         channels.clone(),
         chat_router.clone(),
+        Arc::new(bendclaw::kernel::channel::status::ChannelStatus::new()),
     ));
     let sessions = Arc::new(SessionManager::new());
     let persist_writer = bendclaw::kernel::writer::BackgroundWriter::noop("persist");
@@ -106,7 +107,6 @@ pub fn test_runtime(fake: FakeDatabend) -> Arc<Runtime> {
                 bendclaw::kernel::channel::delivery::rate_limit::RateLimitConfig::default(),
             ),
         ),
-        health_monitor_handle: parking_lot::RwLock::new(None),
         tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),
     }))
 }

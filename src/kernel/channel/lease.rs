@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tokio::sync::Mutex;
+use parking_lot::Mutex;
 
 use crate::base::Result;
 use crate::kernel::channel::account::ChannelAccount;
@@ -51,6 +51,7 @@ impl LeaseResource for ChannelLeaseResource {
     fn scan_interval_secs(&self) -> u64 {
         60
     }
+
     fn claim_condition(&self) -> Option<&str> {
         Some("enabled = true")
     }
@@ -104,7 +105,7 @@ impl LeaseResource for ChannelLeaseResource {
             }
         }
 
-        *self.discovered_configs.lock().await = configs;
+        *self.discovered_configs.lock() = configs;
         Ok(entries)
     }
 
@@ -140,16 +141,17 @@ impl LeaseResource for ChannelLeaseResource {
         if !self.supervisor.is_alive(resource_id).await {
             return false;
         }
-        let running_config = self.supervisor.get_config(resource_id).await;
-        let db_config = self
-            .discovered_configs
-            .lock()
-            .await
-            .get(resource_id)
-            .cloned();
-        match (running_config, db_config) {
-            (Some(running), Some(db)) => running == db,
-            _ => true,
+        let status = match self.supervisor.status().get(resource_id) {
+            Some(s) => s,
+            None => return false,
+        };
+        if !status.connected || status.is_stale() {
+            return false;
+        }
+        let db_config = self.discovered_configs.lock().get(resource_id).cloned();
+        match db_config {
+            Some(db) => status.config == db,
+            None => true,
         }
     }
 }

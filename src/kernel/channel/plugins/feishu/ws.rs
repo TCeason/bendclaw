@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use prost::Message as ProstMessage;
 
+type MultiPartCache = HashMap<String, (tokio::time::Instant, Vec<Option<Vec<u8>>>)>;
+
 use super::config::is_client_error;
 use super::config::FeishuConfig;
 use super::config::ReconnectConfig;
@@ -73,10 +75,7 @@ pub struct DecodedFrame {
 }
 
 /// Decode a PB frame — pure function, no side effects.
-pub fn decode_frame(
-    data: &[u8],
-    msg_cache: &mut HashMap<String, Vec<Option<Vec<u8>>>>,
-) -> DecodedFrame {
+pub fn decode_frame(data: &[u8], msg_cache: &mut MultiPartCache) -> DecodedFrame {
     let frame = match PbFrame::decode(data) {
         Ok(f) => f,
         Err(e) => {
@@ -142,9 +141,9 @@ pub fn decode_frame(
 
     // Multi-part message combining
     let full_payload = if sum > 1 {
-        let buf = msg_cache
+        let (_, buf) = msg_cache
             .entry(msg_id.clone())
-            .or_insert_with(|| vec![None; sum]);
+            .or_insert_with(|| (tokio::time::Instant::now(), vec![None; sum]));
         if seq < buf.len() {
             buf[seq] = Some(payload_bytes);
         }
@@ -371,6 +370,7 @@ pub async fn ws_receive_loop(
     timeout_check.tick().await;
 
     diagnostics::log_feishu_connected(service_id);
+    event_tx.set_connected(true);
 
     let initial_ping = build_ping_frame(service_id);
     if futures::SinkExt::send(
@@ -383,7 +383,7 @@ pub async fn ws_receive_loop(
         return Err(ErrorCode::internal("feishu ws: initial ping failed"));
     }
 
-    let mut msg_cache: HashMap<String, Vec<Option<Vec<u8>>>> = HashMap::new();
+    let mut msg_cache: MultiPartCache = HashMap::new();
     let mut dedup = MessageDedup::new(Duration::from_secs(30 * 60));
     let mut msg_cache_last_cleanup = tokio::time::Instant::now();
 
@@ -405,9 +405,9 @@ pub async fn ws_receive_loop(
                     );
                     break Err(ErrorCode::internal("feishu ws: heartbeat timeout, reconnecting"));
                 }
-                // Cleanup stale msg_cache entries (>10s old)
+                // Cleanup stale msg_cache entries (>5min old)
                 if msg_cache_last_cleanup.elapsed() > Duration::from_secs(10) {
-                    msg_cache.retain(|_, _| true); // TODO: track insertion time if needed
+                    msg_cache.retain(|_, (inserted_at, _)| inserted_at.elapsed() < Duration::from_secs(300));
                     msg_cache_last_cleanup = tokio::time::Instant::now();
                 }
             }

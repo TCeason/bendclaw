@@ -92,6 +92,7 @@ impl ChannelPlugin for ReceiverPlugin {
             supports_threads: false,
             supports_reactions: false,
             max_message_len: 4096,
+            stale_event_threshold: None,
         }
     }
     fn validate_config(&self, _: &serde_json::Value) -> bendclaw::base::Result<()> {
@@ -122,6 +123,7 @@ impl ChannelPlugin for WebhookOnlyPlugin {
             supports_threads: false,
             supports_reactions: false,
             max_message_len: 4096,
+            stale_event_threshold: None,
         }
     }
     fn validate_config(&self, _: &serde_json::Value) -> bendclaw::base::Result<()> {
@@ -195,7 +197,11 @@ fn build_resource_inner(
         DebounceConfig::default(),
         Arc::new(|_| Box::pin(async {})),
     ));
-    let supervisor = Arc::new(ChannelSupervisor::new(registry.clone(), router));
+    let supervisor = Arc::new(ChannelSupervisor::new(
+        registry.clone(),
+        router,
+        Arc::new(bendclaw::kernel::channel::status::ChannelStatus::new()),
+    ));
 
     let resource = ChannelLeaseResource::new(databases, registry, supervisor.clone());
     (resource, supervisor)
@@ -492,5 +498,96 @@ async fn is_healthy_returns_true_when_config_unchanged() {
     assert!(
         resource.is_healthy("acct-1").await,
         "unchanged config should remain healthy"
+    );
+}
+
+#[tokio::test]
+async fn is_healthy_returns_false_when_disconnected() {
+    let (resource, supervisor) = build_resource(|sql, _db| {
+        if sql.contains("evotai_meta.evotai_agents") {
+            return Ok(paged_rows(&[&["agent1"]], None, None));
+        }
+        Ok(QueryResponse {
+            id: String::new(),
+            state: "Succeeded".into(),
+            error: None,
+            data: vec![account_row("acct-1", "fake_receiver", true)],
+            next_uri: None,
+            final_uri: None,
+            schema: Vec::new(),
+        })
+    });
+
+    let pool = {
+        let entries = resource.discover().await.unwrap();
+        entries[0].pool.clone()
+    };
+
+    let entry = bendclaw::kernel::lease::ResourceEntry {
+        id: "acct-1".to_string(),
+        pool,
+        lease_token: Some("tok-1".to_string()),
+        lease_node_id: Some("inst-1".to_string()),
+        lease_expires_at: None,
+        context: String::new(),
+        release_fn: None,
+    };
+
+    resource.on_acquired(&entry).await.unwrap();
+    assert!(resource.is_healthy("acct-1").await);
+
+    supervisor.status().set_connected("acct-1", false);
+    assert!(
+        !resource.is_healthy("acct-1").await,
+        "disconnected channel should be unhealthy"
+    );
+}
+
+#[tokio::test]
+async fn is_healthy_returns_false_when_stale() {
+    let (resource, supervisor) = build_resource(|sql, _db| {
+        if sql.contains("evotai_meta.evotai_agents") {
+            return Ok(paged_rows(&[&["agent1"]], None, None));
+        }
+        Ok(QueryResponse {
+            id: String::new(),
+            state: "Succeeded".into(),
+            error: None,
+            data: vec![account_row("acct-1", "fake_receiver", true)],
+            next_uri: None,
+            final_uri: None,
+            schema: Vec::new(),
+        })
+    });
+
+    let pool = {
+        let entries = resource.discover().await.unwrap();
+        entries[0].pool.clone()
+    };
+
+    let entry = bendclaw::kernel::lease::ResourceEntry {
+        id: "acct-1".to_string(),
+        pool,
+        lease_token: Some("tok-1".to_string()),
+        lease_node_id: Some("inst-1".to_string()),
+        lease_expires_at: None,
+        context: String::new(),
+        release_fn: None,
+    };
+
+    resource.on_acquired(&entry).await.unwrap();
+    assert!(resource.is_healthy("acct-1").await);
+
+    // Override with zero stale threshold so it becomes stale immediately.
+    supervisor.status().reset(
+        "acct-1",
+        serde_json::json!({"token": "abc"}),
+        std::time::Duration::ZERO,
+    );
+    std::thread::sleep(std::time::Duration::from_millis(1));
+
+    assert!(
+        !resource.is_healthy("acct-1").await,
+        "stale channel should be unhealthy"
     );
 }

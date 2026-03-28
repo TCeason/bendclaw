@@ -73,6 +73,7 @@ impl ChannelPlugin for TelegramChannel {
             supports_threads: false,
             supports_reactions: true,
             max_message_len: TELEGRAM_MAX_MESSAGE_LEN,
+            stale_event_threshold: Some(std::time::Duration::from_secs(120)),
         }
     }
 
@@ -119,18 +120,30 @@ impl ReceiverFactory for TelegramReceiverFactory {
 
         let handle = crate::base::spawn_named("telegram_long_poll", async move {
             let mut offset: i64 = 0;
+            let mut attempt: u64 = 0;
             loop {
                 tokio::select! {
-                    _ = cancel.cancelled() => {
-
-                        return;
-                    }
+                    _ = cancel.cancelled() => return,
                     result = poll_updates(&client, &config, &mut offset, &event_tx) => {
-                        if let Err(e) = result {
-                            diagnostics::log_channel_poll_error(&account_id, &e);
-                            tokio::select! {
-                                _ = cancel.cancelled() => return,
-                                _ = tokio::time::sleep(Duration::from_secs(RETRY_DELAY_SECS)) => {}
+                        match result {
+                            Ok(()) => {
+                                event_tx.set_connected(true);
+                                attempt = 0;
+                            }
+                            Err(e) => {
+                                event_tx.set_connected(false);
+                                diagnostics::log_channel_poll_error(&account_id, &e);
+                                if e.code == ErrorCode::CONFIG {
+                                    return;
+                                }
+                                attempt += 1;
+                                let backoff = RETRY_DELAY_SECS
+                                    * 2u64.saturating_pow(attempt.min(4) as u32);
+                                let backoff = backoff.min(120);
+                                tokio::select! {
+                                    _ = cancel.cancelled() => return,
+                                    _ = tokio::time::sleep(Duration::from_secs(backoff)) => {}
+                                }
                             }
                         }
                     }
@@ -357,6 +370,14 @@ async fn poll_updates(
         .await
         .map_err(|e| ErrorCode::internal(format!("telegram getUpdates: {e}")))?;
 
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(ErrorCode::config(format!(
+            "telegram auth error: HTTP {status}: {body}"
+        )));
+    }
+
     let json: serde_json::Value = resp
         .json()
         .await
@@ -364,6 +385,10 @@ async fn poll_updates(
 
     if !json["ok"].as_bool().unwrap_or(false) {
         let desc = json["description"].as_str().unwrap_or("unknown error");
+        let error_code = json["error_code"].as_u64().unwrap_or(0);
+        if error_code == 401 || error_code == 403 {
+            return Err(ErrorCode::config(format!("telegram auth failed: {desc}")));
+        }
         return Err(ErrorCode::internal(format!(
             "telegram getUpdates failed: {desc}"
         )));

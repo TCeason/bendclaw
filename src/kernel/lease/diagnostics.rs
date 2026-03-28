@@ -28,18 +28,9 @@ pub(crate) fn log_lease_resources_discovered(
     table: &str,
     count: u64,
     discover_ms: u64,
-    empty: bool,
+    prev_count: u64,
 ) {
-    if empty {
-        crate::observability::log::slog!(
-            debug,
-            "lease",
-            "resources_discovered",
-            table = table,
-            count,
-            discover_ms,
-        );
-    } else {
+    if count != prev_count {
         crate::observability::log::slog!(
             info,
             "lease",

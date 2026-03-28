@@ -11,6 +11,14 @@ use crate::llm::message::ChatMessage;
 use crate::llm::tool::ToolSchema;
 use crate::observability::server_log;
 
+fn tool_names(turn: &LLMResponse) -> String {
+    turn.tool_calls()
+        .iter()
+        .map(|call| call.name.as_str())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 pub(super) struct PreparedLlmRequest {
     pub(super) chat_messages: Vec<ChatMessage>,
     pub(super) active_tools: Vec<ToolSchema>,
@@ -195,6 +203,7 @@ pub(super) fn log_llm_failure(
         finish_reason = %turn.finish_reason(),
         error = %error,
         tool_calls = turn.tool_calls().len(),
+        tool_names = %tool_names(turn),
         elapsed_ms,
         tokens = turn.usage().total_tokens,
         ttft_ms,
@@ -219,6 +228,7 @@ pub(super) fn log_llm_success(
         provider = %turn.provider().unwrap_or(""),
         finish_reason = %turn.finish_reason(),
         tool_calls = turn.tool_calls().len(),
+        tool_names = %tool_names(turn),
         elapsed_ms,
         tokens = turn.usage().total_tokens,
         ttft_ms,
@@ -233,12 +243,7 @@ pub(super) fn log_llm_final_output(
     llm_call_id: &str,
     turn: &LLMResponse,
 ) {
-    let tool_names = turn
-        .tool_calls()
-        .iter()
-        .map(|call| call.name.as_str())
-        .collect::<Vec<_>>()
-        .join(",");
+    let tool_names_str = tool_names(turn);
     let content_blocks = turn.content_blocks();
     let thinking_preview = content_blocks
         .iter()
@@ -255,7 +260,7 @@ pub(super) fn log_llm_final_output(
         llm_call_id = %llm_call_id,
         finish_reason = %turn.finish_reason(),
         tool_calls = turn.tool_calls().len(),
-        tool_names = %tool_names,
+        tool_names = %tool_names_str,
         text_preview = %server_log::preview_text(turn.text()),
         text_bytes = turn.text().len() as u64,
         thinking_preview = %thinking_preview,
@@ -294,6 +299,10 @@ pub(super) fn build_turn_completed_payload(
         "tool_calls".to_string(),
         serde_json::json!(turn.tool_calls().len() as u64),
     );
+    let names = tool_names(turn);
+    if !names.is_empty() {
+        payload.insert("tool_names".to_string(), serde_json::json!(names));
+    }
     for (k, v) in extra {
         payload.insert(k.to_string(), v.clone());
     }
@@ -306,11 +315,13 @@ pub(super) fn log_turn_completed(
     status: &str,
     turn: &LLMResponse,
 ) {
+    let names = tool_names(turn);
     match status {
         "failed" => crate::observability::log::run_log!(error, ctx, "turn", status,
             msg = format!("  iter-{iteration} {status}"),
             finish_reason = %turn.finish_reason(),
             tool_calls = turn.tool_calls().len(),
+            tool_names = %names,
             tokens = turn.usage().total_tokens,
             bytes = turn.bytes(),
             chunk_count = turn.chunk_count(),
@@ -319,6 +330,7 @@ pub(super) fn log_turn_completed(
             msg = format!("  iter-{iteration} {status}"),
             finish_reason = %turn.finish_reason(),
             tool_calls = turn.tool_calls().len(),
+            tool_names = %names,
             tokens = turn.usage().total_tokens,
             bytes = turn.bytes(),
             chunk_count = turn.chunk_count(),
@@ -327,6 +339,7 @@ pub(super) fn log_turn_completed(
             msg = format!("  iter-{iteration} {status}"),
             finish_reason = %turn.finish_reason(),
             tool_calls = turn.tool_calls().len(),
+            tool_names = %names,
             tokens = turn.usage().total_tokens,
             bytes = turn.bytes(),
             chunk_count = turn.chunk_count(),

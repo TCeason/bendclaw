@@ -43,6 +43,7 @@ impl ChannelPlugin for HttpApiChannel {
             supports_threads: false,
             supports_reactions: false,
             max_message_len: 1_000_000,
+            stale_event_threshold: None,
         }
     }
 

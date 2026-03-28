@@ -53,7 +53,6 @@ pub struct Runtime {
     pub(crate) persist_writer: crate::kernel::run::persist_op::PersistWriter,
     pub(crate) channel_message_writer: crate::kernel::channel::ChannelMessageWriter,
     pub(crate) rate_limiter: Arc<OutboundRateLimiter>,
-    pub(crate) health_monitor_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) tool_writer: crate::kernel::writer::tool_op::ToolWriter,
 }
 
@@ -81,7 +80,6 @@ pub struct RuntimeParts {
     pub persist_writer: crate::kernel::run::persist_op::PersistWriter,
     pub channel_message_writer: crate::kernel::channel::ChannelMessageWriter,
     pub rate_limiter: Arc<OutboundRateLimiter>,
-    pub health_monitor_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     pub tool_writer: crate::kernel::writer::tool_op::ToolWriter,
 }
 
@@ -130,7 +128,6 @@ impl Runtime {
             persist_writer: parts.persist_writer,
             channel_message_writer: parts.channel_message_writer,
             rate_limiter: parts.rate_limiter,
-            health_monitor_handle: parts.health_monitor_handle,
             tool_writer: parts.tool_writer,
         }
     }

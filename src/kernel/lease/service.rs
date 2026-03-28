@@ -151,9 +151,19 @@ fn spawn_scan_loop(
     crate::base::spawn_named("lease_scan_loop", async move {
         let interval = Duration::from_secs(resource.scan_interval_secs());
         let mut consecutive_errors: u64 = 0;
+        let mut prev_count: u64 = 0;
 
         loop {
-            match scan_once(&node_id, &resource, &held, &lease_count, &cancel).await {
+            match scan_once(
+                &node_id,
+                &resource,
+                &held,
+                &lease_count,
+                &cancel,
+                &mut prev_count,
+            )
+            .await
+            {
                 Ok(()) => {
                     if consecutive_errors > 0 {
                         diagnostics::log_lease_scan_recovered(resource.table(), consecutive_errors);
@@ -195,6 +205,7 @@ async fn scan_once(
     held: &Arc<Mutex<HashMap<String, HeldLease>>>,
     lease_count: &Arc<AtomicUsize>,
     cancel: &CancellationToken,
+    prev_count: &mut u64,
 ) -> crate::base::Result<()> {
     if cancel.is_cancelled() {
         return Ok(());
@@ -202,16 +213,9 @@ async fn scan_once(
     let scan_start = std::time::Instant::now();
     let entries = resource.discover().await?;
     let discover_ms = scan_start.elapsed().as_millis() as u64;
-    if entries.is_empty() {
-        diagnostics::log_lease_resources_discovered(resource.table(), 0u64, discover_ms, true);
-    } else {
-        diagnostics::log_lease_resources_discovered(
-            resource.table(),
-            entries.len() as u64,
-            discover_ms,
-            false,
-        );
-    }
+    let count = entries.len() as u64;
+    diagnostics::log_lease_resources_discovered(resource.table(), count, discover_ms, *prev_count);
+    *prev_count = count;
     let mut seen_ids = HashSet::new();
     let lease_secs = resource.lease_secs();
     let table = resource.table();

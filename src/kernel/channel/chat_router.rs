@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures::FutureExt;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
@@ -158,7 +160,7 @@ impl ChatRouter {
                                     all_events: vec![stale_job.event],
                                     merged_count: 1,
                                 };
-                                (self.handler)(input).await;
+                                self.call_handler(input).await;
                             }
 
                             return;
@@ -170,10 +172,10 @@ impl ChatRouter {
             let result = debounce(&self.debounce_config, job, &mut rx).await;
             match result {
                 DebounceResult::Ready(input) => {
-                    (self.handler)(input).await;
+                    self.call_handler(input).await;
                 }
                 DebounceResult::ReadyWithLeftover(input, next) => {
-                    (self.handler)(*input).await;
+                    self.call_handler(*input).await;
                     leftover = Some(next);
                 }
             }
@@ -186,6 +188,20 @@ impl ChatRouter {
     /// Number of active per-chat queues.
     pub async fn active_chats(&self) -> usize {
         self.chats.lock().await.len()
+    }
+
+    async fn call_handler(&self, input: DebouncedInput) {
+        let handler = self.handler.clone();
+        if let Err(panic) = AssertUnwindSafe(handler(input)).catch_unwind().await {
+            let msg = match panic.downcast_ref::<&str>() {
+                Some(s) => s.to_string(),
+                None => match panic.downcast_ref::<String>() {
+                    Some(s) => s.clone(),
+                    None => "unknown panic".to_string(),
+                },
+            };
+            crate::observability::log::slog!(error, "chat_router", "handler_panic", panic = %msg,);
+        }
     }
 }
 

@@ -70,6 +70,7 @@ impl ChannelPlugin for GitHubChannel {
             supports_threads: true,
             supports_reactions: true,
             max_message_len: GITHUB_MAX_COMMENT_LEN,
+            stale_event_threshold: None,
         }
     }
 

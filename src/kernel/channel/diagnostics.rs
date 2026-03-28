@@ -128,6 +128,10 @@ pub(crate) fn log_channel_update_draft_failed(error: &impl std::fmt::Display) {
     crate::observability::log::slog!(warn, "channel", "update_draft_failed", error = %error,);
 }
 
+pub(crate) fn log_channel_stream_timeout(timeout_secs: u64) {
+    crate::observability::log::slog!(warn, "channel", "stream_timeout", timeout_secs,);
+}
+
 pub(crate) fn log_channel_dispatch_failed(
     agent_id: &str,
     channel_type: &str,
