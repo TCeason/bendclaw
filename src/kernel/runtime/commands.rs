@@ -5,8 +5,6 @@ use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
 use crate::kernel::runtime::diagnostics;
 use crate::kernel::runtime::Runtime;
-use crate::kernel::skills::remote::repository::DatabendSkillRepository;
-use crate::kernel::skills::remote::repository::SkillRepository;
 use crate::kernel::skills::skill::Skill;
 use crate::llm::config::LLMConfig;
 use crate::observability::redaction;
@@ -193,7 +191,7 @@ impl Runtime {
         result
     }
 
-    pub async fn create_skill(&self, agent_id: &str, skill: Skill) -> Result<()> {
+    pub async fn create_skill(&self, user_id: &str, skill: Skill) -> Result<()> {
         let started = Instant::now();
         let payload = serde_json::json!({
             "name": skill.name.clone(),
@@ -208,27 +206,20 @@ impl Runtime {
             "files": skill.files.clone(),
             "requires": skill.requires.clone(),
         });
-        log_runtime_info("create_skill", "started", agent_id, 0, payload.clone());
+        log_runtime_info("create_skill", "started", user_id, 0, payload.clone());
         self.require_ready()?;
-        let pool = self.databases.agent_pool(agent_id)?;
-        let store = DatabendSkillRepository::new(pool);
-        let result = async {
-            store.save(&skill).await?;
-            self.skills.insert(&skill, agent_id);
-            Ok(())
-        }
-        .await;
+        let result = self.org.skills().create(user_id, skill).await;
         match &result {
             Ok(_) => log_runtime_info(
                 "create_skill",
                 "completed",
-                agent_id,
+                user_id,
                 started.elapsed().as_millis() as u64,
                 payload,
             ),
             Err(error) => log_runtime_error(
                 "create_skill",
-                agent_id,
+                user_id,
                 started.elapsed().as_millis() as u64,
                 error,
                 payload,
@@ -237,32 +228,25 @@ impl Runtime {
         result
     }
 
-    pub async fn delete_skill(&self, agent_id: &str, skill_name: &str) -> Result<()> {
+    pub async fn delete_skill(&self, user_id: &str, skill_name: &str) -> Result<()> {
         let started = Instant::now();
         let payload = serde_json::json!({
             "skill_name": skill_name,
         });
-        log_runtime_info("delete_skill", "started", agent_id, 0, payload.clone());
+        log_runtime_info("delete_skill", "started", user_id, 0, payload.clone());
         self.require_ready()?;
-        let pool = self.databases.agent_pool(agent_id)?;
-        let store = DatabendSkillRepository::new(pool);
-        let result = async {
-            store.remove(skill_name, Some(agent_id)).await?;
-            self.skills.evict(skill_name, agent_id);
-            Ok(())
-        }
-        .await;
+        let result = self.org.skills().delete(user_id, skill_name).await;
         match &result {
             Ok(_) => log_runtime_info(
                 "delete_skill",
                 "completed",
-                agent_id,
+                user_id,
                 started.elapsed().as_millis() as u64,
                 payload,
             ),
             Err(error) => log_runtime_error(
                 "delete_skill",
-                agent_id,
+                user_id,
                 started.elapsed().as_millis() as u64,
                 error,
                 payload,

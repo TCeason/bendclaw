@@ -10,9 +10,6 @@ use bendclaw::kernel::skills::skill::SkillFile;
 use bendclaw::kernel::skills::skill::SkillRequirements;
 use bendclaw::kernel::skills::skill::SkillScope;
 use bendclaw::kernel::skills::skill::SkillSource;
-use bendclaw::kernel::skills::store::SkillStore;
-use bendclaw::storage::AgentDatabases;
-use tempfile::TempDir;
 
 use crate::common::fake_databend::paged_rows;
 use crate::common::fake_databend::FakeDatabend;
@@ -57,10 +54,11 @@ fn make_skill(agent_id: &str, name: &str, creator: &str, body: &str) -> Skill {
         name: name.to_string(),
         version: "1.0.0".to_string(),
         description: format!("skill {name}"),
-        scope: SkillScope::Agent,
+        scope: SkillScope::Private,
         source: SkillSource::Agent,
-        agent_id: Some(agent_id.to_string()),
+        user_id: agent_id.to_string(),
         created_by: Some(creator.to_string()),
+        last_used_by: None,
         timeout: 45,
         executable: true,
         parameters: vec![],
@@ -85,7 +83,7 @@ fn skill_rows(skills: impl Iterator<Item = Skill>) -> bendclaw::storage::pool::Q
                 serde_json::Value::String(skill.version),
                 serde_json::Value::String(skill.scope.as_str().to_string()),
                 serde_json::Value::String(skill.source.as_str().to_string()),
-                serde_json::Value::String(skill.agent_id.unwrap_or_default()),
+                serde_json::Value::String(skill.user_id),
                 serde_json::Value::String(skill.created_by.unwrap_or_default()),
                 serde_json::Value::String(skill.description),
                 serde_json::Value::String(skill.timeout.to_string()),
@@ -199,8 +197,9 @@ fn fake_pool(state: &RemoteState, prefix: &str) -> bendclaw::storage::Pool {
                 description: values[6].clone(),
                 scope: SkillScope::parse(&values[2]),
                 source: SkillSource::parse(&values[3]),
-                agent_id: Some(values[4].clone()),
+                user_id: values[4].clone(),
                 created_by: Some(values[5].clone()),
+                last_used_by: None,
                 timeout: 45,
                 executable: true,
                 parameters: vec![],
@@ -310,91 +309,5 @@ async fn remote_repository_roundtrip_on_fake_databend() -> Result<()> {
 
     repo.remove("remote-tool", Some("agent-a")).await?;
     assert!(repo.get("remote-tool").await?.is_none());
-    Ok(())
-}
-
-#[tokio::test]
-async fn skill_store_refresh_syncs_remote_skills_and_evicts_stale_dirs() -> Result<()> {
-    let mut dbs = HashMap::new();
-    dbs.insert(
-        "test_agent-a".to_string(),
-        HashMap::from([("remote-a".to_string(), StoredSkill {
-            sha256: make_skill(
-                "agent-a",
-                "remote-a",
-                "user-a",
-                "#!/usr/bin/env bash\necho a",
-            )
-            .compute_sha256(),
-            skill: make_skill(
-                "agent-a",
-                "remote-a",
-                "user-a",
-                "#!/usr/bin/env bash\necho a",
-            ),
-        })]),
-    );
-    dbs.insert(
-        "test_agent-b".to_string(),
-        HashMap::from([("remote-b".to_string(), StoredSkill {
-            sha256: make_skill(
-                "agent-b",
-                "remote-b",
-                "user-b",
-                "#!/usr/bin/env bash\necho b",
-            )
-            .compute_sha256(),
-            skill: make_skill(
-                "agent-b",
-                "remote-b",
-                "user-b",
-                "#!/usr/bin/env bash\necho b",
-            ),
-        })]),
-    );
-    let state = RemoteState {
-        databases: Arc::new(Mutex::new(dbs)),
-    };
-    let root_pool = fake_pool(&state, "test_");
-    let databases = Arc::new(AgentDatabases::new(root_pool, "test_")?);
-    let workspace = TempDir::new()?;
-
-    let stale_dir = workspace
-        .path()
-        .join("agents")
-        .join("agent-stale")
-        .join("skills")
-        .join(".remote")
-        .join("old-skill");
-    std::fs::create_dir_all(&stale_dir)?;
-    std::fs::write(stale_dir.join("SKILL.md"), "# old")?;
-
-    let store = SkillStore::new(databases, workspace.path().to_path_buf(), None);
-    store.refresh().await?;
-
-    let skill_a = store
-        .get("agent-a", "remote-a")
-        .ok_or_else(|| anyhow::anyhow!("agent-a skill missing"))?;
-    let skill_b = store
-        .get("agent-b", "remote-b")
-        .ok_or_else(|| anyhow::anyhow!("agent-b skill missing"))?;
-
-    assert_eq!(skill_a.created_by.as_deref(), Some("user-a"));
-    assert_eq!(skill_b.created_by.as_deref(), Some("user-b"));
-    let script_a = store
-        .host_script_path("agent-a", "remote-a")
-        .ok_or_else(|| anyhow::anyhow!("agent-a script missing"))?;
-    let script_b = store
-        .host_script_path("agent-b", "remote-b")
-        .ok_or_else(|| anyhow::anyhow!("agent-b script missing"))?;
-    assert_eq!(
-        std::fs::read_to_string(script_a)?,
-        "#!/usr/bin/env bash\necho a"
-    );
-    assert_eq!(
-        std::fs::read_to_string(script_b)?,
-        "#!/usr/bin/env bash\necho b"
-    );
-    assert!(!stale_dir.exists());
     Ok(())
 }

@@ -24,13 +24,16 @@ use crate::kernel::directive::DirectiveService;
 use crate::kernel::runtime::agent_config::AgentConfig;
 use crate::kernel::runtime::agent_config::CheckpointConfig;
 use crate::kernel::runtime::diagnostics;
+use crate::kernel::runtime::org::OrgServices;
 use crate::kernel::runtime::runtime::Runtime;
 use crate::kernel::runtime::runtime::RuntimeParts;
 use crate::kernel::runtime::runtime::RuntimeStatus;
 use crate::kernel::runtime::ActivityTracker;
 use crate::kernel::session::SessionLifecycle;
 use crate::kernel::session::SessionManager;
-use crate::kernel::skills::store::SkillStore;
+use crate::kernel::skills::projector::SkillProjector;
+use crate::kernel::subscriptions::SharedSubscriptionStore;
+use crate::kernel::subscriptions::SubscriptionStore;
 use crate::llm::provider::LLMProvider;
 use crate::storage::pool::Pool;
 
@@ -206,14 +209,30 @@ async fn construct(
     let sync_cancel = CancellationToken::new();
 
     let workspace_root = Path::new(&config.workspace.root_dir);
-    let (skills, _, sync_handle) = build_skill_store(
-        databases.clone(),
-        workspace_root,
+    let skill_store_for_projector = Arc::new(
+        crate::kernel::skills::shared::DatabendSharedSkillStore::new(
+            pool.with_database("evotai_meta")?,
+        ),
+    );
+    let sub_store: Arc<dyn SubscriptionStore> = Arc::new(SharedSubscriptionStore::new(
+        pool.with_database("evotai_meta")?,
+    ));
+    let projector = Arc::new(SkillProjector::new(
+        workspace_root.to_path_buf(),
+        skill_store_for_projector,
+        sub_store,
         hub_config,
-        skills_sync_interval_secs,
-        sync_cancel.clone(),
-    )
-    .await;
+    ));
+
+    // Build OrgServices (evotai_meta shared services)
+    let meta_pool = pool.with_database("evotai_meta")?;
+    crate::storage::migrator::run_org(&meta_pool).await;
+    let org = Arc::new(OrgServices::new(
+        meta_pool,
+        projector.clone(),
+        &config,
+        llm.clone(),
+    ));
 
     let sessions = Arc::new(SessionManager::new());
     let channels = Arc::new(build_channel_registry());
@@ -270,10 +289,11 @@ async fn construct(
             databases,
             llm: RwLock::new(llm),
             agent_llms: RwLock::new(HashMap::new()),
-            skills,
+            org,
+            projector: projector.clone(),
             status: RwLock::new(RuntimeStatus::Ready),
             sync_cancel: sync_cancel.clone(),
-            sync_handle: RwLock::new(Some(sync_handle)),
+            sync_handle: RwLock::new(None),
             lease_handle: RwLock::new(None),
             cluster: RwLock::new(cluster_service),
             heartbeat_handle: RwLock::new(heartbeat_handle),
@@ -360,34 +380,57 @@ async fn construct(
         });
     }
 
+    // Spawn skill sync loop (hub + remote mirror)
+    {
+        let sync_projector = runtime.projector.clone();
+        let sync_databases = runtime.databases().clone();
+        let cancel = runtime.sync_cancel.clone();
+        let sync_handle = crate::base::spawn_named("skill_sync_loop", async move {
+            let base_interval = std::time::Duration::from_secs(skills_sync_interval_secs);
+            let mut consecutive_errors: u64 = 0;
+            let mut next_sleep = std::time::Duration::ZERO;
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => { break; }
+                    _ = tokio::time::sleep(next_sleep) => {
+                        sync_projector.ensure_hub();
+                        let user_ids = match sync_databases.list_user_ids().await {
+                            Ok(ids) => ids,
+                            Err(e) => {
+                                crate::kernel::skills::diagnostics::log_skill_sync_failed(&e, consecutive_errors + 1);
+                                consecutive_errors += 1;
+                                let secs = (60u64 << (consecutive_errors - 1).min(3)).min(300);
+                                next_sleep = std::time::Duration::from_secs(secs);
+                                continue;
+                            }
+                        };
+                        let mut had_error = false;
+                        for user_id in &user_ids {
+                            if let Err(e) = sync_projector.reconcile(user_id).await {
+                                if !had_error {
+                                    consecutive_errors += 1;
+                                    had_error = true;
+                                }
+                                if consecutive_errors == 1 || consecutive_errors.is_multiple_of(20) {
+                                    crate::kernel::skills::diagnostics::log_skill_sync_failed(&e, consecutive_errors);
+                                }
+                            }
+                        }
+                        if had_error {
+                            let secs = (60u64 << (consecutive_errors - 1).min(3)).min(300);
+                            next_sleep = std::time::Duration::from_secs(secs);
+                        } else {
+                            consecutive_errors = 0;
+                            next_sleep = base_interval;
+                        }
+                    }
+                }
+            }
+        });
+        *runtime.sync_handle.write() = Some(sync_handle);
+    }
+
     Ok(runtime)
-}
-
-async fn build_skill_store(
-    databases: Arc<crate::storage::AgentDatabases>,
-    workspace_root: &Path,
-    hub_config: Option<crate::config::HubConfig>,
-    sync_interval_secs: u64,
-    cancel: CancellationToken,
-) -> (Arc<SkillStore>, usize, tokio::task::JoinHandle<()>) {
-    let store = Arc::new(SkillStore::new(
-        databases,
-        workspace_root.to_path_buf(),
-        hub_config,
-    ));
-
-    let skill_count = store.loaded_skills().len();
-
-    // Initial refresh is handled by the background sync task (first tick
-    // fires immediately), so the server can start accepting requests without
-    // waiting for git clone / DB skill sync.
-    let sync_handle = crate::kernel::skills::remote::sync::spawn_sync_task(
-        store.clone(),
-        sync_interval_secs,
-        cancel,
-    );
-
-    (store, skill_count, sync_handle)
 }
 
 fn build_channel_registry() -> crate::kernel::channel::registry::ChannelRegistry {

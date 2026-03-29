@@ -3,27 +3,34 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use bendclaw::kernel::skills::remote::repository::DatabendSkillRepositoryFactory;
+use bendclaw::kernel::runtime::agent_config::AgentConfig;
+use bendclaw::kernel::runtime::org::OrgServices;
+use bendclaw::kernel::skills::projector::SkillProjector;
 use bendclaw::kernel::tools::skill::SkillCreateTool;
 use bendclaw::kernel::tools::Tool;
+use bendclaw_test_harness::mocks::skill::NoopSkillStore;
+use bendclaw_test_harness::mocks::skill::NoopSubscriptionStore;
 use serde_json::json;
 
 use crate::mocks::context::test_tool_context;
-use crate::mocks::skill::test_skill_store;
-
-fn dummy_databases() -> Arc<bendclaw::storage::AgentDatabases> {
-    let pool =
-        bendclaw::storage::Pool::new("http://localhost:0", "", "default").expect("dummy pool");
-    Arc::new(bendclaw::storage::AgentDatabases::new(pool, "test_").unwrap())
-}
 
 fn make_tool() -> SkillCreateTool {
-    let databases = dummy_databases();
-    let factory = Arc::new(DatabendSkillRepositoryFactory::new(databases.clone()));
+    let pool =
+        bendclaw::storage::Pool::new("http://localhost:0", "", "default").expect("dummy pool");
     let dir = std::env::temp_dir().join(format!("bendclaw-create-{}", ulid::Ulid::new()));
     let _ = std::fs::create_dir_all(&dir);
-    let store = test_skill_store(databases, dir);
-    SkillCreateTool::new(factory, store)
+    let projector = Arc::new(SkillProjector::new(
+        dir,
+        Arc::new(NoopSkillStore),
+        Arc::new(NoopSubscriptionStore),
+        None,
+    ));
+    let config = AgentConfig::default();
+    let llm: Arc<dyn bendclaw::llm::provider::LLMProvider> =
+        Arc::new(bendclaw_test_harness::mocks::llm::MockLLMProvider::with_text("ok"));
+    let meta_pool = pool.with_database("evotai_meta").expect("meta pool");
+    let org = Arc::new(OrgServices::new(meta_pool, projector, &config, llm));
+    SkillCreateTool::new(org.skills().clone())
 }
 
 fn valid_args() -> serde_json::Value {
@@ -102,7 +109,6 @@ async fn create_rejects_md_script() -> Result<()> {
         .is_some_and(|e| e.contains("extension")));
     Ok(())
 }
-
 #[tokio::test]
 async fn create_rejects_rb_script() -> Result<()> {
     let tool = make_tool();

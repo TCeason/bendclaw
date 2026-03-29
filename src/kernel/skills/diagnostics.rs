@@ -53,22 +53,6 @@ pub(crate) fn log_skill_hub_clone_failed(stderr: &str) {
     crate::observability::log::slog!(warn, "skill", "hub_clone_failed", stderr = %stderr,);
 }
 
-pub(crate) fn log_skill_sync_db_list_failed(error: &impl std::fmt::Display) {
-    crate::observability::log::slog!(warn, "skill_sync", "db_list_failed", error = %error,);
-}
-
-pub(crate) fn log_skill_sync_fetched(agents: usize, skills: usize) {
-    crate::observability::log::slog!(debug, "skill_sync", "fetched", agents, skills,);
-}
-
-pub(crate) fn log_skill_sync_db_skipped(agent_id: &str, error: &impl std::fmt::Display) {
-    crate::observability::log::slog!(warn, "skill_sync", "db_skipped", agent_id = %agent_id, error = %error,);
-}
-
-pub(crate) fn log_skill_sync_fetch_failed(skill: &str, error: &impl std::fmt::Display) {
-    crate::observability::log::slog!(warn, "skill_sync", "skill_fetch_failed", skill = %skill, error = %error,);
-}
-
 pub(crate) fn log_skill_sync_list_failed(agent_id: &str, error: &impl std::fmt::Display) {
     crate::observability::log::slog!(warn, "skill_sync", "skill_list_failed", agent_id = %agent_id, error = %error,);
 }

@@ -10,10 +10,11 @@ use crate::kernel::tools::Tool;
 use crate::kernel::tools::ToolContext;
 use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
+use crate::kernel::variables::store::SharedVariableStore;
+use crate::kernel::variables::store::VariableStore;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
 use crate::observability::log::slog;
-use crate::storage::dal::variable::VariableRepo;
 
 /// Execute a shell command in the session workspace directory.
 /// Zero-field struct — workspace is obtained from `ctx` at execution time.
@@ -108,8 +109,8 @@ impl Tool for ShellTool {
         if !secret_ids.is_empty() {
             let pool = ctx.pool.clone();
             crate::base::spawn_fire_and_forget("variable_touch_last_used", async move {
-                let repo = VariableRepo::new(pool);
-                let _ = repo.touch_last_used_many(&secret_ids).await;
+                let store = SharedVariableStore::new(pool);
+                let _ = store.touch_last_used_many(&secret_ids, "").await;
             });
         }
 

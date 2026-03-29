@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::io::AsyncReadExt;
 
 use crate::base::truncate_head_tail;
-use crate::storage::dal::variable::record::VariableRecord;
+use crate::kernel::variables::Variable;
 
 // ── Path resolver ──
 
@@ -92,7 +92,7 @@ pub struct Workspace {
     cwd: PathBuf,
     safe_env_vars: Vec<String>,
     env_vars: HashMap<String, String>,
-    variable_records: Vec<VariableRecord>,
+    variables: Vec<Variable>,
     command_idle_timeout: Duration,
     max_command_timeout: Duration,
     max_output_bytes: usize,
@@ -116,7 +116,7 @@ impl Workspace {
             cwd,
             safe_env_vars,
             env_vars: variables,
-            variable_records: Vec::new(),
+            variables: Vec::new(),
             command_idle_timeout,
             max_command_timeout,
             max_output_bytes,
@@ -125,17 +125,17 @@ impl Workspace {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn from_variable_records(
+    pub fn from_variables(
         dir: PathBuf,
         cwd: PathBuf,
         safe_env_vars: Vec<String>,
-        variable_records: Vec<VariableRecord>,
+        variables: &[Variable],
         command_idle_timeout: Duration,
         max_command_timeout: Duration,
         max_output_bytes: usize,
         resolver: Arc<dyn PathResolver>,
     ) -> Self {
-        let env_vars = variable_records
+        let env_vars = variables
             .iter()
             .map(|v| (v.key.clone(), v.value.clone()))
             .collect();
@@ -144,7 +144,7 @@ impl Workspace {
             cwd,
             safe_env_vars,
             env_vars,
-            variable_records,
+            variables: variables.to_vec(),
             command_idle_timeout,
             max_command_timeout,
             max_output_bytes,
@@ -334,12 +334,12 @@ impl Workspace {
         self.env_vars.contains_key(var)
     }
 
-    pub fn variable(&self, key: &str) -> Option<&VariableRecord> {
-        self.variable_records.iter().find(|v| v.key == key)
+    pub fn variable(&self, key: &str) -> Option<&Variable> {
+        self.variables.iter().find(|v| v.key == key)
     }
 
     pub fn secret_variable_ids(&self) -> Vec<String> {
-        self.variable_records
+        self.variables
             .iter()
             .filter(|v| v.secret)
             .map(|v| v.id.clone())
@@ -351,7 +351,7 @@ impl Workspace {
         keys: impl IntoIterator<Item = &'a str>,
     ) -> Vec<String> {
         let wanted: std::collections::HashSet<&str> = keys.into_iter().collect();
-        self.variable_records
+        self.variables
             .iter()
             .filter(|v| v.secret && wanted.contains(v.key.as_str()))
             .map(|v| v.id.clone())

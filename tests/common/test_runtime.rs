@@ -8,19 +8,22 @@ use bendclaw::kernel::channel::debouncer::DebounceConfig;
 use bendclaw::kernel::channel::registry::ChannelRegistry;
 use bendclaw::kernel::channel::supervisor::ChannelSupervisor;
 use bendclaw::kernel::runtime::agent_config::AgentConfig;
+use bendclaw::kernel::runtime::org::OrgServices;
 use bendclaw::kernel::runtime::ActivityTracker;
 use bendclaw::kernel::runtime::Runtime;
 use bendclaw::kernel::runtime::RuntimeParts;
 use bendclaw::kernel::runtime::RuntimeStatus;
 use bendclaw::kernel::session::SessionLifecycle;
 use bendclaw::kernel::session::SessionManager;
-use bendclaw::kernel::skills::store::SkillStore;
+use bendclaw::kernel::skills::projector::SkillProjector;
 use bendclaw::llm::message::ChatMessage;
 use bendclaw::llm::provider::LLMProvider;
 use bendclaw::llm::provider::LLMResponse;
 use bendclaw::llm::stream::ResponseStream;
 use bendclaw::llm::tool::ToolSchema;
 use bendclaw::storage::AgentDatabases;
+use bendclaw_test_harness::mocks::skill::NoopSkillStore;
+use bendclaw_test_harness::mocks::skill::NoopSubscriptionStore;
 use parking_lot::RwLock;
 
 use super::fake_databend::FakeDatabend;
@@ -59,7 +62,19 @@ pub fn test_runtime(fake: FakeDatabend) -> Arc<Runtime> {
     let databases = Arc::new(AgentDatabases::new(pool, "test_").expect("agent databases"));
     let workspace_root = std::env::temp_dir().join(format!("bendclaw-test-{}", ulid::Ulid::new()));
     let _ = std::fs::create_dir_all(&workspace_root);
-    let skills = Arc::new(SkillStore::new(databases.clone(), workspace_root, None));
+    let projector = Arc::new(SkillProjector::new(
+        workspace_root,
+        Arc::new(NoopSkillStore),
+        Arc::new(NoopSubscriptionStore),
+        None,
+    ));
+    let config = AgentConfig::default();
+    let llm: Arc<dyn LLMProvider> = Arc::new(NoopLLM);
+    let meta_pool = databases
+        .root_pool()
+        .with_database("evotai_meta")
+        .expect("meta pool");
+    let org = Arc::new(OrgServices::new(meta_pool, projector.clone(), &config, llm));
     let channels = Arc::new(ChannelRegistry::new());
     let chat_router = Arc::new(ChatRouter::new(
         ChatRouterConfig::default(),
@@ -80,11 +95,12 @@ pub fn test_runtime(fake: FakeDatabend) -> Arc<Runtime> {
     ));
 
     Arc::new(Runtime::from_parts(RuntimeParts {
-        config: AgentConfig::default(),
+        config,
         databases,
         llm: RwLock::new(Arc::new(NoopLLM)),
         agent_llms: RwLock::new(HashMap::new()),
-        skills,
+        org,
+        projector,
         sessions,
         session_lifecycle,
         channels,

@@ -4,12 +4,11 @@ use parking_lot::RwLock;
 
 use crate::kernel::agent_store::AgentStore;
 use crate::kernel::directive::DirectiveService;
-use crate::kernel::memory::MemoryService;
 use crate::kernel::run::prompt::PromptConfig;
 use crate::kernel::run::prompt::PromptVariable;
 use crate::kernel::runtime::agent_config::AgentConfig;
+use crate::kernel::runtime::org::OrgServices;
 use crate::kernel::session::workspace::Workspace;
-use crate::kernel::skills::store::SkillStore;
 use crate::kernel::tools::registry::ToolRegistry;
 use crate::llm::provider::LLMProvider;
 use crate::llm::tool::ToolSchema;
@@ -17,7 +16,7 @@ use crate::llm::tool::ToolSchema;
 pub struct SessionResources {
     pub workspace: Arc<Workspace>,
     pub tool_registry: Arc<ToolRegistry>,
-    pub skills: Arc<SkillStore>,
+    pub org: Arc<OrgServices>,
     pub tools: Arc<Vec<ToolSchema>>,
     pub storage: Arc<AgentStore>,
     pub llm: Arc<RwLock<Arc<dyn LLMProvider>>>,
@@ -29,5 +28,4 @@ pub struct SessionResources {
     pub trace_writer: crate::kernel::trace::TraceWriter,
     pub persist_writer: crate::kernel::run::persist_op::PersistWriter,
     pub prompt_config: Option<PromptConfig>,
-    pub memory: Option<Arc<MemoryService>>,
 }

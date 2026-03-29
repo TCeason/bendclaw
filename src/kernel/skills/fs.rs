@@ -152,10 +152,11 @@ pub fn load_skill_from_dir(dir: &Path, fallback_name: &str) -> Option<LoadedSkil
         name,
         description,
         version,
-        scope: SkillScope::Global,
+        scope: SkillScope::Shared,
         source: SkillSource::Local,
-        agent_id: None,
+        user_id: String::new(),
         created_by: None,
+        last_used_by: None,
         timeout,
         executable,
         parameters,
@@ -172,7 +173,7 @@ pub fn load_skill_from_dir(dir: &Path, fallback_name: &str) -> Option<LoadedSkil
 }
 
 /// Load a skill from a directory, overlaying `.meta.json` if present.
-/// This restores scope/source/agent_id/executable that aren't in SKILL.md frontmatter.
+/// This restores scope/source/user_id/executable that aren't in SKILL.md frontmatter.
 pub fn load_skill_with_meta(dir: &Path, fallback_name: &str) -> Option<LoadedSkill> {
     let mut loaded = load_skill_from_dir(dir, fallback_name)?;
     let meta_path = dir.join(".meta.json");
@@ -180,7 +181,7 @@ pub fn load_skill_with_meta(dir: &Path, fallback_name: &str) -> Option<LoadedSki
         if let Ok(meta) = serde_json::from_str::<SkillMeta>(&json) {
             loaded.skill.scope = SkillScope::parse(&meta.scope);
             loaded.skill.source = SkillSource::parse(&meta.source);
-            loaded.skill.agent_id = meta.agent_id;
+            loaded.skill.user_id = meta.user_id;
             loaded.skill.created_by = meta.created_by;
             loaded.skill.executable = meta.executable;
             loaded.skill.parameters = meta.parameters;

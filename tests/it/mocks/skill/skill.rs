@@ -1,14 +1,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Build a test `SkillStore` backed by a temp directory (no DB needed for hub-only tests).
-pub fn test_skill_store(
-    databases: Arc<bendclaw::storage::AgentDatabases>,
+/// Build a test `SkillProjector` backed by a temp directory (no DB needed for hub-only tests).
+#[allow(dead_code)]
+pub fn test_skill_projector(
     workspace_root: PathBuf,
-) -> Arc<bendclaw::kernel::skills::store::SkillStore> {
-    Arc::new(bendclaw::kernel::skills::store::SkillStore::new(
-        databases,
+) -> Arc<bendclaw::kernel::skills::projector::SkillProjector> {
+    Arc::new(bendclaw::kernel::skills::projector::SkillProjector::new(
         workspace_root,
+        Arc::new(bendclaw_test_harness::mocks::skill::NoopSkillStore),
+        Arc::new(bendclaw_test_harness::mocks::skill::NoopSubscriptionStore),
         None,
     ))
 }

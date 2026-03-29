@@ -200,11 +200,11 @@ pub fn api_router(state: AppState, _log_level: &str, auth: &AuthConfig) -> Route
         )
         // Skills
         .route(
-            "/v1/agents/{agent_id}/skills",
+            "/v1/skills",
             get(v1::skills::list_skills).post(v1::skills::create_skill),
         )
         .route(
-            "/v1/agents/{agent_id}/skills/{skill_name}",
+            "/v1/skills/{*skill_key}",
             get(v1::skills::get_skill).delete(v1::skills::delete_skill),
         )
         // Hub

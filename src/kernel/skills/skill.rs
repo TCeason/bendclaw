@@ -17,24 +17,25 @@ use crate::kernel::skills::sanitizer::sanitize_skill_description;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SkillScope {
-    Agent,
+    Private,
     #[default]
-    Global,
+    Shared,
 }
 
 impl SkillScope {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Agent => "agent",
-            Self::Global => "global",
+            Self::Private => "private",
+            Self::Shared => "shared",
         }
     }
 
-    /// Parse scope from string. Legacy `"user"` maps to `Agent`.
+    /// Parse scope from string. Legacy `"agent"` / `"user"` map to `Private`,
+    /// legacy `"global"` maps to `Shared`.
     pub fn parse(s: &str) -> Self {
         match s {
-            "agent" | "user" => Self::Agent,
-            _ => Self::Global,
+            "private" | "agent" | "user" => Self::Private,
+            _ => Self::Shared,
         }
     }
 }
@@ -117,6 +118,21 @@ fn default_timeout() -> u64 {
     30
 }
 
+// ── SkillId ──────────────────────────────────────────────────────────────────
+
+/// Explicit composite primary key for a skill.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SkillId {
+    pub owner_id: String,
+    pub name: String,
+}
+
+impl fmt::Display for SkillId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.owner_id, self.name)
+    }
+}
+
 // ── Skill ─────────────────────────────────────────────────────────────────────
 
 /// The canonical skill domain model.
@@ -130,9 +146,11 @@ pub struct Skill {
     #[serde(default)]
     pub source: SkillSource,
     #[serde(default)]
-    pub agent_id: Option<String>,
+    pub user_id: String,
     #[serde(default)]
     pub created_by: Option<String>,
+    #[serde(default)]
+    pub last_used_by: Option<String>,
     #[serde(default = "default_timeout")]
     pub timeout: u64,
     pub executable: bool,
@@ -148,11 +166,18 @@ pub struct Skill {
 }
 
 impl Skill {
-    /// Check if this skill is visible to the given agent context.
-    pub fn is_visible_to(&self, agent_id: &str) -> bool {
+    pub fn skill_id(&self) -> SkillId {
+        SkillId {
+            owner_id: self.user_id.clone(),
+            name: self.name.clone(),
+        }
+    }
+
+    /// Check if this skill is visible to the given user.
+    pub fn is_visible_to(&self, user_id: &str) -> bool {
         match self.scope {
-            SkillScope::Global => true,
-            SkillScope::Agent => self.agent_id.as_deref() == Some(agent_id),
+            SkillScope::Shared => true,
+            SkillScope::Private => self.user_id == user_id,
         }
     }
 
@@ -172,7 +197,7 @@ impl Skill {
         hasher.update(b"|");
         hasher.update(self.source.as_str().as_bytes());
         hasher.update(b"|");
-        hasher.update(self.agent_id.as_deref().unwrap_or("").as_bytes());
+        hasher.update(self.user_id.as_bytes());
         hasher.update(b"|");
         hasher.update(self.created_by.as_deref().unwrap_or("").as_bytes());
         hasher.update(b"|");

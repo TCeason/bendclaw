@@ -6,12 +6,11 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::base::Result;
-use crate::kernel::skills::remote::repository::DatabendSkillRepositoryFactory;
+use crate::kernel::skills::service::SkillService;
 use crate::kernel::skills::skill::Skill;
 use crate::kernel::skills::skill::SkillFile;
 use crate::kernel::skills::skill::SkillScope;
 use crate::kernel::skills::skill::SkillSource;
-use crate::kernel::skills::store::SkillStore;
 use crate::kernel::tools::OperationClassifier;
 use crate::kernel::tools::Tool;
 use crate::kernel::tools::ToolContext;
@@ -19,16 +18,12 @@ use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::OpType;
 pub struct SkillCreateTool {
-    store_factory: Arc<DatabendSkillRepositoryFactory>,
-    store: Arc<SkillStore>,
+    service: Arc<SkillService>,
 }
 
 impl SkillCreateTool {
-    pub fn new(store_factory: Arc<DatabendSkillRepositoryFactory>, store: Arc<SkillStore>) -> Self {
-        Self {
-            store_factory,
-            store,
-        }
+    pub fn new(service: Arc<SkillService>) -> Self {
+        Self { service }
     }
 }
 
@@ -127,10 +122,11 @@ impl Tool for SkillCreateTool {
             name: name.clone(),
             version: version.clone(),
             description,
-            scope: SkillScope::Agent,
+            scope: SkillScope::Shared,
             source: SkillSource::Agent,
-            agent_id: Some(ctx.agent_id.to_string()),
+            user_id: ctx.user_id.to_string(),
             created_by: Some(ctx.user_id.to_string()),
+            last_used_by: None,
             timeout,
             executable: true,
             parameters: crate::kernel::skills::fs::parse_parameters_section(&content),
@@ -140,20 +136,9 @@ impl Tool for SkillCreateTool {
             manifest: None,
         };
 
-        let store = match self.store_factory.for_agent(&ctx.agent_id) {
-            Ok(s) => s,
-            Err(e) => {
-                return Ok(ToolResult::error(format!(
-                    "failed to access agent store: {e}"
-                )))
-            }
-        };
-
-        if let Err(e) = store.save(&skill).await {
+        if let Err(e) = self.service.create(&ctx.user_id, skill).await {
             return Ok(ToolResult::error(format!("failed to save skill: {e}")));
         }
-
-        self.store.insert(&skill, &ctx.agent_id);
 
         Ok(ToolResult::ok(format!(
             "Skill '{name}' created (v{version})"

@@ -291,9 +291,11 @@ impl Tool for WebSearchTool {
             if key.secret {
                 if let Some(id) = key.id {
                     let pool = ctx.pool.clone();
+                    let agent_id = ctx.agent_id.to_string();
                     crate::base::spawn_fire_and_forget("variable_touch_last_used", async move {
-                        let repo = crate::storage::dal::variable::VariableRepo::new(pool);
-                        let _ = repo.touch_last_used(&id).await;
+                        let store = crate::kernel::variables::store::SharedVariableStore::new(pool);
+                        use crate::kernel::variables::store::VariableStore;
+                        let _ = store.touch_last_used(&id, &agent_id).await;
                     });
                 }
             }

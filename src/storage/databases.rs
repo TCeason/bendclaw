@@ -70,6 +70,17 @@ impl AgentDatabases {
         Ok(ids)
     }
 
+    /// List distinct user IDs that own active agents.
+    pub async fn list_user_ids(&self) -> Result<Vec<String>> {
+        let sql = "SELECT DISTINCT user_id FROM evotai_meta.evotai_agents WHERE status = 'active' AND user_id != '' ORDER BY user_id";
+        let rows = self.pool.query_all(sql).await?;
+        let ids: Vec<String> = rows
+            .iter()
+            .map(|row| crate::storage::sql::col(row, 0))
+            .collect();
+        Ok(ids)
+    }
+
     /// Check if a specific agent database exists.
     pub async fn database_exists(&self, db_name: &str) -> Result<bool> {
         let sql = format!("SHOW DATABASES LIKE '{db_name}'");

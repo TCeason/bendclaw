@@ -5,31 +5,31 @@ use crate::kernel::skills::skill::SkillSource;
 use crate::service::error::Result;
 use crate::service::state::AppState;
 
-pub(super) async fn list_skills(state: &AppState, agent_id: &str) -> Result<Vec<Skill>> {
-    Ok(state.runtime.skills().for_agent(agent_id))
+pub(super) async fn list_skills(state: &AppState, user_id: &str) -> Result<Vec<Skill>> {
+    Ok(state.runtime.org().skills().list(user_id))
 }
 
 pub(super) async fn get_skill(
     state: &AppState,
-    agent_id: &str,
-    skill_name: &str,
+    user_id: &str,
+    skill_key: &str,
 ) -> Result<Option<Skill>> {
-    Ok(state.runtime.skills().get(agent_id, skill_name))
+    Ok(state.runtime.org().skills().get(user_id, skill_key))
 }
 
 pub(super) async fn create_skill(
     state: &AppState,
     user_id: &str,
-    agent_id: &str,
     req: CreateSkillRequest,
 ) -> Result<Skill> {
     let skill = Skill {
         name: req.name,
         version: req.version,
-        scope: SkillScope::Agent,
+        scope: SkillScope::Shared,
         source: SkillSource::Agent,
-        agent_id: Some(agent_id.to_string()),
+        user_id: user_id.to_string(),
         created_by: Some(user_id.to_string()),
+        last_used_by: None,
         description: req.description,
         content: req.content,
         timeout: req.timeout,
@@ -40,15 +40,27 @@ pub(super) async fn create_skill(
         manifest: req.manifest,
     };
     skill.validate()?;
-    state.runtime.create_skill(agent_id, skill.clone()).await?;
+    state.runtime.create_skill(user_id, skill.clone()).await?;
     Ok(skill)
 }
 
 pub(super) async fn delete_skill(
     state: &AppState,
-    agent_id: &str,
-    skill_name: &str,
+    user_id: &str,
+    skill_key: &str,
 ) -> Result<String> {
-    state.runtime.delete_skill(agent_id, skill_name).await?;
-    Ok(skill_name.to_string())
+    let (owner, bare_name) = crate::kernel::skills::tool_key::parse(skill_key, user_id);
+    if owner != user_id {
+        // Subscribed skill: unsubscribe instead of delete
+        state
+            .runtime
+            .org()
+            .skills()
+            .unsubscribe(user_id, bare_name, owner)
+            .await?;
+    } else {
+        // Owned skill: delete
+        state.runtime.delete_skill(user_id, bare_name).await?;
+    }
+    Ok(skill_key.to_string())
 }

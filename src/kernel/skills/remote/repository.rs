@@ -53,7 +53,7 @@ impl RowMapper for SkillMapper {
             version: sql::col(row, 1),
             scope: SkillScope::parse(&sql::col(row, 2)),
             source: SkillSource::parse(&sql::col(row, 3)),
-            agent_id: sql::col_opt(row, 4),
+            agent_id: sql::col_opt(row, 4).unwrap_or_default(),
             created_by: sql::col_opt(row, 5),
             description: sql::col(row, 6),
             timeout: sql::col_u64(row, 7)?,

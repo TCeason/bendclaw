@@ -210,23 +210,25 @@ async fn web_search_success_formats_results_and_caps_count(
 
     let tool = WebSearchTool::new(format!("http://{addr}/search"));
     let _ws_dir = std::env::temp_dir().join(format!("bendclaw-web-search-{}", ulid::Ulid::new()));
-    let workspace = bendclaw::kernel::session::workspace::Workspace::from_variable_records(
+    let vars = vec![bendclaw::kernel::variables::Variable {
+        id: "var-brave".into(),
+        key: "BRAVE_API_KEY".into(),
+        value: "token".into(),
+        secret: false,
+        revoked: false,
+        user_id: String::new(),
+        scope: bendclaw::kernel::variables::VariableScope::Shared,
+        created_by: String::new(),
+        last_used_at: None,
+        last_used_by: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+    }];
+    let workspace = bendclaw::kernel::session::workspace::Workspace::from_variables(
         _ws_dir.clone(),
         _ws_dir,
         vec!["PATH".into(), "HOME".into()],
-        vec![bendclaw::storage::VariableRecord {
-            id: "var-brave".into(),
-            key: "BRAVE_API_KEY".into(),
-            value: "token".into(),
-            secret: false,
-            revoked: false,
-            user_id: String::new(),
-            scope: String::new(),
-            created_by: String::new(),
-            last_used_at: None,
-            created_at: String::new(),
-            updated_at: String::new(),
-        }],
+        &vars,
         std::time::Duration::from_secs(5),
         std::time::Duration::from_secs(300),
         1_048_576,
@@ -436,23 +438,25 @@ async fn web_search_auto_falls_back_to_ddg_on_brave_failure(
 
     let _ws_dir =
         std::env::temp_dir().join(format!("bendclaw-auto-fallback-{}", ulid::Ulid::new()));
-    let workspace = bendclaw::kernel::session::workspace::Workspace::from_variable_records(
+    let vars = vec![bendclaw::kernel::variables::Variable {
+        id: "var-brave".into(),
+        key: "BRAVE_API_KEY".into(),
+        value: "bad-token".into(),
+        secret: false,
+        revoked: false,
+        user_id: String::new(),
+        scope: bendclaw::kernel::variables::VariableScope::Shared,
+        created_by: String::new(),
+        last_used_at: None,
+        last_used_by: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+    }];
+    let workspace = bendclaw::kernel::session::workspace::Workspace::from_variables(
         _ws_dir.clone(),
         _ws_dir,
         vec!["PATH".into(), "HOME".into()],
-        vec![bendclaw::storage::VariableRecord {
-            id: "var-brave".into(),
-            key: "BRAVE_API_KEY".into(),
-            value: "bad-token".into(),
-            secret: false,
-            revoked: false,
-            user_id: String::new(),
-            scope: String::new(),
-            created_by: String::new(),
-            last_used_at: None,
-            created_at: String::new(),
-            updated_at: String::new(),
-        }],
+        &vars,
         Duration::from_secs(5),
         Duration::from_secs(300),
         1_048_576,
@@ -543,23 +547,25 @@ async fn web_search_returns_cached_result_on_second_call() -> Result<(), Box<dyn
         .with_cache(cache.clone());
 
     let _ws_dir = std::env::temp_dir().join(format!("bendclaw-cache-test-{}", ulid::Ulid::new()));
-    let workspace = bendclaw::kernel::session::workspace::Workspace::from_variable_records(
+    let vars = vec![bendclaw::kernel::variables::Variable {
+        id: "var-brave".into(),
+        key: "BRAVE_API_KEY".into(),
+        value: "token".into(),
+        secret: false,
+        revoked: false,
+        user_id: String::new(),
+        scope: bendclaw::kernel::variables::VariableScope::Shared,
+        created_by: String::new(),
+        last_used_at: None,
+        last_used_by: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+    }];
+    let workspace = bendclaw::kernel::session::workspace::Workspace::from_variables(
         _ws_dir.clone(),
         _ws_dir,
         vec!["PATH".into(), "HOME".into()],
-        vec![bendclaw::storage::VariableRecord {
-            id: "var-brave".into(),
-            key: "BRAVE_API_KEY".into(),
-            value: "token".into(),
-            secret: false,
-            revoked: false,
-            user_id: String::new(),
-            scope: String::new(),
-            created_by: String::new(),
-            last_used_at: None,
-            created_at: String::new(),
-            updated_at: String::new(),
-        }],
+        &vars,
         Duration::from_secs(5),
         Duration::from_secs(300),
         1_048_576,

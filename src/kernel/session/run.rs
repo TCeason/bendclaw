@@ -121,7 +121,7 @@ impl<'a> SessionRunCoordinator<'a> {
         let full_prompt = {
             let mut pb = PromptBuilder::new(
                 self.resources.storage.clone(),
-                self.resources.skills.clone(),
+                self.resources.org.skills().clone(),
             )
             .with_tools(self.resources.tools.clone())
             .with_variables(self.resources.prompt_variables.clone())
@@ -133,8 +133,8 @@ impl<'a> SessionRunCoordinator<'a> {
             pb = pb.with_directive_prompt(directive_prompt);
             let recall_memory = self
                 .resources
-                .memory
-                .as_ref()
+                .org
+                .memory()
                 .filter(|_| self.resources.config.memory.recall)
                 .cloned();
             pb = pb.with_memory_service(recall_memory, self.resources.config.memory.recall_budget);
@@ -287,7 +287,7 @@ impl<'a> SessionRunCoordinator<'a> {
         let skill_executor = Arc::new(crate::kernel::skills::runner::SkillRunner::new(
             self.agent_id,
             self.user_id,
-            self.resources.skills.clone(),
+            self.resources.org.skills().clone(),
             self.resources.workspace.clone(),
             self.resources.storage.pool().clone(),
         ));
@@ -320,8 +320,8 @@ impl<'a> SessionRunCoordinator<'a> {
 
         let extract_memory = self
             .resources
-            .memory
-            .as_ref()
+            .org
+            .memory()
             .filter(|_| self.resources.config.memory.extract)
             .cloned();
         let mut engine = Engine::from_tx(

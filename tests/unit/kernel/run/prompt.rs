@@ -20,14 +20,16 @@ use bendclaw::kernel::run::prompt::MAX_SYSTEM_BYTES;
 use bendclaw::kernel::run::prompt::MAX_TOOLS_BYTES;
 use bendclaw::kernel::run::prompt::MAX_VARIABLES_BYTES;
 use bendclaw::kernel::skills::hub::paths::hub_dir;
-use bendclaw::kernel::skills::store::SkillStore;
+use bendclaw::kernel::skills::projector::SkillProjector;
 use bendclaw::llm::message::ChatMessage;
 use bendclaw::llm::provider::LLMProvider;
 use bendclaw::llm::provider::LLMResponse;
 use bendclaw::llm::stream::ResponseStream;
 use bendclaw::llm::tool::ToolSchema;
-use bendclaw::storage::AgentDatabases;
 use bendclaw::storage::VariableRecord;
+use bendclaw_test_harness::mocks::skill::test_skill_service;
+use bendclaw_test_harness::mocks::skill::NoopSkillStore;
+use bendclaw_test_harness::mocks::skill::NoopSubscriptionStore;
 
 use crate::common::fake_databend::paged_rows;
 use crate::common::fake_databend::FakeDatabend;
@@ -233,12 +235,20 @@ fn make_prompt_builder(
 ) -> Result<(PromptBuilder, FakeDatabend, PathBuf)> {
     let fake = FakeDatabend::new(query);
     let pool = fake.pool();
-    let databases = Arc::new(AgentDatabases::new(pool.clone(), "test_")?);
     let workspace_root = prompt_test_workspace();
     std::fs::create_dir_all(&workspace_root)?;
-    let skills = Arc::new(SkillStore::new(databases, workspace_root.clone(), None));
+    let skills = Arc::new(SkillProjector::new(
+        workspace_root.clone(),
+        Arc::new(NoopSkillStore),
+        Arc::new(NoopSubscriptionStore),
+        None,
+    ));
     let storage = Arc::new(AgentStore::new(pool, Arc::new(NoopLLM)));
-    Ok((PromptBuilder::new(storage, skills), fake, workspace_root))
+    Ok((
+        PromptBuilder::new(storage, test_skill_service(skills)),
+        fake,
+        workspace_root,
+    ))
 }
 
 fn write_hub_skill(workspace_root: &std::path::Path) -> Result<()> {
@@ -248,6 +258,39 @@ fn write_hub_skill(workspace_root: &std::path::Path) -> Result<()> {
         skill_dir.join("SKILL.md"),
         "---\nname: demo-skill\ndescription: Demo skill\n---\nUse this skill carefully.\n",
     )?;
+    Ok(())
+}
+
+fn write_subscribed_skill(
+    workspace_root: &std::path::Path,
+    subscriber: &str,
+    owner: &str,
+    name: &str,
+    desc: &str,
+) -> Result<()> {
+    let skill = bendclaw::kernel::skills::skill::Skill {
+        name: name.to_string(),
+        version: "1.0.0".to_string(),
+        description: desc.to_string(),
+        scope: bendclaw::kernel::skills::skill::SkillScope::Shared,
+        source: bendclaw::kernel::skills::skill::SkillSource::Agent,
+        user_id: owner.to_string(),
+        created_by: Some(owner.to_string()),
+        last_used_by: None,
+        timeout: 30,
+        executable: false,
+        parameters: vec![],
+        content: format!("# {desc}"),
+        files: vec![],
+        requires: None,
+        manifest: None,
+    };
+    bendclaw::kernel::skills::remote::writer::write_subscribed_skill(
+        workspace_root,
+        subscriber,
+        owner,
+        &skill,
+    );
     Ok(())
 }
 
@@ -489,6 +532,58 @@ fn total_max_under_200kb() {
             + MAX_RUNTIME_BYTES;
         assert!(total <= 250 * 1024);
     }
+}
+
+#[tokio::test]
+async fn prompt_shows_subscribed_skill_with_namespaced_key() -> Result<()> {
+    let (builder, _fake, workspace_root) = make_prompt_builder(|sql, _database| {
+        if sql.contains("FROM sessions WHERE id = 'session-1'") {
+            return Ok(paged_rows(
+                &[&[
+                    "session-1",
+                    "agent-1",
+                    "user-1",
+                    "Test Session",
+                    "private",
+                    "",
+                    "",
+                    "",
+                    r#"{"name":"Bob"}"#,
+                    "",
+                    "2026-03-10T00:00:00Z",
+                    "2026-03-10T00:00:00Z",
+                ]],
+                None,
+                None,
+            ));
+        }
+        Ok(paged_rows(&[], None, None))
+    })?;
+    write_hub_skill(&workspace_root)?;
+    write_subscribed_skill(
+        &workspace_root,
+        "user-1",
+        "alice",
+        "shared-docs",
+        "Alice shared docs",
+    )?;
+
+    let prompt = builder.build("agent-1", "user-1", "session-1").await?;
+
+    // Hub skill appears with bare name
+    assert!(prompt.contains("<skill name=\"demo-skill\">Demo skill</skill>"));
+    // Subscribed skill appears with owner/name
+    assert!(
+        prompt.contains("<skill name=\"alice/shared-docs\">Alice shared docs</skill>"),
+        "prompt should show subscribed skill with namespaced key, got:\n{}",
+        prompt
+            .lines()
+            .filter(|l| l.contains("skill"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

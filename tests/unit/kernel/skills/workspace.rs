@@ -4,35 +4,38 @@ use std::time::Duration;
 use anyhow::Result;
 use bendclaw::kernel::session::workspace::SandboxResolver;
 use bendclaw::kernel::session::workspace::Workspace;
-use bendclaw::storage::dal::variable::VariableRecord;
+use bendclaw::kernel::variables::Variable;
+use bendclaw::kernel::variables::VariableScope;
 
-fn variable(id: &str, key: &str, value: &str, secret: bool) -> VariableRecord {
-    VariableRecord {
+fn variable(id: &str, key: &str, value: &str, secret: bool) -> Variable {
+    Variable {
         id: id.to_string(),
         key: key.to_string(),
         value: value.to_string(),
         secret,
         revoked: false,
         user_id: String::new(),
-        scope: String::new(),
+        scope: VariableScope::Shared,
         created_by: String::new(),
         last_used_at: None,
+        last_used_by: None,
         created_at: String::new(),
         updated_at: String::new(),
     }
 }
 
 #[test]
-fn workspace_from_variable_records_builds_env_and_lookups() -> Result<()> {
+fn workspace_from_variables_builds_env_and_lookups() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let ws = Workspace::from_variable_records(
+    let vars = vec![
+        variable("v1", "API_TOKEN", "secret-token", true),
+        variable("v2", "LOG_LEVEL", "debug", false),
+    ];
+    let ws = Workspace::from_variables(
         dir.path().to_path_buf(),
         dir.path().to_path_buf(),
         vec!["PATH".into()],
-        vec![
-            variable("v1", "API_TOKEN", "secret-token", true),
-            variable("v2", "LOG_LEVEL", "debug", false),
-        ],
+        &vars,
         Duration::from_secs(5),
         Duration::from_secs(300),
         1_048_576,
@@ -53,15 +56,16 @@ fn workspace_from_variable_records_builds_env_and_lookups() -> Result<()> {
 #[test]
 fn workspace_secret_variable_helpers_return_expected_ids() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let ws = Workspace::from_variable_records(
+    let vars = vec![
+        variable("v1", "API_TOKEN", "secret-token", true),
+        variable("v2", "LOG_LEVEL", "debug", false),
+        variable("v3", "BRAVE_API_KEY", "brave-secret", true),
+    ];
+    let ws = Workspace::from_variables(
         dir.path().to_path_buf(),
         dir.path().to_path_buf(),
         vec!["PATH".into()],
-        vec![
-            variable("v1", "API_TOKEN", "secret-token", true),
-            variable("v2", "LOG_LEVEL", "debug", false),
-            variable("v3", "BRAVE_API_KEY", "brave-secret", true),
-        ],
+        &vars,
         Duration::from_secs(5),
         Duration::from_secs(300),
         1_048_576,

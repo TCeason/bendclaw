@@ -7,9 +7,7 @@ const BASE_MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/base/sessions.sql"),
     include_str!("../../migrations/base/runs.sql"),
     include_str!("../../migrations/base/agent.sql"),
-    include_str!("../../migrations/base/skills.sql"),
     include_str!("../../migrations/base/traces.sql"),
-    include_str!("../../migrations/base/variables.sql"),
     include_str!("../../migrations/base/tasks.sql"),
     include_str!("../../migrations/base/feedback.sql"),
     include_str!("../../migrations/base/channels.sql"),
@@ -20,6 +18,9 @@ const BASE_MIGRATIONS: &[&str] = &[
 const ORG_MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/org/agents.sql"),
     include_str!("../../migrations/org/memory.sql"),
+    include_str!("../../migrations/org/variables.sql"),
+    include_str!("../../migrations/org/skills.sql"),
+    include_str!("../../migrations/org/subscriptions.sql"),
 ];
 
 /// Run all agent migrations against the pool's current database.

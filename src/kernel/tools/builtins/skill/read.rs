@@ -5,7 +5,7 @@ use serde_json::json;
 
 use crate::base::Result;
 use crate::kernel::skills::sanitizer::sanitize_skill_content;
-use crate::kernel::skills::store::SkillStore;
+use crate::kernel::skills::service::SkillService;
 use crate::kernel::tools::OperationClassifier;
 use crate::kernel::tools::Tool;
 use crate::kernel::tools::ToolContext;
@@ -20,12 +20,12 @@ const MAX_SKILL_CONTENT_BYTES: usize = 64 * 1024;
 
 /// In-process tool that reads skill documentation.
 pub struct SkillReadTool {
-    store: Arc<SkillStore>,
+    service: Arc<SkillService>,
 }
 
 impl SkillReadTool {
-    pub fn new(store: Arc<SkillStore>) -> Self {
-        Self { store }
+    pub fn new(service: Arc<SkillService>) -> Self {
+        Self { service }
     }
 }
 
@@ -72,7 +72,7 @@ impl Tool for SkillReadTool {
     ) -> Result<ToolResult> {
         let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
 
-        match self.store.read_skill(&ctx.agent_id, path) {
+        match self.service.read_skill(&ctx.user_id, path) {
             Some(content) => {
                 let raw_size = content.len();
 

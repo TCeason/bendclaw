@@ -263,6 +263,26 @@ pub async fn app_with_root_pool_and_llm(
     db_prefix: &str,
     llm: Arc<dyn bendclaw::llm::provider::LLMProvider>,
 ) -> anyhow::Result<axum::Router> {
+    let (router, _workspace_root) = app_with_workspace(
+        root_pool,
+        api_base_url,
+        api_token,
+        warehouse,
+        db_prefix,
+        llm,
+    )
+    .await?;
+    Ok(router)
+}
+
+pub async fn app_with_workspace(
+    root_pool: Pool,
+    api_base_url: &str,
+    api_token: &str,
+    warehouse: &str,
+    db_prefix: &str,
+    llm: Arc<dyn bendclaw::llm::provider::LLMProvider>,
+) -> anyhow::Result<(axum::Router, std::path::PathBuf)> {
     use bendclaw::service::state::AppState;
 
     let workspace = bendclaw::config::WorkspaceConfig {
@@ -272,6 +292,8 @@ pub async fn app_with_root_pool_and_llm(
             .into_owned(),
         ..Default::default()
     };
+
+    let workspace_root = std::path::PathBuf::from(&workspace.root_dir);
 
     let runtime = bendclaw::kernel::Runtime::new(
         api_base_url,
@@ -292,10 +314,9 @@ pub async fn app_with_root_pool_and_llm(
         auth_key: String::new(),
         shutdown_token: tokio_util::sync::CancellationToken::new(),
     };
-    Ok(bendclaw::service::api_router(
-        state,
-        "info",
-        &bendclaw::config::AuthConfig::default(),
+    Ok((
+        bendclaw::service::api_router(state, "info", &bendclaw::config::AuthConfig::default()),
+        workspace_root,
     ))
 }
 
@@ -429,9 +450,7 @@ const ALL_MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/base/sessions.sql"),
     include_str!("../../migrations/base/runs.sql"),
     include_str!("../../migrations/base/agent.sql"),
-    include_str!("../../migrations/base/skills.sql"),
     include_str!("../../migrations/base/traces.sql"),
-    include_str!("../../migrations/base/variables.sql"),
     include_str!("../../migrations/base/tasks.sql"),
     include_str!("../../migrations/base/feedback.sql"),
     include_str!("../../migrations/base/channels.sql"),

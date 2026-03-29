@@ -6,20 +6,22 @@ use async_trait::async_trait;
 use bendclaw::base::ErrorCode;
 use bendclaw::kernel::agent_store::AgentStore;
 use bendclaw::kernel::runtime::agent_config::AgentConfig;
+use bendclaw::kernel::runtime::org::OrgServices;
 use bendclaw::kernel::session::state::SessionState;
 use bendclaw::kernel::session::workspace::SandboxResolver;
 use bendclaw::kernel::session::workspace::Workspace;
 use bendclaw::kernel::session::Session;
 use bendclaw::kernel::session::SessionManager;
 use bendclaw::kernel::session::SessionResources;
-use bendclaw::kernel::skills::store::SkillStore;
+use bendclaw::kernel::skills::projector::SkillProjector;
 use bendclaw::kernel::tools::registry::ToolRegistry;
 use bendclaw::llm::message::ChatMessage;
 use bendclaw::llm::provider::LLMProvider;
 use bendclaw::llm::provider::LLMResponse;
 use bendclaw::llm::stream::ResponseStream;
 use bendclaw::llm::tool::ToolSchema;
-use bendclaw::storage::AgentDatabases;
+use bendclaw_test_harness::mocks::skill::NoopSkillStore;
+use bendclaw_test_harness::mocks::skill::NoopSubscriptionStore;
 use parking_lot::RwLock;
 use tokio_util::sync::CancellationToken;
 
@@ -78,8 +80,15 @@ fn test_session(session_id: &str, agent_id: &str) -> Arc<Session> {
         })
     });
     let pool = fake.pool();
-    let databases = Arc::new(AgentDatabases::new(pool.clone(), "unit_").unwrap());
-    let skills = Arc::new(SkillStore::new(databases, workspace_dir, None));
+    let projector = Arc::new(SkillProjector::new(
+        workspace_dir,
+        Arc::new(NoopSkillStore),
+        Arc::new(NoopSubscriptionStore),
+        None,
+    ));
+    let config = Arc::new(AgentConfig::default());
+    let meta_pool = pool.with_database("evotai_meta").expect("meta pool");
+    let org = Arc::new(OrgServices::new(meta_pool, projector, &config, llm.clone()));
     Arc::new(Session::new(
         session_id.into(),
         agent_id.into(),
@@ -87,11 +96,11 @@ fn test_session(session_id: &str, agent_id: &str) -> Arc<Session> {
         SessionResources {
             workspace,
             tool_registry: Arc::new(ToolRegistry::new()),
-            skills,
+            org,
             tools: Arc::new(vec![]),
             storage: Arc::new(AgentStore::new(pool, llm.clone())),
             llm: Arc::new(RwLock::new(llm)),
-            config: Arc::new(AgentConfig::default()),
+            config,
             prompt_variables: vec![],
             cluster_client: None,
             directive: None,
@@ -99,7 +108,6 @@ fn test_session(session_id: &str, agent_id: &str) -> Arc<Session> {
             persist_writer: bendclaw::kernel::writer::BackgroundWriter::noop("persist"),
             tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),
             prompt_config: None,
-            memory: None,
         },
     ))
 }

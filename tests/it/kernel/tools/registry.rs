@@ -1,29 +1,36 @@
 use std::sync::Arc;
 
-use bendclaw::kernel::skills::remote::repository::DatabendSkillRepositoryFactory;
+use bendclaw::kernel::runtime::agent_config::AgentConfig;
+use bendclaw::kernel::runtime::org::OrgServices;
+use bendclaw::kernel::skills::projector::SkillProjector;
 use bendclaw::kernel::tools::registry::create_session_tools;
 use bendclaw::kernel::tools::registry::ToolRegistry;
 use bendclaw::kernel::tools::ToolId;
 
-use crate::mocks::skill::test_skill_store;
-
 fn make_registry() -> ToolRegistry {
     let pool = bendclaw::storage::Pool::new("https://api.databend.com/v1", "test-token", "default")
         .expect("pool: static URL is always valid");
-    let databases =
-        Arc::new(bendclaw::storage::AgentDatabases::new(pool.clone(), "test_").unwrap());
     let dir = std::env::temp_dir().join(format!("bendclaw-reg-{}", ulid::Ulid::new()));
     let _ = std::fs::create_dir_all(&dir);
-    let skill_store = test_skill_store(databases.clone(), dir);
-    let factory = Arc::new(DatabendSkillRepositoryFactory::new(databases));
-    let channels = Arc::new(bendclaw::kernel::channel::registry::ChannelRegistry::new());
-    create_session_tools(
+    let skill_store = Arc::new(
+        bendclaw::kernel::skills::shared::DatabendSharedSkillStore::new(
+            pool.with_database("evotai_meta")
+                .expect("meta pool for projector"),
+        ),
+    );
+    let projector = Arc::new(SkillProjector::new(
+        dir,
         skill_store,
-        factory,
-        pool,
-        channels,
-        "test_instance".to_string(),
-    )
+        Arc::new(bendclaw_test_harness::mocks::skill::NoopSubscriptionStore),
+        None,
+    ));
+    let config = AgentConfig::default();
+    let llm: Arc<dyn bendclaw::llm::provider::LLMProvider> =
+        Arc::new(bendclaw_test_harness::mocks::llm::MockLLMProvider::with_text("ok"));
+    let meta_pool = pool.with_database("evotai_meta").expect("meta pool");
+    let org = Arc::new(OrgServices::new(meta_pool, projector, &config, llm));
+    let channels = Arc::new(bendclaw::kernel::channel::registry::ChannelRegistry::new());
+    create_session_tools(org, pool, channels, "test_instance".to_string())
 }
 
 #[test]

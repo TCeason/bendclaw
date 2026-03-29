@@ -3,26 +3,33 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use bendclaw::kernel::skills::store::SkillStore;
+use bendclaw::kernel::skills::projector::SkillProjector;
+use bendclaw::kernel::skills::service::SkillService;
 use bendclaw::kernel::tools::skill::SkillReadTool;
 use bendclaw::kernel::tools::OperationClassifier;
 use bendclaw::kernel::tools::Tool;
+use bendclaw_test_harness::mocks::skill::NoopSkillStore;
+use bendclaw_test_harness::mocks::skill::NoopSubscriptionStore;
 use serde_json::json;
 
 use crate::mocks::context::test_tool_context;
-use crate::mocks::skill::test_skill_store;
 
-fn make_tool() -> (SkillReadTool, Arc<SkillStore>) {
-    let databases = {
-        let pool =
-            bendclaw::storage::Pool::new("http://localhost:0", "", "default").expect("dummy pool");
-        Arc::new(bendclaw::storage::AgentDatabases::new(pool, "test_").unwrap())
-    };
+fn make_tool() -> (SkillReadTool, Arc<SkillService>) {
     let dir = std::env::temp_dir().join(format!("bendclaw-read-{}", ulid::Ulid::new()));
     let _ = std::fs::create_dir_all(&dir);
-    let store = test_skill_store(databases, dir);
-    let tool = SkillReadTool::new(store.clone());
-    (tool, store)
+    let projector = Arc::new(SkillProjector::new(
+        dir,
+        Arc::new(NoopSkillStore),
+        Arc::new(NoopSubscriptionStore),
+        None,
+    ));
+    let service = Arc::new(SkillService::new(
+        Arc::new(NoopSkillStore),
+        Arc::new(NoopSubscriptionStore),
+        projector,
+    ));
+    let tool = SkillReadTool::new(service.clone());
+    (tool, service)
 }
 
 // ── metadata ──

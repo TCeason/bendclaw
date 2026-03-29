@@ -9,7 +9,7 @@ use crate::kernel::cluster::ClusterService;
 use crate::kernel::run::default_identity;
 use crate::kernel::run::prompt_diagnostics;
 use crate::kernel::run::runtime_context;
-use crate::kernel::skills::store::SkillStore;
+use crate::kernel::skills::service::SkillService;
 use crate::llm::tool::ToolSchema;
 
 const RECENT_ERRORS_LIMIT: u32 = 5;
@@ -72,6 +72,16 @@ impl From<crate::storage::dal::variable::record::VariableRecord> for PromptVaria
     }
 }
 
+impl From<&crate::kernel::variables::Variable> for PromptVariable {
+    fn from(value: &crate::kernel::variables::Variable) -> Self {
+        Self {
+            key: value.key.clone(),
+            value: value.value.clone(),
+            secret: value.secret,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PromptConfig {
     pub system_prompt: String,
@@ -97,7 +107,7 @@ use crate::kernel::memory::MemoryService;
 
 pub struct PromptBuilder {
     storage: Arc<AgentStore>,
-    skills: Arc<SkillStore>,
+    skills: Arc<SkillService>,
 
     identity: Option<String>,
     soul: Option<String>,
@@ -114,7 +124,7 @@ pub struct PromptBuilder {
 }
 
 impl PromptBuilder {
-    pub fn new(storage: Arc<AgentStore>, skills: Arc<SkillStore>) -> Self {
+    pub fn new(storage: Arc<AgentStore>, skills: Arc<SkillService>) -> Self {
         Self {
             storage,
             skills,
@@ -276,7 +286,7 @@ impl PromptBuilder {
         }
 
         // 4. Skills (metadata only, sync)
-        self.append_skills(&mut prompt, agent_id);
+        self.append_skills(&mut prompt, user_id);
 
         // 5. Tools (compact list, sync)
         self.append_tools(&mut prompt);
@@ -333,8 +343,8 @@ impl PromptBuilder {
         tokio::join!(config_fut, vars_fut, errors_fut, state_fut, session_fut)
     }
 
-    fn append_skills(&self, prompt: &mut String, agent_id: &str) {
-        let skills = self.skills.for_agent(agent_id);
+    fn append_skills(&self, prompt: &mut String, user_id: &str) {
+        let skills = self.skills.list(user_id);
 
         let non_exec: Vec<_> = skills.iter().filter(|s| !s.executable).collect();
         if non_exec.is_empty() {
@@ -344,7 +354,8 @@ impl PromptBuilder {
         let mut buf = String::new();
         buf.push_str("## Available Skills\n\n<available_skills>\n");
         for s in &non_exec {
-            let _ = writeln!(buf, "<skill name=\"{}\">{}</skill>", s.name, s.description);
+            let display = crate::kernel::skills::tool_key::format(s, user_id);
+            let _ = writeln!(buf, "<skill name=\"{}\">{}</skill>", display, s.description);
         }
         buf.push_str("</available_skills>\n\n");
         buf.push_str("Use `read_skill(name)` for full instructions.\n\n");

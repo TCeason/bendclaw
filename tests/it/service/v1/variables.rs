@@ -26,7 +26,11 @@ struct VariableRecord {
     value: String,
     secret: bool,
     revoked: bool,
+    user_id: String,
+    scope: String,
+    created_by: String,
     last_used_at: Option<String>,
+    last_used_by: Option<String>,
     created_at: String,
     updated_at: String,
 }
@@ -65,7 +69,11 @@ fn variable_rows(records: &[VariableRecord]) -> bendclaw::storage::pool::QueryRe
                 serde_json::Value::String(record.value.clone()),
                 serde_json::Value::String(record.secret.to_string()),
                 serde_json::Value::String(record.revoked.to_string()),
+                serde_json::Value::String(record.user_id.clone()),
+                serde_json::Value::String(record.scope.clone()),
+                serde_json::Value::String(record.created_by.clone()),
                 serde_json::Value::String(record.last_used_at.clone().unwrap_or_default()),
+                serde_json::Value::String(record.last_used_by.clone().unwrap_or_default()),
                 serde_json::Value::String(record.created_at.clone()),
                 serde_json::Value::String(record.updated_at.clone()),
             ]
@@ -82,6 +90,7 @@ fn variable_rows(records: &[VariableRecord]) -> bendclaw::storage::pool::QueryRe
     }
 }
 
+// PLACEHOLDER_TEST
 #[tokio::test]
 async fn variables_api_fast_crud_and_masking() -> Result<()> {
     let state = VariableState {
@@ -89,42 +98,63 @@ async fn variables_api_fast_crud_and_masking() -> Result<()> {
     };
     let fake_state = state.clone();
     let fake = FakeDatabend::new(move |sql, _database| {
+        if sql.starts_with("CREATE ") || sql.starts_with("--") {
+            return Ok(paged_rows(&[], None, None));
+        }
+        if sql.contains("evotai_meta.evotai_agents") {
+            return Ok(paged_rows(&[], None, None));
+        }
         let mut records = fake_state.records.lock().expect("variable state");
-        if sql.starts_with("INSERT INTO variables") {
+        if sql.starts_with("INSERT INTO evotai_meta.variables") {
             let values = quoted_values(sql);
+            // Quoted values: id, key, value, user_id, scope, created_by
+            // secret and revoked are unquoted booleans
+            let secret = sql.contains(", true, ") || sql.contains(", TRUE, ");
             records.push(VariableRecord {
                 id: values[0].clone(),
                 key: values[1].clone(),
                 value: values[2].clone(),
-                secret: sql.contains(", true,") || sql.contains(", TRUE,"),
-                revoked: sql.contains(", true, revoked"),
+                secret,
+                revoked: false,
+                user_id: values[3].clone(),
+                scope: values.get(4).cloned().unwrap_or("shared".into()),
+                created_by: values.get(5).cloned().unwrap_or_default(),
                 last_used_at: None,
+                last_used_by: None,
                 created_at: "2026-03-11T00:00:00Z".to_string(),
                 updated_at: "2026-03-11T00:00:00Z".to_string(),
             });
             return Ok(paged_rows(&[], None, None));
         }
-        if sql.starts_with("SELECT COUNT(*) FROM variables") {
-            return Ok(paged_rows(&[&[&records.len().to_string()]], None, None));
-        }
-        if sql.starts_with("SELECT id, key, value") && sql.contains("WHERE id = ") {
-            let id = quoted_values(sql).pop().unwrap_or_default();
+        if sql.contains("FROM evotai_meta.variables")
+            && sql.contains("WHERE user_id =")
+            && sql.contains("AND id =")
+        {
+            let values = quoted_values(sql);
+            let user_id = &values[0];
+            let id = &values[1];
             let found: Vec<_> = records
                 .iter()
-                .filter(|record| record.id == id)
+                .filter(|r| r.user_id == *user_id && r.id == *id)
                 .cloned()
                 .collect();
             return Ok(variable_rows(&found));
         }
-        if sql.starts_with("SELECT id, key, value") {
-            let mut all = records.clone();
-            all.reverse();
-            return Ok(variable_rows(&all));
-        }
-        if sql.starts_with("UPDATE variables SET key=") {
+        if sql.contains("FROM evotai_meta.variables") && sql.contains("WHERE user_id =") {
             let values = quoted_values(sql);
+            let user_id = &values[0];
+            let found: Vec<_> = records
+                .iter()
+                .filter(|r| r.user_id == *user_id)
+                .cloned()
+                .collect();
+            return Ok(variable_rows(&found));
+        }
+        if sql.starts_with("UPDATE evotai_meta.variables SET") {
+            let values = quoted_values(sql);
+            // Quoted values: key, value, id, user_id
             let id = values[2].clone();
-            if let Some(record) = records.iter_mut().find(|record| record.id == id) {
+            if let Some(record) = records.iter_mut().find(|r| r.id == id) {
                 record.key = values[0].clone();
                 record.value = values[1].clone();
                 record.secret = sql.contains("secret=true");
@@ -133,9 +163,11 @@ async fn variables_api_fast_crud_and_masking() -> Result<()> {
             }
             return Ok(paged_rows(&[], None, None));
         }
-        if sql.starts_with("DELETE FROM variables WHERE id = ") {
-            let id = quoted_values(sql).pop().unwrap_or_default();
-            records.retain(|record| record.id != id);
+        if sql.starts_with("DELETE FROM evotai_meta.variables") {
+            let values = quoted_values(sql);
+            // Quoted values: id, user_id
+            let id = values[0].clone();
+            records.retain(|r| r.id != id);
             return Ok(paged_rows(&[], None, None));
         }
         Ok(paged_rows(&[], None, None))
@@ -156,6 +188,7 @@ async fn variables_api_fast_crud_and_masking() -> Result<()> {
     let agent_id = uid("agent");
     let user = uid("user");
 
+    // CREATE
     let created = app
         .clone()
         .oneshot(
@@ -180,6 +213,7 @@ async fn variables_api_fast_crud_and_masking() -> Result<()> {
         .to_string();
     assert_eq!(created_body["value"], "****");
 
+    // LIST
     let list = app
         .clone()
         .oneshot(
@@ -191,9 +225,10 @@ async fn variables_api_fast_crud_and_masking() -> Result<()> {
         .await?;
     assert_eq!(list.status(), StatusCode::OK);
     let list_body = json_body(list).await?;
-    assert_eq!(list_body["data"][0]["key"], "API_TOKEN");
-    assert_eq!(list_body["data"][0]["value"], "****");
+    assert_eq!(list_body[0]["key"], "API_TOKEN");
+    assert_eq!(list_body[0]["value"], "****");
 
+    // UPDATE
     let updated = app
         .clone()
         .oneshot(
@@ -212,6 +247,7 @@ async fn variables_api_fast_crud_and_masking() -> Result<()> {
         .await?;
     assert_eq!(updated.status(), StatusCode::OK);
 
+    // GET
     let got = app
         .clone()
         .oneshot(
@@ -228,6 +264,7 @@ async fn variables_api_fast_crud_and_masking() -> Result<()> {
     assert_eq!(got_body["revoked"], true);
     assert_eq!(got_body["value"], "rotated");
 
+    // DELETE
     let deleted = app
         .clone()
         .oneshot(
@@ -240,6 +277,7 @@ async fn variables_api_fast_crud_and_masking() -> Result<()> {
         .await?;
     assert_eq!(deleted.status(), StatusCode::OK);
 
+    // GET after delete → 404
     let missing = app
         .clone()
         .oneshot(

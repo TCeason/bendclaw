@@ -6,8 +6,6 @@ use parking_lot::RwLock;
 use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
-use crate::kernel::memory::MemoryService;
-use crate::kernel::memory::SharedMemoryStore;
 use crate::kernel::run::prompt::PromptConfig;
 use crate::kernel::run::prompt::PromptVariable;
 use crate::kernel::runtime::diagnostics;
@@ -17,11 +15,9 @@ use crate::kernel::session::workspace::SandboxResolver;
 use crate::kernel::session::workspace::Workspace;
 use crate::kernel::session::Session;
 use crate::kernel::session::SessionResources;
-use crate::kernel::skills::remote::repository::DatabendSkillRepositoryFactory;
 use crate::kernel::tools::registry::create_session_tools;
 use crate::kernel::tools::registry::register_cluster_tools;
 use crate::kernel::tools::registry::register_memory_tools;
-use crate::storage::dal::variable::VariableRepo;
 
 impl Runtime {
     pub async fn get_or_create_session(
@@ -61,20 +57,25 @@ impl Runtime {
         }
 
         // Parallelize the two independent DB queries: agent config + variables.
-        let variable_repo = VariableRepo::new(pool.clone());
         let (llm_config_result, vars_result) = tokio::join!(
             self.resolve_agent_llm_and_config(agent_id, &pool),
-            variable_repo.list_all_active()
+            self.org.variables().list_active(user_id)
         );
 
         let (agent_llm, cached_config) = llm_config_result?;
-        let variable_records = vars_result
+        let variables = vars_result
             .map_err(|e| ErrorCode::internal(format!("failed to load variables: {e}")))?;
-        let prompt_variables = variable_records
-            .clone()
-            .into_iter()
-            .map(PromptVariable::from)
-            .collect();
+        // Deduplicate by key: owned variables take precedence over subscribed ones.
+        // list_active returns owned first (user_id = ?) then subscribed via UNION.
+        let variables: Vec<_> = {
+            let mut seen = std::collections::HashSet::new();
+            variables
+                .into_iter()
+                .filter(|v| seen.insert(v.key.clone()))
+                .collect()
+        };
+        let prompt_variables: Vec<PromptVariable> =
+            variables.iter().map(PromptVariable::from).collect();
         let prompt_config = cached_config.clone().map(PromptConfig::from);
 
         let storage = Arc::new(AgentStore::new(pool.clone(), agent_llm.clone()));
@@ -97,22 +98,19 @@ impl Runtime {
                 .unwrap_or_else(|| workspace_dir.clone())
         };
 
-        let workspace = Arc::new(Workspace::from_variable_records(
+        let workspace = Arc::new(Workspace::from_variables(
             workspace_dir,
             cwd,
             self.config.workspace.safe_env_vars.clone(),
-            variable_records.clone(),
+            &variables,
             Duration::from_secs(self.config.workspace.command_timeout_secs),
             Duration::from_secs(self.config.workspace.max_command_timeout_secs),
             self.config.workspace.max_output_bytes,
             resolver,
         ));
 
-        let skill_store_factory =
-            Arc::new(DatabendSkillRepositoryFactory::new(self.databases.clone()));
         let mut tool_registry = create_session_tools(
-            self.skills.clone(),
-            skill_store_factory,
+            self.org.clone(),
             pool.clone(),
             self.channels.clone(),
             self.config.node_id.clone(),
@@ -124,19 +122,8 @@ impl Runtime {
             register_cluster_tools(&mut tool_registry, svc.clone(), dt);
         }
 
-        // Build shared MemoryService if memory is enabled.
-        let memory = if self.config.memory.enabled {
-            let meta_pool = self.databases.root_pool().with_database("evotai_meta")?;
-            let store = Arc::new(SharedMemoryStore::new(meta_pool));
-            let llm = agent_llm.clone();
-            let model: Arc<str> = llm.default_model().into();
-            Some(Arc::new(MemoryService::new(store, llm, model)))
-        } else {
-            None
-        };
-
         // Conditionally register memory tools
-        if let Some(ref mem) = memory {
+        if let Some(mem) = self.org.memory() {
             register_memory_tools(&mut tool_registry, mem.clone());
         }
 
@@ -145,16 +132,17 @@ impl Runtime {
         let mut tools = tool_registry.tool_schemas();
         let existing_names: std::collections::HashSet<String> =
             tools.iter().map(|t| t.function.name.clone()).collect();
-        for skill in self.skills.for_agent(agent_id) {
+        for skill in self.org.skills().list(user_id) {
             if !skill.executable {
                 continue;
             }
-            if existing_names.contains(&skill.name) {
+            let tool_name = crate::kernel::skills::tool_key::format(&skill, user_id);
+            if existing_names.contains(&tool_name) {
                 continue;
             }
             let params = skill.to_json_schema();
             tools.push(crate::llm::tool::ToolSchema::new(
-                &skill.name,
+                &tool_name,
                 &skill.description,
                 params,
             ));
@@ -169,7 +157,7 @@ impl Runtime {
             SessionResources {
                 workspace,
                 tool_registry,
-                skills: self.skills.clone(),
+                org: self.org.clone(),
                 tools: Arc::new(tools),
                 storage,
                 llm: Arc::new(RwLock::new(agent_llm)),
@@ -181,7 +169,6 @@ impl Runtime {
                 persist_writer: self.persist_writer.clone(),
                 tool_writer: self.tool_writer.clone(),
                 prompt_config,
-                memory,
             },
         ));
 

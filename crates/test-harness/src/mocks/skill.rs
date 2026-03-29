@@ -3,33 +3,46 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use bendclaw::kernel::skills::remote::repository::SkillRepository;
+use bendclaw::kernel::skills::service::SkillService;
+use bendclaw::kernel::skills::shared::SharedSkillStore;
 use bendclaw::kernel::skills::skill::Skill;
+use bendclaw::kernel::subscriptions::store::Subscription;
+use bendclaw::kernel::subscriptions::store::SubscriptionStore;
 use parking_lot::Mutex;
 
 /// Skill store that does nothing (for tests that don't need persistence).
 pub struct NoopSkillStore;
 
 #[async_trait]
-impl SkillRepository for NoopSkillStore {
-    async fn list(&self) -> bendclaw::base::Result<Vec<Skill>> {
+impl SharedSkillStore for NoopSkillStore {
+    async fn list(&self, _user_id: &str) -> bendclaw::base::Result<Vec<Skill>> {
         Ok(vec![])
     }
-    async fn get(&self, _name: &str) -> bendclaw::base::Result<Option<Skill>> {
+    async fn get(&self, _user_id: &str, _name: &str) -> bendclaw::base::Result<Option<Skill>> {
         Ok(None)
     }
-    async fn save(&self, _skill: &Skill) -> bendclaw::base::Result<()> {
+    async fn save(&self, _user_id: &str, _skill: &Skill) -> bendclaw::base::Result<()> {
         Ok(())
     }
-    async fn remove(&self, _name: &str, _agent_id: Option<&str>) -> bendclaw::base::Result<()> {
+    async fn remove(&self, _user_id: &str, _name: &str) -> bendclaw::base::Result<()> {
         Ok(())
     }
-    async fn checksums(&self) -> bendclaw::base::Result<HashMap<String, String>> {
+    async fn checksums(&self, _user_id: &str) -> bendclaw::base::Result<HashMap<String, String>> {
         Ok(HashMap::new())
+    }
+    async fn touch_last_used(
+        &self,
+        _id: &bendclaw::kernel::skills::skill::SkillId,
+        _agent_id: &str,
+    ) -> bendclaw::base::Result<()> {
+        Ok(())
+    }
+    async fn list_shared(&self, _user_id: &str) -> bendclaw::base::Result<Vec<Skill>> {
+        Ok(vec![])
     }
 }
 
-/// In-memory [`SkillRepository`] for unit-testing tools that create/remove skills.
+/// In-memory skill store for unit-testing tools that create/remove skills.
 pub struct MockSkillStore {
     skills: Mutex<HashMap<String, Skill>>,
 }
@@ -51,26 +64,26 @@ impl MockSkillStore {
 }
 
 #[async_trait]
-impl SkillRepository for MockSkillStore {
-    async fn list(&self) -> bendclaw::base::Result<Vec<Skill>> {
+impl SharedSkillStore for MockSkillStore {
+    async fn list(&self, _user_id: &str) -> bendclaw::base::Result<Vec<Skill>> {
         Ok(self.skills.lock().values().cloned().collect())
     }
 
-    async fn get(&self, name: &str) -> bendclaw::base::Result<Option<Skill>> {
+    async fn get(&self, _user_id: &str, name: &str) -> bendclaw::base::Result<Option<Skill>> {
         Ok(self.skills.lock().get(name).cloned())
     }
 
-    async fn save(&self, skill: &Skill) -> bendclaw::base::Result<()> {
+    async fn save(&self, _user_id: &str, skill: &Skill) -> bendclaw::base::Result<()> {
         self.skills.lock().insert(skill.name.clone(), skill.clone());
         Ok(())
     }
 
-    async fn remove(&self, name: &str, _agent_id: Option<&str>) -> bendclaw::base::Result<()> {
+    async fn remove(&self, _user_id: &str, name: &str) -> bendclaw::base::Result<()> {
         self.skills.lock().remove(name);
         Ok(())
     }
 
-    async fn checksums(&self) -> bendclaw::base::Result<HashMap<String, String>> {
+    async fn checksums(&self, _user_id: &str) -> bendclaw::base::Result<HashMap<String, String>> {
         let map = self
             .skills
             .lock()
@@ -79,16 +92,95 @@ impl SkillRepository for MockSkillStore {
             .collect();
         Ok(map)
     }
+
+    async fn touch_last_used(
+        &self,
+        _id: &bendclaw::kernel::skills::skill::SkillId,
+        _agent_id: &str,
+    ) -> bendclaw::base::Result<()> {
+        Ok(())
+    }
+
+    async fn list_shared(&self, _user_id: &str) -> bendclaw::base::Result<Vec<Skill>> {
+        Ok(vec![])
+    }
 }
 
-/// Build a test `SkillStore` backed by a temp directory (no DB needed for hub-only tests).
-pub fn test_skill_store(
-    databases: Arc<bendclaw::storage::AgentDatabases>,
+/// Subscription store that does nothing (for tests that don't need subscription persistence).
+pub struct NoopSubscriptionStore;
+
+#[async_trait]
+impl SubscriptionStore for NoopSubscriptionStore {
+    async fn subscribe(
+        &self,
+        _user_id: &str,
+        _resource_type: &str,
+        _resource_key: &str,
+        _owner_id: &str,
+    ) -> bendclaw::base::Result<()> {
+        Ok(())
+    }
+
+    async fn unsubscribe(
+        &self,
+        _user_id: &str,
+        _resource_type: &str,
+        _resource_key: &str,
+        _owner_id: &str,
+    ) -> bendclaw::base::Result<()> {
+        Ok(())
+    }
+
+    async fn list(
+        &self,
+        _user_id: &str,
+        _resource_type: &str,
+    ) -> bendclaw::base::Result<Vec<Subscription>> {
+        Ok(vec![])
+    }
+
+    async fn is_subscribed(
+        &self,
+        _user_id: &str,
+        _resource_type: &str,
+        _resource_key: &str,
+        _owner_id: &str,
+    ) -> bendclaw::base::Result<bool> {
+        Ok(false)
+    }
+}
+
+/// Build a test `SkillProjector` backed by a temp directory (no DB needed for hub-only tests).
+pub fn test_skill_projector(
     workspace_root: PathBuf,
-) -> Arc<bendclaw::kernel::skills::store::SkillStore> {
-    Arc::new(bendclaw::kernel::skills::store::SkillStore::new(
-        databases,
+) -> Arc<bendclaw::kernel::skills::projector::SkillProjector> {
+    Arc::new(bendclaw::kernel::skills::projector::SkillProjector::new(
         workspace_root,
+        Arc::new(NoopSkillStore),
+        Arc::new(NoopSubscriptionStore),
         None,
+    ))
+}
+
+/// Build a test `SkillService` wrapping a projector with noop stores.
+pub fn test_skill_service(
+    projector: Arc<bendclaw::kernel::skills::projector::SkillProjector>,
+) -> Arc<SkillService> {
+    Arc::new(SkillService::new(
+        Arc::new(NoopSkillStore),
+        Arc::new(NoopSubscriptionStore),
+        projector,
+    ))
+}
+
+/// Build a test `SkillService` with a custom `SharedSkillStore`.
+pub fn test_skill_service_with_store(
+    store: Arc<dyn SharedSkillStore>,
+    projector: Arc<bendclaw::kernel::skills::projector::SkillProjector>,
+) -> Arc<SkillService> {
+    Arc::new(SkillService::new(
+        store,
+        Arc::new(NoopSubscriptionStore),
+        projector,
     ))
 }

@@ -18,6 +18,7 @@ use crate::service::state::AppState;
 #[derive(Serialize)]
 pub struct SkillResponse {
     pub name: String,
+    pub owner_id: String,
     pub version: String,
     pub scope: String,
     pub source: String,
@@ -32,9 +33,10 @@ pub struct SkillResponse {
     pub manifest: Option<SkillManifest>,
 }
 
-fn to_response(s: &Skill) -> SkillResponse {
+fn to_response(s: &Skill, viewer_id: &str) -> SkillResponse {
     SkillResponse {
-        name: s.name.clone(),
+        name: crate::kernel::skills::tool_key::format(s, viewer_id),
+        owner_id: s.user_id.clone(),
         version: s.version.clone(),
         scope: s.scope.as_str().to_string(),
         source: s.source.as_str().to_string(),
@@ -81,39 +83,42 @@ fn default_timeout() -> u64 {
 
 pub async fn list_skills(
     State(state): State<AppState>,
-    _ctx: RequestContext,
-    Path(agent_id): Path<String>,
+    ctx: RequestContext,
 ) -> Result<Json<Vec<SkillResponse>>> {
-    let skills = service::list_skills(&state, &agent_id).await?;
-    Ok(Json(skills.iter().map(to_response).collect()))
+    let skills = service::list_skills(&state, &ctx.user_id).await?;
+    Ok(Json(
+        skills
+            .iter()
+            .map(|s| to_response(s, &ctx.user_id))
+            .collect(),
+    ))
 }
 
 pub async fn get_skill(
     State(state): State<AppState>,
-    _ctx: RequestContext,
-    Path((agent_id, skill_name)): Path<(String, String)>,
+    ctx: RequestContext,
+    Path(skill_key): Path<String>,
 ) -> Result<Json<SkillResponse>> {
-    let skill = service::get_skill(&state, &agent_id, &skill_name)
+    let skill = service::get_skill(&state, &ctx.user_id, &skill_key)
         .await?
-        .ok_or_else(|| ServiceError::AgentNotFound(format!("skill '{skill_name}' not found")))?;
-    Ok(Json(to_response(&skill)))
+        .ok_or_else(|| ServiceError::AgentNotFound(format!("skill '{skill_key}' not found")))?;
+    Ok(Json(to_response(&skill, &ctx.user_id)))
 }
 
 pub async fn create_skill(
     State(state): State<AppState>,
     ctx: RequestContext,
-    Path(agent_id): Path<String>,
     Json(req): Json<CreateSkillRequest>,
 ) -> Result<Json<SkillResponse>> {
-    let skill = service::create_skill(&state, &ctx.user_id, &agent_id, req).await?;
-    Ok(Json(to_response(&skill)))
+    let skill = service::create_skill(&state, &ctx.user_id, req).await?;
+    Ok(Json(to_response(&skill, &ctx.user_id)))
 }
 
 pub async fn delete_skill(
     State(state): State<AppState>,
-    _ctx: RequestContext,
-    Path((agent_id, skill_name)): Path<(String, String)>,
+    ctx: RequestContext,
+    Path(skill_key): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
-    let deleted = service::delete_skill(&state, &agent_id, &skill_name).await?;
+    let deleted = service::delete_skill(&state, &ctx.user_id, &skill_key).await?;
     Ok(Json(serde_json::json!({ "deleted": deleted })))
 }

@@ -6,9 +6,8 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::base::Result;
-use crate::kernel::skills::remote::repository::DatabendSkillRepositoryFactory;
+use crate::kernel::skills::service::SkillService;
 use crate::kernel::skills::skill::Skill;
-use crate::kernel::skills::store::SkillStore;
 use crate::kernel::tools::OperationClassifier;
 use crate::kernel::tools::Tool;
 use crate::kernel::tools::ToolContext;
@@ -16,16 +15,12 @@ use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
 use crate::kernel::OpType;
 pub struct SkillRemoveTool {
-    store_factory: Arc<DatabendSkillRepositoryFactory>,
-    store: Arc<SkillStore>,
+    service: Arc<SkillService>,
 }
 
 impl SkillRemoveTool {
-    pub fn new(store_factory: Arc<DatabendSkillRepositoryFactory>, store: Arc<SkillStore>) -> Self {
-        Self {
-            store_factory,
-            store,
-        }
+    pub fn new(service: Arc<SkillService>) -> Self {
+        Self { service }
     }
 }
 
@@ -49,7 +44,7 @@ impl Tool for SkillRemoveTool {
     }
 
     fn description(&self) -> &str {
-        "Remove a previously created skill."
+        "Remove an owned skill or unsubscribe from a subscribed skill."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -76,25 +71,35 @@ impl Tool for SkillRemoveTool {
             .unwrap_or("")
             .to_string();
 
-        if let Err(e) = Skill::validate_name(&name) {
+        let (owner, bare_name) = crate::kernel::skills::tool_key::parse(&name, &ctx.user_id);
+
+        // Validate bare name in all cases
+        if let Err(e) = Skill::validate_name(bare_name) {
             return Ok(ToolResult::error(e.message));
         }
 
-        let store = match self.store_factory.for_agent(&ctx.agent_id) {
-            Ok(s) => s,
-            Err(e) => {
-                return Ok(ToolResult::error(format!(
-                    "failed to access agent store: {e}"
-                )))
+        if owner != &*ctx.user_id {
+            // Subscribed skill: owner is a user_id, not a skill name — no skill name validation
+            if owner.is_empty() || owner.contains("..") {
+                return Ok(ToolResult::error("invalid owner in skill key".to_string()));
             }
-        };
-
-        if let Err(e) = store.remove(&name, Some(&ctx.agent_id)).await {
-            return Ok(ToolResult::error(format!("failed to remove skill: {e}")));
+            // Subscribed skill: unsubscribe
+            if let Err(e) = self
+                .service
+                .unsubscribe(&ctx.user_id, bare_name, owner)
+                .await
+            {
+                return Ok(ToolResult::error(format!(
+                    "failed to unsubscribe skill: {e}"
+                )));
+            }
+            Ok(ToolResult::ok(format!("Skill '{name}' unsubscribed")))
+        } else {
+            // Owned skill: delete
+            if let Err(e) = self.service.delete(&ctx.user_id, &name).await {
+                return Ok(ToolResult::error(format!("failed to remove skill: {e}")));
+            }
+            Ok(ToolResult::ok(format!("Skill '{name}' removed")))
         }
-
-        self.store.evict(&name, &ctx.agent_id);
-
-        Ok(ToolResult::ok(format!("Skill '{name}' removed")))
     }
 }

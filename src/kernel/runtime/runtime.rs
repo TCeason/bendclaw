@@ -15,9 +15,10 @@ use crate::kernel::directive::DirectiveService;
 use crate::kernel::lease::LeaseServiceHandle;
 use crate::kernel::runtime::agent_config::AgentConfig;
 use crate::kernel::runtime::diagnostics;
+use crate::kernel::runtime::org::OrgServices;
 use crate::kernel::session::SessionLifecycle;
 use crate::kernel::session::SessionManager;
-use crate::kernel::skills::store::SkillStore;
+use crate::kernel::skills::projector::SkillProjector;
 use crate::llm::provider::LLMProvider;
 use crate::storage::pool::Pool;
 
@@ -34,7 +35,8 @@ pub struct Runtime {
     pub(crate) databases: Arc<crate::storage::AgentDatabases>,
     pub(crate) llm: RwLock<Arc<dyn LLMProvider>>,
     pub(crate) agent_llms: RwLock<HashMap<String, Arc<dyn LLMProvider>>>,
-    pub(crate) skills: Arc<SkillStore>,
+    pub(crate) org: Arc<OrgServices>,
+    pub(crate) projector: Arc<SkillProjector>,
     pub(crate) sessions: Arc<SessionManager>,
     pub(crate) session_lifecycle: Arc<SessionLifecycle>,
     pub(crate) channels: Arc<ChannelRegistry>,
@@ -61,7 +63,8 @@ pub struct RuntimeParts {
     pub databases: Arc<crate::storage::AgentDatabases>,
     pub llm: RwLock<Arc<dyn LLMProvider>>,
     pub agent_llms: RwLock<HashMap<String, Arc<dyn LLMProvider>>>,
-    pub skills: Arc<SkillStore>,
+    pub org: Arc<OrgServices>,
+    pub projector: Arc<SkillProjector>,
     pub sessions: Arc<SessionManager>,
     pub session_lifecycle: Arc<SessionLifecycle>,
     pub channels: Arc<ChannelRegistry>,
@@ -109,7 +112,8 @@ impl Runtime {
             databases: parts.databases,
             llm: parts.llm,
             agent_llms: parts.agent_llms,
-            skills: parts.skills,
+            org: parts.org,
+            projector: parts.projector,
             sessions: parts.sessions,
             session_lifecycle: parts.session_lifecycle,
             channels: parts.channels,
@@ -153,9 +157,10 @@ impl Runtime {
         self.activity_tracker.track_task()
     }
 
-    pub fn skill_prompt(&self, agent_id: &str) -> String {
-        self.skills
-            .for_agent(agent_id)
+    pub fn skill_prompt(&self, user_id: &str) -> String {
+        self.org
+            .skills()
+            .list(user_id)
             .into_iter()
             .filter(|s| !s.executable)
             .map(|s| s.content)
@@ -258,8 +263,12 @@ impl Runtime {
         }
     }
 
-    pub fn skills(&self) -> &Arc<SkillStore> {
-        &self.skills
+    pub fn skills(&self) -> &Arc<SkillProjector> {
+        &self.projector
+    }
+
+    pub fn org(&self) -> &Arc<OrgServices> {
+        &self.org
     }
 
     pub fn sessions(&self) -> &Arc<SessionManager> {

@@ -8,9 +8,11 @@ pub mod run;
 pub mod runtime;
 pub mod session;
 pub mod skills;
+pub mod subscriptions;
 pub mod task;
 pub mod tools;
 pub mod trace;
+pub mod variables;
 pub mod writer;
 
 pub use runtime::Runtime;

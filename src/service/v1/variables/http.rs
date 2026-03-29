@@ -6,11 +6,11 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use super::service;
+use crate::kernel::variables::store::Variable;
 use crate::service::context::RequestContext;
 use crate::service::error::Result;
 use crate::service::state::AppState;
 use crate::service::v1::common::ListQuery;
-use crate::service::v1::common::Paginated;
 
 #[derive(Serialize)]
 pub struct VariableResponse {
@@ -44,57 +44,53 @@ pub struct UpdateVariableRequest {
 
 pub async fn list_variables(
     State(state): State<AppState>,
-    _ctx: RequestContext,
-    Path(agent_id): Path<String>,
-    Query(q): Query<ListQuery>,
-) -> Result<Json<Paginated<VariableResponse>>> {
-    let (records, total) = service::list_variables(&state, &agent_id, &q).await?;
-    Ok(Json(Paginated::new(
-        records.into_iter().map(to_response).collect(),
-        &q,
-        total,
-    )))
+    ctx: RequestContext,
+    Path(_agent_id): Path<String>,
+    Query(_q): Query<ListQuery>,
+) -> Result<Json<Vec<VariableResponse>>> {
+    let records = service::list_variables(&state, &ctx.user_id).await?;
+    Ok(Json(records.into_iter().map(to_response).collect()))
 }
 
 pub async fn create_variable(
     State(state): State<AppState>,
-    _ctx: RequestContext,
-    Path(agent_id): Path<String>,
+    ctx: RequestContext,
+    Path(_agent_id): Path<String>,
     Json(req): Json<CreateVariableRequest>,
 ) -> Result<Json<VariableResponse>> {
-    let record = service::create_variable(&state, &agent_id, req).await?;
+    let record = service::create_variable(&state, &ctx.user_id, req).await?;
     Ok(Json(to_response(record)))
 }
 
 pub async fn get_variable(
     State(state): State<AppState>,
-    _ctx: RequestContext,
-    Path((agent_id, var_id)): Path<(String, String)>,
+    ctx: RequestContext,
+    Path((_agent_id, var_id)): Path<(String, String)>,
 ) -> Result<Json<VariableResponse>> {
-    let record = service::get_variable(&state, &agent_id, &var_id).await?;
+    let record = service::get_variable(&state, &ctx.user_id, &var_id).await?;
     Ok(Json(to_response(record)))
 }
 
 pub async fn update_variable(
     State(state): State<AppState>,
-    _ctx: RequestContext,
-    Path((agent_id, var_id)): Path<(String, String)>,
+    ctx: RequestContext,
+    Path((_agent_id, var_id)): Path<(String, String)>,
     Json(req): Json<UpdateVariableRequest>,
 ) -> Result<Json<serde_json::Value>> {
-    service::update_variable(&state, &agent_id, &var_id, req).await?;
+    service::update_variable(&state, &ctx.user_id, &var_id, req).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 pub async fn delete_variable(
     State(state): State<AppState>,
-    _ctx: RequestContext,
-    Path((agent_id, var_id)): Path<(String, String)>,
+    ctx: RequestContext,
+    Path((_agent_id, var_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>> {
-    service::delete_variable(&state, &agent_id, &var_id).await?;
+    service::delete_variable(&state, &ctx.user_id, &var_id).await?;
     Ok(Json(serde_json::json!({ "deleted": var_id })))
 }
 
-fn to_response(r: crate::storage::dal::variable::VariableRecord) -> VariableResponse {
+fn to_response(r: Variable) -> VariableResponse {
     VariableResponse {
         id: r.id,
         key: r.key,

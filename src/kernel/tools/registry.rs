@@ -7,8 +7,7 @@ use super::ToolSpec;
 use crate::kernel::channel::registry::ChannelRegistry;
 use crate::kernel::cluster::ClusterService;
 use crate::kernel::cluster::DispatchTable;
-use crate::kernel::skills::remote::repository::DatabendSkillRepositoryFactory;
-use crate::kernel::skills::store::SkillStore;
+use crate::kernel::runtime::org::OrgServices;
 use crate::llm::tool::ToolSchema;
 
 /// Registry of in-process tools, keyed by name.
@@ -92,8 +91,7 @@ impl Default for ToolRegistry {
 
 /// Create a per-session tool registry with all dependencies injected.
 pub fn create_session_tools(
-    skill_store: Arc<SkillStore>,
-    skill_store_factory: Arc<DatabendSkillRepositoryFactory>,
+    org: Arc<OrgServices>,
     databend_pool: crate::storage::Pool,
     channels: Arc<ChannelRegistry>,
     node_id: String,
@@ -103,21 +101,15 @@ pub fn create_session_tools(
     // Skill tools
     registry.register_builtin(
         ToolId::SkillRead,
-        Arc::new(super::skill::SkillReadTool::new(skill_store.clone())),
+        Arc::new(super::skill::SkillReadTool::new(org.skills().clone())),
     );
     registry.register_builtin(
         ToolId::SkillCreate,
-        Arc::new(super::skill::SkillCreateTool::new(
-            skill_store_factory.clone(),
-            skill_store.clone(),
-        )),
+        Arc::new(super::skill::SkillCreateTool::new(org.skills().clone())),
     );
     registry.register_builtin(
         ToolId::SkillRemove,
-        Arc::new(super::skill::SkillRemoveTool::new(
-            skill_store_factory,
-            skill_store,
-        )),
+        Arc::new(super::skill::SkillRemoveTool::new(org.skills().clone())),
     );
 
     // File tools (zero-field — workspace comes from ToolContext at execution time)

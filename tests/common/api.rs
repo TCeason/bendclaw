@@ -163,16 +163,11 @@ impl TestApi {
 
     pub async fn create_skill(
         &self,
-        agent_id: &str,
+        _agent_id: &str,
         user: &str,
         body: Value,
     ) -> anyhow::Result<Value> {
-        self.request_json(
-            Method::POST,
-            format!("/v1/agents/{agent_id}/skills"),
-            user,
-            Some(body),
-        )
-        .await
+        self.request_json(Method::POST, "/v1/skills".to_string(), user, Some(body))
+            .await
     }
 }

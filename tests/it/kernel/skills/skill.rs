@@ -8,31 +8,31 @@ use bendclaw::kernel::skills::skill::SkillSource;
 
 #[test]
 fn skill_scope_display() {
-    assert_eq!(SkillScope::Agent.to_string(), "agent");
-    assert_eq!(SkillScope::Global.to_string(), "global");
+    assert_eq!(SkillScope::Private.to_string(), "private");
+    assert_eq!(SkillScope::Shared.to_string(), "shared");
 }
 
 #[test]
 fn skill_scope_as_str() {
-    assert_eq!(SkillScope::Agent.as_str(), "agent");
-    assert_eq!(SkillScope::Global.as_str(), "global");
+    assert_eq!(SkillScope::Private.as_str(), "private");
+    assert_eq!(SkillScope::Shared.as_str(), "shared");
 }
 
 #[test]
 fn skill_scope_parse() {
-    assert_eq!(SkillScope::parse("agent"), SkillScope::Agent);
-    assert_eq!(SkillScope::parse("global"), SkillScope::Global);
-    assert_eq!(SkillScope::parse("unknown"), SkillScope::Global);
+    assert_eq!(SkillScope::parse("private"), SkillScope::Private);
+    assert_eq!(SkillScope::parse("shared"), SkillScope::Shared);
+    assert_eq!(SkillScope::parse("unknown"), SkillScope::Shared);
 }
 
 #[test]
-fn skill_scope_default_is_global() {
-    assert_eq!(SkillScope::default(), SkillScope::Global);
+fn skill_scope_default_is_shared() {
+    assert_eq!(SkillScope::default(), SkillScope::Shared);
 }
 
 #[test]
 fn skill_scope_serde_roundtrip() -> Result<()> {
-    for scope in [SkillScope::Agent, SkillScope::Global] {
+    for scope in [SkillScope::Private, SkillScope::Shared] {
         let json = serde_json::to_string(&scope)?;
         let back: SkillScope = serde_json::from_str(&json)?;
         assert_eq!(back, scope);
@@ -62,15 +62,16 @@ fn skill_source_default_is_local() {
     assert_eq!(SkillSource::default(), SkillSource::Local);
 }
 
-fn test_skill(scope: SkillScope, agent_id: Option<&str>, user_id: Option<&str>) -> Skill {
+fn test_skill(scope: SkillScope, user_id: &str) -> Skill {
     Skill {
         name: "test".into(),
         version: "0.1.0".into(),
         description: "test skill".into(),
         scope,
         source: SkillSource::Local,
-        agent_id: agent_id.map(String::from),
-        created_by: user_id.map(String::from),
+        user_id: user_id.to_string(),
+        created_by: None,
+        last_used_by: None,
         timeout: 30,
         executable: true,
         parameters: vec![],
@@ -82,26 +83,26 @@ fn test_skill(scope: SkillScope, agent_id: Option<&str>, user_id: Option<&str>) 
 }
 
 #[test]
-fn global_skill_visible_to_anyone() {
-    let skill = test_skill(SkillScope::Global, None, None);
-    assert!(skill.is_visible_to("any_agent"));
+fn shared_skill_visible_to_anyone() {
+    let skill = test_skill(SkillScope::Shared, "");
+    assert!(skill.is_visible_to("any_user"));
 }
 
 #[test]
-fn agent_skill_visible_to_same_agent() {
-    let skill = test_skill(SkillScope::Agent, Some("a1"), Some("u1"));
-    assert!(skill.is_visible_to("a1"));
+fn private_skill_visible_to_same_user() {
+    let skill = test_skill(SkillScope::Private, "u1");
+    assert!(skill.is_visible_to("u1"));
 }
 
 #[test]
-fn agent_skill_not_visible_to_different_agent() {
-    let skill = test_skill(SkillScope::Agent, Some("a1"), Some("u1"));
-    assert!(!skill.is_visible_to("a2"));
+fn private_skill_not_visible_to_different_user() {
+    let skill = test_skill(SkillScope::Private, "u1");
+    assert!(!skill.is_visible_to("u2"));
 }
 
 #[test]
 fn compute_sha256_deterministic() {
-    let skill = test_skill(SkillScope::Global, None, None);
+    let skill = test_skill(SkillScope::Shared, "");
     let h1 = skill.compute_sha256();
     let h2 = skill.compute_sha256();
     assert_eq!(h1, h2);
@@ -109,16 +110,16 @@ fn compute_sha256_deterministic() {
 
 #[test]
 fn compute_sha256_changes_with_content() {
-    let s1 = test_skill(SkillScope::Global, None, None);
-    let mut s2 = test_skill(SkillScope::Global, None, None);
+    let s1 = test_skill(SkillScope::Shared, "");
+    let mut s2 = test_skill(SkillScope::Shared, "");
     s2.content = "different content".into();
     assert_ne!(s1.compute_sha256(), s2.compute_sha256());
 }
 
 #[test]
 fn compute_sha256_includes_files() {
-    let s1 = test_skill(SkillScope::Global, None, None);
-    let mut s2 = test_skill(SkillScope::Global, None, None);
+    let s1 = test_skill(SkillScope::Shared, "");
+    let mut s2 = test_skill(SkillScope::Shared, "");
     s2.files = vec![SkillFile {
         path: "run.py".into(),
         body: "print('hi')".into(),
@@ -128,8 +129,8 @@ fn compute_sha256_includes_files() {
 
 #[test]
 fn compute_sha256_changes_with_version() {
-    let s1 = test_skill(SkillScope::Global, None, None);
-    let mut s2 = test_skill(SkillScope::Global, None, None);
+    let s1 = test_skill(SkillScope::Shared, "");
+    let mut s2 = test_skill(SkillScope::Shared, "");
     s2.version = "0.2.0".into();
     assert_ne!(s1.compute_sha256(), s2.compute_sha256());
 }
@@ -140,10 +141,11 @@ fn skill_serde_roundtrip() -> Result<()> {
         name: "test".into(),
         version: "1.0.0".into(),
         description: "desc".into(),
-        scope: SkillScope::Agent,
+        scope: SkillScope::Private,
         source: SkillSource::Hub,
-        agent_id: Some("a1".into()),
+        user_id: "u1".to_string(),
         created_by: Some("u1".into()),
+        last_used_by: None,
         timeout: 60,
         executable: true,
         parameters: vec![SkillParameter {
@@ -167,7 +169,7 @@ fn skill_serde_roundtrip() -> Result<()> {
     let json = serde_json::to_string(&skill)?;
     let back: Skill = serde_json::from_str(&json)?;
     assert_eq!(back.name, "test");
-    assert_eq!(back.scope, SkillScope::Agent);
+    assert_eq!(back.scope, SkillScope::Private);
     assert_eq!(back.source, SkillSource::Hub);
     assert_eq!(back.parameters.len(), 1);
     assert_eq!(back.files.len(), 1);
@@ -226,7 +228,6 @@ fn validate_name_path_traversal_rejected() {
 
 #[test]
 fn validate_name_reserved_tool_name_rejected() {
-    // "shell" is a reserved ToolId name
     assert!(Skill::validate_name("shell").is_err());
 }
 
@@ -295,7 +296,6 @@ fn validate_size_single_file_too_large() {
 
 #[test]
 fn validate_size_total_files_too_large() {
-    // 5 files × 41KB each = 205KB > 200KB limit
     let body = "x".repeat(41 * 1024);
     let files: Vec<SkillFile> = (0..5)
         .map(|i| SkillFile {
@@ -310,20 +310,20 @@ fn validate_size_total_files_too_large() {
 
 #[test]
 fn validate_valid_skill() {
-    let skill = test_skill(SkillScope::Global, None, None);
+    let skill = test_skill(SkillScope::Shared, "");
     assert!(skill.validate().is_ok());
 }
 
 #[test]
 fn validate_invalid_name_fails() {
-    let mut skill = test_skill(SkillScope::Global, None, None);
+    let mut skill = test_skill(SkillScope::Shared, "");
     skill.name = "INVALID".into();
     assert!(skill.validate().is_err());
 }
 
 #[test]
 fn validate_invalid_file_path_fails() {
-    let mut skill = test_skill(SkillScope::Global, None, None);
+    let mut skill = test_skill(SkillScope::Shared, "");
     skill.files = vec![SkillFile {
         path: "/absolute/path.py".into(),
         body: "code".into(),
@@ -333,7 +333,7 @@ fn validate_invalid_file_path_fails() {
 
 #[test]
 fn validate_content_too_large_fails() {
-    let mut skill = test_skill(SkillScope::Global, None, None);
+    let mut skill = test_skill(SkillScope::Shared, "");
     skill.content = "x".repeat(10 * 1024 + 1);
     assert!(skill.validate().is_err());
 }

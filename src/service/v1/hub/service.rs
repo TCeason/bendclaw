@@ -14,10 +14,10 @@ pub(super) fn list_hub_skills(state: &AppState) -> Vec<Skill> {
 }
 
 pub(super) fn hub_status(state: &AppState) -> HubStatus {
-    let store = state.runtime.skills();
-    let hub_config = store.hub_config().cloned();
-    let last_sync = crate::kernel::skills::hub::sync::last_sync_time(store.workspace_root());
-    let hub_skills: Vec<_> = store
+    let projector = state.runtime.skills();
+    let hub_config = projector.hub_config().cloned();
+    let last_sync = crate::kernel::skills::hub::sync::last_sync_time(projector.workspace_root());
+    let hub_skills: Vec<_> = projector
         .loaded_skills()
         .into_iter()
         .filter(|s| s.skill.source == crate::kernel::skills::skill::SkillSource::Hub)
