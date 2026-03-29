@@ -4,5 +4,6 @@ CREATE TABLE IF NOT EXISTS resource_subscriptions (
     resource_type VARCHAR   NOT NULL COMMENT 'variable | skill',
     resource_key  VARCHAR   NOT NULL COMMENT 'variable.id or skill name',
     owner_id      VARCHAR   NOT NULL COMMENT 'Resource owner user_id',
+    revoked       BOOLEAN   NOT NULL DEFAULT false COMMENT 'Soft-revoke subscription',
     created_at    TIMESTAMP NOT NULL DEFAULT NOW()
 ) COMMENT = 'User opt-in to shared resources from others';
