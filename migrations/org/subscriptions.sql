@@ -7,3 +7,5 @@ CREATE TABLE IF NOT EXISTS resource_subscriptions (
     revoked       BOOLEAN   NOT NULL DEFAULT false COMMENT 'Soft-revoke subscription',
     created_at    TIMESTAMP NOT NULL DEFAULT NOW()
 ) COMMENT = 'User opt-in to shared resources from others';
+
+ALTER TABLE resource_subscriptions ADD COLUMN IF NOT EXISTS revoked BOOLEAN NOT NULL DEFAULT false COMMENT 'Soft-revoke subscription';
