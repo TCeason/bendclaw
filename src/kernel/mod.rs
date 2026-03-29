@@ -13,6 +13,7 @@ pub mod task;
 pub mod tools;
 pub mod trace;
 pub mod variables;
+pub mod workbench;
 pub mod writer;
 
 pub use runtime::Runtime;

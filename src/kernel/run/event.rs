@@ -3,6 +3,7 @@ use serde::Serialize;
 
 use crate::kernel::run::result::Reason;
 use crate::kernel::run::result::Usage;
+use crate::kernel::workbench::sem_event::SemEvent;
 use crate::kernel::OperationMeta;
 use crate::llm::stream::StreamEvent;
 use crate::llm::usage::TokenUsage;
@@ -92,6 +93,9 @@ pub enum Event {
 
     /// A user message was injected into the running engine via the inbox channel.
     MessageInjected { content: String },
+
+    /// Semantic hint layered on top of raw runtime facts.
+    Semantic(SemEvent),
 }
 
 impl Event {
@@ -122,6 +126,7 @@ impl Event {
             Self::AppData(_) => "AppData".to_string(),
             Self::Progress { .. } => "Progress".to_string(),
             Self::MessageInjected { .. } => "MessageInjected".to_string(),
+            Self::Semantic(sem) => sem.name().to_string(),
         }
     }
 }

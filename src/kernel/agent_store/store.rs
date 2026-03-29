@@ -152,6 +152,14 @@ impl AgentStore {
         self.run_events.list_by_run(run_id, limit).await
     }
 
+    pub async fn run_events_list_by_runs(
+        &self,
+        run_ids: &[&str],
+        limit: u32,
+    ) -> Result<Vec<RunEventRecord>> {
+        self.run_events.list_by_runs(run_ids, limit).await
+    }
+
     // ── Traces ─────────────────────────────────────────────────────────────
 
     pub async fn recent_failed_spans(

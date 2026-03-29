@@ -115,4 +115,35 @@ impl RunEventRepo {
         }
         result
     }
+
+    /// Load replay-relevant events for multiple runs in a single query.
+    /// Only returns event types consumed by the replay projector:
+    /// ToolStart, ToolEnd, and sem.capabilities_snapshot.
+    /// Ordered by created_at then seq for correct cross-run chronology.
+    pub async fn list_by_runs(&self, run_ids: &[&str], limit: u32) -> Result<Vec<RunEventRecord>> {
+        if run_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let in_list: String = run_ids
+            .iter()
+            .map(|id| format!("'{}'", sql::escape(id)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let condition = format!(
+            "run_id IN ({in_list}) AND event IN ('ToolStart', 'ToolEnd', 'sem.capabilities_snapshot')"
+        );
+        let result = self
+            .table
+            .list_where(&condition, "created_at ASC, seq ASC", limit as u64)
+            .await;
+        if let Err(error) = &result {
+            repo_error(
+                REPO,
+                "list_by_runs",
+                serde_json::json!({"run_count": run_ids.len(), "limit": limit}),
+                error,
+            );
+        }
+        result
+    }
 }

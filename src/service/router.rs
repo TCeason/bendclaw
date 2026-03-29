@@ -298,6 +298,11 @@ pub fn api_router(state: AppState, _log_level: &str, auth: &AuthConfig) -> Route
             "/v1/agents/{agent_id}/feedback/{feedback_id}",
             delete(v1::feedback::delete_feedback),
         )
+        // Workbench
+        .route(
+            "/v1/agents/{agent_id}/workbench/sessions/{session_id}/replay",
+            get(v1::workbench::replay::get_replay),
+        )
         // System
         .route("/v1/system/upgrade", post(v1::system::upgrade))
         // Channels

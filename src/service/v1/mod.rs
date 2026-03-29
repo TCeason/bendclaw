@@ -12,3 +12,4 @@ pub mod tasks;
 pub mod traces;
 pub mod usage;
 pub mod variables;
+pub mod workbench;
