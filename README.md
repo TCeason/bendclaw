@@ -29,6 +29,7 @@ It's also a distributed runtime from day one. Agents collaborate across nodes, f
 ## What's Inside
 
 - **Autonomous learning** — agents extract and **share** knowledge from every run, auto-injected into future prompts for continuous **co-evolution**
+- **Session replay** — structured replay API turns raw execution traces into inspectable summaries; agents can review their own sessions to self-diagnose failures and improve over time
 - **Cluster dispatch** — agents **collaborate** across nodes, fan out subtasks, and collect results
 - **Lease-based scheduling** — tasks and channel receivers claimed via distributed DB leases; automatic failover
 - **Shared persistent memory** — vector + full-text search on shared cloud storage, one unified data layer
@@ -108,6 +109,7 @@ curl -fsSL https://app.evot.ai/api/setup | sh -s -- <BASE64_CONFIG>
 |---|---|
 | **Gateway** | HTTP routing, SSE streaming, Bearer auth, CORS, request logging |
 | **Kernel** | Agent loop, LLM router (Anthropic / OpenAI) with circuit breaker and failover, tool registry, context compaction, prompt builder |
+| **Workbench** | Session replay projection — semantic event capture, structured replay summaries from raw execution facts, agent self-inspection |
 | **Recall** | Post-run knowledge extraction (fire-and-forget), learning accumulation, auto-injection into future prompts |
 | **Lease** | Distributed lease coordination — claim/renew/release across nodes; per-resource callbacks for task scheduling and channel receiver lifecycle |
 | **Hub** | Pluggable skill registry, auto-sync from remote repo, 100+ integrations fed into Kernel |
@@ -133,6 +135,24 @@ curl -fsSL https://app.evot.ai/api/setup | sh -s -- <BASE64_CONFIG>
 | **Channel** | `channel_send` | Send messages through connected channels |
 | **Cluster** | `cluster_nodes`, `cluster_dispatch`, `cluster_collect` | Discover peers, dispatch subtasks to other agents, collect results |
 | **Coding** | `claude_code`, `codex_exec` | Delegate coding tasks to Claude Code or OpenAI Codex CLI with multi-turn session support |
+
+---
+
+## Session Replay
+
+Every agent session produces a structured replay — a single API call returns what happened, which tools were used, what capabilities were available, and how the session ended.
+
+```
+GET /v1/agents/{agent_id}/workbench/sessions/{session_id}/replay
+```
+
+Returns:
+- **Run summaries** — status, stop reason, iterations, duration, errors for each run in the session
+- **Tool timeline** — ordered sequence of tool calls with success/failure and duration
+- **Capabilities by run** — which tools and skills were visible at each run start
+- **Outcome** — final status derived from the last run
+
+This is the foundation for agent self-improvement. Instead of treating each session as a black box, agents can inspect their own execution history, identify failure patterns, and feed insights back through the memory system. Humans get a structured view for debugging; agents get a feedback loop for co-evolution.
 
 ---
 
