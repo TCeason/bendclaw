@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use bendclaw::kernel::run::compactor::Compactor;
+use bendclaw::kernel::run::compaction::split_chunks;
+use bendclaw::kernel::run::compaction::Compactor;
 use bendclaw::kernel::Message;
 use bendclaw_test_harness::mocks::llm::MockLLMProvider;
 use tokio_util::sync::CancellationToken;
@@ -9,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 #[test]
 fn split_chunks_short_text() {
     let text = "hello world";
-    let chunks = Compactor::split_chunks(text, 100);
+    let chunks = split_chunks(text, 100);
     assert_eq!(chunks.len(), 1);
     assert_eq!(chunks[0], "hello world");
 }
@@ -17,7 +18,7 @@ fn split_chunks_short_text() {
 #[test]
 fn split_chunks_exact_boundary() {
     let text = "12345";
-    let chunks = Compactor::split_chunks(text, 5);
+    let chunks = split_chunks(text, 5);
     assert_eq!(chunks.len(), 1);
     assert_eq!(chunks[0], "12345");
 }
@@ -25,7 +26,7 @@ fn split_chunks_exact_boundary() {
 #[test]
 fn split_chunks_at_paragraph_boundary() {
     let text = "first paragraph\n\nsecond paragraph\n\nthird paragraph";
-    let chunks = Compactor::split_chunks(text, 25);
+    let chunks = split_chunks(text, 25);
     assert!(chunks.len() >= 2);
     for chunk in &chunks {
         assert!(!chunk.is_empty());
@@ -35,7 +36,7 @@ fn split_chunks_at_paragraph_boundary() {
 #[test]
 fn split_chunks_no_boundary() {
     let text = "a".repeat(100);
-    let chunks = Compactor::split_chunks(&text, 30);
+    let chunks = split_chunks(&text, 30);
     assert!(chunks.len() >= 3);
     let reassembled: String = chunks.concat();
     assert_eq!(reassembled, text);
@@ -44,7 +45,7 @@ fn split_chunks_no_boundary() {
 #[test]
 fn split_chunks_preserves_all_content() {
     let text = "chunk one\n\nchunk two\n\nchunk three\n\nchunk four";
-    let chunks = Compactor::split_chunks(text, 15);
+    let chunks = split_chunks(text, 15);
     let reassembled: String = chunks.concat();
     assert_eq!(reassembled, text);
 }
@@ -52,7 +53,7 @@ fn split_chunks_preserves_all_content() {
 #[test]
 fn split_chunks_ends_with_newline_boundary() {
     let text = "aaa\n\nbbb\n\nccc\n\n";
-    let chunks = Compactor::split_chunks(text, 6);
+    let chunks = split_chunks(text, 6);
     assert!(chunks.len() >= 2);
     let rebuilt = chunks.concat();
     assert_eq!(rebuilt, text);
@@ -61,7 +62,7 @@ fn split_chunks_ends_with_newline_boundary() {
 #[test]
 fn split_chunks_multiple_paragraphs_keeps_content() {
     let text = "p1\n\np2\n\np3\n\np4\n\np5";
-    let chunks = Compactor::split_chunks(text, 5);
+    let chunks = split_chunks(text, 5);
     assert!(chunks.len() >= 3);
     let rebuilt = chunks.concat();
     assert_eq!(rebuilt, text);
@@ -70,7 +71,7 @@ fn split_chunks_multiple_paragraphs_keeps_content() {
 #[test]
 fn split_chunks_large_chunk_no_split() {
     let text = "one\n\ntwo\n\nthree";
-    let chunks = Compactor::split_chunks(text, 10_000);
+    let chunks = split_chunks(text, 10_000);
     assert_eq!(chunks.len(), 1);
     assert_eq!(chunks[0], text);
 }

@@ -14,7 +14,7 @@ use super::resources::SessionResources;
 use super::state::SessionState;
 use crate::base::ErrorCode;
 use crate::base::Result;
-use crate::kernel::run::compactor::Compactor;
+use crate::kernel::run::compaction::Compactor;
 use crate::kernel::run::context::Context;
 use crate::kernel::run::dispatcher::ToolDispatcher;
 use crate::kernel::run::engine::Engine;
@@ -340,6 +340,12 @@ impl<'a> SessionRunCoordinator<'a> {
             inbox_rx,
             extract_memory,
         );
+        if let Some(ref hook) = self.resources.before_turn_hook {
+            engine = engine.with_before_turn(Box::new(Arc::clone(hook)));
+        }
+        if let Some(ref source) = self.resources.steering_source {
+            engine = engine.with_steering(Box::new(Arc::clone(source)));
+        }
         let events = rx;
         let task = tokio::spawn(async move { engine.run().await });
 

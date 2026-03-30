@@ -117,6 +117,8 @@ pub async fn test_session(llm: Arc<dyn LLMProvider>) -> Result<Session> {
             persist_writer: bendclaw::kernel::writer::BackgroundWriter::noop("persist"),
             tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),
             prompt_config: None,
+            before_turn_hook: None,
+            steering_source: None,
         },
     ))
 }

@@ -1,21 +1,22 @@
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
 
 use super::diagnostics;
 use super::engine::Engine;
 use crate::kernel::memory::pressure;
 use crate::kernel::memory::pressure::PressureLevel;
-use crate::kernel::run::compactor::Compactor;
 use crate::kernel::run::dispatcher::DispatchOutcome;
 use crate::kernel::run::dispatcher::ParsedToolCall;
 use crate::kernel::run::dispatcher::ToolCallResult;
 use crate::kernel::run::event::Event;
+use crate::kernel::run::hooks::SteeringDecision;
+use crate::kernel::run::prompt_projection;
 use crate::kernel::run::run_loop::RunLoopState;
 use crate::kernel::trace::SpanMeta;
 use crate::kernel::trace::TraceSpan;
 use crate::kernel::Message;
 use crate::kernel::OperationMeta;
 use crate::llm::message::ToolCall;
-use crate::llm::tokens::count_tokens;
 use crate::observability::server_log;
 
 /// Max bytes for span error messages stored in trace DB.
@@ -34,6 +35,23 @@ impl Engine {
             .execute_calls(&parsed, state.deadline())
             .await;
         self.apply_tool_results(results, &spans).await;
+
+        // ── steering check ──
+        if let Some(ref source) = self.steering_source {
+            let iteration = self.iteration.load(Ordering::Relaxed);
+            if let SteeringDecision::Redirect(msgs) = source.check_steering(iteration).await {
+                for msg in msgs {
+                    self.emit(Event::MessageInjected {
+                        content: msg.text(),
+                    })
+                    .await;
+                    self.ctx
+                        .messages
+                        .push(msg.with_run_id(self.ctx.run_id.to_string()));
+                }
+            }
+        }
+
         let invoked: Vec<String> = parsed.iter().map(|p| p.call.name.clone()).collect();
         self.ctx.tool_view.note_invoked_batch(&invoked);
         self.ctx.tool_view.advance();
@@ -222,19 +240,15 @@ impl Engine {
     }
 
     pub(super) async fn try_compact(&mut self, state: &mut RunLoopState) {
-        let total_tokens: usize = self
-            .ctx
-            .messages
-            .iter()
-            .map(|m| count_tokens(&m.text()))
-            .sum();
+        let total_tokens = prompt_projection::count_prompt_tokens(&self.ctx.messages);
         let max_tokens = state.max_context_tokens();
         let level = pressure::assess(total_tokens, max_tokens);
 
         // Elevated / High: extract memories before compaction
         if matches!(level, PressureLevel::Elevated | PressureLevel::High) {
             if let Some(ref mem) = self.memory {
-                let transcript = Compactor::build_transcript_from(&self.ctx.messages);
+                let transcript =
+                    crate::kernel::run::compaction::build_transcript_from(&self.ctx.messages);
                 let result = mem
                     .extract_and_save(
                         &transcript,

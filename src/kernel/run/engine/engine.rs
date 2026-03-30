@@ -6,10 +6,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::kernel::memory::MemoryService;
 use crate::kernel::run::checkpoint::CompactionCheckpoint;
-use crate::kernel::run::compactor::Compactor;
+use crate::kernel::run::compaction::Compactor;
 use crate::kernel::run::context::Context;
 use crate::kernel::run::dispatcher::ToolDispatcher;
 use crate::kernel::run::event::Event;
+use crate::kernel::run::hooks::BeforeTurnHook;
+use crate::kernel::run::hooks::SteeringSource;
 use crate::kernel::run::run_loop::AbortPolicy;
 use crate::kernel::trace::Trace;
 use crate::kernel::trace::TraceRecorder;
@@ -20,7 +22,7 @@ use crate::observability::server_log;
 pub(super) const EVENT_CAPACITY: usize = 128;
 pub(super) const INBOX_CAPACITY: usize = 16;
 
-pub(crate) struct Engine {
+pub struct Engine {
     pub(super) ctx: Context,
     pub(super) compactor: Compactor,
     pub(super) dispatcher: ToolDispatcher,
@@ -33,6 +35,8 @@ pub(crate) struct Engine {
     pub(super) loop_span_id: String,
     pub(super) latest_checkpoint: Option<CompactionCheckpoint>,
     pub(super) memory: Option<Arc<MemoryService>>,
+    pub(super) before_turn_hook: Option<Box<dyn BeforeTurnHook>>,
+    pub(super) steering_source: Option<Box<dyn SteeringSource>>,
 }
 
 impl Engine {
@@ -73,8 +77,21 @@ impl Engine {
             loop_span_id: String::new(),
             latest_checkpoint: None,
             memory,
+            before_turn_hook: None,
+            steering_source: None,
         }
     }
+
+    pub fn with_before_turn(mut self, hook: Box<dyn BeforeTurnHook>) -> Self {
+        self.before_turn_hook = Some(hook);
+        self
+    }
+
+    pub fn with_steering(mut self, source: Box<dyn SteeringSource>) -> Self {
+        self.steering_source = Some(source);
+        self
+    }
+
     pub(super) fn ops_ctx(&self, turn: u32) -> server_log::ServerCtx<'_> {
         server_log::ServerCtx::new(
             &self.ctx.trace_id,

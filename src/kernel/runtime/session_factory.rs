@@ -169,6 +169,8 @@ impl Runtime {
                 persist_writer: self.persist_writer.clone(),
                 tool_writer: self.tool_writer.clone(),
                 prompt_config,
+                before_turn_hook: None,
+                steering_source: None,
             },
         ));
 

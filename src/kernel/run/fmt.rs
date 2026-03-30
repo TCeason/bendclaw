@@ -1,15 +1,17 @@
+use super::prompt_projection::is_prompt_relevant;
 use crate::kernel::Message;
 use crate::llm::message::ChatMessage;
 
 /// Convert application-layer messages to LLM-compatible messages.
 ///
-/// Filters out messages the LLM doesn't need (Memory, Note).
-/// CompactionSummary becomes a system message so the LLM retains context.
+/// Pre-filters via `is_prompt_relevant()` (the single source of truth),
+/// then converts each surviving message to a `ChatMessage`.
 /// System prompts and compaction summaries are marked with `cache_control`
 /// for Anthropic prompt caching (ignored by other providers).
 pub fn to_chat_messages(messages: &[Message]) -> Vec<ChatMessage> {
     messages
         .iter()
+        .filter(|m| is_prompt_relevant(m))
         .filter_map(|m| match m {
             Message::System { content } => Some(ChatMessage::system(content).with_cache_control()),
 
@@ -41,11 +43,13 @@ pub fn to_chat_messages(messages: &[Message]) -> Vec<ChatMessage> {
                     .with_cache_control(),
             ),
 
-            Message::Memory { .. } | Message::Note { .. } | Message::OperationEvent { .. } => None,
-
             Message::Error { source, message } => {
                 Some(ChatMessage::assistant(format!("[{source}] {message}")))
             }
+
+            // is_prompt_relevant() already filtered these out, but the
+            // compiler needs exhaustive matching.
+            _ => None,
         })
         .collect()
 }

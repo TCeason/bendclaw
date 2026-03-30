@@ -11,7 +11,7 @@ use crate::llm::provider::LLMProvider;
 ///
 /// Built internally by `Session::chat()`.
 #[allow(dead_code)]
-pub(crate) struct Context {
+pub struct Context {
     // ── Identity ──
     pub agent_id: Arc<str>,
     pub user_id: Arc<str>,

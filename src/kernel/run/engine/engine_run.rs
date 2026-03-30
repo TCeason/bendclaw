@@ -5,6 +5,7 @@ use super::diagnostics;
 use super::engine::Engine;
 use crate::base::Result;
 use crate::kernel::run::event::Event;
+use crate::kernel::run::hooks::TurnDecision;
 use crate::kernel::run::result::ContentBlock;
 use crate::kernel::run::result::Reason;
 use crate::kernel::run::result::Result as AgentResult;
@@ -79,6 +80,23 @@ impl Engine {
             state,
             self.ctx.messages.len(),
         );
+
+        // ── before_turn hook ──
+        if let Some(ref hook) = self.before_turn_hook {
+            match hook.before_turn(iteration, &self.ctx.messages).await {
+                TurnDecision::Continue => {}
+                TurnDecision::Abort(_reason) => {
+                    return Ok(StepOutcome::Abort(Reason::Aborted));
+                }
+                TurnDecision::InjectMessages(msgs) => {
+                    for msg in msgs {
+                        self.ctx
+                            .messages
+                            .push(msg.with_run_id(self.ctx.run_id.to_string()));
+                    }
+                }
+            }
+        }
 
         self.emit(Event::ReasonStart).await;
 

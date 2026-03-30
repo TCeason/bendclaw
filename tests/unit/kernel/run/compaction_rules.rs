@@ -1,6 +1,6 @@
-use bendclaw::kernel::run::compaction_rules::keep_budget;
-use bendclaw::kernel::run::compaction_rules::plan_compaction_split;
-use bendclaw::kernel::run::compaction_rules::SUMMARY_RESERVE;
+use bendclaw::kernel::run::compaction::rules::keep_budget;
+use bendclaw::kernel::run::compaction::rules::plan_compaction_split;
+use bendclaw::kernel::run::compaction::rules::SUMMARY_RESERVE;
 use bendclaw::kernel::Message;
 
 #[test]
