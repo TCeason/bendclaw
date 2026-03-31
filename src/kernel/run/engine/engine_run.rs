@@ -156,6 +156,12 @@ impl Engine {
                 self.emit_turn_end(iteration, "continue", &turn, &[]).await;
                 Ok(StepOutcome::Continue)
             }
+            TurnTransition::CompactAndRetry => {
+                self.try_compact(state).await;
+                self.emit_turn_end(iteration, "compact_retry", &turn, &[])
+                    .await;
+                Ok(StepOutcome::Continue)
+            }
             TurnTransition::Done => {
                 self.emit_turn_end(iteration, "done", &turn, &[]).await;
                 Ok(StepOutcome::Done)

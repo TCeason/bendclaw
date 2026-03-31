@@ -153,19 +153,7 @@ impl Builder {
     }
 
     pub async fn build(self) -> Result<Arc<Runtime>> {
-        let config = AgentConfig {
-            node_id: self.node_id,
-            databend_api_base_url: self.api_base_url,
-            databend_api_token: self.api_token,
-            databend_warehouse: self.warehouse,
-            db_prefix: self.db_prefix,
-            max_iterations: self.max_iterations,
-            max_context_tokens: self.max_context_tokens,
-            max_duration_secs: self.max_duration_secs,
-            workspace: self.workspace,
-            checkpoint: CheckpointConfig::default(),
-            memory: crate::kernel::runtime::agent_config::MemoryConfig::default(),
-        };
+        let config = self.build_config();
         construct(
             config,
             self.llm,
@@ -179,6 +167,112 @@ impl Builder {
         )
         .await
     }
+
+    /// Build a minimal runtime for foreground CLI use.
+    /// Skips lease, directive, cluster, and skill sync background tasks.
+    pub async fn build_minimal(self) -> Result<Arc<Runtime>> {
+        let config = self.build_config();
+        construct_minimal(config, self.llm, self.root_pool).await
+    }
+
+    fn build_config(&self) -> AgentConfig {
+        AgentConfig {
+            node_id: self.node_id.clone(),
+            databend_api_base_url: self.api_base_url.clone(),
+            databend_api_token: self.api_token.clone(),
+            databend_warehouse: self.warehouse.clone(),
+            db_prefix: self.db_prefix.clone(),
+            max_iterations: self.max_iterations,
+            max_context_tokens: self.max_context_tokens,
+            max_duration_secs: self.max_duration_secs,
+            workspace: self.workspace.clone(),
+            checkpoint: CheckpointConfig::default(),
+            memory: crate::kernel::runtime::agent_config::MemoryConfig::default(),
+        }
+    }
+}
+
+/// Pre-runtime dependencies shared by both construct paths.
+struct RuntimeDeps {
+    config: AgentConfig,
+    llm: Arc<dyn LLMProvider>,
+    databases: Arc<crate::storage::AgentDatabases>,
+    org: Arc<OrgServices>,
+    projector: Arc<SkillProjector>,
+    sync_cancel: CancellationToken,
+}
+
+/// Assemble the Runtime from deps. Shared by construct() and construct_minimal().
+fn assemble_runtime(deps: RuntimeDeps) -> Arc<Runtime> {
+    let sessions = Arc::new(SessionManager::new());
+    let channels = Arc::new(build_channel_registry());
+    let activity_tracker = Arc::new(ActivityTracker::new());
+    let trace_writer = crate::kernel::trace::TraceWriter::spawn();
+    let persist_writer = crate::kernel::run::persist_op::spawn_persist_writer();
+    let session_lifecycle = Arc::new(SessionLifecycle::new(
+        deps.databases.clone(),
+        sessions.clone(),
+        persist_writer.clone(),
+    ));
+    let channel_message_writer = crate::kernel::channel::spawn_channel_message_writer();
+    let rate_limiter = Arc::new(
+        crate::kernel::channel::delivery::rate_limit::OutboundRateLimiter::new(
+            crate::kernel::channel::delivery::rate_limit::RateLimitConfig::default(),
+        ),
+    );
+    let tool_writer = crate::kernel::writer::tool_op::spawn_tool_writer();
+    let sync_cancel = deps.sync_cancel;
+
+    Arc::new_cyclic(|weak: &std::sync::Weak<Runtime>| {
+        let weak_for_handler = weak.clone();
+        let handler: ChatHandler = Arc::new(move |input| {
+            let weak = weak_for_handler.clone();
+            Box::pin(async move {
+                if let Some(runtime) = weak.upgrade() {
+                    dispatch_debounced(&runtime, input).await;
+                }
+            })
+        });
+        let chat_router = Arc::new(ChatRouter::new(
+            ChatRouterConfig::default(),
+            DebounceConfig::default(),
+            handler,
+        ));
+        let channel_status = Arc::new(crate::kernel::channel::status::ChannelStatus::new());
+        let supervisor = Arc::new(ChannelSupervisor::new(
+            channels.clone(),
+            chat_router.clone(),
+            channel_status,
+        ));
+
+        Runtime::from_parts(RuntimeParts {
+            sessions,
+            session_lifecycle,
+            channels,
+            supervisor,
+            chat_router,
+            config: deps.config,
+            databases: deps.databases,
+            llm: RwLock::new(deps.llm),
+            agent_llms: RwLock::new(HashMap::new()),
+            org: deps.org,
+            projector: deps.projector,
+            status: RwLock::new(RuntimeStatus::Ready),
+            sync_cancel,
+            sync_handle: RwLock::new(None),
+            lease_handle: RwLock::new(None),
+            cluster: RwLock::new(None),
+            heartbeat_handle: RwLock::new(None),
+            directive: RwLock::new(None),
+            directive_handle: RwLock::new(None),
+            activity_tracker,
+            trace_writer,
+            persist_writer,
+            channel_message_writer,
+            rate_limiter,
+            tool_writer,
+        })
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -234,78 +328,13 @@ async fn construct(
         llm.clone(),
     ));
 
-    let sessions = Arc::new(SessionManager::new());
-    let channels = Arc::new(build_channel_registry());
-    let activity_tracker = Arc::new(ActivityTracker::new());
-    let trace_writer = crate::kernel::trace::TraceWriter::spawn();
-    let persist_writer = crate::kernel::run::persist_op::spawn_persist_writer();
-    let session_lifecycle = Arc::new(SessionLifecycle::new(
-        databases.clone(),
-        sessions.clone(),
-        persist_writer.clone(),
-    ));
-    let channel_message_writer = crate::kernel::channel::spawn_channel_message_writer();
-    let rate_limiter = Arc::new(
-        crate::kernel::channel::delivery::rate_limit::OutboundRateLimiter::new(
-            crate::kernel::channel::delivery::rate_limit::RateLimitConfig::default(),
-        ),
-    );
-    let tool_writer = crate::kernel::writer::tool_op::spawn_tool_writer();
-
-    // Directive and cluster start as None — initialized in background after lease.
-    let (directive, directive_handle) = (None, None);
-    let (cluster_service, heartbeat_handle) = (None, None);
-
-    // Use Arc::new_cyclic so the ChatRouter handler can capture a Weak<Runtime>.
-    let runtime = Arc::new_cyclic(|weak: &std::sync::Weak<Runtime>| {
-        let weak_for_handler = weak.clone();
-        let handler: ChatHandler = Arc::new(move |input| {
-            let weak = weak_for_handler.clone();
-            Box::pin(async move {
-                if let Some(runtime) = weak.upgrade() {
-                    dispatch_debounced(&runtime, input).await;
-                }
-            })
-        });
-        let chat_router = Arc::new(ChatRouter::new(
-            ChatRouterConfig::default(),
-            DebounceConfig::default(),
-            handler,
-        ));
-        let channel_status = Arc::new(crate::kernel::channel::status::ChannelStatus::new());
-        let supervisor = Arc::new(ChannelSupervisor::new(
-            channels.clone(),
-            chat_router.clone(),
-            channel_status,
-        ));
-
-        Runtime::from_parts(RuntimeParts {
-            sessions,
-            session_lifecycle,
-            channels,
-            supervisor,
-            chat_router,
-            config,
-            databases,
-            llm: RwLock::new(llm),
-            agent_llms: RwLock::new(HashMap::new()),
-            org,
-            projector: projector.clone(),
-            status: RwLock::new(RuntimeStatus::Ready),
-            sync_cancel: sync_cancel.clone(),
-            sync_handle: RwLock::new(None),
-            lease_handle: RwLock::new(None),
-            cluster: RwLock::new(cluster_service),
-            heartbeat_handle: RwLock::new(heartbeat_handle),
-            directive: RwLock::new(directive),
-            directive_handle: RwLock::new(directive_handle),
-            activity_tracker,
-            trace_writer,
-            persist_writer,
-            channel_message_writer,
-            rate_limiter,
-            tool_writer,
-        })
+    let runtime = assemble_runtime(RuntimeDeps {
+        config,
+        llm,
+        databases,
+        org,
+        projector: projector.clone(),
+        sync_cancel: sync_cancel.clone(),
     });
 
     let http_client = reqwest::Client::new();
@@ -429,6 +458,49 @@ async fn construct(
         });
         *runtime.sync_handle.write() = Some(sync_handle);
     }
+
+    Ok(runtime)
+}
+
+async fn construct_minimal(
+    config: AgentConfig,
+    llm: Arc<dyn LLMProvider>,
+    root_pool: Option<Pool>,
+) -> Result<Arc<Runtime>> {
+    let pool = match root_pool {
+        Some(pool) => pool,
+        None => Pool::noop(),
+    };
+    let databases = Arc::new(crate::storage::AgentDatabases::new(
+        pool.clone(),
+        &config.db_prefix,
+    )?);
+
+    let workspace_root = Path::new(&config.workspace.root_dir);
+    let skill_store = Arc::new(crate::kernel::skills::shared::DatabendSharedSkillStore::noop());
+    let sub_store: Arc<dyn SubscriptionStore> = Arc::new(SharedSubscriptionStore::noop());
+    let projector = Arc::new(SkillProjector::new(
+        workspace_root.to_path_buf(),
+        skill_store,
+        sub_store,
+        None,
+    ));
+
+    let org = Arc::new(OrgServices::new(
+        pool.clone(),
+        projector.clone(),
+        &config,
+        llm.clone(),
+    ));
+
+    let runtime = assemble_runtime(RuntimeDeps {
+        config,
+        llm,
+        databases,
+        org,
+        projector,
+        sync_cancel: CancellationToken::new(),
+    });
 
     Ok(runtime)
 }

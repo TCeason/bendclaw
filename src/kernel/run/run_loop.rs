@@ -318,6 +318,7 @@ pub struct RunLoopState {
     final_content: Vec<ContentBlock>,
     has_tool_calls: bool,
     consecutive_max_tokens: u32,
+    overflow_retries: u32,
 }
 
 impl RunLoopState {
@@ -330,6 +331,7 @@ impl RunLoopState {
             final_content: Vec::new(),
             has_tool_calls: true,
             consecutive_max_tokens: 0,
+            overflow_retries: 0,
         }
     }
 
@@ -388,6 +390,15 @@ impl RunLoopState {
 
     pub fn reset_max_tokens_streak(&mut self) {
         self.consecutive_max_tokens = 0;
+    }
+
+    pub fn increment_overflow_retries(&mut self) -> u32 {
+        self.overflow_retries += 1;
+        self.overflow_retries
+    }
+
+    pub fn reset_overflow_retries(&mut self) {
+        self.overflow_retries = 0;
     }
 
     pub fn check_abort(&self, policy: &AbortPolicy, cancelled: bool, now: Instant) -> LoopDecision {

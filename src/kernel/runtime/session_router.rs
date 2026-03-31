@@ -101,9 +101,10 @@ impl Runtime {
             });
         }
 
-        let session = self
-            .get_or_create_session(agent_id, session_id, user_id)
-            .await?;
+        let session = crate::kernel::session::factory::acquire_cloud_session(
+            self, agent_id, session_id, user_id,
+        )
+        .await?;
 
         if session.is_running() {
             if session.inject_message(input) {
@@ -114,7 +115,7 @@ impl Runtime {
         }
 
         let stream = session
-            .run(
+            .submit_turn(
                 input,
                 trace_id,
                 parent_run_id,
@@ -207,7 +208,7 @@ pub async fn merge_followup(
     }
     let followup = session.take_followup()?;
     let stream = session
-        .run(&followup, trace_id, None, "", "", false)
+        .submit_turn(&followup, trace_id, None, "", "", false)
         .await
         .ok()?;
     let _ = agent_id;

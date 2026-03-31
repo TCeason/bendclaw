@@ -38,6 +38,21 @@ pub trait DatabendClient: Send + Sync {
     async fn finalize(&self, uri: &str) -> Result<()>;
 }
 
+struct NoopDatabendClient;
+
+#[async_trait::async_trait]
+impl DatabendClient for NoopDatabendClient {
+    async fn query(&self, _sql: &str, _database: Option<&str>) -> Result<QueryResponse> {
+        Err(ErrorCode::internal("noop databend client"))
+    }
+    async fn page(&self, _uri: &str) -> Result<QueryResponse> {
+        Err(ErrorCode::internal("noop databend client"))
+    }
+    async fn finalize(&self, _uri: &str) -> Result<()> {
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 struct HttpDatabendClient {
     client: reqwest::Client,
@@ -178,6 +193,12 @@ impl Pool {
             warehouse: warehouse.to_string(),
             database: None,
         }
+    }
+
+    /// Create a no-op pool that returns errors on all queries.
+    /// Used by ephemeral sessions that don't need DB access.
+    pub fn noop() -> Self {
+        Self::from_client("noop://", "noop", Arc::new(NoopDatabendClient))
     }
 
     pub fn base_url(&self) -> &str {

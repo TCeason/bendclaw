@@ -14,6 +14,7 @@ use bendclaw::kernel::run::result::ContentBlock;
 use bendclaw::kernel::run::result::Reason;
 use bendclaw::kernel::run::result::Result as AgentResult;
 use bendclaw::kernel::run::result::Usage as AgentUsage;
+use bendclaw::kernel::session::backend::sink::RunPersister;
 use bendclaw::kernel::trace::TraceRecorder;
 use bendclaw::storage::dal::run::record::RunStatus;
 use bendclaw::storage::SpanRepo;
@@ -112,13 +113,12 @@ async fn persist_success_writes_usage_events_run_and_trace() -> Result<()> {
     let writer = spawn_persist_writer();
     let persister = make_persister(&client, &writer);
 
-    let text = persister.persist_success(
+    persister.persist_success(
         make_result("done", Reason::EndTurn, 10),
         "provider-1",
         "model-1",
         &[Event::Start],
-    )?;
-    assert_eq!(text, "done");
+    );
 
     flush(&writer).await;
 
@@ -147,7 +147,7 @@ async fn persist_success_pauses_on_timeout() -> Result<()> {
 
     persister.persist_success(make_result("partial", Reason::Timeout, 6), "p", "m", &[
         Event::Start,
-    ])?;
+    ]);
 
     flush(&writer).await;
 
@@ -167,10 +167,8 @@ async fn persist_success_returns_text_synchronously() {
     let writer = spawn_persist_writer();
     let persister = make_persister(&client, &writer);
 
-    let text = persister
-        .persist_success(make_result("fast", Reason::EndTurn, 0), "p", "m", &[])
-        .expect("sync call should not fail");
-    assert_eq!(text, "fast");
+    // persist_success is now fire-and-forget via RunSink trait
+    persister.persist_success(make_result("fast", Reason::EndTurn, 0), "p", "m", &[]);
     writer.shutdown().await;
 }
 

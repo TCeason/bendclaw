@@ -108,3 +108,19 @@ async fn pool_exec_classifies_api_error_from_injected_client() {
     assert_eq!(error.code, bendclaw::base::ErrorCode::NOT_FOUND);
     assert!(error.message.contains("Unknown database"));
 }
+
+// ── Pool::noop ──────────────────────────────────────────────────────────────
+
+#[test]
+fn pool_noop_creates_successfully() {
+    let pool = Pool::noop();
+    // normalize_base_url appends /v1
+    assert!(pool.base_url().starts_with("noop:"));
+}
+
+#[tokio::test]
+async fn pool_noop_query_returns_error() {
+    let pool = Pool::noop();
+    let err = pool.exec("SELECT 1").await;
+    assert!(err.is_err(), "noop pool should return error on query");
+}

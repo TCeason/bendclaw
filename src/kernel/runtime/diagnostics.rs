@@ -47,11 +47,11 @@ pub(super) fn log_runtime_command_failed(
     );
 }
 
-pub(super) fn log_runtime_denied(agent_id: &str, user_id: &str, session_id: &str) {
+pub(crate) fn log_runtime_denied(agent_id: &str, user_id: &str, session_id: &str) {
     crate::observability::log::slog!(error, "runtime", "denied", agent_id, user_id, session_id,);
 }
 
-pub(super) fn log_runtime_recreated(agent_id: &str, user_id: &str, session_id: &str) {
+pub(crate) fn log_runtime_recreated(agent_id: &str, user_id: &str, session_id: &str) {
     crate::observability::log::slog!(
         info,
         "runtime",
@@ -63,11 +63,11 @@ pub(super) fn log_runtime_recreated(agent_id: &str, user_id: &str, session_id: &
     );
 }
 
-pub(super) fn log_runtime_reused(agent_id: &str, user_id: &str, session_id: &str) {
+pub(crate) fn log_runtime_reused(agent_id: &str, user_id: &str, session_id: &str) {
     crate::observability::log::slog!(info, "runtime", "reused", agent_id, user_id, session_id,);
 }
 
-pub(super) fn log_runtime_session_created(
+pub(crate) fn log_runtime_session_created(
     agent_id: &str,
     user_id: &str,
     session_id: &str,

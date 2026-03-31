@@ -87,9 +87,13 @@ async fn run_task_prompt(
     task: &TaskRecord,
 ) -> (String, Option<String>, Option<String>, Option<String>) {
     let session_id = format!("task_{}", task.id);
-    let session = match runtime
-        .get_or_create_session(agent_id, &session_id, "system")
-        .await
+    let session = match crate::kernel::session::factory::acquire_cloud_session(
+        runtime,
+        agent_id,
+        &session_id,
+        "system",
+    )
+    .await
     {
         Ok(s) => s,
         Err(e) => {
@@ -105,7 +109,10 @@ async fn run_task_prompt(
     // Enrich prompt with channel delivery context so the LLM knows where to send.
     let prompt = enrich_prompt_with_delivery(&task.prompt, &task.delivery, runtime, agent_id).await;
 
-    let stream = match session.run(&prompt, &task.id, None, "", "", false).await {
+    let stream = match session
+        .submit_turn(&prompt, &task.id, None, "", "", false)
+        .await
+    {
         Ok(s) => s,
         Err(e) => {
             return (

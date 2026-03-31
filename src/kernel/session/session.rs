@@ -14,6 +14,7 @@ use super::run::SessionRunCoordinator;
 use super::state::SessionState;
 use crate::base::ErrorCode;
 use crate::base::Result;
+use crate::kernel::session::assembly::contract::SessionAssembly;
 use crate::kernel::session::session_manager::SessionInfo;
 use crate::kernel::session::session_manager::TurnStats;
 use crate::kernel::session::session_stream::Stream;
@@ -46,27 +47,53 @@ impl Session {
         }
     }
 
-    pub async fn run(
+    /// Create a Session from a SessionAssembly (produced by any assembler).
+    /// Uses a noop pool for ephemeral sessions — DB calls won't be reached
+    /// because the noop backend handles persistence.
+    pub fn from_assembly(assembly: SessionAssembly) -> Self {
+        let id = assembly.labels.session_id.to_string();
+        let agent_id = assembly.labels.agent_id.clone();
+        let user_id = assembly.labels.user_id.clone();
+        let core = assembly.core;
+        let infra = assembly.infra;
+        let agent = assembly.agent;
+
+        let res = SessionResources {
+            workspace: core.workspace,
+            tool_registry: core.tool_registry,
+            org: agent.org,
+            tools: core.tools,
+            storage: infra.storage,
+            llm: core.llm,
+            config: agent.config,
+            prompt_variables: agent.prompt_variables,
+            cluster_client: agent.cluster_client,
+            directive: agent.directive,
+            tool_writer: infra.tool_writer,
+            trace_writer: infra.trace_writer,
+            persist_writer: infra.persist_writer,
+            prompt_config: agent.prompt_config,
+            before_turn_hook: None,
+            steering_source: None,
+            allowed_tool_names: core.allowed_tool_names,
+            prompt_resolver: core.prompt_resolver,
+            context_provider: core.context_provider,
+            run_initializer: core.run_initializer,
+        };
+        Self::new(id, agent_id, user_id, res)
+    }
+
+    /// Core run entry point. Accepts full prompt metadata and run options.
+    /// Invocation layer and server callers use this directly.
+    pub async fn run_with_meta(
         &self,
         user_message: &str,
-        trace_id: &str,
-        parent_run_id: Option<&str>,
-        parent_trace_id: &str,
-        origin_node_id: &str,
-        is_remote_dispatch: bool,
+        meta: crate::kernel::run::prompt::PromptRequestMeta,
+        options: super::options::RunOptions,
     ) -> Result<Stream> {
-        {
-            let state = self.state.lock();
-            if let SessionState::Running { run_id, .. } = &*state {
-                diagnostics::log_run_rejected(&self.id, &self.agent_id, run_id);
-                return Err(ErrorCode::denied(format!(
-                    "session already has a running run: {run_id}"
-                )));
-            }
-        }
+        self.ensure_idle()?;
         *self.last_active.lock() = Instant::now();
         let start = Instant::now();
-
         SessionRunCoordinator {
             session_id: &self.id,
             agent_id: &self.agent_id,
@@ -75,7 +102,47 @@ impl Session {
             state: &self.state,
             history: &self.history,
         }
-        .start(
+        .start_with_options(user_message, "", None, "", "", false, start, options, meta)
+        .await
+    }
+
+    /// Convenience: run with options, deriving prompt meta from overlays.
+    pub async fn run_with_options(
+        &self,
+        user_message: &str,
+        opts: super::options::RunOptions,
+    ) -> Result<Stream> {
+        let meta = crate::kernel::run::prompt::PromptRequestMeta {
+            channel_type: None,
+            channel_chat_id: None,
+            system_overlay: opts.system_overlay.clone(),
+            skill_overlay: opts.skill_overlay.clone(),
+        };
+        self.run_with_meta(user_message, meta, opts).await
+    }
+
+    /// Server/router entry: run with tracing and dispatch context.
+    pub async fn submit_turn(
+        &self,
+        user_message: &str,
+        trace_id: &str,
+        parent_run_id: Option<&str>,
+        parent_trace_id: &str,
+        origin_node_id: &str,
+        is_remote_dispatch: bool,
+    ) -> Result<Stream> {
+        self.ensure_idle()?;
+        *self.last_active.lock() = Instant::now();
+        let start = Instant::now();
+        SessionRunCoordinator {
+            session_id: &self.id,
+            agent_id: &self.agent_id,
+            user_id: &self.user_id,
+            resources: &self.res,
+            state: &self.state,
+            history: &self.history,
+        }
+        .start_with_options(
             user_message,
             trace_id,
             parent_run_id,
@@ -83,12 +150,26 @@ impl Session {
             origin_node_id,
             is_remote_dispatch,
             start,
+            super::options::RunOptions::default(),
+            crate::kernel::run::prompt::PromptRequestMeta::default(),
         )
         .await
     }
 
+    fn ensure_idle(&self) -> Result<()> {
+        let state = self.state.lock();
+        if let SessionState::Running { run_id, .. } = &*state {
+            diagnostics::log_run_rejected(&self.id, &self.agent_id, run_id);
+            return Err(ErrorCode::denied(format!(
+                "session already has a running run: {run_id}"
+            )));
+        }
+        Ok(())
+    }
+
     pub async fn chat(&self, user_message: &str, trace_id: &str) -> Result<Stream> {
-        self.run(user_message, trace_id, None, "", "", false).await
+        self.submit_turn(user_message, trace_id, None, "", "", false)
+            .await
     }
 
     /// Inject a user message into the running engine. Returns true if sent.

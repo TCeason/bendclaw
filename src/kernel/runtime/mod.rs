@@ -2,12 +2,11 @@ mod activity;
 pub mod agent_config;
 mod agent_setup;
 mod commands;
-mod diagnostics;
+pub(crate) mod diagnostics;
 pub mod org;
 pub mod runtime;
 pub mod runtime_builder;
 mod runtime_lifecycle;
-mod session_factory;
 mod session_router;
 
 pub use activity::ActivityGuard;

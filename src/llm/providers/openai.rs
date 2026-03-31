@@ -104,9 +104,7 @@ impl LLMProvider for OpenAIProvider {
                 &request_id,
                 &text,
             );
-            return Err(ErrorCode::llm_request(common::api_error_message(
-                "OpenAI", status, &text,
-            )));
+            return Err(common::classify_api_error("OpenAI", status, &text));
         }
 
         let data: serde_json::Value = http::read_json(

@@ -1,10 +1,14 @@
 mod args;
+pub mod cmd_agent;
 pub mod control;
+pub mod input;
+pub mod output;
 pub mod update;
 
 pub use args::Cli;
 pub use args::CliOverrides;
 pub use args::Command;
+pub use cmd_agent::cmd_agent;
 pub use control::cmd_restart;
 pub use control::cmd_start;
 pub use control::cmd_status;

@@ -147,3 +147,11 @@ impl Usage {
         self.cache_read_tokens as f64 / self.prompt_tokens as f64
     }
 }
+
+/// Output of a completed run, suitable for CLI or API consumers.
+/// Decoupled from persistence — assembled directly from AgentResult.
+#[derive(Debug, Clone)]
+pub struct RunOutput {
+    pub text: String,
+    pub stop_reason: Reason,
+}

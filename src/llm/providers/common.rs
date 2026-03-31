@@ -35,6 +35,64 @@ pub fn api_error_message(provider: &str, status: StatusCode, text: &str) -> Stri
     format!("{provider} API error {status}: {text}")
 }
 
+/// Known phrases that indicate the prompt exceeded the model's context window.
+/// Covers Anthropic, OpenAI, Google, Bedrock, xAI, Groq, OpenRouter, llama.cpp,
+/// LM Studio, MiniMax, Kimi, GitHub Copilot, and generic patterns.
+const OVERFLOW_PHRASES: &[&str] = &[
+    "prompt is too long",
+    "input is too long",
+    "exceeds the context window",
+    "exceeds the maximum",
+    "maximum prompt length",
+    "reduce the length of the messages",
+    "maximum context length",
+    "exceeds the limit of",
+    "exceeds the available context size",
+    "greater than the context length",
+    "context window exceeds limit",
+    "exceeded model token limit",
+    "context length exceeded",
+    "context_length_exceeded",
+    "too many tokens",
+    "token limit exceeded",
+];
+
+/// Returns `true` when the HTTP status + body indicate a context overflow error.
+pub fn is_context_overflow(status: StatusCode, message: &str) -> bool {
+    // HTTP 413 is "Payload Too Large" — always overflow
+    if status.as_u16() == 413 {
+        return true;
+    }
+    // HTTP 400 with empty body is often overflow from some providers
+    if status.as_u16() == 400 && message.trim().is_empty() {
+        return true;
+    }
+    is_context_overflow_message(message)
+}
+
+/// Returns `true` when the error message text matches a known overflow pattern.
+pub fn is_context_overflow_message(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    OVERFLOW_PHRASES.iter().any(|phrase| lower.contains(phrase))
+}
+
+/// Classify an API error response into the appropriate `ErrorCode`.
+/// Detects context overflow, rate limits, and server errors before falling
+/// back to the generic `llm_request`.
+pub fn classify_api_error(provider: &str, status: StatusCode, text: &str) -> ErrorCode {
+    let msg = api_error_message(provider, status, text);
+    if is_context_overflow(status, text) {
+        return ErrorCode::llm_context_overflow(msg);
+    }
+    if status.as_u16() == 429 {
+        return ErrorCode::llm_rate_limit(msg);
+    }
+    if status.is_server_error() {
+        return ErrorCode::llm_server(msg);
+    }
+    ErrorCode::llm_request(msg)
+}
+
 pub async fn stream_done(
     writer: &crate::llm::stream::StreamWriter,
     reason: &str,

@@ -11,7 +11,8 @@ use bendclaw::kernel::session::workspace::SandboxResolver;
 use bendclaw::kernel::session::workspace::Workspace;
 use bendclaw::kernel::session::Session;
 use bendclaw::kernel::session::SessionResources;
-use bendclaw::kernel::tools::registry::create_session_tools;
+use bendclaw::kernel::tools::registry::ToolRegistry;
+use bendclaw::kernel::tools::services::NoopSecretUsageSink;
 use bendclaw::kernel::tools::ToolContext;
 use bendclaw::llm::provider::LLMProvider;
 use bendclaw::storage::Pool;
@@ -89,12 +90,18 @@ pub async fn test_session(llm: Arc<dyn LLMProvider>) -> Result<Session> {
     let workspace = test_workspace(workspace_dir);
 
     let channels = Arc::new(bendclaw::kernel::channel::registry::ChannelRegistry::new());
-    let tool_registry = Arc::new(create_session_tools(
+    let mut registry = ToolRegistry::new();
+    let sink: Arc<dyn bendclaw::kernel::tools::services::SecretUsageSink> =
+        Arc::new(NoopSecretUsageSink);
+    bendclaw::kernel::tools::catalog::core::register(&mut registry, sink);
+    bendclaw::kernel::tools::catalog::cloud::register(
+        &mut registry,
         org.clone(),
         pool.clone(),
         channels,
         "test-instance".to_string(),
-    ));
+    );
+    let tool_registry = Arc::new(registry);
 
     let tools = Arc::new(tool_registry.tool_schemas());
 
@@ -119,6 +126,16 @@ pub async fn test_session(llm: Arc<dyn LLMProvider>) -> Result<Session> {
             prompt_config: None,
             before_turn_hook: None,
             steering_source: None,
+            allowed_tool_names: None,
+            prompt_resolver: Arc::new(
+                bendclaw::kernel::run::prompt::resolver::LocalPromptResolver::new(
+                    bendclaw::kernel::run::prompt::PromptSeed::default(),
+                    Arc::new(vec![]),
+                    std::path::PathBuf::from("/tmp"),
+                ),
+            ),
+            context_provider: Arc::new(bendclaw::kernel::session::backend::noop::NoopBackend),
+            run_initializer: Arc::new(bendclaw::kernel::session::backend::noop::NoopBackend),
         },
     ))
 }

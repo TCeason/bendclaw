@@ -9,7 +9,7 @@ use crate::kernel::run::persist_op::PersistWriter;
 
 /// Create session record (first turn) and run record. Returns the run_id.
 /// DB writes are fire-and-forget via the background PersistWriter.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, dead_code)]
 pub(crate) fn init_run(
     storage: &Arc<AgentStore>,
     persist_writer: &PersistWriter,

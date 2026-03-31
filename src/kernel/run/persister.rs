@@ -3,7 +3,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::base::Result;
+use parking_lot::Mutex;
+
+use crate::base::ErrorCode;
 use crate::kernel::agent_store::AgentStore;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::persist_op::PersistOp;
@@ -11,6 +13,7 @@ use crate::kernel::run::persist_op::PersistWriter;
 use crate::kernel::run::persister_diagnostics;
 use crate::kernel::run::result::Reason;
 use crate::kernel::run::result::Result as AgentResult;
+use crate::kernel::session::backend::sink::RunPersister;
 use crate::kernel::trace::TraceRecorder;
 use crate::observability::audit;
 use crate::observability::log::run_log;
@@ -19,15 +22,21 @@ use crate::storage::dal::run::record::RunMetrics;
 use crate::storage::dal::run::record::RunStatus;
 use crate::storage::dal::run_event::record::RunEventRecord;
 
-pub struct TurnPersister {
+struct Inner {
     storage: Arc<AgentStore>,
     trace: TraceRecorder,
     agent_id: Arc<str>,
     session_id: String,
-    run_id: String,
     user_id: Arc<str>,
     start: Instant,
     writer: PersistWriter,
+}
+
+/// Persists run lifecycle events to the background writer.
+/// Implements RunSink so Stream can hold it as Arc<dyn RunSink>.
+pub struct TurnPersister {
+    run_id: String,
+    inner: Mutex<Option<Inner>>,
 }
 
 impl TurnPersister {
@@ -42,244 +51,282 @@ impl TurnPersister {
         start: Instant,
         writer: PersistWriter,
     ) -> Self {
+        let run_id = run_id.into();
         Self {
-            storage,
-            trace,
-            agent_id,
-            session_id: session_id.into(),
-            run_id: run_id.into(),
-            user_id,
-            start,
-            writer,
+            run_id,
+            inner: Mutex::new(Some(Inner {
+                storage,
+                trace,
+                agent_id,
+                session_id: session_id.into(),
+                user_id,
+                start,
+                writer,
+            })),
         }
     }
+}
 
-    pub fn run_id(&self) -> &str {
-        &self.run_id
-    }
-
-    /// Assemble a success op and send to background writer. Returns response
-    /// text immediately — DB writes happen asynchronously.
-    pub fn persist_success(
-        self,
-        result: AgentResult,
-        provider: &str,
-        model: &str,
-        events: &[Event],
-    ) -> Result<String> {
-        let response_text = result.text();
-        let checkpoint = result.checkpoint.clone();
-        let duration_ms = self.start.elapsed().as_millis() as u64;
-        let storage = self.storage.clone();
-        let session_id = self.session_id.clone();
-        let agent_id = self.agent_id.clone();
-        let user_id = self.user_id.clone();
-
-        let metrics = RunMetrics {
-            prompt_tokens: result.usage.prompt_tokens,
-            completion_tokens: result.usage.completion_tokens,
-            reasoning_tokens: result.usage.reasoning_tokens,
-            total_tokens: result.usage.total_tokens,
-            cache_read_tokens: result.usage.cache_read_tokens,
-            cache_write_tokens: result.usage.cache_write_tokens,
-            ttft_ms: result.usage.ttft_ms,
-            duration_ms,
-            cost: 0.0,
+impl RunPersister for TurnPersister {
+    fn persist_success(&self, result: AgentResult, provider: &str, model: &str, events: &[Event]) {
+        let i = match self.inner.lock().take() {
+            Some(i) => i,
+            None => return,
         };
-        let metrics_json = serde_json::to_string(&metrics)?;
-        let status = status_from_reason(&result.stop_reason);
-        let error_text = if matches!(status, RunStatus::Error) {
-            response_text.clone()
-        } else {
-            String::new()
+        do_persist_success(&self.run_id, i, result, provider, model, events);
+    }
+
+    fn persist_error(&self, error: &ErrorCode, events: &[Event]) {
+        let i = match self.inner.lock().take() {
+            Some(i) => i,
+            None => return,
         };
-        run_log!(info, self.ops_ctx(result.iterations), "persist", "final_output",
-            msg = "persist final output prepared",
-            status = %status.as_str(),
-            stop_reason = %result.stop_reason.as_str(),
-            output_preview = %server_log::preview_text(&response_text),
-            output_bytes = response_text.len() as u64,
-            content_blocks = result.content.len(),
-            message_count = result.messages.len(),
-        );
-
-        let mut all_events = events.to_vec();
-        let mut payload = audit::base_payload(&self.ops_ctx(result.iterations));
-        payload.insert(
-            "user_id".to_string(),
-            serde_json::json!(self.user_id.to_string()),
-        );
-        payload.insert("status".to_string(), serde_json::json!(status.as_str()));
-        payload.insert("provider".to_string(), serde_json::json!(provider));
-        payload.insert("model".to_string(), serde_json::json!(model));
-        payload.insert(
-            "iterations".to_string(),
-            serde_json::json!(result.iterations),
-        );
-        payload.insert(
-            "stop_reason".to_string(),
-            serde_json::json!(result.stop_reason.as_str()),
-        );
-        payload.insert(
-            "output".to_string(),
-            serde_json::json!(response_text.clone()),
-        );
-        payload.insert("error".to_string(), serde_json::json!(error_text.clone()));
-        payload.insert("usage".to_string(), serde_json::json!(result.usage.clone()));
-        payload.insert("metrics".to_string(), serde_json::json!(metrics.clone()));
-        payload.insert(
-            "content".to_string(),
-            serde_json::json!(result.content.clone()),
-        );
-        payload.insert(
-            "messages".to_string(),
-            serde_json::json!(result.messages.clone()),
-        );
-        all_events.push(audit::event_from_map("run.completed", payload));
-
-        let event_records = self.build_event_records(&all_events);
-
-        self.writer.send(PersistOp::RunSuccess {
-            storage,
-            trace: Box::new(self.trace),
-            run_id: self.run_id,
-            session_id,
-            agent_id,
-            user_id,
-            response_text: response_text.clone(),
-            error_text,
-            status,
-            metrics_json,
-            stop_reason: result.stop_reason.as_str().to_string(),
-            iterations: result.iterations,
-            duration_ms,
-            usage: result.usage,
-            provider: provider.to_string(),
-            model: model.to_string(),
-            event_records,
-            events: events.to_vec(),
-        });
-
-        if let Some(checkpoint) = checkpoint {
-            self.writer.send(PersistOp::SaveCheckpoint {
-                storage: self.storage,
-                session_id: self.session_id,
-                agent_id: self.agent_id.to_string(),
-                user_id: self.user_id.to_string(),
-                summary_text: checkpoint.summary_text,
-                through_run_id: checkpoint.through_run_id,
-            });
-        }
-
-        Ok(response_text)
+        do_persist_error(&self.run_id, i, error, events);
     }
 
-    /// Assemble an error op and send to background writer.
-    pub fn persist_error(self, error: &crate::base::ErrorCode, events: &[Event]) {
-        let duration_ms = self.start.elapsed().as_millis() as u64;
-        let error_text = format!("{error}");
-
-        persister_diagnostics::log_run_failed(
-            &self.agent_id,
-            &self.session_id,
-            &self.run_id,
-            duration_ms,
-            &error_text,
-        );
-
-        let mut all_events = events.to_vec();
-        let mut payload = audit::base_payload(&self.ops_ctx(0));
-        payload.insert(
-            "user_id".to_string(),
-            serde_json::json!(self.user_id.to_string()),
-        );
-        payload.insert(
-            "status".to_string(),
-            serde_json::json!(RunStatus::Error.as_str()),
-        );
-        payload.insert("error".to_string(), serde_json::json!(error_text.clone()));
-        all_events.push(audit::event_from_map("run.failed", payload));
-
-        let event_records = self.build_event_records(&all_events);
-
-        self.writer.send(PersistOp::RunError {
-            storage: self.storage,
-            trace: self.trace,
-            run_id: self.run_id,
-            session_id: self.session_id,
-            agent_id: self.agent_id,
-            error_text,
-            duration_ms,
-            event_records,
-        });
+    fn persist_cancelled(&self, events: &[Event]) {
+        let i = match self.inner.lock().take() {
+            Some(i) => i,
+            None => return,
+        };
+        do_persist_cancelled(&self.run_id, i, events);
     }
+}
 
-    /// Assemble a cancellation op and send to background writer.
-    pub fn persist_cancelled(self, events: &[Event]) {
-        let duration_ms = self.start.elapsed().as_millis() as u64;
+// ─── Implementation helpers (consume Inner) ─────────────────────────────────
 
-        let mut all_events = events.to_vec();
-        let mut payload = audit::base_payload(&self.ops_ctx(0));
-        payload.insert(
-            "user_id".to_string(),
-            serde_json::json!(self.user_id.to_string()),
-        );
-        payload.insert(
-            "status".to_string(),
-            serde_json::json!(RunStatus::Cancelled.as_str()),
-        );
-        payload.insert("error".to_string(), serde_json::json!("cancelled"));
-        all_events.push(audit::event_from_map("run.cancelled", payload));
+fn ops_ctx<'a>(
+    trace: &'a TraceRecorder,
+    run_id: &'a str,
+    session_id: &'a str,
+    agent_id: &'a str,
+    turn: u32,
+) -> server_log::ServerCtx<'a> {
+    server_log::ServerCtx::new(&trace.trace_id, run_id, session_id, agent_id, turn)
+}
 
-        let event_records = self.build_event_records(&all_events);
-
-        run_log!(
-            warn,
-            self.ops_ctx(0),
-            "run",
-            "cancelled",
-            elapsed_ms = duration_ms,
-            event_count = all_events.len(),
-        );
-
-        self.writer.send(PersistOp::RunCancelled {
-            storage: self.storage,
-            trace: self.trace,
-            run_id: self.run_id,
-            duration_ms,
-            event_records,
-        });
-    }
-
-    fn ops_ctx(&self, turn: u32) -> server_log::ServerCtx<'_> {
-        server_log::ServerCtx::new(
-            &self.trace.trace_id,
-            &self.run_id,
-            &self.session_id,
-            &self.agent_id,
-            turn,
-        )
-    }
-
-    fn build_event_records(&self, events: &[Event]) -> Vec<RunEventRecord> {
-        events
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, event)| {
-                Some(RunEventRecord {
-                    id: crate::kernel::new_id(),
-                    run_id: self.run_id.clone(),
-                    session_id: self.session_id.clone(),
-                    agent_id: self.agent_id.to_string(),
-                    user_id: self.user_id.to_string(),
-                    seq: (idx + 1) as u32,
-                    event: event.name(),
-                    payload: serde_json::to_string(event).ok()?,
-                    created_at: String::new(),
-                })
+fn build_event_records(
+    run_id: &str,
+    session_id: &str,
+    agent_id: &str,
+    user_id: &str,
+    events: &[Event],
+) -> Vec<RunEventRecord> {
+    events
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, event)| {
+            Some(RunEventRecord {
+                id: crate::kernel::new_id(),
+                run_id: run_id.to_string(),
+                session_id: session_id.to_string(),
+                agent_id: agent_id.to_string(),
+                user_id: user_id.to_string(),
+                seq: (idx + 1) as u32,
+                event: event.name(),
+                payload: serde_json::to_string(event).ok()?,
+                created_at: String::new(),
             })
-            .collect()
+        })
+        .collect()
+}
+
+fn do_persist_success(
+    run_id: &str,
+    i: Inner,
+    result: AgentResult,
+    provider: &str,
+    model: &str,
+    events: &[Event],
+) {
+    let response_text = result.text();
+    let checkpoint = result.checkpoint.clone();
+    let duration_ms = i.start.elapsed().as_millis() as u64;
+    let ctx = ops_ctx(
+        &i.trace,
+        run_id,
+        &i.session_id,
+        &i.agent_id,
+        result.iterations,
+    );
+
+    let metrics = RunMetrics {
+        prompt_tokens: result.usage.prompt_tokens,
+        completion_tokens: result.usage.completion_tokens,
+        reasoning_tokens: result.usage.reasoning_tokens,
+        total_tokens: result.usage.total_tokens,
+        cache_read_tokens: result.usage.cache_read_tokens,
+        cache_write_tokens: result.usage.cache_write_tokens,
+        ttft_ms: result.usage.ttft_ms,
+        duration_ms,
+        cost: 0.0,
+    };
+    // PLACEHOLDER_PERSIST_REST
+    let metrics_json = serde_json::to_string(&metrics).unwrap_or_default();
+    let status = status_from_reason(&result.stop_reason);
+    let error_text = if matches!(status, RunStatus::Error) {
+        response_text.clone()
+    } else {
+        String::new()
+    };
+
+    run_log!(info, ctx, "persist", "final_output",
+        msg = "persist final output prepared",
+        status = %status.as_str(),
+        stop_reason = %result.stop_reason.as_str(),
+        output_preview = %server_log::preview_text(&response_text),
+        output_bytes = response_text.len() as u64,
+        content_blocks = result.content.len(),
+        message_count = result.messages.len(),
+    );
+
+    let mut all_events = events.to_vec();
+    let mut payload = audit::base_payload(&ctx);
+    payload.insert(
+        "user_id".to_string(),
+        serde_json::json!(i.user_id.to_string()),
+    );
+    payload.insert("status".to_string(), serde_json::json!(status.as_str()));
+    payload.insert("provider".to_string(), serde_json::json!(provider));
+    payload.insert("model".to_string(), serde_json::json!(model));
+    payload.insert(
+        "iterations".to_string(),
+        serde_json::json!(result.iterations),
+    );
+    payload.insert(
+        "stop_reason".to_string(),
+        serde_json::json!(result.stop_reason.as_str()),
+    );
+    payload.insert(
+        "output".to_string(),
+        serde_json::json!(response_text.clone()),
+    );
+    payload.insert("error".to_string(), serde_json::json!(error_text.clone()));
+    payload.insert("usage".to_string(), serde_json::json!(result.usage.clone()));
+    payload.insert("metrics".to_string(), serde_json::json!(metrics.clone()));
+    payload.insert(
+        "content".to_string(),
+        serde_json::json!(result.content.clone()),
+    );
+    payload.insert(
+        "messages".to_string(),
+        serde_json::json!(result.messages.clone()),
+    );
+    all_events.push(audit::event_from_map("run.completed", payload));
+
+    let event_records =
+        build_event_records(run_id, &i.session_id, &i.agent_id, &i.user_id, &all_events);
+
+    i.writer.send(PersistOp::RunSuccess {
+        storage: i.storage.clone(),
+        trace: Box::new(i.trace),
+        run_id: run_id.to_string(),
+        session_id: i.session_id.clone(),
+        agent_id: i.agent_id.clone(),
+        user_id: i.user_id.clone(),
+        response_text: response_text.clone(),
+        error_text,
+        status,
+        metrics_json,
+        stop_reason: result.stop_reason.as_str().to_string(),
+        iterations: result.iterations,
+        duration_ms,
+        usage: result.usage,
+        provider: provider.to_string(),
+        model: model.to_string(),
+        event_records,
+        events: events.to_vec(),
+    });
+
+    if let Some(checkpoint) = checkpoint {
+        i.writer.send(PersistOp::SaveCheckpoint {
+            storage: i.storage,
+            session_id: i.session_id,
+            agent_id: i.agent_id.to_string(),
+            user_id: i.user_id.to_string(),
+            summary_text: checkpoint.summary_text,
+            through_run_id: checkpoint.through_run_id,
+        });
     }
+}
+
+fn do_persist_error(run_id: &str, i: Inner, error: &ErrorCode, events: &[Event]) {
+    let duration_ms = i.start.elapsed().as_millis() as u64;
+    let error_text = format!("{error}");
+
+    persister_diagnostics::log_run_failed(
+        &i.agent_id,
+        &i.session_id,
+        run_id,
+        duration_ms,
+        &error_text,
+    );
+
+    let mut all_events = events.to_vec();
+    let mut payload =
+        audit::base_payload(&ops_ctx(&i.trace, run_id, &i.session_id, &i.agent_id, 0));
+    payload.insert(
+        "user_id".to_string(),
+        serde_json::json!(i.user_id.to_string()),
+    );
+    payload.insert(
+        "status".to_string(),
+        serde_json::json!(RunStatus::Error.as_str()),
+    );
+    payload.insert("error".to_string(), serde_json::json!(error_text.clone()));
+    all_events.push(audit::event_from_map("run.failed", payload));
+
+    let event_records =
+        build_event_records(run_id, &i.session_id, &i.agent_id, &i.user_id, &all_events);
+
+    i.writer.send(PersistOp::RunError {
+        storage: i.storage,
+        trace: i.trace,
+        run_id: run_id.to_string(),
+        session_id: i.session_id,
+        agent_id: i.agent_id,
+        error_text,
+        duration_ms,
+        event_records,
+    });
+}
+
+fn do_persist_cancelled(run_id: &str, i: Inner, events: &[Event]) {
+    let duration_ms = i.start.elapsed().as_millis() as u64;
+    let ctx = ops_ctx(&i.trace, run_id, &i.session_id, &i.agent_id, 0);
+
+    let mut all_events = events.to_vec();
+    let mut payload = audit::base_payload(&ctx);
+    payload.insert(
+        "user_id".to_string(),
+        serde_json::json!(i.user_id.to_string()),
+    );
+    payload.insert(
+        "status".to_string(),
+        serde_json::json!(RunStatus::Cancelled.as_str()),
+    );
+    payload.insert("error".to_string(), serde_json::json!("cancelled"));
+    all_events.push(audit::event_from_map("run.cancelled", payload));
+
+    let event_records =
+        build_event_records(run_id, &i.session_id, &i.agent_id, &i.user_id, &all_events);
+
+    run_log!(
+        warn,
+        ctx,
+        "run",
+        "cancelled",
+        elapsed_ms = duration_ms,
+        event_count = all_events.len(),
+    );
+
+    i.writer.send(PersistOp::RunCancelled {
+        storage: i.storage,
+        trace: i.trace,
+        run_id: run_id.to_string(),
+        duration_ms,
+        event_records,
+    });
 }
 
 pub fn status_from_reason(reason: &Reason) -> RunStatus {

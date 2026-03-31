@@ -1,7 +1,11 @@
+pub mod assembly;
+pub mod backend;
 pub(crate) mod diagnostics;
+pub mod factory;
 pub(crate) mod history_loader;
 pub mod lifecycle;
 pub mod message;
+pub mod options;
 pub mod resources;
 pub(crate) mod run;
 pub mod session;

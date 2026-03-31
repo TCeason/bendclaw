@@ -28,6 +28,8 @@ pub enum SearchProvider {
 
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
 
+use crate::kernel::tools::services::SecretUsageSink;
+
 /// Search the web using Brave (with API key) or DuckDuckGo (zero-config fallback).
 #[derive(Clone)]
 pub struct WebSearchTool {
@@ -35,10 +37,11 @@ pub struct WebSearchTool {
     brave_base_url: String,
     provider: SearchProvider,
     cache: Arc<WebCache>,
+    secret_sink: Arc<dyn SecretUsageSink>,
 }
 
 impl WebSearchTool {
-    pub fn new(brave_base_url: impl Into<String>) -> Self {
+    pub fn new(brave_base_url: impl Into<String>, secret_sink: Arc<dyn SecretUsageSink>) -> Self {
         Self {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
@@ -48,6 +51,7 @@ impl WebSearchTool {
             brave_base_url: brave_base_url.into(),
             provider: SearchProvider::Auto,
             cache: Arc::new(WebCache::new(DEFAULT_CACHE_TTL)),
+            secret_sink,
         }
     }
 
@@ -146,7 +150,10 @@ struct BraveKey {
 
 impl Default for WebSearchTool {
     fn default() -> Self {
-        Self::new("https://api.search.brave.com/res/v1/web/search")
+        Self::new(
+            "https://api.search.brave.com/res/v1/web/search",
+            Arc::new(crate::kernel::tools::services::NoopSecretUsageSink),
+        )
     }
 }
 
@@ -290,13 +297,7 @@ impl Tool for WebSearchTool {
         if let Some(key) = brave_key {
             if key.secret {
                 if let Some(id) = key.id {
-                    let pool = ctx.pool.clone();
-                    let agent_id = ctx.agent_id.to_string();
-                    crate::base::spawn_fire_and_forget("variable_touch_last_used", async move {
-                        let store = crate::kernel::variables::store::SharedVariableStore::new(pool);
-                        use crate::kernel::variables::store::VariableStore;
-                        let _ = store.touch_last_used(&id, &agent_id).await;
-                    });
+                    self.secret_sink.touch_last_used(&id, &ctx.agent_id);
                 }
             }
         }

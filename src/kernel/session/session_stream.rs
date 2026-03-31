@@ -11,25 +11,24 @@ use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::run::event::Delta;
 use crate::kernel::run::event::Event;
-use crate::kernel::run::persister::TurnPersister;
 use crate::kernel::run::result::Reason;
 use crate::kernel::run::result::Result as AgentResult;
+use crate::kernel::run::result::RunOutput;
+use crate::kernel::session::backend::sink::RunPersister;
 use crate::kernel::session::state::SessionState;
 use crate::kernel::ErrorSource;
 use crate::kernel::Message;
 
-#[derive(Debug, Clone)]
-pub struct FinishedRunOutput {
-    pub text: String,
-    pub stop_reason: Reason,
-}
+/// Backward-compatible alias. New code should use `RunOutput` directly.
+pub type FinishedRunOutput = RunOutput;
 
 pub struct Stream {
     task: JoinHandle<Result<AgentResult>>,
     events: mpsc::Receiver<Event>,
     state: Arc<Mutex<SessionState>>,
     history: Arc<Mutex<Vec<Message>>>,
-    persister: TurnPersister,
+    run_sink: Arc<dyn RunPersister>,
+    run_id: String,
     usage_provider: String,
     usage_model: String,
     collected_events: Vec<Event>,
@@ -42,7 +41,8 @@ impl Stream {
         events: mpsc::Receiver<Event>,
         state: Arc<Mutex<SessionState>>,
         history: Arc<Mutex<Vec<Message>>>,
-        persister: TurnPersister,
+        run_sink: Arc<dyn RunPersister>,
+        run_id: String,
         usage_provider: String,
         usage_model: String,
         initial_events: Vec<Event>,
@@ -52,7 +52,8 @@ impl Stream {
             events,
             state,
             history,
-            persister,
+            run_sink,
+            run_id,
             usage_provider,
             usage_model,
             collected_events: initial_events,
@@ -60,14 +61,14 @@ impl Stream {
     }
 
     pub fn run_id(&self) -> &str {
-        self.persister.run_id()
+        &self.run_id
     }
 
     pub async fn finish(self) -> Result<String> {
         Ok(self.finish_output().await?.text)
     }
 
-    pub async fn finish_output(mut self) -> Result<FinishedRunOutput> {
+    pub async fn finish_output(mut self) -> Result<RunOutput> {
         while let Some(event) = self.events.recv().await {
             self.collect_runtime_info(&event);
             self.collected_events.push(event);
@@ -78,26 +79,27 @@ impl Stream {
             Ok(Ok(result)) => {
                 let stop_reason = result.stop_reason.clone();
                 *self.history.lock() = result.messages.clone();
-                let text = self.persister.persist_success(
+                let text = result.text();
+                self.run_sink.persist_success(
                     result,
                     &self.usage_provider,
                     &self.usage_model,
                     &self.collected_events,
-                )?;
-                Ok(FinishedRunOutput { text, stop_reason })
+                );
+                Ok(RunOutput { text, stop_reason })
             }
             Ok(Err(e)) => {
                 let text = Message::error(ErrorSource::Internal, format!("{e}")).text();
-                self.persister.persist_error(&e, &self.collected_events);
-                Ok(FinishedRunOutput {
+                self.run_sink.persist_error(&e, &self.collected_events);
+                Ok(RunOutput {
                     text,
                     stop_reason: Reason::Error,
                 })
             }
             Err(e) if e.is_cancelled() => {
                 let text = AgentResult::aborted().text();
-                self.persister.persist_cancelled(&self.collected_events);
-                Ok(FinishedRunOutput {
+                self.run_sink.persist_cancelled(&self.collected_events);
+                Ok(RunOutput {
                     text,
                     stop_reason: Reason::Aborted,
                 })
@@ -105,8 +107,8 @@ impl Stream {
             Err(e) => {
                 let err = ErrorCode::internal(format!("agent task failed: {e}"));
                 let text = Message::error(ErrorSource::Internal, format!("{err}")).text();
-                self.persister.persist_error(&err, &self.collected_events);
-                Ok(FinishedRunOutput {
+                self.run_sink.persist_error(&err, &self.collected_events);
+                Ok(RunOutput {
                     text,
                     stop_reason: Reason::Error,
                 })

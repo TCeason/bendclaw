@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -72,6 +73,7 @@ pub struct ToolDispatcher {
     skill_executor: Arc<dyn SkillExecutor>,
     tool_context: ToolContext,
     cancel: CancellationToken,
+    allowed_tool_names: Option<HashSet<String>>,
 }
 
 impl ToolDispatcher {
@@ -92,7 +94,13 @@ impl ToolDispatcher {
             skill_executor,
             tool_context,
             cancel,
+            allowed_tool_names: None,
         }
+    }
+
+    pub fn with_allowed_tool_names(mut self, names: Option<HashSet<String>>) -> Self {
+        self.allowed_tool_names = names;
+        self
     }
 
     pub fn parse_calls(&self, calls: &[ToolCall]) -> Vec<ParsedToolCall> {
@@ -204,6 +212,16 @@ impl ToolDispatcher {
         args: serde_json::Value,
         timeout: Duration,
     ) -> ToolCallResult {
+        // Enforce tool filter if set
+        if let Some(ref allowed) = self.allowed_tool_names {
+            if !allowed.contains(&tc.name) {
+                let tracker = Self::begin_tracker(&tc.name, &args, None, timeout);
+                return ToolCallResult::InfraError(
+                    format!("tool '{}' is not available in this session", tc.name),
+                    tracker.finish(),
+                );
+            }
+        }
         if let Some(tool) = self.tool_registry.get(&tc.name) {
             self.run_tool(&tc.id, &tc.name, tool, args, timeout).await
         } else {

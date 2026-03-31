@@ -58,6 +58,18 @@ async fn session_belongs_to_matches_exact_agent_and_user() -> Result<()> {
         prompt_config: None,
         before_turn_hook: None,
         steering_source: None,
+        allowed_tool_names: None,
+        prompt_resolver: std::sync::Arc::new(
+            bendclaw::kernel::run::prompt::resolver::LocalPromptResolver::new(
+                bendclaw::kernel::run::prompt::PromptSeed::default(),
+                std::sync::Arc::new(vec![]),
+                std::path::PathBuf::from("/tmp"),
+            ),
+        ),
+        context_provider: std::sync::Arc::new(
+            bendclaw::kernel::session::backend::noop::NoopBackend,
+        ),
+        run_initializer: std::sync::Arc::new(bendclaw::kernel::session::backend::noop::NoopBackend),
     });
 
     assert!(session.belongs_to("a1", "u1"));

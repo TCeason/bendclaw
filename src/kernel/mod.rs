@@ -2,6 +2,7 @@ pub mod agent_store;
 pub mod channel;
 pub mod cluster;
 pub mod directive;
+pub mod invocation;
 pub mod lease;
 pub mod memory;
 pub mod run;

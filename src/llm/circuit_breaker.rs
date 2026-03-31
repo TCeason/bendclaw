@@ -12,6 +12,10 @@ use crate::observability::log::slog;
 /// count toward the circuit breaker threshold. Non-transient errors (auth,
 /// context-length, invalid input) should not trip the breaker.
 pub fn is_transient(error: &ErrorCode) -> bool {
+    // Context overflow is deterministic — retrying without compaction won't help.
+    if error.code == ErrorCode::LLM_CONTEXT_OVERFLOW {
+        return false;
+    }
     matches!(
         error.code,
         ErrorCode::LLM_RATE_LIMIT | ErrorCode::LLM_SERVER | ErrorCode::TIMEOUT

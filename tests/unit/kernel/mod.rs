@@ -2,6 +2,7 @@ mod agent_store;
 mod channel;
 mod cluster;
 mod directive;
+mod invocation;
 mod lease;
 mod memory;
 mod run;

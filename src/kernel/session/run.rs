@@ -9,10 +9,9 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::diagnostics;
-use super::history_loader::SessionHistoryLoader;
+use super::options::RunOptions;
 use super::resources::SessionResources;
 use super::state::SessionState;
-use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::run::compaction::Compactor;
 use crate::kernel::run::context::Context;
@@ -20,9 +19,7 @@ use crate::kernel::run::dispatcher::ToolDispatcher;
 use crate::kernel::run::engine::Engine;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::persister::TurnPersister;
-use crate::kernel::run::prompt::PromptBuilder;
 use crate::kernel::run::result::Result as AgentResult;
-use crate::kernel::run::usage::UsageScope;
 use crate::kernel::session::session_stream::Stream;
 use crate::kernel::tools::progressive::ProgressiveToolView;
 use crate::kernel::tools::ToolContext;
@@ -46,7 +43,7 @@ pub(super) struct SessionRunCoordinator<'a> {
 
 impl<'a> SessionRunCoordinator<'a> {
     #[allow(clippy::too_many_arguments)]
-    pub(super) async fn start(
+    pub(super) async fn start_with_options(
         &self,
         user_message: &str,
         trace_id: &str,
@@ -55,14 +52,10 @@ impl<'a> SessionRunCoordinator<'a> {
         origin_node_id: &str,
         is_remote_dispatch: bool,
         started_at: Instant,
+        opts: RunOptions,
+        meta: crate::kernel::run::prompt::PromptRequestMeta,
     ) -> Result<Stream> {
         self.enforce_token_limits().await?;
-
-        let directive_prompt = self
-            .resources
-            .directive
-            .as_ref()
-            .and_then(|directive| directive.cached_prompt());
 
         self.ensure_history_loaded().await?;
         let mut history = self.history.lock().clone();
@@ -73,12 +66,7 @@ impl<'a> SessionRunCoordinator<'a> {
             .count() as u32
             + 1;
 
-        let run_id = crate::kernel::run::run_record::init_run(
-            &self.resources.storage,
-            &self.resources.persist_writer,
-            self.session_id,
-            self.agent_id,
-            self.user_id,
+        let run_id = self.resources.run_initializer.init_run(
             user_message,
             parent_run_id,
             &self.resources.config.node_id,
@@ -118,29 +106,7 @@ impl<'a> SessionRunCoordinator<'a> {
             &context_preview,
         );
 
-        let full_prompt = {
-            let mut pb = PromptBuilder::new(
-                self.resources.storage.clone(),
-                self.resources.org.skills().clone(),
-            )
-            .with_tools(self.resources.tools.clone())
-            .with_variables(self.resources.prompt_variables.clone())
-            .with_cached_config(self.resources.prompt_config.clone())
-            .with_cwd(self.resources.workspace.cwd().to_path_buf());
-            if let Some(ref cc) = self.resources.cluster_client {
-                pb = pb.with_cluster_client(cc.clone());
-            }
-            pb = pb.with_directive_prompt(directive_prompt);
-            let recall_memory = self
-                .resources
-                .org
-                .memory()
-                .filter(|_| self.resources.config.memory.recall)
-                .cloned();
-            pb = pb.with_memory_service(recall_memory, self.resources.config.memory.recall_budget);
-            pb.build(self.agent_id, self.user_id, self.session_id)
-                .await?
-        };
+        let full_prompt = self.resources.prompt_resolver.resolve(&meta).await?;
 
         diagnostics::log_prompt_built(
             run_ctx,
@@ -195,7 +161,20 @@ impl<'a> SessionRunCoordinator<'a> {
             trace.clone(),
             &llm,
             is_remote_dispatch,
+            &opts,
         );
+
+        let run_persister: Arc<dyn crate::kernel::session::backend::sink::RunPersister> =
+            Arc::new(TurnPersister::new(
+                self.resources.storage.clone(),
+                trace,
+                self.agent_id.clone(),
+                self.session_id.to_string(),
+                &run_id,
+                self.user_id.clone(),
+                started_at,
+                self.resources.persist_writer.clone(),
+            ));
 
         self.mark_running(run_id.clone(), cancel, iteration, inbox_tx);
 
@@ -204,16 +183,8 @@ impl<'a> SessionRunCoordinator<'a> {
             events,
             self.state.clone(),
             self.history.clone(),
-            TurnPersister::new(
-                self.resources.storage.clone(),
-                trace,
-                self.agent_id.clone(),
-                self.session_id.to_string(),
-                run_id,
-                self.user_id.clone(),
-                started_at,
-                self.resources.persist_writer.clone(),
-            ),
+            run_persister,
+            run_id,
             USAGE_PROVIDER_UNKNOWN.to_string(),
             usage_model,
             initial_events,
@@ -259,6 +230,7 @@ impl<'a> SessionRunCoordinator<'a> {
         trace: TraceRecorder,
         llm: &Arc<dyn LLMProvider>,
         is_dispatched: bool,
+        opts: &RunOptions,
     ) -> (
         JoinHandle<Result<AgentResult>>,
         mpsc::Receiver<Event>,
@@ -277,9 +249,14 @@ impl<'a> SessionRunCoordinator<'a> {
             llm: llm.clone(),
             model: llm.default_model().into(),
             temperature: llm.default_temperature(),
-            max_iterations: self.resources.config.max_iterations,
+            max_iterations: opts
+                .max_iterations
+                .unwrap_or(self.resources.config.max_iterations),
             max_context_tokens: self.resources.config.max_context_tokens,
-            max_duration: Duration::from_secs(self.resources.config.max_duration_secs),
+            max_duration: Duration::from_secs(
+                opts.max_duration_secs
+                    .unwrap_or(self.resources.config.max_duration_secs),
+            ),
             tool_view,
             system_prompt: prompt.into(),
             messages: history,
@@ -319,7 +296,8 @@ impl<'a> SessionRunCoordinator<'a> {
             },
             cancel.clone(),
             event_tx,
-        );
+        )
+        .with_allowed_tool_names(self.resources.allowed_tool_names.clone());
 
         let (inbox_tx, inbox_rx) = Engine::create_inbox();
 
@@ -353,74 +331,15 @@ impl<'a> SessionRunCoordinator<'a> {
     }
 
     async fn enforce_token_limits(&self) -> Result<()> {
-        let record = match &self.resources.prompt_config {
-            Some(r) => r.clone(),
-            None => return Ok(()),
-        };
-        let need_total = record.token_limit_total.is_some();
-        let need_daily = record.token_limit_daily.is_some();
-        if !need_total && !need_daily {
-            return Ok(());
-        }
-
-        let total_fut = async {
-            if need_total {
-                Some(
-                    self.resources
-                        .storage
-                        .usage_summarize(UsageScope::AgentTotal {
-                            agent_id: self.agent_id.to_string(),
-                        })
-                        .await,
-                )
-            } else {
-                None
-            }
-        };
-        let daily_fut = async {
-            if need_daily {
-                let day = crate::storage::time::now().date_naive().to_string();
-                Some(
-                    self.resources
-                        .storage
-                        .usage_summarize(UsageScope::AgentDaily {
-                            agent_id: self.agent_id.to_string(),
-                            day,
-                        })
-                        .await,
-                )
-            } else {
-                None
-            }
-        };
-
-        let (total_result, daily_result) = tokio::join!(total_fut, daily_fut);
-
-        if let (Some(total_limit), Some(result)) = (record.token_limit_total, total_result) {
-            let used = result?.total_tokens;
-            if used >= total_limit {
-                return Err(ErrorCode::quota_exceeded(format!(
-                    "agent token total limit exceeded: used={used} limit={total_limit}"
-                )));
-            }
-        }
-        if let (Some(daily_limit), Some(result)) = (record.token_limit_daily, daily_result) {
-            let used = result?.total_tokens;
-            if used >= daily_limit {
-                return Err(ErrorCode::quota_exceeded(format!(
-                    "agent token daily limit exceeded: used={used} limit={daily_limit}"
-                )));
-            }
-        }
-        Ok(())
+        self.resources.context_provider.enforce_token_limits().await
     }
 
     async fn ensure_history_loaded(&self) -> Result<()> {
         if !self.history.lock().is_empty() {
             return Ok(());
         }
-        let loader = SessionHistoryLoader::new(self.resources.storage.clone());
-        *self.history.lock() = loader.load(self.session_id, 1000).await?;
+        let loaded = self.resources.context_provider.load_history(1000).await?;
+        *self.history.lock() = loaded;
         Ok(())
     }
 

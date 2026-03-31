@@ -1,8 +1,11 @@
 pub mod builtins;
+pub mod catalog;
 pub mod id;
 pub mod operation;
 pub mod progressive;
 pub mod registry;
+pub mod selection;
+pub mod services;
 pub mod tool;
 
 pub use builtins::databend;

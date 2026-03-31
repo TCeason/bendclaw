@@ -1,26 +1,31 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::json;
 
 use crate::base::truncate_chars_with_ellipsis;
 use crate::base::Result;
+use crate::kernel::tools::services::SecretUsageSink;
 use crate::kernel::tools::OperationClassifier;
 use crate::kernel::tools::Tool;
 use crate::kernel::tools::ToolContext;
 use crate::kernel::tools::ToolId;
 use crate::kernel::tools::ToolResult;
-use crate::kernel::variables::store::SharedVariableStore;
-use crate::kernel::variables::store::VariableStore;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
 use crate::observability::log::slog;
 
 /// Execute a shell command in the session workspace directory.
-/// Zero-field struct — workspace is obtained from `ctx` at execution time.
-pub struct ShellTool;
+pub struct ShellTool {
+    secret_sink: Arc<dyn SecretUsageSink>,
+}
 
 impl ShellTool {
+    pub fn new(secret_sink: Arc<dyn SecretUsageSink>) -> Self {
+        Self { secret_sink }
+    }
+
     fn extract_command(args: &serde_json::Value) -> &str {
         args.get("command").and_then(|v| v.as_str()).unwrap_or("")
     }
@@ -107,11 +112,7 @@ impl Tool for ShellTool {
 
         let secret_ids = ctx.workspace.secret_variable_ids();
         if !secret_ids.is_empty() {
-            let pool = ctx.pool.clone();
-            crate::base::spawn_fire_and_forget("variable_touch_last_used", async move {
-                let store = SharedVariableStore::new(pool);
-                let _ = store.touch_last_used_many(&secret_ids, "").await;
-            });
+            self.secret_sink.touch_last_used_many(&secret_ids, "");
         }
 
         slog!(

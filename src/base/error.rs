@@ -122,6 +122,12 @@ build_agent_errors!(
     (1202, llm_rate_limit, LLM_RATE_LIMIT, "LlmRateLimit"),
     (1203, llm_server, LLM_SERVER, "LlmServerError"),
     (1204, llm_parse, LLM_PARSE, "LlmParse"),
+    (
+        1205,
+        llm_context_overflow,
+        LLM_CONTEXT_OVERFLOW,
+        "LlmContextOverflow"
+    ),
     (1300, auth_request, AUTH_REQUEST, "AuthRequest"),
     (1301, auth_credentials, AUTH_CREDENTIALS, "AuthCredentials"),
     (

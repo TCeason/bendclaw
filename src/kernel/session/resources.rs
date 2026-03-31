@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -7,9 +8,12 @@ use crate::kernel::directive::DirectiveService;
 use crate::kernel::run::hooks::BeforeTurnHook;
 use crate::kernel::run::hooks::SteeringSource;
 use crate::kernel::run::prompt::PromptConfig;
+use crate::kernel::run::prompt::PromptResolver;
 use crate::kernel::run::prompt::PromptVariable;
 use crate::kernel::runtime::agent_config::AgentConfig;
 use crate::kernel::runtime::org::OrgServices;
+use crate::kernel::session::backend::context::SessionContextProvider;
+use crate::kernel::session::backend::sink::RunInitializer;
 use crate::kernel::session::workspace::Workspace;
 use crate::kernel::tools::registry::ToolRegistry;
 use crate::llm::provider::LLMProvider;
@@ -32,4 +36,11 @@ pub struct SessionResources {
     pub prompt_config: Option<PromptConfig>,
     pub before_turn_hook: Option<Arc<dyn BeforeTurnHook>>,
     pub steering_source: Option<Arc<dyn SteeringSource>>,
+    pub allowed_tool_names: Option<HashSet<String>>,
+    /// Resolves the system prompt per invocation.
+    pub prompt_resolver: Arc<dyn PromptResolver>,
+    /// Backend: history loading and token limit enforcement.
+    pub context_provider: Arc<dyn SessionContextProvider>,
+    /// Backend: run initialization (creates run record, returns run_id).
+    pub run_initializer: Arc<dyn RunInitializer>,
 }

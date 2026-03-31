@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use bendclaw::kernel::agent_store::AgentStore;
 use bendclaw::kernel::run::prompt::substitute_template;
 use bendclaw::kernel::run::prompt::truncate_layer;
-use bendclaw::kernel::run::prompt::PromptBuilder;
+use bendclaw::kernel::run::prompt::CloudPromptLoader;
 use bendclaw::kernel::run::prompt::MAX_ERRORS_BYTES;
 use bendclaw::kernel::run::prompt::MAX_IDENTITY_BYTES;
 use bendclaw::kernel::run::prompt::MAX_RUNTIME_BYTES;
@@ -188,7 +188,7 @@ fn substitute_template_cases() {
 struct NoopLLM;
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PromptBuilder integration
+// CloudPromptLoader integration
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[async_trait]
@@ -232,7 +232,7 @@ fn make_prompt_builder(
         + Send
         + Sync
         + 'static,
-) -> Result<(PromptBuilder, FakeDatabend, PathBuf)> {
+) -> Result<(CloudPromptLoader, FakeDatabend, PathBuf)> {
     let fake = FakeDatabend::new(query);
     let pool = fake.pool();
     let workspace_root = prompt_test_workspace();
@@ -245,7 +245,7 @@ fn make_prompt_builder(
     ));
     let storage = Arc::new(AgentStore::new(pool, Arc::new(NoopLLM)));
     Ok((
-        PromptBuilder::new(storage, test_skill_service(skills)),
+        CloudPromptLoader::new(storage, test_skill_service(skills)),
         fake,
         workspace_root,
     ))
@@ -721,4 +721,83 @@ fn variables_max_size_is_reasonable() {
     const {
         assert!(MAX_VARIABLES_BYTES >= 8192);
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// build_prompt (pure function — no DB)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+use bendclaw::kernel::run::prompt::build_prompt;
+use bendclaw::kernel::run::prompt::PromptInputs;
+use bendclaw::kernel::run::prompt::PromptSeed;
+use bendclaw::kernel::run::prompt::SkillPromptEntry;
+
+fn minimal_inputs() -> PromptInputs {
+    PromptInputs {
+        seed: PromptSeed::default(),
+        tools: Arc::new(vec![]),
+        cwd: PathBuf::from("/tmp"),
+        system_overlay: None,
+        skill_overlay: None,
+        memory_recall: None,
+        cluster_info: None,
+        recent_errors: None,
+        session_state: None,
+        channel_type: None,
+        channel_chat_id: None,
+        runtime_override: None,
+    }
+}
+
+#[test]
+fn build_prompt_returns_nonempty_with_defaults() {
+    let prompt = build_prompt(minimal_inputs());
+    assert!(
+        !prompt.is_empty(),
+        "prompt should contain at least the default identity"
+    );
+}
+
+#[test]
+fn build_prompt_includes_system_overlay() {
+    let mut inputs = minimal_inputs();
+    inputs.system_overlay = Some("You are a test bot.".to_string());
+    let prompt = build_prompt(inputs);
+    assert!(prompt.contains("You are a test bot."));
+}
+
+#[test]
+fn build_prompt_includes_skill_overlay() {
+    let mut inputs = minimal_inputs();
+    inputs.skill_overlay = Some("Custom skill instructions here.".to_string());
+    let prompt = build_prompt(inputs);
+    assert!(prompt.contains("Custom skill instructions here."));
+}
+
+#[test]
+fn build_prompt_includes_directive() {
+    let mut inputs = minimal_inputs();
+    inputs.seed.directive_prompt = Some("Always respond in JSON.".to_string());
+    let prompt = build_prompt(inputs);
+    assert!(prompt.contains("Always respond in JSON."));
+}
+
+#[test]
+fn build_prompt_includes_skill_prompts() {
+    let mut inputs = minimal_inputs();
+    inputs.seed.skill_prompts = vec![SkillPromptEntry {
+        display_name: "test_skill".to_string(),
+        description: "A test skill for unit testing.".to_string(),
+    }];
+    let prompt = build_prompt(inputs);
+    assert!(prompt.contains("test_skill"));
+    assert!(prompt.contains("A test skill for unit testing."));
+}
+
+#[test]
+fn build_prompt_includes_memory_recall() {
+    let mut inputs = minimal_inputs();
+    inputs.memory_recall = Some("User prefers terse responses.".to_string());
+    let prompt = build_prompt(inputs);
+    assert!(prompt.contains("User prefers terse responses."));
 }

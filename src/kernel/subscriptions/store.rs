@@ -63,6 +63,10 @@ impl SharedSubscriptionStore {
     pub fn new(pool: Pool) -> Self {
         Self { pool }
     }
+
+    pub fn noop() -> Self {
+        Self { pool: Pool::noop() }
+    }
 }
 
 #[async_trait]

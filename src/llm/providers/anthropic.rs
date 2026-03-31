@@ -5,7 +5,6 @@ use tokio_stream::StreamExt;
 
 use super::common;
 use crate::base::http;
-use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::llm::http_adapter;
 use crate::llm::message::CacheControl;
@@ -118,11 +117,7 @@ impl LLMProvider for AnthropicProvider {
                 &request_id,
                 &text,
             );
-            return Err(ErrorCode::llm_request(common::api_error_message(
-                "Anthropic",
-                status,
-                &text,
-            )));
+            return Err(common::classify_api_error("Anthropic", status, &text));
         }
 
         let data: serde_json::Value = http::read_json(
