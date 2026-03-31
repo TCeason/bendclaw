@@ -244,7 +244,6 @@ async fn web_search_success_formats_results_and_caps_count(
         run_id: "r-test".into(),
         trace_id: "t-test".into(),
         workspace: std::sync::Arc::new(workspace),
-        pool: crate::mocks::context::dummy_pool(),
         is_dispatched: false,
         runtime: bendclaw::kernel::tools::ToolRuntime {
             event_tx: None,
@@ -475,7 +474,6 @@ async fn web_search_auto_falls_back_to_ddg_on_brave_failure(
         run_id: "r-test".into(),
         trace_id: "t-test".into(),
         workspace: Arc::new(workspace),
-        pool: crate::mocks::context::dummy_pool(),
         is_dispatched: false,
         runtime: bendclaw::kernel::tools::ToolRuntime {
             event_tx: None,
@@ -589,7 +587,6 @@ async fn web_search_returns_cached_result_on_second_call() -> Result<(), Box<dyn
         run_id: "r-test".into(),
         trace_id: "t-test".into(),
         workspace: Arc::new(workspace),
-        pool: crate::mocks::context::dummy_pool(),
         is_dispatched: false,
         runtime: bendclaw::kernel::tools::ToolRuntime {
             event_tx: None,

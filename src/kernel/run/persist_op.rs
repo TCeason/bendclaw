@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
-use crate::kernel::agent_store::AgentStore;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::persist_diagnostics;
 use crate::kernel::run::result::Reason;
 use crate::kernel::run::usage::ModelRole;
 use crate::kernel::run::usage::UsageEvent;
+use crate::kernel::session::store::SessionStore;
 use crate::kernel::trace::TraceRecorder;
 use crate::kernel::writer::BackgroundWriter;
 use crate::observability::log::run_log;
@@ -24,7 +24,7 @@ pub enum PersistOp {
     /// to wait for DB writes before reading back.
     Flush(tokio::sync::oneshot::Sender<()>),
     InitRun {
-        storage: Arc<AgentStore>,
+        storage: Arc<dyn SessionStore>,
         run_id: String,
         session_id: String,
         agent_id: String,
@@ -48,7 +48,7 @@ pub enum PersistOp {
         session_id: String,
     },
     RunSuccess {
-        storage: Arc<AgentStore>,
+        storage: Arc<dyn SessionStore>,
         trace: Box<TraceRecorder>,
         run_id: String,
         session_id: String,
@@ -64,11 +64,13 @@ pub enum PersistOp {
         usage: crate::kernel::run::result::Usage,
         provider: String,
         model: String,
+        input_price: f64,
+        output_price: f64,
         event_records: Vec<RunEventRecord>,
         events: Vec<Event>,
     },
     RunError {
-        storage: Arc<AgentStore>,
+        storage: Arc<dyn SessionStore>,
         trace: TraceRecorder,
         run_id: String,
         session_id: String,
@@ -78,14 +80,14 @@ pub enum PersistOp {
         event_records: Vec<RunEventRecord>,
     },
     RunCancelled {
-        storage: Arc<AgentStore>,
+        storage: Arc<dyn SessionStore>,
         trace: TraceRecorder,
         run_id: String,
         duration_ms: u64,
         event_records: Vec<RunEventRecord>,
     },
     SaveCheckpoint {
-        storage: Arc<AgentStore>,
+        storage: Arc<dyn SessionStore>,
         session_id: String,
         agent_id: String,
         user_id: String,
@@ -216,6 +218,8 @@ async fn handle_op(op: PersistOp) {
             usage,
             provider,
             model,
+            input_price,
+            output_price,
             event_records,
             events: _,
         } => {
@@ -228,8 +232,16 @@ async fn handle_op(op: PersistOp) {
             );
 
             // Usage, events, run update — all in parallel
-            let usage_fut = record_usage(&storage, &ctx, &usage, &provider, &model);
-            let events_fut = persist_event_records(&storage, &ctx, &event_records);
+            let usage_fut = record_usage(
+                storage.as_ref(),
+                &ctx,
+                &usage,
+                &provider,
+                &model,
+                input_price,
+                output_price,
+            );
+            let events_fut = persist_event_records(storage.as_ref(), &ctx, &event_records);
             let run_fut = storage.run_update_final(
                 &run_id,
                 status.clone(),
@@ -308,7 +320,7 @@ async fn handle_op(op: PersistOp) {
                 server_log::ServerCtx::new(&trace.trace_id, &run_id, &session_id, &agent_id, 0);
 
             let (events_res, run_res) = tokio::join!(
-                persist_event_records(&storage, &ctx, &event_records),
+                persist_event_records(storage.as_ref(), &ctx, &event_records),
                 storage.run_update_final(
                     &run_id,
                     RunStatus::Error,
@@ -406,15 +418,20 @@ async fn handle_op(op: PersistOp) {
 }
 
 async fn record_usage(
-    storage: &AgentStore,
+    storage: &dyn SessionStore,
     ctx: &server_log::ServerCtx<'_>,
     usage: &crate::kernel::run::result::Usage,
     provider: &str,
     model: &str,
+    input_price: f64,
+    output_price: f64,
 ) -> crate::base::Result<()> {
     if usage.total_tokens == 0 {
         return Ok(());
     }
+    let cost = (usage.prompt_tokens as f64 * input_price
+        + usage.completion_tokens as f64 * output_price)
+        / 1_000_000.0;
     let event = UsageEvent {
         agent_id: ctx.agent_id.to_string(),
         user_id: String::new(),
@@ -429,14 +446,14 @@ async fn record_usage(
         cache_read_tokens: usage.cache_read_tokens,
         cache_write_tokens: usage.cache_write_tokens,
         ttft_ms: usage.ttft_ms,
-        cost: 0.0,
+        cost,
     };
     storage.usage_record(event).await?;
     storage.usage_flush().await
 }
 
 async fn persist_event_records(
-    storage: &AgentStore,
+    storage: &dyn SessionStore,
     ctx: &server_log::ServerCtx<'_>,
     records: &[RunEventRecord],
 ) -> crate::base::Result<()> {

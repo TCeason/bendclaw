@@ -14,15 +14,17 @@ use crate::kernel::tools::OpType;
 use crate::kernel::tools::ToolId;
 use crate::storage::dal::session::repo::SessionRepo;
 use crate::storage::dal::task::TaskDelivery;
+use crate::storage::pool::Pool;
 use crate::storage::TaskSchedule;
 
 pub struct TaskCreateTool {
     node_id: String,
+    pool: Pool,
 }
 
 impl TaskCreateTool {
-    pub fn new(node_id: String) -> Self {
-        Self { node_id }
+    pub fn new(node_id: String, pool: Pool) -> Self {
+        Self { node_id, pool }
     }
 }
 
@@ -75,7 +77,7 @@ impl Tool for TaskCreateTool {
 
         // Auto-inject channel delivery from session context when not explicitly set
         if matches!(spec.delivery, TaskDelivery::None) {
-            let session = SessionRepo::new(ctx.pool.clone())
+            let session = SessionRepo::new(self.pool.clone())
                 .load(&ctx.session_id)
                 .await?;
             if let Some(ch) = session
@@ -103,7 +105,7 @@ impl Tool for TaskCreateTool {
             ctx.user_id.to_string(),
             ctx.user_id.to_string(),
         );
-        match admin::create_task(&ctx.pool, params).await {
+        match admin::create_task(&self.pool, params).await {
             Ok(record) => Ok(ToolResult::ok(
                 serde_json::to_string_pretty(&TaskView::from(record)).unwrap_or_default(),
             )),

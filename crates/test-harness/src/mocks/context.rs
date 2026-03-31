@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use bendclaw::kernel::agent_store::AgentStore;
 use bendclaw::kernel::runtime::agent_config::AgentConfig;
 use bendclaw::kernel::runtime::org::OrgServices;
 use bendclaw::kernel::session::workspace::SandboxResolver;
@@ -53,7 +52,6 @@ pub fn test_tool_context() -> ToolContext {
         run_id: "r-test".into(),
         trace_id: "t-test".into(),
         workspace: test_workspace(dir),
-        pool: dummy_pool(),
         is_dispatched: false,
         runtime: bendclaw::kernel::tools::ToolRuntime {
             event_tx: None,
@@ -85,7 +83,9 @@ pub async fn test_session(llm: Arc<dyn LLMProvider>) -> Result<Session> {
         llm.clone(),
     ));
 
-    let storage = Arc::new(AgentStore::new(pool.clone(), llm.clone()));
+    let store: Arc<dyn bendclaw::kernel::session::store::SessionStore> = Arc::new(
+        bendclaw::kernel::session::store::db::DbSessionStore::new(pool.clone()),
+    );
 
     let workspace = test_workspace(workspace_dir);
 
@@ -114,13 +114,14 @@ pub async fn test_session(llm: Arc<dyn LLMProvider>) -> Result<Session> {
             tool_registry,
             org,
             tools,
-            storage,
+            store: store,
             llm: Arc::new(RwLock::new(llm)),
             config,
             prompt_variables: vec![],
             cluster_client: None,
             directive: None,
             trace_writer: bendclaw::kernel::trace::TraceWriter::spawn(),
+            trace_factory: Arc::new(bendclaw::kernel::trace::factory::NoopTraceFactory),
             persist_writer: bendclaw::kernel::writer::BackgroundWriter::noop("persist"),
             tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),
             prompt_config: None,
@@ -136,6 +137,7 @@ pub async fn test_session(llm: Arc<dyn LLMProvider>) -> Result<Session> {
             ),
             context_provider: Arc::new(bendclaw::kernel::session::backend::noop::NoopBackend),
             run_initializer: Arc::new(bendclaw::kernel::session::backend::noop::NoopBackend),
+            skill_executor: Arc::new(bendclaw::kernel::skills::noop::NoopSkillExecutor),
         },
     ))
 }

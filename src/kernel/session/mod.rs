@@ -12,6 +12,7 @@ pub mod session;
 pub mod session_manager;
 pub mod session_stream;
 pub mod state;
+pub mod store;
 pub mod workspace;
 
 pub use lifecycle::SessionLifecycle;

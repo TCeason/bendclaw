@@ -14,15 +14,17 @@ use crate::kernel::tools::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
 use crate::storage::dal::channel_account::repo::ChannelAccountRepo;
+use crate::storage::pool::Pool;
 
 /// Send a message to an external channel (Telegram, Feishu, GitHub, etc.).
 pub struct ChannelSendTool {
     channels: Arc<ChannelRegistry>,
+    pool: Pool,
 }
 
 impl ChannelSendTool {
-    pub fn new(channels: Arc<ChannelRegistry>) -> Self {
-        Self { channels }
+    pub fn new(channels: Arc<ChannelRegistry>, pool: Pool) -> Self {
+        Self { channels, pool }
     }
 }
 
@@ -101,7 +103,7 @@ impl Tool for ChannelSendTool {
         }
 
         // Find the first enabled account of this channel type for the agent.
-        let repo = ChannelAccountRepo::new(ctx.pool.clone());
+        let repo = ChannelAccountRepo::new(self.pool.clone());
         let accounts = match repo.list_by_agent(&ctx.agent_id).await {
             Ok(a) => a,
             Err(e) => return Ok(ToolResult::error(format!("Failed to list accounts: {e}"))),

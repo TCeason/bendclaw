@@ -15,6 +15,7 @@ use crate::kernel::session::assembly::contract::RunLabels;
 use crate::kernel::session::assembly::contract::RuntimeInfra;
 use crate::kernel::session::assembly::contract::SessionAssembly;
 use crate::kernel::session::assembly::contract::SessionCore;
+use crate::kernel::session::assembly::contract::SessionOwner;
 use crate::kernel::tools::registry::ToolRegistry;
 use crate::kernel::tools::services::DbSecretUsageSink;
 
@@ -26,11 +27,12 @@ pub struct CloudAssembler {
 impl CloudAssembler {
     pub async fn assemble(
         &self,
-        agent_id: &str,
         session_id: &str,
-        user_id: &str,
+        owner: &SessionOwner,
         opts: CloudBuildOptions,
     ) -> Result<SessionAssembly> {
+        let agent_id = &owner.agent_id;
+        let user_id = &owner.user_id;
         let pool = self.runtime.databases.agent_pool(agent_id)?;
 
         // LLM + config
@@ -146,13 +148,46 @@ impl CloudAssembler {
             session_id.to_string(),
         ));
 
-        // Backend: use existing storage/writers for now (full PersistentBackend comes later)
-        let noop = Arc::new(crate::kernel::session::backend::noop::NoopBackend);
+        // Session store — DbSessionStore for persistence, separate from AgentStore
+        let session_store = Arc::new(crate::kernel::session::store::db::DbSessionStore::new(
+            pool.clone(),
+        ));
+
+        // Backend: PersistentBackend for history loading + run initialization
+        let persistent = Arc::new(
+            crate::kernel::session::backend::persistent::PersistentBackend::new(
+                session_store.clone(),
+                self.runtime.persist_writer.clone(),
+                session_id,
+                agent_id,
+                user_id,
+                prompt_config.clone(),
+            ),
+        );
+
+        // Trace factory — needs pool before SkillRunner consumes it
+        let trace_factory = Arc::new(crate::kernel::trace::factory::DbTraceFactory {
+            trace_repo: Arc::new(crate::storage::dal::trace::repo::TraceRepo::new(
+                pool.clone(),
+            )),
+            span_repo: Arc::new(crate::storage::dal::trace::repo::SpanRepo::new(
+                pool.clone(),
+            )),
+        });
+
+        let skill_executor: Arc<dyn crate::kernel::skills::executor::SkillExecutor> =
+            Arc::new(crate::kernel::skills::runner::SkillRunner::new(
+                agent_id,
+                user_id,
+                self.runtime.org.skills().clone(),
+                workspace.clone(),
+                pool,
+            ));
 
         Ok(SessionAssembly {
             labels: RunLabels {
-                agent_id: agent_id.into(),
-                user_id: user_id.into(),
+                agent_id: agent_id.as_str().into(),
+                user_id: user_id.as_str().into(),
                 session_id: session_id.into(),
             },
             core: SessionCore {
@@ -162,11 +197,12 @@ impl CloudAssembler {
                 tools: tools_arc,
                 allowed_tool_names,
                 prompt_resolver,
-                context_provider: noop.clone(),
-                run_initializer: noop,
+                context_provider: persistent.clone(),
+                run_initializer: persistent,
             },
             infra: RuntimeInfra {
-                storage,
+                store: session_store,
+                trace_factory,
                 tool_writer: self.runtime.tool_writer.clone(),
                 trace_writer: self.runtime.trace_writer.clone(),
                 persist_writer: self.runtime.persist_writer.clone(),
@@ -178,7 +214,7 @@ impl CloudAssembler {
                 directive: self.runtime.directive.read().clone(),
                 prompt_config,
                 prompt_variables,
-                skill_executor: None,
+                skill_executor,
                 memory_recaller: None,
             },
         })

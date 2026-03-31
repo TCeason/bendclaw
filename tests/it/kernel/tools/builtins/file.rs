@@ -4,7 +4,6 @@ use bendclaw::kernel::tools::file::FileWriteTool;
 use bendclaw::kernel::tools::Tool;
 use serde_json::json;
 
-use crate::mocks::context::dummy_pool;
 use crate::mocks::context::test_workspace;
 
 fn make_ctx(workspace_dir: std::path::PathBuf) -> bendclaw::kernel::tools::ToolContext {
@@ -16,7 +15,6 @@ fn make_ctx(workspace_dir: std::path::PathBuf) -> bendclaw::kernel::tools::ToolC
         run_id: "r-test".into(),
         trace_id: "t-test".into(),
         workspace: test_workspace(workspace_dir),
-        pool: dummy_pool(),
         is_dispatched: false,
         runtime: bendclaw::kernel::tools::ToolRuntime {
             event_tx: None,

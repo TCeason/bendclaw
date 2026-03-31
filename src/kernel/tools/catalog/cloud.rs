@@ -38,14 +38,19 @@ pub fn register(
     registry.register_builtin(
         ToolId::Databend,
         Arc::new(crate::kernel::tools::builtins::databend::DatabendTool::new(
-            databend_pool,
+            databend_pool.clone(),
         )),
     );
 
     // Channel send
     registry.register_builtin(
         ToolId::ChannelSend,
-        Arc::new(crate::kernel::tools::builtins::channel::ChannelSendTool::new(channels)),
+        Arc::new(
+            crate::kernel::tools::builtins::channel::ChannelSendTool::new(
+                channels,
+                databend_pool.clone(),
+            ),
+        ),
     );
 
     // Task tools
@@ -53,46 +58,55 @@ pub fn register(
         ToolId::TaskCreate,
         Arc::new(crate::kernel::tools::builtins::task::TaskCreateTool::new(
             node_id.clone(),
+            databend_pool.clone(),
         )),
     );
     registry.register_builtin(
         ToolId::TaskList,
         Arc::new(crate::kernel::tools::builtins::task::TaskListTool::new(
             node_id.clone(),
+            databend_pool.clone(),
         )),
     );
     registry.register_builtin(
         ToolId::TaskGet,
         Arc::new(crate::kernel::tools::builtins::task::TaskGetTool::new(
             node_id.clone(),
+            databend_pool.clone(),
         )),
     );
     registry.register_builtin(
         ToolId::TaskUpdate,
         Arc::new(crate::kernel::tools::builtins::task::TaskUpdateTool::new(
             node_id.clone(),
+            databend_pool.clone(),
         )),
     );
     registry.register_builtin(
         ToolId::TaskDelete,
         Arc::new(crate::kernel::tools::builtins::task::TaskDeleteTool::new(
             node_id.clone(),
+            databend_pool.clone(),
         )),
     );
     registry.register_builtin(
         ToolId::TaskToggle,
         Arc::new(crate::kernel::tools::builtins::task::TaskToggleTool::new(
             node_id.clone(),
+            databend_pool.clone(),
         )),
     );
     registry.register_builtin(
         ToolId::TaskHistory,
         Arc::new(crate::kernel::tools::builtins::task::TaskHistoryTool::new(
             node_id,
+            databend_pool.clone(),
         )),
     );
     registry.register_builtin(
         ToolId::TaskRun,
-        Arc::new(crate::kernel::tools::builtins::task::TaskRunTool),
+        Arc::new(crate::kernel::tools::builtins::task::TaskRunTool::new(
+            databend_pool,
+        )),
     );
 }

@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
 use crate::base::Result;
-use crate::kernel::agent_store::AgentStore;
 use crate::kernel::session::diagnostics;
+use crate::kernel::session::store::SessionStore;
 use crate::kernel::Message;
 
 pub(crate) struct SessionHistoryLoader {
-    storage: Arc<AgentStore>,
+    storage: Arc<dyn SessionStore>,
 }
 
 impl SessionHistoryLoader {
-    pub(crate) fn new(storage: Arc<AgentStore>) -> Self {
+    pub(crate) fn new(storage: Arc<dyn SessionStore>) -> Self {
         Self { storage }
     }
 

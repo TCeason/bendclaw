@@ -11,14 +11,19 @@ use crate::kernel::tools::tool::ToolResult;
 use crate::kernel::tools::Impact;
 use crate::kernel::tools::OpType;
 use crate::kernel::tools::ToolId;
+use crate::storage::pool::Pool;
 
 pub struct TaskUpdateTool {
     _node_id: String,
+    pool: Pool,
 }
 
 impl TaskUpdateTool {
-    pub fn new(node_id: String) -> Self {
-        Self { _node_id: node_id }
+    pub fn new(node_id: String, pool: Pool) -> Self {
+        Self {
+            _node_id: node_id,
+            pool,
+        }
     }
 }
 
@@ -56,7 +61,7 @@ impl Tool for TaskUpdateTool {
     async fn execute_with_context(
         &self,
         args: serde_json::Value,
-        ctx: &ToolContext,
+        _ctx: &ToolContext,
     ) -> crate::base::Result<ToolResult> {
         let input: TaskUpdateToolInput = match serde_json::from_value(args) {
             Ok(input) => input,
@@ -67,7 +72,7 @@ impl Tool for TaskUpdateTool {
             }
         };
 
-        match admin::update_task(&ctx.pool, &input.task_id, input.spec.into_params()).await {
+        match admin::update_task(&self.pool, &input.task_id, input.spec.into_params()).await {
             Ok(updated) => Ok(ToolResult::ok(
                 serde_json::to_string_pretty(&TaskView::from(updated)).unwrap_or_default(),
             )),

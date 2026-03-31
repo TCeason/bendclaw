@@ -8,6 +8,7 @@ use crate::kernel::runtime::diagnostics;
 use crate::kernel::runtime::Runtime;
 use crate::kernel::session::assembly::cloud::CloudAssembler;
 use crate::kernel::session::assembly::cloud::CloudBuildOptions;
+use crate::kernel::session::assembly::contract::SessionOwner;
 use crate::kernel::session::Session;
 
 /// Acquire a persistent cloud session by identity. Used by server-side callers
@@ -54,10 +55,14 @@ pub async fn acquire_cloud_session_with_opts(
     }
 
     // Cache miss or stale eviction — assemble, create, insert
+    let owner = SessionOwner {
+        agent_id: agent_id.to_string(),
+        user_id: user_id.to_string(),
+    };
     let assembly = CloudAssembler {
         runtime: runtime.clone(),
     }
-    .assemble(agent_id, session_id, user_id, opts)
+    .assemble(session_id, &owner, opts)
     .await?;
     let tool_count = assembly.core.tools.len();
     let session = Arc::new(Session::from_assembly(assembly));

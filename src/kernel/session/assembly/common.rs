@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,31 +11,31 @@ use crate::kernel::session::workspace::Workspace;
 use crate::kernel::variables::Variable;
 use crate::llm::tool::ToolSchema;
 
-/// Build workspace from config + variables. Shared by both assemblers.
-pub fn build_workspace(
+/// Build workspace from a pre-computed workspace_dir + config policy.
+/// Both local and cloud assemblers call this — policy (sandbox, resolver, timeouts)
+/// lives here once, only the workspace_dir derivation differs per assembler.
+pub fn build_workspace_from_dir(
     config: &AgentConfig,
-    agent_id: &str,
-    session_id: &str,
-    user_id: &str,
+    workspace_dir: PathBuf,
     cwd_override: Option<&Path>,
     variables: &[Variable],
 ) -> crate::base::Result<Arc<Workspace>> {
-    let workspace_dir = config.workspace.session_dir(user_id, agent_id, session_id);
     if let Err(e) = std::fs::create_dir_all(&workspace_dir) {
         return Err(crate::base::ErrorCode::internal(format!(
             "failed to create session workspace: {e}"
         )));
     }
 
-    let cwd = cwd_override.map(|p| p.to_path_buf()).unwrap_or_else(|| {
-        if config.workspace.sandbox {
-            workspace_dir.clone()
-        } else {
+    let cwd = if config.workspace.sandbox {
+        // Sandbox: always use workspace_dir, ignore external cwd override
+        workspace_dir.clone()
+    } else {
+        cwd_override.map(|p| p.to_path_buf()).unwrap_or_else(|| {
             std::env::var_os("HOME")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| workspace_dir.clone())
-        }
-    });
+        })
+    };
 
     let resolver: Arc<dyn crate::kernel::session::workspace::PathResolver> =
         if config.workspace.sandbox {
@@ -55,13 +56,18 @@ pub fn build_workspace(
     )))
 }
 
-/// Build workspace for ephemeral sessions (no agent/user, minimal config).
-pub fn build_workspace_ephemeral(
+/// Build workspace from config + variables. Cloud assembler uses this —
+/// workspace_dir derived from config.workspace.session_dir().
+pub fn build_workspace(
     config: &AgentConfig,
+    agent_id: &str,
     session_id: &str,
+    user_id: &str,
     cwd_override: Option<&Path>,
+    variables: &[Variable],
 ) -> crate::base::Result<Arc<Workspace>> {
-    build_workspace(config, "agent", session_id, "cli", cwd_override, &[])
+    let workspace_dir = config.workspace.session_dir(user_id, agent_id, session_id);
+    build_workspace_from_dir(config, workspace_dir, cwd_override, variables)
 }
 
 /// Apply tool filter to schemas. Returns the allowed_tool_names set if a filter was given.

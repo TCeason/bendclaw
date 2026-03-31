@@ -92,7 +92,6 @@ fn build_engine(
     let workspace = bendclaw_test_harness::mocks::context::test_workspace(
         std::env::temp_dir().join("bendclaw-engine-hooks-test"),
     );
-    let pool = bendclaw_test_harness::mocks::context::dummy_pool();
 
     let dispatcher = ToolDispatcher::new(
         Arc::new(ToolRegistry::new()),
@@ -104,7 +103,6 @@ fn build_engine(
             run_id: "run-1".into(),
             trace_id: "trace-1".into(),
             workspace,
-            pool,
             is_dispatched: false,
             runtime: ToolRuntime {
                 event_tx: None,

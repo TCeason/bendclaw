@@ -9,6 +9,7 @@ mod config_cluster;
 mod config_directive;
 mod kernel;
 mod llm;
+mod local;
 mod service;
 mod storage;
 mod version;

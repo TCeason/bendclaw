@@ -12,8 +12,17 @@ use crate::kernel::tools::Impact;
 use crate::kernel::tools::OpType;
 use crate::kernel::tools::ToolId;
 use crate::storage::dal::task::TaskRepo;
+use crate::storage::pool::Pool;
 
-pub struct TaskRunTool;
+pub struct TaskRunTool {
+    pool: Pool,
+}
+
+impl TaskRunTool {
+    pub fn new(pool: Pool) -> Self {
+        Self { pool }
+    }
+}
 
 impl OperationClassifier for TaskRunTool {
     fn op_type(&self) -> OpType {
@@ -59,19 +68,19 @@ impl Tool for TaskRunTool {
     async fn execute_with_context(
         &self,
         args: serde_json::Value,
-        ctx: &ToolContext,
+        _ctx: &ToolContext,
     ) -> crate::base::Result<ToolResult> {
         let task_id = match args.get("task_id").and_then(|v| v.as_str()) {
             Some(id) => id,
             None => return Ok(ToolResult::error("missing required parameter: task_id")),
         };
 
-        let task = match admin::get_task(&ctx.pool, task_id).await? {
+        let task = match admin::get_task(&self.pool, task_id).await? {
             Some(t) => t,
             None => return Ok(ToolResult::error(format!("task {task_id} not found"))),
         };
 
-        let repo = TaskRepo::new(ctx.pool.clone());
+        let repo = TaskRepo::new(self.pool.clone());
         if let Err(e) = repo.trigger_now(task_id).await {
             return Ok(ToolResult::error(format!("failed to trigger task: {e}")));
         }

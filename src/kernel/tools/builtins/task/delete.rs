@@ -9,14 +9,19 @@ use crate::kernel::tools::tool::ToolResult;
 use crate::kernel::tools::Impact;
 use crate::kernel::tools::OpType;
 use crate::kernel::tools::ToolId;
+use crate::storage::pool::Pool;
 
 pub struct TaskDeleteTool {
     _node_id: String,
+    pool: Pool,
 }
 
 impl TaskDeleteTool {
-    pub fn new(node_id: String) -> Self {
-        Self { _node_id: node_id }
+    pub fn new(node_id: String, pool: Pool) -> Self {
+        Self {
+            _node_id: node_id,
+            pool,
+        }
     }
 }
 
@@ -63,14 +68,14 @@ impl Tool for TaskDeleteTool {
     async fn execute_with_context(
         &self,
         args: serde_json::Value,
-        ctx: &ToolContext,
+        _ctx: &ToolContext,
     ) -> crate::base::Result<ToolResult> {
         let task_id = match args.get("task_id").and_then(|v| v.as_str()) {
             Some(id) if !id.is_empty() => id,
             _ => return Ok(ToolResult::error("task_id is required")),
         };
 
-        match admin::delete_task(&ctx.pool, task_id).await {
+        match admin::delete_task(&self.pool, task_id).await {
             Ok(()) => Ok(ToolResult::ok(format!("Task '{task_id}' deleted"))),
             Err(e) => Ok(ToolResult::error(format!("Failed to delete task: {e}"))),
         }

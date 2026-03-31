@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use bendclaw::base::ErrorCode;
-use bendclaw::kernel::agent_store::AgentStore;
 use bendclaw::kernel::runtime::agent_config::AgentConfig;
 use bendclaw::kernel::runtime::org::OrgServices;
 use bendclaw::kernel::session::state::SessionState;
@@ -98,7 +97,12 @@ fn test_session(session_id: &str, agent_id: &str) -> Arc<Session> {
             tool_registry: Arc::new(ToolRegistry::new()),
             org,
             tools: Arc::new(vec![]),
-            storage: Arc::new(AgentStore::new(pool, llm.clone())),
+            store: Arc::new(
+                bendclaw::kernel::session::store::json::JsonSessionStore::new(
+                    std::path::PathBuf::from("/tmp/test-store"),
+                ),
+            ),
+            trace_factory: Arc::new(bendclaw::kernel::trace::factory::NoopTraceFactory),
             llm: Arc::new(RwLock::new(llm)),
             config,
             prompt_variables: vec![],
@@ -124,6 +128,7 @@ fn test_session(session_id: &str, agent_id: &str) -> Arc<Session> {
             run_initializer: std::sync::Arc::new(
                 bendclaw::kernel::session::backend::noop::NoopBackend,
             ),
+            skill_executor: std::sync::Arc::new(bendclaw::kernel::skills::noop::NoopSkillExecutor),
         },
     ))
 }

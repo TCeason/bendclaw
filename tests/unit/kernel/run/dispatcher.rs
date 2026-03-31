@@ -148,7 +148,6 @@ fn dispatcher(
             workspace: bendclaw_test_harness::mocks::context::test_workspace(
                 std::env::temp_dir().join("bendclaw-test-dispatcher"),
             ),
-            pool: bendclaw_test_harness::mocks::context::dummy_pool(),
             is_dispatched: false,
             runtime: bendclaw::kernel::tools::ToolRuntime {
                 event_tx: None,

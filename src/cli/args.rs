@@ -92,6 +92,4 @@ pub enum Command {
     Update,
     /// Run in foreground (default)
     Run,
-    /// Run a one-shot agent task and exit
-    Agent(super::cmd_agent::AgentArgs),
 }

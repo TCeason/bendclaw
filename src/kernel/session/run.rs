@@ -145,7 +145,7 @@ impl<'a> SessionRunCoordinator<'a> {
             },
             crate::kernel::workbench::sem_event::capture_capabilities(
                 self.resources.tools.as_ref(),
-                &self.resources.org.skills().list(self.user_id),
+                &self.resources.org.list_skills(self.user_id),
                 self.user_id,
             ),
         ];
@@ -166,7 +166,7 @@ impl<'a> SessionRunCoordinator<'a> {
 
         let run_persister: Arc<dyn crate::kernel::session::backend::sink::RunPersister> =
             Arc::new(TurnPersister::new(
-                self.resources.storage.clone(),
+                self.resources.store.clone(),
                 trace,
                 self.agent_id.clone(),
                 self.session_id.to_string(),
@@ -174,6 +174,7 @@ impl<'a> SessionRunCoordinator<'a> {
                 self.user_id.clone(),
                 started_at,
                 self.resources.persist_writer.clone(),
+                llm.clone(),
             ));
 
         self.mark_running(run_id.clone(), cancel, iteration, inbox_tx);
@@ -203,10 +204,8 @@ impl<'a> SessionRunCoordinator<'a> {
         } else {
             trace_id.to_string()
         };
-        let mut trace = TraceRecorder::with_writer(
-            self.resources.trace_writer.clone(),
-            self.resources.storage.trace_repo(),
-            self.resources.storage.span_repo(),
+        let mut trace = self.resources.trace_factory.create_recorder(
+            &self.resources.trace_writer,
             effective_trace_id,
             run_id.to_string(),
             self.agent_id.to_string(),
@@ -266,13 +265,7 @@ impl<'a> SessionRunCoordinator<'a> {
         let iteration = Arc::new(AtomicU32::new(0));
 
         let compactor = Compactor::new(ctx.llm.clone(), ctx.model.clone(), cancel.clone());
-        let skill_executor = Arc::new(crate::kernel::skills::runner::SkillRunner::new(
-            self.agent_id,
-            self.user_id,
-            self.resources.org.skills().clone(),
-            self.resources.workspace.clone(),
-            self.resources.storage.pool().clone(),
-        ));
+        let skill_executor = self.resources.skill_executor.clone();
         let (tx, rx) = Engine::create_channel();
         let event_tx = tx.clone();
         let dispatcher = ToolDispatcher::new(
@@ -285,7 +278,6 @@ impl<'a> SessionRunCoordinator<'a> {
                 run_id: run_id.into(),
                 trace_id: trace.trace_id.as_str().into(),
                 workspace: self.resources.workspace.clone(),
-                pool: self.resources.storage.pool().clone(),
                 is_dispatched,
                 runtime: ToolRuntime {
                     event_tx: None,
@@ -305,8 +297,7 @@ impl<'a> SessionRunCoordinator<'a> {
             .resources
             .org
             .memory()
-            .filter(|_| self.resources.config.memory.extract)
-            .cloned();
+            .filter(|_| self.resources.config.memory.extract);
         let mut engine = Engine::from_tx(
             ctx,
             dispatcher,

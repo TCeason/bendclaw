@@ -63,7 +63,7 @@ impl Session {
             tool_registry: core.tool_registry,
             org: agent.org,
             tools: core.tools,
-            storage: infra.storage,
+            store: infra.store,
             llm: core.llm,
             config: agent.config,
             prompt_variables: agent.prompt_variables,
@@ -71,6 +71,7 @@ impl Session {
             directive: agent.directive,
             tool_writer: infra.tool_writer,
             trace_writer: infra.trace_writer,
+            trace_factory: infra.trace_factory,
             persist_writer: infra.persist_writer,
             prompt_config: agent.prompt_config,
             before_turn_hook: None,
@@ -79,6 +80,7 @@ impl Session {
             prompt_resolver: core.prompt_resolver,
             context_provider: core.context_provider,
             run_initializer: core.run_initializer,
+            skill_executor: agent.skill_executor,
         };
         Self::new(id, agent_id, user_id, res)
     }

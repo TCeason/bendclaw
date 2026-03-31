@@ -29,14 +29,12 @@ fn build_prompt_meta(context: &ConversationContext, options: &RunOptions) -> Pro
     }
 }
 
-fn validate(req: &InvocationRequest) -> Result<()> {
-    if matches!(
-        (&req.source, &req.persistence),
-        (ConfigSource::Local, PersistenceMode::Persistent { .. })
-    ) {
-        return Err(ErrorCode::invalid_input(
-            "Local + Persistent is not supported",
-        ));
+pub fn validate(req: &InvocationRequest) -> Result<()> {
+    if req.agent_id.is_empty() {
+        return Err(ErrorCode::invalid_input("agent_id must not be empty"));
+    }
+    if req.user_id.is_empty() {
+        return Err(ErrorCode::invalid_input("user_id must not be empty"));
     }
     Ok(())
 }

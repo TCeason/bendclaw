@@ -70,3 +70,12 @@ impl OrgServices {
         &self.subscriptions
     }
 }
+
+impl super::session_org::SessionOrgServices for OrgServices {
+    fn list_skills(&self, user_id: &str) -> Vec<crate::kernel::skills::skill::Skill> {
+        self.skills.list(user_id)
+    }
+    fn memory(&self) -> Option<Arc<MemoryService>> {
+        self.memory.clone()
+    }
+}

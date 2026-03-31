@@ -10,6 +10,7 @@ use bendclaw::config::BendClawConfig;
 use bendclaw::kernel::Runtime;
 use bendclaw::llm::router::LLMRouter;
 use bendclaw::service::state::AppState;
+use bendclaw::tracing_fmt;
 use clap::Parser;
 use tracing::info;
 use tracing_error::ErrorLayer;
@@ -17,8 +18,6 @@ use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer as _;
-
-mod tracing_fmt;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -31,10 +30,6 @@ async fn main() -> anyhow::Result<()> {
         Command::Status => cmd_status(),
         Command::Update => bendclaw::cli::cmd_update().await?,
         Command::Run => cmd_run(cli.config, cli.overrides).await?,
-        Command::Agent(args) => {
-            let config = load_config(cli.config, &cli.overrides)?;
-            bendclaw::cli::cmd_agent(config, args).await?;
-        }
     }
 
     Ok(())
@@ -49,26 +44,6 @@ fn resolve_config_path(explicit: Option<String>) -> String {
         return default.to_string_lossy().into_owned();
     }
     String::new()
-}
-
-fn load_config(
-    config_path: Option<String>,
-    overrides: &bendclaw::cli::CliOverrides,
-) -> anyhow::Result<BendClawConfig> {
-    let env_file = bendclaw::cli::evotai_dir().join("bendclaw.env");
-    if env_file.exists() {
-        dotenvy::from_path(&env_file).ok();
-    }
-    let path = resolve_config_path(config_path);
-    let mut config = if path.is_empty() {
-        let mut cfg = BendClawConfig::default();
-        cfg.apply_env();
-        cfg
-    } else {
-        BendClawConfig::load(&path)?
-    };
-    config.apply_cli(overrides);
-    Ok(config)
 }
 
 async fn cmd_run(

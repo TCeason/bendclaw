@@ -3,15 +3,15 @@
 use std::sync::Arc;
 
 use crate::base::Result;
-use crate::kernel::agent_store::AgentStore;
 use crate::kernel::run::persist_op::PersistOp;
 use crate::kernel::run::persist_op::PersistWriter;
+use crate::kernel::session::store::SessionStore;
 
 /// Create session record (first turn) and run record. Returns the run_id.
 /// DB writes are fire-and-forget via the background PersistWriter.
 #[allow(clippy::too_many_arguments, dead_code)]
 pub(crate) fn init_run(
-    storage: &Arc<AgentStore>,
+    storage: &Arc<dyn SessionStore>,
     persist_writer: &PersistWriter,
     session_id: &str,
     agent_id: &str,

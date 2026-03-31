@@ -9,14 +9,19 @@ use crate::kernel::tools::tool::ToolContext;
 use crate::kernel::tools::tool::ToolResult;
 use crate::kernel::tools::OpType;
 use crate::kernel::tools::ToolId;
+use crate::storage::pool::Pool;
 
 pub struct TaskListTool {
     _node_id: String,
+    pool: Pool,
 }
 
 impl TaskListTool {
-    pub fn new(node_id: String) -> Self {
-        Self { _node_id: node_id }
+    pub fn new(node_id: String, pool: Pool) -> Self {
+        Self {
+            _node_id: node_id,
+            pool,
+        }
     }
 }
 
@@ -57,11 +62,11 @@ impl Tool for TaskListTool {
     async fn execute_with_context(
         &self,
         args: serde_json::Value,
-        ctx: &ToolContext,
+        _ctx: &ToolContext,
     ) -> crate::base::Result<ToolResult> {
         let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as u32;
 
-        match admin::list_tasks(&ctx.pool, limit).await {
+        match admin::list_tasks(&self.pool, limit).await {
             Ok(tasks) => {
                 let items: Vec<TaskSummaryView> =
                     tasks.into_iter().map(TaskSummaryView::from).collect();

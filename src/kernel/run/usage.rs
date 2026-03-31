@@ -29,7 +29,7 @@ impl std::fmt::Display for ModelRole {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageEvent {
     pub agent_id: String,
     pub user_id: String,

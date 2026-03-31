@@ -9,13 +9,18 @@ use crate::kernel::directive::DirectiveService;
 use crate::kernel::run::prompt::PromptConfig;
 use crate::kernel::run::prompt::PromptResolver;
 use crate::kernel::runtime::agent_config::AgentConfig;
-use crate::kernel::runtime::org::OrgServices;
 use crate::kernel::session::backend::context::SessionContextProvider;
 use crate::kernel::session::backend::sink::RunInitializer;
 use crate::kernel::session::workspace::Workspace;
 use crate::kernel::tools::registry::ToolRegistry;
 use crate::llm::provider::LLMProvider;
 use crate::llm::tool::ToolSchema;
+
+/// Owner identity for session assembly. Callers (invocation layer, factory) construct this.
+pub struct SessionOwner {
+    pub agent_id: String,
+    pub user_id: String,
+}
 
 /// Labels for logging, tracing, and run records. Not an identity model.
 #[derive(Debug, Clone)]
@@ -47,7 +52,8 @@ pub struct SessionCore {
 
 /// Infrastructure: storage, writers, tracing.
 pub struct RuntimeInfra {
-    pub storage: Arc<crate::kernel::agent_store::AgentStore>,
+    pub store: Arc<dyn crate::kernel::session::store::SessionStore>,
+    pub trace_factory: Arc<dyn crate::kernel::trace::factory::TraceFactory>,
     pub tool_writer: crate::kernel::writer::tool_op::ToolWriter,
     pub trace_writer: crate::kernel::trace::TraceWriter,
     pub persist_writer: crate::kernel::run::persist_op::PersistWriter,
@@ -55,20 +61,14 @@ pub struct RuntimeInfra {
 
 /// Agent-level context: org, config, prompt data, optional services.
 pub struct AgentContext {
-    pub org: Arc<OrgServices>,
+    pub org: Arc<dyn crate::kernel::runtime::session_org::SessionOrgServices>,
     pub config: Arc<AgentConfig>,
     pub cluster_client: Option<Arc<crate::kernel::cluster::ClusterService>>,
     pub directive: Option<Arc<DirectiveService>>,
     pub prompt_config: Option<PromptConfig>,
     pub prompt_variables: Vec<crate::kernel::run::prompt::PromptVariable>,
-    pub skill_executor: Option<Arc<dyn SkillExecutor>>,
+    pub skill_executor: Arc<dyn crate::kernel::skills::executor::SkillExecutor>,
     pub memory_recaller: Option<Arc<dyn MemoryRecaller>>,
-}
-
-/// Executable skill executor. Persistent sessions have one; ephemeral don't.
-#[async_trait]
-pub trait SkillExecutor: Send + Sync {
-    async fn execute(&self, skill_name: &str, input: &str) -> Result<String>;
 }
 
 /// Runtime memory recall. Persistent sessions have one; ephemeral don't.

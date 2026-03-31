@@ -4,6 +4,7 @@ pub mod executor;
 pub mod fs;
 pub mod hub;
 pub mod manifest;
+pub mod noop;
 pub mod projector;
 pub mod remote;
 pub mod resolver;

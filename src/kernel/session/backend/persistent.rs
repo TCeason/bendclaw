@@ -1,46 +1,60 @@
-//! DB-backed backend for persistent (Cloud + Persistent) sessions.
+//! PersistentBackend<S> — shared backend for both local and cloud sessions.
+//!
+//! Implements SessionContextProvider (history + token limits) and
+//! RunInitializer (sync fire-and-forget via PersistOp).
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use super::context::SessionContextProvider;
+use super::sink::RunInitializer;
 use crate::base::ErrorCode;
 use crate::base::Result;
-use crate::kernel::agent_store::AgentStore;
+use crate::kernel::run::persist_op::PersistOp;
+use crate::kernel::run::persist_op::PersistWriter;
 use crate::kernel::run::prompt::PromptConfig;
 use crate::kernel::run::usage::UsageScope;
 use crate::kernel::session::history_loader::SessionHistoryLoader;
+use crate::kernel::session::store::SessionStore;
 use crate::kernel::Message;
 
-/// Persistent backend — real DB calls for history, quota, and run lifecycle.
-pub struct PersistentBackend {
-    storage: Arc<AgentStore>,
+/// Persistent backend generic over any SessionStore implementation.
+/// Local uses `PersistentBackend<JsonSessionStore>`,
+/// cloud uses `PersistentBackend<DbSessionStore>`.
+pub struct PersistentBackend<S: SessionStore + 'static> {
+    store: Arc<S>,
+    persist_writer: PersistWriter,
     session_id: String,
     agent_id: String,
+    user_id: String,
     prompt_config: Option<PromptConfig>,
 }
 
-impl PersistentBackend {
+impl<S: SessionStore + 'static> PersistentBackend<S> {
     pub fn new(
-        storage: Arc<AgentStore>,
-        session_id: String,
-        agent_id: String,
+        store: Arc<S>,
+        persist_writer: PersistWriter,
+        session_id: impl Into<String>,
+        agent_id: impl Into<String>,
+        user_id: impl Into<String>,
         prompt_config: Option<PromptConfig>,
     ) -> Self {
         Self {
-            storage,
-            session_id,
-            agent_id,
+            store,
+            persist_writer,
+            session_id: session_id.into(),
+            agent_id: agent_id.into(),
+            user_id: user_id.into(),
             prompt_config,
         }
     }
 }
 
 #[async_trait]
-impl SessionContextProvider for PersistentBackend {
+impl<S: SessionStore + 'static> SessionContextProvider for PersistentBackend<S> {
     async fn load_history(&self, limit: usize) -> Result<Vec<Message>> {
-        let loader = SessionHistoryLoader::new(self.storage.clone());
+        let loader = SessionHistoryLoader::new(self.store.clone());
         loader.load(&self.session_id, limit as u32).await
     }
 
@@ -58,7 +72,7 @@ impl SessionContextProvider for PersistentBackend {
         let total_fut = async {
             if need_total {
                 Some(
-                    self.storage
+                    self.store
                         .usage_summarize(UsageScope::AgentTotal {
                             agent_id: self.agent_id.clone(),
                         })
@@ -72,7 +86,7 @@ impl SessionContextProvider for PersistentBackend {
             if need_daily {
                 let day = crate::storage::time::now().date_naive().to_string();
                 Some(
-                    self.storage
+                    self.store
                         .usage_summarize(UsageScope::AgentDaily {
                             agent_id: self.agent_id.clone(),
                             day,
@@ -103,5 +117,24 @@ impl SessionContextProvider for PersistentBackend {
             }
         }
         Ok(())
+    }
+}
+
+impl<S: SessionStore + 'static> RunInitializer for PersistentBackend<S> {
+    fn init_run(&self, input: &str, parent_run_id: Option<&str>, node_id: &str) -> Result<String> {
+        let run_id = crate::kernel::new_run_id();
+
+        self.persist_writer.send(PersistOp::InitRun {
+            storage: self.store.clone(),
+            run_id: run_id.clone(),
+            session_id: self.session_id.clone(),
+            agent_id: self.agent_id.clone(),
+            user_id: self.user_id.clone(),
+            user_message: input.to_string(),
+            parent_run_id: parent_run_id.unwrap_or_default().to_string(),
+            node_id: node_id.to_string(),
+        });
+
+        Ok(run_id)
     }
 }

@@ -1,4 +1,5 @@
 pub(crate) mod diagnostics;
+pub mod factory;
 pub mod recorder;
 pub mod span_meta;
 pub mod writer;

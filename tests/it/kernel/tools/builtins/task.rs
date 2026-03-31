@@ -20,7 +20,7 @@ use crate::common::task_rows::TaskHistoryRow;
 use crate::common::task_rows::TaskRow;
 use crate::mocks::context::test_workspace;
 
-fn ctx_with_pool(pool: bendclaw::storage::Pool) -> bendclaw::kernel::tools::ToolContext {
+fn test_ctx() -> bendclaw::kernel::tools::ToolContext {
     bendclaw::kernel::tools::ToolContext {
         user_id: "u1".into(),
         session_id: "s1".into(),
@@ -30,7 +30,6 @@ fn ctx_with_pool(pool: bendclaw::storage::Pool) -> bendclaw::kernel::tools::Tool
         workspace: test_workspace(
             std::env::temp_dir().join(format!("bendclaw-task-tool-{}", ulid::Ulid::new())),
         ),
-        pool,
         is_dispatched: false,
         runtime: bendclaw::kernel::tools::ToolRuntime {
             event_tx: None,
@@ -54,7 +53,8 @@ async fn task_create_tool_persists_schedule_and_returns_json() -> Result<()> {
         }
         Ok(paged_rows(&[], None, None))
     });
-    let tool = TaskCreateTool::new("inst-1".to_string());
+    let pool = fake.pool();
+    let tool = TaskCreateTool::new("inst-1".to_string(), pool.clone());
 
     let result = tool
         .execute_with_context(
@@ -66,7 +66,7 @@ async fn task_create_tool_persists_schedule_and_returns_json() -> Result<()> {
                     "seconds": 60
                 }
             }),
-            &ctx_with_pool(fake.pool()),
+            &test_ctx(),
         )
         .await?;
 
@@ -92,7 +92,8 @@ async fn task_create_tool_accepts_channel_delivery() -> Result<()> {
         }
         Ok(paged_rows(&[], None, None))
     });
-    let tool = TaskCreateTool::new("inst-1".to_string());
+    let pool = fake.pool();
+    let tool = TaskCreateTool::new("inst-1".to_string(), pool.clone());
 
     let result = tool
         .execute_with_context(
@@ -109,7 +110,7 @@ async fn task_create_tool_accepts_channel_delivery() -> Result<()> {
                     "chat_id": "chat-42"
                 }
             }),
-            &ctx_with_pool(fake.pool()),
+            &test_ctx(),
         )
         .await?;
 
@@ -130,10 +131,11 @@ async fn task_list_tool_returns_compact_items() -> Result<()> {
         assert!(sql.contains("LIMIT 2"));
         Ok(task_query([row.clone()]))
     });
-    let tool = TaskListTool::new("inst-1".to_string());
+    let pool = fake.pool();
+    let tool = TaskListTool::new("inst-1".to_string(), pool.clone());
 
     let result = tool
-        .execute_with_context(json!({"limit": 2}), &ctx_with_pool(fake.pool()))
+        .execute_with_context(json!({"limit": 2}), &test_ctx())
         .await?;
 
     assert!(result.success);
@@ -153,10 +155,11 @@ async fn task_get_tool_returns_full_record() -> Result<()> {
         assert!(sql.contains("LIMIT 1"));
         Ok(task_query([row.clone()]))
     });
-    let tool = TaskGetTool::new("inst-1".to_string());
+    let pool = fake.pool();
+    let tool = TaskGetTool::new("inst-1".to_string(), pool.clone());
 
     let result = tool
-        .execute_with_context(json!({"task_id": "task-1"}), &ctx_with_pool(fake.pool()))
+        .execute_with_context(json!({"task_id": "task-1"}), &test_ctx())
         .await?;
 
     assert!(result.success);
@@ -194,7 +197,8 @@ async fn task_update_tool_reads_updates_and_reloads_task() -> Result<()> {
             other => panic!("unexpected query count {other}: {sql}"),
         }
     });
-    let tool = TaskUpdateTool::new("inst-1".to_string());
+    let pool = fake.pool();
+    let tool = TaskUpdateTool::new("inst-1".to_string(), pool.clone());
 
     let result = tool
         .execute_with_context(
@@ -203,7 +207,7 @@ async fn task_update_tool_reads_updates_and_reloads_task() -> Result<()> {
                 "name": "updated-report",
                 "enabled": false
             }),
-            &ctx_with_pool(fake.pool()),
+            &test_ctx(),
         )
         .await?;
 
@@ -220,10 +224,11 @@ async fn task_delete_tool_removes_task() -> Result<()> {
         assert_eq!(sql, "DELETE FROM tasks WHERE id = 'task-1'");
         Ok(paged_rows(&[], None, None))
     });
-    let tool = TaskDeleteTool::new("inst-1".to_string());
+    let pool = fake.pool();
+    let tool = TaskDeleteTool::new("inst-1".to_string(), pool.clone());
 
     let result = tool
-        .execute_with_context(json!({"task_id": "task-1"}), &ctx_with_pool(fake.pool()))
+        .execute_with_context(json!({"task_id": "task-1"}), &test_ctx())
         .await?;
 
     assert!(result.success);
@@ -254,10 +259,11 @@ async fn task_toggle_tool_returns_updated_task_summary() -> Result<()> {
             other => panic!("unexpected query count {other}: {sql}"),
         }
     });
-    let tool = TaskToggleTool::new("inst-1".to_string());
+    let pool = fake.pool();
+    let tool = TaskToggleTool::new("inst-1".to_string(), pool.clone());
 
     let result = tool
-        .execute_with_context(json!({"task_id": "task-1"}), &ctx_with_pool(fake.pool()))
+        .execute_with_context(json!({"task_id": "task-1"}), &test_ctx())
         .await?;
 
     assert!(result.success);
@@ -277,13 +283,11 @@ async fn task_history_tool_returns_entries() -> Result<()> {
         );
         Ok(task_history_query([TaskHistoryRow::ok("task-1")]))
     });
-    let tool = TaskHistoryTool::new("inst-1".to_string());
+    let pool = fake.pool();
+    let tool = TaskHistoryTool::new("inst-1".to_string(), pool.clone());
 
     let result = tool
-        .execute_with_context(
-            json!({"task_id": "task-1", "limit": 5}),
-            &ctx_with_pool(fake.pool()),
-        )
+        .execute_with_context(json!({"task_id": "task-1", "limit": 5}), &test_ctx())
         .await?;
 
     assert!(result.success);

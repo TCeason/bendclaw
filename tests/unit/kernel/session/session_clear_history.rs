@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use bendclaw::kernel::agent_store::AgentStore;
 use bendclaw::kernel::runtime::agent_config::AgentConfig;
 use bendclaw::kernel::runtime::org::OrgServices;
 use bendclaw::kernel::session::workspace::SandboxResolver;
@@ -48,7 +47,12 @@ fn make_session(id: &str) -> Arc<Session> {
             tool_registry: Arc::new(ToolRegistry::new()),
             org,
             tools: Arc::new(vec![]),
-            storage: Arc::new(AgentStore::new(pool, llm.clone())),
+            store: Arc::new(
+                bendclaw::kernel::session::store::json::JsonSessionStore::new(
+                    std::path::PathBuf::from("/tmp/test-store"),
+                ),
+            ),
+            trace_factory: Arc::new(bendclaw::kernel::trace::factory::NoopTraceFactory),
             llm: Arc::new(RwLock::new(llm)),
             config,
             prompt_variables: vec![],
@@ -74,6 +78,7 @@ fn make_session(id: &str) -> Arc<Session> {
             run_initializer: std::sync::Arc::new(
                 bendclaw::kernel::session::backend::noop::NoopBackend,
             ),
+            skill_executor: std::sync::Arc::new(bendclaw::kernel::skills::noop::NoopSkillExecutor),
         },
     ))
 }

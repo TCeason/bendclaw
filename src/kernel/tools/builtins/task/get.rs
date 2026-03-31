@@ -9,14 +9,19 @@ use crate::kernel::tools::tool::ToolContext;
 use crate::kernel::tools::tool::ToolResult;
 use crate::kernel::tools::OpType;
 use crate::kernel::tools::ToolId;
+use crate::storage::pool::Pool;
 
 pub struct TaskGetTool {
     _node_id: String,
+    pool: Pool,
 }
 
 impl TaskGetTool {
-    pub fn new(node_id: String) -> Self {
-        Self { _node_id: node_id }
+    pub fn new(node_id: String, pool: Pool) -> Self {
+        Self {
+            _node_id: node_id,
+            pool,
+        }
     }
 }
 
@@ -59,14 +64,14 @@ impl Tool for TaskGetTool {
     async fn execute_with_context(
         &self,
         args: serde_json::Value,
-        ctx: &ToolContext,
+        _ctx: &ToolContext,
     ) -> crate::base::Result<ToolResult> {
         let task_id = match args.get("task_id").and_then(|v| v.as_str()) {
             Some(id) if !id.is_empty() => id,
             _ => return Ok(ToolResult::error("task_id is required")),
         };
 
-        match admin::get_task(&ctx.pool, task_id).await {
+        match admin::get_task(&self.pool, task_id).await {
             Ok(Some(task)) => Ok(ToolResult::ok(
                 serde_json::to_string_pretty(&TaskView::from(task)).unwrap_or_default(),
             )),

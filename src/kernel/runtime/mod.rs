@@ -7,6 +7,7 @@ pub mod org;
 pub mod runtime;
 pub mod runtime_builder;
 mod runtime_lifecycle;
+pub mod session_org;
 mod session_router;
 
 pub use activity::ActivityGuard;

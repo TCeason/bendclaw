@@ -11,7 +11,6 @@ use crate::kernel::run::event::Event;
 use crate::kernel::session::workspace::Workspace;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
-use crate::storage::pool::Pool;
 
 /// Runtime controls injected into tools during execution.
 #[derive(Clone)]
@@ -32,7 +31,6 @@ pub struct ToolContext {
     pub run_id: Arc<str>,
     pub trace_id: Arc<str>,
     pub workspace: Arc<Workspace>,
-    pub pool: Pool,
     /// True when this run was dispatched from a remote node (has parent_run_id).
     /// Prevents nested dispatch — only one level of fanout is allowed.
     pub is_dispatched: bool,

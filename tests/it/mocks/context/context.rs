@@ -24,6 +24,7 @@ pub fn test_workspace(dir: std::path::PathBuf) -> Arc<Workspace> {
 
 /// Create a dummy Pool that points to a non-existent endpoint.
 /// Suitable for tests that never actually query the database.
+#[allow(dead_code)]
 pub fn dummy_pool() -> Pool {
     Pool::new("http://localhost:0", "", "default").expect("dummy pool: invalid URL is unreachable")
 }
@@ -40,7 +41,6 @@ pub fn test_tool_context() -> ToolContext {
         run_id: "r-test".into(),
         trace_id: "t-test".into(),
         workspace: test_workspace(dir),
-        pool: dummy_pool(),
         is_dispatched: false,
         runtime: bendclaw::kernel::tools::ToolRuntime {
             event_tx: None,

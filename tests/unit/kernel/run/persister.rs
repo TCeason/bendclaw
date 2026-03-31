@@ -3,7 +3,6 @@ use std::time::Instant;
 
 use anyhow::Result;
 use bendclaw::base::ErrorCode;
-use bendclaw::kernel::agent_store::AgentStore;
 use bendclaw::kernel::run::event::Event;
 use bendclaw::kernel::run::persist_op::spawn_persist_writer;
 use bendclaw::kernel::run::persist_op::PersistOp;
@@ -31,8 +30,11 @@ fn make_client() -> FakeDatabend {
 
 fn make_persister(client: &FakeDatabend, writer: &PersistWriter) -> TurnPersister {
     let pool = client.pool();
-    let llm = Arc::new(MockLLMProvider::with_text("unused"));
-    let storage = Arc::new(AgentStore::new(pool.clone(), llm));
+    let llm: Arc<dyn bendclaw::llm::provider::LLMProvider> =
+        Arc::new(MockLLMProvider::with_text("unused"));
+    let storage: Arc<dyn bendclaw::kernel::session::store::SessionStore> = Arc::new(
+        bendclaw::kernel::session::store::db::DbSessionStore::new(pool.clone()),
+    );
     let trace = TraceRecorder::new(
         Arc::new(TraceRepo::new(pool.clone())),
         Arc::new(SpanRepo::new(pool)),
@@ -51,6 +53,7 @@ fn make_persister(client: &FakeDatabend, writer: &PersistWriter) -> TurnPersiste
         Arc::<str>::from("user-1"),
         Instant::now(),
         writer.clone(),
+        llm,
     )
 }
 

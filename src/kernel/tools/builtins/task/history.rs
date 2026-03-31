@@ -9,14 +9,19 @@ use crate::kernel::tools::tool::ToolContext;
 use crate::kernel::tools::tool::ToolResult;
 use crate::kernel::tools::OpType;
 use crate::kernel::tools::ToolId;
+use crate::storage::pool::Pool;
 
 pub struct TaskHistoryTool {
     _node_id: String,
+    pool: Pool,
 }
 
 impl TaskHistoryTool {
-    pub fn new(node_id: String) -> Self {
-        Self { _node_id: node_id }
+    pub fn new(node_id: String, pool: Pool) -> Self {
+        Self {
+            _node_id: node_id,
+            pool,
+        }
     }
 }
 
@@ -64,7 +69,7 @@ impl Tool for TaskHistoryTool {
     async fn execute_with_context(
         &self,
         args: serde_json::Value,
-        ctx: &ToolContext,
+        _ctx: &ToolContext,
     ) -> crate::base::Result<ToolResult> {
         let task_id = match args.get("task_id").and_then(|v| v.as_str()) {
             Some(id) if !id.is_empty() => id,
@@ -73,7 +78,7 @@ impl Tool for TaskHistoryTool {
 
         let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as u32;
 
-        match admin::list_task_history(&ctx.pool, task_id, limit).await {
+        match admin::list_task_history(&self.pool, task_id, limit).await {
             Ok(entries) => Ok(ToolResult::ok(
                 serde_json::to_string_pretty(
                     &entries

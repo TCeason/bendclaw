@@ -6,7 +6,6 @@ use std::time::Instant;
 use parking_lot::Mutex;
 
 use crate::base::ErrorCode;
-use crate::kernel::agent_store::AgentStore;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::persist_op::PersistOp;
 use crate::kernel::run::persist_op::PersistWriter;
@@ -14,7 +13,9 @@ use crate::kernel::run::persister_diagnostics;
 use crate::kernel::run::result::Reason;
 use crate::kernel::run::result::Result as AgentResult;
 use crate::kernel::session::backend::sink::RunPersister;
+use crate::kernel::session::store::SessionStore;
 use crate::kernel::trace::TraceRecorder;
+use crate::llm::provider::LLMProvider;
 use crate::observability::audit;
 use crate::observability::log::run_log;
 use crate::observability::server_log;
@@ -23,13 +24,14 @@ use crate::storage::dal::run::record::RunStatus;
 use crate::storage::dal::run_event::record::RunEventRecord;
 
 struct Inner {
-    storage: Arc<AgentStore>,
+    storage: Arc<dyn SessionStore>,
     trace: TraceRecorder,
     agent_id: Arc<str>,
     session_id: String,
     user_id: Arc<str>,
     start: Instant,
     writer: PersistWriter,
+    llm: Arc<dyn LLMProvider>,
 }
 
 /// Persists run lifecycle events to the background writer.
@@ -42,7 +44,7 @@ pub struct TurnPersister {
 impl TurnPersister {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        storage: Arc<AgentStore>,
+        storage: Arc<dyn SessionStore>,
         trace: TraceRecorder,
         agent_id: Arc<str>,
         session_id: impl Into<String>,
@@ -50,6 +52,7 @@ impl TurnPersister {
         user_id: Arc<str>,
         start: Instant,
         writer: PersistWriter,
+        llm: Arc<dyn LLMProvider>,
     ) -> Self {
         let run_id = run_id.into();
         Self {
@@ -62,6 +65,7 @@ impl TurnPersister {
                 user_id,
                 start,
                 writer,
+                llm,
             })),
         }
     }
@@ -217,6 +221,8 @@ fn do_persist_success(
     let event_records =
         build_event_records(run_id, &i.session_id, &i.agent_id, &i.user_id, &all_events);
 
+    let (input_price, output_price) = i.llm.pricing(model).unwrap_or((3.0, 15.0));
+
     i.writer.send(PersistOp::RunSuccess {
         storage: i.storage.clone(),
         trace: Box::new(i.trace),
@@ -234,6 +240,8 @@ fn do_persist_success(
         usage: result.usage,
         provider: provider.to_string(),
         model: model.to_string(),
+        input_price,
+        output_price,
         event_records,
         events: events.to_vec(),
     });

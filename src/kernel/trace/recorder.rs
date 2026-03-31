@@ -72,6 +72,29 @@ impl TraceRecorder {
         }
     }
 
+    /// Noop recorder — doesn't emit any trace ops. For local/test use.
+    pub fn noop(
+        trace_id: impl Into<String>,
+        run_id: impl Into<String>,
+        agent_id: impl Into<String>,
+        session_id: impl Into<String>,
+        user_id: impl Into<String>,
+    ) -> Self {
+        let noop_pool = crate::storage::Pool::noop();
+        Self {
+            writer: TraceWriter::noop(),
+            trace_repo: Arc::new(TraceRepo::new(noop_pool.clone())),
+            span_repo: Arc::new(SpanRepo::new(noop_pool)),
+            trace_id: trace_id.into(),
+            run_id: run_id.into(),
+            agent_id: agent_id.into(),
+            session_id: session_id.into(),
+            user_id: user_id.into(),
+            parent_trace_id: String::new(),
+            origin_node_id: String::new(),
+        }
+    }
+
     /// Set parent trace context for distributed trace linking.
     pub fn with_parent_trace(
         mut self,
