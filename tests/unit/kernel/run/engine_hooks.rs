@@ -3,7 +3,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use bendclaw::kernel::execution::events::EventEmitter;
+use bendclaw::kernel::execution::labels::ExecutionLabels;
+use bendclaw::kernel::execution::recorder::ExecutionRecorder;
 use bendclaw::kernel::execution::CallExecutor;
+use bendclaw::kernel::execution::ToolLifecycle;
 use bendclaw::kernel::run::compaction::Compactor;
 use bendclaw::kernel::run::context::Context;
 use bendclaw::kernel::run::engine::Engine;
@@ -136,9 +140,23 @@ fn build_engine(
     let compactor = Compactor::new(llm, "mock".into(), cancel.clone());
     let trace = test_trace_recorder();
 
+    let labels = Arc::new(ExecutionLabels {
+        trace_id: "trace-1".to_string(),
+        run_id: "run-1".to_string(),
+        session_id: "session-1".to_string(),
+        agent_id: "agent-1".to_string(),
+    });
+    let recorder = ExecutionRecorder::new(
+        labels,
+        bendclaw::kernel::trace::Trace::new(trace.clone()),
+        tx.clone(),
+    );
+    let emitter = EventEmitter::new(tx.clone());
+    let lifecycle = ToolLifecycle::new(executor, recorder, emitter);
+
     let engine = Engine::from_tx(
         ctx,
-        executor,
+        lifecycle,
         compactor,
         cancel,
         Arc::new(AtomicU32::new(0)),

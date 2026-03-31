@@ -2,11 +2,9 @@ use serde_json::Map;
 use serde_json::Value;
 
 use super::engine::Engine;
-use crate::kernel::execution::ParsedToolCall;
 use crate::kernel::run::run_loop::AbortSignal;
 use crate::kernel::run::run_loop::LLMResponse;
 use crate::kernel::run::run_loop::RunLoopState;
-use crate::kernel::OperationMeta;
 use crate::llm::message::ChatMessage;
 use crate::llm::tool::ToolSchema;
 use crate::observability::server_log;
@@ -373,101 +371,10 @@ pub(super) fn log_abort_signal(
     }
 }
 
-pub(super) fn log_tool_started(ctx: server_log::ServerCtx<'_>, parsed: &ParsedToolCall) {
-    crate::observability::log::run_log!(info, ctx, "tool", "started",
-        msg = format!("    tool [{}] started", parsed.call.name),
-        tool_name = %parsed.call.name,
-        tool_kind = %parsed.kind.as_str(),
-        bytes = parsed.arguments.to_string().len() as u64,
-        tool_call_id = %parsed.call.id,
-    );
-}
-
-pub(super) fn build_tool_started_payload(
-    mut payload: Map<String, Value>,
-    parsed: &ParsedToolCall,
-) -> Map<String, Value> {
-    payload.insert(
-        "tool_call_id".to_string(),
-        serde_json::json!(parsed.call.id.clone()),
-    );
-    payload.insert(
-        "tool_name".to_string(),
-        serde_json::json!(parsed.call.name.clone()),
-    );
-    payload.insert(
-        "arguments".to_string(),
-        serde_json::json!(parsed.arguments.clone()),
-    );
-    payload
-}
-
-pub(super) fn log_tool_infra_error(name: &str, error: &str) {
-    crate::observability::log::slog!(error, "tool", "infra_error",
-        tool = %name,
-        error = %error,
-    );
-}
-
 pub(super) fn log_message_injected(session_id: &str) {
     crate::observability::log::slog!(info, "run", "message_injected",
         session_id = %session_id,
     );
-}
-
-pub(super) fn log_tool_result(
-    ctx: server_log::ServerCtx<'_>,
-    parsed: &ParsedToolCall,
-    meta: &OperationMeta,
-    success: bool,
-    error_text: Option<&str>,
-    output_len: usize,
-) {
-    if success {
-        crate::observability::log::run_log!(info, ctx, "tool", "completed",
-            msg = format!("    tool [{}] completed {}ms", parsed.call.name, meta.duration_ms),
-            tool_name = %parsed.call.name,
-            tool_kind = %parsed.kind.as_str(),
-            summary = %meta.summary,
-            elapsed_ms = meta.duration_ms,
-            bytes = output_len as u64,
-            tool_call_id = %parsed.call.id,
-        );
-    } else {
-        crate::observability::log::run_log!(error, ctx, "tool", "failed",
-            msg = format!("    tool [{}] failed", parsed.call.name),
-            tool_name = %parsed.call.name,
-            tool_kind = %parsed.kind.as_str(),
-            error = %error_text.unwrap_or(""),
-            summary = %meta.summary,
-            elapsed_ms = meta.duration_ms,
-            bytes = output_len as u64,
-            tool_call_id = %parsed.call.id,
-        );
-    }
-}
-
-pub(super) fn build_tool_result_payload(
-    mut payload: Map<String, Value>,
-    parsed: &ParsedToolCall,
-    success: bool,
-    output: &str,
-    error_text: Option<&str>,
-    meta: &OperationMeta,
-) -> Map<String, Value> {
-    payload.insert(
-        "tool_call_id".to_string(),
-        serde_json::json!(parsed.call.id.clone()),
-    );
-    payload.insert(
-        "tool_name".to_string(),
-        serde_json::json!(parsed.call.name.clone()),
-    );
-    payload.insert("success".to_string(), serde_json::json!(success));
-    payload.insert("output".to_string(), serde_json::json!(output));
-    payload.insert("error".to_string(), serde_json::json!(error_text));
-    payload.insert("operation".to_string(), serde_json::json!(meta.clone()));
-    payload
 }
 
 fn chat_role_count_summary(messages: &[ChatMessage]) -> String {

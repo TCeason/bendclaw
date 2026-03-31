@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::kernel::execution::CallExecutor;
+use crate::kernel::execution::ToolLifecycle;
 use crate::kernel::memory::MemoryService;
 use crate::kernel::run::checkpoint::CompactionCheckpoint;
 use crate::kernel::run::compaction::Compactor;
@@ -25,7 +25,7 @@ pub(super) const INBOX_CAPACITY: usize = 16;
 pub struct Engine {
     pub(super) ctx: Context,
     pub(super) compactor: Compactor,
-    pub(super) executor: CallExecutor,
+    pub(super) lifecycle: ToolLifecycle,
     pub(super) cancel: CancellationToken,
     pub(super) iteration: Arc<AtomicU32>,
     pub(super) tx: mpsc::Sender<Event>,
@@ -55,7 +55,7 @@ impl Engine {
     #[allow(clippy::too_many_arguments)]
     pub fn from_tx(
         ctx: Context,
-        executor: CallExecutor,
+        lifecycle: ToolLifecycle,
         compactor: Compactor,
         cancel: CancellationToken,
         iteration: Arc<AtomicU32>,
@@ -68,7 +68,7 @@ impl Engine {
             abort_policy: AbortPolicy::new(ctx.max_iterations),
             ctx,
             compactor,
-            executor,
+            lifecycle,
             cancel,
             iteration,
             tx,
@@ -92,6 +92,14 @@ impl Engine {
         self
     }
 
+    pub(super) async fn emit(&self, event: Event) {
+        let _ = self.tx.send(event).await;
+    }
+
+    // ── LLM / turn observability helpers ─────────────────────────────────
+    // These remain on Engine because engine_run, engine_llm, and diagnostics
+    // all need them for turn-level and LLM-level audit/logging.
+
     pub(super) fn ops_ctx(&self, turn: u32) -> server_log::ServerCtx<'_> {
         server_log::ServerCtx::new(
             &self.ctx.trace_id,
@@ -112,9 +120,5 @@ impl Engine {
         payload: serde_json::Map<String, serde_json::Value>,
     ) {
         self.emit(audit::event_from_map(name, payload)).await;
-    }
-
-    pub(super) async fn emit(&self, event: Event) {
-        let _ = self.tx.send(event).await;
     }
 }

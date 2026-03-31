@@ -1,10 +1,20 @@
 pub mod call;
 pub(crate) mod diagnostics;
+pub mod events;
 pub mod executor;
+pub mod labels;
+pub mod lifecycle;
+pub mod messages;
+pub mod recorder;
 pub mod result;
+pub mod turn_context;
 
 pub use call::DispatchKind;
 pub use call::DispatchOutcome;
 pub use call::ParsedToolCall;
 pub use executor::CallExecutor;
+pub use labels::ExecutionLabels;
+pub use lifecycle::ToolDispatchOutput;
+pub use lifecycle::ToolLifecycle;
 pub use result::ToolCallResult;
+pub use turn_context::TurnContext;

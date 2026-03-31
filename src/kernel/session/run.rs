@@ -13,7 +13,11 @@ use super::options::RunOptions;
 use super::resources::SessionResources;
 use super::state::SessionState;
 use crate::base::Result;
+use crate::kernel::execution::events::EventEmitter;
+use crate::kernel::execution::labels::ExecutionLabels;
+use crate::kernel::execution::recorder::ExecutionRecorder;
 use crate::kernel::execution::CallExecutor;
+use crate::kernel::execution::ToolLifecycle;
 use crate::kernel::run::compaction::Compactor;
 use crate::kernel::run::context::Context;
 use crate::kernel::run::engine::Engine;
@@ -291,6 +295,20 @@ impl<'a> SessionRunCoordinator<'a> {
         )
         .with_allowed_tool_names(self.resources.allowed_tool_names.clone());
 
+        let labels = Arc::new(ExecutionLabels {
+            trace_id: trace.trace_id.to_string(),
+            run_id: run_id.to_string(),
+            session_id: self.session_id.to_string(),
+            agent_id: self.agent_id.to_string(),
+        });
+        let recorder = ExecutionRecorder::new(
+            labels,
+            crate::kernel::trace::Trace::new(trace.clone()),
+            tx.clone(),
+        );
+        let emitter = EventEmitter::new(tx.clone());
+        let lifecycle = ToolLifecycle::new(executor, recorder, emitter);
+
         let (inbox_tx, inbox_rx) = Engine::create_inbox();
 
         let extract_memory = self
@@ -300,7 +318,7 @@ impl<'a> SessionRunCoordinator<'a> {
             .filter(|_| self.resources.config.memory.extract);
         let mut engine = Engine::from_tx(
             ctx,
-            executor,
+            lifecycle,
             compactor,
             cancel.clone(),
             iteration.clone(),
