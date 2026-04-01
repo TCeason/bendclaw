@@ -3,8 +3,8 @@
 use std::time::Duration;
 use std::time::Instant;
 
-use super::abort_policy::AbortPolicy;
-use super::abort_policy::LoopDecision;
+use super::abort::AbortPolicy;
+use super::abort::LoopDecision;
 use crate::kernel::run::context::Context;
 use crate::kernel::run::result::ContentBlock;
 use crate::kernel::run::result::Usage;

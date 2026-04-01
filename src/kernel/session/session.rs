@@ -60,9 +60,8 @@ impl Session {
 
         let res = SessionResources {
             workspace: core.workspace,
-            tool_registry: core.tool_registry,
+            toolset: core.toolset,
             org: agent.org,
-            tools: core.tools,
             store: infra.store,
             llm: core.llm,
             config: agent.config,
@@ -76,7 +75,6 @@ impl Session {
             prompt_config: agent.prompt_config,
             before_turn_hook: None,
             steering_source: None,
-            allowed_tool_names: core.allowed_tool_names,
             prompt_resolver: core.prompt_resolver,
             context_provider: core.context_provider,
             run_initializer: core.run_initializer,

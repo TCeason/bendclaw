@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -12,9 +11,8 @@ use crate::kernel::runtime::agent_config::AgentConfig;
 use crate::kernel::session::backend::context::SessionContextProvider;
 use crate::kernel::session::backend::sink::RunInitializer;
 use crate::kernel::session::workspace::Workspace;
-use crate::kernel::tools::execution::registry::ToolRegistry;
+use crate::kernel::tools::execution::toolset::Toolset;
 use crate::llm::provider::LLMProvider;
-use crate::llm::tool::ToolSchema;
 
 /// Owner identity for session assembly. Callers (invocation layer, factory) construct this.
 pub struct SessionOwner {
@@ -42,9 +40,7 @@ pub struct SessionAssembly {
 pub struct SessionCore {
     pub workspace: Arc<Workspace>,
     pub llm: Arc<RwLock<Arc<dyn LLMProvider>>>,
-    pub tool_registry: Arc<ToolRegistry>,
-    pub tools: Arc<Vec<ToolSchema>>,
-    pub allowed_tool_names: Option<HashSet<String>>,
+    pub toolset: Toolset,
     pub prompt_resolver: Arc<dyn PromptResolver>,
     pub context_provider: Arc<dyn SessionContextProvider>,
     pub run_initializer: Arc<dyn RunInitializer>,

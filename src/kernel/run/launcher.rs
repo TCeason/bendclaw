@@ -1,0 +1,41 @@
+use std::sync::atomic::AtomicU32;
+use std::sync::Arc;
+
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
+
+use crate::base::Result as AgentBaseResult;
+use crate::kernel::run::event::Event;
+use crate::kernel::run::result::Result as AgentResult;
+use crate::kernel::session::assembly::run_dependencies::build_run_driver;
+use crate::kernel::session::assembly::run_dependencies::RunAssemblyDeps;
+use crate::kernel::session::assembly::run_dependencies::RunConfig;
+use crate::kernel::session::assembly::run_dependencies::RunRequest;
+use crate::kernel::trace::TraceRecorder;
+use crate::kernel::Message;
+
+pub struct EngineHandle {
+    pub task: JoinHandle<AgentBaseResult<AgentResult>>,
+    pub events: mpsc::Receiver<Event>,
+    pub cancel: CancellationToken,
+    pub iteration: Arc<AtomicU32>,
+    pub inbox_tx: mpsc::Sender<Message>,
+}
+
+pub fn launch(
+    deps: RunAssemblyDeps,
+    trace: TraceRecorder,
+    request: RunRequest,
+    config: RunConfig,
+) -> EngineHandle {
+    let mut driver = build_run_driver(deps, trace, request, config);
+    let task = tokio::spawn(async move { driver.query_engine.run().await });
+    EngineHandle {
+        task,
+        events: driver.events,
+        cancel: driver.cancel,
+        iteration: driver.iteration,
+        inbox_tx: driver.inbox_tx,
+    }
+}

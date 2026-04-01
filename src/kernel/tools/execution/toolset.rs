@@ -22,6 +22,7 @@ const CORE_TOOLS: &[ToolId] = &[
     ToolId::WebSearch,
 ];
 
+#[derive(Clone)]
 pub struct Toolset {
     pub registry: Arc<ToolRegistry>,
     pub tools: Arc<Vec<ToolSchema>>,

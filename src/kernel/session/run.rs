@@ -5,10 +5,8 @@ use std::time::Instant;
 
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::assembly::run_dependencies::build_run_driver;
 use super::assembly::run_dependencies::RunAssemblyDeps;
 use super::assembly::run_dependencies::RunConfig;
 use super::assembly::run_dependencies::RunRequest;
@@ -17,9 +15,9 @@ use super::options::RunOptions;
 use super::resources::SessionResources;
 use super::state::SessionState;
 use crate::base::Result;
-use crate::kernel::run::event::Event;
+use crate::kernel::run::launcher;
+use crate::kernel::run::launcher::EngineHandle;
 use crate::kernel::run::persister::TurnPersister;
-use crate::kernel::run::result::Result as AgentResult;
 use crate::kernel::session::session_stream::Stream;
 use crate::kernel::trace::TraceRecorder;
 use crate::kernel::Message;
@@ -109,7 +107,7 @@ impl<'a> SessionRunCoordinator<'a> {
             run_ctx,
             self.user_id,
             full_prompt.len(),
-            self.resources.tools.len(),
+            self.resources.toolset.tools.len(),
             history.len(),
         );
 
@@ -141,7 +139,7 @@ impl<'a> SessionRunCoordinator<'a> {
                 audit::event_from_map("prompt.built", payload)
             },
             crate::kernel::workbench::sem_event::capture_capabilities(
-                self.resources.tools.as_ref(),
+                self.resources.toolset.tools.as_ref(),
                 &self.resources.org.list_skills(self.user_id),
                 self.user_id,
             ),
@@ -150,7 +148,7 @@ impl<'a> SessionRunCoordinator<'a> {
         let llm = self.resources.llm.read().clone();
         let usage_model = llm.default_model().to_string();
 
-        let (engine_task, events, cancel, iteration, inbox_tx) = self.spawn_engine(
+        let handle = self.spawn_engine(
             &run_id,
             &full_prompt,
             history,
@@ -174,11 +172,16 @@ impl<'a> SessionRunCoordinator<'a> {
                 llm.clone(),
             ));
 
-        self.mark_running(run_id.clone(), cancel, iteration, inbox_tx);
+        self.mark_running(
+            run_id.clone(),
+            handle.cancel,
+            handle.iteration,
+            handle.inbox_tx,
+        );
 
         Ok(Stream::new(
-            engine_task,
-            events,
+            handle.task,
+            handle.events,
             self.state.clone(),
             self.history.clone(),
             run_persister,
@@ -216,7 +219,7 @@ impl<'a> SessionRunCoordinator<'a> {
         trace
     }
 
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    #[allow(clippy::too_many_arguments)]
     fn spawn_engine(
         &self,
         run_id: &str,
@@ -227,13 +230,7 @@ impl<'a> SessionRunCoordinator<'a> {
         llm: &Arc<dyn LLMProvider>,
         is_dispatched: bool,
         opts: &RunOptions,
-    ) -> (
-        JoinHandle<Result<AgentResult>>,
-        mpsc::Receiver<Event>,
-        CancellationToken,
-        Arc<AtomicU32>,
-        mpsc::Sender<Message>,
-    ) {
+    ) -> EngineHandle {
         let deps = RunAssemblyDeps::from_resources(self.resources);
         let request = RunRequest {
             user_id: self.user_id.clone(),
@@ -256,16 +253,7 @@ impl<'a> SessionRunCoordinator<'a> {
             ),
             llm: llm.clone(),
         };
-        let mut driver = build_run_driver(deps, trace, request, config);
-        let task = tokio::spawn(async move { driver.query_engine.run().await });
-
-        (
-            task,
-            driver.events,
-            driver.cancel,
-            driver.iteration,
-            driver.inbox_tx,
-        )
+        launcher::launch(deps, trace, request, config)
     }
 
     async fn enforce_token_limits(&self) -> Result<()> {

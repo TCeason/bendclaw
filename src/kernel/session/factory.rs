@@ -64,7 +64,7 @@ pub async fn acquire_cloud_session_with_opts(
     }
     .assemble(session_id, &owner, opts)
     .await?;
-    let tool_count = assembly.core.tools.len();
+    let tool_count = assembly.core.toolset.tools.len();
     let session = Arc::new(Session::from_assembly(assembly));
     runtime.sessions.insert(session.clone());
 

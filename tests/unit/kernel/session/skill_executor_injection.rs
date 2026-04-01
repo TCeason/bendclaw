@@ -11,6 +11,7 @@ use bendclaw::kernel::session::assembly::contract::*;
 use bendclaw::kernel::session::backend::noop::NoopBackend;
 use bendclaw::kernel::skills::executor::SkillExecutor;
 use bendclaw::kernel::skills::executor::SkillOutput;
+use bendclaw::kernel::tools::execution::toolset::Toolset;
 use bendclaw::kernel::trace::factory::NoopTraceFactory;
 
 /// Mock executor that records whether it was called.
@@ -49,11 +50,13 @@ fn build_assembly_with_mock(executor: Arc<dyn SkillExecutor>) -> SessionAssembly
                 bendclaw_test_harness::mocks::llm::MockLLMProvider::with_text("ok"),
             )
                 as Arc<dyn bendclaw::llm::provider::LLMProvider>)),
-            tool_registry: Arc::new(
-                bendclaw::kernel::tools::execution::registry::ToolRegistry::new(),
-            ),
-            tools: Arc::new(vec![]),
-            allowed_tool_names: None,
+            toolset: Toolset {
+                registry: Arc::new(
+                    bendclaw::kernel::tools::execution::registry::ToolRegistry::new(),
+                ),
+                tools: Arc::new(vec![]),
+                allowed_tool_names: None,
+            },
             prompt_resolver: Arc::new(
                 bendclaw::kernel::run::prompt::resolver::LocalPromptResolver::new(
                     bendclaw::kernel::run::prompt::PromptSeed::default(),

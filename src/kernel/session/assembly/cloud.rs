@@ -103,12 +103,10 @@ impl CloudAssembler {
             opts.tool_filter,
         );
 
-        let tools_arc = toolset.tools.clone();
-
         let prompt_resolver = Arc::new(CloudPromptResolver::new(
             storage.clone(),
             self.runtime.org.clone(),
-            tools_arc.clone(),
+            toolset.tools.clone(),
             prompt_variables.clone(),
             prompt_config.clone(),
             workspace.cwd().to_path_buf(),
@@ -166,9 +164,7 @@ impl CloudAssembler {
             core: SessionCore {
                 workspace,
                 llm: Arc::new(RwLock::new(agent_llm)),
-                tool_registry: toolset.registry,
-                tools: tools_arc,
-                allowed_tool_names: toolset.allowed_tool_names,
+                toolset,
                 prompt_resolver,
                 context_provider: persistent.clone(),
                 run_initializer: persistent,

@@ -3,9 +3,9 @@ use std::time::Instant;
 use tokio_stream::StreamExt;
 
 use super::diagnostics;
-use super::llm_response::LLMResponse;
-use super::query_engine::QueryEngine;
-use super::turn_state::RunLoopState;
+use super::engine_loop::QueryEngine;
+use super::response::LLMResponse;
+use super::state::RunLoopState;
 use crate::kernel::run::event::Delta;
 use crate::kernel::run::event::Event;
 use crate::kernel::trace::SpanMeta;

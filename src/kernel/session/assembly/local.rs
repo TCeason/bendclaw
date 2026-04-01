@@ -119,9 +119,7 @@ pub fn build_local_assembly(
         core: SessionCore {
             workspace,
             llm,
-            tool_registry: toolset.registry,
-            tools: toolset.tools,
-            allowed_tool_names: toolset.allowed_tool_names,
+            toolset,
             prompt_resolver,
             context_provider: persistent.clone(),
             run_initializer: persistent,

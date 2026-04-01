@@ -1,11 +1,11 @@
 use std::time::Duration;
 use std::time::Instant;
 
-use bendclaw::kernel::run::query_engine::llm_response::LLMResponse;
-use bendclaw::kernel::run::query_engine::transition::apply_turn_result;
-use bendclaw::kernel::run::query_engine::transition::TurnTransition;
-use bendclaw::kernel::run::query_engine::turn_state::RunLoopConfig;
-use bendclaw::kernel::run::query_engine::turn_state::RunLoopState;
+use bendclaw::kernel::run::engine::response::LLMResponse;
+use bendclaw::kernel::run::engine::state::RunLoopConfig;
+use bendclaw::kernel::run::engine::state::RunLoopState;
+use bendclaw::kernel::run::engine::transition::apply_turn_result;
+use bendclaw::kernel::run::engine::transition::TurnTransition;
 use bendclaw::kernel::run::Reason;
 use bendclaw::kernel::Message;
 use bendclaw::llm::stream::StreamEvent;

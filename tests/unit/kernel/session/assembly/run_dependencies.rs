@@ -12,6 +12,7 @@ use bendclaw::kernel::session::assembly::run_dependencies::RunAssemblyDeps;
 use bendclaw::kernel::session::assembly::run_dependencies::RunConfig;
 use bendclaw::kernel::session::assembly::run_dependencies::RunRequest;
 use bendclaw::kernel::tools::execution::registry::ToolRegistry;
+use bendclaw::kernel::tools::execution::toolset::Toolset;
 use bendclaw::kernel::trace::TraceRecorder;
 use bendclaw_test_harness::mocks::llm::MockLLMProvider;
 
@@ -27,11 +28,13 @@ fn test_deps() -> RunAssemblyDeps {
     );
     RunAssemblyDeps {
         workspace,
-        tool_registry: Arc::new(ToolRegistry::new()),
-        tools: Arc::new(vec![]),
+        toolset: Toolset {
+            registry: Arc::new(ToolRegistry::new()),
+            tools: Arc::new(vec![]),
+            allowed_tool_names: None,
+        },
         skill_executor: Arc::new(bendclaw::kernel::skills::noop::NoopSkillExecutor),
         tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),
-        allowed_tool_names: None,
         extract_memory: None,
         before_turn_hook: None,
         steering_source: None,

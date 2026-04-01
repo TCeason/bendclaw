@@ -104,18 +104,14 @@ pub async fn test_session(llm: Arc<dyn LLMProvider>) -> Result<Session> {
         },
         None,
     );
-    let tool_registry = toolset.registry;
-    let tools = toolset.tools;
-
     Ok(Session::new(
         "s1".to_string(),
         "a1".into(),
         "u1".into(),
         SessionResources {
             workspace,
-            tool_registry,
+            toolset,
             org,
-            tools,
             store: store,
             llm: Arc::new(RwLock::new(llm)),
             config,
@@ -129,7 +125,6 @@ pub async fn test_session(llm: Arc<dyn LLMProvider>) -> Result<Session> {
             prompt_config: None,
             before_turn_hook: None,
             steering_source: None,
-            allowed_tool_names: None,
             prompt_resolver: Arc::new(
                 bendclaw::kernel::run::prompt::resolver::LocalPromptResolver::new(
                     bendclaw::kernel::run::prompt::PromptSeed::default(),

@@ -9,6 +9,7 @@ use bendclaw::kernel::session::Session;
 use bendclaw::kernel::session::SessionResources;
 use bendclaw::kernel::skills::projector::SkillProjector;
 use bendclaw::kernel::tools::execution::registry::ToolRegistry;
+use bendclaw::kernel::tools::execution::toolset::Toolset;
 use bendclaw_test_harness::mocks::llm::MockLLMProvider;
 use bendclaw_test_harness::mocks::skill::NoopSkillStore;
 use bendclaw_test_harness::mocks::skill::NoopSubscriptionStore;
@@ -44,9 +45,12 @@ fn make_session(id: &str) -> Arc<Session> {
         "u1".into(),
         SessionResources {
             workspace,
-            tool_registry: Arc::new(ToolRegistry::new()),
+            toolset: Toolset {
+                registry: Arc::new(ToolRegistry::new()),
+                tools: Arc::new(vec![]),
+                allowed_tool_names: None,
+            },
             org,
-            tools: Arc::new(vec![]),
             store: Arc::new(
                 bendclaw::kernel::session::store::json::JsonSessionStore::new(
                     std::path::PathBuf::from("/tmp/test-store"),
@@ -64,7 +68,6 @@ fn make_session(id: &str) -> Arc<Session> {
             prompt_config: None,
             before_turn_hook: None,
             steering_source: None,
-            allowed_tool_names: None,
             prompt_resolver: std::sync::Arc::new(
                 bendclaw::kernel::run::prompt::resolver::LocalPromptResolver::new(
                     bendclaw::kernel::run::prompt::PromptSeed::default(),

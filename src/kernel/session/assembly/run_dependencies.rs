@@ -4,7 +4,6 @@
 //! This module constructs Context, ToolStack, Compactor, QueryEngine.
 //! Assembly only builds — does NOT spawn.
 
-use std::collections::HashSet;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,15 +14,15 @@ use tokio_util::sync::CancellationToken;
 use crate::kernel::memory::MemoryService;
 use crate::kernel::run::compaction::Compactor;
 use crate::kernel::run::context::Context;
+use crate::kernel::run::engine::QueryEngine;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::hooks::BeforeTurnHook;
 use crate::kernel::run::hooks::SteeringSource;
-use crate::kernel::run::query_engine::QueryEngine;
 use crate::kernel::session::resources::SessionResources;
 use crate::kernel::skills::executor::SkillExecutor;
 use crate::kernel::tools::execution::labels::ExecutionLabels;
 use crate::kernel::tools::execution::progressive::ProgressiveToolView;
-use crate::kernel::tools::execution::registry::ToolRegistry;
+use crate::kernel::tools::execution::toolset::Toolset;
 use crate::kernel::tools::execution::ToolStack;
 use crate::kernel::tools::execution::ToolStackConfig;
 use crate::kernel::tools::ToolContext;
@@ -31,16 +30,13 @@ use crate::kernel::tools::ToolRuntime;
 use crate::kernel::trace::TraceRecorder;
 use crate::kernel::Message;
 use crate::llm::provider::LLMProvider;
-use crate::llm::tool::ToolSchema;
 
 /// Narrow projection of SessionResources — only what run assembly needs.
 pub struct RunAssemblyDeps {
     pub workspace: Arc<crate::kernel::session::workspace::Workspace>,
-    pub tool_registry: Arc<ToolRegistry>,
-    pub tools: Arc<Vec<ToolSchema>>,
+    pub toolset: Toolset,
     pub skill_executor: Arc<dyn SkillExecutor>,
     pub tool_writer: crate::kernel::writer::tool_op::ToolWriter,
-    pub allowed_tool_names: Option<HashSet<String>>,
     pub extract_memory: Option<Arc<MemoryService>>,
     pub before_turn_hook: Option<Arc<dyn BeforeTurnHook>>,
     pub steering_source: Option<Arc<dyn SteeringSource>>,
@@ -50,11 +46,9 @@ impl RunAssemblyDeps {
     pub fn from_resources(r: &SessionResources) -> Self {
         Self {
             workspace: r.workspace.clone(),
-            tool_registry: r.tool_registry.clone(),
-            tools: r.tools.clone(),
+            toolset: r.toolset.clone(),
             skill_executor: r.skill_executor.clone(),
             tool_writer: r.tool_writer.clone(),
-            allowed_tool_names: r.allowed_tool_names.clone(),
             extract_memory: r.org.memory().filter(|_| r.config.memory.extract),
             before_turn_hook: r.before_turn_hook.clone(),
             steering_source: r.steering_source.clone(),
@@ -97,7 +91,7 @@ pub fn build_run_driver(
     request: RunRequest,
     config: RunConfig,
 ) -> RunDriver {
-    let tool_view = ProgressiveToolView::new(deps.tools);
+    let tool_view = ProgressiveToolView::new(deps.toolset.tools.clone());
     let ctx = Context {
         agent_id: request.agent_id.clone(),
         user_id: request.user_id.clone(),
@@ -128,7 +122,7 @@ pub fn build_run_driver(
         agent_id: request.agent_id.to_string(),
     });
     let tool_stack = ToolStack::build(ToolStackConfig {
-        tool_registry: deps.tool_registry,
+        tool_registry: deps.toolset.registry,
         skill_executor: deps.skill_executor,
         tool_context: ToolContext {
             user_id: request.user_id,
@@ -149,7 +143,7 @@ pub fn build_run_driver(
         cancel: cancel.clone(),
         trace: crate::kernel::trace::Trace::new(trace.clone()),
         event_tx: tx.clone(),
-        allowed_tool_names: deps.allowed_tool_names,
+        allowed_tool_names: deps.toolset.allowed_tool_names,
     });
 
     let (inbox_tx, inbox_rx) = QueryEngine::create_inbox();

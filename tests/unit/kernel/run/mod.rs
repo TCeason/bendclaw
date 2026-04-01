@@ -2,6 +2,7 @@ mod compaction_rules;
 mod compactor;
 mod default_identity;
 mod engine_hooks;
+mod engine_smoke;
 mod event;
 mod fmt;
 mod hooks;

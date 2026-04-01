@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -16,16 +15,14 @@ use crate::kernel::session::backend::sink::RunInitializer;
 use crate::kernel::session::store::SessionStore;
 use crate::kernel::session::workspace::Workspace;
 use crate::kernel::skills::executor::SkillExecutor;
-use crate::kernel::tools::execution::registry::ToolRegistry;
+use crate::kernel::tools::execution::toolset::Toolset;
 use crate::kernel::trace::factory::TraceFactory;
 use crate::llm::provider::LLMProvider;
-use crate::llm::tool::ToolSchema;
 
 pub struct SessionResources {
     pub workspace: Arc<Workspace>,
-    pub tool_registry: Arc<ToolRegistry>,
+    pub toolset: Toolset,
     pub org: Arc<dyn SessionOrgServices>,
-    pub tools: Arc<Vec<ToolSchema>>,
     pub store: Arc<dyn SessionStore>,
     pub llm: Arc<RwLock<Arc<dyn LLMProvider>>>,
     pub config: Arc<AgentConfig>,
@@ -39,7 +36,6 @@ pub struct SessionResources {
     pub prompt_config: Option<PromptConfig>,
     pub before_turn_hook: Option<Arc<dyn BeforeTurnHook>>,
     pub steering_source: Option<Arc<dyn SteeringSource>>,
-    pub allowed_tool_names: Option<HashSet<String>>,
     pub prompt_resolver: Arc<dyn PromptResolver>,
     pub context_provider: Arc<dyn SessionContextProvider>,
     pub run_initializer: Arc<dyn RunInitializer>,
