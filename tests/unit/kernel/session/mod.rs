@@ -1,3 +1,4 @@
+mod assembly;
 mod json_store;
 mod noop_backend;
 mod session_clear_history;
