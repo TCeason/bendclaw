@@ -1,3 +1,4 @@
+pub mod build;
 pub mod checkpoint;
 pub mod compaction;
 pub mod context;
@@ -20,7 +21,7 @@ pub mod runtime_context;
 pub mod usage;
 
 pub use checkpoint::CompactionCheckpoint;
-pub use engine::QueryEngine;
+pub use engine::Engine;
 pub use event::Delta;
 pub use event::Event;
 pub use result::ContentBlock;

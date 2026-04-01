@@ -1,3 +1,4 @@
+mod build;
 mod compaction_rules;
 mod compactor;
 mod default_identity;

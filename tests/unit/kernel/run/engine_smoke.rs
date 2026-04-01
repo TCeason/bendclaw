@@ -5,12 +5,14 @@ use std::time::Duration;
 
 use bendclaw::kernel::run::compaction::Compactor;
 use bendclaw::kernel::run::context::Context;
-use bendclaw::kernel::run::engine::QueryEngine;
+use bendclaw::kernel::run::engine::Engine;
 use bendclaw::kernel::run::event::Event;
 use bendclaw::kernel::run::result::Reason;
+use bendclaw::kernel::tools::execution::id::ToolId;
 use bendclaw::kernel::tools::execution::labels::ExecutionLabels;
 use bendclaw::kernel::tools::execution::progressive::ProgressiveToolView;
 use bendclaw::kernel::tools::execution::registry::ToolRegistry;
+use bendclaw::kernel::tools::execution::services::NoopSecretUsageSink;
 use bendclaw::kernel::tools::execution::ToolStack;
 use bendclaw::kernel::tools::execution::ToolStackConfig;
 use bendclaw::kernel::tools::ToolContext;
@@ -37,13 +39,33 @@ fn trace() -> TraceRecorder {
     )
 }
 
+fn real_registry() -> ToolRegistry {
+    let mut registry = ToolRegistry::new();
+    let sink: Arc<dyn bendclaw::kernel::tools::execution::services::SecretUsageSink> =
+        Arc::new(NoopSecretUsageSink);
+    registry.register_builtin(
+        ToolId::ListDir,
+        Arc::new(bendclaw::kernel::tools::list_dir::ListDirTool),
+    );
+    registry.register_builtin(
+        ToolId::Glob,
+        Arc::new(bendclaw::kernel::tools::glob::GlobTool),
+    );
+    registry.register_builtin(
+        ToolId::Bash,
+        Arc::new(bendclaw::kernel::tools::bash::ShellTool::new(sink)),
+    );
+    registry
+}
+
 fn build_engine_with_filter(
     llm: Arc<MockLLMProvider>,
+    registry: ToolRegistry,
     allowed: Option<HashSet<String>>,
-) -> (QueryEngine, tokio::sync::mpsc::Receiver<Event>) {
+) -> (Engine, tokio::sync::mpsc::Receiver<Event>) {
     let cancel = CancellationToken::new();
-    let (tx, rx) = QueryEngine::create_channel();
-    let (_inbox_tx, inbox_rx) = QueryEngine::create_inbox();
+    let (tx, rx) = Engine::create_channel();
+    let (_inbox_tx, inbox_rx) = Engine::create_inbox();
     let workspace = bendclaw_test_harness::mocks::context::test_workspace(
         std::env::temp_dir().join("bendclaw-engine-smoke"),
     );
@@ -54,7 +76,11 @@ fn build_engine_with_filter(
         agent_id: "agent-1".to_string(),
     });
     let tool_stack = ToolStack::build(ToolStackConfig {
-        tool_registry: Arc::new(ToolRegistry::new()),
+        toolset: bendclaw::kernel::tools::execution::toolset::Toolset {
+            registry: Arc::new(registry),
+            tools: Arc::new(vec![]),
+            allowed_tool_names: allowed,
+        },
         skill_executor: Arc::new(bendclaw::kernel::skills::noop::NoopSkillExecutor),
         tool_context: ToolContext {
             user_id: "user-1".into(),
@@ -75,7 +101,6 @@ fn build_engine_with_filter(
         cancel: cancel.clone(),
         trace: bendclaw::kernel::trace::Trace::new(trace()),
         event_tx: tx.clone(),
-        allowed_tool_names: allowed,
     });
     let ctx = Context {
         agent_id: "agent-1".into(),
@@ -95,7 +120,7 @@ fn build_engine_with_filter(
         messages: vec![Message::user("hello")],
     };
     let compactor = Compactor::new(llm, "mock".into(), cancel.clone());
-    let engine = QueryEngine::from_tx(
+    let engine = Engine::from_tx(
         ctx,
         tool_stack.lifecycle,
         compactor,
@@ -109,8 +134,8 @@ fn build_engine_with_filter(
     (engine, rx)
 }
 
-fn build_engine(llm: Arc<MockLLMProvider>) -> (QueryEngine, tokio::sync::mpsc::Receiver<Event>) {
-    build_engine_with_filter(llm, None)
+fn build_engine(llm: Arc<MockLLMProvider>) -> (Engine, tokio::sync::mpsc::Receiver<Event>) {
+    build_engine_with_filter(llm, real_registry(), None)
 }
 
 #[tokio::test]
@@ -124,23 +149,39 @@ async fn engine_no_tool_call_completes_with_end_turn() {
 }
 
 #[tokio::test]
-async fn engine_tool_call_then_final_response() {
+async fn engine_builtin_tool_dispatch_executes() {
     let llm = Arc::new(MockLLMProvider::new(vec![
         MockTurn::ToolCall {
-            name: "bash".to_string(),
-            arguments: r#"{"command":"echo hi"}"#.to_string(),
+            name: "list_dir".to_string(),
+            arguments: r#"{"path":"/tmp"}"#.to_string(),
         },
-        MockTurn::Text("final answer".to_string()),
+        MockTurn::Text("done".to_string()),
     ]));
     let (mut engine, _rx) = build_engine(llm);
     let result = engine.run().await.unwrap();
     assert_eq!(result.stop_reason, Reason::EndTurn);
     assert!(result.iterations >= 2);
+    let tool_results: Vec<String> = result
+        .messages
+        .iter()
+        .filter_map(|m| match m {
+            Message::ToolResult { output, .. } => Some(output.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !tool_results.is_empty(),
+        "should have tool result from list_dir"
+    );
+    assert!(
+        !tool_results[0].contains("is not available in this session"),
+        "tool result should be a real execution, not a filter error"
+    );
 }
 
 #[tokio::test]
 async fn engine_filter_blocks_disallowed_tool() {
-    let allowed: HashSet<String> = ["read"].iter().map(|s| s.to_string()).collect();
+    let allowed: HashSet<String> = ["list_dir"].iter().map(|s| s.to_string()).collect();
     let llm = Arc::new(MockLLMProvider::new(vec![
         MockTurn::ToolCall {
             name: "bash".to_string(),
@@ -148,16 +189,27 @@ async fn engine_filter_blocks_disallowed_tool() {
         },
         MockTurn::Text("done".to_string()),
     ]));
-    let (mut engine, _rx) = build_engine_with_filter(llm, Some(allowed));
+    let (mut engine, _rx) = build_engine_with_filter(llm, real_registry(), Some(allowed));
     let result = engine.run().await.unwrap();
     assert_eq!(result.stop_reason, Reason::EndTurn);
-    let tool_results: Vec<_> = result
+    let tool_results: Vec<String> = result
         .messages
         .iter()
-        .filter(|m| matches!(m, Message::ToolResult { .. }))
+        .filter_map(|m| match m {
+            Message::ToolResult { output, .. } => Some(output.clone()),
+            _ => None,
+        })
         .collect();
     assert!(
         !tool_results.is_empty(),
-        "should have tool result (error) for blocked tool"
+        "should have tool result for blocked tool"
+    );
+    assert!(
+        tool_results[0].contains("bash"),
+        "error should mention the blocked tool name 'bash'"
+    );
+    assert!(
+        tool_results[0].contains("not available"),
+        "error should indicate tool is not available"
     );
 }

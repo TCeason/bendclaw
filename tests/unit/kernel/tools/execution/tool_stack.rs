@@ -97,7 +97,11 @@ fn build_tool_stack(
         agent_id: "a1".into(),
     });
     let stack = ToolStack::build(ToolStackConfig {
-        tool_registry: Arc::new(registry),
+        toolset: bendclaw::kernel::tools::execution::toolset::Toolset {
+            registry: Arc::new(registry),
+            tools: Arc::new(vec![]),
+            allowed_tool_names: allowed,
+        },
         skill_executor: Arc::new(NoopSkillExecutor),
         tool_context: ToolContext {
             user_id: "u1".into(),
@@ -120,7 +124,6 @@ fn build_tool_stack(
             "t1", "r1", "a1", "s1", "u1",
         )),
         event_tx: tx,
-        allowed_tool_names: allowed,
     });
     (stack, rx)
 }

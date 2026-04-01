@@ -1,11 +1,11 @@
 pub mod abort;
-pub mod diagnostics;
-pub mod engine_loop;
+pub(crate) mod diagnostics;
 mod llm;
 pub mod message;
 pub mod response;
+pub mod run_loop;
 pub mod state;
 mod tools;
 pub mod transition;
 
-pub use engine_loop::QueryEngine;
+pub use run_loop::Engine;

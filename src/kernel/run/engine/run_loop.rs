@@ -1,4 +1,4 @@
-//! QueryEngine — main loop owner for a single agent run.
+//! Engine — main loop owner for a single agent run.
 
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
@@ -39,7 +39,7 @@ use crate::observability::server_log;
 pub(super) const EVENT_CAPACITY: usize = 128;
 pub(super) const INBOX_CAPACITY: usize = 16;
 
-pub struct QueryEngine {
+pub struct Engine {
     pub(super) ctx: Context,
     pub(super) compactor: Compactor,
     pub(super) lifecycle: ToolLifecycle,
@@ -56,7 +56,7 @@ pub struct QueryEngine {
     pub(super) steering_source: Option<Box<dyn SteeringSource>>,
 }
 
-impl QueryEngine {
+impl Engine {
     pub fn create_channel() -> (mpsc::Sender<Event>, mpsc::Receiver<Event>) {
         mpsc::channel(EVENT_CAPACITY)
     }

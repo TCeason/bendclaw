@@ -5,7 +5,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bendclaw::kernel::run::compaction::Compactor;
 use bendclaw::kernel::run::context::Context;
-use bendclaw::kernel::run::engine::QueryEngine;
+use bendclaw::kernel::run::engine::Engine;
 use bendclaw::kernel::run::event::Event;
 use bendclaw::kernel::run::hooks::BeforeTurnHook;
 use bendclaw::kernel::run::hooks::SteeringDecision;
@@ -86,10 +86,10 @@ impl bendclaw::kernel::skills::executor::SkillExecutor for NoopSkillExecutor {
 fn build_engine(
     llm: Arc<MockLLMProvider>,
     messages: Vec<Message>,
-) -> (QueryEngine, tokio::sync::mpsc::Receiver<Event>) {
+) -> (Engine, tokio::sync::mpsc::Receiver<Event>) {
     let cancel = CancellationToken::new();
-    let (tx, rx) = QueryEngine::create_channel();
-    let (_inbox_tx, inbox_rx) = QueryEngine::create_inbox();
+    let (tx, rx) = Engine::create_channel();
+    let (_inbox_tx, inbox_rx) = Engine::create_inbox();
 
     let workspace = bendclaw_test_harness::mocks::context::test_workspace(
         std::env::temp_dir().join("bendclaw-engine-hooks-test"),
@@ -103,7 +103,11 @@ fn build_engine(
         agent_id: "agent-1".to_string(),
     });
     let tool_stack = ToolStack::build(ToolStackConfig {
-        tool_registry: Arc::new(ToolRegistry::new()),
+        toolset: bendclaw::kernel::tools::execution::toolset::Toolset {
+            registry: Arc::new(ToolRegistry::new()),
+            tools: Arc::new(vec![]),
+            allowed_tool_names: None,
+        },
         skill_executor: Arc::new(NoopSkillExecutor),
         tool_context: bendclaw::kernel::tools::ToolContext {
             user_id: "user-1".into(),
@@ -124,7 +128,6 @@ fn build_engine(
         cancel: cancel.clone(),
         trace: bendclaw::kernel::trace::Trace::new(trace.clone()),
         event_tx: tx.clone(),
-        allowed_tool_names: None,
     });
 
     let ctx = Context {
@@ -147,7 +150,7 @@ fn build_engine(
 
     let compactor = Compactor::new(llm, "mock".into(), cancel.clone());
 
-    let engine = QueryEngine::from_tx(
+    let engine = Engine::from_tx(
         ctx,
         tool_stack.lifecycle,
         compactor,

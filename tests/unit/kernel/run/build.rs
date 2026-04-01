@@ -7,10 +7,10 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bendclaw::kernel::session::assembly::run_dependencies::build_run_driver;
-use bendclaw::kernel::session::assembly::run_dependencies::RunAssemblyDeps;
-use bendclaw::kernel::session::assembly::run_dependencies::RunConfig;
-use bendclaw::kernel::session::assembly::run_dependencies::RunRequest;
+use bendclaw::kernel::run::build::build_run_driver;
+use bendclaw::kernel::run::build::RunAssemblyDeps;
+use bendclaw::kernel::run::build::RunConfig;
+use bendclaw::kernel::run::build::RunRequest;
 use bendclaw::kernel::tools::execution::registry::ToolRegistry;
 use bendclaw::kernel::tools::execution::toolset::Toolset;
 use bendclaw::kernel::trace::TraceRecorder;
@@ -75,7 +75,7 @@ async fn build_run_driver_events_channel_is_live() {
         test_config(),
     );
 
-    // The events receiver should be open (sender held by query_engine internals)
+    // The events receiver should be open (sender held by engine internals)
     // We can verify by checking that the receiver is not immediately closed.
     let mut rx = driver.events;
     // try_recv should return Empty (not Disconnected) because senders are alive

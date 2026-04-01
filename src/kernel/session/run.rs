@@ -7,14 +7,14 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use super::assembly::run_dependencies::RunAssemblyDeps;
-use super::assembly::run_dependencies::RunConfig;
-use super::assembly::run_dependencies::RunRequest;
 use super::diagnostics;
 use super::options::RunOptions;
 use super::resources::SessionResources;
 use super::state::SessionState;
 use crate::base::Result;
+use crate::kernel::run::build::RunAssemblyDeps;
+use crate::kernel::run::build::RunConfig;
+use crate::kernel::run::build::RunRequest;
 use crate::kernel::run::launcher;
 use crate::kernel::run::launcher::EngineHandle;
 use crate::kernel::run::persister::TurnPersister;

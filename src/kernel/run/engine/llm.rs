@@ -3,8 +3,8 @@ use std::time::Instant;
 use tokio_stream::StreamExt;
 
 use super::diagnostics;
-use super::engine_loop::QueryEngine;
 use super::response::LLMResponse;
+use super::run_loop::Engine;
 use super::state::RunLoopState;
 use crate::kernel::run::event::Delta;
 use crate::kernel::run::event::Event;
@@ -13,7 +13,7 @@ use crate::kernel::Message;
 use crate::kernel::OpType;
 use crate::kernel::OperationMeta;
 
-impl QueryEngine {
+impl Engine {
     pub(super) async fn call_llm(
         &mut self,
         state: &mut RunLoopState,

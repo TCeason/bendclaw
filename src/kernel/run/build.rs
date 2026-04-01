@@ -1,7 +1,7 @@
 //! Run assembly — builds a fully wired RunDriver from high-level inputs.
 //!
 //! Session layer passes RunRequest + RunConfig + RunAssemblyDeps.
-//! This module constructs Context, ToolStack, Compactor, QueryEngine.
+//! This module constructs Context, ToolStack, Compactor, Engine.
 //! Assembly only builds — does NOT spawn.
 
 use std::sync::atomic::AtomicU32;
@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use crate::kernel::memory::MemoryService;
 use crate::kernel::run::compaction::Compactor;
 use crate::kernel::run::context::Context;
-use crate::kernel::run::engine::QueryEngine;
+use crate::kernel::run::engine::Engine;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::hooks::BeforeTurnHook;
 use crate::kernel::run::hooks::SteeringSource;
@@ -78,7 +78,7 @@ pub struct RunConfig {
 
 /// Fully assembled run driver — ready to spawn.
 pub struct RunDriver {
-    pub query_engine: QueryEngine,
+    pub engine: Engine,
     pub events: mpsc::Receiver<Event>,
     pub cancel: CancellationToken,
     pub iteration: Arc<AtomicU32>,
@@ -114,7 +114,7 @@ pub fn build_run_driver(
     let iteration = Arc::new(AtomicU32::new(0));
     let compactor = Compactor::new(ctx.llm.clone(), ctx.model.clone(), cancel.clone());
 
-    let (tx, rx) = QueryEngine::create_channel();
+    let (tx, rx) = Engine::create_channel();
     let labels = Arc::new(ExecutionLabels {
         trace_id: trace.trace_id.to_string(),
         run_id: request.run_id.clone(),
@@ -122,7 +122,7 @@ pub fn build_run_driver(
         agent_id: request.agent_id.to_string(),
     });
     let tool_stack = ToolStack::build(ToolStackConfig {
-        tool_registry: deps.toolset.registry,
+        toolset: deps.toolset.clone(),
         skill_executor: deps.skill_executor,
         tool_context: ToolContext {
             user_id: request.user_id,
@@ -143,13 +143,12 @@ pub fn build_run_driver(
         cancel: cancel.clone(),
         trace: crate::kernel::trace::Trace::new(trace.clone()),
         event_tx: tx.clone(),
-        allowed_tool_names: deps.toolset.allowed_tool_names,
     });
 
-    let (inbox_tx, inbox_rx) = QueryEngine::create_inbox();
+    let (inbox_tx, inbox_rx) = Engine::create_inbox();
     let extract_memory = deps.extract_memory;
 
-    let mut engine = QueryEngine::from_tx(
+    let mut engine = Engine::from_tx(
         ctx,
         tool_stack.lifecycle,
         compactor,
@@ -168,7 +167,7 @@ pub fn build_run_driver(
     }
 
     RunDriver {
-        query_engine: engine,
+        engine,
         events: rx,
         cancel,
         iteration,

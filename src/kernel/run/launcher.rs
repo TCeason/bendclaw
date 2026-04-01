@@ -6,12 +6,12 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::base::Result as AgentBaseResult;
+use crate::kernel::run::build::build_run_driver;
+use crate::kernel::run::build::RunAssemblyDeps;
+use crate::kernel::run::build::RunConfig;
+use crate::kernel::run::build::RunRequest;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::result::Result as AgentResult;
-use crate::kernel::session::assembly::run_dependencies::build_run_driver;
-use crate::kernel::session::assembly::run_dependencies::RunAssemblyDeps;
-use crate::kernel::session::assembly::run_dependencies::RunConfig;
-use crate::kernel::session::assembly::run_dependencies::RunRequest;
 use crate::kernel::trace::TraceRecorder;
 use crate::kernel::Message;
 
@@ -30,7 +30,7 @@ pub fn launch(
     config: RunConfig,
 ) -> EngineHandle {
     let mut driver = build_run_driver(deps, trace, request, config);
-    let task = tokio::spawn(async move { driver.query_engine.run().await });
+    let task = tokio::spawn(async move { driver.engine.run().await });
     EngineHandle {
         task,
         events: driver.events,

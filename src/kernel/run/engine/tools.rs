@@ -4,7 +4,7 @@
 
 use std::sync::atomic::Ordering;
 
-use super::engine_loop::QueryEngine;
+use super::run_loop::Engine;
 use super::state::RunLoopState;
 use crate::kernel::memory::pressure;
 use crate::kernel::memory::pressure::PressureLevel;
@@ -14,7 +14,7 @@ use crate::kernel::run::prompt_projection;
 use crate::kernel::tools::execution::TurnContext;
 use crate::llm::message::ToolCall;
 
-impl QueryEngine {
+impl Engine {
     pub(super) async fn dispatch_tools(
         &mut self,
         tool_calls: &[ToolCall],
