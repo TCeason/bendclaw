@@ -69,7 +69,7 @@ impl ToolOrchestrator {
                     (false, Some(msg.clone()), format!("Error: {msg}"))
                 }
                 ToolCallResult::InfraError(msg, _) => {
-                    self.recorder.log_tool_infra_error(&p.call.name, &msg);
+                    self.recorder.log_tool_infra_error(&p.call.name, msg);
                     (false, Some(msg.clone()), format!("Error: {msg}"))
                 }
             };

@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 use super::parsed_tool_call::ParsedToolCall;
 use crate::kernel::run::event::Event;
-use crate::kernel::tools::execution_labels::ExecutionLabels;
+use crate::kernel::tools::run_labels::RunLabels;
 use crate::kernel::tools::runtime::diagnostics;
 use crate::kernel::tools::runtime::turn_context::TurnContext;
 use crate::kernel::trace::SpanMeta;
@@ -22,17 +22,17 @@ use crate::observability::server_log;
 const MAX_SPAN_ERROR: usize = 2_000;
 
 pub struct ExecutionRecorder {
-    labels: Arc<ExecutionLabels>,
+    labels: Arc<RunLabels>,
     trace: Trace,
     tx: mpsc::Sender<Event>,
 }
 
 impl ExecutionRecorder {
-    pub fn new(labels: Arc<ExecutionLabels>, trace: Trace, tx: mpsc::Sender<Event>) -> Self {
+    pub fn new(labels: Arc<RunLabels>, trace: Trace, tx: mpsc::Sender<Event>) -> Self {
         Self { labels, trace, tx }
     }
 
-    pub fn labels(&self) -> Arc<ExecutionLabels> {
+    pub fn labels(&self) -> Arc<RunLabels> {
         self.labels.clone()
     }
 

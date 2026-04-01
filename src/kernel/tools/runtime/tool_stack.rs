@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use crate::kernel::run::event::Event;
 use crate::kernel::skills::executor::SkillExecutor;
 use crate::kernel::tools::catalog::toolset::Toolset;
-use crate::kernel::tools::execution_labels::ExecutionLabels;
+use crate::kernel::tools::run_labels::RunLabels;
 use crate::kernel::tools::runtime::tool_events::EventEmitter;
 use crate::kernel::tools::runtime::tool_executor::CallExecutor;
 use crate::kernel::tools::runtime::tool_orchestrator::ToolOrchestrator;
@@ -23,7 +23,7 @@ pub struct ToolStackConfig {
     pub toolset: Toolset,
     pub skill_executor: Arc<dyn SkillExecutor>,
     pub tool_context: ToolContext,
-    pub labels: Arc<ExecutionLabels>,
+    pub labels: Arc<RunLabels>,
     pub cancel: CancellationToken,
     pub trace: Trace,
     pub event_tx: mpsc::Sender<Event>,

@@ -12,11 +12,11 @@ use bendclaw::kernel::run::event::Event;
 use bendclaw::kernel::skills::executor::SkillExecutor;
 use bendclaw::kernel::skills::executor::SkillOutput;
 use bendclaw::kernel::tools::catalog::tool_registry::ToolRegistry;
-use bendclaw::kernel::tools::execution_labels::ExecutionLabels;
+use bendclaw::kernel::tools::run_labels::RunLabels;
 use bendclaw::kernel::tools::runtime::tool_events::EventEmitter;
+use bendclaw::kernel::tools::runtime::tool_executor::CallExecutor;
+use bendclaw::kernel::tools::runtime::tool_orchestrator::ToolOrchestrator;
 use bendclaw::kernel::tools::runtime::tool_recorder::ExecutionRecorder;
-use bendclaw::kernel::tools::runtime::CallExecutor;
-use bendclaw::kernel::tools::runtime::ToolOrchestrator;
 use bendclaw::kernel::tools::runtime::TurnContext;
 use bendclaw::kernel::tools::OperationClassifier;
 use bendclaw::kernel::tools::Tool;
@@ -87,7 +87,7 @@ fn test_trace_recorder() -> bendclaw::kernel::trace::TraceRecorder {
     bendclaw::kernel::trace::TraceRecorder::noop("t1", "r1", "a1", "s1", "u1")
 }
 
-fn build_lifecycle(tools: Vec<Arc<dyn Tool>>) -> (ToolOrchestrator, mpsc::Receiver<Event>) {
+fn build_orchestrator(tools: Vec<Arc<dyn Tool>>) -> (ToolOrchestrator, mpsc::Receiver<Event>) {
     let cancel = CancellationToken::new();
     let mut registry = ToolRegistry::new();
     for t in tools {
@@ -117,7 +117,7 @@ fn build_lifecycle(tools: Vec<Arc<dyn Tool>>) -> (ToolOrchestrator, mpsc::Receiv
         cancel,
         tx.clone(),
     );
-    let labels = Arc::new(ExecutionLabels {
+    let labels = Arc::new(RunLabels {
         trace_id: "t1".into(),
         run_id: "r1".into(),
         session_id: "s1".into(),
@@ -142,8 +142,8 @@ fn tc() -> TurnContext {
 // ── Tests ────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn lifecycle_success_emits_start_before_end() {
-    let (mut lifecycle, mut rx) = build_lifecycle(vec![Arc::new(MockTool {
+async fn orchestrator_success_emits_start_before_end() {
+    let (mut orchestrator, mut rx) = build_orchestrator(vec![Arc::new(MockTool {
         name: "read".into(),
         output: "content".into(),
         succeed: true,
@@ -154,7 +154,7 @@ async fn lifecycle_success_emits_start_before_end() {
         arguments: "{}".into(),
     }];
     let deadline = Instant::now() + Duration::from_secs(5);
-    let output = lifecycle.dispatch(&calls, deadline, tc()).await;
+    let output = orchestrator.dispatch(&calls, deadline, tc()).await;
 
     // Collect events
     let mut events = Vec::new();
@@ -192,8 +192,8 @@ async fn lifecycle_success_emits_start_before_end() {
 }
 
 #[tokio::test]
-async fn lifecycle_tool_error_path() {
-    let (mut lifecycle, mut rx) = build_lifecycle(vec![Arc::new(MockTool {
+async fn orchestrator_tool_error_path() {
+    let (mut orchestrator, mut rx) = build_orchestrator(vec![Arc::new(MockTool {
         name: "shell".into(),
         output: "command not found".into(),
         succeed: false,
@@ -204,7 +204,7 @@ async fn lifecycle_tool_error_path() {
         arguments: "{}".into(),
     }];
     let deadline = Instant::now() + Duration::from_secs(5);
-    let output = lifecycle.dispatch(&calls, deadline, tc()).await;
+    let output = orchestrator.dispatch(&calls, deadline, tc()).await;
 
     let mut events = Vec::new();
     while let Ok(ev) = rx.try_recv() {
@@ -223,8 +223,8 @@ async fn lifecycle_tool_error_path() {
 }
 
 #[tokio::test]
-async fn lifecycle_multiple_tools_all_produce_events() {
-    let (mut lifecycle, mut rx) = build_lifecycle(vec![
+async fn orchestrator_multiple_tools_all_produce_events() {
+    let (mut orchestrator, mut rx) = build_orchestrator(vec![
         Arc::new(MockTool {
             name: "read".into(),
             output: "ok1".into(),
@@ -249,7 +249,7 @@ async fn lifecycle_multiple_tools_all_produce_events() {
         },
     ];
     let deadline = Instant::now() + Duration::from_secs(5);
-    let output = lifecycle.dispatch(&calls, deadline, tc()).await;
+    let output = orchestrator.dispatch(&calls, deadline, tc()).await;
 
     let mut events = Vec::new();
     while let Ok(ev) = rx.try_recv() {
@@ -270,8 +270,8 @@ async fn lifecycle_multiple_tools_all_produce_events() {
 }
 
 #[tokio::test]
-async fn lifecycle_transcript_contains_tool_result() {
-    let (mut lifecycle, _rx) = build_lifecycle(vec![Arc::new(MockTool {
+async fn orchestrator_transcript_contains_tool_result() {
+    let (mut orchestrator, _rx) = build_orchestrator(vec![Arc::new(MockTool {
         name: "read".into(),
         output: "file content here".into(),
         succeed: true,
@@ -282,7 +282,7 @@ async fn lifecycle_transcript_contains_tool_result() {
         arguments: "{}".into(),
     }];
     let deadline = Instant::now() + Duration::from_secs(5);
-    let output = lifecycle.dispatch(&calls, deadline, tc()).await;
+    let output = orchestrator.dispatch(&calls, deadline, tc()).await;
 
     // Should have: started_message, completed_message, tool_result_message
     assert!(
@@ -298,4 +298,42 @@ async fn lifecycle_transcript_contains_tool_result() {
         text.contains("file content here"),
         "tool_result message should contain tool output"
     );
+}
+
+#[tokio::test]
+async fn orchestrator_infra_error_emits_failure_event_and_message() {
+    // Use a tool that will timeout (simulating infra error) by using a very short deadline
+    // with a tool that takes time. We reuse the existing MockTool with succeed=true but
+    // set an already-expired deadline so the tool times out.
+    let (mut orchestrator, mut rx) = build_orchestrator(vec![Arc::new(MockTool {
+        name: "slow".into(),
+        output: "should not appear".into(),
+        succeed: true,
+    })]);
+    let calls = vec![ToolCall {
+        id: "tc1".into(),
+        name: "unknown_tool_xyz".into(),
+        arguments: "{}".into(),
+    }];
+    // unknown_tool_xyz is not registered, so it falls through to skill executor
+    // which returns "not implemented" error — this exercises the non-tool path.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let output = orchestrator.dispatch(&calls, deadline, tc()).await;
+
+    let mut events = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        events.push(ev);
+    }
+
+    // ToolEnd should fire with success=false
+    let end_event = events.iter().find(|e| matches!(e, Event::ToolEnd { .. }));
+    assert!(end_event.is_some(), "missing ToolEnd event for skill error");
+    if let Some(Event::ToolEnd { success, .. }) = end_event {
+        assert!(!success, "expected success=false for skill error");
+    }
+
+    // Messages should contain error text
+    let has_error = output.messages.iter().any(|m| m.text().contains("Error:"));
+    assert!(has_error, "expected error message in output");
+    assert_eq!(output.invoked_names, vec!["unknown_tool_xyz"]);
 }

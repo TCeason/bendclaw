@@ -1,3 +1,3 @@
+mod tool_registry;
 mod tool_selection;
-mod tool_stack;
 mod toolset;

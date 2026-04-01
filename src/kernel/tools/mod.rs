@@ -1,7 +1,7 @@
 pub mod builtin;
 pub mod catalog;
-pub mod execution_labels;
 pub mod operation;
+pub mod run_labels;
 pub mod runtime;
 pub mod tool_context;
 pub mod tool_contract;

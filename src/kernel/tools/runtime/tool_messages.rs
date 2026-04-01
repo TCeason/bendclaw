@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::parsed_tool_call::DispatchOutcome;
 use super::parsed_tool_call::ParsedToolCall;
 use super::tool_result::ToolCallResult;
-use crate::kernel::tools::execution_labels::ExecutionLabels;
+use crate::kernel::tools::run_labels::RunLabels;
 use crate::kernel::Message;
 use crate::kernel::OperationMeta;
 
@@ -46,7 +46,7 @@ pub fn tool_failed_message(
 }
 
 /// Tool result message that goes back into the LLM transcript.
-pub fn tool_result_message(outcome: &DispatchOutcome, labels: &Arc<ExecutionLabels>) -> Message {
+pub fn tool_result_message(outcome: &DispatchOutcome, labels: &Arc<RunLabels>) -> Message {
     let p = &outcome.parsed;
     let meta = outcome.result.operation().clone();
     let (output, success) = match &outcome.result {

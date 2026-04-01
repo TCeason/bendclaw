@@ -13,10 +13,10 @@ use bendclaw::kernel::run::hooks::SteeringSource;
 use bendclaw::kernel::run::hooks::TurnDecision;
 use bendclaw::kernel::run::result::Reason;
 use bendclaw::kernel::tools::catalog::tool_registry::ToolRegistry;
-use bendclaw::kernel::tools::catalog::ToolStack;
-use bendclaw::kernel::tools::catalog::ToolStackConfig;
-use bendclaw::kernel::tools::execution_labels::ExecutionLabels;
+use bendclaw::kernel::tools::run_labels::RunLabels;
 use bendclaw::kernel::tools::runtime::tool_progressive::ProgressiveToolView;
+use bendclaw::kernel::tools::runtime::ToolStack;
+use bendclaw::kernel::tools::runtime::ToolStackConfig;
 use bendclaw::kernel::tools::ToolRuntime;
 use bendclaw::kernel::trace::TraceRecorder;
 use bendclaw::kernel::Message;
@@ -96,7 +96,7 @@ fn build_engine(
     );
 
     let trace = test_trace_recorder();
-    let labels = Arc::new(ExecutionLabels {
+    let labels = Arc::new(RunLabels {
         trace_id: "trace-1".to_string(),
         run_id: "run-1".to_string(),
         session_id: "session-1".to_string(),

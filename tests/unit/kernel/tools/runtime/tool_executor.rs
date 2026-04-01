@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use bendclaw::kernel::skills::executor::SkillExecutor;
 use bendclaw::kernel::skills::executor::SkillOutput;
 use bendclaw::kernel::tools::catalog::tool_registry::ToolRegistry;
-use bendclaw::kernel::tools::runtime::CallExecutor;
-use bendclaw::kernel::tools::runtime::DispatchKind;
-use bendclaw::kernel::tools::runtime::ToolCallResult;
+use bendclaw::kernel::tools::runtime::parsed_tool_call::DispatchKind;
+use bendclaw::kernel::tools::runtime::tool_executor::CallExecutor;
+use bendclaw::kernel::tools::runtime::tool_result::ToolCallResult;
 use bendclaw::kernel::tools::OperationClassifier;
 use bendclaw::kernel::tools::Tool;
 use bendclaw::kernel::tools::ToolContext;
@@ -467,5 +467,96 @@ async fn execute_calls_truncates_large_skill_output() -> Result<()> {
         }
         _ => anyhow::bail!("expected success"),
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn execute_calls_runs_tools_in_parallel() -> Result<()> {
+    // Each tool sleeps 100ms. If run sequentially 3×100ms = 300ms.
+    // If parallel, total should be ~100ms (well under 250ms).
+    struct SlowTool {
+        name: String,
+        delay: Duration,
+    }
+
+    impl OperationClassifier for SlowTool {
+        fn op_type(&self) -> OpType {
+            OpType::FileRead
+        }
+        fn classify_impact(&self, _: &serde_json::Value) -> Option<Impact> {
+            None
+        }
+        fn summarize(&self, _: &serde_json::Value) -> String {
+            self.name.clone()
+        }
+    }
+
+    #[async_trait]
+    impl Tool for SlowTool {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn description(&self) -> &str {
+            "slow"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        async fn execute_with_context(
+            &self,
+            _args: serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> bendclaw::base::Result<ToolResult> {
+            tokio::time::sleep(self.delay).await;
+            Ok(ToolResult::ok(format!("{} done", self.name)))
+        }
+    }
+
+    let tools: Vec<Arc<dyn Tool>> = (0..3)
+        .map(|i| {
+            Arc::new(SlowTool {
+                name: format!("slow_{i}"),
+                delay: Duration::from_millis(100),
+            }) as Arc<dyn Tool>
+        })
+        .collect();
+
+    let exec = build_executor(
+        tools,
+        Arc::new(MockSkillExecutor::new(MockSkillBehavior::OkString(
+            "ok".to_string(),
+        ))),
+        CancellationToken::new(),
+    );
+
+    let calls: Vec<ToolCall> = (0..3)
+        .map(|i| ToolCall {
+            id: format!("tc{i}"),
+            name: format!("slow_{i}"),
+            arguments: "{}".into(),
+        })
+        .collect();
+
+    let parsed = exec.parse_calls(&calls);
+    let start = Instant::now();
+    let outcomes = exec
+        .execute_calls(&parsed, Instant::now() + Duration::from_secs(5))
+        .await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(outcomes.len(), 3);
+    for outcome in &outcomes {
+        assert!(
+            matches!(outcome.result, ToolCallResult::Success(..)),
+            "all tools should succeed"
+        );
+    }
+    // If truly parallel, 3×100ms tools should complete well under 250ms
+    assert!(
+        elapsed < Duration::from_millis(250),
+        "expected parallel execution under 250ms, got {:?}",
+        elapsed
+    );
+
     Ok(())
 }

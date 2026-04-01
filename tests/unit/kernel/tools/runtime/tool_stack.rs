@@ -11,9 +11,9 @@ use bendclaw::kernel::run::event::Event;
 use bendclaw::kernel::skills::executor::SkillExecutor;
 use bendclaw::kernel::skills::executor::SkillOutput;
 use bendclaw::kernel::tools::catalog::tool_registry::ToolRegistry;
-use bendclaw::kernel::tools::catalog::ToolStack;
-use bendclaw::kernel::tools::catalog::ToolStackConfig;
-use bendclaw::kernel::tools::execution_labels::ExecutionLabels;
+use bendclaw::kernel::tools::run_labels::RunLabels;
+use bendclaw::kernel::tools::runtime::ToolStack;
+use bendclaw::kernel::tools::runtime::ToolStackConfig;
 use bendclaw::kernel::tools::runtime::TurnContext;
 use bendclaw::kernel::tools::OperationClassifier;
 use bendclaw::kernel::tools::Tool;
@@ -90,7 +90,7 @@ fn build_tool_stack(
     let workspace = bendclaw_test_harness::mocks::context::test_workspace(
         std::env::temp_dir().join("bendclaw-test-tool-stack"),
     );
-    let labels = Arc::new(ExecutionLabels {
+    let labels = Arc::new(RunLabels {
         trace_id: "t1".into(),
         run_id: "r1".into(),
         session_id: "s1".into(),

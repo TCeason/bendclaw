@@ -10,10 +10,10 @@ use crate::kernel::run::compaction::Compactor;
 use crate::kernel::run::context::Context;
 use crate::kernel::run::engine::Engine;
 use crate::kernel::run::event::Event;
-use crate::kernel::tools::catalog::ToolStack;
-use crate::kernel::tools::catalog::ToolStackConfig;
-use crate::kernel::tools::execution_labels::ExecutionLabels;
+use crate::kernel::tools::run_labels::RunLabels;
 use crate::kernel::tools::runtime::tool_progressive::ProgressiveToolView;
+use crate::kernel::tools::runtime::ToolStack;
+use crate::kernel::tools::runtime::ToolStackConfig;
 use crate::kernel::tools::ToolContext;
 use crate::kernel::tools::ToolRuntime;
 use crate::kernel::trace::TraceRecorder;
@@ -79,7 +79,7 @@ pub fn build_run_driver(
     let compactor = Compactor::new(ctx.llm.clone(), ctx.model.clone(), cancel.clone());
 
     let (tx, rx) = Engine::create_channel();
-    let labels = Arc::new(ExecutionLabels {
+    let labels = Arc::new(RunLabels {
         trace_id: trace.trace_id.to_string(),
         run_id: request.run_id.clone(),
         session_id: request.session_id.to_string(),

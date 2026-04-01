@@ -20,7 +20,10 @@ pub struct SessionOwner {
     pub user_id: String,
 }
 
-/// Labels for logging, tracing, and run records. Not an identity model.
+/// Session-scoped labels for logging and run records (agent + user + session).
+///
+/// Distinct from `tools::run_labels::RunLabels` which is per-run and includes
+/// trace_id + run_id for the tool runtime layer.
 #[derive(Debug, Clone)]
 pub struct RunLabels {
     pub agent_id: Arc<str>,

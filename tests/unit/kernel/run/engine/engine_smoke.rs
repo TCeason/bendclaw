@@ -9,10 +9,10 @@ use bendclaw::kernel::run::engine::Engine;
 use bendclaw::kernel::run::event::Event;
 use bendclaw::kernel::run::result::Reason;
 use bendclaw::kernel::tools::catalog::tool_registry::ToolRegistry;
-use bendclaw::kernel::tools::catalog::ToolStack;
-use bendclaw::kernel::tools::catalog::ToolStackConfig;
-use bendclaw::kernel::tools::execution_labels::ExecutionLabels;
+use bendclaw::kernel::tools::run_labels::RunLabels;
 use bendclaw::kernel::tools::runtime::tool_progressive::ProgressiveToolView;
+use bendclaw::kernel::tools::runtime::ToolStack;
+use bendclaw::kernel::tools::runtime::ToolStackConfig;
 use bendclaw::kernel::tools::tool_id::ToolId;
 use bendclaw::kernel::tools::tool_services::NoopSecretUsageSink;
 use bendclaw::kernel::tools::ToolContext;
@@ -71,7 +71,7 @@ fn build_engine_with_filter(
     let workspace = bendclaw_test_harness::mocks::context::test_workspace(
         std::env::temp_dir().join("bendclaw-engine-smoke"),
     );
-    let labels = Arc::new(ExecutionLabels {
+    let labels = Arc::new(RunLabels {
         trace_id: "trace-1".to_string(),
         run_id: "run-1".to_string(),
         session_id: "session-1".to_string(),
