@@ -45,15 +45,15 @@ fn real_registry() -> ToolRegistry {
         Arc::new(NoopSecretUsageSink);
     registry.register_builtin(
         ToolId::ListDir,
-        Arc::new(bendclaw::kernel::tools::list_dir::ListDirTool),
+        Arc::new(bendclaw::kernel::tools::builtin::filesystem::list_dir::ListDirTool),
     );
     registry.register_builtin(
         ToolId::Glob,
-        Arc::new(bendclaw::kernel::tools::glob::GlobTool),
+        Arc::new(bendclaw::kernel::tools::builtin::filesystem::glob::GlobTool),
     );
     registry.register_builtin(
         ToolId::Bash,
-        Arc::new(bendclaw::kernel::tools::bash::ShellTool::new(sink)),
+        Arc::new(bendclaw::kernel::tools::builtin::shell::bash::ShellTool::new(sink)),
     );
     registry
 }

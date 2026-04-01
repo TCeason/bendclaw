@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bendclaw::kernel::tools::databend::DatabendTool;
+use bendclaw::kernel::tools::builtin::databend::DatabendTool;
 use bendclaw::kernel::tools::Impact;
 use bendclaw::kernel::tools::OpType;
 use bendclaw::kernel::tools::OperationClassifier;
@@ -10,7 +10,7 @@ use serde_json::json;
 // ── Action parsing & SQL generation ──────────────────────────────────────────
 
 mod action {
-    use bendclaw::kernel::tools::databend::action::Action;
+    use bendclaw::kernel::tools::builtin::databend::action::Action;
     use serde_json::json;
 
     #[test]

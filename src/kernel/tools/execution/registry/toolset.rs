@@ -129,15 +129,15 @@ fn finish_toolset(registry: ToolRegistry, filter: Option<HashSet<String>>) -> To
 }
 
 fn register_core(registry: &mut ToolRegistry, secret_sink: Arc<dyn SecretUsageSink>) {
-    use crate::kernel::tools::bash::ShellTool;
-    use crate::kernel::tools::edit::FileEditTool;
-    use crate::kernel::tools::glob::GlobTool;
-    use crate::kernel::tools::grep::GrepTool;
-    use crate::kernel::tools::list_dir::ListDirTool;
-    use crate::kernel::tools::read::FileReadTool;
-    use crate::kernel::tools::web_fetch::WebFetchTool;
-    use crate::kernel::tools::web_search::WebSearchTool;
-    use crate::kernel::tools::write::FileWriteTool;
+    use crate::kernel::tools::builtin::filesystem::edit::FileEditTool;
+    use crate::kernel::tools::builtin::filesystem::glob::GlobTool;
+    use crate::kernel::tools::builtin::filesystem::grep::GrepTool;
+    use crate::kernel::tools::builtin::filesystem::list_dir::ListDirTool;
+    use crate::kernel::tools::builtin::filesystem::read::FileReadTool;
+    use crate::kernel::tools::builtin::filesystem::write::FileWriteTool;
+    use crate::kernel::tools::builtin::shell::bash::ShellTool;
+    use crate::kernel::tools::builtin::web_tools::web_fetch::WebFetchTool;
+    use crate::kernel::tools::builtin::web_tools::web_search::WebSearchTool;
 
     registry.register_builtin(ToolId::Read, Arc::new(FileReadTool));
     registry.register_builtin(ToolId::Write, Arc::new(FileWriteTool));
@@ -157,19 +157,19 @@ fn register_core(registry: &mut ToolRegistry, secret_sink: Arc<dyn SecretUsageSi
 }
 
 fn register_cloud(registry: &mut ToolRegistry, deps: &CloudToolsetDeps) {
-    use crate::kernel::tools::channel_send::ChannelSendTool;
-    use crate::kernel::tools::databend::DatabendTool;
-    use crate::kernel::tools::skills::create::SkillCreateTool;
-    use crate::kernel::tools::skills::read::SkillReadTool;
-    use crate::kernel::tools::skills::remove::SkillRemoveTool;
-    use crate::kernel::tools::tasks::create::TaskCreateTool;
-    use crate::kernel::tools::tasks::delete::TaskDeleteTool;
-    use crate::kernel::tools::tasks::get::TaskGetTool;
-    use crate::kernel::tools::tasks::history::TaskHistoryTool;
-    use crate::kernel::tools::tasks::list::TaskListTool;
-    use crate::kernel::tools::tasks::run::TaskRunTool;
-    use crate::kernel::tools::tasks::toggle::TaskToggleTool;
-    use crate::kernel::tools::tasks::update::TaskUpdateTool;
+    use crate::kernel::tools::builtin::channel::channel_send::ChannelSendTool;
+    use crate::kernel::tools::builtin::databend::DatabendTool;
+    use crate::kernel::tools::builtin::skills::create::SkillCreateTool;
+    use crate::kernel::tools::builtin::skills::read::SkillReadTool;
+    use crate::kernel::tools::builtin::skills::remove::SkillRemoveTool;
+    use crate::kernel::tools::builtin::tasks::create::TaskCreateTool;
+    use crate::kernel::tools::builtin::tasks::delete::TaskDeleteTool;
+    use crate::kernel::tools::builtin::tasks::get::TaskGetTool;
+    use crate::kernel::tools::builtin::tasks::history::TaskHistoryTool;
+    use crate::kernel::tools::builtin::tasks::list::TaskListTool;
+    use crate::kernel::tools::builtin::tasks::run::TaskRunTool;
+    use crate::kernel::tools::builtin::tasks::toggle::TaskToggleTool;
+    use crate::kernel::tools::builtin::tasks::update::TaskUpdateTool;
 
     registry.register_builtin(
         ToolId::SkillRead,
@@ -233,9 +233,9 @@ fn register_optional(
     memory: Option<&Arc<MemoryService>>,
 ) {
     if let Some((service, dispatch_table)) = cluster {
-        use crate::kernel::tools::cluster::collect::ClusterCollectTool;
-        use crate::kernel::tools::cluster::dispatch::ClusterDispatchTool;
-        use crate::kernel::tools::cluster::nodes::ClusterNodesTool;
+        use crate::kernel::tools::builtin::cluster::collect::ClusterCollectTool;
+        use crate::kernel::tools::builtin::cluster::dispatch::ClusterDispatchTool;
+        use crate::kernel::tools::builtin::cluster::nodes::ClusterNodesTool;
 
         registry.register_builtin(
             ToolId::ClusterNodes,
@@ -255,8 +255,8 @@ fn register_optional(
     }
 
     if let Some(mem) = memory {
-        use crate::kernel::tools::memory::save::MemorySaveTool;
-        use crate::kernel::tools::memory::search::MemorySearchTool;
+        use crate::kernel::tools::builtin::memory::save::MemorySaveTool;
+        use crate::kernel::tools::builtin::memory::search::MemorySearchTool;
 
         registry.register_builtin(
             ToolId::MemorySearch,

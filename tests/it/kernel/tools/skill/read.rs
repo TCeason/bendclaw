@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use bendclaw::kernel::skills::projector::SkillProjector;
 use bendclaw::kernel::skills::service::SkillService;
-use bendclaw::kernel::tools::skills::read::SkillReadTool;
+use bendclaw::kernel::tools::builtin::skills::read::SkillReadTool;
 use bendclaw::kernel::tools::OperationClassifier;
 use bendclaw::kernel::tools::Tool;
 use bendclaw_test_harness::mocks::skill::NoopSkillStore;
