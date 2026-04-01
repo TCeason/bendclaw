@@ -10,8 +10,7 @@ use bendclaw::kernel::session::workspace::SandboxResolver;
 use bendclaw::kernel::session::workspace::Workspace;
 use bendclaw::kernel::session::Session;
 use bendclaw::kernel::session::SessionResources;
-use bendclaw::kernel::tools::registry::ToolRegistry;
-use bendclaw::kernel::tools::services::NoopSecretUsageSink;
+use bendclaw::kernel::tools::execution::services::NoopSecretUsageSink;
 use bendclaw::kernel::tools::ToolContext;
 use bendclaw::llm::provider::LLMProvider;
 use bendclaw::storage::Pool;
@@ -90,20 +89,23 @@ pub async fn test_session(llm: Arc<dyn LLMProvider>) -> Result<Session> {
     let workspace = test_workspace(workspace_dir);
 
     let channels = Arc::new(bendclaw::kernel::channel::registry::ChannelRegistry::new());
-    let mut registry = ToolRegistry::new();
-    let sink: Arc<dyn bendclaw::kernel::tools::services::SecretUsageSink> =
+    let sink: Arc<dyn bendclaw::kernel::tools::execution::services::SecretUsageSink> =
         Arc::new(NoopSecretUsageSink);
-    bendclaw::kernel::tools::catalog::register_core(&mut registry, sink);
-    bendclaw::kernel::tools::catalog::register_cloud(
-        &mut registry,
-        org.clone(),
-        pool.clone(),
-        channels,
-        "test-instance".to_string(),
+    let toolset = bendclaw::kernel::tools::execution::toolset::build_cloud_toolset(
+        bendclaw::kernel::tools::execution::toolset::CloudToolsetDeps {
+            org: org.clone(),
+            databend_pool: pool.clone(),
+            channels,
+            node_id: "test-instance".to_string(),
+            cluster: None,
+            memory: None,
+            secret_sink: sink,
+            user_id: "test-user".to_string(),
+        },
+        None,
     );
-    let tool_registry = Arc::new(registry);
-
-    let tools = Arc::new(tool_registry.tool_schemas());
+    let tool_registry = toolset.registry;
+    let tools = toolset.tools;
 
     Ok(Session::new(
         "s1".to_string(),

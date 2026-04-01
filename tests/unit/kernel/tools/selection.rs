@@ -1,6 +1,6 @@
 //! Tests for tools/selection — verifies tool filter parsing.
 
-use bendclaw::kernel::tools::selection::parse_tool_selection;
+use bendclaw::kernel::tools::execution::selection::parse_tool_selection;
 
 #[test]
 fn parse_all_returns_none() {
@@ -12,12 +12,9 @@ fn parse_coding_returns_coding_preset() {
     let filter = parse_tool_selection("coding");
     assert!(filter.is_some());
     let names = filter.unwrap();
+    assert!(names.contains("bash"), "coding preset should include shell");
     assert!(
-        names.contains("shell"),
-        "coding preset should include shell"
-    );
-    assert!(
-        names.contains("file_read"),
+        names.contains("read"),
         "coding preset should include file_read"
     );
     assert!(names.contains("grep"), "coding preset should include grep");
@@ -25,12 +22,12 @@ fn parse_coding_returns_coding_preset() {
 
 #[test]
 fn parse_comma_separated_returns_exact_names() {
-    let filter = parse_tool_selection("file_read,shell");
+    let filter = parse_tool_selection("read,bash");
     assert!(filter.is_some());
     let names = filter.unwrap();
     assert_eq!(names.len(), 2);
-    assert!(names.contains("file_read"));
-    assert!(names.contains("shell"));
+    assert!(names.contains("read"));
+    assert!(names.contains("bash"));
 }
 
 #[test]

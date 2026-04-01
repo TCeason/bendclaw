@@ -1,4 +1,3 @@
-mod catalog;
 mod databend;
 mod execution;
 mod id;
@@ -7,4 +6,5 @@ mod progressive;
 mod selection;
 mod tool;
 mod tool_result;
+mod toolset;
 mod web_html;

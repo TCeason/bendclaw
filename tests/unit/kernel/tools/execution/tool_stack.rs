@@ -11,10 +11,10 @@ use bendclaw::kernel::run::event::Event;
 use bendclaw::kernel::skills::executor::SkillExecutor;
 use bendclaw::kernel::skills::executor::SkillOutput;
 use bendclaw::kernel::tools::execution::labels::ExecutionLabels;
+use bendclaw::kernel::tools::execution::registry::ToolRegistry;
 use bendclaw::kernel::tools::execution::ToolStack;
 use bendclaw::kernel::tools::execution::ToolStackConfig;
 use bendclaw::kernel::tools::execution::TurnContext;
-use bendclaw::kernel::tools::registry::ToolRegistry;
 use bendclaw::kernel::tools::OperationClassifier;
 use bendclaw::kernel::tools::Tool;
 use bendclaw::kernel::tools::ToolContext;
@@ -137,12 +137,12 @@ fn tc() -> TurnContext {
 #[tokio::test]
 async fn tool_stack_allowed_filter_blocks_unlisted_tool() {
     let mut allowed = HashSet::new();
-    allowed.insert("file_read".to_string());
+    allowed.insert("read".to_string());
 
     let (mut stack, mut rx) = build_tool_stack(
         vec![
             Arc::new(MockTool {
-                name: "file_read".into(),
+                name: "read".into(),
             }),
             Arc::new(MockTool {
                 name: "shell".into(),
@@ -155,7 +155,7 @@ async fn tool_stack_allowed_filter_blocks_unlisted_tool() {
     let calls = vec![
         ToolCall {
             id: "tc1".into(),
-            name: "file_read".into(),
+            name: "read".into(),
             arguments: "{}".into(),
         },
         ToolCall {
@@ -167,7 +167,7 @@ async fn tool_stack_allowed_filter_blocks_unlisted_tool() {
     let deadline = Instant::now() + Duration::from_secs(5);
     let output = stack.lifecycle.dispatch(&calls, deadline, tc()).await;
 
-    assert_eq!(output.invoked_names, vec!["file_read", "shell"]);
+    assert_eq!(output.invoked_names, vec!["read", "shell"]);
 
     // Collect events — shell should have success=false (filtered)
     let mut events = Vec::new();
@@ -183,7 +183,7 @@ async fn tool_stack_allowed_filter_blocks_unlisted_tool() {
         .collect();
 
     // file_read should succeed, shell should fail (filtered out)
-    let file_read_ok = end_events.iter().any(|(n, s)| n == "file_read" && *s);
+    let file_read_ok = end_events.iter().any(|(n, s)| n == "read" && *s);
     let shell_blocked = end_events.iter().any(|(n, s)| n == "shell" && !*s);
     assert!(file_read_ok, "file_read should succeed");
     assert!(
@@ -197,7 +197,7 @@ async fn tool_stack_no_filter_allows_all_tools() {
     let (mut stack, _rx) = build_tool_stack(
         vec![
             Arc::new(MockTool {
-                name: "file_read".into(),
+                name: "read".into(),
             }),
             Arc::new(MockTool {
                 name: "shell".into(),
@@ -209,7 +209,7 @@ async fn tool_stack_no_filter_allows_all_tools() {
     let calls = vec![
         ToolCall {
             id: "tc1".into(),
-            name: "file_read".into(),
+            name: "read".into(),
             arguments: "{}".into(),
         },
         ToolCall {

@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::kernel::tools::operation::Impact;
+use crate::kernel::tools::execution::operation::Impact;
 
 /// Typed metadata for trace spans — eliminates hand-written JSON in engine.
 #[derive(Debug, Clone, Serialize)]

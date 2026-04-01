@@ -6,7 +6,7 @@ use anyhow::Result;
 use bendclaw::kernel::runtime::agent_config::AgentConfig;
 use bendclaw::kernel::runtime::org::OrgServices;
 use bendclaw::kernel::skills::projector::SkillProjector;
-use bendclaw::kernel::tools::skill_remove::SkillRemoveTool;
+use bendclaw::kernel::tools::skills::remove::SkillRemoveTool;
 use bendclaw::kernel::tools::Tool;
 use bendclaw_test_harness::mocks::skill::NoopSkillStore;
 use bendclaw_test_harness::mocks::skill::NoopSubscriptionStore;
@@ -85,7 +85,7 @@ async fn remove_rejects_reserved_name() -> Result<()> {
     let tool = make_tool();
     let ctx = test_tool_context();
     let result = tool
-        .execute_with_context(json!({"name": "shell"}), &ctx)
+        .execute_with_context(json!({"name": "bash"}), &ctx)
         .await?;
     assert!(!result.success);
     Ok(())

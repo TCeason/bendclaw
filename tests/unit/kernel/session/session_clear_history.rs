@@ -8,7 +8,7 @@ use bendclaw::kernel::session::workspace::Workspace;
 use bendclaw::kernel::session::Session;
 use bendclaw::kernel::session::SessionResources;
 use bendclaw::kernel::skills::projector::SkillProjector;
-use bendclaw::kernel::tools::registry::ToolRegistry;
+use bendclaw::kernel::tools::execution::registry::ToolRegistry;
 use bendclaw_test_harness::mocks::llm::MockLLMProvider;
 use bendclaw_test_harness::mocks::skill::NoopSkillStore;
 use bendclaw_test_harness::mocks::skill::NoopSubscriptionStore;

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use bendclaw::kernel::tools::services::NoopSecretUsageSink;
-use bendclaw::kernel::tools::shell::ShellTool;
+use bendclaw::kernel::tools::bash::ShellTool;
+use bendclaw::kernel::tools::execution::services::NoopSecretUsageSink;
 use bendclaw::kernel::tools::OperationClassifier;
 use bendclaw::kernel::tools::Tool;
 use bendclaw::kernel::Impact;
@@ -79,7 +79,7 @@ async fn shell_execute_nonzero_exit_code() -> Result<(), Box<dyn std::error::Err
 #[tokio::test]
 async fn shell_tool_name_and_schema() {
     let tool = make_shell();
-    assert_eq!(tool.name(), "shell");
+    assert_eq!(tool.name(), "bash");
     let schema = tool.parameters_schema();
     assert!(schema
         .get("properties")

@@ -16,8 +16,9 @@ use crate::kernel::session::assembly::contract::RuntimeInfra;
 use crate::kernel::session::assembly::contract::SessionAssembly;
 use crate::kernel::session::assembly::contract::SessionCore;
 use crate::kernel::session::assembly::contract::SessionOwner;
-use crate::kernel::tools::registry::ToolRegistry;
-use crate::kernel::tools::services::DbSecretUsageSink;
+use crate::kernel::tools::execution::services::DbSecretUsageSink;
+use crate::kernel::tools::execution::toolset::build_cloud_toolset;
+use crate::kernel::tools::execution::toolset::CloudToolsetDeps;
 
 /// Assembles a full session with cloud config, all tools, skills, memory.
 pub struct CloudAssembler {
@@ -80,57 +81,29 @@ impl CloudAssembler {
         let storage = Arc::new(AgentStore::new(pool.clone(), agent_llm.clone()));
 
         // Tools: core + persistent + optional
-        let secret_sink: Arc<dyn crate::kernel::tools::services::SecretUsageSink> =
+        let secret_sink: Arc<dyn crate::kernel::tools::execution::services::SecretUsageSink> =
             Arc::new(DbSecretUsageSink::new(pool.clone()));
-        let mut registry = ToolRegistry::new();
-        crate::kernel::tools::catalog::register_core(&mut registry, secret_sink);
-        crate::kernel::tools::catalog::register_cloud(
-            &mut registry,
-            self.runtime.org.clone(),
-            pool.clone(),
-            self.runtime.channels.clone(),
-            self.runtime.config.node_id.clone(),
-        );
         let cluster_ref = self.runtime.cluster.read().clone();
         let memory_ref = self.runtime.org.memory().cloned();
-        if let Some(ref svc) = cluster_ref {
+        let cluster_deps = cluster_ref.as_ref().map(|svc| {
             let dt = svc.create_dispatch_table();
-            crate::kernel::tools::catalog::register_optional(
-                &mut registry,
-                Some((svc, &dt)),
-                memory_ref.as_ref(),
-            );
-        } else {
-            crate::kernel::tools::catalog::register_optional(
-                &mut registry,
-                None,
-                memory_ref.as_ref(),
-            );
-        }
-        let registry = Arc::new(registry);
+            (svc.clone(), dt)
+        });
+        let toolset = build_cloud_toolset(
+            CloudToolsetDeps {
+                org: self.runtime.org.clone(),
+                databend_pool: pool.clone(),
+                channels: self.runtime.channels.clone(),
+                node_id: self.runtime.config.node_id.clone(),
+                cluster: cluster_deps,
+                memory: memory_ref,
+                secret_sink,
+                user_id: user_id.to_string(),
+            },
+            opts.tool_filter,
+        );
 
-        // Tool schemas + executable skill tools
-        let mut tools = registry.tool_schemas();
-        let existing_names: HashSet<String> =
-            tools.iter().map(|t| t.function.name.clone()).collect();
-        for skill in self.runtime.org.skills().list(user_id) {
-            if !skill.executable {
-                continue;
-            }
-            let tool_name = crate::kernel::skills::tool_key::format(&skill, user_id);
-            if existing_names.contains(&tool_name) {
-                continue;
-            }
-            let params = skill.to_json_schema();
-            tools.push(crate::llm::tool::ToolSchema::new(
-                &tool_name,
-                &skill.description,
-                params,
-            ));
-        }
-        let allowed_tool_names = common::apply_tool_filter(&mut tools, opts.tool_filter);
-
-        let tools_arc = Arc::new(tools);
+        let tools_arc = toolset.tools.clone();
 
         let prompt_resolver = Arc::new(CloudPromptResolver::new(
             storage.clone(),
@@ -193,9 +166,9 @@ impl CloudAssembler {
             core: SessionCore {
                 workspace,
                 llm: Arc::new(RwLock::new(agent_llm)),
-                tool_registry: registry,
+                tool_registry: toolset.registry,
                 tools: tools_arc,
-                allowed_tool_names,
+                allowed_tool_names: toolset.allowed_tool_names,
                 prompt_resolver,
                 context_provider: persistent.clone(),
                 run_initializer: persistent,

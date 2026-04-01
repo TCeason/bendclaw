@@ -146,8 +146,8 @@ fn name_all_reserved_tool_ids_rejected() {
 }
 
 #[test]
-fn name_shell_reserved() {
-    assert!(Skill::validate_name("shell").is_err());
+fn name_bash_reserved() {
+    assert!(Skill::validate_name("bash").is_err());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

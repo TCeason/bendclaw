@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bendclaw::kernel::run::Event;
-use bendclaw::kernel::tools::operation::OpType;
-use bendclaw::kernel::tools::operation::OperationMeta;
+use bendclaw::kernel::tools::execution::operation::OpType;
+use bendclaw::kernel::tools::execution::operation::OperationMeta;
 use bendclaw::kernel::workbench::replay::project_replay;
 use bendclaw::kernel::workbench::replay::ReplayFacts;
 use bendclaw::kernel::workbench::sem_event::SemEvent;

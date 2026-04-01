@@ -1,3 +1,3 @@
-mod channel_send;
+mod send;
 
-pub use channel_send::ChannelSendTool;
+pub use send::ChannelSendTool;

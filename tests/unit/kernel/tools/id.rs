@@ -2,14 +2,14 @@ use bendclaw::kernel::tools::ToolId;
 
 #[test]
 fn tool_id_debug() {
-    assert_eq!(format!("{:?}", ToolId::Shell), "Shell");
+    assert_eq!(format!("{:?}", ToolId::Bash), "Bash");
     assert_eq!(format!("{:?}", ToolId::Databend), "Databend");
-    assert_eq!(format!("{:?}", ToolId::FileRead), "FileRead");
+    assert_eq!(format!("{:?}", ToolId::Read), "Read");
 }
 
 #[test]
 fn tool_id_clone_and_copy() {
-    let a = ToolId::FileRead;
+    let a = ToolId::Read;
     let b = a; // Copy
     let c = a; // also Copy (ToolId is Copy)
     assert_eq!(a, b);
@@ -34,10 +34,10 @@ fn tool_id_as_str() {
     assert_eq!(ToolId::SkillRead.as_str(), "skill_read");
     assert_eq!(ToolId::SkillCreate.as_str(), "create_skill");
     assert_eq!(ToolId::SkillRemove.as_str(), "remove_skill");
-    assert_eq!(ToolId::FileRead.as_str(), "file_read");
-    assert_eq!(ToolId::FileWrite.as_str(), "file_write");
-    assert_eq!(ToolId::FileEdit.as_str(), "file_edit");
-    assert_eq!(ToolId::Shell.as_str(), "shell");
+    assert_eq!(ToolId::Read.as_str(), "read");
+    assert_eq!(ToolId::Write.as_str(), "write");
+    assert_eq!(ToolId::Edit.as_str(), "edit");
+    assert_eq!(ToolId::Bash.as_str(), "bash");
     assert_eq!(ToolId::Databend.as_str(), "databend");
 }
 
@@ -45,8 +45,8 @@ fn tool_id_as_str() {
 fn tool_id_eq_and_hash() {
     use std::collections::HashSet;
     let mut set = HashSet::new();
-    set.insert(ToolId::Shell);
-    set.insert(ToolId::Shell);
+    set.insert(ToolId::Bash);
+    set.insert(ToolId::Bash);
     assert_eq!(set.len(), 1);
-    assert!(set.contains(&ToolId::Shell));
+    assert!(set.contains(&ToolId::Bash));
 }

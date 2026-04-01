@@ -4,8 +4,8 @@ use bendclaw::kernel::run::Delta;
 use bendclaw::kernel::run::Event;
 use bendclaw::kernel::run::Reason;
 use bendclaw::kernel::run::Usage;
-use bendclaw::kernel::tools::operation::OpType;
-use bendclaw::kernel::tools::operation::OperationMeta;
+use bendclaw::kernel::tools::execution::operation::OpType;
+use bendclaw::kernel::tools::execution::operation::OperationMeta;
 use bendclaw::llm::stream::StreamEvent;
 use bendclaw::llm::usage::TokenUsage;
 

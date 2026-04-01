@@ -2,16 +2,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde_json::json;
 
 use crate::base::Result;
+use crate::kernel::tools::execution::context::ToolContext;
+use crate::kernel::tools::execution::id::ToolId;
+use crate::kernel::tools::execution::tool::OperationClassifier;
+use crate::kernel::tools::execution::tool::Tool;
+use crate::kernel::tools::execution::tool::ToolResult;
 use crate::kernel::tools::web::cache::WebCache;
 use crate::kernel::tools::web::duckduckgo;
-use crate::kernel::tools::OperationClassifier;
-use crate::kernel::tools::Tool;
-use crate::kernel::tools::ToolContext;
-use crate::kernel::tools::ToolId;
-use crate::kernel::tools::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
 use crate::observability::log::slog;
@@ -28,7 +27,7 @@ pub enum SearchProvider {
 
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
 
-use crate::kernel::tools::services::SecretUsageSink;
+use crate::kernel::tools::execution::services::SecretUsageSink;
 
 /// Search the web using Brave (with API key) or DuckDuckGo (zero-config fallback).
 #[derive(Clone)]
@@ -152,7 +151,7 @@ impl Default for WebSearchTool {
     fn default() -> Self {
         Self::new(
             "https://api.search.brave.com/res/v1/web/search",
-            Arc::new(crate::kernel::tools::services::NoopSecretUsageSink),
+            Arc::new(crate::kernel::tools::execution::services::NoopSecretUsageSink),
         )
     }
 }
@@ -182,21 +181,7 @@ impl Tool for WebSearchTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        let year = chrono::Utc::now().format("%Y");
-        json!({
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": format!("The search query. Be specific and use keywords for better results. For example, use 'Rust async runtime tokio {year}' instead of 'tell me about async in Rust'.")
-                },
-                "count": {
-                    "type": "integer",
-                    "description": "Number of results to return (default 5, max 10)"
-                }
-            },
-            "required": ["query"]
-        })
+        super::schema::schema()
     }
 
     async fn execute_with_context(

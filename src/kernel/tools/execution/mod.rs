@@ -1,13 +1,22 @@
 pub mod call;
+pub mod context;
 pub(crate) mod diagnostics;
 pub mod events;
 pub mod executor;
+pub mod id;
 pub mod labels;
 pub mod lifecycle;
 pub mod messages;
+pub mod operation;
+pub mod progressive;
 pub mod recorder;
+pub mod registry;
 pub mod result;
+pub mod selection;
+pub mod services;
+pub mod tool;
 pub mod tool_stack;
+pub mod toolset;
 pub mod turn_context;
 
 pub use call::DispatchKind;

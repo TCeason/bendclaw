@@ -12,7 +12,7 @@ use crate::kernel::runtime::agent_config::AgentConfig;
 use crate::kernel::session::backend::context::SessionContextProvider;
 use crate::kernel::session::backend::sink::RunInitializer;
 use crate::kernel::session::workspace::Workspace;
-use crate::kernel::tools::registry::ToolRegistry;
+use crate::kernel::tools::execution::registry::ToolRegistry;
 use crate::llm::provider::LLMProvider;
 use crate::llm::tool::ToolSchema;
 

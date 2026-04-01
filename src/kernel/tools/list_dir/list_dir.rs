@@ -2,11 +2,11 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::base::Result;
-use crate::kernel::tools::OperationClassifier;
-use crate::kernel::tools::Tool;
-use crate::kernel::tools::ToolContext;
-use crate::kernel::tools::ToolId;
-use crate::kernel::tools::ToolResult;
+use crate::kernel::tools::execution::context::ToolContext;
+use crate::kernel::tools::execution::id::ToolId;
+use crate::kernel::tools::execution::tool::OperationClassifier;
+use crate::kernel::tools::execution::tool::Tool;
+use crate::kernel::tools::execution::tool::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
 

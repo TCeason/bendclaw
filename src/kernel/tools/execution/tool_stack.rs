@@ -16,7 +16,7 @@ use super::lifecycle::ToolLifecycle;
 use super::recorder::ExecutionRecorder;
 use crate::kernel::run::event::Event;
 use crate::kernel::skills::executor::SkillExecutor;
-use crate::kernel::tools::registry::ToolRegistry;
+use crate::kernel::tools::execution::registry::ToolRegistry;
 use crate::kernel::tools::ToolContext;
 use crate::kernel::trace::Trace;
 

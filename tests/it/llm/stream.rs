@@ -64,11 +64,11 @@ async fn stream_channel_tool_calls() {
     let (writer, mut stream) = ResponseStream::channel(16);
 
     tokio::spawn(async move {
-        writer.tool_start(0, "tc_001", "shell").await;
+        writer.tool_start(0, "tc_001", "bash").await;
         writer.tool_delta(0, r#"{"command"#).await;
         writer.tool_delta(0, r#"": "ls"}"#).await;
         writer
-            .tool_end(0, "tc_001", "shell", r#"{"command": "ls"}"#)
+            .tool_end(0, "tc_001", "bash", r#"{"command": "ls"}"#)
             .await;
         writer.done("tool_calls").await;
     });
@@ -80,7 +80,7 @@ async fn stream_channel_tool_calls() {
             StreamEvent::ToolCallStart { index, id, name } => {
                 assert_eq!(index, 0);
                 assert_eq!(id, "tc_001");
-                assert_eq!(name, "shell");
+                assert_eq!(name, "bash");
             }
             StreamEvent::ToolCallDelta { json_chunk, .. } => deltas.push_str(&json_chunk),
             StreamEvent::ToolCallEnd {
@@ -91,7 +91,7 @@ async fn stream_channel_tool_calls() {
             } => {
                 assert_eq!(index, 0);
                 assert_eq!(id, "tc_001");
-                assert_eq!(name, "shell");
+                assert_eq!(name, "bash");
                 assert_eq!(arguments, r#"{"command": "ls"}"#);
                 ended = true;
             }
@@ -212,13 +212,13 @@ fn accumulator_drain_filters_empty() {
     // Only index 2 has an id
     let tc = acc.get_or_create(2);
     tc.id = "tc_002".into();
-    tc.name = "shell".into();
+    tc.name = "bash".into();
     tc.arguments = r#"{"cmd":"ls"}"#.into();
 
     let drained = acc.drain();
     assert_eq!(drained.len(), 1);
     assert_eq!(drained[0].id, "tc_002");
-    assert_eq!(drained[0].name, "shell");
+    assert_eq!(drained[0].name, "bash");
 }
 
 #[test]
@@ -226,7 +226,7 @@ fn accumulator_append_arguments() -> Result<()> {
     let mut acc = ToolCallAccumulator::new();
     let tc = acc.get_or_create(0);
     tc.id = "tc_001".into();
-    tc.name = "file_read".into();
+    tc.name = "read".into();
     tc.arguments.push_str(r#"{"path"#);
     tc.arguments.push_str(r#"": "a.rs"}"#);
 
@@ -266,9 +266,9 @@ async fn stream_writer_thinking() -> Result<()> {
 #[tokio::test]
 async fn stream_writer_tool_lifecycle() -> Result<()> {
     let (writer, mut stream) = ResponseStream::channel(16);
-    writer.tool_start(0, "tc1", "shell").await;
+    writer.tool_start(0, "tc1", "bash").await;
     writer.tool_delta(0, "{\"cmd\":").await;
-    writer.tool_end(0, "tc1", "shell", "{\"cmd\":\"ls\"}").await;
+    writer.tool_end(0, "tc1", "bash", "{\"cmd\":\"ls\"}").await;
     drop(writer);
 
     let e1 = stream
@@ -337,12 +337,12 @@ fn tool_call_accumulator_get_or_create() -> Result<()> {
     let mut acc = ToolCallAccumulator::new();
     let tc = acc.get_or_create(0);
     tc.id = "tc1".into();
-    tc.name = "shell".into();
+    tc.name = "bash".into();
     tc.arguments = "{}".into();
     let found = acc
         .find(0)
         .ok_or_else(|| anyhow::anyhow!("expected entry at index 0"))?;
-    assert_eq!(found.name, "shell");
+    assert_eq!(found.name, "bash");
     Ok(())
 }
 

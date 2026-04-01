@@ -14,10 +14,10 @@ use bendclaw::kernel::skills::executor::SkillOutput;
 use bendclaw::kernel::tools::execution::events::EventEmitter;
 use bendclaw::kernel::tools::execution::labels::ExecutionLabels;
 use bendclaw::kernel::tools::execution::recorder::ExecutionRecorder;
+use bendclaw::kernel::tools::execution::registry::ToolRegistry;
 use bendclaw::kernel::tools::execution::CallExecutor;
 use bendclaw::kernel::tools::execution::ToolLifecycle;
 use bendclaw::kernel::tools::execution::TurnContext;
-use bendclaw::kernel::tools::registry::ToolRegistry;
 use bendclaw::kernel::tools::OperationClassifier;
 use bendclaw::kernel::tools::Tool;
 use bendclaw::kernel::tools::ToolContext;
@@ -144,13 +144,13 @@ fn tc() -> TurnContext {
 #[tokio::test]
 async fn lifecycle_success_emits_start_before_end() {
     let (mut lifecycle, mut rx) = build_lifecycle(vec![Arc::new(MockTool {
-        name: "file_read".into(),
+        name: "read".into(),
         output: "content".into(),
         succeed: true,
     })]);
     let calls = vec![ToolCall {
         id: "tc1".into(),
-        name: "file_read".into(),
+        name: "read".into(),
         arguments: "{}".into(),
     }];
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -188,7 +188,7 @@ async fn lifecycle_success_emits_start_before_end() {
         !output.messages.is_empty(),
         "dispatch should produce messages"
     );
-    assert_eq!(output.invoked_names, vec!["file_read"]);
+    assert_eq!(output.invoked_names, vec!["read"]);
 }
 
 #[tokio::test]
@@ -226,7 +226,7 @@ async fn lifecycle_tool_error_path() {
 async fn lifecycle_multiple_tools_all_produce_events() {
     let (mut lifecycle, mut rx) = build_lifecycle(vec![
         Arc::new(MockTool {
-            name: "file_read".into(),
+            name: "read".into(),
             output: "ok1".into(),
             succeed: true,
         }),
@@ -239,7 +239,7 @@ async fn lifecycle_multiple_tools_all_produce_events() {
     let calls = vec![
         ToolCall {
             id: "tc1".into(),
-            name: "file_read".into(),
+            name: "read".into(),
             arguments: "{}".into(),
         },
         ToolCall {
@@ -272,13 +272,13 @@ async fn lifecycle_multiple_tools_all_produce_events() {
 #[tokio::test]
 async fn lifecycle_transcript_contains_tool_result() {
     let (mut lifecycle, _rx) = build_lifecycle(vec![Arc::new(MockTool {
-        name: "file_read".into(),
+        name: "read".into(),
         output: "file content here".into(),
         succeed: true,
     })]);
     let calls = vec![ToolCall {
         id: "tc1".into(),
-        name: "file_read".into(),
+        name: "read".into(),
         arguments: "{}".into(),
     }];
     let deadline = Instant::now() + Duration::from_secs(5);

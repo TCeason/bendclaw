@@ -228,7 +228,7 @@ fn validate_name_path_traversal_rejected() {
 
 #[test]
 fn validate_name_reserved_tool_name_rejected() {
-    assert!(Skill::validate_name("shell").is_err());
+    assert!(Skill::validate_name("bash").is_err());
 }
 
 // ── Skill::validate_file_path ──

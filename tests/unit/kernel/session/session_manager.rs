@@ -13,7 +13,7 @@ use bendclaw::kernel::session::Session;
 use bendclaw::kernel::session::SessionManager;
 use bendclaw::kernel::session::SessionResources;
 use bendclaw::kernel::skills::projector::SkillProjector;
-use bendclaw::kernel::tools::registry::ToolRegistry;
+use bendclaw::kernel::tools::execution::registry::ToolRegistry;
 use bendclaw::llm::message::ChatMessage;
 use bendclaw::llm::provider::LLMProvider;
 use bendclaw::llm::provider::LLMResponse;

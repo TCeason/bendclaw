@@ -1,12 +1,11 @@
 use async_trait::async_trait;
-use serde_json::json;
 
 use crate::base::Result;
-use crate::kernel::tools::OperationClassifier;
-use crate::kernel::tools::Tool;
-use crate::kernel::tools::ToolContext;
-use crate::kernel::tools::ToolId;
-use crate::kernel::tools::ToolResult;
+use crate::kernel::tools::execution::context::ToolContext;
+use crate::kernel::tools::execution::id::ToolId;
+use crate::kernel::tools::execution::tool::OperationClassifier;
+use crate::kernel::tools::execution::tool::Tool;
+use crate::kernel::tools::execution::tool::ToolResult;
 use crate::kernel::OpType;
 
 const MAX_RESULTS: usize = 500;
@@ -37,20 +36,7 @@ impl Tool for GlobTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "pattern": {
-                    "type": "string",
-                    "description": "Glob pattern to match file names, e.g. '*.rs', '*.test.ts', 'Cargo.toml'."
-                },
-                "path": {
-                    "type": "string",
-                    "description": "Absolute or relative path to search in. Defaults to the workspace directory."
-                }
-            },
-            "required": ["pattern"]
-        })
+        super::schema::schema()
     }
 
     async fn execute_with_context(

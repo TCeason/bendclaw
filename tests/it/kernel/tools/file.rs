@@ -1,6 +1,6 @@
-use bendclaw::kernel::tools::file_edit::FileEditTool;
-use bendclaw::kernel::tools::file_read::FileReadTool;
-use bendclaw::kernel::tools::file_write::FileWriteTool;
+use bendclaw::kernel::tools::edit::FileEditTool;
+use bendclaw::kernel::tools::read::FileReadTool;
+use bendclaw::kernel::tools::write::FileWriteTool;
 use bendclaw::kernel::tools::Tool;
 use serde_json::json;
 
@@ -231,9 +231,9 @@ async fn file_edit_missing_params() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn file_tool_names() {
-    assert_eq!(FileReadTool.name(), "file_read");
-    assert_eq!(FileWriteTool.name(), "file_write");
-    assert_eq!(FileEditTool.name(), "file_edit");
+    assert_eq!(FileReadTool.name(), "read");
+    assert_eq!(FileWriteTool.name(), "write");
+    assert_eq!(FileEditTool.name(), "edit");
 }
 
 // ── OperationClassifier: op_type ──

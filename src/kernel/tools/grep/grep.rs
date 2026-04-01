@@ -1,12 +1,11 @@
 use async_trait::async_trait;
-use serde_json::json;
 
 use crate::base::Result;
-use crate::kernel::tools::OperationClassifier;
-use crate::kernel::tools::Tool;
-use crate::kernel::tools::ToolContext;
-use crate::kernel::tools::ToolId;
-use crate::kernel::tools::ToolResult;
+use crate::kernel::tools::execution::context::ToolContext;
+use crate::kernel::tools::execution::id::ToolId;
+use crate::kernel::tools::execution::tool::OperationClassifier;
+use crate::kernel::tools::execution::tool::Tool;
+use crate::kernel::tools::execution::tool::ToolResult;
 use crate::kernel::OpType;
 
 const MAX_MATCHES: usize = 200;
@@ -37,24 +36,7 @@ impl Tool for GrepTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "pattern": {
-                    "type": "string",
-                    "description": "Regular expression pattern to search for."
-                },
-                "path": {
-                    "type": "string",
-                    "description": "Absolute or relative path to search in. Defaults to the workspace directory."
-                },
-                "file_pattern": {
-                    "type": "string",
-                    "description": "Optional glob to filter files (e.g. '*.rs', '*.py')."
-                }
-            },
-            "required": ["pattern"]
-        })
+        super::schema::schema()
     }
 
     async fn execute_with_context(

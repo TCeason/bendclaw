@@ -103,14 +103,14 @@ fn chat_message_assistant() {
 fn chat_message_assistant_with_tool_calls() {
     let tc = ToolCall {
         id: "tc_001".into(),
-        name: "shell".into(),
+        name: "bash".into(),
         arguments: r#"{"command":"ls"}"#.into(),
     };
     let msg = ChatMessage::assistant_with_tool_calls("running", vec![tc]);
     assert_eq!(msg.role, Role::Assistant);
     assert_eq!(msg.text(), "running");
     assert_eq!(msg.tool_calls.len(), 1);
-    assert_eq!(msg.tool_calls[0].name, "shell");
+    assert_eq!(msg.tool_calls[0].name, "bash");
 }
 
 #[test]
@@ -167,13 +167,13 @@ fn chat_message_text_skips_images() {
 fn tool_call_serde_roundtrip() -> anyhow::Result<()> {
     let tc = ToolCall {
         id: "tc_001".into(),
-        name: "file_read".into(),
+        name: "read".into(),
         arguments: r#"{"path":"a.rs"}"#.into(),
     };
     let json = serde_json::to_string(&tc)?;
     let parsed: ToolCall = serde_json::from_str(&json)?;
     assert_eq!(parsed.id, "tc_001");
-    assert_eq!(parsed.name, "file_read");
+    assert_eq!(parsed.name, "read");
     assert_eq!(parsed.arguments, r#"{"path":"a.rs"}"#);
     Ok(())
 }

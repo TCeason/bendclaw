@@ -49,7 +49,9 @@ fn build_assembly_with_mock(executor: Arc<dyn SkillExecutor>) -> SessionAssembly
                 bendclaw_test_harness::mocks::llm::MockLLMProvider::with_text("ok"),
             )
                 as Arc<dyn bendclaw::llm::provider::LLMProvider>)),
-            tool_registry: Arc::new(bendclaw::kernel::tools::registry::ToolRegistry::new()),
+            tool_registry: Arc::new(
+                bendclaw::kernel::tools::execution::registry::ToolRegistry::new(),
+            ),
             tools: Arc::new(vec![]),
             allowed_tool_names: None,
             prompt_resolver: Arc::new(

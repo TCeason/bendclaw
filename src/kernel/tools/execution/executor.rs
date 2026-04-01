@@ -15,7 +15,7 @@ use super::result::ToolCallResult;
 use crate::kernel::run::event::Event;
 use crate::kernel::skills::executor::parse_skill_args;
 use crate::kernel::skills::executor::SkillExecutor;
-use crate::kernel::tools::registry::ToolRegistry;
+use crate::kernel::tools::execution::registry::ToolRegistry;
 use crate::kernel::tools::Tool;
 use crate::kernel::tools::ToolContext;
 use crate::kernel::tools::ToolRuntime;

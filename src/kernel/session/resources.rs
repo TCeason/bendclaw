@@ -16,7 +16,7 @@ use crate::kernel::session::backend::sink::RunInitializer;
 use crate::kernel::session::store::SessionStore;
 use crate::kernel::session::workspace::Workspace;
 use crate::kernel::skills::executor::SkillExecutor;
-use crate::kernel::tools::registry::ToolRegistry;
+use crate::kernel::tools::execution::registry::ToolRegistry;
 use crate::kernel::trace::factory::TraceFactory;
 use crate::llm::provider::LLMProvider;
 use crate::llm::tool::ToolSchema;

@@ -1,16 +1,15 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde_json::json;
 
 use crate::base::truncate_chars_with_ellipsis;
 use crate::base::truncate_with_notice;
 use crate::base::Result;
-use crate::kernel::tools::OperationClassifier;
-use crate::kernel::tools::Tool;
-use crate::kernel::tools::ToolContext;
-use crate::kernel::tools::ToolId;
-use crate::kernel::tools::ToolResult;
+use crate::kernel::tools::execution::context::ToolContext;
+use crate::kernel::tools::execution::id::ToolId;
+use crate::kernel::tools::execution::tool::OperationClassifier;
+use crate::kernel::tools::execution::tool::Tool;
+use crate::kernel::tools::execution::tool::ToolResult;
 use crate::kernel::Impact;
 use crate::kernel::OpType;
 use crate::observability::log::slog;
@@ -54,16 +53,7 @@ impl Tool for WebFetchTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "The URL to fetch"
-                }
-            },
-            "required": ["url"]
-        })
+        super::schema::schema()
     }
 
     async fn execute_with_context(

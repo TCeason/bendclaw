@@ -16,8 +16,8 @@ use crate::kernel::run::prompt::resolver::LocalPromptResolver;
 use crate::kernel::runtime::agent_config::AgentConfig;
 use crate::kernel::runtime::session_org::LocalOrgServices;
 use crate::kernel::session::store::json::JsonSessionStore;
-use crate::kernel::tools::registry::ToolRegistry;
-use crate::kernel::tools::services::NoopSecretUsageSink;
+use crate::kernel::tools::execution::services::NoopSecretUsageSink;
+use crate::kernel::tools::execution::toolset::build_local_toolset;
 use crate::kernel::trace::factory::NoopTraceFactory;
 use crate::kernel::trace::TraceWriter;
 use crate::kernel::writer::BackgroundWriter;
@@ -89,19 +89,13 @@ pub fn build_local_assembly(
         .map(|o| Arc::new(RwLock::new(o)) as Arc<RwLock<Arc<dyn LLMProvider>>>)
         .unwrap_or_else(|| deps.llm.clone());
 
-    let secret_sink: Arc<dyn crate::kernel::tools::services::SecretUsageSink> =
+    let secret_sink: Arc<dyn crate::kernel::tools::execution::services::SecretUsageSink> =
         Arc::new(NoopSecretUsageSink);
-    let mut registry = ToolRegistry::new();
-    crate::kernel::tools::catalog::register_core(&mut registry, secret_sink);
-    let registry = Arc::new(registry);
-
-    let mut tools = registry.tool_schemas();
-    let allowed_tool_names = common::apply_tool_filter(&mut tools, opts.tool_filter);
-    let tools_arc = Arc::new(tools);
+    let toolset = build_local_toolset(opts.tool_filter, secret_sink);
 
     let prompt_resolver = Arc::new(LocalPromptResolver::new(
         PromptSeed::default(),
-        tools_arc.clone(),
+        toolset.tools.clone(),
         workspace.cwd().to_path_buf(),
     ));
 
@@ -125,9 +119,9 @@ pub fn build_local_assembly(
         core: SessionCore {
             workspace,
             llm,
-            tool_registry: registry,
-            tools: tools_arc,
-            allowed_tool_names,
+            tool_registry: toolset.registry,
+            tools: toolset.tools,
+            allowed_tool_names: toolset.allowed_tool_names,
             prompt_resolver,
             context_provider: persistent.clone(),
             run_initializer: persistent,
