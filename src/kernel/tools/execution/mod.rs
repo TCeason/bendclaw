@@ -7,6 +7,7 @@ pub mod lifecycle;
 pub mod messages;
 pub mod recorder;
 pub mod result;
+pub mod tool_stack;
 pub mod turn_context;
 
 pub use call::DispatchKind;
@@ -17,4 +18,6 @@ pub use labels::ExecutionLabels;
 pub use lifecycle::ToolDispatchOutput;
 pub use lifecycle::ToolLifecycle;
 pub use result::ToolCallResult;
+pub use tool_stack::ToolStack;
+pub use tool_stack::ToolStackConfig;
 pub use turn_context::TurnContext;

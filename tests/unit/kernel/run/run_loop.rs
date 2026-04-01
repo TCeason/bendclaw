@@ -1,11 +1,11 @@
 use std::time::Duration;
 use std::time::Instant;
 
-use bendclaw::kernel::run::run_loop::AbortPolicy;
-use bendclaw::kernel::run::run_loop::AbortSignal;
-use bendclaw::kernel::run::run_loop::LLMResponse;
-use bendclaw::kernel::run::run_loop::RunLoopConfig;
-use bendclaw::kernel::run::run_loop::RunLoopState;
+use bendclaw::kernel::run::query_engine::abort_policy::AbortPolicy;
+use bendclaw::kernel::run::query_engine::abort_policy::AbortSignal;
+use bendclaw::kernel::run::query_engine::llm_response::LLMResponse;
+use bendclaw::kernel::run::query_engine::turn_state::RunLoopConfig;
+use bendclaw::kernel::run::query_engine::turn_state::RunLoopState;
 use bendclaw::kernel::run::ContentBlock;
 use bendclaw::kernel::run::Reason;
 use bendclaw::llm::stream::StreamEvent;

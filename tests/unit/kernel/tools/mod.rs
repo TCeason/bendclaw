@@ -1,5 +1,6 @@
 mod catalog;
 mod databend;
+mod execution;
 mod id;
 mod operation;
 mod progressive;

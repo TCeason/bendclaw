@@ -1,5 +1,6 @@
 pub mod catalog;
 pub mod context;
+pub mod execution;
 pub mod id;
 pub mod operation;
 pub mod progressive;

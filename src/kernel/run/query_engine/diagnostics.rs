@@ -1,10 +1,10 @@
 use serde_json::Map;
 use serde_json::Value;
 
-use super::engine::Engine;
-use crate::kernel::run::run_loop::AbortSignal;
-use crate::kernel::run::run_loop::LLMResponse;
-use crate::kernel::run::run_loop::RunLoopState;
+use super::abort_policy::AbortSignal;
+use super::llm_response::LLMResponse;
+use super::query_engine::QueryEngine;
+use super::turn_state::RunLoopState;
 use crate::llm::message::ChatMessage;
 use crate::llm::tool::ToolSchema;
 use crate::observability::server_log;
@@ -36,7 +36,7 @@ pub(super) struct PreparedLlmRequestSummary {
     pub(super) assistant_tool_call_messages: usize,
 }
 
-impl Engine {
+impl QueryEngine {
     pub(super) fn prepare_llm_request(&self, iteration: u32) -> PreparedLlmRequest {
         let mut chat_messages = Vec::new();
         if !self.ctx.system_prompt.is_empty() {

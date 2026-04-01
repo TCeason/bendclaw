@@ -4,17 +4,17 @@
 
 use std::sync::atomic::Ordering;
 
-use super::engine::Engine;
-use crate::kernel::execution::TurnContext;
+use super::query_engine::QueryEngine;
+use super::turn_state::RunLoopState;
 use crate::kernel::memory::pressure;
 use crate::kernel::memory::pressure::PressureLevel;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::hooks::SteeringDecision;
 use crate::kernel::run::prompt_projection;
-use crate::kernel::run::run_loop::RunLoopState;
+use crate::kernel::tools::execution::TurnContext;
 use crate::llm::message::ToolCall;
 
-impl Engine {
+impl QueryEngine {
     pub(super) async fn dispatch_tools(
         &mut self,
         tool_calls: &[ToolCall],

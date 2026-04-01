@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use crate::kernel::run::run_loop::LLMResponse;
-use crate::kernel::run::run_loop::RunLoopState;
+use super::llm_response::LLMResponse;
+use super::turn_state::RunLoopState;
 use crate::kernel::session::message::MessageMetrics;
 use crate::kernel::Message;
 use crate::kernel::OpType;

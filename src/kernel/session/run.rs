@@ -8,26 +8,19 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use super::assembly::run_dependencies::build_run_driver;
+use super::assembly::run_dependencies::RunAssemblyDeps;
+use super::assembly::run_dependencies::RunConfig;
+use super::assembly::run_dependencies::RunRequest;
 use super::diagnostics;
 use super::options::RunOptions;
 use super::resources::SessionResources;
 use super::state::SessionState;
 use crate::base::Result;
-use crate::kernel::execution::events::EventEmitter;
-use crate::kernel::execution::labels::ExecutionLabels;
-use crate::kernel::execution::recorder::ExecutionRecorder;
-use crate::kernel::execution::CallExecutor;
-use crate::kernel::execution::ToolLifecycle;
-use crate::kernel::run::compaction::Compactor;
-use crate::kernel::run::context::Context;
-use crate::kernel::run::engine::Engine;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::persister::TurnPersister;
 use crate::kernel::run::result::Result as AgentResult;
 use crate::kernel::session::session_stream::Stream;
-use crate::kernel::tools::progressive::ProgressiveToolView;
-use crate::kernel::tools::ToolContext;
-use crate::kernel::tools::ToolRuntime;
 use crate::kernel::trace::TraceRecorder;
 use crate::kernel::Message;
 use crate::llm::provider::LLMProvider;
@@ -241,17 +234,18 @@ impl<'a> SessionRunCoordinator<'a> {
         Arc<AtomicU32>,
         mpsc::Sender<Message>,
     ) {
-        let tool_view = ProgressiveToolView::new(self.resources.tools.clone());
-        let ctx = Context {
-            agent_id: self.agent_id.clone(),
+        let deps = RunAssemblyDeps::from_resources(self.resources);
+        let request = RunRequest {
             user_id: self.user_id.clone(),
+            agent_id: self.agent_id.clone(),
             session_id: self.session_id.into(),
-            run_id: run_id.into(),
+            run_id: run_id.to_string(),
             turn,
-            trace_id: trace.trace_id.as_str().into(),
-            llm: llm.clone(),
-            model: llm.default_model().into(),
-            temperature: llm.default_temperature(),
+            messages: history,
+            system_prompt: prompt.into(),
+            is_dispatched,
+        };
+        let config = RunConfig {
             max_iterations: opts
                 .max_iterations
                 .unwrap_or(self.resources.config.max_iterations),
@@ -260,83 +254,18 @@ impl<'a> SessionRunCoordinator<'a> {
                 opts.max_duration_secs
                     .unwrap_or(self.resources.config.max_duration_secs),
             ),
-            tool_view,
-            system_prompt: prompt.into(),
-            messages: history,
+            llm: llm.clone(),
         };
+        let mut driver = build_run_driver(deps, trace, request, config);
+        let task = tokio::spawn(async move { driver.query_engine.run().await });
 
-        let cancel = CancellationToken::new();
-        let iteration = Arc::new(AtomicU32::new(0));
-
-        let compactor = Compactor::new(ctx.llm.clone(), ctx.model.clone(), cancel.clone());
-        let skill_executor = self.resources.skill_executor.clone();
-        let (tx, rx) = Engine::create_channel();
-        let event_tx = tx.clone();
-        let executor = CallExecutor::new(
-            self.resources.tool_registry.clone(),
-            skill_executor,
-            ToolContext {
-                user_id: self.user_id.clone(),
-                session_id: self.session_id.into(),
-                agent_id: self.agent_id.clone(),
-                run_id: run_id.into(),
-                trace_id: trace.trace_id.as_str().into(),
-                workspace: self.resources.workspace.clone(),
-                is_dispatched,
-                runtime: ToolRuntime {
-                    event_tx: None,
-                    cancel: cancel.clone(),
-                    tool_call_id: None,
-                },
-                tool_writer: self.resources.tool_writer.clone(),
-            },
-            cancel.clone(),
-            event_tx,
+        (
+            task,
+            driver.events,
+            driver.cancel,
+            driver.iteration,
+            driver.inbox_tx,
         )
-        .with_allowed_tool_names(self.resources.allowed_tool_names.clone());
-
-        let labels = Arc::new(ExecutionLabels {
-            trace_id: trace.trace_id.to_string(),
-            run_id: run_id.to_string(),
-            session_id: self.session_id.to_string(),
-            agent_id: self.agent_id.to_string(),
-        });
-        let recorder = ExecutionRecorder::new(
-            labels,
-            crate::kernel::trace::Trace::new(trace.clone()),
-            tx.clone(),
-        );
-        let emitter = EventEmitter::new(tx.clone());
-        let lifecycle = ToolLifecycle::new(executor, recorder, emitter);
-
-        let (inbox_tx, inbox_rx) = Engine::create_inbox();
-
-        let extract_memory = self
-            .resources
-            .org
-            .memory()
-            .filter(|_| self.resources.config.memory.extract);
-        let mut engine = Engine::from_tx(
-            ctx,
-            lifecycle,
-            compactor,
-            cancel.clone(),
-            iteration.clone(),
-            trace,
-            tx,
-            inbox_rx,
-            extract_memory,
-        );
-        if let Some(ref hook) = self.resources.before_turn_hook {
-            engine = engine.with_before_turn(Box::new(Arc::clone(hook)));
-        }
-        if let Some(ref source) = self.resources.steering_source {
-            engine = engine.with_steering(Box::new(Arc::clone(source)));
-        }
-        let events = rx;
-        let task = tokio::spawn(async move { engine.run().await });
-
-        (task, events, cancel, iteration, inbox_tx)
     }
 
     async fn enforce_token_limits(&self) -> Result<()> {

@@ -3,20 +3,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use bendclaw::kernel::execution::events::EventEmitter;
-use bendclaw::kernel::execution::labels::ExecutionLabels;
-use bendclaw::kernel::execution::recorder::ExecutionRecorder;
-use bendclaw::kernel::execution::CallExecutor;
-use bendclaw::kernel::execution::ToolLifecycle;
 use bendclaw::kernel::run::compaction::Compactor;
 use bendclaw::kernel::run::context::Context;
-use bendclaw::kernel::run::engine::Engine;
 use bendclaw::kernel::run::event::Event;
 use bendclaw::kernel::run::hooks::BeforeTurnHook;
 use bendclaw::kernel::run::hooks::SteeringDecision;
 use bendclaw::kernel::run::hooks::SteeringSource;
 use bendclaw::kernel::run::hooks::TurnDecision;
+use bendclaw::kernel::run::query_engine::QueryEngine;
 use bendclaw::kernel::run::result::Reason;
+use bendclaw::kernel::tools::execution::labels::ExecutionLabels;
+use bendclaw::kernel::tools::execution::ToolStack;
+use bendclaw::kernel::tools::execution::ToolStackConfig;
 use bendclaw::kernel::tools::progressive::ProgressiveToolView;
 use bendclaw::kernel::tools::registry::ToolRegistry;
 use bendclaw::kernel::tools::ToolRuntime;
@@ -88,19 +86,26 @@ impl bendclaw::kernel::skills::executor::SkillExecutor for NoopSkillExecutor {
 fn build_engine(
     llm: Arc<MockLLMProvider>,
     messages: Vec<Message>,
-) -> (Engine, tokio::sync::mpsc::Receiver<Event>) {
+) -> (QueryEngine, tokio::sync::mpsc::Receiver<Event>) {
     let cancel = CancellationToken::new();
-    let (tx, rx) = Engine::create_channel();
-    let (_inbox_tx, inbox_rx) = Engine::create_inbox();
+    let (tx, rx) = QueryEngine::create_channel();
+    let (_inbox_tx, inbox_rx) = QueryEngine::create_inbox();
 
     let workspace = bendclaw_test_harness::mocks::context::test_workspace(
         std::env::temp_dir().join("bendclaw-engine-hooks-test"),
     );
 
-    let executor = CallExecutor::new(
-        Arc::new(ToolRegistry::new()),
-        Arc::new(NoopSkillExecutor),
-        bendclaw::kernel::tools::ToolContext {
+    let trace = test_trace_recorder();
+    let labels = Arc::new(ExecutionLabels {
+        trace_id: "trace-1".to_string(),
+        run_id: "run-1".to_string(),
+        session_id: "session-1".to_string(),
+        agent_id: "agent-1".to_string(),
+    });
+    let tool_stack = ToolStack::build(ToolStackConfig {
+        tool_registry: Arc::new(ToolRegistry::new()),
+        skill_executor: Arc::new(NoopSkillExecutor),
+        tool_context: bendclaw::kernel::tools::ToolContext {
             user_id: "user-1".into(),
             session_id: "session-1".into(),
             agent_id: "agent-1".into(),
@@ -115,9 +120,12 @@ fn build_engine(
             },
             tool_writer: bendclaw::kernel::writer::BackgroundWriter::noop("tool_write"),
         },
-        cancel.clone(),
-        tx.clone(),
-    );
+        labels,
+        cancel: cancel.clone(),
+        trace: bendclaw::kernel::trace::Trace::new(trace.clone()),
+        event_tx: tx.clone(),
+        allowed_tool_names: None,
+    });
 
     let ctx = Context {
         agent_id: "agent-1".into(),
@@ -138,25 +146,10 @@ fn build_engine(
     };
 
     let compactor = Compactor::new(llm, "mock".into(), cancel.clone());
-    let trace = test_trace_recorder();
 
-    let labels = Arc::new(ExecutionLabels {
-        trace_id: "trace-1".to_string(),
-        run_id: "run-1".to_string(),
-        session_id: "session-1".to_string(),
-        agent_id: "agent-1".to_string(),
-    });
-    let recorder = ExecutionRecorder::new(
-        labels,
-        bendclaw::kernel::trace::Trace::new(trace.clone()),
-        tx.clone(),
-    );
-    let emitter = EventEmitter::new(tx.clone());
-    let lifecycle = ToolLifecycle::new(executor, recorder, emitter);
-
-    let engine = Engine::from_tx(
+    let engine = QueryEngine::from_tx(
         ctx,
-        lifecycle,
+        tool_stack.lifecycle,
         compactor,
         cancel,
         Arc::new(AtomicU32::new(0)),
