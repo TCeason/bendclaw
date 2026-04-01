@@ -5,7 +5,7 @@ use crate::kernel::channel::delivery::retry::send_with_retry;
 use crate::kernel::channel::delivery::retry::RetryConfig;
 use crate::kernel::channel::diagnostics;
 use crate::kernel::channel::plugin::ChannelOutbound;
-use crate::kernel::session::session_stream::Stream;
+use crate::kernel::session::runtime::session_stream::Stream;
 use crate::observability::server_log;
 
 /// Result of outbound delivery: full text + last platform message ID.

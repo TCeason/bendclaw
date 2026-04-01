@@ -7,10 +7,9 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use super::diagnostics;
-use super::options::RunOptions;
-use super::resources::SessionResources;
-use super::state::SessionState;
+use super::run_options::RunOptions;
+use super::session_resources::SessionResources;
+use super::session_stream::Stream;
 use crate::base::Result;
 use crate::kernel::run::build::RunAssemblyDeps;
 use crate::kernel::run::build::RunConfig;
@@ -18,7 +17,8 @@ use crate::kernel::run::build::RunRequest;
 use crate::kernel::run::launcher;
 use crate::kernel::run::launcher::EngineHandle;
 use crate::kernel::run::persister::TurnPersister;
-use crate::kernel::session::session_stream::Stream;
+use crate::kernel::session::core::session_state::SessionState;
+use crate::kernel::session::diagnostics;
 use crate::kernel::trace::TraceRecorder;
 use crate::kernel::Message;
 use crate::llm::provider::LLMProvider;
@@ -27,18 +27,18 @@ use crate::observability::server_log;
 
 const USAGE_PROVIDER_UNKNOWN: &str = "unknown";
 
-pub(super) struct SessionRunCoordinator<'a> {
-    pub(super) session_id: &'a str,
-    pub(super) agent_id: &'a Arc<str>,
-    pub(super) user_id: &'a Arc<str>,
-    pub(super) resources: &'a SessionResources,
-    pub(super) state: &'a Arc<Mutex<SessionState>>,
-    pub(super) history: &'a Arc<Mutex<Vec<Message>>>,
+pub(in crate::kernel::session) struct SessionRunCoordinator<'a> {
+    pub(in crate::kernel::session) session_id: &'a str,
+    pub(in crate::kernel::session) agent_id: &'a Arc<str>,
+    pub(in crate::kernel::session) user_id: &'a Arc<str>,
+    pub(in crate::kernel::session) resources: &'a SessionResources,
+    pub(in crate::kernel::session) state: &'a Arc<Mutex<SessionState>>,
+    pub(in crate::kernel::session) history: &'a Arc<Mutex<Vec<Message>>>,
 }
 
 impl<'a> SessionRunCoordinator<'a> {
     #[allow(clippy::too_many_arguments)]
-    pub(super) async fn start_with_options(
+    pub(in crate::kernel::session) async fn start_with_options(
         &self,
         user_message: &str,
         trace_id: &str,

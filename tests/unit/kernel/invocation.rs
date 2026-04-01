@@ -2,7 +2,7 @@
 
 use bendclaw::kernel::invocation::request::*;
 use bendclaw::kernel::invocation::validate;
-use bendclaw::kernel::session::options::RunOptions;
+use bendclaw::kernel::session::runtime::run_options::RunOptions;
 
 fn make_request(agent_id: &str, user_id: &str) -> InvocationRequest {
     InvocationRequest {

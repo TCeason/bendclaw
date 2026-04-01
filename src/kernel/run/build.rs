@@ -18,7 +18,7 @@ use crate::kernel::run::engine::Engine;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::hooks::BeforeTurnHook;
 use crate::kernel::run::hooks::SteeringSource;
-use crate::kernel::session::resources::SessionResources;
+use crate::kernel::session::runtime::session_resources::SessionResources;
 use crate::kernel::skills::executor::SkillExecutor;
 use crate::kernel::tools::execution::labels::ExecutionLabels;
 use crate::kernel::tools::execution::progressive::ProgressiveToolView;

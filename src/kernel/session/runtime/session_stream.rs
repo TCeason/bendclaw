@@ -15,7 +15,7 @@ use crate::kernel::run::result::Reason;
 use crate::kernel::run::result::Result as AgentResult;
 use crate::kernel::run::result::RunOutput;
 use crate::kernel::session::backend::sink::RunPersister;
-use crate::kernel::session::state::SessionState;
+use crate::kernel::session::core::session_state::SessionState;
 use crate::kernel::ErrorSource;
 use crate::kernel::Message;
 

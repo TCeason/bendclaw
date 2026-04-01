@@ -13,7 +13,7 @@ use bendclaw::kernel::runtime::ActivityTracker;
 use bendclaw::kernel::runtime::Runtime;
 use bendclaw::kernel::runtime::RuntimeParts;
 use bendclaw::kernel::runtime::RuntimeStatus;
-use bendclaw::kernel::session::SessionLifecycle;
+use bendclaw::kernel::session::store::lifecycle::SessionLifecycle;
 use bendclaw::kernel::session::SessionManager;
 use bendclaw::kernel::skills::projector::SkillProjector;
 use bendclaw::llm::message::ChatMessage;

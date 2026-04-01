@@ -4,7 +4,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use serde::Serialize;
 
-use crate::kernel::session::Session;
+use super::session::Session;
 pub struct SessionManager {
     sessions: RwLock<HashMap<String, Arc<Session>>>,
 }

@@ -16,7 +16,7 @@ use crate::kernel::lease::LeaseServiceHandle;
 use crate::kernel::runtime::agent_config::AgentConfig;
 use crate::kernel::runtime::diagnostics;
 use crate::kernel::runtime::org::OrgServices;
-use crate::kernel::session::SessionLifecycle;
+use crate::kernel::session::store::lifecycle::SessionLifecycle;
 use crate::kernel::session::SessionManager;
 use crate::kernel::skills::projector::SkillProjector;
 use crate::llm::provider::LLMProvider;

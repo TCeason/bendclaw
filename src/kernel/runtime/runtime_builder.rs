@@ -29,7 +29,7 @@ use crate::kernel::runtime::runtime::Runtime;
 use crate::kernel::runtime::runtime::RuntimeParts;
 use crate::kernel::runtime::runtime::RuntimeStatus;
 use crate::kernel::runtime::ActivityTracker;
-use crate::kernel::session::SessionLifecycle;
+use crate::kernel::session::store::lifecycle::SessionLifecycle;
 use crate::kernel::session::SessionManager;
 use crate::kernel::skills::projector::SkillProjector;
 use crate::kernel::subscriptions::SharedSubscriptionStore;

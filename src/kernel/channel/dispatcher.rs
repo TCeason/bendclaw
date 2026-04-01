@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::message::InboundEvent;
 use super::message::ReplyContext;
 use super::registry::ChannelRegistry;
-use crate::kernel::session::session_manager::SessionManager;
+use crate::kernel::session::core::session_manager::SessionManager;
 
 /// Result of dispatching an inbound event.
 pub struct DispatchResult {

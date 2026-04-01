@@ -6,8 +6,8 @@ use crate::base::Result;
 use crate::kernel::session::assembly::local::build_local_assembly;
 use crate::kernel::session::assembly::local::LocalBuildOptions;
 use crate::kernel::session::assembly::local::LocalRuntimeDeps;
-use crate::kernel::session::options::RunOptions;
-use crate::kernel::session::session::Session;
+use crate::kernel::session::core::session::Session;
+use crate::kernel::session::runtime::run_options::RunOptions;
 use crate::local::args::RunArgs;
 
 pub async fn execute(args: RunArgs, deps: LocalRuntimeDeps) -> Result<()> {

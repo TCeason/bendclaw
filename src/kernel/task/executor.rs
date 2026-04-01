@@ -6,7 +6,7 @@ use crate::kernel::channel::send_text_to_account;
 use crate::kernel::channel::ChannelRegistry;
 use crate::kernel::run::result::Reason;
 use crate::kernel::runtime::Runtime;
-use crate::kernel::session::session_stream::FinishedRunOutput;
+use crate::kernel::session::runtime::session_stream::FinishedRunOutput;
 use crate::kernel::task::diagnostics;
 use crate::kernel::task::execution;
 use crate::storage::dal::channel_account::repo::ChannelAccountRepo;

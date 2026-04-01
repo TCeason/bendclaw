@@ -9,8 +9,8 @@ use crate::base::Result;
 use crate::kernel::run::prompt::PromptRequestMeta;
 use crate::kernel::run::result::RunOutput;
 use crate::kernel::runtime::Runtime;
-use crate::kernel::session::options::RunOptions;
-use crate::kernel::session::session_stream::Stream;
+use crate::kernel::session::runtime::run_options::RunOptions;
+use crate::kernel::session::runtime::session_stream::Stream;
 
 /// Convert ConversationContext + RunOptions into neutral PromptRequestMeta.
 /// Lives here in invocation/ — run/prompt/* never imports invocation types.

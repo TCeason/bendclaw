@@ -18,7 +18,7 @@ use bendclaw::kernel::channel::plugin::InboundKind;
 use bendclaw::kernel::channel::plugin::ReceiverFactory;
 use bendclaw::kernel::channel::ChannelRegistry;
 use bendclaw::kernel::run::result::Reason;
-use bendclaw::kernel::session::session_stream::FinishedRunOutput;
+use bendclaw::kernel::session::runtime::session_stream::FinishedRunOutput;
 use bendclaw::kernel::task::executor::classify_task_run_output;
 use bendclaw::kernel::task::executor::compute_next_run;
 use bendclaw::kernel::task::executor::deliver_channel;

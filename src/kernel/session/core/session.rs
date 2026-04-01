@@ -8,16 +8,17 @@ use std::time::Instant;
 
 use parking_lot::Mutex;
 
-use super::diagnostics;
-use super::resources::SessionResources;
-use super::run::SessionRunCoordinator;
-use super::state::SessionState;
+use super::session_manager::SessionInfo;
+use super::session_manager::TurnStats;
+use super::session_state::SessionState;
 use crate::base::ErrorCode;
 use crate::base::Result;
 use crate::kernel::session::assembly::contract::SessionAssembly;
-use crate::kernel::session::session_manager::SessionInfo;
-use crate::kernel::session::session_manager::TurnStats;
-use crate::kernel::session::session_stream::Stream;
+use crate::kernel::session::diagnostics;
+use crate::kernel::session::runtime::run_options::RunOptions;
+use crate::kernel::session::runtime::session_resources::SessionResources;
+use crate::kernel::session::runtime::session_run::SessionRunCoordinator;
+use crate::kernel::session::runtime::session_stream::Stream;
 use crate::kernel::Message;
 
 pub struct Session {
@@ -89,7 +90,7 @@ impl Session {
         &self,
         user_message: &str,
         meta: crate::kernel::run::prompt::PromptRequestMeta,
-        options: super::options::RunOptions,
+        options: RunOptions,
     ) -> Result<Stream> {
         self.ensure_idle()?;
         *self.last_active.lock() = Instant::now();
@@ -107,11 +108,7 @@ impl Session {
     }
 
     /// Convenience: run with options, deriving prompt meta from overlays.
-    pub async fn run_with_options(
-        &self,
-        user_message: &str,
-        opts: super::options::RunOptions,
-    ) -> Result<Stream> {
+    pub async fn run_with_options(&self, user_message: &str, opts: RunOptions) -> Result<Stream> {
         let meta = crate::kernel::run::prompt::PromptRequestMeta {
             channel_type: None,
             channel_chat_id: None,
@@ -150,7 +147,7 @@ impl Session {
             origin_node_id,
             is_remote_dispatch,
             start,
-            super::options::RunOptions::default(),
+            RunOptions::default(),
             crate::kernel::run::prompt::PromptRequestMeta::default(),
         )
         .await

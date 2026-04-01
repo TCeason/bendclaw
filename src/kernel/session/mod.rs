@@ -1,27 +1,15 @@
 pub mod assembly;
 pub mod backend;
+pub mod core;
 pub(crate) mod diagnostics;
 pub mod factory;
-pub(crate) mod history_loader;
-pub mod lifecycle;
 pub mod message;
-pub mod options;
-pub mod resources;
-pub(crate) mod run;
-pub mod session;
-pub mod session_manager;
-pub mod session_stream;
-pub mod state;
+pub mod runtime;
 pub mod store;
 pub mod workspace;
 
-pub use lifecycle::SessionLifecycle;
+pub use core::session::Session;
+pub use core::session_manager::SessionManager;
+
 pub use message::Message;
-pub use resources::SessionResources;
-pub use session::Session;
-pub use session_manager::SessionInfo;
-pub use session_manager::SessionManager;
-pub use session_manager::SessionStats;
-pub use session_manager::TurnStats;
-pub use session_stream::Stream;
 pub use workspace::Workspace;

@@ -123,7 +123,7 @@ fn from_assembly_preserves_executor_identity() {
     let executor_weak = Arc::downgrade(&executor);
 
     let assembly = build_assembly_with_mock(executor);
-    let _session = bendclaw::kernel::session::session::Session::from_assembly(assembly);
+    let _session = bendclaw::kernel::session::core::session::Session::from_assembly(assembly);
 
     // If from_assembly() replaced the executor with Noop, the weak ref would be dead.
     assert!(
