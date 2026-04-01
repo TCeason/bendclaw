@@ -11,11 +11,11 @@ use crate::kernel::skills::skill::Skill;
 use crate::kernel::skills::skill::SkillFile;
 use crate::kernel::skills::skill::SkillScope;
 use crate::kernel::skills::skill::SkillSource;
-use crate::kernel::tools::execution::tool_context::ToolContext;
-use crate::kernel::tools::execution::tool_contract::OperationClassifier;
-use crate::kernel::tools::execution::tool_contract::Tool;
-use crate::kernel::tools::execution::tool_contract::ToolResult;
-use crate::kernel::tools::execution::tool_id::ToolId;
+use crate::kernel::tools::tool_context::ToolContext;
+use crate::kernel::tools::tool_contract::OperationClassifier;
+use crate::kernel::tools::tool_contract::Tool;
+use crate::kernel::tools::tool_contract::ToolResult;
+use crate::kernel::tools::tool_id::ToolId;
 use crate::kernel::OpType;
 pub struct SkillCreateTool {
     service: Arc<SkillService>,

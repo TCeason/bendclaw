@@ -11,7 +11,7 @@ use bendclaw::kernel::session::assembly::contract::*;
 use bendclaw::kernel::session::backend::noop::NoopBackend;
 use bendclaw::kernel::skills::executor::SkillExecutor;
 use bendclaw::kernel::skills::executor::SkillOutput;
-use bendclaw::kernel::tools::execution::registry::toolset::Toolset;
+use bendclaw::kernel::tools::catalog::toolset::Toolset;
 use bendclaw::kernel::trace::factory::NoopTraceFactory;
 
 /// Mock executor that records whether it was called.
@@ -52,8 +52,7 @@ fn build_assembly_with_mock(executor: Arc<dyn SkillExecutor>) -> SessionAssembly
                 as Arc<dyn bendclaw::llm::provider::LLMProvider>)),
             toolset: Toolset {
                 registry: Arc::new(
-                    bendclaw::kernel::tools::execution::registry::tool_registry::ToolRegistry::new(
-                    ),
+                    bendclaw::kernel::tools::catalog::tool_registry::ToolRegistry::new(),
                 ),
                 tools: Arc::new(vec![]),
                 allowed_tool_names: None,

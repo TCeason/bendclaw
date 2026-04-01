@@ -1,4 +1,4 @@
-pub mod build;
+pub mod assembly;
 pub mod checkpoint;
 pub mod compaction;
 pub mod context;

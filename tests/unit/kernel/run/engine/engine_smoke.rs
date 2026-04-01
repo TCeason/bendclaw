@@ -8,13 +8,13 @@ use bendclaw::kernel::run::context::Context;
 use bendclaw::kernel::run::engine::Engine;
 use bendclaw::kernel::run::event::Event;
 use bendclaw::kernel::run::result::Reason;
-use bendclaw::kernel::tools::execution::dispatch::tool_progressive::ProgressiveToolView;
-use bendclaw::kernel::tools::execution::execution_labels::ExecutionLabels;
-use bendclaw::kernel::tools::execution::registry::tool_registry::ToolRegistry;
-use bendclaw::kernel::tools::execution::tool_id::ToolId;
-use bendclaw::kernel::tools::execution::tool_services::NoopSecretUsageSink;
-use bendclaw::kernel::tools::execution::ToolStack;
-use bendclaw::kernel::tools::execution::ToolStackConfig;
+use bendclaw::kernel::tools::catalog::tool_registry::ToolRegistry;
+use bendclaw::kernel::tools::catalog::ToolStack;
+use bendclaw::kernel::tools::catalog::ToolStackConfig;
+use bendclaw::kernel::tools::execution_labels::ExecutionLabels;
+use bendclaw::kernel::tools::runtime::tool_progressive::ProgressiveToolView;
+use bendclaw::kernel::tools::tool_id::ToolId;
+use bendclaw::kernel::tools::tool_services::NoopSecretUsageSink;
 use bendclaw::kernel::tools::ToolContext;
 use bendclaw::kernel::tools::ToolRuntime;
 use bendclaw::kernel::trace::TraceRecorder;
@@ -41,7 +41,7 @@ fn trace() -> TraceRecorder {
 
 fn real_registry() -> ToolRegistry {
     let mut registry = ToolRegistry::new();
-    let sink: Arc<dyn bendclaw::kernel::tools::execution::tool_services::SecretUsageSink> =
+    let sink: Arc<dyn bendclaw::kernel::tools::tool_services::SecretUsageSink> =
         Arc::new(NoopSecretUsageSink);
     registry.register_builtin(
         ToolId::ListDir,
@@ -78,7 +78,7 @@ fn build_engine_with_filter(
         agent_id: "agent-1".to_string(),
     });
     let tool_stack = ToolStack::build(ToolStackConfig {
-        toolset: bendclaw::kernel::tools::execution::registry::toolset::Toolset {
+        toolset: bendclaw::kernel::tools::catalog::toolset::Toolset {
             registry: Arc::new(registry),
             tools: Arc::new(vec![]),
             allowed_tool_names: allowed,
@@ -124,7 +124,7 @@ fn build_engine_with_filter(
     let compactor = Compactor::new(llm, "mock".into(), cancel.clone());
     let engine = Engine::from_tx(
         ctx,
-        tool_stack.lifecycle,
+        tool_stack.orchestrator,
         compactor,
         cancel,
         Arc::new(AtomicU32::new(0)),

@@ -5,8 +5,8 @@ use crate::base::Content;
 use crate::base::ErrorSource;
 use crate::base::Role;
 use crate::base::ToolCall;
-use crate::kernel::tools::execution::operation::OpType;
-use crate::kernel::tools::execution::operation::OperationMeta;
+use crate::kernel::tools::operation::OpType;
+use crate::kernel::tools::operation::OperationMeta;
 
 /// Per-message token and timing metrics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

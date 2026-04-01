@@ -1,17 +1,17 @@
 //! Tool dispatch — thin orchestration layer.
 //!
-//! Engine delegates to ToolLifecycle for the full parse → start → execute → end pipeline.
+//! Engine delegates to ToolOrchestrator for the full parse → start → execute → end pipeline.
 
 use std::sync::atomic::Ordering;
 
-use super::engine_runner::Engine;
+use super::engine::Engine;
 use super::engine_state::RunLoopState;
 use crate::kernel::memory::pressure;
 use crate::kernel::memory::pressure::PressureLevel;
 use crate::kernel::run::event::Event;
 use crate::kernel::run::hooks::SteeringDecision;
 use crate::kernel::run::prompt_projection;
-use crate::kernel::tools::execution::TurnContext;
+use crate::kernel::tools::runtime::TurnContext;
 use crate::llm::message::ToolCall;
 
 impl Engine {
@@ -25,7 +25,7 @@ impl Engine {
             loop_span_id: self.loop_span_id.clone(),
         };
         let output = self
-            .lifecycle
+            .orchestrator
             .dispatch(tool_calls, state.deadline(), tc)
             .await;
 

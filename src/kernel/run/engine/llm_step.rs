@@ -3,7 +3,7 @@ use std::time::Instant;
 use tokio_stream::StreamExt;
 
 use super::diagnostics;
-use super::engine_runner::Engine;
+use super::engine::Engine;
 use super::engine_state::RunLoopState;
 use super::response_mapper::LLMResponse;
 use crate::kernel::run::event::Delta;

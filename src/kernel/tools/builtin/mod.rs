@@ -1,4 +1,3 @@
-pub mod catalog;
 pub mod channel;
 pub mod cluster;
 pub mod databend;

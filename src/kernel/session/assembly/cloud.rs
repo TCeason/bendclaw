@@ -13,9 +13,9 @@ use crate::kernel::agent_store::AgentStore;
 use crate::kernel::run::prompt::PromptConfig;
 use crate::kernel::run::prompt::PromptVariable;
 use crate::kernel::runtime::Runtime;
-use crate::kernel::tools::builtin::catalog::build_cloud_toolset;
-use crate::kernel::tools::builtin::catalog::CloudToolsetDeps;
-use crate::kernel::tools::execution::tool_services::DbSecretUsageSink;
+use crate::kernel::tools::catalog::build_cloud_toolset;
+use crate::kernel::tools::catalog::CloudToolsetDeps;
+use crate::kernel::tools::tool_services::DbSecretUsageSink;
 
 /// Assembles a full session with cloud config, all tools, skills, memory.
 pub struct CloudAssembler {
@@ -73,7 +73,7 @@ impl CloudAssembler {
 
         let storage = Arc::new(AgentStore::new(pool.clone(), agent_llm.clone()));
 
-        let secret_sink: Arc<dyn crate::kernel::tools::execution::tool_services::SecretUsageSink> =
+        let secret_sink: Arc<dyn crate::kernel::tools::tool_services::SecretUsageSink> =
             Arc::new(DbSecretUsageSink::new(pool.clone()));
         let cluster_ref = self.runtime.cluster.read().clone();
         let memory_ref = self.runtime.org.memory().cloned();

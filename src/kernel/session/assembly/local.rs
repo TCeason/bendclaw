@@ -17,8 +17,8 @@ use crate::kernel::run::persist_op::PersistWriter;
 use crate::kernel::runtime::agent_config::AgentConfig;
 use crate::kernel::runtime::session_org::LocalOrgServices;
 use crate::kernel::session::store::json::JsonSessionStore;
-use crate::kernel::tools::builtin::catalog::build_local_toolset;
-use crate::kernel::tools::execution::tool_services::NoopSecretUsageSink;
+use crate::kernel::tools::catalog::build_local_toolset;
+use crate::kernel::tools::tool_services::NoopSecretUsageSink;
 use crate::kernel::trace::TraceWriter;
 use crate::kernel::writer::BackgroundWriter;
 use crate::llm::provider::LLMProvider;
@@ -78,7 +78,7 @@ pub fn build_local_assembly(
         .map(|o| Arc::new(RwLock::new(o)) as Arc<RwLock<Arc<dyn LLMProvider>>>)
         .unwrap_or_else(|| deps.llm.clone());
 
-    let secret_sink: Arc<dyn crate::kernel::tools::execution::tool_services::SecretUsageSink> =
+    let secret_sink: Arc<dyn crate::kernel::tools::tool_services::SecretUsageSink> =
         Arc::new(NoopSecretUsageSink);
     let toolset = build_local_toolset(opts.tool_filter, secret_sink);
 

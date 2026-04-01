@@ -12,11 +12,11 @@ use bendclaw::kernel::run::hooks::SteeringDecision;
 use bendclaw::kernel::run::hooks::SteeringSource;
 use bendclaw::kernel::run::hooks::TurnDecision;
 use bendclaw::kernel::run::result::Reason;
-use bendclaw::kernel::tools::execution::dispatch::tool_progressive::ProgressiveToolView;
-use bendclaw::kernel::tools::execution::execution_labels::ExecutionLabels;
-use bendclaw::kernel::tools::execution::registry::tool_registry::ToolRegistry;
-use bendclaw::kernel::tools::execution::ToolStack;
-use bendclaw::kernel::tools::execution::ToolStackConfig;
+use bendclaw::kernel::tools::catalog::tool_registry::ToolRegistry;
+use bendclaw::kernel::tools::catalog::ToolStack;
+use bendclaw::kernel::tools::catalog::ToolStackConfig;
+use bendclaw::kernel::tools::execution_labels::ExecutionLabels;
+use bendclaw::kernel::tools::runtime::tool_progressive::ProgressiveToolView;
 use bendclaw::kernel::tools::ToolRuntime;
 use bendclaw::kernel::trace::TraceRecorder;
 use bendclaw::kernel::Message;
@@ -103,7 +103,7 @@ fn build_engine(
         agent_id: "agent-1".to_string(),
     });
     let tool_stack = ToolStack::build(ToolStackConfig {
-        toolset: bendclaw::kernel::tools::execution::registry::toolset::Toolset {
+        toolset: bendclaw::kernel::tools::catalog::toolset::Toolset {
             registry: Arc::new(ToolRegistry::new()),
             tools: Arc::new(vec![]),
             allowed_tool_names: None,
@@ -152,7 +152,7 @@ fn build_engine(
 
     let engine = Engine::from_tx(
         ctx,
-        tool_stack.lifecycle,
+        tool_stack.orchestrator,
         compactor,
         cancel,
         Arc::new(AtomicU32::new(0)),

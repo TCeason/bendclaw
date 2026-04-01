@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use bendclaw::kernel::tools::execution::tool_contract::Tool;
-use bendclaw::kernel::tools::execution::tool_services::NoopSecretUsageSink;
+use bendclaw::kernel::tools::tool_contract::Tool;
+use bendclaw::kernel::tools::tool_services::NoopSecretUsageSink;
 
 fn assert_valid_spec(tool: &dyn Tool) {
     let spec = tool.spec();
@@ -61,7 +61,7 @@ fn grep_spec_is_valid() {
 
 #[test]
 fn bash_spec_is_valid() {
-    let sink: Arc<dyn bendclaw::kernel::tools::execution::tool_services::SecretUsageSink> =
+    let sink: Arc<dyn bendclaw::kernel::tools::tool_services::SecretUsageSink> =
         Arc::new(NoopSecretUsageSink);
     assert_valid_spec(&bendclaw::kernel::tools::builtin::shell::ShellTool::new(
         sink,
@@ -80,7 +80,7 @@ fn web_search_spec_is_valid() {
 
 #[test]
 fn all_core_tool_names_are_unique() {
-    let sink: Arc<dyn bendclaw::kernel::tools::execution::tool_services::SecretUsageSink> =
+    let sink: Arc<dyn bendclaw::kernel::tools::tool_services::SecretUsageSink> =
         Arc::new(NoopSecretUsageSink);
     let tools: Vec<Box<dyn Tool>> = vec![
         Box::new(bendclaw::kernel::tools::builtin::filesystem::FileReadTool),
@@ -107,7 +107,7 @@ fn all_core_tool_names_are_unique() {
 
 #[test]
 fn tool_spec_descriptions_contain_usage_guidance() {
-    let sink: Arc<dyn bendclaw::kernel::tools::execution::tool_services::SecretUsageSink> =
+    let sink: Arc<dyn bendclaw::kernel::tools::tool_services::SecretUsageSink> =
         Arc::new(NoopSecretUsageSink);
     let tools: Vec<Box<dyn Tool>> = vec![
         Box::new(bendclaw::kernel::tools::builtin::filesystem::FileReadTool),

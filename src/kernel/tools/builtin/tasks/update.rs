@@ -4,13 +4,13 @@ use crate::kernel::task::input::task_update_schema;
 use crate::kernel::task::input::TaskUpdateToolInput;
 use crate::kernel::task::management;
 use crate::kernel::task::view::TaskView;
-use crate::kernel::tools::execution::operation::Impact;
-use crate::kernel::tools::execution::operation::OpType;
-use crate::kernel::tools::execution::tool_context::ToolContext;
-use crate::kernel::tools::execution::tool_contract::OperationClassifier;
-use crate::kernel::tools::execution::tool_contract::Tool;
-use crate::kernel::tools::execution::tool_contract::ToolResult;
-use crate::kernel::tools::execution::tool_id::ToolId;
+use crate::kernel::tools::operation::Impact;
+use crate::kernel::tools::operation::OpType;
+use crate::kernel::tools::tool_context::ToolContext;
+use crate::kernel::tools::tool_contract::OperationClassifier;
+use crate::kernel::tools::tool_contract::Tool;
+use crate::kernel::tools::tool_contract::ToolResult;
+use crate::kernel::tools::tool_id::ToolId;
 use crate::storage::pool::Pool;
 
 pub struct TaskUpdateTool {

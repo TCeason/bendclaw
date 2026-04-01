@@ -6,11 +6,11 @@ use serde_json::json;
 use crate::base::Result;
 use crate::kernel::skills::sanitizer::sanitize_skill_content;
 use crate::kernel::skills::service::SkillService;
-use crate::kernel::tools::execution::tool_context::ToolContext;
-use crate::kernel::tools::execution::tool_contract::OperationClassifier;
-use crate::kernel::tools::execution::tool_contract::Tool;
-use crate::kernel::tools::execution::tool_contract::ToolResult;
-use crate::kernel::tools::execution::tool_id::ToolId;
+use crate::kernel::tools::tool_context::ToolContext;
+use crate::kernel::tools::tool_contract::OperationClassifier;
+use crate::kernel::tools::tool_contract::Tool;
+use crate::kernel::tools::tool_contract::ToolResult;
+use crate::kernel::tools::tool_id::ToolId;
 use crate::kernel::OpType;
 use crate::observability::log::slog;
 

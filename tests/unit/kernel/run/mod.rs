@@ -1,4 +1,4 @@
-mod build;
+mod assembly;
 mod compaction_rules;
 mod compactor;
 mod default_identity;

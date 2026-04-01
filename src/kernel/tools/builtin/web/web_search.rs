@@ -4,11 +4,11 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use crate::base::Result;
-use crate::kernel::tools::execution::tool_context::ToolContext;
-use crate::kernel::tools::execution::tool_contract::OperationClassifier;
-use crate::kernel::tools::execution::tool_contract::Tool;
-use crate::kernel::tools::execution::tool_contract::ToolResult;
-use crate::kernel::tools::execution::tool_id::ToolId;
+use crate::kernel::tools::tool_context::ToolContext;
+use crate::kernel::tools::tool_contract::OperationClassifier;
+use crate::kernel::tools::tool_contract::Tool;
+use crate::kernel::tools::tool_contract::ToolResult;
+use crate::kernel::tools::tool_id::ToolId;
 use crate::kernel::tools::web::cache::WebCache;
 use crate::kernel::tools::web::duckduckgo;
 use crate::kernel::Impact;
@@ -64,7 +64,7 @@ pub enum SearchProvider {
 
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
 
-use crate::kernel::tools::execution::tool_services::SecretUsageSink;
+use crate::kernel::tools::tool_services::SecretUsageSink;
 
 /// Search the web using Brave (with API key) or DuckDuckGo (zero-config fallback).
 #[derive(Clone)]
@@ -188,7 +188,7 @@ impl Default for WebSearchTool {
     fn default() -> Self {
         Self::new(
             "https://api.search.brave.com/res/v1/web/search",
-            Arc::new(crate::kernel::tools::execution::tool_services::NoopSecretUsageSink),
+            Arc::new(crate::kernel::tools::tool_services::NoopSecretUsageSink),
         )
     }
 }
