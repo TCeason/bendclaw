@@ -90,7 +90,6 @@ fn variable_rows(records: &[VariableRecord]) -> bendclaw::storage::pool::QueryRe
     }
 }
 
-// PLACEHOLDER_TEST
 #[tokio::test]
 async fn variables_api_fast_crud_and_masking() -> Result<()> {
     let state = VariableState {

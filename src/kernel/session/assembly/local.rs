@@ -83,7 +83,7 @@ pub fn build_local_assembly(
     let toolset = build_local_toolset(opts.tool_filter, secret_sink);
 
     let prompt_resolver = prompt_factory::build_local_prompt_resolver(
-        toolset.tools.clone(),
+        toolset.definitions.clone(),
         workspace.cwd().to_path_buf(),
     );
 

@@ -77,10 +77,34 @@ fn build_engine_with_filter(
         session_id: "session-1".to_string(),
         agent_id: "agent-1".to_string(),
     });
+    let definitions: Vec<bendclaw::kernel::tools::catalog::tool_definition::ToolDefinition> =
+        registry
+            .iter_tools()
+            .map(|t| {
+                bendclaw::kernel::tools::catalog::tool_definition::ToolDefinition::from_builtin(
+                    t.as_ref(),
+                )
+            })
+            .collect();
+    let bindings: std::collections::HashMap<
+        String,
+        bendclaw::kernel::tools::catalog::tool_target::ToolTarget,
+    > = registry
+        .iter_tools()
+        .map(|t| {
+            (
+                t.name().to_string(),
+                bendclaw::kernel::tools::catalog::tool_target::ToolTarget::Builtin(t.clone()),
+            )
+        })
+        .collect();
+    let tools_schema: Vec<bendclaw::llm::tool::ToolSchema> =
+        definitions.iter().map(|d| d.to_tool_schema()).collect();
     let tool_stack = ToolStack::build(ToolStackConfig {
-        toolset: bendclaw::kernel::tools::catalog::toolset::Toolset {
-            registry: Arc::new(registry),
-            tools: Arc::new(vec![]),
+        toolset: bendclaw::kernel::tools::catalog::Toolset {
+            definitions: Arc::new(definitions),
+            bindings: Arc::new(bindings),
+            tools: Arc::new(tools_schema),
             allowed_tool_names: allowed,
         },
         skill_executor: Arc::new(bendclaw::kernel::skills::runtime::NoopSkillExecutor),

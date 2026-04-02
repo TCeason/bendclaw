@@ -7,9 +7,9 @@ use crate::config::WorkspaceConfig;
 use crate::kernel::cluster::ClusterOptions;
 use crate::kernel::runtime::agent_config::AgentConfig;
 use crate::kernel::runtime::agent_config::CheckpointConfig;
+use crate::kernel::runtime::runtime::Runtime;
 use crate::kernel::runtime::runtime_bootstrap::construct;
 use crate::kernel::runtime::runtime_bootstrap::construct_minimal;
-use crate::kernel::runtime::runtime_handle::Runtime;
 use crate::llm::provider::LLMProvider;
 use crate::storage::pool::Pool;
 

@@ -1,4 +1,4 @@
-//! Tests for ToolRegistry — the single source of truth for tool registration.
+//! Tests for ToolRegistry — helper for building tool definitions and bindings.
 
 use std::sync::Arc;
 

@@ -8,7 +8,7 @@ use crate::kernel::channel::delivery::rate_limit::OutboundRateLimiter;
 use crate::kernel::channel::delivery::rate_limit::RateLimitConfig;
 use crate::kernel::channel::inbound::dispatch_debounced;
 use crate::kernel::channel::supervisor::ChannelSupervisor;
-use crate::kernel::runtime::runtime_handle::Runtime;
+use crate::kernel::runtime::runtime::Runtime;
 use crate::kernel::trace::TraceWriter;
 
 pub fn build_channel_registry() -> crate::kernel::channel::registry::ChannelRegistry {

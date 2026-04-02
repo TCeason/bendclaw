@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -6,7 +7,6 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use super::parsed_tool_call::DispatchKind;
 use super::parsed_tool_call::DispatchOutcome;
 use super::parsed_tool_call::ParsedToolCall;
 use super::tool_result::truncate_output;
@@ -14,7 +14,9 @@ use super::tool_result::ToolCallResult;
 use crate::kernel::run::event::Event;
 use crate::kernel::skills::runtime::parse_skill_args;
 use crate::kernel::skills::runtime::SkillExecutor;
-use crate::kernel::tools::catalog::tool_registry::ToolRegistry;
+use crate::kernel::tools::catalog::tool_definition::ToolDefinition;
+use crate::kernel::tools::catalog::tool_target::ToolTarget;
+use crate::kernel::tools::catalog::toolset::Toolset;
 use crate::kernel::tools::runtime::diagnostics;
 use crate::kernel::tools::Tool;
 use crate::kernel::tools::ToolContext;
@@ -27,7 +29,8 @@ use crate::llm::message::ToolCall;
 const MAX_PER_TOOL_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub struct CallExecutor {
-    tool_registry: Arc<ToolRegistry>,
+    definitions: Arc<Vec<ToolDefinition>>,
+    bindings: Arc<HashMap<String, ToolTarget>>,
     skill_executor: Arc<dyn SkillExecutor>,
     tool_context: ToolContext,
     cancel: CancellationToken,
@@ -35,8 +38,9 @@ pub struct CallExecutor {
 }
 
 impl CallExecutor {
+    /// Build from a `Toolset` — the single runtime boundary.
     pub fn new(
-        tool_registry: Arc<ToolRegistry>,
+        toolset: &Toolset,
         skill_executor: Arc<dyn SkillExecutor>,
         mut tool_context: ToolContext,
         cancel: CancellationToken,
@@ -48,28 +52,29 @@ impl CallExecutor {
             tool_call_id: None,
         };
         Self {
-            tool_registry,
+            definitions: toolset.definitions.clone(),
+            bindings: toolset.bindings.clone(),
             skill_executor,
             tool_context,
             cancel,
-            allowed_tool_names: None,
+            allowed_tool_names: toolset.allowed_tool_names.clone(),
         }
     }
 
-    pub fn with_allowed_tool_names(mut self, names: Option<HashSet<String>>) -> Self {
-        self.allowed_tool_names = names;
-        self
+    fn resolve_definition(&self, name: &str) -> Option<&ToolDefinition> {
+        self.definitions.iter().find(|d| d.name == name)
+    }
+
+    fn resolve_target(&self, name: &str) -> Option<&ToolTarget> {
+        self.bindings.get(name)
     }
 
     pub fn parse_calls(&self, calls: &[ToolCall]) -> Vec<ParsedToolCall> {
         calls
             .iter()
             .map(|tc| {
-                let kind = if self.tool_registry.get(&tc.name).is_some() {
-                    DispatchKind::Tool
-                } else {
-                    DispatchKind::Skill
-                };
+                let definition = self.resolve_definition(&tc.name).cloned();
+                let target = self.resolve_target(&tc.name).cloned();
                 let arguments = match serde_json::from_str(&tc.arguments) {
                     Ok(arguments) => arguments,
                     Err(error) => {
@@ -80,7 +85,8 @@ impl CallExecutor {
                 ParsedToolCall {
                     call: tc.clone(),
                     arguments,
-                    kind,
+                    definition,
+                    target,
                 }
             })
             .collect()
@@ -101,20 +107,17 @@ impl CallExecutor {
                 let parsed = parsed.clone();
                 let name = parsed.call.name.clone();
                 let args = parsed.arguments.clone();
-                let kind = parsed.kind;
-                let tool_ref = if matches!(kind, DispatchKind::Tool) {
-                    self.tool_registry.get(&name)
-                } else {
-                    None
-                };
+                let target = parsed.target.clone();
                 let fut = self.dispatch(
                     parsed.call.clone(),
                     parsed.arguments.clone(),
+                    target.clone(),
                     per_tool_timeout,
                 );
                 let cancel = self.cancel.clone();
                 async move {
-                    let tracker = Self::begin_tracker(&name, &args, tool_ref, per_tool_timeout);
+                    let tracker =
+                        Self::begin_tracker(&name, &args, target.as_ref(), per_tool_timeout);
                     let result = tokio::select! {
                         result = tokio::time::timeout(per_tool_timeout, fut) => {
                             match result {
@@ -144,10 +147,10 @@ impl CallExecutor {
     fn begin_tracker(
         name: &str,
         args: &serde_json::Value,
-        tool: Option<&Arc<dyn Tool>>,
+        target: Option<&ToolTarget>,
         timeout: Duration,
     ) -> OperationTracker {
-        if let Some(tool) = tool {
+        if let Some(ToolTarget::Builtin(tool)) = target {
             OperationMeta::begin(tool.op_type())
                 .maybe_impact(tool.classify_impact(args))
                 .timeout(timeout)
@@ -163,34 +166,44 @@ impl CallExecutor {
         &self,
         tc: ToolCall,
         args: serde_json::Value,
+        target: Option<ToolTarget>,
         timeout: Duration,
     ) -> ToolCallResult {
-        // Enforce tool filter if set
+        // Enforce tool filter
         if let Some(ref allowed) = self.allowed_tool_names {
             if !allowed.contains(&tc.name) {
-                let tracker = Self::begin_tracker(&tc.name, &args, None, timeout);
+                let tracker = Self::begin_tracker(&tc.name, &args, target.as_ref(), timeout);
                 return ToolCallResult::InfraError(
                     format!("tool '{}' is not available in this session", tc.name),
                     tracker.finish(),
                 );
             }
         }
-        if let Some(tool) = self.tool_registry.get(&tc.name) {
-            self.run_tool(&tc.id, &tc.name, tool, args, timeout).await
-        } else {
-            self.run_skill(&tc.name, &tc.arguments, timeout).await
+
+        match target {
+            Some(ToolTarget::Builtin(ref tool)) => self.run_tool(&tc.id, tool, args, timeout).await,
+            Some(ToolTarget::Skill) => self.run_skill(&tc.name, &tc.arguments, timeout).await,
+            None => {
+                let tracker = Self::begin_tracker(&tc.name, &args, None, timeout);
+                ToolCallResult::InfraError(
+                    format!("tool '{}' not found", tc.name),
+                    tracker.finish(),
+                )
+            }
         }
     }
 
     async fn run_tool(
         &self,
         tool_call_id: &str,
-        name: &str,
         tool: &Arc<dyn Tool>,
         args: serde_json::Value,
         timeout: Duration,
     ) -> ToolCallResult {
-        let tracker = Self::begin_tracker(name, &args, Some(tool), timeout);
+        let tracker = OperationMeta::begin(tool.op_type())
+            .maybe_impact(tool.classify_impact(&args))
+            .timeout(timeout)
+            .summary(tool.summarize(&args));
         let mut tool_context = self.tool_context.clone();
         tool_context.runtime.tool_call_id = Some(Arc::from(tool_call_id));
 
@@ -204,7 +217,6 @@ impl CallExecutor {
         let meta = tracker.finish();
         if !result.success {
             let msg = result.error.unwrap_or_else(|| "unknown error".into());
-
             return ToolCallResult::ToolError(truncate_output(msg), meta);
         }
         ToolCallResult::Success(truncate_output(result.output), meta)

@@ -4,8 +4,8 @@
 
 use std::sync::atomic::Ordering;
 
-use super::engine::Engine;
 use super::engine_state::RunLoopState;
+use super::turn_engine::Engine;
 use crate::kernel::memory::pressure;
 use crate::kernel::memory::pressure::PressureLevel;
 use crate::kernel::run::event::Event;

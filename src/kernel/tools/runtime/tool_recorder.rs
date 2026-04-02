@@ -40,7 +40,7 @@ impl ExecutionRecorder {
 
     pub fn start_tool_span(&self, parsed: &ParsedToolCall, tc: &TurnContext) -> TraceSpan {
         self.trace.start_span(
-            parsed.kind.as_str(),
+            parsed.kind_str(),
             &parsed.call.name,
             &tc.loop_span_id,
             "",

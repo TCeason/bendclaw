@@ -10,47 +10,41 @@ use crate::kernel::tools::builtin::filesystem::ListDirTool;
 use crate::kernel::tools::builtin::shell::ShellTool;
 use crate::kernel::tools::builtin::web::WebFetchTool;
 use crate::kernel::tools::builtin::web::WebSearchTool;
-use crate::kernel::tools::catalog::tool_registry::ToolRegistry;
+use crate::kernel::tools::catalog::tool_definition::ToolDefinition;
+use crate::kernel::tools::catalog::tool_target::ToolTarget;
+use crate::kernel::tools::catalog::toolset::ToolEntry;
 use crate::kernel::tools::catalog::toolset::Toolset;
 use crate::kernel::tools::tool_services::SecretUsageSink;
-use crate::kernel::tools::ToolId;
-
-const CORE_TOOLS: &[ToolId] = &[
-    ToolId::Read,
-    ToolId::Write,
-    ToolId::Edit,
-    ToolId::Bash,
-    ToolId::Glob,
-    ToolId::Grep,
-    ToolId::WebFetch,
-    ToolId::WebSearch,
-];
 
 pub fn build_local_toolset(
     filter: Option<HashSet<String>>,
     secret_sink: Arc<dyn SecretUsageSink>,
 ) -> Toolset {
-    let mut registry = ToolRegistry::new();
-    register_core(&mut registry, secret_sink);
-    Toolset::from_registry(registry, filter, CORE_TOOLS)
+    let entries = build_core_entries(secret_sink);
+    Toolset::from_entries(entries, filter)
 }
 
-pub(crate) fn register_core(registry: &mut ToolRegistry, secret_sink: Arc<dyn SecretUsageSink>) {
-    registry.register_builtin(ToolId::Read, Arc::new(FileReadTool));
-    registry.register_builtin(ToolId::Write, Arc::new(FileWriteTool));
-    registry.register_builtin(ToolId::Edit, Arc::new(FileEditTool));
-    registry.register_builtin(ToolId::ListDir, Arc::new(ListDirTool));
-    registry.register_builtin(ToolId::Grep, Arc::new(GrepTool));
-    registry.register_builtin(ToolId::Glob, Arc::new(GlobTool));
-    registry.register_builtin(ToolId::Bash, Arc::new(ShellTool::new(secret_sink.clone())));
-    registry.register_builtin(
-        ToolId::WebSearch,
+pub(crate) fn build_core_entries(secret_sink: Arc<dyn SecretUsageSink>) -> Vec<ToolEntry> {
+    let tools: Vec<Arc<dyn crate::kernel::tools::Tool>> = vec![
+        Arc::new(FileReadTool),
+        Arc::new(FileWriteTool),
+        Arc::new(FileEditTool),
+        Arc::new(ListDirTool),
+        Arc::new(GrepTool),
+        Arc::new(GlobTool),
+        Arc::new(ShellTool::new(secret_sink.clone())),
         Arc::new(WebSearchTool::new(
             "https://api.search.brave.com/res/v1/web/search",
             secret_sink,
         )),
-    );
-    registry.register_builtin(ToolId::WebFetch, Arc::new(WebFetchTool));
-}
+        Arc::new(WebFetchTool),
+    ];
 
-pub(crate) const LOCAL_CORE_TOOLS: &[ToolId] = CORE_TOOLS;
+    tools
+        .into_iter()
+        .map(|t| ToolEntry {
+            definition: ToolDefinition::from_builtin(t.as_ref()),
+            target: ToolTarget::Builtin(t),
+        })
+        .collect()
+}

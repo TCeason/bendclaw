@@ -6,8 +6,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use bendclaw::kernel::skills::runtime::SkillExecutor;
 use bendclaw::kernel::skills::runtime::SkillOutput;
+use bendclaw::kernel::tools::catalog::tool_definition::ToolDefinition;
 use bendclaw::kernel::tools::catalog::tool_registry::ToolRegistry;
-use bendclaw::kernel::tools::runtime::parsed_tool_call::DispatchKind;
 use bendclaw::kernel::tools::runtime::tool_executor::CallExecutor;
 use bendclaw::kernel::tools::runtime::tool_result::ToolCallResult;
 use bendclaw::kernel::tools::OperationClassifier;
@@ -132,12 +132,56 @@ fn build_executor(
     skill_executor: Arc<dyn SkillExecutor>,
     cancel: CancellationToken,
 ) -> CallExecutor {
+    build_executor_with_skills(tools, vec![], skill_executor, cancel)
+}
+
+fn build_executor_with_skills(
+    tools: Vec<Arc<dyn Tool>>,
+    skill_names: Vec<&str>,
+    skill_executor: Arc<dyn SkillExecutor>,
+    cancel: CancellationToken,
+) -> CallExecutor {
     let mut registry = ToolRegistry::new();
-    for t in tools {
-        registry.register(t);
+    for t in &tools {
+        registry.register(t.clone());
     }
+    let mut definitions: Vec<ToolDefinition> = registry
+        .iter_tools()
+        .map(|t| ToolDefinition::from_builtin(t.as_ref()))
+        .collect();
+    let mut bindings: std::collections::HashMap<
+        String,
+        bendclaw::kernel::tools::catalog::tool_target::ToolTarget,
+    > = registry
+        .iter_tools()
+        .map(|t| {
+            (
+                t.name().to_string(),
+                bendclaw::kernel::tools::catalog::tool_target::ToolTarget::Builtin(t.clone()),
+            )
+        })
+        .collect();
+    for name in skill_names {
+        definitions.push(ToolDefinition::from_skill(
+            name.to_string(),
+            format!("{name} skill"),
+            serde_json::json!({"type": "object"}),
+        ));
+        bindings.insert(
+            name.to_string(),
+            bendclaw::kernel::tools::catalog::tool_target::ToolTarget::Skill,
+        );
+    }
+    let tools_schema: Vec<bendclaw::llm::tool::ToolSchema> =
+        definitions.iter().map(|d| d.to_tool_schema()).collect();
+    let toolset = bendclaw::kernel::tools::catalog::Toolset {
+        definitions: Arc::new(definitions),
+        bindings: Arc::new(bindings),
+        tools: Arc::new(tools_schema),
+        allowed_tool_names: None,
+    };
     CallExecutor::new(
-        Arc::new(registry),
+        &toolset,
         skill_executor,
         ToolContext {
             user_id: "u1".into(),
@@ -163,11 +207,12 @@ fn build_executor(
 
 #[test]
 fn parse_calls_marks_tool_vs_skill_and_handles_bad_json() {
-    let exec = build_executor(
+    let exec = build_executor_with_skills(
         vec![Arc::new(MockTool {
             name: "memory_read".to_string(),
             behavior: MockToolBehavior::Ok("ok".to_string()),
         })],
+        vec!["custom_skill"],
         Arc::new(MockSkillExecutor::new(MockSkillBehavior::OkString(
             "ok".to_string(),
         ))),
@@ -189,8 +234,8 @@ fn parse_calls_marks_tool_vs_skill_and_handles_bad_json() {
 
     let parsed = exec.parse_calls(&calls);
     assert_eq!(parsed.len(), 2);
-    assert!(matches!(parsed[0].kind, DispatchKind::Tool));
-    assert!(matches!(parsed[1].kind, DispatchKind::Skill));
+    assert!(parsed[0].is_builtin());
+    assert!(parsed[1].is_skill());
     assert_eq!(parsed[0].arguments["key"], "k");
     assert!(parsed[1].arguments.is_object());
     assert!(parsed[1]
@@ -260,7 +305,12 @@ async fn execute_calls_handles_skill_success_and_errors() -> Result<()> {
     let skill_exec = Arc::new(MockSkillExecutor::new(MockSkillBehavior::OkJson(
         serde_json::json!({"ok": true}),
     )));
-    let exec = build_executor(vec![], skill_exec.clone(), CancellationToken::new());
+    let exec = build_executor_with_skills(
+        vec![],
+        vec!["run_skill"],
+        skill_exec.clone(),
+        CancellationToken::new(),
+    );
 
     let calls = vec![ToolCall {
         id: "tc1".into(),
@@ -285,8 +335,9 @@ async fn execute_calls_handles_skill_success_and_errors() -> Result<()> {
     assert!(args.contains(&"--q".to_string()));
     assert!(args.contains(&"hello".to_string()));
 
-    let exec_tool_err = build_executor(
+    let exec_tool_err = build_executor_with_skills(
         vec![],
+        vec!["run_skill"],
         Arc::new(MockSkillExecutor::new(MockSkillBehavior::ToolError(
             "skill rejected".to_string(),
         ))),
@@ -300,8 +351,9 @@ async fn execute_calls_handles_skill_success_and_errors() -> Result<()> {
         _ => anyhow::bail!("expected skill tool error"),
     }
 
-    let exec_infra_err = build_executor(
+    let exec_infra_err = build_executor_with_skills(
         vec![],
+        vec!["run_skill"],
         Arc::new(MockSkillExecutor::new(MockSkillBehavior::InfraError(
             "executor down".to_string(),
         ))),
@@ -441,8 +493,9 @@ async fn execute_calls_truncates_large_tool_error() -> Result<()> {
 #[tokio::test]
 async fn execute_calls_truncates_large_skill_output() -> Result<()> {
     let large_output = "s".repeat(300_000);
-    let exec = build_executor(
+    let exec = build_executor_with_skills(
         vec![],
+        vec!["big_skill"],
         Arc::new(MockSkillExecutor::new(MockSkillBehavior::OkString(
             large_output,
         ))),

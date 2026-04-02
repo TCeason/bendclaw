@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use super::runtime_state::RuntimeParts;
-use super::runtime_state::RuntimeStatus;
+use super::runtime_parts::RuntimeParts;
+use super::runtime_parts::RuntimeStatus;
 use super::ActivityGuard;
 use super::ActivityTracker;
 use super::SuspendStatus;
@@ -123,16 +123,6 @@ impl Runtime {
         self.activity_tracker.track_task()
     }
 
-    pub fn skill_prompt(&self, user_id: &str) -> String {
-        self.catalog
-            .visible_skills(user_id)
-            .into_iter()
-            .filter(|s| !s.executable)
-            .map(|s| s.content)
-            .collect::<Vec<_>>()
-            .join("\n\n")
-    }
-
     pub fn database(&self) -> &Pool {
         self.databases.root_pool()
     }
@@ -226,10 +216,6 @@ impl Runtime {
                 result.marked_running,
             );
         }
-    }
-
-    pub fn skills(&self) -> &Arc<SkillCatalog> {
-        &self.catalog
     }
 
     pub fn org(&self) -> &Arc<OrgServices> {

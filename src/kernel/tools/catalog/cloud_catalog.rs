@@ -5,14 +5,12 @@ use crate::kernel::channel::registry::ChannelRegistry;
 use crate::kernel::cluster::ClusterService;
 use crate::kernel::cluster::DispatchTable;
 use crate::kernel::memory::MemoryService;
-use crate::kernel::tools::catalog::local_catalog::register_core;
-use crate::kernel::tools::catalog::local_catalog::LOCAL_CORE_TOOLS;
-use crate::kernel::tools::catalog::optional_catalog::register_optional;
-use crate::kernel::tools::catalog::skill_schemas::append_skill_schemas;
-use crate::kernel::tools::catalog::tool_registry::ToolRegistry;
+use crate::kernel::tools::catalog::local_catalog::build_core_entries;
+use crate::kernel::tools::catalog::tool_definition::ToolDefinition;
+use crate::kernel::tools::catalog::tool_target::ToolTarget;
+use crate::kernel::tools::catalog::toolset::ToolEntry;
 use crate::kernel::tools::catalog::toolset::Toolset;
 use crate::kernel::tools::tool_services::SecretUsageSink;
-use crate::kernel::tools::ToolId;
 use crate::storage::Pool;
 
 pub struct CloudToolsetDeps {
@@ -27,14 +25,16 @@ pub struct CloudToolsetDeps {
 }
 
 pub fn build_cloud_toolset(deps: CloudToolsetDeps, filter: Option<HashSet<String>>) -> Toolset {
-    let mut registry = ToolRegistry::new();
-    register_core(&mut registry, deps.secret_sink.clone());
-    register_cloud(&mut registry, &deps);
-    register_optional(&mut registry, deps.cluster.as_ref(), deps.memory.as_ref());
+    let mut entries = build_core_entries(deps.secret_sink.clone());
+    entries.extend(build_cloud_entries(&deps));
+    entries.extend(build_optional_entries(
+        deps.cluster.as_ref(),
+        deps.memory.as_ref(),
+    ));
 
-    let mut toolset = Toolset::from_registry(registry, filter.clone(), LOCAL_CORE_TOOLS);
+    let mut toolset = Toolset::from_entries(entries, filter);
 
-    let skills: Vec<_> = deps
+    let skill_entries: Vec<ToolEntry> = deps
         .org
         .catalog()
         .visible_skills(&deps.user_id)
@@ -44,15 +44,18 @@ pub fn build_cloud_toolset(deps: CloudToolsetDeps, filter: Option<HashSet<String
             let name = crate::kernel::skills::model::tool_key::format(&s, &deps.user_id);
             let desc = s.description.clone();
             let params = s.to_json_schema();
-            (name, desc, params)
+            ToolEntry {
+                definition: ToolDefinition::from_skill(name, desc, params),
+                target: ToolTarget::Skill,
+            }
         })
         .collect();
 
-    append_skill_schemas(&mut toolset, &skills, &filter);
+    toolset.append_skill_entries(skill_entries);
     toolset
 }
 
-fn register_cloud(registry: &mut ToolRegistry, deps: &CloudToolsetDeps) {
+fn build_cloud_entries(deps: &CloudToolsetDeps) -> Vec<ToolEntry> {
     use crate::kernel::tools::builtin::channel::ChannelSendTool;
     use crate::kernel::tools::builtin::databend::DatabendTool;
     use crate::kernel::tools::builtin::skills::create::SkillCreateTool;
@@ -67,58 +70,72 @@ fn register_cloud(registry: &mut ToolRegistry, deps: &CloudToolsetDeps) {
     use crate::kernel::tools::builtin::tasks::toggle::TaskToggleTool;
     use crate::kernel::tools::builtin::tasks::update::TaskUpdateTool;
 
-    registry.register_builtin(
-        ToolId::SkillRead,
-        Arc::new(SkillReadTool::new(deps.org.catalog().clone())),
-    );
-    registry.register_builtin(
-        ToolId::SkillCreate,
-        Arc::new(SkillCreateTool::new(deps.org.manager().clone())),
-    );
-    registry.register_builtin(
-        ToolId::SkillRemove,
-        Arc::new(SkillRemoveTool::new(deps.org.manager().clone())),
-    );
-    registry.register_builtin(
-        ToolId::Databend,
-        Arc::new(DatabendTool::new(deps.databend_pool.clone())),
-    );
-    registry.register_builtin(
-        ToolId::ChannelSend,
-        Arc::new(ChannelSendTool::new(
-            deps.channels.clone(),
-            deps.databend_pool.clone(),
-        )),
-    );
     let node_id = &deps.node_id;
     let pool = &deps.databend_pool;
-    registry.register_builtin(
-        ToolId::TaskCreate,
+
+    let tools: Vec<Arc<dyn crate::kernel::tools::Tool>> = vec![
+        Arc::new(SkillReadTool::new(deps.org.catalog().clone())),
+        Arc::new(SkillCreateTool::new(deps.org.manager().clone())),
+        Arc::new(SkillRemoveTool::new(deps.org.manager().clone())),
+        Arc::new(DatabendTool::new(pool.clone())),
+        Arc::new(ChannelSendTool::new(deps.channels.clone(), pool.clone())),
         Arc::new(TaskCreateTool::new(node_id.clone(), pool.clone())),
-    );
-    registry.register_builtin(
-        ToolId::TaskList,
         Arc::new(TaskListTool::new(node_id.clone(), pool.clone())),
-    );
-    registry.register_builtin(
-        ToolId::TaskGet,
         Arc::new(TaskGetTool::new(node_id.clone(), pool.clone())),
-    );
-    registry.register_builtin(
-        ToolId::TaskUpdate,
         Arc::new(TaskUpdateTool::new(node_id.clone(), pool.clone())),
-    );
-    registry.register_builtin(
-        ToolId::TaskDelete,
         Arc::new(TaskDeleteTool::new(node_id.clone(), pool.clone())),
-    );
-    registry.register_builtin(
-        ToolId::TaskToggle,
         Arc::new(TaskToggleTool::new(node_id.clone(), pool.clone())),
-    );
-    registry.register_builtin(
-        ToolId::TaskHistory,
         Arc::new(TaskHistoryTool::new(node_id.clone(), pool.clone())),
-    );
-    registry.register_builtin(ToolId::TaskRun, Arc::new(TaskRunTool::new(pool.clone())));
+        Arc::new(TaskRunTool::new(pool.clone())),
+    ];
+
+    tools
+        .into_iter()
+        .map(|t| ToolEntry {
+            definition: ToolDefinition::from_builtin(t.as_ref()),
+            target: ToolTarget::Builtin(t),
+        })
+        .collect()
+}
+
+fn build_optional_entries(
+    cluster: Option<&(Arc<ClusterService>, Arc<DispatchTable>)>,
+    memory: Option<&Arc<MemoryService>>,
+) -> Vec<ToolEntry> {
+    let mut entries = Vec::new();
+
+    if let Some((service, dispatch_table)) = cluster {
+        use crate::kernel::tools::builtin::cluster::collect::ClusterCollectTool;
+        use crate::kernel::tools::builtin::cluster::dispatch::ClusterDispatchTool;
+        use crate::kernel::tools::builtin::cluster::nodes::ClusterNodesTool;
+
+        let tools: Vec<Arc<dyn crate::kernel::tools::Tool>> = vec![
+            Arc::new(ClusterNodesTool::new(service.clone())),
+            Arc::new(ClusterDispatchTool::new(
+                service.clone(),
+                dispatch_table.clone(),
+            )),
+            Arc::new(ClusterCollectTool::new(dispatch_table.clone())),
+        ];
+        entries.extend(tools.into_iter().map(|t| ToolEntry {
+            definition: ToolDefinition::from_builtin(t.as_ref()),
+            target: ToolTarget::Builtin(t),
+        }));
+    }
+
+    if let Some(mem) = memory {
+        use crate::kernel::tools::builtin::memory::save::MemorySaveTool;
+        use crate::kernel::tools::builtin::memory::search::MemorySearchTool;
+
+        let tools: Vec<Arc<dyn crate::kernel::tools::Tool>> = vec![
+            Arc::new(MemorySearchTool::new(mem.clone())),
+            Arc::new(MemorySaveTool::new(mem.clone())),
+        ];
+        entries.extend(tools.into_iter().map(|t| ToolEntry {
+            definition: ToolDefinition::from_builtin(t.as_ref()),
+            target: ToolTarget::Builtin(t),
+        }));
+    }
+
+    entries
 }

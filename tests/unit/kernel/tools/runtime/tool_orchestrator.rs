@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use bendclaw::kernel::run::event::Event;
 use bendclaw::kernel::skills::runtime::SkillExecutor;
 use bendclaw::kernel::skills::runtime::SkillOutput;
+use bendclaw::kernel::tools::catalog::tool_definition::ToolDefinition;
 use bendclaw::kernel::tools::catalog::tool_registry::ToolRegistry;
 use bendclaw::kernel::tools::run_labels::RunLabels;
 use bendclaw::kernel::tools::runtime::tool_events::EventEmitter;
@@ -90,12 +91,36 @@ fn test_trace_recorder() -> bendclaw::kernel::trace::TraceRecorder {
 fn build_orchestrator(tools: Vec<Arc<dyn Tool>>) -> (ToolOrchestrator, mpsc::Receiver<Event>) {
     let cancel = CancellationToken::new();
     let mut registry = ToolRegistry::new();
-    for t in tools {
-        registry.register(t);
+    for t in &tools {
+        registry.register(t.clone());
     }
+    let definitions: Vec<ToolDefinition> = registry
+        .iter_tools()
+        .map(|t| ToolDefinition::from_builtin(t.as_ref()))
+        .collect();
+    let bindings: std::collections::HashMap<
+        String,
+        bendclaw::kernel::tools::catalog::tool_target::ToolTarget,
+    > = registry
+        .iter_tools()
+        .map(|t| {
+            (
+                t.name().to_string(),
+                bendclaw::kernel::tools::catalog::tool_target::ToolTarget::Builtin(t.clone()),
+            )
+        })
+        .collect();
     let (tx, rx) = mpsc::channel(128);
+    let tools_schema: Vec<bendclaw::llm::tool::ToolSchema> =
+        definitions.iter().map(|d| d.to_tool_schema()).collect();
+    let toolset = bendclaw::kernel::tools::catalog::Toolset {
+        definitions: Arc::new(definitions),
+        bindings: Arc::new(bindings),
+        tools: Arc::new(tools_schema),
+        allowed_tool_names: None,
+    };
     let executor = CallExecutor::new(
-        Arc::new(registry),
+        &toolset,
         Arc::new(NoopSkillExecutor),
         ToolContext {
             user_id: "u1".into(),

@@ -2,10 +2,10 @@
 
 use std::fmt::Write;
 
-use super::model::*;
+use super::prompt_model::*;
+use super::tool_prompt;
 use crate::kernel::run::default_identity;
 use crate::kernel::run::runtime_context;
-use crate::llm::tool::ToolSchema;
 
 /// Build a complete system prompt from pre-fetched inputs. Pure, sync, no DB.
 pub fn build_prompt(inputs: PromptInputs) -> String {
@@ -62,13 +62,12 @@ pub fn build_prompt(inputs: PromptInputs) -> String {
     }
 
     // 5. Tools + Cluster + Directive
-    append_tools_section(&mut prompt, &inputs.tools);
+    tool_prompt::render_tools_section(&mut prompt, &inputs.tools);
     if let Some(ref info) = inputs.cluster_info {
         if !info.is_empty() {
             prompt.push_str(&truncate_layer("cluster", info, MAX_CLUSTER_BYTES, "cache"));
         }
     }
-    // PLACEHOLDER_TAIL
     if let Some(ref text) = inputs.seed.directive_prompt {
         if !text.is_empty() {
             let mut buf = String::from("## Directive\n\n");
@@ -147,22 +146,6 @@ fn append_skill_prompts(prompt: &mut String, skills: &[SkillPromptEntry]) {
     buf.push_str("</available_skills>\n\n");
     buf.push_str("Use `read_skill(name)` for full instructions.\n\n");
     prompt.push_str(&truncate_layer("skills", &buf, MAX_SKILLS_BYTES, "catalog"));
-}
-
-fn append_tools_section(prompt: &mut String, tools: &[ToolSchema]) {
-    if tools.is_empty() {
-        return;
-    }
-    let mut buf = String::new();
-    buf.push_str("## Available Tools\n\n");
-    for t in tools {
-        let _ = writeln!(buf, "- `{}`: {}", t.function.name, t.function.description);
-    }
-    buf.push_str(
-        "\nCall tools when they would help accomplish the task.\
-         \nTo self-upgrade, run `bendclaw update && bendclaw restart` via shell. Warn the user that the session will be interrupted.\n",
-    );
-    prompt.push_str(&truncate_layer("tools", &buf, MAX_TOOLS_BYTES, "registry"));
 }
 
 fn append_variables_section(prompt: &mut String, variables: &[PromptVariable]) {

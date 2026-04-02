@@ -99,7 +99,7 @@ impl CloudAssembler {
             prompt_factory::CloudPromptResolverConfig {
                 storage: storage.clone(),
                 org: self.runtime.org.clone(),
-                tools: toolset.tools.clone(),
+                tools: toolset.definitions.clone(),
                 variables: prompt_variables.clone(),
                 prompt_config: prompt_config.clone(),
                 cwd: workspace.cwd().to_path_buf(),

@@ -3,20 +3,20 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::build::build_prompt;
-use super::model::*;
 use super::prompt_contract::PromptResolver;
+use super::prompt_model::*;
+use super::prompt_renderer::build_prompt;
 use crate::base::Result;
-use crate::llm::tool::ToolSchema;
+use crate::kernel::tools::catalog::tool_definition::ToolDefinition;
 
 pub struct LocalPromptResolver {
     seed: PromptSeed,
-    tools: Arc<Vec<ToolSchema>>,
+    tools: Arc<Vec<ToolDefinition>>,
     cwd: PathBuf,
 }
 
 impl LocalPromptResolver {
-    pub fn new(seed: PromptSeed, tools: Arc<Vec<ToolSchema>>, cwd: PathBuf) -> Self {
+    pub fn new(seed: PromptSeed, tools: Arc<Vec<ToolDefinition>>, cwd: PathBuf) -> Self {
         Self { seed, tools, cwd }
     }
 }

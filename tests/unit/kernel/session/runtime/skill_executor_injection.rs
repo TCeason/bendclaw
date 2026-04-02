@@ -51,9 +51,8 @@ fn build_assembly_with_mock(executor: Arc<dyn SkillExecutor>) -> SessionAssembly
             )
                 as Arc<dyn bendclaw::llm::provider::LLMProvider>)),
             toolset: Toolset {
-                registry: Arc::new(
-                    bendclaw::kernel::tools::catalog::tool_registry::ToolRegistry::new(),
-                ),
+                definitions: Arc::new(vec![]),
+                bindings: Arc::new(std::collections::HashMap::new()),
                 tools: Arc::new(vec![]),
                 allowed_tool_names: None,
             },

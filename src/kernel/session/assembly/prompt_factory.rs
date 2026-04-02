@@ -2,17 +2,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::kernel::agent_store::AgentStore;
-use crate::kernel::run::prompt::model::PromptConfig;
-use crate::kernel::run::prompt::model::PromptSeed;
-use crate::kernel::run::prompt::model::PromptVariable;
-use crate::kernel::run::prompt::CloudPromptResolver;
+use crate::kernel::run::prompt::prompt_model::PromptConfig;
+use crate::kernel::run::prompt::prompt_model::PromptSeed;
+use crate::kernel::run::prompt::prompt_model::PromptVariable;
+use crate::kernel::run::prompt::CloudPromptLoader;
 use crate::kernel::run::prompt::LocalPromptResolver;
 use crate::kernel::run::prompt::PromptResolver;
 use crate::kernel::runtime::org::OrgServices;
-use crate::llm::tool::ToolSchema;
+use crate::kernel::tools::catalog::tool_definition::ToolDefinition;
 
 pub fn build_local_prompt_resolver(
-    tools: Arc<Vec<ToolSchema>>,
+    tools: Arc<Vec<ToolDefinition>>,
     cwd: PathBuf,
 ) -> Arc<dyn PromptResolver> {
     Arc::new(LocalPromptResolver::new(PromptSeed::default(), tools, cwd))
@@ -21,7 +21,7 @@ pub fn build_local_prompt_resolver(
 pub struct CloudPromptResolverConfig {
     pub storage: Arc<AgentStore>,
     pub org: Arc<OrgServices>,
-    pub tools: Arc<Vec<ToolSchema>>,
+    pub tools: Arc<Vec<ToolDefinition>>,
     pub variables: Vec<PromptVariable>,
     pub prompt_config: Option<PromptConfig>,
     pub cwd: PathBuf,
@@ -35,7 +35,7 @@ pub struct CloudPromptResolverConfig {
 }
 
 pub fn build_cloud_prompt_resolver(cfg: CloudPromptResolverConfig) -> Arc<dyn PromptResolver> {
-    Arc::new(CloudPromptResolver::new(
+    Arc::new(CloudPromptLoader::new(
         cfg.storage,
         cfg.org,
         cfg.tools,

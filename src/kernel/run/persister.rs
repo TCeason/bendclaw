@@ -165,7 +165,6 @@ fn do_persist_success(
         duration_ms,
         cost: 0.0,
     };
-    // PLACEHOLDER_PERSIST_REST
     let metrics_json = serde_json::to_string(&metrics).unwrap_or_default();
     let status = status_from_reason(&result.stop_reason);
     let error_text = if matches!(status, RunStatus::Error) {

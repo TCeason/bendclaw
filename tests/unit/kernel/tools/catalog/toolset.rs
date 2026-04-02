@@ -48,13 +48,12 @@ fn core_catalog_tool_schemas_have_descriptions() {
 fn description_for(name: &str) -> String {
     let toolset = make_local_toolset();
     toolset
-        .registry
-        .tool_schemas()
-        .into_iter()
-        .find(|s| s.function.name == name)
+        .definitions
+        .iter()
+        .find(|d| d.name == name)
         .unwrap_or_else(|| panic!("tool '{name}' not found"))
-        .function
         .description
+        .clone()
 }
 
 #[test]
@@ -222,6 +221,7 @@ const EXPECTED_CORE: &[&str] = &[
     "read",
     "write",
     "edit",
+    "list_dir",
     "bash",
     "glob",
     "grep",
@@ -230,7 +230,7 @@ const EXPECTED_CORE: &[&str] = &[
 ];
 
 #[test]
-fn default_exposure_is_exactly_8_core_tools() {
+fn default_exposure_is_exactly_9_core_tools() {
     let toolset = make_local_toolset();
     let mut names: Vec<String> = toolset
         .tools
@@ -242,19 +242,25 @@ fn default_exposure_is_exactly_8_core_tools() {
     expected.sort();
     assert_eq!(
         names, expected,
-        "default tool schemas must be exactly the 8 core tools"
+        "default tool schemas must be exactly the 9 core tools"
     );
 }
 
 #[test]
-fn registry_contains_more_than_core_tools() {
+fn bindings_match_definitions() {
     let toolset = make_local_toolset();
-    let all = toolset.registry.tool_schemas();
-    assert!(
-        all.len() > EXPECTED_CORE.len(),
-        "registry should contain core + list_dir, got {}",
-        all.len()
+    assert_eq!(
+        toolset.bindings.len(),
+        toolset.definitions.len(),
+        "every definition should have a corresponding binding"
     );
+    for def in toolset.definitions.iter() {
+        assert!(
+            toolset.bindings.contains_key(&def.name),
+            "missing binding for '{}'",
+            def.name
+        );
+    }
 }
 
 #[test]

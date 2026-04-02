@@ -6,7 +6,7 @@ use crate::service::error::Result;
 use crate::service::state::AppState;
 
 pub(super) async fn list_skills(state: &AppState, user_id: &str) -> Result<Vec<Skill>> {
-    Ok(state.runtime.skills().visible_skills(user_id))
+    Ok(state.runtime.org().catalog().visible_skills(user_id))
 }
 
 pub(super) async fn get_skill(
@@ -14,7 +14,7 @@ pub(super) async fn get_skill(
     user_id: &str,
     skill_key: &str,
 ) -> Result<Option<Skill>> {
-    Ok(state.runtime.skills().resolve(user_id, skill_key))
+    Ok(state.runtime.org().catalog().resolve(user_id, skill_key))
 }
 
 pub(super) async fn create_skill(

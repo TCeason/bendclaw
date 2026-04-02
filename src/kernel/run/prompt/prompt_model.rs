@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::kernel::run::prompt_diagnostics;
-use crate::llm::tool::ToolSchema;
+use crate::kernel::tools::catalog::tool_definition::ToolDefinition;
 
 const _RECENT_ERRORS_LIMIT: u32 = 5;
 
@@ -129,7 +129,7 @@ pub struct SkillPromptEntry {
 #[derive(Debug, Clone)]
 pub struct PromptInputs {
     pub seed: PromptSeed,
-    pub tools: Arc<Vec<ToolSchema>>,
+    pub tools: Arc<Vec<ToolDefinition>>,
     pub cwd: PathBuf,
     pub system_overlay: Option<String>,
     pub skill_overlay: Option<String>,

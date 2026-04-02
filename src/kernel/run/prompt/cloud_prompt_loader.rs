@@ -1,137 +1,90 @@
 //! CloudPromptLoader: fetches cloud prompt dependencies from DB,
 //! then delegates to the pure build_prompt() function.
+//! Also implements PromptResolver for direct use by sessions.
 
 use std::fmt::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::build::build_prompt;
-use super::model::*;
+use async_trait::async_trait;
+
+use super::prompt_contract::PromptResolver;
+use super::prompt_model::*;
+use super::prompt_renderer::build_prompt;
 use crate::base::Result;
 use crate::kernel::agent_store::AgentStore;
 use crate::kernel::cluster::ClusterService;
-use crate::kernel::memory::MemoryService;
 use crate::kernel::run::prompt_diagnostics;
-use crate::kernel::skills::catalog::SkillCatalog;
-use crate::llm::tool::ToolSchema;
+use crate::kernel::runtime::org::OrgServices;
+use crate::kernel::tools::catalog::tool_definition::ToolDefinition;
 
 const RECENT_ERRORS_LIMIT: u32 = 5;
 
 pub struct CloudPromptLoader {
     storage: Arc<AgentStore>,
-    skills: Arc<SkillCatalog>,
+    org: Arc<OrgServices>,
 
     identity: Option<String>,
     soul: Option<String>,
     runtime: Option<String>,
     cwd: Option<PathBuf>,
     recent_errors: Option<String>,
-    tools: Option<Arc<Vec<ToolSchema>>>,
+    tools: Option<Arc<Vec<ToolDefinition>>>,
     variables: Option<Vec<PromptVariable>>,
     cluster_client: Option<Arc<ClusterService>>,
-    directive_prompt: Option<String>,
+    directive: Option<Arc<crate::kernel::directive::DirectiveService>>,
     cached_config: Option<PromptConfig>,
-    memory_service: Option<Arc<MemoryService>>,
+    memory_enabled: bool,
     memory_recall_budget: usize,
-    system_overlay: Option<String>,
-    skill_overlay: Option<String>,
+    agent_id: String,
+    user_id: String,
+    session_id: String,
 }
 
 impl CloudPromptLoader {
-    pub fn new(storage: Arc<AgentStore>, skills: Arc<SkillCatalog>) -> Self {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        storage: Arc<AgentStore>,
+        org: Arc<OrgServices>,
+        tools: Arc<Vec<ToolDefinition>>,
+        variables: Vec<PromptVariable>,
+        cached_config: Option<PromptConfig>,
+        cwd: PathBuf,
+        cluster_client: Option<Arc<ClusterService>>,
+        directive: Option<Arc<crate::kernel::directive::DirectiveService>>,
+        memory_enabled: bool,
+        memory_recall_budget: usize,
+        agent_id: String,
+        user_id: String,
+        session_id: String,
+    ) -> Self {
         Self {
             storage,
-            skills,
+            org,
             identity: None,
             soul: None,
             runtime: None,
-            cwd: None,
+            cwd: Some(cwd),
             recent_errors: None,
-            tools: None,
-            variables: None,
-            cluster_client: None,
-            directive_prompt: None,
-            cached_config: None,
-            memory_service: None,
-            memory_recall_budget: 2000,
-            system_overlay: None,
-            skill_overlay: None,
+            tools: Some(tools),
+            variables: Some(variables),
+            cluster_client,
+            directive,
+            cached_config,
+            memory_enabled,
+            memory_recall_budget,
+            agent_id,
+            user_id,
+            session_id,
         }
-    }
-
-    pub fn with_cached_config(mut self, config: Option<PromptConfig>) -> Self {
-        self.cached_config = config;
-        self
-    }
-    pub fn with_identity(mut self, s: impl Into<String>) -> Self {
-        let s = s.into();
-        if !s.is_empty() {
-            self.identity = Some(s);
-        }
-        self
-    }
-    pub fn with_soul(mut self, s: impl Into<String>) -> Self {
-        let s = s.into();
-        if !s.is_empty() {
-            self.soul = Some(s);
-        }
-        self
-    }
-    pub fn with_runtime(mut self, s: impl Into<String>) -> Self {
-        let s = s.into();
-        if !s.is_empty() {
-            self.runtime = Some(s);
-        }
-        self
-    }
-    pub fn with_cwd(mut self, cwd: PathBuf) -> Self {
-        self.cwd = Some(cwd);
-        self
-    }
-    pub fn with_recent_errors(mut self, s: impl Into<String>) -> Self {
-        let s = s.into();
-        if !s.is_empty() {
-            self.recent_errors = Some(s);
-        }
-        self
-    }
-    pub fn with_tools(mut self, tools: Arc<Vec<ToolSchema>>) -> Self {
-        self.tools = Some(tools);
-        self
-    }
-    pub fn with_variables(mut self, vars: Vec<PromptVariable>) -> Self {
-        if !vars.is_empty() {
-            self.variables = Some(vars);
-        }
-        self
-    }
-    pub fn with_cluster_client(mut self, client: Arc<ClusterService>) -> Self {
-        self.cluster_client = Some(client);
-        self
-    }
-    pub fn with_directive_prompt(mut self, prompt: Option<String>) -> Self {
-        self.directive_prompt = prompt;
-        self
-    }
-    pub fn with_memory_service(
-        mut self,
-        memory: Option<Arc<MemoryService>>,
-        recall_budget: usize,
-    ) -> Self {
-        self.memory_service = memory;
-        self.memory_recall_budget = recall_budget;
-        self
-    }
-    pub fn with_overlays(mut self, system: Option<String>, skill: Option<String>) -> Self {
-        self.system_overlay = system;
-        self.skill_overlay = skill;
-        self
     }
 
     /// Build the full system prompt. Fetches data from DB, then delegates to pure build_prompt().
-    pub async fn build(&self, agent_id: &str, user_id: &str, session_id: &str) -> Result<String> {
+    async fn build_prompt(&self, meta: &PromptRequestMeta) -> Result<String> {
+        let directive_prompt = self.directive.as_ref().and_then(|d| d.cached_prompt());
+
         let (config, errors_text, state, session_record) =
-            self.fetch_all(agent_id, session_id).await;
+            self.fetch_all(&self.agent_id, &self.session_id).await;
 
         let config = config?;
         let state = state?;
@@ -175,18 +128,19 @@ impl CloudPromptLoader {
         };
 
         let skill_prompts: Vec<SkillPromptEntry> = self
-            .skills
-            .visible_skills(user_id)
+            .org
+            .catalog()
+            .visible_skills(&self.user_id)
             .into_iter()
             .filter(|s| !s.executable)
             .map(|s| SkillPromptEntry {
-                display_name: crate::kernel::skills::model::tool_key::format(&s, user_id),
+                display_name: crate::kernel::skills::model::tool_key::format(&s, &self.user_id),
                 description: s.description.clone(),
             })
             .collect();
 
         let cluster_info = self.build_cluster_info().await;
-        let memory_recall = self.build_memory_recall(user_id, agent_id).await;
+        let memory_recall = self.build_memory_recall().await;
 
         let (channel_type, channel_chat_id) = session_record
             .as_ref()
@@ -201,12 +155,12 @@ impl CloudPromptLoader {
                 cached_config: resolved_config,
                 variables,
                 skill_prompts,
-                directive_prompt: self.directive_prompt.clone(),
+                directive_prompt,
             },
             tools: self.tools.clone().unwrap_or_else(|| Arc::new(vec![])),
             cwd: self.cwd.clone().unwrap_or_else(|| PathBuf::from(".")),
-            system_overlay: self.system_overlay.clone(),
-            skill_overlay: self.skill_overlay.clone(),
+            system_overlay: meta.system_overlay.clone(),
+            skill_overlay: meta.skill_overlay.clone(),
             memory_recall,
             cluster_info,
             recent_errors: if self.recent_errors.is_some() {
@@ -275,14 +229,14 @@ impl CloudPromptLoader {
         Some(buf)
     }
 
-    async fn build_memory_recall(&self, user_id: &str, agent_id: &str) -> Option<String> {
-        let mem = self.memory_service.as_ref()?;
+    async fn build_memory_recall(&self) -> Option<String> {
+        let mem = self.org.memory().filter(|_| self.memory_enabled)?;
         let budget = self.memory_recall_budget;
         if budget < 20 {
             return None;
         }
         let fetch_limit = (budget / 80).clamp(5, 50) as u32;
-        let entries = mem.recall(user_id, agent_id, fetch_limit).await;
+        let entries = mem.recall(&self.user_id, &self.agent_id, fetch_limit).await;
         crate::kernel::memory::format::format_for_prompt(&entries, budget)
     }
 
@@ -312,5 +266,12 @@ impl CloudPromptLoader {
                 String::new()
             }
         }
+    }
+}
+
+#[async_trait]
+impl PromptResolver for CloudPromptLoader {
+    async fn resolve(&self, meta: &PromptRequestMeta) -> Result<String> {
+        self.build_prompt(meta).await
     }
 }

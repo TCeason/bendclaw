@@ -11,7 +11,6 @@ use bendclaw::kernel::run::assembly::build_run_driver;
 use bendclaw::kernel::run::assembly::RunAssemblyDeps;
 use bendclaw::kernel::run::assembly::RunConfig;
 use bendclaw::kernel::run::assembly::RunRequest;
-use bendclaw::kernel::tools::catalog::tool_registry::ToolRegistry;
 use bendclaw::kernel::tools::catalog::toolset::Toolset;
 use bendclaw::kernel::trace::TraceRecorder;
 use bendclaw_test_harness::mocks::llm::MockLLMProvider;
@@ -29,7 +28,8 @@ fn test_deps() -> RunAssemblyDeps {
     RunAssemblyDeps {
         workspace,
         toolset: Toolset {
-            registry: Arc::new(ToolRegistry::new()),
+            definitions: Arc::new(vec![]),
+            bindings: Arc::new(std::collections::HashMap::new()),
             tools: Arc::new(vec![]),
             allowed_tool_names: None,
         },

@@ -14,7 +14,7 @@ use crate::kernel::OperationMeta;
 /// Operation event emitted when a tool starts.
 pub fn tool_started_message(parsed: &ParsedToolCall) -> Message {
     Message::operation_event(
-        parsed.kind.as_str(),
+        parsed.kind_str(),
         &parsed.call.name,
         "started",
         serde_json::json!({"tool_call_id": parsed.call.id, "arguments": parsed.arguments}),
@@ -24,7 +24,7 @@ pub fn tool_started_message(parsed: &ParsedToolCall) -> Message {
 /// Operation event emitted when a tool completes successfully.
 pub fn tool_completed_message(parsed: &ParsedToolCall, meta: &OperationMeta) -> Message {
     Message::operation_event(
-        parsed.kind.as_str(),
+        parsed.kind_str(),
         &parsed.call.name,
         "completed",
         serde_json::json!({"tool_call_id": parsed.call.id, "duration_ms": meta.duration_ms}),
@@ -38,7 +38,7 @@ pub fn tool_failed_message(
     error: String,
 ) -> Message {
     Message::operation_event(
-        parsed.kind.as_str(),
+        parsed.kind_str(),
         &parsed.call.name,
         "failed",
         serde_json::json!({"tool_call_id": parsed.call.id, "duration_ms": meta.duration_ms, "error": error}),

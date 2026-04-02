@@ -3,11 +3,11 @@ use crate::kernel::skills::model::skill::Skill;
 use crate::service::state::AppState;
 
 pub(super) fn list_hub_skills(state: &AppState) -> Vec<Skill> {
-    state.runtime.skills().hub_skills()
+    state.runtime.org().catalog().hub_skills()
 }
 
 pub(super) fn hub_status(state: &AppState) -> HubStatus {
-    let catalog = state.runtime.skills();
+    let catalog = state.runtime.org().catalog();
     let hub_config = catalog.hub_config().cloned();
     let last_sync = catalog.hub_last_sync();
     let hub_skill_count = catalog.hub_skills().len();
@@ -25,7 +25,7 @@ pub(super) fn hub_status(state: &AppState) -> HubStatus {
 }
 
 pub(super) fn skill_credentials(state: &AppState, skill_name: &str) -> Vec<CredentialSpec> {
-    let skill = state.runtime.skills().get_hub(skill_name);
+    let skill = state.runtime.org().catalog().get_hub(skill_name);
     skill
         .and_then(|s| s.manifest)
         .map(|m| m.credentials)

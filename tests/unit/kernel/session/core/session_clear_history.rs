@@ -8,7 +8,6 @@ use bendclaw::kernel::session::workspace::SandboxResolver;
 use bendclaw::kernel::session::workspace::Workspace;
 use bendclaw::kernel::session::Session;
 use bendclaw::kernel::skills::catalog::SkillCatalog;
-use bendclaw::kernel::tools::catalog::tool_registry::ToolRegistry;
 use bendclaw::kernel::tools::catalog::toolset::Toolset;
 use bendclaw_test_harness::mocks::llm::MockLLMProvider;
 use bendclaw_test_harness::mocks::skill::NoopSkillStore;
@@ -46,7 +45,8 @@ fn make_session(id: &str) -> Arc<Session> {
         SessionResources {
             workspace,
             toolset: Toolset {
-                registry: Arc::new(ToolRegistry::new()),
+                definitions: Arc::new(vec![]),
+                bindings: Arc::new(std::collections::HashMap::new()),
                 tools: Arc::new(vec![]),
                 allowed_tool_names: None,
             },

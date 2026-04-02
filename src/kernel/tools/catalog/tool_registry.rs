@@ -68,6 +68,11 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// Iterate over all registered tool trait objects.
+    pub fn iter_tools(&self) -> impl Iterator<Item = &Arc<dyn Tool>> {
+        self.tools.values()
+    }
+
     pub fn get_by_ids(&self, ids: &[ToolId]) -> Vec<ToolSchema> {
         ids.iter()
             .filter_map(|id| {

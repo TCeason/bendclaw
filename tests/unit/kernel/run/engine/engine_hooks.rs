@@ -12,7 +12,6 @@ use bendclaw::kernel::run::hooks::SteeringDecision;
 use bendclaw::kernel::run::hooks::SteeringSource;
 use bendclaw::kernel::run::hooks::TurnDecision;
 use bendclaw::kernel::run::result::Reason;
-use bendclaw::kernel::tools::catalog::tool_registry::ToolRegistry;
 use bendclaw::kernel::tools::run_labels::RunLabels;
 use bendclaw::kernel::tools::runtime::tool_progressive::ProgressiveToolView;
 use bendclaw::kernel::tools::runtime::ToolStack;
@@ -103,8 +102,9 @@ fn build_engine(
         agent_id: "agent-1".to_string(),
     });
     let tool_stack = ToolStack::build(ToolStackConfig {
-        toolset: bendclaw::kernel::tools::catalog::toolset::Toolset {
-            registry: Arc::new(ToolRegistry::new()),
+        toolset: bendclaw::kernel::tools::catalog::Toolset {
+            definitions: Arc::new(vec![]),
+            bindings: Arc::new(std::collections::HashMap::new()),
             tools: Arc::new(vec![]),
             allowed_tool_names: None,
         },

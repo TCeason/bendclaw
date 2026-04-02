@@ -9,6 +9,8 @@ pub mod tool_id;
 pub mod tool_services;
 pub mod web;
 
+pub use catalog::ToolDefinition;
+pub use catalog::ToolTarget;
 pub use operation::Impact;
 pub use operation::OpType;
 pub use operation::OperationMeta;

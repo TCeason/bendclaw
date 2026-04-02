@@ -1,7 +1,4 @@
 //! Factory that assembles the full tool execution stack.
-//!
-//! Hides CallExecutor / ExecutionRecorder / EventEmitter wiring
-//! so callers only deal with ToolStack.
 
 use std::sync::Arc;
 
@@ -36,13 +33,12 @@ pub struct ToolStack {
 impl ToolStack {
     pub fn build(config: ToolStackConfig) -> Self {
         let executor = CallExecutor::new(
-            config.toolset.registry,
+            &config.toolset,
             config.skill_executor,
             config.tool_context,
             config.cancel,
             config.event_tx.clone(),
-        )
-        .with_allowed_tool_names(config.toolset.allowed_tool_names);
+        );
         let recorder = ExecutionRecorder::new(config.labels, config.trace, config.event_tx.clone());
         let emitter = EventEmitter::new(config.event_tx);
         Self {
