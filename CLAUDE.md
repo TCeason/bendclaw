@@ -11,7 +11,7 @@
 - Design for testability
 - `mod.rs` files must only contain module declarations (`mod`), re-exports (`pub use`), and `use` statements — no code logic
 - `lib.rs` files follow the same rule: only module declarations, re-exports, and `use` statements — no business logic
-- `agent-sdk` lives in `crates/agent-sdk` as a workspace member — the core agent runtime engine
+- `bend-agent` lives in `crates/bend-agent` as a workspace member — the core agent runtime engine
 
 # Testing
 

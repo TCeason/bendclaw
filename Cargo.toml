@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/agent-sdk"]
+members = ["crates/bend-agent"]
 resolver = "2"
 
 [workspace.package]
@@ -7,7 +7,7 @@ edition = "2021"
 version = "0.1.0"
 
 [workspace.dependencies]
-agent-sdk = { path = "crates/agent-sdk" }
+bend-agent = { path = "crates/bend-agent" }
 anyhow = "1"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["macros"] }
@@ -37,7 +37,7 @@ name = "bendclaw"
 path = "src/bin/bendclaw.rs"
 
 [dependencies]
-agent-sdk.workspace = true
+bend-agent.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
