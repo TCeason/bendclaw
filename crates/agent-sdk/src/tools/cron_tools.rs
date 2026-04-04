@@ -51,6 +51,12 @@ impl CronStore {
     }
 }
 
+impl Default for CronStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // --- CronCreateTool ---
 
 pub struct CronCreateTool {

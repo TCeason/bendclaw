@@ -113,7 +113,7 @@ impl Tool for FileReadTool {
         // Read text file
         let content = tokio::fs::read_to_string(&path)
             .await
-            .map_err(|e| ToolError::IoError(e))?;
+            .map_err(ToolError::IoError)?;
 
         // Track file state for staleness detection
         {

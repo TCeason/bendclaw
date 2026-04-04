@@ -101,8 +101,8 @@ impl Tool for ToolSearchTool {
 
         let tools = self.available_tools.read().await;
 
-        let matches: Vec<&ToolInfo> = if query.starts_with("select:") {
-            let names: Vec<&str> = query[7..].split(',').map(|s| s.trim()).collect();
+        let matches: Vec<&ToolInfo> = if let Some(selected) = query.strip_prefix("select:") {
+            let names: Vec<&str> = selected.split(',').map(|s| s.trim()).collect();
             tools
                 .iter()
                 .filter(|t| names.iter().any(|n| t.name.eq_ignore_ascii_case(n)))

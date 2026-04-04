@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 
 use crate::types::ApiToolParam;
-use crate::types::ContentBlock;
 use crate::types::Message;
 use crate::types::SystemBlock;
 use crate::types::ThinkingConfig;

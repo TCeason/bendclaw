@@ -15,14 +15,9 @@ use crate::types::ToolUseContext;
 pub type AskUserFn =
     Arc<dyn Fn(&str) -> futures::future::BoxFuture<'static, Result<String, String>> + Send + Sync>;
 
+#[derive(Default)]
 pub struct AskUserTool {
     ask_fn: Option<AskUserFn>,
-}
-
-impl Default for AskUserTool {
-    fn default() -> Self {
-        Self { ask_fn: None }
-    }
 }
 
 impl AskUserTool {
@@ -68,7 +63,7 @@ impl Tool for AskUserTool {
             Some(ask_fn) => {
                 let answer = (ask_fn)(question)
                     .await
-                    .map_err(|e| ToolError::ExecutionError(e))?;
+                    .map_err(ToolError::ExecutionError)?;
                 Ok(ToolResult::text(answer))
             }
             None => Ok(ToolResult::error(

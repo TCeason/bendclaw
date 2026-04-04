@@ -123,21 +123,15 @@ fn compute_hunks<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<Hunk<'a>> {
         }
 
         // Start hunk with context before
-        let context_start = if i >= context_lines {
-            i - context_lines
-        } else {
-            0
-        };
+        let context_start = i.saturating_sub(context_lines);
 
         let mut hunk_lines = Vec::new();
-        let mut old_start = 0;
-        let mut new_start = 0;
 
         // Calculate starting positions
         let mut oi = 0;
         let mut ni = 0;
-        for j in 0..context_start {
-            match &edits[j] {
+        for line in edits.iter().take(context_start) {
+            match line {
                 DiffLine::Context(_) => {
                     oi += 1;
                     ni += 1;
@@ -146,8 +140,8 @@ fn compute_hunks<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<Hunk<'a>> {
                 DiffLine::Added(_) => ni += 1,
             }
         }
-        old_start = oi;
-        new_start = ni;
+        let old_start = oi;
+        let new_start = ni;
 
         // Add context before
         let mut j = context_start;
@@ -188,7 +182,7 @@ fn compute_hunks<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<Hunk<'a>> {
         }
 
         // Remove trailing context beyond limit
-        while hunk_lines.len() > 0 {
+        while !hunk_lines.is_empty() {
             if matches!(hunk_lines.last(), Some(DiffLine::Context(_))) {
                 let trailing_context = hunk_lines
                     .iter()

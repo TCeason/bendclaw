@@ -13,6 +13,7 @@ use crate::utils::messages as msg_utils;
 use crate::utils::retry;
 
 /// Run the main agentic loop.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_loop(
     api_client: ApiClient,
     mut messages: Vec<Message>,
@@ -201,7 +202,7 @@ pub(crate) async fn run_loop(
         .iter()
         .rev()
         .find(|m| m.role == MessageRole::Assistant)
-        .map(|m| extract_text(m))
+        .map(extract_text)
         .unwrap_or_default();
 
     // Send result event

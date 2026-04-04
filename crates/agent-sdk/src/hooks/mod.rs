@@ -95,6 +95,7 @@ pub struct HookRule {
 }
 
 /// Hook configuration for the agent.
+#[derive(Default)]
 pub struct HookConfig {
     pub pre_tool_use: Vec<HookRule>,
     pub post_tool_use: Vec<HookRule>,
@@ -117,34 +118,6 @@ pub struct HookConfig {
     pub pre_compact: Vec<HookRule>,
     pub post_compact: Vec<HookRule>,
     pub teammate_idle: Vec<HookRule>,
-}
-
-impl Default for HookConfig {
-    fn default() -> Self {
-        Self {
-            pre_tool_use: Vec::new(),
-            post_tool_use: Vec::new(),
-            post_tool_use_failure: Vec::new(),
-            post_sampling: Vec::new(),
-            session_start: Vec::new(),
-            session_end: Vec::new(),
-            stop: Vec::new(),
-            subagent_start: Vec::new(),
-            subagent_stop: Vec::new(),
-            user_prompt_submit: Vec::new(),
-            permission_request: Vec::new(),
-            permission_denied: Vec::new(),
-            task_created: Vec::new(),
-            task_completed: Vec::new(),
-            config_change: Vec::new(),
-            cwd_changed: Vec::new(),
-            file_changed: Vec::new(),
-            notification: Vec::new(),
-            pre_compact: Vec::new(),
-            post_compact: Vec::new(),
-            teammate_idle: Vec::new(),
-        }
-    }
 }
 
 impl HookConfig {
@@ -285,8 +258,7 @@ fn matches_tool(matcher: &str, tool_name: &str) -> bool {
     }
 
     // Support prefix matching: "mcp__*"
-    if matcher.ends_with('*') {
-        let prefix = &matcher[..matcher.len() - 1];
+    if let Some(prefix) = matcher.strip_suffix('*') {
         return tool_name.starts_with(prefix);
     }
 

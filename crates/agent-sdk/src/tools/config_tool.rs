@@ -26,6 +26,12 @@ impl ConfigStore {
     }
 }
 
+impl Default for ConfigStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// ConfigTool for get/set/list session settings.
 pub struct ConfigTool {
     store: ConfigStore,

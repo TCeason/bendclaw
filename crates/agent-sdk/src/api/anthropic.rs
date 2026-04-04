@@ -95,7 +95,7 @@ impl LLMProvider for AnthropicProvider {
             max_tokens: request.max_tokens,
             messages: api_messages,
             system: request.system,
-            tools: if request.tools.as_ref().map_or(true, |t| t.is_empty()) {
+            tools: if request.tools.as_ref().is_none_or(|t| t.is_empty()) {
                 None
             } else {
                 request.tools

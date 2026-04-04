@@ -237,14 +237,12 @@ impl ApiClient {
     /// Delegates to the Anthropic provider only; prefer `create_message()` instead.
     pub async fn create_message_stream(
         &self,
-        messages: &[Message],
-        system: Option<Vec<SystemBlock>>,
-        tools: Option<Vec<ApiToolParam>>,
-        max_tokens: Option<u64>,
-        thinking: Option<ThinkingConfig>,
+        _messages: &[Message],
+        _system: Option<Vec<SystemBlock>>,
+        _tools: Option<Vec<ApiToolParam>>,
+        _max_tokens: Option<u64>,
+        _thinking: Option<ThinkingConfig>,
     ) -> Result<reqwest::Response, ApiError> {
-        // For backward compat, this method is only meaningful for direct SSE parsing.
-        // New code should use create_message() which handles both providers.
         Err(ApiError::ParseError(
             "create_message_stream is deprecated; use create_message() instead".to_string(),
         ))
@@ -252,16 +250,8 @@ impl ApiClient {
 
     /// Legacy: Parse Anthropic SSE stream. Kept for backward compatibility.
     pub async fn parse_stream(
-        response: reqwest::Response,
+        _response: reqwest::Response,
     ) -> Result<(Message, Usage, Option<String>), ApiError> {
-        let pr = super::anthropic::AnthropicProvider::new(
-            Client::new(),
-            String::new(),
-            String::new(),
-            HashMap::new(),
-        );
-        // Redirect to new provider-based parsing isn't possible with raw response.
-        // This method is kept only for API compat but new code should use create_message().
         Err(ApiError::ParseError(
             "parse_stream is deprecated; use create_message() instead".to_string(),
         ))

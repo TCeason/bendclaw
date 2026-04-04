@@ -65,6 +65,12 @@ impl TaskStore {
     }
 }
 
+impl Default for TaskStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // --- TaskCreateTool ---
 
 pub struct TaskCreateTool {

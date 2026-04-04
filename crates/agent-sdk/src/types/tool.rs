@@ -209,19 +209,14 @@ pub struct SandboxFilesystemConfig {
 }
 
 /// Permission mode for controlling tool access.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PermissionMode {
     Default,
     AcceptEdits,
+    #[default]
     BypassPermissions,
     Plan,
     DontAsk,
     Auto,
-}
-
-impl Default for PermissionMode {
-    fn default() -> Self {
-        Self::BypassPermissions
-    }
 }

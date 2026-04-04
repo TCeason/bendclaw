@@ -40,6 +40,12 @@ impl TodoStore {
     }
 }
 
+impl Default for TodoStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// TodoWriteTool - Manage a session todo/checklist.
 pub struct TodoWriteTool {
     store: TodoStore,

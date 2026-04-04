@@ -57,7 +57,7 @@ impl Tool for McpToolWrapper {
             .client
             .call_tool(&self.server_name, &self.tool_def.name, input)
             .await
-            .map_err(|e| ToolError::ExecutionError(e))?;
+            .map_err(ToolError::ExecutionError)?;
 
         if result.is_error {
             let text: String = result

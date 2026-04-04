@@ -77,24 +77,7 @@ pub fn check_permission(
     // Default behavior based on mode
     match config.mode {
         PermissionMode::DontAsk | PermissionMode::Auto => PermissionResult::Allow,
-        PermissionMode::AcceptEdits => {
-            // Allow read-only tools and file edits
-            let read_only_tools = [
-                "Read",
-                "Glob",
-                "Grep",
-                "WebFetch",
-                "WebSearch",
-                "TaskList",
-                "TaskGet",
-                "ToolSearch",
-            ];
-            if read_only_tools.contains(&tool_name) {
-                PermissionResult::Allow
-            } else {
-                PermissionResult::Allow // acceptEdits mode allows edits
-            }
-        }
+        PermissionMode::AcceptEdits => PermissionResult::Allow,
         PermissionMode::Plan => PermissionResult::Deny(format!(
             "Tool '{}' requires approval in plan mode",
             tool_name
@@ -107,8 +90,7 @@ fn matches_rule(rule_name: &str, tool_name: &str) -> bool {
     if rule_name == "*" {
         return true;
     }
-    if rule_name.ends_with('*') {
-        let prefix = &rule_name[..rule_name.len() - 1];
+    if let Some(prefix) = rule_name.strip_suffix('*') {
         return tool_name.starts_with(prefix);
     }
     rule_name == tool_name

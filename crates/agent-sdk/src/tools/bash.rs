@@ -190,10 +190,8 @@ async fn run_command(
 }
 
 fn check_destructive(command: &str) -> Option<&'static str> {
-    for pattern in DESTRUCTIVE_PATTERNS {
-        if command.contains(pattern) {
-            return Some(pattern);
-        }
-    }
-    None
+    DESTRUCTIVE_PATTERNS
+        .iter()
+        .find(|pattern| command.contains(**pattern))
+        .copied()
 }

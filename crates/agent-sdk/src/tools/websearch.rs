@@ -26,14 +26,9 @@ pub type SearchFn = Arc<
         + Sync,
 >;
 
+#[derive(Default)]
 pub struct WebSearchTool {
     search_fn: Option<SearchFn>,
-}
-
-impl Default for WebSearchTool {
-    fn default() -> Self {
-        Self { search_fn: None }
-    }
 }
 
 impl WebSearchTool {
@@ -101,7 +96,7 @@ impl Tool for WebSearchTool {
             Some(search_fn) => {
                 let results = (search_fn)(query, max_results)
                     .await
-                    .map_err(|e| ToolError::ExecutionError(e))?;
+                    .map_err(ToolError::ExecutionError)?;
 
                 if results.is_empty() {
                     return Ok(ToolResult::text("No results found.".to_string()));

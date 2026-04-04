@@ -13,6 +13,7 @@ use crate::tools::ToolRegistry;
 use crate::types::*;
 
 /// Configuration options for creating an agent.
+#[derive(Default)]
 pub struct AgentOptions {
     /// LLM model ID (default: claude-sonnet-4-6-20250514).
     pub model: Option<String>,
@@ -74,43 +75,6 @@ pub struct AgentOptions {
     pub debug: Option<bool>,
     /// Additional working directories.
     pub additional_directories: Option<Vec<String>>,
-}
-
-impl Default for AgentOptions {
-    fn default() -> Self {
-        Self {
-            model: None,
-            api_key: None,
-            base_url: None,
-            cwd: None,
-            system_prompt: None,
-            append_system_prompt: None,
-            max_turns: None,
-            max_budget_usd: None,
-            permission_mode: None,
-            allowed_tools: None,
-            disallowed_tools: None,
-            can_use_tool: None,
-            custom_tools: Vec::new(),
-            mcp_servers: HashMap::new(),
-            agents: HashMap::new(),
-            thinking: None,
-            max_tokens: None,
-            json_schema: None,
-            hooks: None,
-            custom_headers: HashMap::new(),
-            continue_session: None,
-            resume: None,
-            fork_session: None,
-            persist_session: None,
-            session_id: None,
-            effort: None,
-            fallback_model: None,
-            sandbox: None,
-            debug: None,
-            additional_directories: None,
-        }
-    }
 }
 
 /// Subagent definition.

@@ -90,28 +90,25 @@ impl Tool for GlobTool {
 
         let mut files: Vec<(String, std::time::SystemTime)> = Vec::new();
 
-        for entry in entries {
-            if let Ok(path) = entry {
-                // Skip directories in SKIP_DIRS
-                let should_skip = path.components().any(|c| {
-                    if let std::path::Component::Normal(os_str) = c {
-                        SKIP_DIRS.contains(&os_str.to_str().unwrap_or(""))
-                    } else {
-                        false
-                    }
-                });
-
-                if should_skip {
-                    continue;
+        for path in entries.flatten() {
+            let should_skip = path.components().any(|c| {
+                if let std::path::Component::Normal(os_str) = c {
+                    SKIP_DIRS.contains(&os_str.to_str().unwrap_or(""))
+                } else {
+                    false
                 }
+            });
 
-                if path.is_file() {
-                    let modified = path
-                        .metadata()
-                        .and_then(|m| m.modified())
-                        .unwrap_or(std::time::UNIX_EPOCH);
-                    files.push((path.to_string_lossy().to_string(), modified));
-                }
+            if should_skip {
+                continue;
+            }
+
+            if path.is_file() {
+                let modified = path
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::UNIX_EPOCH);
+                files.push((path.to_string_lossy().to_string(), modified));
             }
         }
 

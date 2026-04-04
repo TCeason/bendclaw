@@ -10,12 +10,9 @@ use super::provider::LLMProvider;
 use super::provider::ProviderRequest;
 use super::provider::ProviderResponse;
 use super::ApiError;
-use crate::types::ApiToolParam;
 use crate::types::ContentBlock;
 use crate::types::Message;
 use crate::types::MessageRole;
-use crate::types::SystemBlock;
-use crate::types::ThinkingConfig;
 use crate::types::Usage;
 
 // --- OpenAI request types ---
