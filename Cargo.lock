@@ -3,6 +3,30 @@
 version = 4
 
 [[package]]
+name = "agent-sdk"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "bytes",
+ "chrono",
+ "futures",
+ "glob",
+ "pin-project-lite",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -173,6 +197,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 name = "bendclaw"
 version = "0.1.0"
 dependencies = [
+ "agent-sdk",
  "anyhow",
  "async-trait",
  "axum",
@@ -181,7 +206,6 @@ dependencies = [
  "dotenvy",
  "futures",
  "insta",
- "open-agent-sdk",
  "serde",
  "serde_json",
  "tempfile",
@@ -1080,30 +1104,6 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
-
-[[package]]
-name = "open-agent-sdk"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "base64",
- "bytes",
- "chrono",
- "futures",
- "glob",
- "pin-project-lite",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
- "uuid",
-]
 
 [[package]]
 name = "openssl"

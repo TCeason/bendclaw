@@ -1,3 +1,0 @@
-[submodule "crates/open-agent-sdk"]
-	path = crates/open-agent-sdk
-	url = git@github.com:codeany-ai/open-agent-sdk-rust.git

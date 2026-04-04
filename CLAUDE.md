@@ -11,7 +11,7 @@
 - Design for testability
 - `mod.rs` files must only contain module declarations (`mod`), re-exports (`pub use`), and `use` statements — no code logic
 - `lib.rs` files follow the same rule: only module declarations, re-exports, and `use` statements — no business logic
-- `open-agent-sdk` lives in `crates/open-agent-sdk` as a git submodule — treat it as a dependency, do not modify it directly
+- `agent-sdk` lives in `crates/agent-sdk` as a workspace member — the core agent runtime engine
 
 # Testing
 
