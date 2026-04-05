@@ -7,6 +7,7 @@ license = "MIT"
 repository = "https://github.com/EvotAI/bendclaw"
 
 [dependencies]
+bend-base.workspace = true
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 futures = "0.3"

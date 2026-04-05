@@ -1,7 +1,7 @@
 mod args;
-mod command;
-mod output;
+mod cli;
+mod sink;
 
 pub use args::*;
-pub use command::*;
-pub use output::*;
+pub use cli::*;
+pub use sink::*;

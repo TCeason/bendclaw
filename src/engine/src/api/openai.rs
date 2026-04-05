@@ -1,6 +1,8 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use async_trait::async_trait;
+use bend_base::logx;
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
@@ -112,6 +114,18 @@ impl LLMProvider for OpenAIProvider {
         &self,
         request: ProviderRequest<'_>,
     ) -> Result<ProviderResponse, ApiError> {
+        let started_at = Instant::now();
+        logx!(
+            info,
+            "llm",
+            "request",
+            provider = "openai",
+            model = %request.model,
+            message_count = request.messages.len() as u64,
+            tool_count = request.tools.as_ref().map(|tools| tools.len()).unwrap_or(0) as u64,
+            max_tokens = request.max_tokens,
+        );
+
         // Convert messages to OpenAI format
         let mut openai_messages = Vec::new();
 
@@ -250,19 +264,70 @@ impl LLMProvider for OpenAIProvider {
             req_builder = req_builder.header(key, value);
         }
 
-        let response = req_builder.json(&body).send().await.map_err(|e| {
-            if e.is_timeout() {
-                ApiError::Timeout
-            } else {
-                ApiError::NetworkError(e.to_string())
+        let response = match req_builder.json(&body).send().await {
+            Ok(response) => response,
+            Err(error) => {
+                let api_error = if error.is_timeout() {
+                    ApiError::Timeout
+                } else {
+                    ApiError::NetworkError(error.to_string())
+                };
+                logx!(
+                    warn,
+                    "llm",
+                    "request_failed",
+                    provider = "openai",
+                    model = %request.model,
+                    error = %api_error,
+                    elapsed_ms = started_at.elapsed().as_millis() as u64,
+                );
+                return Err(api_error);
             }
-        })?;
+        };
 
         if !response.status().is_success() {
-            return Err(response::http_error(response).await);
+            let error = response::http_error(response).await;
+            logx!(
+                warn,
+                "llm",
+                "response_failed",
+                provider = "openai",
+                model = %request.model,
+                error = %error,
+                elapsed_ms = started_at.elapsed().as_millis() as u64,
+            );
+            return Err(error);
         }
 
-        parse_openai_stream(response).await
+        let provider_response = match parse_openai_stream(response).await {
+            Ok(provider_response) => provider_response,
+            Err(error) => {
+                logx!(
+                    warn,
+                    "llm",
+                    "stream_failed",
+                    provider = "openai",
+                    model = %request.model,
+                    error = %error,
+                    elapsed_ms = started_at.elapsed().as_millis() as u64,
+                );
+                return Err(error);
+            }
+        };
+
+        logx!(
+            info,
+            "llm",
+            "completed",
+            provider = "openai",
+            model = %request.model,
+            input_tokens = provider_response.usage.input_tokens,
+            output_tokens = provider_response.usage.output_tokens,
+            stop_reason = %provider_response.stop_reason.clone().unwrap_or_default(),
+            elapsed_ms = started_at.elapsed().as_millis() as u64,
+        );
+
+        Ok(provider_response)
     }
 }
 

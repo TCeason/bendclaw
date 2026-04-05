@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use bend_base::logx;
+
 use crate::api::ApiError;
 
 /// Retry configuration.
@@ -75,12 +77,14 @@ where
                 }
 
                 let delay = get_retry_delay(config, attempt);
-                tracing::warn!(
-                    "Retrying after error (attempt {}/{}): {}. Waiting {:?}",
-                    attempt + 1,
-                    config.max_retries,
-                    error,
-                    delay
+                logx!(
+                    warn,
+                    "llm",
+                    "retrying",
+                    attempt = attempt + 1,
+                    max_retries = config.max_retries,
+                    error = %error,
+                    delay_ms = delay.as_millis() as u64,
                 );
                 tokio::time::sleep(delay).await;
                 last_error = Some(error);

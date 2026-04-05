@@ -5,74 +5,33 @@ use axum::extract::State;
 use axum::response::Html;
 use axum::response::IntoResponse;
 use axum::response::Sse;
-use axum::routing::get;
-use axum::routing::post;
 use axum::Json;
-use axum::Router;
 use futures::stream::Stream;
 use serde::Deserialize;
 use serde::Serialize;
-use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
-use tower_http::cors::CorsLayer;
 
 use crate::agent::build_agent_options;
-use crate::conf::Config;
-use crate::conf::LlmConfig;
-use crate::error::BendclawError;
-use crate::error::Result;
+use crate::server::server::AppState;
 use crate::server::stream;
 
 const INDEX_HTML: &str = include_str!("index.html");
 
-struct AppState {
-    agent: Mutex<Option<bend_agent::Agent>>,
-    llm: LlmConfig,
-}
-
 #[derive(Deserialize)]
-struct ChatRequest {
+pub(crate) struct ChatRequest {
     message: String,
 }
 
 #[derive(Serialize)]
-struct StatusResponse {
+pub(crate) struct StatusResponse {
     status: String,
 }
 
-pub async fn start(conf: Config) -> Result<()> {
-    let llm = conf.active_llm();
-    let state = Arc::new(AppState {
-        agent: Mutex::new(None),
-        llm,
-    });
-
-    let app = Router::new()
-        .route("/", get(index_handler))
-        .route("/api/new", post(new_session_handler))
-        .route("/api/chat", post(chat_handler))
-        .layer(CorsLayer::permissive())
-        .with_state(state);
-
-    let addr = format!("{}:{}", conf.server.host, conf.server.port);
-    tracing::info!("bendclaw server listening on http://{addr}");
-
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .map_err(|e| BendclawError::Run(format!("failed to bind {addr}: {e}")))?;
-
-    axum::serve(listener, app)
-        .await
-        .map_err(|e| BendclawError::Run(format!("server error: {e}")))?;
-
-    Ok(())
-}
-
-async fn index_handler() -> Html<&'static str> {
+pub(crate) async fn index() -> Html<&'static str> {
     Html(INDEX_HTML)
 }
 
-async fn new_session_handler(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
+pub(crate) async fn new_session(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
     if let Some(agent) = state.agent.lock().await.take() {
         agent.close().await;
     }
@@ -81,7 +40,7 @@ async fn new_session_handler(State(state): State<Arc<AppState>>) -> Json<StatusR
     })
 }
 
-async fn chat_handler(
+pub(crate) async fn chat(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ChatRequest>,
 ) -> impl IntoResponse {

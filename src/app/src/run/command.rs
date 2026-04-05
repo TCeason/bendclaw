@@ -1,4 +1,7 @@
 use std::sync::Arc;
+use std::time::Instant;
+
+use bend_base::logx;
 
 use crate::conf::LlmConfig;
 use crate::error::BendclawError;
@@ -34,6 +37,7 @@ pub async fn run_with_runner(
     run_store: &dyn RunStore,
     runner: &dyn AgentRunner,
 ) -> Result<()> {
+    let started_at = Instant::now();
     let cwd = std::env::current_dir()
         .map_err(|e| BendclawError::Run(format!("failed to get cwd: {e}")))?
         .to_string_lossy()
@@ -59,16 +63,44 @@ pub async fn run_with_runner(
     let run_id = ulid::Ulid::new().to_string();
     let mut run_meta = RunMeta::new(run_id.clone(), state.meta.session_id.clone(), model.clone());
     run_store.save_run(&run_meta).await?;
+    logx!(
+        info,
+        "run",
+        "started",
+        run_id = %run_id,
+        session_id = %state.meta.session_id,
+        provider = ?llm_config.provider,
+        model = %model,
+        resumed = request.session_id.is_some(),
+    );
 
     let started_event = stream::run_started_event(&run_id, &state.meta.session_id);
     if let Err(e) = sink.publish(Arc::new(started_event.clone())).await {
         run_meta.finish(RunStatus::Failed);
         let _ = run_store.save_run(&run_meta).await;
+        logx!(
+            error,
+            "run",
+            "failed",
+            run_id = %run_id,
+            session_id = %state.meta.session_id,
+            error = %e,
+            elapsed_ms = started_at.elapsed().as_millis() as u64,
+        );
         return Err(e);
     }
     if let Err(e) = run_store.append_event(&run_id, &started_event).await {
         run_meta.finish(RunStatus::Failed);
         let _ = run_store.save_run(&run_meta).await;
+        logx!(
+            error,
+            "run",
+            "failed",
+            run_id = %run_id,
+            session_id = %state.meta.session_id,
+            error = %e,
+            elapsed_ms = started_at.elapsed().as_millis() as u64,
+        );
         return Err(e);
     }
 
@@ -86,6 +118,15 @@ pub async fn run_with_runner(
         Err(e) => {
             run_meta.finish(RunStatus::Failed);
             let _ = run_store.save_run(&run_meta).await;
+            logx!(
+                error,
+                "run",
+                "failed",
+                run_id = %run_id,
+                session_id = %state.meta.session_id,
+                error = %e,
+                elapsed_ms = started_at.elapsed().as_millis() as u64,
+            );
             return Err(e);
         }
     };
@@ -132,7 +173,43 @@ pub async fn run_with_runner(
     runner.close().await;
 
     if let Some(e) = stream_error {
+        logx!(
+            error,
+            "run",
+            "failed",
+            run_id = %run_id,
+            session_id = %state.meta.session_id,
+            error = %e,
+            elapsed_ms = started_at.elapsed().as_millis() as u64,
+            turn,
+        );
         return Err(e);
+    }
+
+    match &save_result {
+        Ok(()) => {
+            logx!(
+                info,
+                "run",
+                "completed",
+                run_id = %run_id,
+                session_id = %state.meta.session_id,
+                elapsed_ms = started_at.elapsed().as_millis() as u64,
+                turn,
+            );
+        }
+        Err(error) => {
+            logx!(
+                error,
+                "run",
+                "failed",
+                run_id = %run_id,
+                session_id = %state.meta.session_id,
+                error = %error,
+                elapsed_ms = started_at.elapsed().as_millis() as u64,
+                turn,
+            );
+        }
     }
 
     save_result

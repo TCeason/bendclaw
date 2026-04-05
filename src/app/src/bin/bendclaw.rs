@@ -1,3 +1,4 @@
+use bend_base::logx;
 use clap::Parser;
 
 fn main() -> anyhow::Result<()> {
@@ -8,11 +9,14 @@ fn main() -> anyhow::Result<()> {
 
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
 
-    tracing::info!(
+    logx!(
+        info,
+        "app",
+        "started",
+        msg = "build info",
         git_sha = env!("BENDCLAW_GIT_SHA"),
         git_branch = env!("BENDCLAW_GIT_BRANCH"),
         build_timestamp = env!("BENDCLAW_BUILD_TIMESTAMP"),
-        "build info"
     );
 
     let args = bendclaw::cli::CliArgs::parse();

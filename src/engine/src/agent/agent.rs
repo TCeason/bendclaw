@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use bend_base::logx;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -168,7 +169,13 @@ impl Agent {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to connect MCP server '{}': {}", name, e);
+                    logx!(
+                        warn,
+                        "mcp",
+                        "connect_failed",
+                        server = %name,
+                        error = %e,
+                    );
                 }
             }
         }
