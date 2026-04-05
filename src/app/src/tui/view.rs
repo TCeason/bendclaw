@@ -32,7 +32,7 @@ use crate::tui::state::SessionScope;
 use crate::tui::state::TranscriptBlock;
 use crate::tui::state::TuiState;
 
-const PREVIEW_HEIGHT: u16 = 8;
+const MAX_PREVIEW_HEIGHT: u16 = 18;
 
 pub fn render(frame: &mut Frame, state: &TuiState) {
     let mut constraints = Vec::new();
@@ -104,6 +104,61 @@ pub fn user_block(text: &str) -> TranscriptBlock {
 
 pub fn assistant_block(text: &str) -> TranscriptBlock {
     TranscriptBlock::new(render_markdown(text))
+}
+
+pub fn transcript_blocks(messages: &[bend_agent::Message]) -> Vec<TranscriptBlock> {
+    let mut blocks = Vec::new();
+
+    for message in messages {
+        match message.role {
+            bend_agent::MessageRole::User => {
+                let text = message_text(message);
+                if !text.trim().is_empty() {
+                    blocks.push(user_block(&text));
+                }
+
+                for block in &message.content {
+                    if let bend_agent::ContentBlock::ToolResult {
+                        content, is_error, ..
+                    } = block
+                    {
+                        blocks.push(tool_result_block(
+                            "Tool result",
+                            &tool_result_content_lines(content),
+                            !*is_error,
+                        ));
+                    }
+                }
+            }
+            bend_agent::MessageRole::Assistant => {
+                let text = message_text(message);
+                if !text.trim().is_empty() {
+                    blocks.push(assistant_block(&text));
+                }
+
+                for block in &message.content {
+                    match block {
+                        bend_agent::ContentBlock::ToolUse { name, input, .. } => {
+                            let (title, lines) = transcript_tool_call_message(name, input);
+                            blocks.push(tool_call_block(&title, &lines));
+                        }
+                        bend_agent::ContentBlock::ToolResult {
+                            content, is_error, ..
+                        } => {
+                            blocks.push(tool_result_block(
+                                "Tool result",
+                                &tool_result_content_lines(content),
+                                !*is_error,
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    blocks
 }
 
 pub fn log_block(text: impl Into<String>) -> TranscriptBlock {
@@ -182,20 +237,13 @@ fn preview_height(state: &TuiState) -> u16 {
     if state.streaming_assistant.trim().is_empty() {
         0
     } else {
-        PREVIEW_HEIGHT
+        estimate_preview_height(&state.streaming_assistant)
     }
 }
 
 fn render_preview(frame: &mut Frame, area: Rect, state: &TuiState) {
-    let block = Block::default()
-        .title(" Assistant ")
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
     let mut lines = render_markdown(&state.streaming_assistant);
-    let max = inner.height as usize;
+    let max = area.height as usize;
     if lines.len() > max {
         lines = lines.split_off(lines.len() - max);
     }
@@ -203,7 +251,7 @@ fn render_preview(frame: &mut Frame, area: Rect, state: &TuiState) {
     let paragraph = Paragraph::new(Text::from(lines))
         .wrap(Wrap { trim: false })
         .scroll((0, 0));
-    frame.render_widget(paragraph, inner);
+    frame.render_widget(paragraph, area);
 }
 
 fn render_status(frame: &mut Frame, area: Rect, state: &TuiState) {
@@ -274,6 +322,16 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &TuiState) {
         Paragraph::new(text).style(Style::default().fg(Color::DarkGray)),
         area,
     );
+}
+
+fn estimate_preview_height(text: &str) -> u16 {
+    let estimated = render_markdown(text)
+        .iter()
+        .map(|line| (line.width().max(1)).div_ceil(100))
+        .sum::<usize>()
+        .max(1) as u16;
+
+    estimated.min(MAX_PREVIEW_HEIGHT)
 }
 
 fn render_popup(frame: &mut Frame, area: Rect, popup: &PopupState, state: &TuiState) {
@@ -536,6 +594,7 @@ fn filtered_session_entries(
 }
 
 fn render_markdown(text: &str) -> Vec<Line<'static>> {
+    let text = normalize_cjk_spacing(text);
     let mut lines = Vec::new();
     let mut current = Vec::new();
     let mut heading: Option<HeadingLevel> = None;
@@ -543,7 +602,7 @@ fn render_markdown(text: &str) -> Vec<Line<'static>> {
     let mut inline_style = Style::default().fg(Color::White);
     let mut in_code_block = false;
 
-    for event in Parser::new_ext(text, Options::all()) {
+    for event in Parser::new_ext(&text, Options::all()) {
         match event {
             Event::Start(Tag::Paragraph) => {}
             Event::End(TagEnd::Paragraph) => push_line(&mut lines, &mut current),
@@ -623,7 +682,7 @@ fn render_markdown(text: &str) -> Vec<Line<'static>> {
                     }
                 } else {
                     current.push(Span::styled(
-                        normalize_cjk_spacing(&value),
+                        value.to_string(),
                         heading_style(heading).patch(inline_style),
                     ));
                 }
@@ -779,6 +838,59 @@ fn summarize_title(value: &str) -> String {
         title.push_str("...");
     }
     title
+}
+
+fn message_text(message: &bend_agent::Message) -> String {
+    message
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            bend_agent::ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn tool_result_content_lines(content: &[bend_agent::types::ToolResultContentBlock]) -> Vec<String> {
+    let lines = content
+        .iter()
+        .filter_map(|block| match block {
+            bend_agent::types::ToolResultContentBlock::Text { text } => Some(text.clone()),
+            bend_agent::types::ToolResultContentBlock::Image { .. } => None,
+        })
+        .collect::<Vec<_>>();
+
+    if lines.is_empty() {
+        vec!["Result: completed".into()]
+    } else {
+        lines
+    }
+}
+
+fn transcript_tool_call_message(name: &str, input: &serde_json::Value) -> (String, Vec<String>) {
+    let summarized = summarize_inline_text(&input.to_string(), 120);
+    let lowercase = name.to_lowercase();
+
+    if lowercase.contains("grep") {
+        return ("Grep 1 search".into(), vec![format!("\"{summarized}\"")]);
+    }
+    if lowercase.contains("glob") {
+        return ("Glob 1 pattern".into(), vec![summarized]);
+    }
+    if lowercase.contains("read") {
+        return ("Read 1 file".into(), vec![summarized]);
+    }
+
+    (format!("{name} call"), vec![summarized])
+}
+
+fn summarize_inline_text(value: &str, max: usize) -> String {
+    if value.chars().count() <= max {
+        value.to_string()
+    } else {
+        format!("{}...", value.chars().take(max).collect::<String>())
+    }
 }
 
 fn normalize_cjk_spacing(value: &str) -> String {

@@ -34,6 +34,7 @@ use crate::request::Request;
 use crate::request::RequestExecutor;
 use crate::request::RequestFinishedPayload;
 use crate::request::ToolResultPayload;
+use crate::session::Session;
 use crate::storage::model::ListSessions;
 use crate::storage::model::RunEventKind;
 use crate::storage::model::SessionMeta;
@@ -93,6 +94,12 @@ impl Tui {
         let mut viewport_height = view::desired_inline_height(&state);
         let mut terminal = enter_terminal(viewport_height)?;
         flush_block(&mut terminal, view::welcome_block(&state))?;
+        if let Some(session_id) = state.session_id.clone() {
+            flush_blocks(
+                &mut terminal,
+                self.resume_session_blocks(&mut state, &session_id).await?,
+            )?;
+        }
 
         let result = loop {
             let desired_height = view::desired_inline_height(&state);
@@ -157,7 +164,7 @@ impl Tui {
                 }
 
                 if state.popup.is_some() {
-                    return self.handle_popup_key(state, key.code);
+                    return self.handle_popup_key(state, key.code).await;
                 }
 
                 match key.code {
@@ -203,7 +210,11 @@ impl Tui {
         Ok(TerminalAction::none())
     }
 
-    fn handle_popup_key(&self, state: &mut TuiState, code: KeyCode) -> Result<TerminalAction> {
+    async fn handle_popup_key(
+        &self,
+        state: &mut TuiState,
+        code: KeyCode,
+    ) -> Result<TerminalAction> {
         match code {
             KeyCode::Esc => {
                 state.popup = None;
@@ -278,15 +289,12 @@ impl Tui {
                             filtered_session_indices(&options, &filter, &state.cwd, scope);
                         if let Some(index) = filtered.get(selected) {
                             if let Some(session) = options.get(*index) {
-                                state.session_id = Some(session.session_id.clone());
-                                state.session_started_at = Instant::now();
-                                state.status_message =
-                                    Some(format!("Resumed {}", short_id(&session.session_id)));
-                                return Ok(TerminalAction::with_block(view::log_block(format!(
-                                    "[{}] resumed {}",
-                                    time_now(),
-                                    summarize_session_title(session)
-                                ))));
+                                return Ok(TerminalAction {
+                                    exit: false,
+                                    blocks: self
+                                        .resume_session_blocks(state, &session.session_id)
+                                        .await?,
+                                });
                             }
                         }
                     }
@@ -575,6 +583,33 @@ impl Tui {
         }
 
         options
+    }
+
+    async fn resume_session_blocks(
+        &self,
+        state: &mut TuiState,
+        session_id: &str,
+    ) -> Result<Vec<TranscriptBlock>> {
+        let session = Session::load(session_id, self.storage.clone())
+            .await?
+            .ok_or_else(|| BendclawError::Session(format!("session not found: {session_id}")))?;
+        let meta = session.meta().await;
+        let messages = session.messages().await;
+
+        state.session_id = Some(meta.session_id.clone());
+        state.session_started_at = Instant::now();
+        state.loading = false;
+        state.request_started_at = None;
+        state.streaming_assistant.clear();
+        state.status_message = Some(format!("Resumed {}", short_id(&meta.session_id)));
+
+        let mut blocks = vec![view::log_block(format!(
+            "[{}] resumed {}",
+            time_now(),
+            summarize_session_title(&meta)
+        ))];
+        blocks.extend(view::transcript_blocks(&messages));
+        Ok(blocks)
     }
 }
 
@@ -880,5 +915,79 @@ fn human_duration(duration_ms: u64) -> String {
         format!("{:.1}s", duration_ms as f64 / 1000.0)
     } else {
         format!("{duration_ms}ms")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::conf::Config;
+    use crate::conf::StorageConfig;
+    use crate::storage::open_storage;
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
+    fn line_texts(block: &TranscriptBlock) -> Vec<String> {
+        block.lines.iter().map(ToString::to_string).collect()
+    }
+
+    #[tokio::test]
+    async fn resume_session_blocks_loads_saved_transcript() -> TestResult {
+        let dir = TempDir::new()?;
+        let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+        let session = Session::create(
+            "sess-restore".into(),
+            "/tmp".into(),
+            "claude-sonnet".into(),
+            storage.clone(),
+        )
+        .await?;
+
+        session
+            .apply_messages(vec![
+                bend_agent::Message {
+                    role: bend_agent::MessageRole::User,
+                    content: vec![bend_agent::ContentBlock::Text {
+                        text: "hello".into(),
+                    }],
+                },
+                bend_agent::Message {
+                    role: bend_agent::MessageRole::Assistant,
+                    content: vec![bend_agent::ContentBlock::Text {
+                        text: "hi there".into(),
+                    }],
+                },
+            ])
+            .await;
+        session.save().await?;
+
+        let tui = Tui::new(
+            Config::new(dir.path().to_path_buf()),
+            storage,
+            None,
+            None,
+            None,
+        );
+        let mut state = TuiState::new("/tmp".into(), None, ModelOption {
+            provider: ProviderKind::Anthropic,
+            model: "claude-sonnet".into(),
+        });
+
+        let blocks = tui
+            .resume_session_blocks(&mut state, "sess-restore")
+            .await?;
+
+        assert_eq!(state.session_id.as_deref(), Some("sess-restore"));
+        assert!(blocks.len() >= 3);
+        assert!(line_texts(&blocks[1])
+            .iter()
+            .any(|line| line.contains("> hello")));
+        assert!(line_texts(&blocks[2])
+            .iter()
+            .any(|line| line.contains("hi there")));
+
+        Ok(())
     }
 }
