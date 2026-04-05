@@ -3,18 +3,27 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bendclaw::conf::LlmConfig;
 use bendclaw::conf::ProviderKind;
-use bendclaw::conf::StoreConfig;
+use bendclaw::conf::StorageConfig;
 use bendclaw::error::Result;
 use bendclaw::run::*;
-use bendclaw::store::create_stores;
+use bendclaw::storage::model::ListRunEvents;
+use bendclaw::storage::model::ListTranscriptEntries;
+use bendclaw::storage::open_storage;
 use tempfile::TempDir;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
-fn fs_store(root: &TempDir) -> StoreConfig {
-    StoreConfig::fs(root.path().to_path_buf())
+fn is_uuid_v7(value: &str) -> bool {
+    match uuid::Uuid::parse_str(value) {
+        Ok(value) => value.get_version_num() == 7,
+        Err(_) => false,
+    }
+}
+
+fn fs_store(root: &TempDir) -> StorageConfig {
+    StorageConfig::fs(root.path().to_path_buf())
 }
 
 fn test_llm_config() -> LlmConfig {
@@ -101,7 +110,7 @@ impl EventSink for CollectSink {
 #[tokio::test]
 async fn full_pipeline_creates_session_and_run() -> TestResult {
     let root = TempDir::new()?;
-    let stores = create_stores(&fs_store(&root))?;
+    let storage = open_storage(&fs_store(&root))?;
     let sink = CollectSink::new();
 
     let final_messages = vec![
@@ -145,15 +154,7 @@ async fn full_pipeline_creates_session_and_run() -> TestResult {
     let runner = MockRunner::new(sdk_messages, final_messages);
     let request = RunRequest::new("hello".into());
 
-    run_with_runner(
-        request,
-        test_llm_config(),
-        &sink,
-        stores.session.as_ref(),
-        stores.run.as_ref(),
-        &runner,
-    )
-    .await?;
+    run_with_runner(request, test_llm_config(), &sink, storage.as_ref(), &runner).await?;
 
     let events = sink.events().await;
     assert!(events.len() >= 4);
@@ -167,21 +168,31 @@ async fn full_pipeline_creates_session_and_run() -> TestResult {
     let session_id = &events[0].session_id;
     let run_id = &events[0].run_id;
 
-    let session_meta = stores
-        .session
-        .load_meta(session_id)
+    assert!(is_uuid_v7(session_id));
+    assert!(is_uuid_v7(run_id));
+    assert!(is_uuid_v7(&events[0].event_id));
+
+    let session_meta = storage
+        .get_session(session_id)
         .await?
         .ok_or_else(|| missing_error("missing session meta"))?;
     assert_eq!(session_meta.session_id, *session_id);
 
-    let transcript = stores
-        .session
-        .load_transcript(session_id)
-        .await?
-        .ok_or_else(|| missing_error("missing transcript"))?;
+    let transcript = storage
+        .list_transcript_entries(ListTranscriptEntries {
+            session_id: session_id.clone(),
+            run_id: None,
+            after_seq: None,
+            limit: None,
+        })
+        .await?;
     assert_eq!(transcript.len(), 2);
 
-    let run_events = stores.run.load_events(run_id).await?;
+    let run_events = storage
+        .list_run_events(ListRunEvents {
+            run_id: run_id.clone(),
+        })
+        .await?;
     assert_eq!(run_events.len(), 4);
 
     Ok(())
@@ -190,7 +201,7 @@ async fn full_pipeline_creates_session_and_run() -> TestResult {
 #[tokio::test]
 async fn pipeline_marks_failed_when_no_result() -> TestResult {
     let root = TempDir::new()?;
-    let stores = create_stores(&fs_store(&root))?;
+    let storage = open_storage(&fs_store(&root))?;
     let sink = CollectSink::new();
 
     let sdk_messages = vec![bend_agent::SDKMessage::Error {
@@ -200,19 +211,17 @@ async fn pipeline_marks_failed_when_no_result() -> TestResult {
     let runner = MockRunner::new(sdk_messages, vec![]);
     let request = RunRequest::new("hello".into());
 
-    run_with_runner(
-        request,
-        test_llm_config(),
-        &sink,
-        stores.session.as_ref(),
-        stores.run.as_ref(),
-        &runner,
-    )
-    .await?;
+    run_with_runner(request, test_llm_config(), &sink, storage.as_ref(), &runner).await?;
 
     let events = sink.events().await;
     let run_id = &events[0].run_id;
-    let meta_path = root.path().join("runs").join(format!("{run_id}.json"));
+    let session_id = &events[0].session_id;
+    let meta_path = root
+        .path()
+        .join("sessions")
+        .join(session_id)
+        .join("runs")
+        .join(format!("{run_id}.json"));
     let content = std::fs::read_to_string(meta_path)?;
     let run_meta: bendclaw::run::RunMeta = serde_json::from_str(&content)?;
     assert_eq!(run_meta.status, bendclaw::run::RunStatus::Failed);
@@ -223,7 +232,7 @@ async fn pipeline_marks_failed_when_no_result() -> TestResult {
 #[tokio::test]
 async fn pipeline_resume_session() -> TestResult {
     let root = TempDir::new()?;
-    let stores = create_stores(&fs_store(&root))?;
+    let storage = open_storage(&fs_store(&root))?;
 
     let first_messages = vec![
         bend_agent::Message {
@@ -260,8 +269,7 @@ async fn pipeline_resume_session() -> TestResult {
         RunRequest::new("hello".into()),
         test_llm_config(),
         &sink1,
-        stores.session.as_ref(),
-        stores.run.as_ref(),
+        storage.as_ref(),
         &runner1,
     )
     .await?;
@@ -321,17 +329,19 @@ async fn pipeline_resume_session() -> TestResult {
         request,
         test_llm_config(),
         &sink2,
-        stores.session.as_ref(),
-        stores.run.as_ref(),
+        storage.as_ref(),
         &runner2,
     )
     .await?;
 
-    let transcript = stores
-        .session
-        .load_transcript(&session_id)
-        .await?
-        .ok_or_else(|| missing_error("missing resumed transcript"))?;
+    let transcript = storage
+        .list_transcript_entries(ListTranscriptEntries {
+            session_id: session_id.clone(),
+            run_id: None,
+            after_seq: None,
+            limit: None,
+        })
+        .await?;
     assert_eq!(transcript.len(), 4);
 
     Ok(())

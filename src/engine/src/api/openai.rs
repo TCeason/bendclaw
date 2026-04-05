@@ -333,15 +333,21 @@ impl LLMProvider for OpenAIProvider {
 
 /// Parse OpenAI SSE stream into a ProviderResponse.
 async fn parse_openai_stream(response: reqwest::Response) -> Result<ProviderResponse, ApiError> {
+    let content_type = response::response_content_type(response.headers());
     let body = response
         .text()
         .await
         .map_err(|e| ApiError::NetworkError(e.to_string()))?;
 
+    if !response::is_streaming_content_type(&content_type) || !response::has_sse_data_lines(&body) {
+        return parse_openai_fallback(&body);
+    }
+
     let mut text_content = String::new();
     let mut tool_calls: HashMap<usize, OpenAIToolCall> = HashMap::new();
     let mut usage = Usage::default();
     let mut stop_reason: Option<String> = None;
+    let mut saw_valid_sse_event = false;
 
     for line in body.lines() {
         let line = line.trim();
@@ -354,7 +360,10 @@ async fn parse_openai_stream(response: reqwest::Response) -> Result<ProviderResp
         }
 
         let chunk: Value = match serde_json::from_str(data) {
-            Ok(v) => v,
+            Ok(chunk) => {
+                saw_valid_sse_event = true;
+                chunk
+            }
             Err(_) => continue,
         };
 
@@ -426,6 +435,10 @@ async fn parse_openai_stream(response: reqwest::Response) -> Result<ProviderResp
         }
     }
 
+    if !saw_valid_sse_event {
+        return parse_openai_fallback(&body);
+    }
+
     // Build normalized content blocks
     let mut content_blocks: Vec<ContentBlock> = Vec::new();
 
@@ -458,4 +471,120 @@ async fn parse_openai_stream(response: reqwest::Response) -> Result<ProviderResp
         usage,
         stop_reason,
     })
+}
+
+fn parse_openai_fallback(body: &str) -> Result<ProviderResponse, ApiError> {
+    let value = response::parse_json_body(body, "OpenAI")?;
+    if let Some(error) = response::json_stream_error(&value, "OpenAI") {
+        return Err(error);
+    }
+    parse_openai_response(&value)
+}
+
+fn parse_openai_response(value: &Value) -> Result<ProviderResponse, ApiError> {
+    let choice = value
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+        .ok_or_else(|| {
+            ApiError::StreamError("OpenAI upstream returned JSON body without choices".to_string())
+        })?;
+
+    let message = choice.get("message").ok_or_else(|| {
+        ApiError::StreamError("OpenAI upstream returned JSON body without message".to_string())
+    })?;
+
+    let mut content_blocks = Vec::new();
+
+    if let Some(content) = message.get("content") {
+        if let Some(text) = content.as_str() {
+            if !text.is_empty() {
+                content_blocks.push(ContentBlock::Text {
+                    text: text.to_string(),
+                });
+            }
+        } else if let Some(parts) = content.as_array() {
+            for part in parts {
+                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    if !text.is_empty() {
+                        content_blocks.push(ContentBlock::Text {
+                            text: text.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
+        for tool_call in tool_calls {
+            let id = tool_call
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let function = match tool_call.get("function") {
+                Some(function) => function,
+                None => continue,
+            };
+            let name = function
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let input = parse_openai_tool_arguments(function.get("arguments"));
+
+            content_blocks.push(ContentBlock::ToolUse { id, name, input });
+        }
+    }
+
+    let usage = parse_openai_usage(value.get("usage"));
+    let stop_reason = choice
+        .get("finish_reason")
+        .and_then(Value::as_str)
+        .map(map_openai_stop_reason);
+
+    Ok(ProviderResponse {
+        message: Message {
+            role: MessageRole::Assistant,
+            content: content_blocks,
+        },
+        usage,
+        stop_reason,
+    })
+}
+
+fn parse_openai_usage(value: Option<&Value>) -> Usage {
+    let mut usage = Usage::default();
+
+    if let Some(value) = value {
+        if let Some(prompt_tokens) = value.get("prompt_tokens").and_then(Value::as_u64) {
+            usage.input_tokens = prompt_tokens;
+        }
+        if let Some(completion_tokens) = value.get("completion_tokens").and_then(Value::as_u64) {
+            usage.output_tokens = completion_tokens;
+        }
+    }
+
+    usage
+}
+
+fn map_openai_stop_reason(reason: &str) -> String {
+    match reason {
+        "stop" => "end_turn".to_string(),
+        "tool_calls" => "tool_use".to_string(),
+        "length" => "max_tokens".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn parse_openai_tool_arguments(arguments: Option<&Value>) -> Value {
+    match arguments {
+        Some(Value::String(arguments)) => match serde_json::from_str(arguments) {
+            Ok(value) => value,
+            Err(_) => Value::Object(serde_json::Map::new()),
+        },
+        Some(value) if value.is_object() || value.is_array() => value.clone(),
+        _ => Value::Object(serde_json::Map::new()),
+    }
 }

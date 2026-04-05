@@ -10,7 +10,9 @@ fn provider_kind(provider: &crate::conf::ProviderKind) -> bend_agent::ProviderKi
 pub fn build_agent_options(
     llm: &LlmConfig,
     cwd: Option<String>,
+    session_id: Option<String>,
     max_turns: Option<u32>,
+    append_system_prompt: Option<String>,
 ) -> bend_agent::AgentOptions {
     bend_agent::AgentOptions {
         provider: Some(provider_kind(&llm.provider)),
@@ -18,7 +20,9 @@ pub fn build_agent_options(
         api_key: Some(llm.api_key.clone()),
         base_url: llm.base_url.clone(),
         cwd,
+        session_id,
         max_turns,
+        append_system_prompt,
         ..Default::default()
     }
 }

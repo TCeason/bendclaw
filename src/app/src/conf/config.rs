@@ -13,7 +13,7 @@ pub struct Config {
     pub anthropic: ProviderConfig,
     pub openai: ProviderConfig,
     pub server: ServerConfig,
-    pub store: StoreConfig,
+    pub storage: StorageConfig,
 }
 
 impl Config {
@@ -23,7 +23,7 @@ impl Config {
             anthropic: ProviderConfig::anthropic(),
             openai: ProviderConfig::openai(),
             server: ServerConfig::default(),
-            store: StoreConfig::fs(state_root),
+            storage: StorageConfig::fs(state_root),
         }
     }
 
@@ -59,18 +59,18 @@ impl Config {
             return Err(BendclawError::Conf("active llm api_key not set".into()));
         }
 
-        match self.store.backend {
-            StoreBackend::Fs => {
-                if self.store.fs.root_dir.as_os_str().is_empty() {
-                    return Err(BendclawError::Conf("store.fs.root_dir not set".into()));
+        match self.storage.backend {
+            StorageBackend::Fs => {
+                if self.storage.fs.root_dir.as_os_str().is_empty() {
+                    return Err(BendclawError::Conf("storage.fs.root_dir not set".into()));
                 }
             }
-            StoreBackend::Cloud => {
-                if self.store.cloud.endpoint.is_empty() {
-                    return Err(BendclawError::Conf("store.cloud.endpoint not set".into()));
+            StorageBackend::Cloud => {
+                if self.storage.cloud.endpoint.is_empty() {
+                    return Err(BendclawError::Conf("storage.cloud.endpoint not set".into()));
                 }
-                if self.store.cloud.api_key.is_empty() {
-                    return Err(BendclawError::Conf("store.cloud.api_key not set".into()));
+                if self.storage.cloud.api_key.is_empty() {
+                    return Err(BendclawError::Conf("storage.cloud.api_key not set".into()));
                 }
             }
         }
@@ -145,37 +145,37 @@ impl Default for ServerConfig {
 }
 
 #[derive(Debug, Clone)]
-pub struct StoreConfig {
-    pub backend: StoreBackend,
-    pub fs: FsStoreConfig,
-    pub cloud: CloudStoreConfig,
+pub struct StorageConfig {
+    pub backend: StorageBackend,
+    pub fs: FsStorageConfig,
+    pub cloud: CloudStorageConfig,
 }
 
-impl StoreConfig {
+impl StorageConfig {
     pub fn fs(root_dir: PathBuf) -> Self {
         Self {
-            backend: StoreBackend::Fs,
-            fs: FsStoreConfig { root_dir },
-            cloud: CloudStoreConfig::default(),
+            backend: StorageBackend::Fs,
+            fs: FsStorageConfig { root_dir },
+            cloud: CloudStorageConfig::default(),
         }
     }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum StoreBackend {
+pub enum StorageBackend {
     #[default]
     Fs,
     Cloud,
 }
 
 #[derive(Debug, Clone)]
-pub struct FsStoreConfig {
+pub struct FsStorageConfig {
     pub root_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct CloudStoreConfig {
+pub struct CloudStorageConfig {
     pub endpoint: String,
     pub api_key: String,
     pub workspace: Option<String>,

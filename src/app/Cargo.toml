@@ -26,7 +26,7 @@ toml.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-ulid.workspace = true
+uuid.workspace = true
 
 [lints.clippy]
 module_inception = "allow"

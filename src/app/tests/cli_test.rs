@@ -10,6 +10,11 @@ type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 fn parse_prompt_mode_args() -> TestResult {
     let args = CliArgs::try_parse_from([
         "bendclaw",
+        "--verbose",
+        "--max-turns",
+        "3",
+        "--append-system-prompt",
+        "be concise",
         "-p",
         "hello",
         "--resume",
@@ -21,8 +26,11 @@ fn parse_prompt_mode_args() -> TestResult {
     ])?;
 
     assert_eq!(args.prompt.as_deref(), Some("hello"));
+    assert!(args.verbose);
     assert_eq!(args.resume.as_deref(), Some("session-1"));
     assert!(matches!(args.output_format, OutputFormat::StreamJson));
+    assert_eq!(args.max_turns, Some(3));
+    assert_eq!(args.append_system_prompt.as_deref(), Some("be concise"));
     assert_eq!(args.model.as_deref(), Some("claude-sonnet-4-20250514"));
     assert!(args.command.is_none());
     Ok(())

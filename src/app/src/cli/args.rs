@@ -10,10 +10,19 @@ pub struct CliArgs {
     pub prompt: Option<String>,
 
     #[arg(long)]
+    pub verbose: bool,
+
+    #[arg(long)]
     pub resume: Option<String>,
 
     #[arg(long, default_value_t = OutputFormat::Text)]
     pub output_format: OutputFormat,
+
+    #[arg(long)]
+    pub max_turns: Option<u32>,
+
+    #[arg(long)]
+    pub append_system_prompt: Option<String>,
 
     #[arg(long)]
     pub model: Option<String>,

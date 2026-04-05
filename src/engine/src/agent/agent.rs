@@ -180,7 +180,10 @@ impl Agent {
             }
         }
 
-        let session_id = uuid::Uuid::new_v4().to_string();
+        let session_id = options
+            .session_id
+            .clone()
+            .unwrap_or_else(crate::ids::new_session_id);
 
         Ok(Self {
             api_client,

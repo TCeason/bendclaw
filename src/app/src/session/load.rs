@@ -1,27 +1,35 @@
 use crate::error::Result;
 use crate::session::SessionMeta;
 use crate::session::SessionState;
-use crate::store::SessionStore;
+use crate::storage::model::ListTranscriptEntries;
+use crate::storage::Storage;
 
 pub async fn new_session(
     session_id: String,
     cwd: String,
     model: String,
-    store: &dyn SessionStore,
+    storage: &dyn Storage,
 ) -> Result<SessionState> {
     let meta = SessionMeta::new(session_id, cwd, model);
-    store.save_meta(&meta).await?;
+    storage.put_session(meta.clone()).await?;
     Ok(SessionState::new(meta, Vec::new()))
 }
 
-pub async fn load_session(
-    session_id: &str,
-    store: &dyn SessionStore,
-) -> Result<Option<SessionState>> {
-    let meta = match store.load_meta(session_id).await? {
+pub async fn load_session(session_id: &str, storage: &dyn Storage) -> Result<Option<SessionState>> {
+    let meta = match storage.get_session(session_id).await? {
         Some(m) => m,
         None => return Ok(None),
     };
-    let messages = store.load_transcript(session_id).await?.unwrap_or_default();
+    let messages = storage
+        .list_transcript_entries(ListTranscriptEntries {
+            session_id: session_id.to_string(),
+            run_id: None,
+            after_seq: None,
+            limit: None,
+        })
+        .await?
+        .into_iter()
+        .map(|entry| entry.message)
+        .collect();
     Ok(Some(SessionState::new(meta, messages)))
 }

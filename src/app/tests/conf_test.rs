@@ -7,7 +7,7 @@ use bendclaw::conf::load_config;
 use bendclaw::conf::resolve_llm_config;
 use bendclaw::conf::ConfigOverrides;
 use bendclaw::conf::ProviderKind;
-use bendclaw::conf::StoreBackend;
+use bendclaw::conf::StorageBackend;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -151,8 +151,8 @@ fn load_config_prefers_process_env_over_env_file() -> TestResult {
     let config = result?;
     assert_eq!(config.active_llm().api_key, "process-key");
     assert_eq!(config.server.port, 9020);
-    assert_eq!(config.store.backend, StoreBackend::Fs);
-    assert_eq!(config.store.fs.root_dir, env_home.join(".evotai"));
+    assert_eq!(config.storage.backend, StorageBackend::Fs);
+    assert_eq!(config.storage.fs.root_dir, env_home.join(".evotai"));
     Ok(())
 }
 
@@ -179,10 +179,10 @@ model = "toml-model"
 host = "0.0.0.0"
 port = 8010
 
-[store]
+[storage]
 backend = "fs"
 
-[store.fs]
+[storage.fs]
 root_dir = "~/custom-store"
 "#,
     )?;
@@ -203,7 +203,7 @@ root_dir = "~/custom-store"
     assert_eq!(config.active_llm().model, "cli-model");
     assert_eq!(config.server.host, "0.0.0.0");
     assert_eq!(config.server.port, 9010);
-    assert_eq!(config.store.fs.root_dir, env_home.join("custom-store"));
+    assert_eq!(config.storage.fs.root_dir, env_home.join("custom-store"));
     Ok(())
 }
 
@@ -268,10 +268,10 @@ provider = "anthropic"
 api_key = "anthropic-key"
 base_url = ""
 
-[store]
+[storage]
 backend = "cloud"
 
-[store.cloud]
+[storage.cloud]
 endpoint = "https://cloud.example.com"
 api_key = "cloud-key"
 workspace = ""
@@ -287,6 +287,6 @@ workspace = ""
 
     let config = result?;
     assert_eq!(config.active_llm().base_url, None);
-    assert_eq!(config.store.cloud.workspace, None);
+    assert_eq!(config.storage.cloud.workspace, None);
     Ok(())
 }

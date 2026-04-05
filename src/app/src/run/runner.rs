@@ -21,8 +21,11 @@ pub trait AgentRunner: Send + Sync {
 pub struct AgentRunOptions {
     pub llm: LlmConfig,
     pub cwd: String,
+    pub session_id: String,
     pub messages: Vec<bend_agent::Message>,
     pub prompt: String,
+    pub max_turns: Option<u32>,
+    pub append_system_prompt: Option<String>,
 }
 
 pub struct BendAgentRunner {
@@ -51,7 +54,13 @@ impl AgentRunner for BendAgentRunner {
         &self,
         options: AgentRunOptions,
     ) -> Result<mpsc::Receiver<bend_agent::SDKMessage>> {
-        let agent_options = build_agent_options(&options.llm, Some(options.cwd), None);
+        let agent_options = build_agent_options(
+            &options.llm,
+            Some(options.cwd),
+            Some(options.session_id),
+            options.max_turns,
+            options.append_system_prompt,
+        );
 
         let mut agent = bend_agent::Agent::new(agent_options)
             .await

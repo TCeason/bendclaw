@@ -1,6 +1,9 @@
-use bendclaw::conf::StoreConfig;
+use bendclaw::conf::StorageConfig;
 use bendclaw::session::SessionMeta;
-use bendclaw::store::create_stores;
+use bendclaw::storage::model::ListSessions;
+use bendclaw::storage::model::ListTranscriptEntries;
+use bendclaw::storage::model::TranscriptEntry;
+use bendclaw::storage::open_storage;
 use tempfile::TempDir;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -12,14 +15,13 @@ fn missing_error(message: &str) -> std::io::Error {
 #[tokio::test]
 async fn save_and_load_meta() -> TestResult {
     let dir = TempDir::new()?;
-    let stores = create_stores(&StoreConfig::fs(dir.path().to_path_buf()))?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
 
     let meta = SessionMeta::new("sess-001".into(), "/tmp".into(), "claude-sonnet".into());
-    stores.session.save_meta(&meta).await?;
+    storage.put_session(meta).await?;
 
-    let loaded = stores
-        .session
-        .load_meta("sess-001")
+    let loaded = storage
+        .get_session("sess-001")
         .await?
         .ok_or_else(|| missing_error("missing session meta"))?;
     assert_eq!(loaded.session_id, "sess-001");
@@ -32,9 +34,9 @@ async fn save_and_load_meta() -> TestResult {
 #[tokio::test]
 async fn load_meta_not_found() -> TestResult {
     let dir = TempDir::new()?;
-    let stores = create_stores(&StoreConfig::fs(dir.path().to_path_buf()))?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
 
-    let loaded = stores.session.load_meta("nonexistent").await?;
+    let loaded = storage.get_session("nonexistent").await?;
     assert!(loaded.is_none());
     Ok(())
 }
@@ -42,33 +44,33 @@ async fn load_meta_not_found() -> TestResult {
 #[tokio::test]
 async fn save_and_load_transcript() -> TestResult {
     let dir = TempDir::new()?;
-    let stores = create_stores(&StoreConfig::fs(dir.path().to_path_buf()))?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
 
-    let messages = vec![
-        bend_agent::Message {
+    let entries = vec![
+        TranscriptEntry::new("sess-002".into(), None, 1, 0, bend_agent::Message {
             role: bend_agent::MessageRole::User,
             content: vec![bend_agent::ContentBlock::Text {
                 text: "hello".into(),
             }],
-        },
-        bend_agent::Message {
+        }),
+        TranscriptEntry::new("sess-002".into(), None, 2, 0, bend_agent::Message {
             role: bend_agent::MessageRole::Assistant,
             content: vec![bend_agent::ContentBlock::Text {
                 text: "hi there".into(),
             }],
-        },
+        }),
     ];
 
-    stores
-        .session
-        .save_transcript("sess-002", &messages)
-        .await?;
+    storage.put_transcript_entries(entries).await?;
 
-    let loaded = stores
-        .session
-        .load_transcript("sess-002")
-        .await?
-        .ok_or_else(|| missing_error("missing transcript"))?;
+    let loaded = storage
+        .list_transcript_entries(ListTranscriptEntries {
+            session_id: "sess-002".into(),
+            run_id: None,
+            after_seq: None,
+            limit: None,
+        })
+        .await?;
     assert_eq!(loaded.len(), 2);
     Ok(())
 }
@@ -76,17 +78,24 @@ async fn save_and_load_transcript() -> TestResult {
 #[tokio::test]
 async fn load_transcript_not_found() -> TestResult {
     let dir = TempDir::new()?;
-    let stores = create_stores(&StoreConfig::fs(dir.path().to_path_buf()))?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
 
-    let loaded = stores.session.load_transcript("nonexistent").await?;
-    assert!(loaded.is_none());
+    let loaded = storage
+        .list_transcript_entries(ListTranscriptEntries {
+            session_id: "nonexistent".into(),
+            run_id: None,
+            after_seq: None,
+            limit: None,
+        })
+        .await?;
+    assert!(loaded.is_empty());
     Ok(())
 }
 
 #[tokio::test]
 async fn list_recent_sessions() -> TestResult {
     let dir = TempDir::new()?;
-    let stores = create_stores(&StoreConfig::fs(dir.path().to_path_buf()))?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
 
     for index in 0..5 {
         let meta = SessionMeta::new(
@@ -94,10 +103,10 @@ async fn list_recent_sessions() -> TestResult {
             "/tmp".into(),
             "claude-sonnet".into(),
         );
-        stores.session.save_meta(&meta).await?;
+        storage.put_session(meta).await?;
     }
 
-    let recent = stores.session.list_recent(3).await?;
+    let recent = storage.list_sessions(ListSessions { limit: 3 }).await?;
     assert_eq!(recent.len(), 3);
     Ok(())
 }

@@ -31,7 +31,38 @@ pub fn stream_error(value: &Value) -> Option<ApiError> {
     json_error_message(value).map(ApiError::StreamError)
 }
 
-fn json_error_message(value: &Value) -> Option<String> {
+pub fn response_content_type(headers: &HeaderMap) -> String {
+    headers
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string()
+}
+
+pub fn is_streaming_content_type(content_type: &str) -> bool {
+    content_type.contains("stream") || content_type.contains("event-stream")
+}
+
+pub fn has_sse_data_lines(body: &str) -> bool {
+    body.lines()
+        .any(|line| line.trim_start().starts_with("data: "))
+}
+
+pub fn parse_json_body(body: &str, provider: &str) -> Result<Value, ApiError> {
+    serde_json::from_str(body).map_err(|_| {
+        ApiError::StreamError(format!(
+            "{provider} upstream returned non-SSE body: {}",
+            truncate_body(body),
+        ))
+    })
+}
+
+pub fn json_stream_error(value: &Value, provider: &str) -> Option<ApiError> {
+    json_error_message(value)
+        .map(|message| ApiError::StreamError(format!("{provider} upstream error: {message}")))
+}
+
+pub fn json_error_message(value: &Value) -> Option<String> {
     if let Some(message) = value.pointer("/error/message").and_then(Value::as_str) {
         return Some(message.to_string());
     }
@@ -44,6 +75,10 @@ fn json_error_message(value: &Value) -> Option<String> {
     }
 
     if let Some(message) = value.get("message").and_then(Value::as_str) {
+        return Some(message.to_string());
+    }
+
+    if let Some(message) = value.pointer("/Output/message").and_then(Value::as_str) {
         return Some(message.to_string());
     }
 
@@ -74,5 +109,15 @@ fn attach_request_id(message: String, request_id: Option<String>) -> String {
             format!("{message} (request_id: {request_id})")
         }
         _ => message,
+    }
+}
+
+fn truncate_body(body: &str) -> String {
+    const MAX_LEN: usize = 256;
+
+    if body.len() <= MAX_LEN {
+        body.to_string()
+    } else {
+        format!("{}...", &body[..MAX_LEN])
     }
 }

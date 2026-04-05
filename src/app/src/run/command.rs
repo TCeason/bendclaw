@@ -15,26 +15,23 @@ use crate::run::runner::BendAgentRunner;
 use crate::run::sink::EventSink;
 use crate::run::stream;
 use crate::session;
-use crate::store::RunStore;
-use crate::store::SessionStore;
+use crate::storage::Storage;
 
 pub async fn run(
     request: RunRequest,
     llm_config: LlmConfig,
     sink: &dyn EventSink,
-    session_store: &dyn SessionStore,
-    run_store: &dyn RunStore,
+    storage: &dyn Storage,
 ) -> Result<()> {
     let runner = BendAgentRunner::new();
-    run_with_runner(request, llm_config, sink, session_store, run_store, &runner).await
+    run_with_runner(request, llm_config, sink, storage, &runner).await
 }
 
 pub async fn run_with_runner(
     request: RunRequest,
     llm_config: LlmConfig,
     sink: &dyn EventSink,
-    session_store: &dyn SessionStore,
-    run_store: &dyn RunStore,
+    storage: &dyn Storage,
     runner: &dyn AgentRunner,
 ) -> Result<()> {
     let started_at = Instant::now();
@@ -46,7 +43,7 @@ pub async fn run_with_runner(
     let model = llm_config.model.clone();
 
     let mut state = if let Some(ref sid) = request.session_id {
-        match session::load_session(sid, session_store).await? {
+        match session::load_session(sid, storage).await? {
             Some(mut s) => {
                 s.meta.model = model.clone();
                 s
@@ -56,13 +53,13 @@ pub async fn run_with_runner(
             }
         }
     } else {
-        let session_id = ulid::Ulid::new().to_string();
-        session::new_session(session_id, cwd.clone(), model.clone(), session_store).await?
+        let session_id = crate::ids::new_id();
+        session::new_session(session_id, cwd.clone(), model.clone(), storage).await?
     };
 
-    let run_id = ulid::Ulid::new().to_string();
+    let run_id = crate::ids::new_id();
     let mut run_meta = RunMeta::new(run_id.clone(), state.meta.session_id.clone(), model.clone());
-    run_store.save_run(&run_meta).await?;
+    storage.put_run(run_meta.clone()).await?;
     logx!(
         info,
         "run",
@@ -75,23 +72,10 @@ pub async fn run_with_runner(
     );
 
     let started_event = stream::run_started_event(&run_id, &state.meta.session_id);
+    let mut run_events = vec![started_event.clone()];
     if let Err(e) = sink.publish(Arc::new(started_event.clone())).await {
         run_meta.finish(RunStatus::Failed);
-        let _ = run_store.save_run(&run_meta).await;
-        logx!(
-            error,
-            "run",
-            "failed",
-            run_id = %run_id,
-            session_id = %state.meta.session_id,
-            error = %e,
-            elapsed_ms = started_at.elapsed().as_millis() as u64,
-        );
-        return Err(e);
-    }
-    if let Err(e) = run_store.append_event(&run_id, &started_event).await {
-        run_meta.finish(RunStatus::Failed);
-        let _ = run_store.save_run(&run_meta).await;
+        let _ = storage.put_run(run_meta).await;
         logx!(
             error,
             "run",
@@ -108,8 +92,11 @@ pub async fn run_with_runner(
         .run_query(AgentRunOptions {
             llm: llm_config.clone(),
             cwd,
+            session_id: state.meta.session_id.clone(),
             messages: state.messages.clone(),
             prompt: request.prompt.clone(),
+            max_turns: request.max_turns,
+            append_system_prompt: request.append_system_prompt.clone(),
         })
         .await;
 
@@ -117,7 +104,7 @@ pub async fn run_with_runner(
         Ok(rx) => rx,
         Err(e) => {
             run_meta.finish(RunStatus::Failed);
-            let _ = run_store.save_run(&run_meta).await;
+            let _ = storage.put_run(run_meta).await;
             logx!(
                 error,
                 "run",
@@ -149,10 +136,7 @@ pub async fn run_with_runner(
             stream_error = Some(e);
             break;
         }
-        if let Err(e) = run_store.append_event(&run_id, &event).await {
-            stream_error = Some(e);
-            break;
-        }
+        run_events.push(event);
     }
 
     let final_messages = runner.take_messages().await;
@@ -161,7 +145,7 @@ pub async fn run_with_runner(
         session::update_transcript(&mut state, final_messages);
     }
 
-    let save_result = session::save_transcript(&state, session_store).await;
+    let save_result = session::save_transcript(&state, storage).await;
 
     if got_result && save_result.is_ok() && stream_error.is_none() {
         run_meta.finish(RunStatus::Completed);
@@ -169,7 +153,8 @@ pub async fn run_with_runner(
         run_meta.finish(RunStatus::Failed);
     }
 
-    let _ = run_store.save_run(&run_meta).await;
+    let _ = storage.put_run(run_meta).await;
+    let _ = storage.put_run_events(run_events).await;
     runner.close().await;
 
     if let Some(e) = stream_error {

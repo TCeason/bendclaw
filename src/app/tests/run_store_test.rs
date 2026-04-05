@@ -1,9 +1,10 @@
-use bendclaw::conf::StoreConfig;
+use bendclaw::conf::StorageConfig;
 use bendclaw::run::RunEvent;
 use bendclaw::run::RunEventKind;
 use bendclaw::run::RunMeta;
 use bendclaw::run::RunStatus;
-use bendclaw::store::create_stores;
+use bendclaw::storage::model::ListRunEvents;
+use bendclaw::storage::open_storage;
 use tempfile::TempDir;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -11,12 +12,17 @@ type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 #[tokio::test]
 async fn save_and_load_run_meta() -> TestResult {
     let dir = TempDir::new()?;
-    let stores = create_stores(&StoreConfig::fs(dir.path().to_path_buf()))?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
 
     let meta = RunMeta::new("run-001".into(), "sess-001".into(), "claude-sonnet".into());
-    stores.run.save_run(&meta).await?;
+    storage.put_run(meta).await?;
 
-    let path = dir.path().join("runs").join("run-001.json");
+    let path = dir
+        .path()
+        .join("sessions")
+        .join("sess-001")
+        .join("runs")
+        .join("run-001.json");
     assert!(path.exists());
 
     let content = std::fs::read_to_string(&path)?;
@@ -29,7 +35,7 @@ async fn save_and_load_run_meta() -> TestResult {
 #[tokio::test]
 async fn append_and_load_events() -> TestResult {
     let dir = TempDir::new()?;
-    let stores = create_stores(&StoreConfig::fs(dir.path().to_path_buf()))?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
 
     let first = RunEvent::new(
         "run-001".into(),
@@ -46,10 +52,13 @@ async fn append_and_load_events() -> TestResult {
         serde_json::json!({"message": "hello"}),
     );
 
-    stores.run.append_event("run-001", &first).await?;
-    stores.run.append_event("run-001", &second).await?;
+    storage.put_run_events(vec![first, second]).await?;
 
-    let events = stores.run.load_events("run-001").await?;
+    let events = storage
+        .list_run_events(ListRunEvents {
+            run_id: "run-001".into(),
+        })
+        .await?;
     assert_eq!(events.len(), 2);
     Ok(())
 }
@@ -57,9 +66,13 @@ async fn append_and_load_events() -> TestResult {
 #[tokio::test]
 async fn load_events_not_found() -> TestResult {
     let dir = TempDir::new()?;
-    let stores = create_stores(&StoreConfig::fs(dir.path().to_path_buf()))?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
 
-    let events = stores.run.load_events("nonexistent").await?;
+    let events = storage
+        .list_run_events(ListRunEvents {
+            run_id: "nonexistent".into(),
+        })
+        .await?;
     assert!(events.is_empty());
     Ok(())
 }

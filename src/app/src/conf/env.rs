@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::conf::paths;
 use crate::conf::Config;
 use crate::conf::ProviderKind;
-use crate::conf::StoreBackend;
+use crate::conf::StorageBackend;
 use crate::error::BendclawError;
 use crate::error::Result;
 
@@ -19,11 +19,11 @@ const RELEVANT_KEYS: &[&str] = &[
     "BENDCLAW_OPENAI_MODEL",
     "BENDCLAW_SERVER_HOST",
     "BENDCLAW_SERVER_PORT",
-    "BENDCLAW_STORE_BACKEND",
-    "BENDCLAW_STORE_FS_ROOT_DIR",
-    "BENDCLAW_STORE_CLOUD_ENDPOINT",
-    "BENDCLAW_STORE_CLOUD_API_KEY",
-    "BENDCLAW_STORE_CLOUD_WORKSPACE",
+    "BENDCLAW_STORAGE_BACKEND",
+    "BENDCLAW_STORAGE_FS_ROOT_DIR",
+    "BENDCLAW_STORAGE_CLOUD_ENDPOINT",
+    "BENDCLAW_STORAGE_CLOUD_API_KEY",
+    "BENDCLAW_STORAGE_CLOUD_WORKSPACE",
 ];
 
 pub fn load_env_file(path: &Path) -> Result<HashMap<String, String>> {
@@ -123,28 +123,28 @@ pub fn apply_env(config: &mut Config, vars: &HashMap<String, String>) -> Result<
         })?;
     }
 
-    if let Some(backend) = vars.get("BENDCLAW_STORE_BACKEND") {
-        config.store.backend = match backend.as_str() {
-            "fs" => StoreBackend::Fs,
-            "cloud" => StoreBackend::Cloud,
+    if let Some(backend) = vars.get("BENDCLAW_STORAGE_BACKEND") {
+        config.storage.backend = match backend.as_str() {
+            "fs" => StorageBackend::Fs,
+            "cloud" => StorageBackend::Cloud,
             other => {
                 return Err(BendclawError::Conf(format!(
-                    "unknown BENDCLAW_STORE_BACKEND: {other}"
+                    "unknown BENDCLAW_STORAGE_BACKEND: {other}"
                 )))
             }
         };
     }
-    if let Some(root_dir) = vars.get("BENDCLAW_STORE_FS_ROOT_DIR") {
-        config.store.fs.root_dir = paths::expand_home_path(root_dir)?;
+    if let Some(root_dir) = vars.get("BENDCLAW_STORAGE_FS_ROOT_DIR") {
+        config.storage.fs.root_dir = paths::expand_home_path(root_dir)?;
     }
-    if let Some(endpoint) = vars.get("BENDCLAW_STORE_CLOUD_ENDPOINT") {
-        config.store.cloud.endpoint = endpoint.clone();
+    if let Some(endpoint) = vars.get("BENDCLAW_STORAGE_CLOUD_ENDPOINT") {
+        config.storage.cloud.endpoint = endpoint.clone();
     }
-    if let Some(api_key) = vars.get("BENDCLAW_STORE_CLOUD_API_KEY") {
-        config.store.cloud.api_key = api_key.clone();
+    if let Some(api_key) = vars.get("BENDCLAW_STORAGE_CLOUD_API_KEY") {
+        config.storage.cloud.api_key = api_key.clone();
     }
-    if let Some(workspace) = vars.get("BENDCLAW_STORE_CLOUD_WORKSPACE") {
-        config.store.cloud.workspace = Some(workspace.clone());
+    if let Some(workspace) = vars.get("BENDCLAW_STORAGE_CLOUD_WORKSPACE") {
+        config.storage.cloud.workspace = Some(workspace.clone());
     }
 
     Ok(())

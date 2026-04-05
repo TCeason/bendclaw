@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::conf::paths;
 use crate::conf::Config;
 use crate::conf::ProviderKind;
-use crate::conf::StoreBackend;
+use crate::conf::StorageBackend;
 use crate::error::BendclawError;
 use crate::error::Result;
 
@@ -24,7 +24,7 @@ pub struct ConfigPatch {
     anthropic: ProviderPatch,
     openai: ProviderPatch,
     server: ServerPatch,
-    store: StorePatch,
+    storage: StoragePatch,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -50,21 +50,21 @@ struct ServerPatch {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-struct StorePatch {
-    backend: Option<StoreBackend>,
-    fs: FsStorePatch,
-    cloud: CloudStorePatch,
+struct StoragePatch {
+    backend: Option<StorageBackend>,
+    fs: FsStoragePatch,
+    cloud: CloudStoragePatch,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-struct FsStorePatch {
+struct FsStoragePatch {
     root_dir: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-struct CloudStorePatch {
+struct CloudStoragePatch {
     endpoint: Option<String>,
     api_key: Option<String>,
     workspace: Option<String>,
@@ -118,20 +118,20 @@ impl ConfigPatch {
             config.server.port = port;
         }
 
-        if let Some(backend) = self.store.backend {
-            config.store.backend = backend;
+        if let Some(backend) = self.storage.backend {
+            config.storage.backend = backend;
         }
-        if let Some(root_dir) = self.store.fs.root_dir {
-            config.store.fs.root_dir = paths::expand_home_path(&root_dir)?;
+        if let Some(root_dir) = self.storage.fs.root_dir {
+            config.storage.fs.root_dir = paths::expand_home_path(&root_dir)?;
         }
-        if let Some(endpoint) = self.store.cloud.endpoint {
-            config.store.cloud.endpoint = endpoint;
+        if let Some(endpoint) = self.storage.cloud.endpoint {
+            config.storage.cloud.endpoint = endpoint;
         }
-        if let Some(api_key) = self.store.cloud.api_key {
-            config.store.cloud.api_key = api_key;
+        if let Some(api_key) = self.storage.cloud.api_key {
+            config.storage.cloud.api_key = api_key;
         }
-        if let Some(workspace) = self.store.cloud.workspace {
-            config.store.cloud.workspace = optional_string(workspace);
+        if let Some(workspace) = self.storage.cloud.workspace {
+            config.storage.cloud.workspace = optional_string(workspace);
         }
 
         Ok(())

@@ -26,6 +26,7 @@ pub mod api;
 pub mod context;
 pub mod costtracker;
 pub mod hooks;
+mod ids;
 pub mod mcp;
 pub mod permissions;
 pub mod session;

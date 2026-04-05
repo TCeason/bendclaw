@@ -132,7 +132,7 @@ impl LLMProvider for AnthropicProvider {
         let mut req_builder = self
             .client
             .post(self.messages_url())
-            .header("x-api-key", &self.api_key)
+            .header("authorization", format!("Bearer {}", self.api_key))
             .header("anthropic-version", API_VERSION)
             .header("anthropic-beta", "prompt-caching-2024-07-31")
             .header("content-type", "application/json");
@@ -210,15 +210,21 @@ impl LLMProvider for AnthropicProvider {
 
 /// Parse Anthropic SSE stream into a ProviderResponse.
 async fn parse_anthropic_stream(response: reqwest::Response) -> Result<ProviderResponse, ApiError> {
+    let content_type = response::response_content_type(response.headers());
     let body = response
         .text()
         .await
         .map_err(|e| ApiError::NetworkError(e.to_string()))?;
 
+    if !response::is_streaming_content_type(&content_type) || !response::has_sse_data_lines(&body) {
+        return parse_anthropic_fallback(&body);
+    }
+
     let mut content_blocks: Vec<ContentBlock> = Vec::new();
     let mut usage = Usage::default();
     let mut stop_reason: Option<String> = None;
     let mut current_blocks: HashMap<usize, Value> = HashMap::new();
+    let mut saw_valid_sse_event = false;
 
     for line in body.lines() {
         let line = line.trim();
@@ -231,7 +237,10 @@ async fn parse_anthropic_stream(response: reqwest::Response) -> Result<ProviderR
         }
 
         let event: Value = match serde_json::from_str(data) {
-            Ok(e) => e,
+            Ok(event) => {
+                saw_valid_sse_event = true;
+                event
+            }
             Err(_) => continue,
         };
 
@@ -345,6 +354,10 @@ async fn parse_anthropic_stream(response: reqwest::Response) -> Result<ProviderR
         }
     }
 
+    if !saw_valid_sse_event {
+        return parse_anthropic_fallback(&body);
+    }
+
     // Flush remaining blocks
     let mut remaining: Vec<(usize, Value)> = current_blocks.into_iter().collect();
     remaining.sort_by_key(|(idx, _)| *idx);
@@ -358,6 +371,50 @@ async fn parse_anthropic_stream(response: reqwest::Response) -> Result<ProviderR
         message: Message {
             role: MessageRole::Assistant,
             content: content_blocks,
+        },
+        usage,
+        stop_reason,
+    })
+}
+
+fn parse_anthropic_fallback(body: &str) -> Result<ProviderResponse, ApiError> {
+    let value = response::parse_json_body(body, "Anthropic")?;
+    if let Some(error) = response::json_stream_error(&value, "Anthropic") {
+        return Err(error);
+    }
+    parse_anthropic_response(&value)
+}
+
+fn parse_anthropic_response(value: &Value) -> Result<ProviderResponse, ApiError> {
+    let blocks = value
+        .get("content")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            ApiError::StreamError(
+                "Anthropic upstream returned JSON body without content".to_string(),
+            )
+        })?;
+
+    let content = blocks
+        .iter()
+        .filter_map(|block| parse_anthropic_content_block(block.clone()))
+        .collect();
+
+    let usage = value
+        .get("usage")
+        .cloned()
+        .and_then(|usage| serde_json::from_value::<Usage>(usage).ok())
+        .unwrap_or_default();
+
+    let stop_reason = value
+        .get("stop_reason")
+        .and_then(Value::as_str)
+        .map(String::from);
+
+    Ok(ProviderResponse {
+        message: Message {
+            role: MessageRole::Assistant,
+            content,
         },
         usage,
         stop_reason,

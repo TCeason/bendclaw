@@ -150,7 +150,7 @@ pub async fn fork_session(
 
     let fork_id = new_session_id
         .map(|s| s.to_string())
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        .unwrap_or_else(crate::ids::new_session_id);
 
     let now = Utc::now().to_rfc3339();
     let meta = SessionMetadata {

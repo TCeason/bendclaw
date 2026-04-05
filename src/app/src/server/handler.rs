@@ -64,7 +64,7 @@ fn chat_stream(
         let mut agent = state.agent.lock().await.take();
 
         if agent.is_none() {
-            let opts = build_agent_options(&state.llm, None, Some(20));
+            let opts = build_agent_options(&state.llm, None, None, Some(20), None);
             match bend_agent::Agent::new(opts).await {
                 Ok(a) => agent = Some(a),
                 Err(e) => {
