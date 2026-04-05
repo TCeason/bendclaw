@@ -1,8 +1,8 @@
 # BendClaw
 
-DEV_CONFIG ?= $(HOME)/.bendclaw/bendclaw_dev.toml
+DEV_CONFIG ?= $(HOME)/.evotai/bendclaw.env
 CARGO ?= cargo
-NEXTEST := $(CARGO) nextest run
+NEXTEST := $(CARGO) nextest run --no-tests=pass
 COVERAGE_TARGETS := --lib --test unit --test it --test contract
 COVERAGE_CMD := $(CARGO) llvm-cov nextest $(COVERAGE_TARGETS)
 
@@ -84,16 +84,14 @@ dev-env:
 	@if [ ! -f $(DEV_CONFIG) ]; then \
 		echo "==> creating dev config at $(DEV_CONFIG)"; \
 		mkdir -p $$(dirname $(DEV_CONFIG)); \
-		cp configs/bendclaw.toml.example $(DEV_CONFIG); \
+		cp configs/bendclaw.env.example $(DEV_CONFIG); \
 	fi
 	@echo ""
 	@echo "  DEV MODE"
-	@echo "  api:    localhost:8787"
 	@echo "  config: $(DEV_CONFIG)"
-	@echo "  databend: https://app.databend.com"
 	@echo ""
 
 run: dev-env
-	cargo run -- --config $(DEV_CONFIG) run
+	cargo run -p bendclaw
 
 ci: check test

@@ -1,21 +1,27 @@
-# BendClaw configuration.
-# Usage: bendclaw --config bendclaw.toml
+[llm]
+provider = "anthropic"
 
-# Unique identifier for this bendclaw instance.
-node_id = "aos_abc12345"
+[anthropic]
+api_key = ""
+base_url = ""
+model = "claude-sonnet-4-20250514"
+
+[openai]
+api_key = ""
+base_url = ""
+model = "gpt-4o"
 
 [server]
-bind_addr = "127.0.0.1:8787"
+host = "127.0.0.1"
+port = 8082
 
-[storage]
-databend_api_base_url = "https://api.databend.com/v1"
-databend_api_token = ""
+[store]
+backend = "fs"
 
-[llm]
+[store.fs]
+root_dir = "~/.evotai"
 
-[[llm.providers]]
-name = ""
-provider = "anthropic"
-base_url = ""
+[store.cloud]
+endpoint = ""
 api_key = ""
-model = "claude-sonnet-4.6"
+workspace = ""

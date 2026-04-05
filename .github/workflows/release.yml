@@ -245,7 +245,7 @@ jobs:
           TAG="${{ needs.create_release.outputs.tag }}"
           mkdir -p distro/{bin,configs}
           cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} distro/bin/
-          cp configs/bendclaw.toml.example distro/configs/
+          cp configs/bendclaw.env.example distro/configs/
           tar -C distro -czf ${{ env.BINARY_NAME }}-${TAG}-${{ matrix.target }}.tar.gz bin configs
 
       - name: Upload artifact to release

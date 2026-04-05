@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/bend-agent"]
+members = ["src/engine", "src/app"]
 resolver = "2"
 
 [workspace.package]
@@ -7,16 +7,16 @@ edition = "2021"
 version = "0.1.0"
 
 [workspace.dependencies]
-bend-agent = { path = "crates/bend-agent" }
+bend-agent = { path = "src/engine" }
 anyhow = "1"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["macros"] }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
-dotenvy = "0.15"
 futures = "0.3"
 reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
 serde = { version = "1", features = ["derive"] }
+serde_ignored = "0.1"
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
@@ -26,53 +26,3 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 ulid = "1"
-
-[package]
-name = "bendclaw"
-version.workspace = true
-edition.workspace = true
-
-[[bin]]
-name = "bendclaw"
-path = "src/bin/bendclaw.rs"
-
-[dependencies]
-bend-agent.workspace = true
-anyhow.workspace = true
-async-trait.workspace = true
-chrono.workspace = true
-clap.workspace = true
-dotenvy.workspace = true
-futures.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-thiserror.workspace = true
-tokio.workspace = true
-tokio-stream.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
-ulid.workspace = true
-
-[lints.clippy]
-module_inception = "allow"
-should_implement_trait = "allow"
-approx_constant = "allow"
-
-[dev-dependencies]
-insta = { version = "1", features = ["json", "yaml", "redactions"] }
-tempfile = "3"
-
-[[test]]
-name = "unit"
-path = "tests/unit/main.rs"
-
-[[test]]
-name = "it"
-path = "tests/it/main.rs"
-
-[[test]]
-name = "contract"
-path = "tests/contract/main.rs"
-
-[build-dependencies]
-chrono = "0.4"
