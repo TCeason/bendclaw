@@ -58,6 +58,12 @@ pub fn render(frame: &mut Frame, state: &TuiState) {
     render_footer(frame, areas[4], state);
 }
 
+pub fn desired_inline_height(state: &TuiState) -> u16 {
+    let base = if state.messages.is_empty() { 16 } else { 12 };
+    let popup = popup_height(state);
+    base + popup
+}
+
 fn popup_height(state: &TuiState) -> u16 {
     match state.popup {
         Some(PopupState::Model { .. }) => 14,
@@ -72,8 +78,11 @@ fn render_messages(frame: &mut Frame, area: Rect, state: &TuiState) {
         return;
     }
 
-    let lines = build_message_lines(state, area.height as usize);
-    let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+    let lines = build_message_lines(state);
+    let scroll = lines.len().saturating_sub(area.height as usize) as u16;
+    let paragraph = Paragraph::new(Text::from(lines))
+        .scroll((scroll, 0))
+        .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
 }
 
@@ -341,7 +350,7 @@ fn render_filter_line(frame: &mut Frame, area: Rect, placeholder: &str, filter: 
     frame.render_widget(paragraph, area);
 }
 
-fn build_message_lines(state: &TuiState, max_lines: usize) -> Vec<Line<'static>> {
+fn build_message_lines(state: &TuiState) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for item in &state.messages {
         match item {
@@ -393,20 +402,6 @@ fn build_message_lines(state: &TuiState, max_lines: usize) -> Vec<Line<'static>>
 
     if let Some(text) = &state.streaming_assistant {
         lines.extend(render_markdown(text));
-    }
-
-    if lines.len() > max_lines {
-        let start = lines.len() - max_lines;
-        lines = lines.split_off(start);
-    }
-
-    if lines.len() < max_lines {
-        let mut padded = Vec::with_capacity(max_lines);
-        for _ in 0..(max_lines - lines.len()) {
-            padded.push(Line::default());
-        }
-        padded.extend(lines);
-        return padded;
     }
 
     lines

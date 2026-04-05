@@ -85,8 +85,15 @@ impl Tui {
         let (tx, mut rx) = mpsc::unbounded_channel::<TuiEvent>();
         let mut running_task: Option<JoinHandle<()>> = None;
 
-        let mut terminal = enter_terminal()?;
+        let mut viewport_height = view::desired_inline_height(&state);
+        let mut terminal = enter_terminal(viewport_height)?;
         let result = loop {
+            let desired_height = view::desired_inline_height(&state);
+            if desired_height != viewport_height {
+                terminal = reopen_terminal(desired_height)?;
+                viewport_height = desired_height;
+            }
+
             if let Err(error) = terminal.draw(|frame| view::render(frame, &state)) {
                 break Err(BendclawError::Cli(format!("failed to draw tui: {error}")));
             }
@@ -544,11 +551,19 @@ impl Tui {
     }
 }
 
-fn enter_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
+fn enter_terminal(height: u16) -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
     enable_raw_mode().map_err(|e| BendclawError::Cli(format!("failed to enable raw mode: {e}")))?;
+    create_terminal(height)
+}
+
+fn reopen_terminal(height: u16) -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
+    create_terminal(height)
+}
+
+fn create_terminal(height: u16) -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
     let backend = CrosstermBackend::new(stdout());
     Terminal::with_options(backend, TerminalOptions {
-        viewport: Viewport::Inline(22),
+        viewport: Viewport::Inline(height),
     })
     .map_err(|e| BendclawError::Cli(format!("failed to create terminal: {e}")))
 }
