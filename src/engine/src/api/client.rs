@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::Client;
-use serde_json::Value;
 
 use super::anthropic::AnthropicProvider;
 use super::openai::OpenAIProvider;
@@ -12,11 +11,12 @@ use super::provider::LLMProvider;
 use super::provider::ProviderKind;
 use super::provider::ProviderRequest;
 use super::provider::ProviderResponse;
+use super::stream::collect_response;
+use super::stream::ResponseStream;
 use crate::types::ApiToolParam;
 use crate::types::Message;
 use crate::types::SystemBlock;
 use crate::types::ThinkingConfig;
-use crate::types::Usage;
 
 const DEFAULT_TIMEOUT_MS: u64 = 600_000; // 10 minutes
 
@@ -59,33 +59,6 @@ pub fn get_model_config(model: &str) -> ModelConfig {
             max_output_tokens: 16_000,
         },
     }
-}
-
-/// Streaming event from the API (kept for backward compat).
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct StreamEvent {
-    #[serde(rename = "type")]
-    pub event_type: String,
-    #[serde(default)]
-    pub message: Option<Value>,
-    #[serde(default)]
-    pub index: Option<usize>,
-    #[serde(default)]
-    pub content_block: Option<Value>,
-    #[serde(default)]
-    pub delta: Option<Value>,
-    #[serde(default)]
-    pub usage: Option<Usage>,
-}
-
-/// Complete API response (non-streaming).
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ApiResponse {
-    pub id: String,
-    pub content: Vec<Value>,
-    pub model: String,
-    pub stop_reason: Option<String>,
-    pub usage: Usage,
 }
 
 /// Error from the API.
@@ -194,7 +167,7 @@ impl ApiClient {
         get_model_config(&self.model)
     }
 
-    /// Send a streaming request via the provider and return the parsed response.
+    /// Send a request via the provider and collect the streamed response.
     pub async fn create_message(
         &self,
         messages: &[Message],
@@ -215,31 +188,32 @@ impl ApiClient {
             thinking,
         };
 
-        self.provider.create_message(request).await
+        let stream = self.provider.create_message_stream(request).await?;
+        collect_response(stream).await
     }
 
-    /// Legacy method: send streaming request and return raw reqwest::Response.
-    /// Delegates to the Anthropic provider only; prefer `create_message()` instead.
+    /// Send a request via the provider and return normalized streaming events.
     pub async fn create_message_stream(
         &self,
-        _messages: &[Message],
-        _system: Option<Vec<SystemBlock>>,
-        _tools: Option<Vec<ApiToolParam>>,
-        _max_tokens: Option<u64>,
-        _thinking: Option<ThinkingConfig>,
-    ) -> Result<reqwest::Response, ApiError> {
-        Err(ApiError::ParseError(
-            "create_message_stream is deprecated; use create_message() instead".to_string(),
-        ))
-    }
+        messages: &[Message],
+        system: Option<Vec<SystemBlock>>,
+        tools: Option<Vec<ApiToolParam>>,
+        max_tokens: Option<u64>,
+        thinking: Option<ThinkingConfig>,
+    ) -> Result<ResponseStream, ApiError> {
+        let model_config = self.model_config();
+        let max_tokens = max_tokens.unwrap_or(model_config.max_output_tokens);
 
-    /// Legacy: Parse Anthropic SSE stream. Kept for backward compatibility.
-    pub async fn parse_stream(
-        _response: reqwest::Response,
-    ) -> Result<(Message, Usage, Option<String>), ApiError> {
-        Err(ApiError::ParseError(
-            "parse_stream is deprecated; use create_message() instead".to_string(),
-        ))
+        let request = ProviderRequest {
+            model: &self.model,
+            max_tokens,
+            messages,
+            system,
+            tools,
+            thinking,
+        };
+
+        self.provider.create_message_stream(request).await
     }
 }
 

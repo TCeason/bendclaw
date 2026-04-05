@@ -57,9 +57,7 @@ pub fn map_run_event(run_event: &RunEvent) -> Vec<SseEvent> {
             if let Some(payload) = payload_as::<AssistantPayload>(&run_event.payload) {
                 for block in payload.content {
                     match block {
-                        AssistantBlock::Text { text } if !text.is_empty() => {
-                            events.push(event("text", &json!({ "text": text })));
-                        }
+                        AssistantBlock::Text { .. } => {}
                         AssistantBlock::ToolUse { id, name, input } => {
                             events.push(event(
                                 "tool_use",
@@ -104,8 +102,9 @@ pub fn map_run_event(run_event: &RunEvent) -> Vec<SseEvent> {
                         "num_turns": payload.num_turns,
                         "input_tokens": input_tokens,
                         "output_tokens": output_tokens,
-                        "cost": payload.cost_usd,
-                        "duration_ms": payload.duration_ms,
+                    "cost": payload.cost_usd,
+                    "duration_ms": payload.duration_ms,
+                    "summary": payload.summary,
                     }),
                 ));
             }

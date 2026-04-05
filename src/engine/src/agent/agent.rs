@@ -271,6 +271,7 @@ impl Agent {
         let mut num_turns = 0;
         let mut cost_usd = 0.0;
         let mut all_messages = Vec::new();
+        let mut summary = RunSummary::default();
 
         while let Some(msg) = rx.recv().await {
             match msg {
@@ -280,6 +281,7 @@ impl Agent {
                     num_turns: t,
                     cost_usd: c,
                     messages,
+                    summary: s,
                     ..
                 } => {
                     result_text = text;
@@ -287,6 +289,7 @@ impl Agent {
                     num_turns = t;
                     cost_usd = c;
                     all_messages = messages;
+                    summary = s;
                 }
                 SDKMessage::Assistant { message, .. } => {
                     let text = crate::types::extract_text(&message);
@@ -315,6 +318,7 @@ impl Agent {
             cost_usd,
             duration_ms,
             messages: all_messages,
+            summary,
         })
     }
 

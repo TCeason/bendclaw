@@ -105,6 +105,65 @@ pub struct Usage {
     pub cache_read_input_tokens: u64,
 }
 
+/// Transport-level metrics for a single streaming model request.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StreamMetrics {
+    #[serde(default)]
+    pub ttfb_ms: Option<u64>,
+    #[serde(default)]
+    pub ttft_ms: Option<u64>,
+    #[serde(default)]
+    pub stream_duration_ms: u64,
+    #[serde(default)]
+    pub chunk_count: u32,
+    #[serde(default)]
+    pub bytes_received: u64,
+}
+
+/// Aggregated streaming metrics for a full agent run.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RunStreamSummary {
+    #[serde(default)]
+    pub request_count: u32,
+    #[serde(default)]
+    pub first_ttfb_ms: Option<u64>,
+    #[serde(default)]
+    pub first_ttft_ms: Option<u64>,
+    #[serde(default)]
+    pub total_stream_duration_ms: u64,
+    #[serde(default)]
+    pub total_chunk_count: u32,
+    #[serde(default)]
+    pub total_bytes_received: u64,
+}
+
+impl RunStreamSummary {
+    pub fn record(&mut self, metrics: &StreamMetrics) {
+        self.request_count += 1;
+        self.total_stream_duration_ms += metrics.stream_duration_ms;
+        self.total_chunk_count += metrics.chunk_count;
+        self.total_bytes_received += metrics.bytes_received;
+
+        if self.first_ttfb_ms.is_none() {
+            self.first_ttfb_ms = metrics.ttfb_ms;
+        }
+        if self.first_ttft_ms.is_none() {
+            self.first_ttft_ms = metrics.ttft_ms;
+        }
+    }
+}
+
+/// Final run-level summary, separate from realtime streaming deltas.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RunSummary {
+    #[serde(default)]
+    pub api_duration_ms: u64,
+    #[serde(default)]
+    pub tool_duration_ms: u64,
+    #[serde(default)]
+    pub stream: RunStreamSummary,
+}
+
 /// SDK message types emitted during the agent loop.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -142,6 +201,8 @@ pub enum SDKMessage {
         duration_ms: u64,
         #[serde(default)]
         messages: Vec<Message>,
+        #[serde(default)]
+        summary: RunSummary,
     },
 
     #[serde(rename = "partial_message")]
@@ -188,6 +249,7 @@ pub struct QueryResult {
     pub cost_usd: f64,
     pub duration_ms: u64,
     pub messages: Vec<Message>,
+    pub summary: RunSummary,
 }
 
 /// Tool definition in API format (for sending to Claude).

@@ -24,6 +24,7 @@ pub struct RequestFinishedPayload {
     pub cost_usd: f64,
     pub duration_ms: u64,
     pub message_count: usize,
+    pub summary: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

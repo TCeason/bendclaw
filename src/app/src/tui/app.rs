@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
+use bend_agent::RunSummary;
 use crossterm::event::Event;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEventKind;
@@ -432,9 +433,13 @@ impl Tui {
                             for block in payload.content {
                                 match block {
                                     AssistantBlock::Text { text } => {
-                                        state.streaming_assistant.clear();
-                                        if !text.trim().is_empty() {
-                                            blocks.push(view::assistant_block(&text));
+                                        let rendered = if state.streaming_assistant.is_empty() {
+                                            text
+                                        } else {
+                                            std::mem::take(&mut state.streaming_assistant)
+                                        };
+                                        if !rendered.trim().is_empty() {
+                                            blocks.push(view::assistant_block(&rendered));
                                         }
                                     }
                                     AssistantBlock::ToolUse { name, input, .. } => {
@@ -496,6 +501,10 @@ impl Tui {
                                 time_now(),
                                 payload.duration_ms
                             )));
+                            blocks.push(view::summary_block(
+                                "Execution summary",
+                                &build_run_summary_lines(&payload),
+                            ));
                         }
                     }
                     RunEventKind::PartialMessage => {
@@ -827,4 +836,92 @@ fn summarize_session_title(session: &SessionMeta) -> String {
 
 fn time_now() -> String {
     chrono::Local::now().format("%H:%M:%S").to_string()
+}
+
+fn build_run_summary_lines(payload: &RequestFinishedPayload) -> Vec<String> {
+    let summary = serde_json::from_value::<RunSummary>(payload.summary.clone()).unwrap_or_default();
+    let input_tokens = payload
+        .usage
+        .get("input_tokens")
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let output_tokens = payload
+        .usage
+        .get("output_tokens")
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let total_tokens = input_tokens + output_tokens;
+
+    let llm_ms = summary.api_duration_ms;
+    let tool_ms = summary.tool_duration_ms;
+    let other_ms = payload.duration_ms.saturating_sub(llm_ms + tool_ms);
+
+    let mut lines = vec![format!(
+        "total: {}  |  cost: ${:.4}  |  turns: {}  |  tokens: {}",
+        human_duration(payload.duration_ms),
+        payload.cost_usd,
+        payload.num_turns,
+        total_tokens
+    )];
+
+    lines.push(format!(
+        "time split: llm {}  |  tools {}  |  other {}",
+        human_duration(llm_ms),
+        human_duration(tool_ms),
+        human_duration(other_ms)
+    ));
+
+    let mut stream_parts = Vec::new();
+    if let Some(ttfb_ms) = summary.stream.first_ttfb_ms {
+        stream_parts.push(format!("ttfb {}", human_duration(ttfb_ms)));
+    }
+    if let Some(ttft_ms) = summary.stream.first_ttft_ms {
+        stream_parts.push(format!("ttft {}", human_duration(ttft_ms)));
+    }
+    if summary.stream.total_stream_duration_ms > 0 {
+        stream_parts.push(format!(
+            "stream {}",
+            human_duration(summary.stream.total_stream_duration_ms)
+        ));
+    }
+    if summary.stream.total_chunk_count > 0 {
+        stream_parts.push(format!("chunks {}", summary.stream.total_chunk_count));
+    }
+    if summary.stream.total_bytes_received > 0 {
+        stream_parts.push(format!(
+            "bytes {}",
+            human_bytes(summary.stream.total_bytes_received)
+        ));
+    }
+    if summary.stream.request_count > 0 {
+        stream_parts.push(format!("requests {}", summary.stream.request_count));
+    }
+
+    if !stream_parts.is_empty() {
+        lines.push(format!("stream: {}", stream_parts.join("  |  ")));
+    }
+
+    lines
+}
+
+fn human_duration(duration_ms: u64) -> String {
+    if duration_ms >= 1000 {
+        format!("{:.1}s", duration_ms as f64 / 1000.0)
+    } else {
+        format!("{duration_ms}ms")
+    }
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * 1024.0;
+
+    let bytes_f64 = bytes as f64;
+    if bytes_f64 >= MB {
+        format!("{:.1} MB", bytes_f64 / MB)
+    } else if bytes_f64 >= KB {
+        format!("{:.1} KB", bytes_f64 / KB)
+    } else {
+        format!("{bytes} B")
+    }
 }

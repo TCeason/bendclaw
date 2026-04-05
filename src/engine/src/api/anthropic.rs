@@ -1,8 +1,12 @@
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Instant;
 
 use async_trait::async_trait;
 use bend_base::logx;
+use eventsource_stream::Eventsource;
+use futures::StreamExt;
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
@@ -12,6 +16,9 @@ use super::provider::LLMProvider;
 use super::provider::ProviderRequest;
 use super::provider::ProviderResponse;
 use super::response;
+use super::stream::collect_response;
+use super::stream::ResponseStream;
+use super::stream::StreamWriter;
 use super::ApiError;
 use crate::types::ApiToolParam;
 use crate::types::ContentBlock;
@@ -24,6 +31,7 @@ use crate::types::Usage;
 
 const API_VERSION: &str = "2023-06-01";
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
+const PROVIDER_NAME: &str = "anthropic";
 
 #[derive(Debug, Serialize)]
 struct AnthropicRequest {
@@ -76,6 +84,64 @@ impl AnthropicProvider {
             format!("{base}/v1/messages")
         }
     }
+
+    fn build_body(&self, request: ProviderRequest<'_>) -> AnthropicRequest {
+        let api_messages: Vec<AnthropicMessage> = request
+            .messages
+            .iter()
+            .map(|message| {
+                let role = match message.role {
+                    MessageRole::User => "user",
+                    MessageRole::Assistant => "assistant",
+                };
+
+                AnthropicMessage {
+                    role: role.to_string(),
+                    content: serde_json::to_value(&message.content).unwrap_or(Value::Array(vec![])),
+                }
+            })
+            .collect();
+
+        AnthropicRequest {
+            model: request.model.to_string(),
+            max_tokens: request.max_tokens,
+            messages: api_messages,
+            system: request.system,
+            tools: if request.tools.as_ref().is_none_or(|tools| tools.is_empty()) {
+                None
+            } else {
+                request.tools
+            },
+            stream: true,
+            thinking: request.thinking,
+        }
+    }
+
+    fn request_builder(&self, body: &AnthropicRequest) -> reqwest::RequestBuilder {
+        let mut builder = self
+            .client
+            .post(self.messages_url())
+            .header("authorization", format!("Bearer {}", self.api_key))
+            .header("anthropic-version", API_VERSION)
+            .header("anthropic-beta", "prompt-caching-2024-07-31")
+            .header("content-type", "application/json");
+
+        for (key, value) in &self.custom_headers {
+            builder = builder.header(key, value);
+        }
+
+        builder.json(body)
+    }
+
+    async fn send_request(&self, body: &AnthropicRequest) -> Result<reqwest::Response, ApiError> {
+        self.request_builder(body).send().await.map_err(|error| {
+            if error.is_timeout() {
+                ApiError::Timeout
+            } else {
+                ApiError::NetworkError(error.to_string())
+            }
+        })
+    }
 }
 
 #[async_trait]
@@ -88,77 +154,44 @@ impl LLMProvider for AnthropicProvider {
         &self,
         request: ProviderRequest<'_>,
     ) -> Result<ProviderResponse, ApiError> {
+        collect_response(self.create_message_stream(request).await?).await
+    }
+
+    async fn create_message_stream(
+        &self,
+        request: ProviderRequest<'_>,
+    ) -> Result<ResponseStream, ApiError> {
         let started_at = Instant::now();
+        let model = request.model.to_string();
+        let message_count = request.messages.len() as u64;
+        let tool_count = request.tools.as_ref().map(|tools| tools.len()).unwrap_or(0) as u64;
+        let max_tokens = request.max_tokens;
+        let body = self.build_body(request);
+
         logx!(
             info,
             "llm",
             "request",
-            provider = "anthropic",
-            model = %request.model,
-            message_count = request.messages.len() as u64,
-            tool_count = request.tools.as_ref().map(|tools| tools.len()).unwrap_or(0) as u64,
-            max_tokens = request.max_tokens,
+            provider = PROVIDER_NAME,
+            model = %model,
+            message_count,
+            tool_count,
+            max_tokens,
         );
 
-        let api_messages: Vec<AnthropicMessage> = request
-            .messages
-            .iter()
-            .map(|m| {
-                let role = match m.role {
-                    MessageRole::User => "user",
-                    MessageRole::Assistant => "assistant",
-                };
-                AnthropicMessage {
-                    role: role.to_string(),
-                    content: serde_json::to_value(&m.content).unwrap_or(Value::Array(vec![])),
-                }
-            })
-            .collect();
-
-        let body = AnthropicRequest {
-            model: request.model.to_string(),
-            max_tokens: request.max_tokens,
-            messages: api_messages,
-            system: request.system,
-            tools: if request.tools.as_ref().is_none_or(|t| t.is_empty()) {
-                None
-            } else {
-                request.tools
-            },
-            stream: true,
-            thinking: request.thinking,
-        };
-
-        let mut req_builder = self
-            .client
-            .post(self.messages_url())
-            .header("authorization", format!("Bearer {}", self.api_key))
-            .header("anthropic-version", API_VERSION)
-            .header("anthropic-beta", "prompt-caching-2024-07-31")
-            .header("content-type", "application/json");
-
-        for (key, value) in &self.custom_headers {
-            req_builder = req_builder.header(key, value);
-        }
-
-        let response = match req_builder.json(&body).send().await {
+        let response = match self.send_request(&body).await {
             Ok(response) => response,
             Err(error) => {
-                let api_error = if error.is_timeout() {
-                    ApiError::Timeout
-                } else {
-                    ApiError::NetworkError(error.to_string())
-                };
                 logx!(
                     warn,
                     "llm",
                     "request_failed",
-                    provider = "anthropic",
-                    model = %request.model,
-                    error = %api_error,
+                    provider = PROVIDER_NAME,
+                    model = %model,
+                    error = %error,
                     elapsed_ms = started_at.elapsed().as_millis() as u64,
                 );
-                return Err(api_error);
+                return Err(error);
             }
         };
 
@@ -168,59 +201,337 @@ impl LLMProvider for AnthropicProvider {
                 warn,
                 "llm",
                 "response_failed",
-                provider = "anthropic",
-                model = %request.model,
+                provider = PROVIDER_NAME,
+                model = %model,
                 error = %error,
                 elapsed_ms = started_at.elapsed().as_millis() as u64,
             );
             return Err(error);
         }
 
-        let provider_response = match parse_anthropic_stream(response).await {
-            Ok(provider_response) => provider_response,
-            Err(error) => {
+        let (writer, stream) = ResponseStream::channel(128);
+        let model_for_task = model.clone();
+
+        tokio::spawn(async move {
+            if let Err(error) =
+                stream_anthropic_response(response, writer.clone(), &model_for_task).await
+            {
                 logx!(
                     warn,
                     "llm",
                     "stream_failed",
-                    provider = "anthropic",
-                    model = %request.model,
+                    provider = PROVIDER_NAME,
+                    model = %model_for_task,
                     error = %error,
-                    elapsed_ms = started_at.elapsed().as_millis() as u64,
                 );
-                return Err(error);
+                writer.error(error.to_string()).await;
             }
-        };
+        });
 
-        logx!(
-            info,
-            "llm",
-            "completed",
-            provider = "anthropic",
-            model = %request.model,
-            input_tokens = provider_response.usage.input_tokens,
-            output_tokens = provider_response.usage.output_tokens,
-            stop_reason = %provider_response.stop_reason.clone().unwrap_or_default(),
-            elapsed_ms = started_at.elapsed().as_millis() as u64,
-        );
-
-        Ok(provider_response)
+        Ok(stream)
     }
 }
 
-/// Parse Anthropic SSE stream into a ProviderResponse.
-async fn parse_anthropic_stream(response: reqwest::Response) -> Result<ProviderResponse, ApiError> {
-    let content_type = response::response_content_type(response.headers());
-    let body = response
-        .text()
-        .await
-        .map_err(|e| ApiError::NetworkError(e.to_string()))?;
+async fn stream_anthropic_response(
+    response: reqwest::Response,
+    writer: StreamWriter,
+    model: &str,
+) -> Result<(), ApiError> {
+    let raw_body = Arc::new(Mutex::new(Vec::new()));
+    let byte_stream = response.bytes_stream().map({
+        let writer = writer.clone();
+        let raw_body = raw_body.clone();
+        move |chunk| match chunk {
+            Ok(bytes) => {
+                writer.record_chunk(bytes.len());
+                raw_body.lock().unwrap().extend_from_slice(bytes.as_ref());
+                Ok(bytes)
+            }
+            Err(error) => Err(error),
+        }
+    });
 
-    if !response::is_streaming_content_type(&content_type) || !response::has_sse_data_lines(&body) {
-        return parse_anthropic_fallback(&body);
+    let mut event_stream = byte_stream.eventsource();
+    let mut current_blocks: HashMap<usize, Value> = HashMap::new();
+    let mut saw_valid_event = false;
+    let mut stop_reason: Option<String> = None;
+
+    while let Some(event) = event_stream.next().await {
+        let event = match event {
+            Ok(event) => event,
+            Err(error) => {
+                if !saw_valid_event {
+                    if let Some(provider_response) =
+                        fallback_from_raw_body(&raw_body, parse_anthropic_raw_body)?
+                    {
+                        writer
+                            .emit_response(
+                                provider_response,
+                                Some(PROVIDER_NAME.to_string()),
+                                Some(model.to_string()),
+                            )
+                            .await;
+                        return Ok(());
+                    }
+                }
+
+                return Err(ApiError::StreamError(format!("SSE parse error: {error}")));
+            }
+        };
+
+        if event.data.is_empty() {
+            continue;
+        }
+        if event.data == "[DONE]" {
+            break;
+        }
+
+        let payload: Value = match serde_json::from_str(&event.data) {
+            Ok(payload) => payload,
+            Err(_) => continue,
+        };
+        saw_valid_event = true;
+
+        if let Some(error) = response::stream_error(&payload) {
+            return Err(error);
+        }
+
+        let event_type = payload
+            .get("type")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+
+        match event_type {
+            "message_start" => {
+                if let Some(usage) = payload.pointer("/message/usage") {
+                    if let Ok(usage) = serde_json::from_value::<Usage>(usage.clone()) {
+                        writer.usage(usage).await;
+                    }
+                }
+            }
+            "content_block_start" => {
+                let index = payload
+                    .get("index")
+                    .and_then(|value| value.as_u64())
+                    .map(|value| value as usize);
+                let content_block = payload.get("content_block").cloned();
+
+                if let (Some(index), Some(content_block)) = (index, content_block) {
+                    if let Some("tool_use") = content_block.get("type").and_then(Value::as_str) {
+                        if let (Some(id), Some(name)) = (
+                            content_block.get("id").and_then(Value::as_str),
+                            content_block.get("name").and_then(Value::as_str),
+                        ) {
+                            writer.tool_start(index, id, name).await;
+                        }
+                    }
+                    current_blocks.insert(index, content_block);
+                }
+            }
+            "content_block_delta" => {
+                let index = payload
+                    .get("index")
+                    .and_then(|value| value.as_u64())
+                    .map(|value| value as usize);
+                let delta = payload.get("delta");
+
+                if let (Some(index), Some(delta)) = (index, delta) {
+                    let delta_type = delta
+                        .get("type")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("");
+
+                    match delta_type {
+                        "text_delta" => {
+                            if let Some(text) = delta.get("text").and_then(Value::as_str) {
+                                writer.text(text).await;
+                                append_block_string(&mut current_blocks, index, "text", text);
+                            }
+                        }
+                        "thinking_delta" => {
+                            if let Some(thinking) = delta.get("thinking").and_then(Value::as_str) {
+                                writer.thinking(thinking).await;
+                                append_block_string(
+                                    &mut current_blocks,
+                                    index,
+                                    "thinking",
+                                    thinking,
+                                );
+                            }
+                        }
+                        "signature_delta" => {
+                            if let Some(signature) = delta.get("signature").and_then(Value::as_str)
+                            {
+                                writer.thinking_signature(signature).await;
+                                set_block_string(
+                                    &mut current_blocks,
+                                    index,
+                                    "signature",
+                                    signature,
+                                );
+                            }
+                        }
+                        "input_json_delta" => {
+                            if let Some(partial_json) =
+                                delta.get("partial_json").and_then(Value::as_str)
+                            {
+                                writer.tool_delta(index, partial_json).await;
+                                append_block_string(
+                                    &mut current_blocks,
+                                    index,
+                                    "_partial_json",
+                                    partial_json,
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "content_block_stop" => {
+                let index = payload
+                    .get("index")
+                    .and_then(|value| value.as_u64())
+                    .map(|value| value as usize);
+
+                if let Some(index) = index {
+                    emit_pending_tool_end(&writer, index, current_blocks.remove(&index)).await;
+                }
+            }
+            "message_delta" => {
+                if let Some(stop) = payload
+                    .pointer("/delta/stop_reason")
+                    .and_then(Value::as_str)
+                {
+                    stop_reason = Some(stop.to_string());
+                }
+
+                if let Some(usage) = payload.get("usage") {
+                    if let Ok(usage) = serde_json::from_value::<Usage>(usage.clone()) {
+                        writer.usage(usage).await;
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
-    let mut content_blocks: Vec<ContentBlock> = Vec::new();
+    if !saw_valid_event {
+        let provider_response = fallback_from_raw_body(&raw_body, parse_anthropic_raw_body)?
+            .ok_or_else(|| {
+                ApiError::StreamError("Anthropic upstream returned empty stream".to_string())
+            })?;
+        writer
+            .emit_response(
+                provider_response,
+                Some(PROVIDER_NAME.to_string()),
+                Some(model.to_string()),
+            )
+            .await;
+        return Ok(());
+    }
+
+    let mut remaining: Vec<(usize, Value)> = current_blocks.into_iter().collect();
+    remaining.sort_by_key(|(index, _)| *index);
+    for (index, block) in remaining {
+        emit_pending_tool_end(&writer, index, Some(block)).await;
+    }
+
+    writer
+        .done(
+            stop_reason.unwrap_or_else(|| "end_turn".to_string()),
+            Some(PROVIDER_NAME.to_string()),
+            Some(model.to_string()),
+        )
+        .await;
+
+    Ok(())
+}
+
+fn fallback_from_raw_body<F>(
+    raw_body: &Arc<Mutex<Vec<u8>>>,
+    parse: F,
+) -> Result<Option<ProviderResponse>, ApiError>
+where
+    F: FnOnce(&str) -> Result<ProviderResponse, ApiError>,
+{
+    let body = String::from_utf8_lossy(&raw_body.lock().unwrap()).to_string();
+    if body.trim().is_empty() {
+        return Ok(None);
+    }
+
+    parse(&body).map(Some)
+}
+
+fn append_block_string(blocks: &mut HashMap<usize, Value>, index: usize, field: &str, delta: &str) {
+    let block = blocks
+        .entry(index)
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    let existing = block.get(field).and_then(Value::as_str).unwrap_or("");
+    block[field] = Value::String(format!("{existing}{delta}"));
+}
+
+fn set_block_string(blocks: &mut HashMap<usize, Value>, index: usize, field: &str, value: &str) {
+    let block = blocks
+        .entry(index)
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    block[field] = Value::String(value.to_string());
+}
+
+async fn emit_pending_tool_end(writer: &StreamWriter, index: usize, block: Option<Value>) {
+    let Some(block) = block else {
+        return;
+    };
+
+    if block.get("type").and_then(Value::as_str) != Some("tool_use") {
+        return;
+    }
+
+    let Some(id) = block.get("id").and_then(Value::as_str) else {
+        return;
+    };
+    let Some(name) = block.get("name").and_then(Value::as_str) else {
+        return;
+    };
+
+    writer
+        .tool_end(index, id, name, tool_input_json_string(&block))
+        .await;
+}
+
+fn tool_input_json_string(block: &Value) -> String {
+    if let Some(partial_json) = block.get("_partial_json").and_then(Value::as_str) {
+        return partial_json.to_string();
+    }
+
+    block
+        .get("input")
+        .cloned()
+        .unwrap_or_else(|| Value::Object(serde_json::Map::new()))
+        .to_string()
+}
+
+fn parse_anthropic_fallback(body: &str) -> Result<ProviderResponse, ApiError> {
+    let value = response::parse_json_body(body, "Anthropic")?;
+    if let Some(error) = response::json_stream_error(&value, "Anthropic") {
+        return Err(error);
+    }
+    parse_anthropic_response(&value)
+}
+
+fn parse_anthropic_raw_body(body: &str) -> Result<ProviderResponse, ApiError> {
+    if body
+        .lines()
+        .any(|line| line.trim_start().starts_with("data: "))
+    {
+        return parse_anthropic_sse_body(body);
+    }
+
+    parse_anthropic_fallback(body)
+}
+
+fn parse_anthropic_sse_body(body: &str) -> Result<ProviderResponse, ApiError> {
+    let mut content_blocks = Vec::new();
     let mut usage = Usage::default();
     let mut stop_reason: Option<String> = None;
     let mut current_blocks: HashMap<usize, Value> = HashMap::new();
@@ -231,96 +542,101 @@ async fn parse_anthropic_stream(response: reqwest::Response) -> Result<ProviderR
         if !line.starts_with("data: ") {
             continue;
         }
+
         let data = &line[6..];
         if data == "[DONE]" {
             break;
         }
 
-        let event: Value = match serde_json::from_str(data) {
-            Ok(event) => {
+        let payload: Value = match serde_json::from_str(data) {
+            Ok(payload) => {
                 saw_valid_sse_event = true;
-                event
+                payload
             }
             Err(_) => continue,
         };
 
-        if let Some(error) = response::stream_error(&event) {
+        if let Some(error) = response::stream_error(&payload) {
             return Err(error);
         }
 
-        let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let event_type = payload
+            .get("type")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
 
         match event_type {
             "message_start" => {
-                if let Some(u) = event.pointer("/message/usage") {
-                    if let Ok(u) = serde_json::from_value::<Usage>(u.clone()) {
-                        usage.input_tokens = u.input_tokens;
-                        usage.cache_creation_input_tokens = u.cache_creation_input_tokens;
-                        usage.cache_read_input_tokens = u.cache_read_input_tokens;
+                if let Some(usage_value) = payload.pointer("/message/usage") {
+                    if let Ok(parsed_usage) = serde_json::from_value::<Usage>(usage_value.clone()) {
+                        usage.input_tokens = parsed_usage.input_tokens;
+                        usage.cache_creation_input_tokens =
+                            parsed_usage.cache_creation_input_tokens;
+                        usage.cache_read_input_tokens = parsed_usage.cache_read_input_tokens;
                     }
                 }
             }
             "content_block_start" => {
-                if let (Some(idx), Some(block)) = (
-                    event
+                if let (Some(index), Some(block)) = (
+                    payload
                         .get("index")
-                        .and_then(|i| i.as_u64())
-                        .map(|i| i as usize),
-                    event.get("content_block"),
+                        .and_then(|value| value.as_u64())
+                        .map(|value| value as usize),
+                    payload.get("content_block"),
                 ) {
-                    current_blocks.insert(idx, block.clone());
+                    current_blocks.insert(index, block.clone());
                 }
             }
             "content_block_delta" => {
-                let idx = event
+                let index = payload
                     .get("index")
-                    .and_then(|i| i.as_u64())
-                    .map(|i| i as usize);
-                let delta = event.get("delta");
-                if let (Some(idx), Some(delta)) = (idx, delta) {
-                    let delta_type = delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                    .and_then(|value| value.as_u64())
+                    .map(|value| value as usize);
+                let delta = payload.get("delta");
+
+                if let (Some(index), Some(delta)) = (index, delta) {
+                    let delta_type = delta
+                        .get("type")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("");
+
                     match delta_type {
                         "text_delta" => {
-                            if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
-                                let block = current_blocks.entry(idx).or_insert_with(
-                                    || serde_json::json!({"type": "text", "text": ""}),
-                                );
-                                let existing =
-                                    block.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                                block["text"] = Value::String(format!("{}{}", existing, text));
+                            if let Some(text) = delta.get("text").and_then(Value::as_str) {
+                                append_block_string(&mut current_blocks, index, "text", text);
                             }
                         }
                         "input_json_delta" => {
-                            if let Some(partial) =
-                                delta.get("partial_json").and_then(|t| t.as_str())
+                            if let Some(partial_json) =
+                                delta.get("partial_json").and_then(Value::as_str)
                             {
-                                let block = current_blocks.entry(idx).or_insert_with(|| {
-                                    serde_json::json!({"type": "tool_use", "id": "", "name": "", "input": {}})
-                                });
-                                let existing = block
-                                    .get("_partial_json")
-                                    .and_then(|t| t.as_str())
-                                    .unwrap_or("");
-                                block["_partial_json"] =
-                                    Value::String(format!("{}{}", existing, partial));
+                                append_block_string(
+                                    &mut current_blocks,
+                                    index,
+                                    "_partial_json",
+                                    partial_json,
+                                );
                             }
                         }
                         "thinking_delta" => {
-                            if let Some(thinking) = delta.get("thinking").and_then(|t| t.as_str()) {
-                                let block = current_blocks.entry(idx).or_insert_with(
-                                    || serde_json::json!({"type": "thinking", "thinking": ""}),
+                            if let Some(thinking) = delta.get("thinking").and_then(Value::as_str) {
+                                append_block_string(
+                                    &mut current_blocks,
+                                    index,
+                                    "thinking",
+                                    thinking,
                                 );
-                                let existing =
-                                    block.get("thinking").and_then(|t| t.as_str()).unwrap_or("");
-                                block["thinking"] =
-                                    Value::String(format!("{}{}", existing, thinking));
                             }
                         }
                         "signature_delta" => {
-                            if let Some(sig) = delta.get("signature").and_then(|t| t.as_str()) {
-                                if let Some(block) = current_blocks.get_mut(&idx) {
-                                    block["signature"] = Value::String(sig.to_string());
-                                }
+                            if let Some(signature) = delta.get("signature").and_then(Value::as_str)
+                            {
+                                set_block_string(
+                                    &mut current_blocks,
+                                    index,
+                                    "signature",
+                                    signature,
+                                );
                             }
                         }
                         _ => {}
@@ -328,26 +644,31 @@ async fn parse_anthropic_stream(response: reqwest::Response) -> Result<ProviderR
                 }
             }
             "content_block_stop" => {
-                let idx = event
+                let index = payload
                     .get("index")
-                    .and_then(|i| i.as_u64())
-                    .map(|i| i as usize);
-                if let Some(idx) = idx {
-                    if let Some(block) = current_blocks.remove(&idx) {
-                        if let Some(cb) = parse_anthropic_content_block(block) {
-                            content_blocks.push(cb);
+                    .and_then(|value| value.as_u64())
+                    .map(|value| value as usize);
+                if let Some(index) = index {
+                    if let Some(block) = current_blocks.remove(&index) {
+                        if let Some(content_block) = parse_anthropic_content_block(block) {
+                            content_blocks.push(content_block);
                         }
                     }
                 }
             }
             "message_delta" => {
-                if let Some(sr) = event.pointer("/delta/stop_reason").and_then(|s| s.as_str()) {
-                    stop_reason = Some(sr.to_string());
+                if let Some(reason) = payload
+                    .pointer("/delta/stop_reason")
+                    .and_then(Value::as_str)
+                {
+                    stop_reason = Some(reason.to_string());
                 }
-                if let Some(u) = event.get("usage") {
-                    if let Some(out) = u.get("output_tokens").and_then(|o| o.as_u64()) {
-                        usage.output_tokens = out;
-                    }
+                if let Some(output_tokens) = payload
+                    .get("usage")
+                    .and_then(|usage| usage.get("output_tokens"))
+                    .and_then(Value::as_u64)
+                {
+                    usage.output_tokens = output_tokens;
                 }
             }
             _ => {}
@@ -355,15 +676,14 @@ async fn parse_anthropic_stream(response: reqwest::Response) -> Result<ProviderR
     }
 
     if !saw_valid_sse_event {
-        return parse_anthropic_fallback(&body);
+        return parse_anthropic_fallback(body);
     }
 
-    // Flush remaining blocks
     let mut remaining: Vec<(usize, Value)> = current_blocks.into_iter().collect();
-    remaining.sort_by_key(|(idx, _)| *idx);
+    remaining.sort_by_key(|(index, _)| *index);
     for (_, block) in remaining {
-        if let Some(cb) = parse_anthropic_content_block(block) {
-            content_blocks.push(cb);
+        if let Some(content_block) = parse_anthropic_content_block(block) {
+            content_blocks.push(content_block);
         }
     }
 
@@ -375,14 +695,6 @@ async fn parse_anthropic_stream(response: reqwest::Response) -> Result<ProviderR
         usage,
         stop_reason,
     })
-}
-
-fn parse_anthropic_fallback(body: &str) -> Result<ProviderResponse, ApiError> {
-    let value = response::parse_json_body(body, "Anthropic")?;
-    if let Some(error) = response::json_stream_error(&value, "Anthropic") {
-        return Err(error);
-    }
-    parse_anthropic_response(&value)
 }
 
 fn parse_anthropic_response(value: &Value) -> Result<ProviderResponse, ApiError> {
@@ -430,7 +742,9 @@ fn parse_anthropic_content_block(mut block: Value) -> Option<ContentBlock> {
         "tool_use" => {
             let id = block.get("id")?.as_str()?.to_string();
             let name = block.get("name")?.as_str()?.to_string();
-            let input = if let Some(partial) = block.get("_partial_json").and_then(|p| p.as_str()) {
+            let input = if let Some(partial) =
+                block.get("_partial_json").and_then(|value| value.as_str())
+            {
                 serde_json::from_str(partial).unwrap_or(Value::Object(serde_json::Map::new()))
             } else {
                 block
@@ -438,8 +752,8 @@ fn parse_anthropic_content_block(mut block: Value) -> Option<ContentBlock> {
                     .cloned()
                     .unwrap_or(Value::Object(serde_json::Map::new()))
             };
-            if let Some(obj) = block.as_object_mut() {
-                obj.remove("_partial_json");
+            if let Some(object) = block.as_object_mut() {
+                object.remove("_partial_json");
             }
             Some(ContentBlock::ToolUse { id, name, input })
         }
@@ -447,7 +761,7 @@ fn parse_anthropic_content_block(mut block: Value) -> Option<ContentBlock> {
             thinking: block.get("thinking")?.as_str()?.to_string(),
             signature: block
                 .get("signature")
-                .and_then(|s| s.as_str())
+                .and_then(|value| value.as_str())
                 .map(String::from),
         }),
         "image" => {

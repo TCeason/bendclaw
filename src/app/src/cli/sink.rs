@@ -74,9 +74,7 @@ impl EventSink for TextSink {
                 if let Some(payload) = payload_as::<AssistantPayload>(&event.payload) {
                     for block in payload.content {
                         match block {
-                            AssistantBlock::Text { text } => {
-                                print!("{text}");
-                            }
+                            AssistantBlock::Text { .. } => {}
                             AssistantBlock::ToolUse { name, input, .. } => {
                                 let detail = format_tool_input(&input);
                                 eprintln!("[call: {name}] {detail}");
@@ -97,6 +95,11 @@ impl EventSink for TextSink {
                             truncate(&payload.content, 120)
                         );
                     }
+                }
+            }
+            RunEventKind::PartialMessage => {
+                if let Some(payload) = payload_as::<MessagePayload>(&event.payload) {
+                    print!("{}", payload.message);
                 }
             }
             RunEventKind::Error => {

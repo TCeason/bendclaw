@@ -234,6 +234,42 @@ body {
   color: #047857;
   font-size: 13px;
 }
+.result-summary {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin: 8px 0 12px;
+}
+.result-summary .summary-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #475569;
+  margin-bottom: 10px;
+}
+.result-summary .summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px 12px;
+}
+.result-summary .summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.result-summary .summary-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #94a3b8;
+}
+.result-summary .summary-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
 
 /* Error */
 .error-banner {
@@ -416,6 +452,62 @@ function renderMarkdown(text) {
   return html;
 }
 
+function formatCost(cost) {
+  if (!Number.isFinite(cost)) return '$0.0000';
+  return cost < 0.01 ? `$${cost.toFixed(4)}` : `$${cost.toFixed(2)}`;
+}
+
+function formatDuration(durationMs) {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return '0ms';
+  return durationMs >= 1000 ? `${(durationMs / 1000).toFixed(1)}s` : `${Math.round(durationMs)}ms`;
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
+
+function renderSummaryGrid(data) {
+  const summary = data.summary || {};
+  const stream = summary.stream || {};
+  const totalTokens = (data.input_tokens || 0) + (data.output_tokens || 0);
+  const llmMs = summary.api_duration_ms || 0;
+  const toolMs = summary.tool_duration_ms || 0;
+  const otherMs = Math.max((data.duration_ms || 0) - llmMs - toolMs, 0);
+
+  const items = [
+    ['Cost', formatCost(data.cost || 0)],
+    ['Total', formatDuration(data.duration_ms || 0)],
+    ['LLM', formatDuration(llmMs)],
+    ['Tools', formatDuration(toolMs)],
+    ['Other', formatDuration(otherMs)],
+    ['Tokens', `${totalTokens}`],
+  ];
+
+  if (stream.first_ttfb_ms != null) items.push(['TTFB', formatDuration(stream.first_ttfb_ms)]);
+  if (stream.first_ttft_ms != null) items.push(['TTFT', formatDuration(stream.first_ttft_ms)]);
+  if ((stream.total_stream_duration_ms || 0) > 0) items.push(['Stream', formatDuration(stream.total_stream_duration_ms)]);
+  if ((stream.total_chunk_count || 0) > 0) items.push(['Chunks', `${stream.total_chunk_count}`]);
+  if ((stream.total_bytes_received || 0) > 0) items.push(['Bytes', formatBytes(stream.total_bytes_received)]);
+  if ((stream.request_count || 0) > 0) items.push(['Requests', `${stream.request_count}`]);
+
+  return `
+    <div class="result-summary">
+      <div class="summary-title">Execution Summary</div>
+      <div class="summary-grid">
+        ${items.map(([label, value]) => `
+          <div class="summary-item">
+            <div class="summary-label">${escapeHtml(label)}</div>
+            <div class="summary-value">${escapeHtml(value)}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
 async function newSession() {
   await fetch('/api/new', { method: 'POST' });
   chat.innerHTML = `
@@ -543,8 +635,8 @@ async function sendMessage() {
 
           case 'result': {
             const d = event.data;
-            const costStr = d.cost < 0.01 ? `$${d.cost.toFixed(4)}` : `$${d.cost.toFixed(2)}`;
-            const durStr = (d.duration_ms / 1000).toFixed(1) + 's';
+            const costStr = formatCost(d.cost || 0);
+            const durStr = formatDuration(d.duration_ms || 0);
             const banner = document.createElement('div');
             banner.className = 'result-banner';
             banner.innerHTML = `
@@ -553,6 +645,7 @@ async function sendMessage() {
               <span class="stats">· ${costStr} · ${durStr} · ${d.input_tokens + d.output_tokens} tokens</span>
             `;
             assistantDiv.appendChild(banner);
+            assistantDiv.insertAdjacentHTML('beforeend', renderSummaryGrid(d));
             scrollToBottom();
             break;
           }

@@ -107,6 +107,7 @@ async fn full_pipeline_creates_session_and_run() -> TestResult {
             cost_usd: 0.001,
             duration_ms: 100,
             messages: final_messages.clone(),
+            summary: bend_agent::RunSummary::default(),
         },
     ];
 
@@ -234,6 +235,7 @@ async fn pipeline_resume_session() -> TestResult {
             cost_usd: 0.0,
             duration_ms: 50,
             messages: first_messages.clone(),
+            summary: bend_agent::RunSummary::default(),
         },
     ];
 
@@ -293,6 +295,7 @@ async fn pipeline_resume_session() -> TestResult {
             cost_usd: 0.0,
             duration_ms: 50,
             messages: second_messages.clone(),
+            summary: bend_agent::RunSummary::default(),
         },
     ];
 
@@ -408,6 +411,7 @@ fn map_all_sdk_message_variants() {
                 cost_usd: 0.01,
                 duration_ms: 100,
                 messages: vec![],
+                summary: bend_agent::RunSummary::default(),
             },
             RunEventKind::RunFinished,
         ),

@@ -1,8 +1,12 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use tokio::sync::mpsc;
+use tokio_stream::StreamExt;
 
 use crate::api::ApiClient;
+use crate::api::StreamAccumulator;
+use crate::api::StreamEvent;
 use crate::context;
 use crate::costtracker::CostTracker;
 use crate::tools::ToolRegistry;
@@ -29,6 +33,7 @@ pub(crate) async fn run_loop(
     can_use_tool: Option<&CanUseToolFn>,
     tx: mpsc::Sender<SDKMessage>,
 ) -> Result<Vec<Message>, String> {
+    let run_started_at = Instant::now();
     let tool_context = ToolUseContext::new(cwd.to_string());
 
     // Build system prompt blocks
@@ -51,6 +56,7 @@ pub(crate) async fn run_loop(
     let retry_config = retry::RetryConfig::default();
     let mut num_turns: u32 = 0;
     let mut total_usage = Usage::default();
+    let mut run_summary = RunSummary::default();
 
     // Send system message
     let _ = tx
@@ -105,11 +111,11 @@ pub(crate) async fn run_loop(
         let api_tools_ref = &api_tools;
         let thinking_ref = &thinking;
 
-        let start = std::time::Instant::now();
+        let api_started_at = Instant::now();
 
         let response = retry::with_retry(&retry_config, || async {
             api_client_ref
-                .create_message(
+                .create_message_stream(
                     &normalized,
                     Some(system_blocks_ref.clone()),
                     Some(api_tools_ref.clone()),
@@ -120,8 +126,8 @@ pub(crate) async fn run_loop(
         })
         .await;
 
-        let provider_response = match response {
-            Ok(r) => r,
+        let mut response_stream = match response {
+            Ok(stream) => stream,
             Err(e) => {
                 if retry::is_auth_error(&e) {
                     return Err(format!("Authentication error: {}. Check your API key.", e));
@@ -130,7 +136,27 @@ pub(crate) async fn run_loop(
             }
         };
 
-        let api_duration = start.elapsed().as_millis() as u64;
+        let mut accumulator = StreamAccumulator::default();
+        while let Some(event) = response_stream.next().await {
+            if let StreamEvent::ContentDelta(text) = &event {
+                if text.is_empty() {
+                    continue;
+                }
+                let _ = tx
+                    .send(SDKMessage::PartialMessage { text: text.clone() })
+                    .await;
+            }
+
+            if let Err(error) = accumulator.apply(event) {
+                return Err(format!("API error: {}", error));
+            }
+        }
+
+        run_summary.stream.record(&response_stream.metrics());
+
+        let provider_response = accumulator.into_provider_response();
+        let api_duration = api_started_at.elapsed().as_millis() as u64;
+        run_summary.api_duration_ms += api_duration;
         cost_tracker.add_api_duration(api_duration).await;
         cost_tracker
             .add_usage(api_client.model(), &provider_response.usage)
@@ -169,6 +195,7 @@ pub(crate) async fn run_loop(
         let results =
             tools::execute_tools(&assistant_msg, &registry, &tool_context, can_use_tool).await;
         let tool_duration = tool_start.elapsed().as_millis() as u64;
+        run_summary.tool_duration_ms += tool_duration;
         cost_tracker.add_tool_duration(tool_duration).await;
 
         // Send tool result events
@@ -205,6 +232,8 @@ pub(crate) async fn run_loop(
         .map(extract_text)
         .unwrap_or_default();
 
+    let duration_ms = run_started_at.elapsed().as_millis() as u64;
+
     // Send result event
     let _ = tx
         .send(SDKMessage::Result {
@@ -212,8 +241,9 @@ pub(crate) async fn run_loop(
             usage: total_usage,
             num_turns,
             cost_usd: total_cost,
-            duration_ms: 0,
+            duration_ms,
             messages: messages.clone(),
+            summary: run_summary,
         })
         .await;
 

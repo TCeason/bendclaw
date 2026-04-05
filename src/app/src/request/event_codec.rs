@@ -98,6 +98,7 @@ pub fn map_sdk_message(
             cost_usd,
             duration_ms,
             messages,
+            summary,
         } => (
             RunEventKind::RunFinished,
             to_payload(RequestFinishedPayload {
@@ -107,6 +108,7 @@ pub fn map_sdk_message(
                 cost_usd: *cost_usd,
                 duration_ms: *duration_ms,
                 message_count: messages.len(),
+                summary: to_payload(summary),
             }),
         ),
         bend_agent::SDKMessage::PartialMessage { text } => (

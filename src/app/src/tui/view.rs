@@ -152,6 +152,27 @@ pub fn tool_result_block(title: &str, lines: &[String], ok: bool) -> TranscriptB
     TranscriptBlock::new(rendered)
 }
 
+pub fn summary_block(title: &str, lines: &[String]) -> TranscriptBlock {
+    let mut rendered = vec![Line::from(vec![
+        Span::styled(
+            "[RUN]",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Rgb(116, 192, 252))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(title.to_string(), Style::default().fg(Color::Gray)),
+    ])];
+    rendered.extend(lines.iter().map(|line| {
+        Line::from(vec![
+            Span::styled("  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(line.to_string(), Style::default().fg(Color::Gray)),
+        ])
+    }));
+    TranscriptBlock::new(rendered)
+}
+
 fn popup_height(state: &TuiState) -> u16 {
     match state.popup {
         Some(PopupState::Model { .. }) => 12,

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 
+use super::stream::ResponseStream;
 use crate::types::ApiToolParam;
 use crate::types::Message;
 use crate::types::SystemBlock;
@@ -60,4 +61,9 @@ pub trait LLMProvider: Send + Sync {
         &self,
         request: ProviderRequest<'_>,
     ) -> Result<ProviderResponse, super::ApiError>;
+
+    async fn create_message_stream(
+        &self,
+        request: ProviderRequest<'_>,
+    ) -> Result<ResponseStream, super::ApiError>;
 }

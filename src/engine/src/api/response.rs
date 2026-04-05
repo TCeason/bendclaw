@@ -31,23 +31,6 @@ pub fn stream_error(value: &Value) -> Option<ApiError> {
     json_error_message(value).map(ApiError::StreamError)
 }
 
-pub fn response_content_type(headers: &HeaderMap) -> String {
-    headers
-        .get("content-type")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_string()
-}
-
-pub fn is_streaming_content_type(content_type: &str) -> bool {
-    content_type.contains("stream") || content_type.contains("event-stream")
-}
-
-pub fn has_sse_data_lines(body: &str) -> bool {
-    body.lines()
-        .any(|line| line.trim_start().starts_with("data: "))
-}
-
 pub fn parse_json_body(body: &str, provider: &str) -> Result<Value, ApiError> {
     serde_json::from_str(body).map_err(|_| {
         ApiError::StreamError(format!(
