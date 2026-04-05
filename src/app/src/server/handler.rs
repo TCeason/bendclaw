@@ -15,7 +15,7 @@ use crate::agent::build_agent_options;
 use crate::server::server::AppState;
 use crate::server::stream;
 
-const INDEX_HTML: &str = include_str!("index.html");
+const INDEX_HTML: &str = include_str!("static/index.html");
 
 #[derive(Deserialize)]
 pub(crate) struct ChatRequest {
