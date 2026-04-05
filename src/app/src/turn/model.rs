@@ -1,12 +1,12 @@
 #[derive(Debug, Clone)]
-pub struct RunRequest {
+pub struct TurnRequest {
     pub prompt: String,
     pub session_id: Option<String>,
     pub max_turns: Option<u32>,
     pub append_system_prompt: Option<String>,
 }
 
-impl RunRequest {
+impl TurnRequest {
     pub fn new(prompt: String) -> Self {
         Self {
             prompt,
@@ -15,4 +15,10 @@ impl RunRequest {
             append_system_prompt: None,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct TurnResult {
+    pub session_id: String,
+    pub run_id: String,
 }

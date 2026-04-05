@@ -5,7 +5,6 @@ use bendclaw::conf::LlmConfig;
 use bendclaw::conf::ProviderKind;
 use bendclaw::conf::StorageConfig;
 use bendclaw::error::Result;
-use bendclaw::run::*;
 use bendclaw::storage::model::ListRunEvents;
 use bendclaw::storage::model::ListTranscriptEntries;
 use bendclaw::storage::model::RunEvent;
@@ -13,6 +12,7 @@ use bendclaw::storage::model::RunEventKind;
 use bendclaw::storage::model::RunMeta;
 use bendclaw::storage::model::RunStatus;
 use bendclaw::storage::open_storage;
+use bendclaw::turn::*;
 use tempfile::TempDir;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
@@ -156,9 +156,9 @@ async fn full_pipeline_creates_session_and_run() -> TestResult {
     ];
 
     let runner = MockRunner::new(sdk_messages, final_messages);
-    let request = RunRequest::new("hello".into());
+    let request = TurnRequest::new("hello".into());
 
-    run_with_runner(request, test_llm_config(), &sink, storage.as_ref(), &runner).await?;
+    submit_turn_with_runner(request, test_llm_config(), &sink, storage.as_ref(), &runner).await?;
 
     let events = sink.events().await;
     assert!(events.len() >= 4);
@@ -213,9 +213,9 @@ async fn pipeline_marks_failed_when_no_result() -> TestResult {
     }];
 
     let runner = MockRunner::new(sdk_messages, vec![]);
-    let request = RunRequest::new("hello".into());
+    let request = TurnRequest::new("hello".into());
 
-    run_with_runner(request, test_llm_config(), &sink, storage.as_ref(), &runner).await?;
+    submit_turn_with_runner(request, test_llm_config(), &sink, storage.as_ref(), &runner).await?;
 
     let events = sink.events().await;
     let run_id = &events[0].run_id;
@@ -269,8 +269,8 @@ async fn pipeline_resume_session() -> TestResult {
     let runner1 = MockRunner::new(first_sdk, first_messages.clone());
     let sink1 = CollectSink::new();
 
-    run_with_runner(
-        RunRequest::new("hello".into()),
+    submit_turn_with_runner(
+        TurnRequest::new("hello".into()),
         test_llm_config(),
         &sink1,
         storage.as_ref(),
@@ -326,10 +326,10 @@ async fn pipeline_resume_session() -> TestResult {
 
     let runner2 = MockRunner::new(second_sdk, second_messages.clone());
     let sink2 = CollectSink::new();
-    let mut request = RunRequest::new("continue".into());
+    let mut request = TurnRequest::new("continue".into());
     request.session_id = Some(session_id.clone());
 
-    run_with_runner(
+    submit_turn_with_runner(
         request,
         test_llm_config(),
         &sink2,

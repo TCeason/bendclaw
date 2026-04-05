@@ -36,7 +36,7 @@ fn build_agent_options(
 pub trait AgentRunner: Send + Sync {
     async fn run_query(
         &self,
-        options: AgentRunOptions,
+        input: AgentRunOptions,
     ) -> Result<mpsc::Receiver<bend_agent::SDKMessage>>;
 
     async fn take_messages(&self) -> Vec<bend_agent::Message>;
@@ -78,23 +78,23 @@ impl BendAgentRunner {
 impl AgentRunner for BendAgentRunner {
     async fn run_query(
         &self,
-        options: AgentRunOptions,
+        input: AgentRunOptions,
     ) -> Result<mpsc::Receiver<bend_agent::SDKMessage>> {
         let agent_options = build_agent_options(
-            &options.llm,
-            Some(options.cwd),
-            Some(options.session_id),
-            options.max_turns,
-            options.append_system_prompt,
+            &input.llm,
+            Some(input.cwd),
+            Some(input.session_id),
+            input.max_turns,
+            input.append_system_prompt,
         );
 
         let mut agent = bend_agent::Agent::new(agent_options)
             .await
             .map_err(BendclawError::Agent)?;
 
-        agent.messages = options.messages;
+        agent.messages = input.messages;
 
-        let (rx, handle) = agent.query(&options.prompt).await;
+        let (rx, handle) = agent.query(&input.prompt).await;
 
         *self.agent.lock().await = Some(agent);
         *self.handle.lock().await = Some(handle);

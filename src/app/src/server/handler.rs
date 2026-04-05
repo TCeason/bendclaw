@@ -11,10 +11,10 @@ use serde::Deserialize;
 use serde::Serialize;
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::run;
-use crate::run::RunRequest;
 use crate::server::server::AppState;
 use crate::server::stream;
+use crate::turn;
+use crate::turn::TurnRequest;
 
 const INDEX_HTML: &str = include_str!("static/index.html");
 
@@ -60,12 +60,12 @@ fn chat_stream(
     tokio::spawn(async move {
         let current_session_id = state.session_id.lock().await.clone();
         let sink = stream::SseSink::new(tx.clone());
-        let mut request = RunRequest::new(message);
+        let mut request = TurnRequest::new(message);
         request.session_id = current_session_id;
 
-        match run::run(request, state.llm.clone(), &sink, state.storage.as_ref()).await {
-            Ok(output) => {
-                *state.session_id.lock().await = Some(output.session_id);
+        match turn::submit_turn(request, state.llm.clone(), &sink, state.storage.as_ref()).await {
+            Ok(result) => {
+                *state.session_id.lock().await = Some(result.session_id);
             }
             Err(error) => {
                 let _ = tx.send(stream::error_event(error.to_string())).await;

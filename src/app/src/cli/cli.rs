@@ -6,10 +6,10 @@ use crate::conf::load_config;
 use crate::conf::ConfigOverrides;
 use crate::error::BendclawError;
 use crate::error::Result;
-use crate::run;
-use crate::run::RunRequest;
 use crate::server;
 use crate::storage::open_storage;
+use crate::turn;
+use crate::turn::TurnRequest;
 
 pub async fn run_cli(args: CliArgs) -> Result<()> {
     match (args.prompt, args.command) {
@@ -47,12 +47,12 @@ async fn run_prompt(
     let config = load_config(ConfigOverrides::new(model, None))?;
     let storage = open_storage(&config.storage)?;
     let sink = create_sink(&output_format);
-    let mut request = RunRequest::new(prompt);
+    let mut request = TurnRequest::new(prompt);
     request.session_id = resume;
     request.max_turns = max_turns;
     request.append_system_prompt = append_system_prompt;
 
-    let _ = run::run(
+    let _ = turn::submit_turn(
         request,
         config.active_llm(),
         sink.as_ref(),

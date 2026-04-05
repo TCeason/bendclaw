@@ -6,40 +6,35 @@ use bend_base::logx;
 use crate::conf::LlmConfig;
 use crate::error::BendclawError;
 use crate::error::Result;
-use crate::run::request::RunRequest;
-use crate::run::runner::AgentRunOptions;
-use crate::run::runner::AgentRunner;
-use crate::run::runner::BendAgentRunner;
-use crate::run::sink::EventSink;
-use crate::run::stream;
 use crate::session;
 use crate::storage::model::RunMeta;
 use crate::storage::model::RunStatus;
 use crate::storage::Storage;
+use crate::turn::stream;
+use crate::turn::AgentRunOptions;
+use crate::turn::AgentRunner;
+use crate::turn::BendAgentRunner;
+use crate::turn::EventSink;
+use crate::turn::TurnRequest;
+use crate::turn::TurnResult;
 
-#[derive(Debug, Clone)]
-pub struct RunOutput {
-    pub session_id: String,
-    pub run_id: String,
-}
-
-pub async fn run(
-    request: RunRequest,
+pub async fn submit_turn(
+    request: TurnRequest,
     llm_config: LlmConfig,
     sink: &dyn EventSink,
     storage: &dyn Storage,
-) -> Result<RunOutput> {
+) -> Result<TurnResult> {
     let runner = BendAgentRunner::new();
-    run_with_runner(request, llm_config, sink, storage, &runner).await
+    submit_turn_with_runner(request, llm_config, sink, storage, &runner).await
 }
 
-pub async fn run_with_runner(
-    request: RunRequest,
+pub async fn submit_turn_with_runner(
+    request: TurnRequest,
     llm_config: LlmConfig,
     sink: &dyn EventSink,
     storage: &dyn Storage,
     runner: &dyn AgentRunner,
-) -> Result<RunOutput> {
+) -> Result<TurnResult> {
     let started_at = Instant::now();
     let cwd = std::env::current_dir()
         .map_err(|e| BendclawError::Run(format!("failed to get cwd: {e}")))?
@@ -205,7 +200,7 @@ pub async fn run_with_runner(
 
     save_result?;
 
-    Ok(RunOutput {
+    Ok(TurnResult {
         session_id: state.meta.session_id.clone(),
         run_id,
     })
