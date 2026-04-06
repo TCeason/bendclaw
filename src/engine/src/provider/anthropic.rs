@@ -26,20 +26,31 @@ impl StreamProvider for AnthropicProvider {
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<Message, ProviderError> {
         let is_oauth = config.api_key.contains("sk-ant-oat");
+
+        let base_url = config
+            .model_config
+            .as_ref()
+            .map(|mc| mc.base_url.trim_end_matches('/').to_string())
+            .filter(|url| !url.is_empty())
+            .unwrap_or_else(|| "https://api.anthropic.com".into());
+
+        let is_custom = base_url != "https://api.anthropic.com";
+        let url = format!("{}/v1/messages", base_url);
+
         let body = build_request_body(&config, is_oauth);
         debug!(
-            "Anthropic request: model={}, oauth={}",
-            config.model, is_oauth
+            "Anthropic request: model={}, oauth={}, url={}",
+            config.model, is_oauth, url
         );
 
         let client = reqwest::Client::new();
-        let mut builder = client
-            .post(API_URL)
-            .header("anthropic-version", API_VERSION)
-            .header("content-type", "application/json");
+        let mut builder = client.post(&url).header("content-type", "application/json");
 
-        if is_oauth {
-            // OAuth token — Bearer auth with Claude Code identity headers
+        if is_custom {
+            // Custom endpoint — Bearer auth, no Anthropic-specific headers
+            builder = builder.header("authorization", format!("Bearer {}", config.api_key));
+        } else if is_oauth {
+            // Official endpoint, OAuth token
             builder = builder
                 .header("authorization", format!("Bearer {}", config.api_key))
                 .header(
@@ -50,7 +61,17 @@ impl StreamProvider for AnthropicProvider {
                 .header("user-agent", "claude-cli/2.1.2 (external, cli)")
                 .header("x-app", "cli");
         } else {
-            builder = builder.header("x-api-key", &config.api_key);
+            // Official endpoint, API key
+            builder = builder
+                .header("anthropic-version", API_VERSION)
+                .header("x-api-key", &config.api_key);
+        }
+
+        // Extra headers from model config (e.g. custom auth overrides)
+        if let Some(mc) = &config.model_config {
+            for (k, v) in &mc.headers {
+                builder = builder.header(k, v);
+            }
         }
 
         let request = builder.json(&body);
