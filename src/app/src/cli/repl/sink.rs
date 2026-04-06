@@ -101,6 +101,7 @@ impl EventSink for ReplSink {
                 }
                 RunEventPayload::AssistantCompleted { .. } => {
                     spinner.clear_if_rendered();
+                    spinner.hide();
                 }
                 RunEventPayload::ToolStarted { tool_name, .. } => {
                     spinner.clear_if_rendered();
@@ -111,7 +112,7 @@ impl EventSink for ReplSink {
                 }
                 RunEventPayload::ToolFinished { .. } => {
                     spinner.clear_if_rendered();
-                    spinner.restore_verb();
+                    spinner.hide();
                 }
                 RunEventPayload::RunFinished { .. } => {
                     spinner.clear_if_rendered();
