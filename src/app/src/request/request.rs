@@ -114,8 +114,6 @@ impl Request {
     }
 }
 
-// PLACEHOLDER_REMAINING
-
 // ---------------------------------------------------------------------------
 // RequestOptions (internal, resolved context)
 // ---------------------------------------------------------------------------
@@ -168,8 +166,6 @@ async fn run_request(
     let model = llm.model.clone();
     let session = open_session(&request, &storage, &cwd, &model).await?;
     let session_meta = session.meta().await;
-
-    // PLACEHOLDER_RUN_BODY
 
     let run_id = crate::ids::new_id();
     let mut run_meta = RunMeta::new(
@@ -234,8 +230,6 @@ async fn run_request(
     let mut got_assistant_response = false;
     let mut stream_error = None;
 
-    // PLACEHOLDER_EVENT_LOOP
-
     while let Some(protocol_event) = rx.recv().await {
         if matches!(protocol_event, ProtocolEvent::TurnStart) {
             turn += 1;
@@ -289,8 +283,6 @@ async fn run_request(
             run_events.push(event);
         }
     }
-
-    // PLACEHOLDER_FINALIZE
 
     let final_transcripts = agent.take_transcripts().await;
     if !final_transcripts.is_empty() {
