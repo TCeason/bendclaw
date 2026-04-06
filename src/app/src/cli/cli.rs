@@ -7,11 +7,11 @@ use crate::conf::load_config;
 use crate::conf::ConfigOverrides;
 use crate::error::BendclawError;
 use crate::error::Result;
+use crate::repl::Repl;
 use crate::request::Request;
 use crate::request::RequestExecutor;
 use crate::server;
 use crate::storage::open_storage;
-use crate::tui::Tui;
 
 pub struct Cli {
     args: CliArgs,
@@ -59,13 +59,13 @@ impl Cli {
     async fn run_repl(&self) -> Result<()> {
         let config = load_config(ConfigOverrides::new(self.args.model.clone(), None))?;
         let storage = open_storage(&config.storage)?;
-        Tui::new(
+        Repl::new(
             config,
             storage,
             self.args.max_turns,
             self.args.append_system_prompt.clone(),
             self.args.resume.clone(),
-        )
+        )?
         .run()
         .await
     }
