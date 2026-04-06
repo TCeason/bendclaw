@@ -11,6 +11,7 @@ use super::render::print_tool_result;
 use super::render::terminal_writeln;
 use super::render::ToolCallSummary;
 use super::render::DIM;
+use super::render::GRAY;
 use super::render::RED;
 use super::render::RESET;
 use super::spinner::SpinnerState;
@@ -30,6 +31,8 @@ pub struct SinkState {
     pub streamed_assistant: bool,
     pub pending_tools: HashMap<String, ToolCallDisplay>,
     pub markdown_stream: Option<MarkdownStream>,
+    pub llm_call_count: u32,
+    pub tool_call_count: u32,
 }
 
 pub struct ToolCallDisplay {
@@ -137,6 +140,8 @@ impl EventSink for ReplSink {
             RunEventPayload::RunStarted {} => {
                 finish_assistant_stream(&mut state);
                 state.pending_tools.clear();
+                state.llm_call_count = 0;
+                state.tool_call_count = 0;
             }
             RunEventPayload::TurnStarted {} => {}
             RunEventPayload::AssistantCompleted { content, .. } => {
@@ -204,6 +209,7 @@ impl EventSink for ReplSink {
                 args,
             } => {
                 finish_assistant_stream(&mut state);
+                state.tool_call_count += 1;
                 state
                     .pending_tools
                     .entry(tool_call_id.clone())
@@ -225,7 +231,13 @@ impl EventSink for ReplSink {
                 ..
             } => {
                 finish_assistant_stream(&mut state);
-                let summary = build_run_summary(usage, *turn_count, *duration_ms);
+                let summary = build_run_summary(
+                    usage,
+                    *turn_count,
+                    *duration_ms,
+                    state.llm_call_count,
+                    state.tool_call_count,
+                );
                 if !summary.is_empty() {
                     terminal_writeln(&format!("{DIM}{summary}{RESET}"));
                 }
@@ -237,11 +249,15 @@ impl EventSink for ReplSink {
                 ..
             } => {
                 finish_assistant_stream(&mut state);
+                state.llm_call_count += 1;
+                let title = format!("LLM call · {model}");
+                super::render::print_badge_line(&title, false, false);
                 terminal_writeln(&format!(
-                    "{DIM}  LLM call · {model} · {} messages · {} tools{RESET}",
+                    "{GRAY}  {} messages · {} tools{RESET}",
                     messages.len(),
                     tools.len(),
                 ));
+                terminal_writeln("");
             }
             RunEventPayload::LlmCallCompleted { .. } => {}
         }

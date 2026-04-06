@@ -78,15 +78,28 @@ pub fn human_duration(duration_ms: u64) -> String {
     }
 }
 
-pub fn build_run_summary(usage: &UsageSummary, turn_count: u32, duration_ms: u64) -> String {
+pub fn build_run_summary(
+    usage: &UsageSummary,
+    turn_count: u32,
+    duration_ms: u64,
+    llm_calls: u32,
+    tool_calls: u32,
+) -> String {
     let total_tokens = usage.input + usage.output;
 
-    [
+    let mut parts = vec![
         format!("run {}", human_duration(duration_ms)),
         format!("turns {}", turn_count),
-        format!("tokens {}", total_tokens),
-    ]
-    .join("  ·  ")
+    ];
+    if llm_calls > 0 {
+        parts.push(format!("llm {}", llm_calls));
+    }
+    if tool_calls > 0 {
+        parts.push(format!("tools {}", tool_calls));
+    }
+    parts.push(format!("tokens {}", total_tokens));
+
+    parts.join("  ·  ")
 }
 
 // ---------------------------------------------------------------------------
