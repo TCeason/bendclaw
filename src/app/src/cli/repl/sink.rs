@@ -90,7 +90,7 @@ impl EventSink for ReplSink {
                     spinner.activate();
                 }
                 RunEventPayload::TurnStarted {} => {
-                    spinner.set_thinking();
+                    spinner.restore_verb();
                 }
                 RunEventPayload::AssistantDelta { delta, .. } => {
                     if let Some(d) = delta {
