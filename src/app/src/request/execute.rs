@@ -6,13 +6,13 @@ use bend_base::logx;
 use crate::conf::LlmConfig;
 use crate::error::BendclawError;
 use crate::error::Result;
-use crate::request::adapter;
-use crate::request::event_codec::request_started_event;
+use crate::request::from_agent_messages;
 use crate::request::EventSink;
 use crate::request::Request;
+use crate::request::RequestAgent;
 use crate::request::RequestOptions;
 use crate::request::RequestResult;
-use crate::request::RequestRunner;
+use crate::request::RunEventContext;
 use crate::session::Session;
 use crate::storage::model::RunMeta;
 use crate::storage::model::RunStatus;
@@ -23,7 +23,7 @@ pub struct RequestExecutor {
     llm: LlmConfig,
     sink: Arc<dyn EventSink>,
     storage: Arc<dyn Storage>,
-    runner: Arc<RequestRunner>,
+    agent: Arc<RequestAgent>,
 }
 
 impl RequestExecutor {
@@ -32,14 +32,14 @@ impl RequestExecutor {
         llm: LlmConfig,
         sink: Arc<dyn EventSink>,
         storage: Arc<dyn Storage>,
-        runner: Arc<RequestRunner>,
+        agent: Arc<RequestAgent>,
     ) -> Arc<Self> {
         Arc::new(Self {
             request,
             llm,
             sink,
             storage,
-            runner,
+            agent,
         })
     }
 
@@ -49,7 +49,7 @@ impl RequestExecutor {
         sink: Arc<dyn EventSink>,
         storage: Arc<dyn Storage>,
     ) -> Arc<Self> {
-        Self::new(request, llm, sink, storage, RequestRunner::new())
+        Self::new(request, llm, sink, storage, RequestAgent::new())
     }
 
     pub async fn execute(&self) -> Result<RequestResult> {
@@ -81,7 +81,7 @@ impl RequestExecutor {
             resumed = self.request.session_id.is_some(),
         );
 
-        let started_event = request_started_event(&run_id, &session_meta.session_id);
+        let started_event = RunEventContext::new(&run_id, &session_meta.session_id, 0).started();
         let mut run_events = vec![started_event.clone()];
         if let Err(error) = self.sink.publish(Arc::new(started_event)).await {
             run_meta.finish(RunStatus::Failed);
@@ -99,11 +99,10 @@ impl RequestExecutor {
         }
 
         let mut rx = match self
-            .runner
-            .run_query(RequestOptions {
+            .agent
+            .start(RequestOptions {
                 llm: self.llm.clone(),
                 cwd,
-                session_id: session_meta.session_id.clone(),
                 transcript: session.transcript().await,
                 prompt: self.request.prompt.clone(),
                 max_turns: self.request.max_turns,
@@ -140,20 +139,15 @@ impl RequestExecutor {
 
             if let bend_engine::AgentEvent::AgentEnd { ref messages } = agent_event {
                 got_agent_end = true;
-                got_assistant_response = messages.iter().any(|m| {
+                got_assistant_response = messages.iter().any(|message| {
                     matches!(
-                        m,
+                        message,
                         bend_engine::AgentMessage::Llm(bend_engine::Message::Assistant { .. })
                     )
                 });
-                let duration_ms = started_at.elapsed().as_millis() as u64;
-                let finished_event = adapter::build_run_finished_event(
-                    &run_id,
-                    &session_meta.session_id,
-                    turn,
-                    messages,
-                    duration_ms,
-                );
+
+                let finished_event = RunEventContext::new(&run_id, &session_meta.session_id, turn)
+                    .finished(messages, started_at.elapsed().as_millis() as u64);
                 if let Err(error) = self.sink.publish(Arc::new(finished_event.clone())).await {
                     stream_error = Some(error);
                 }
@@ -161,12 +155,8 @@ impl RequestExecutor {
                 continue;
             }
 
-            if let Some(event) = adapter::map_agent_event_to_run_event(
-                &agent_event,
-                &run_id,
-                &session_meta.session_id,
-                turn,
-            ) {
+            let event_context = RunEventContext::new(&run_id, &session_meta.session_id, turn);
+            if let Some(event) = event_context.map(&agent_event) {
                 if let Err(error) = self.sink.publish(Arc::new(event.clone())).await {
                     stream_error = Some(error);
                     break;
@@ -175,10 +165,11 @@ impl RequestExecutor {
             }
         }
 
-        let final_messages = self.runner.take_messages().await;
+        let final_messages = self.agent.take_messages().await;
         if !final_messages.is_empty() {
-            let items = adapter::map_agent_messages_to_transcript_items(&final_messages);
-            session.apply_transcript(items).await;
+            session
+                .apply_transcript(from_agent_messages(&final_messages))
+                .await;
         }
 
         let save_result = session.save().await;
@@ -192,7 +183,7 @@ impl RequestExecutor {
 
         let _ = self.storage.put_run(run_meta).await;
         let _ = self.storage.put_run_events(run_events).await;
-        self.runner.close().await;
+        self.agent.close().await;
 
         if let Some(error) = stream_error {
             logx!(

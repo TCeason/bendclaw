@@ -101,7 +101,7 @@ async fn full_pipeline_creates_session_and_run() -> TestResult {
         },
     ];
 
-    let runner = RequestRunner::scripted(agent_events, final_messages);
+    let agent = RequestAgent::scripted(agent_events, final_messages);
     let request = Request::new("hello".into());
 
     RequestExecutor::new(
@@ -109,7 +109,7 @@ async fn full_pipeline_creates_session_and_run() -> TestResult {
         test_llm_config(),
         sink.clone(),
         storage.clone(),
-        runner,
+        agent,
     )
     .execute()
     .await?;
@@ -167,7 +167,7 @@ async fn pipeline_marks_failed_when_no_result() -> TestResult {
         reason: "api failed".into(),
     }];
 
-    let runner = RequestRunner::scripted(agent_events, vec![]);
+    let agent = RequestAgent::scripted(agent_events, vec![]);
     let request = Request::new("hello".into());
 
     RequestExecutor::new(
@@ -175,7 +175,7 @@ async fn pipeline_marks_failed_when_no_result() -> TestResult {
         test_llm_config(),
         sink.clone(),
         storage.clone(),
-        runner,
+        agent,
     )
     .execute()
     .await?;
@@ -216,7 +216,7 @@ async fn pipeline_resume_session() -> TestResult {
         },
     ];
 
-    let runner1 = RequestRunner::scripted(first_events, first_messages.clone());
+    let agent1 = RequestAgent::scripted(first_events, first_messages.clone());
     let sink1 = Arc::new(CollectSink::new());
 
     RequestExecutor::new(
@@ -224,7 +224,7 @@ async fn pipeline_resume_session() -> TestResult {
         test_llm_config(),
         sink1.clone(),
         storage.clone(),
-        runner1,
+        agent1,
     )
     .execute()
     .await?;
@@ -254,7 +254,7 @@ async fn pipeline_resume_session() -> TestResult {
         },
     ];
 
-    let runner2 = RequestRunner::scripted(second_events, second_messages.clone());
+    let agent2 = RequestAgent::scripted(second_events, second_messages.clone());
     let sink2 = Arc::new(CollectSink::new());
     let mut request = Request::new("continue".into());
     request.session_id = Some(session_id.clone());
@@ -264,7 +264,7 @@ async fn pipeline_resume_session() -> TestResult {
         test_llm_config(),
         sink2.clone(),
         storage.clone(),
-        runner2,
+        agent2,
     )
     .execute()
     .await?;
@@ -290,7 +290,7 @@ async fn pipeline_resume_session() -> TestResult {
 
 #[test]
 fn request_started_event_has_correct_kind() {
-    let event = request_started_event("run-001", "sess-001");
+    let event = RunEventContext::new("run-001", "sess-001", 0).started();
     assert!(matches!(event.kind, RunEventKind::RunStarted));
     assert_eq!(event.turn, 0);
 }

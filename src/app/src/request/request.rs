@@ -1,3 +1,12 @@
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
+use crate::conf::LlmConfig;
+use crate::error::Result;
+use crate::storage::model::RunEvent;
+use crate::storage::model::TranscriptItem;
+
 #[derive(Debug, Clone)]
 pub struct Request {
     pub prompt: String,
@@ -21,4 +30,19 @@ impl Request {
 pub struct RequestResult {
     pub session_id: String,
     pub run_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RequestOptions {
+    pub llm: LlmConfig,
+    pub cwd: String,
+    pub transcript: Vec<TranscriptItem>,
+    pub prompt: String,
+    pub max_turns: Option<u32>,
+    pub append_system_prompt: Option<String>,
+}
+
+#[async_trait]
+pub trait EventSink: Send + Sync {
+    async fn publish(&self, event: Arc<RunEvent>) -> Result<()>;
 }
