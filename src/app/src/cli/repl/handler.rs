@@ -228,12 +228,8 @@ impl Repl {
         let outcome = match control {
             Some(action) => {
                 agent.close().await;
-                let graceful =
-                    tokio::time::timeout(std::time::Duration::from_secs(5), &mut run_task).await;
-                if graceful.is_err() {
-                    run_task.abort();
-                    let _ = run_task.await;
-                }
+                run_task.abort();
+                let _ = run_task.await;
                 PromptExit::Cancelled(action == RunControl::Exit)
             }
             None => {
