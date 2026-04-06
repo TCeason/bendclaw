@@ -203,15 +203,26 @@ impl Repl {
                 .with_limits(self.limits.clone()),
         );
 
+        // Create/open session before spawning so we always have the session_id,
+        // even if the run is cancelled via ESC.
+        let model = agent.llm().model.clone();
+        let session = crate::cli::app::open_session(
+            self.session_id.as_deref(),
+            &self.storage,
+            &self.cwd,
+            &model,
+        )
+        .await?;
+        let session_id = session.meta().await.session_id.clone();
+
         let spinner_state = Arc::new(std::sync::Mutex::new(super::spinner::SpinnerState::new()));
         let sink = Arc::new(ReplSink::new(spinner_state.clone()));
-        let session_id = self.session_id.clone();
         let storage = self.storage.clone();
         let agent_clone = agent.clone();
         let prompt = input.to_string();
 
         let mut run_task = tokio::spawn(async move {
-            crate::cli::app::run_prompt(agent_clone, prompt, session_id, sink, storage).await
+            crate::cli::app::run_prompt(agent_clone, prompt, session, sink, storage).await
         });
         let control = wait_for_run_control(&mut run_task, &spinner_state)?;
         let outcome = match control {
@@ -229,11 +240,12 @@ impl Repl {
             }
         };
 
+        // Always update session_id — the session was created before the spawn,
+        // so even on cancel the transcript saved so far is associated with it.
+        self.session_id = Some(session_id);
+
         match outcome {
-            PromptExit::Finished(result, exit_requested) => {
-                self.session_id = Some(result.session_id);
-                Ok(exit_requested)
-            }
+            PromptExit::Finished(_result, exit_requested) => Ok(exit_requested),
             PromptExit::Cancelled(exit_requested) => {
                 println!("{DIM}[stopped]{RESET}");
                 Ok(exit_requested)

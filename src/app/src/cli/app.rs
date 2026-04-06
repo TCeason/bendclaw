@@ -81,8 +81,9 @@ impl Cli {
         }
         let agent = Arc::new(agent);
 
-        let session_id = self.args.resume.clone();
-        run_prompt(agent, prompt, session_id, sink, storage).await?;
+        let model = agent.llm().model.clone();
+        let session = open_session(self.args.resume.as_deref(), &storage, &cwd, &model).await?;
+        run_prompt(agent, prompt, session, sink, storage).await?;
         Ok(())
     }
 
@@ -113,15 +114,13 @@ pub async fn run_cli(args: CliArgs) -> Result<()> {
 pub async fn run_prompt(
     agent: Arc<AppAgent>,
     prompt: String,
-    session_id: Option<String>,
+    session: Arc<Session>,
     sink: Arc<dyn EventSink>,
     storage: Arc<dyn Storage>,
 ) -> Result<PromptResult> {
     let started_at = Instant::now();
-    let cwd = agent.cwd().to_string();
     let model = agent.llm().model.clone();
 
-    let session = open_session(session_id.as_deref(), &storage, &cwd, &model).await?;
     let session_meta = session.meta().await;
 
     let run_id = crate::ids::new_id();
@@ -140,7 +139,6 @@ pub async fn run_prompt(
         session_id = %session_meta.session_id,
         provider = ?agent.llm().provider,
         model = %model,
-        resumed = session_id.is_some(),
     );
 
     let started_event = RunEventContext::new(&run_id, &session_meta.session_id, 0).started();
@@ -196,6 +194,20 @@ pub async fn run_prompt(
                 .iter()
                 .any(|t| matches!(t, TranscriptItem::Assistant { .. }));
 
+            // Real-time save: persist transcript immediately on AgentEnd
+            if !transcripts.is_empty() {
+                if let Err(e) = session.apply_and_save(transcripts.clone()).await {
+                    logx!(
+                        error,
+                        "run",
+                        "transcript_save_failed",
+                        run_id = %run_id,
+                        session_id = %session_meta.session_id,
+                        error = %e,
+                    );
+                }
+            }
+
             let last_text = transcripts
                 .iter()
                 .rev()
@@ -234,6 +246,8 @@ pub async fn run_prompt(
         }
     }
 
+    // Final save: pick up any transcripts the real-time path may have missed
+    // (e.g. if the loop exited due to stream_error before AgentEnd).
     let final_transcripts = agent.take_transcripts().await;
     if !final_transcripts.is_empty() {
         session.apply_transcript(final_transcripts).await;
@@ -305,7 +319,7 @@ fn current_dir() -> Result<String> {
         .map(|p| p.to_string_lossy().to_string())
 }
 
-async fn open_session(
+pub async fn open_session(
     session_id: Option<&str>,
     storage: &Arc<dyn Storage>,
     cwd: &str,

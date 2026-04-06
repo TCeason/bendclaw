@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bendclaw::agent::AppAgent;
+use bendclaw::cli::app::open_session;
 use bendclaw::cli::app::run_prompt;
 use bendclaw::cli::app::EventSink;
 use bendclaw::conf::StorageConfig;
@@ -97,7 +98,15 @@ async fn full_pipeline_creates_session_and_run() -> TestResult {
 
     let agent = AppAgent::scripted(agent_events, final_transcripts);
 
-    run_prompt(agent, "hello".into(), None, sink.clone(), storage.clone()).await?;
+    let session = open_session(None, &storage, "/tmp", "").await?;
+    run_prompt(
+        agent,
+        "hello".into(),
+        session,
+        sink.clone(),
+        storage.clone(),
+    )
+    .await?;
 
     let events = sink.events().await;
     assert!(events.len() >= 4);
@@ -153,7 +162,15 @@ async fn pipeline_marks_failed_when_no_result() -> TestResult {
 
     let agent = AppAgent::scripted(agent_events, vec![]);
 
-    run_prompt(agent, "hello".into(), None, sink.clone(), storage.clone()).await?;
+    let session = open_session(None, &storage, "/tmp", "").await?;
+    run_prompt(
+        agent,
+        "hello".into(),
+        session,
+        sink.clone(),
+        storage.clone(),
+    )
+    .await?;
 
     let events = sink.events().await;
     let run_id = &events[0].run_id;
@@ -199,7 +216,15 @@ async fn pipeline_resume_session() -> TestResult {
     let agent1 = AppAgent::scripted(first_events, first_transcripts);
     let sink1 = Arc::new(CollectSink::new());
 
-    run_prompt(agent1, "hello".into(), None, sink1.clone(), storage.clone()).await?;
+    let session1 = open_session(None, &storage, "/tmp", "").await?;
+    run_prompt(
+        agent1,
+        "hello".into(),
+        session1,
+        sink1.clone(),
+        storage.clone(),
+    )
+    .await?;
 
     let session_id = sink1
         .events()
@@ -236,10 +261,11 @@ async fn pipeline_resume_session() -> TestResult {
     let agent2 = AppAgent::scripted(second_events, second_transcripts);
     let sink2 = Arc::new(CollectSink::new());
 
+    let session2 = open_session(Some(&session_id), &storage, "/tmp", "").await?;
     run_prompt(
         agent2,
         "continue".into(),
-        Some(session_id.clone()),
+        session2,
         sink2.clone(),
         storage.clone(),
     )

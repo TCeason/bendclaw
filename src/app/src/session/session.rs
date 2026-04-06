@@ -81,6 +81,14 @@ impl Session {
         meta.updated_at = Utc::now().to_rfc3339();
     }
 
+    /// Replace the full transcript and persist immediately.
+    /// Used for real-time saving during the event loop so that
+    /// an ESC / abort never loses already-produced context.
+    pub async fn apply_and_save(&self, items: Vec<TranscriptItem>) -> Result<()> {
+        self.apply_transcript(items).await;
+        self.save().await
+    }
+
     pub async fn save(&self) -> Result<()> {
         let meta = self.meta().await;
         let items = self.transcript().await;

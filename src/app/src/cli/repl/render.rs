@@ -132,19 +132,7 @@ pub fn print_transcript_messages(items: &[TranscriptItem]) {
                 is_error,
                 ..
             } => {
-                let title = if *is_error {
-                    format!("{tool_name} failed")
-                } else {
-                    format!("{tool_name} completed")
-                };
-                print_badge_line(&title, true, !is_error);
-                terminal_writeln(&format!(
-                    "{}  {}{}",
-                    if *is_error { RED } else { GREEN },
-                    summarize_inline(content, 160),
-                    RESET
-                ));
-                terminal_writeln("");
+                print_tool_result(tool_name, content, *is_error, None);
             }
             _ => {}
         }
@@ -171,14 +159,12 @@ pub fn print_tool_result(
     } else {
         format!("{tool_name} completed")
     };
-    let line = tool_result_line(tool_name, content, is_error, tool_call);
+    let lines = tool_result_lines(tool_name, content, is_error, tool_call);
     print_badge_line(&title, true, !is_error);
-    terminal_writeln(&format!(
-        "{}  {}{}",
-        if is_error { RED } else { GREEN },
-        line,
-        RESET
-    ));
+    let color = if is_error { RED } else { GREEN };
+    for line in lines {
+        terminal_writeln(&format!("{color}  {line}{RESET}"));
+    }
     terminal_writeln("");
 }
 
@@ -232,6 +218,31 @@ pub fn tool_result_line(
     }
 }
 
+pub fn tool_result_lines(
+    tool_name: &str,
+    content: &str,
+    is_error: bool,
+    tool_call: Option<&ToolCallSummary>,
+) -> Vec<String> {
+    let should_summarize = !is_error
+        && tool_call
+            .map(|tc| tc.name.to_lowercase().contains("read"))
+            .unwrap_or(false);
+    if should_summarize {
+        return vec![tool_result_line(tool_name, content, is_error, tool_call)];
+    }
+
+    let normalized = content.replace("\r\n", "\n");
+    if normalized.contains('\n') {
+        let trimmed = normalized.trim_end_matches('\n');
+        if trimmed.is_empty() {
+            return vec![tool_result_line(tool_name, content, is_error, tool_call)];
+        }
+        return trimmed.split('\n').map(|line| line.to_string()).collect();
+    }
+    vec![tool_result_line(tool_name, content, is_error, tool_call)]
+}
+
 pub fn split_tool_title(title: &str) -> (String, String) {
     let mut parts = title.split_whitespace();
     let badge = parts.next().unwrap_or("TOOL").to_uppercase();
@@ -243,4 +254,41 @@ pub fn split_tool_title(title: &str) -> (String, String) {
 pub struct ToolCallSummary {
     pub name: String,
     pub summary: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tool_result_lines;
+    use super::ToolCallSummary;
+
+    #[test]
+    fn tool_result_lines_preserves_multiline_content() {
+        let lines = tool_result_lines("bash", "line 1\nline 2\n\nline 4\n", false, None);
+        assert_eq!(lines, vec!["line 1", "line 2", "", "line 4"]);
+    }
+
+    #[test]
+    fn tool_result_lines_keeps_single_line_summary_behavior() {
+        let tool_call = ToolCallSummary {
+            name: "read_file".into(),
+            summary: "/tmp/demo.txt".into(),
+        };
+        let lines = tool_result_lines("read_file", "full file contents", false, Some(&tool_call));
+        assert_eq!(lines, vec!["Result: /tmp/demo.txt"]);
+    }
+
+    #[test]
+    fn tool_result_lines_keeps_read_results_compact_even_when_multiline() {
+        let tool_call = ToolCallSummary {
+            name: "read_file".into(),
+            summary: "/tmp/demo.txt".into(),
+        };
+        let lines = tool_result_lines(
+            "read_file",
+            "[20 lines]\n   1 | first\n   2 | second",
+            false,
+            Some(&tool_call),
+        );
+        assert_eq!(lines, vec!["Result: /tmp/demo.txt"]);
+    }
 }

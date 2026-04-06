@@ -15,6 +15,7 @@ use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 
 use crate::agent::AppAgent;
+use crate::cli::app::open_session;
 use crate::cli::app::run_prompt;
 use crate::conf::Config;
 use crate::conf::LlmConfig;
@@ -123,21 +124,33 @@ impl Server {
             let cwd = std::env::current_dir()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
-            let agent = Arc::new(AppAgent::new(self.llm.clone(), cwd));
+            let agent = Arc::new(AppAgent::new(self.llm.clone(), &cwd));
+            let model = agent.llm().model.clone();
 
-            match run_prompt(
-                agent,
-                message,
-                current_session_id,
-                sink,
-                self.storage.clone(),
+            let session = match open_session(
+                current_session_id.as_deref(),
+                &self.storage,
+                &cwd,
+                &model,
             )
             .await
             {
+                Ok(s) => s,
+                Err(error) => {
+                    let _ = tx.send(stream::error_event(error.to_string())).await;
+                    let _ = tx.send(stream::done_event()).await;
+                    return;
+                }
+            };
+            let session_id = session.meta().await.session_id.clone();
+
+            match run_prompt(agent, message, session, sink, self.storage.clone()).await {
                 Ok(result) => {
                     *self.session_id.write().await = Some(result.session_id);
                 }
                 Err(error) => {
+                    // Session was already created; preserve its id even on error
+                    *self.session_id.write().await = Some(session_id);
                     let _ = tx.send(stream::error_event(error.to_string())).await;
                 }
             }
