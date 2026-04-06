@@ -228,7 +228,6 @@ impl Repl {
         let outcome = match control {
             Some(action) => {
                 agent.close().await;
-                run_task.abort();
                 let _ = run_task.await;
                 PromptExit::Cancelled(action == RunControl::Exit)
             }
