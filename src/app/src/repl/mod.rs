@@ -201,10 +201,8 @@ impl Repl {
                 if self.handle_command(input).await? {
                     break;
                 }
-            } else {
-                if self.run_prompt(input).await? {
-                    break;
-                }
+            } else if self.run_prompt(input).await? {
+                break;
             }
 
             self.refresh_completion_state().await?;
@@ -1260,6 +1258,16 @@ struct SelectorOption {
     secondary: String,
 }
 
+struct SelectorPopup<'a> {
+    title: &'a str,
+    placeholder: &'a str,
+    footer: &'a str,
+    options: &'a [SelectorOption],
+    filtered: &'a [usize],
+    filter: &'a str,
+    selected: usize,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RunControl {
     Cancel,
@@ -1290,17 +1298,18 @@ fn run_selector(
             selected = filtered.len() - 1;
         }
 
+        let popup = SelectorPopup {
+            title,
+            placeholder,
+            footer,
+            options,
+            filtered: &filtered,
+            filter: &filter,
+            selected,
+        };
+
         terminal.draw(|frame| {
-            render_selector_popup(
-                frame,
-                title,
-                placeholder,
-                footer,
-                options,
-                &filtered,
-                &filter,
-                selected,
-            );
+            render_selector_popup(frame, &popup);
         })?;
 
         let event = read()?;
@@ -1344,22 +1353,13 @@ fn filtered_selector_indices(options: &[SelectorOption], filter: &str) -> Vec<us
         .collect()
 }
 
-fn render_selector_popup(
-    frame: &mut ratatui::Frame<'_>,
-    title: &str,
-    placeholder: &str,
-    footer: &str,
-    options: &[SelectorOption],
-    filtered: &[usize],
-    filter: &str,
-    selected: usize,
-) {
-    let area = selector_area(frame.area(), filtered.len());
+fn render_selector_popup(frame: &mut ratatui::Frame<'_>, popup: &SelectorPopup<'_>) {
+    let area = selector_area(frame.area(), popup.filtered.len());
     frame.render_widget(ClearWidget, area);
 
     let block = Block::default()
         .title(Line::from(vec![Span::styled(
-            format!(" {title} "),
+            format!(" {} ", popup.title),
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
@@ -1378,9 +1378,9 @@ fn render_selector_popup(
         ])
         .split(inner);
 
-    render_selector_filter(frame, parts[0], placeholder, filter);
+    render_selector_filter(frame, parts[0], popup.placeholder, popup.filter);
 
-    if filtered.is_empty() {
+    if popup.filtered.is_empty() {
         frame.render_widget(
             Paragraph::new("no matches")
                 .alignment(Alignment::Left)
@@ -1388,15 +1388,16 @@ fn render_selector_popup(
             parts[1],
         );
     } else {
-        let start = selector_scroll_start(selected, filtered.len());
-        let rows = filtered
+        let start = selector_scroll_start(popup.selected, popup.filtered.len());
+        let rows = popup
+            .filtered
             .iter()
             .enumerate()
             .skip(start)
             .take(MAX_SELECTOR_ROWS)
             .map(|(visible_index, option_index)| {
-                let option = &options[*option_index];
-                let selected_row = visible_index == selected;
+                let option = &popup.options[*option_index];
+                let selected_row = visible_index == popup.selected;
                 let row_style = if selected_row {
                     Style::default()
                         .fg(Color::White)
@@ -1428,7 +1429,7 @@ fn render_selector_popup(
     }
 
     frame.render_widget(
-        Paragraph::new(format!("{footer}   {} items", filtered.len()))
+        Paragraph::new(format!("{}   {} items", popup.footer, popup.filtered.len()))
             .style(Style::default().fg(Color::DarkGray)),
         parts[2],
     );
@@ -1472,7 +1473,7 @@ fn selector_scroll_start(selected: usize, len: usize) -> usize {
 }
 
 fn selector_area(frame_area: Rect, item_count: usize) -> Rect {
-    let rows = item_count.min(MAX_SELECTOR_ROWS).max(1) as u16;
+    let rows = item_count.clamp(1, MAX_SELECTOR_ROWS) as u16;
     let width = frame_area
         .width
         .saturating_mul(88)
