@@ -187,7 +187,8 @@ impl Repl {
         request.max_turns = self.max_turns;
         request.append_system_prompt = self.append_system_prompt.clone();
 
-        let sink = Arc::new(ReplSink::default());
+        let spinner_state = Arc::new(std::sync::Mutex::new(super::spinner::SpinnerState::new()));
+        let sink = Arc::new(ReplSink::new(spinner_state.clone()));
         let agent = crate::request::RequestAgent::new();
         let executor = RequestExecutor::new(
             request,
@@ -198,7 +199,7 @@ impl Repl {
         );
 
         let mut run_task = tokio::spawn(async move { executor.execute().await });
-        let control = wait_for_run_control(&mut run_task)?;
+        let control = wait_for_run_control(&mut run_task, &spinner_state)?;
         let outcome = match control {
             Some(action) => {
                 agent.close().await;

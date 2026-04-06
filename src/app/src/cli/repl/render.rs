@@ -24,7 +24,7 @@ pub const BG_ERR: &str = "\x1b[48;2;157;57;57m";
 
 static TERMINAL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
-fn with_terminal<T>(render: impl FnOnce(&mut Stdout) -> T) -> T {
+pub fn with_terminal<T>(render: impl FnOnce(&mut Stdout) -> T) -> T {
     let _guard = TERMINAL_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()

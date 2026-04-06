@@ -83,18 +83,36 @@ GET /v1/agents/{agent_id}/workbench/sessions/{session_id}/replay
 curl -fsSL https://app.evot.ai/api/setup | sh -s -- <BASE64_CONFIG>
 ```
 
-3. `bendclaw run` — the console detects your instance automatically
+3. Start using BendClaw:
+
+```bash
+# Interactive REPL (default mode)
+bendclaw
+
+# One-shot prompt
+bendclaw -p "Hello"
+
+# HTTP / SSE server
+bendclaw server --port 8080
+```
 
 **CLI commands:**
 
 | Command | Description |
 |---------|-------------|
-| `bendclaw run` | Run in foreground (default) |
-| `bendclaw start` | Start server in background |
-| `bendclaw stop` | Stop the server |
-| `bendclaw restart` | Kill old process, start new one |
-| `bendclaw status` | Show server status |
-| `bendclaw update` | Upgrade to latest release |
+| `bendclaw` | Start the interactive REPL (default mode) |
+| `bendclaw repl` | Explicitly start the REPL |
+| `bendclaw -p "..."` | Run a single prompt and exit |
+| `bendclaw server --port 8080` | Start the HTTP / SSE server |
+| `bendclaw --resume <session_id>` | Resume an existing session |
+| `bendclaw --output-format text` | Human-readable prompt output |
+| `bendclaw --output-format stream-json` | Structured event stream output |
+| `bendclaw --max-turns <n>` | Limit the number of agent turns |
+| `bendclaw --append-system-prompt "..."` | Add extra system instructions |
+| `bendclaw --model <model>` | Override the configured model |
+| `bendclaw --verbose` | Enable info-level logging |
+
+> `bendclaw` defaults to REPL mode. `-p/--prompt` cannot be combined with subcommands.
 
 > For development from source, see [Development](#development).
 

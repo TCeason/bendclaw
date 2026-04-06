@@ -39,7 +39,14 @@ impl AgentTool for ListFilesTool {
     }
 
     fn description(&self) -> &str {
-        "List files and directories. Optionally filter by glob pattern. Use to explore project structure before reading specific files."
+        "List the contents of a directory. Use to explore project structure before reading specific files.\n\
+         \n\
+         Usage:\n\
+         - Use this tool instead of shell ls or find for directory listing.\n\
+         - Optionally filter by glob pattern (e.g., '*.rs').\n\
+         - Excludes common noise directories (target, .git, node_modules) by default.\n\
+         - If your command will create new directories or files, first use this tool to verify the \
+         parent directory exists and is the correct location."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

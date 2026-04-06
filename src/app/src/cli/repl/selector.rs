@@ -337,19 +337,36 @@ impl Drop for SelectorTerminal {
 
 pub fn wait_for_run_control(
     run_task: &mut tokio::task::JoinHandle<Result<crate::request::RequestResult>>,
+    spinner: &std::sync::Mutex<super::spinner::SpinnerState>,
 ) -> Result<Option<RunControl>> {
     let _guard = RawModeGuard::enter()?;
     loop {
         if run_task.is_finished() {
+            if let Ok(mut state) = spinner.lock() {
+                state.clear_if_rendered();
+            }
             return Ok(None);
         }
         if !poll(Duration::from_millis(80))? {
+            if let Ok(mut state) = spinner.lock() {
+                if state.is_active() {
+                    state.render_frame();
+                }
+            }
             continue;
         }
         match read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-                KeyCode::Esc => return Ok(Some(RunControl::Cancel)),
+                KeyCode::Esc => {
+                    if let Ok(mut state) = spinner.lock() {
+                        state.clear_if_rendered();
+                    }
+                    return Ok(Some(RunControl::Cancel));
+                }
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Ok(mut state) = spinner.lock() {
+                        state.clear_if_rendered();
+                    }
                     return Ok(Some(RunControl::Exit));
                 }
                 _ => {}

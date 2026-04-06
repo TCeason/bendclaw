@@ -49,7 +49,15 @@ impl AgentTool for SearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search for a pattern across files using grep. Returns matching lines with file paths and line numbers. Supports regex patterns."
+        "A powerful search tool built on grep/ripgrep.\n\
+         \n\
+         Usage:\n\
+         - ALWAYS use this tool for content search. NEVER invoke grep or rg as a shell command. \
+         This tool has been optimized for correct permissions and access.\n\
+         - Supports full regex syntax (e.g., \"log.*Error\", \"function\\s+\\w+\").\n\
+         - Filter files with the include parameter (e.g., \"*.rs\", \"*.py\").\n\
+         - Respects .gitignore. Returns matching lines with file paths and line numbers.\n\
+         - For open-ended searches requiring multiple rounds, break the search into smaller queries."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

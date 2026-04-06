@@ -70,7 +70,16 @@ impl AgentTool for ReadFileTool {
     }
 
     fn description(&self) -> &str {
-        "Read a file's contents. Supports text files with optional offset/limit, and image files (jpg, png, webp, gif, bmp) which are returned as base64-encoded images."
+        "Read a text file from the local filesystem. You can access any file directly by using this tool.\n\
+         \n\
+         Usage:\n\
+         - The path parameter should be an absolute path, not a relative path.\n\
+         - Use this tool instead of shell cat/head/tail for reading files.\n\
+         - Supports optional offset/limit for partial reads of large files.\n\
+         - This tool can only read text files and images (jpg, png, webp, gif, bmp), not directories or binary files.\n\
+         To list a directory, use list_files.\n\
+         - If you read a file that exists but has empty contents you will receive a warning \
+         in place of file contents."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -218,7 +227,15 @@ impl AgentTool for WriteFileTool {
     }
 
     fn description(&self) -> &str {
-        "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Creates parent directories automatically."
+        "Write contents to a file on the local filesystem.\n\
+         \n\
+         Usage:\n\
+         - This tool will overwrite the existing file if there is one at the provided path.\n\
+         - If this is an existing file, you MUST use read_file first to read the file's contents. \
+         This tool will fail if you did not read the file first.\n\
+         - Prefer edit_file for modifying existing files — it only sends the diff. \
+         Only use this tool to create new files or for complete rewrites.\n\
+         - Creates parent directories automatically if they don't exist."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

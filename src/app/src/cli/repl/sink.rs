@@ -14,6 +14,7 @@ use super::render::ToolCallSummary;
 use super::render::DIM;
 use super::render::RED;
 use super::render::RESET;
+use super::spinner::SpinnerState;
 use crate::error::Result;
 use crate::protocol::AssistantBlock;
 use crate::protocol::RunEvent;
@@ -56,25 +57,73 @@ pub fn finish_assistant_line(state: &mut SinkState) {
 
 pub struct ReplSink {
     state: Mutex<SinkState>,
+    spinner: Arc<Mutex<SpinnerState>>,
 }
 
 impl ReplSink {
-    pub fn new() -> Self {
+    pub fn new(spinner: Arc<Mutex<SpinnerState>>) -> Self {
         Self {
             state: Mutex::new(SinkState::default()),
+            spinner,
         }
     }
 }
 
 impl Default for ReplSink {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(Mutex::new(SpinnerState::new())))
     }
 }
 
 #[async_trait]
 impl EventSink for ReplSink {
     async fn publish(&self, event: Arc<RunEvent>) -> Result<()> {
+        // Lock spinner, update state and clear line before any output
+        {
+            let mut spinner = self
+                .spinner
+                .lock()
+                .map_err(|_| crate::error::BendclawError::Cli("spinner lock poisoned".into()))?;
+
+            match &event.payload {
+                RunEventPayload::RunStarted {} => {
+                    spinner.activate();
+                }
+                RunEventPayload::TurnStarted {} => {
+                    spinner.set_thinking();
+                }
+                RunEventPayload::AssistantDelta { delta, .. } => {
+                    if let Some(d) = delta {
+                        spinner.add_tokens(d.len() as u64);
+                    }
+                    spinner.clear_if_rendered();
+                    spinner.hide();
+                }
+                RunEventPayload::AssistantCompleted { .. } => {
+                    spinner.clear_if_rendered();
+                }
+                RunEventPayload::ToolStarted { tool_name, .. } => {
+                    spinner.clear_if_rendered();
+                    spinner.set_tool(tool_name);
+                }
+                RunEventPayload::ToolProgress { text, .. } => {
+                    spinner.set_progress(text);
+                }
+                RunEventPayload::ToolFinished { .. } => {
+                    spinner.clear_if_rendered();
+                    spinner.restore_verb();
+                }
+                RunEventPayload::RunFinished { .. } => {
+                    spinner.clear_if_rendered();
+                    spinner.deactivate();
+                }
+                RunEventPayload::Error { .. } => {
+                    spinner.clear_if_rendered();
+                    spinner.deactivate();
+                }
+            }
+        };
+
         let mut state = self
             .state
             .lock()

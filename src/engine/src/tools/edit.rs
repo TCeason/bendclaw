@@ -34,7 +34,20 @@ impl AgentTool for EditFileTool {
     }
 
     fn description(&self) -> &str {
-        "Make a surgical edit to a file by specifying exact text to find and replace. The old_text must match exactly (including whitespace and indentation). For creating new files, use write_file instead."
+        "Perform exact string replacements in files.\n\
+         \n\
+         Usage:\n\
+         - You must use read_file at least once in the conversation before editing. \
+         This tool will error if you attempt an edit without reading the file first.\n\
+         - When editing text from read_file output, ensure you preserve the exact indentation \
+         (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: \
+         line number + pipe. Everything after that is the actual file content to match. \
+         Never include any part of the line number prefix in old_text or new_text.\n\
+         - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless \
+         explicitly required.\n\
+         - The edit will FAIL if old_text is not unique in the file. Either provide a larger \
+         string with more surrounding context to make it unique.\n\
+         - Use this tool instead of shell sed/awk for file modifications."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

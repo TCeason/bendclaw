@@ -78,7 +78,33 @@ impl AgentTool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a bash command and return stdout/stderr. Use for running scripts, installing packages, checking system state, etc."
+        "Execute a shell command and return its output.\n\
+         \n\
+         The working directory persists between commands, but shell state does not.\n\
+         \n\
+         IMPORTANT: Avoid using this tool to run grep, find, cat, head, tail, sed, awk, or echo \
+         commands, unless explicitly instructed or after you have verified that a dedicated tool \
+         cannot accomplish your task. Instead, use the appropriate dedicated tool:\n\
+         \n\
+         - Content search: Use search (NOT shell grep or rg)\n\
+         - Directory listing: Use list_files (NOT ls or find)\n\
+         - Read files: Use read_file (NOT cat/head/tail)\n\
+         - Edit files: Use edit_file (NOT sed/awk)\n\
+         - Write files: Use write_file (NOT echo/cat redirection)\n\
+         \n\
+         The built-in tools provide a better experience and make it easier to review operations.\n\
+         \n\
+         Guidelines:\n\
+         - Always quote file paths that contain spaces with double quotes.\n\
+         - Try to maintain your current working directory by using absolute paths and avoiding cd.\n\
+         - When issuing multiple commands:\n\
+           - If independent and can run in parallel, make multiple tool calls in a single message.\n\
+           - If dependent and must run sequentially, chain with && in a single call.\n\
+         - For git commands:\n\
+           - Prefer creating a new commit rather than amending an existing commit.\n\
+           - Before running destructive operations (git reset --hard, git push --force, \
+         git checkout --), consider safer alternatives.\n\
+         - Avoid unnecessary sleep commands."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
