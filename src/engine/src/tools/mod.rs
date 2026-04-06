@@ -1,27 +1,26 @@
-pub mod askuser;
 pub mod bash;
-pub mod config_tool;
-pub mod cron_tools;
-pub mod diff;
-pub mod executor;
-pub mod fileedit;
-pub mod fileread;
-pub mod filewrite;
-pub mod glob_tool;
-pub mod grep;
-pub mod lsp_tool;
-pub mod mcp_resource_tools;
-pub mod notebook_edit;
-pub mod plan_tools;
-pub mod registry;
-pub mod send_message;
-pub mod tasks;
-pub mod team_tools;
-pub mod todo_tool;
-pub mod toolsearch;
-pub mod webfetch;
-pub mod websearch;
-pub mod worktree_tools;
+pub mod edit;
+pub mod file;
+pub mod list;
+pub mod search;
 
-pub use executor::*;
-pub use registry::*;
+pub use bash::BashTool;
+pub use edit::EditFileTool;
+pub use file::ReadFileTool;
+pub use file::WriteFileTool;
+pub use list::ListFilesTool;
+pub use search::SearchTool;
+
+use crate::types::AgentTool;
+
+/// Get the standard set of coding agent tools.
+pub fn default_tools() -> Vec<Box<dyn AgentTool>> {
+    vec![
+        Box::new(BashTool::default()),
+        Box::new(ReadFileTool::default()),
+        Box::new(WriteFileTool::new()),
+        Box::new(EditFileTool::new()),
+        Box::new(ListFilesTool::default()),
+        Box::new(SearchTool::default()),
+    ]
+}

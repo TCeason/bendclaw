@@ -7,24 +7,25 @@ use crate::error::Result;
 use crate::storage::model::ListTranscriptEntries;
 use crate::storage::model::SessionMeta;
 use crate::storage::model::TranscriptEntry;
+use crate::storage::model::TranscriptItem;
 use crate::storage::Storage;
 
 pub struct Session {
     storage: Arc<dyn Storage>,
     meta: RwLock<SessionMeta>,
-    messages: RwLock<Vec<bend_agent::Message>>,
+    transcript: RwLock<Vec<TranscriptItem>>,
 }
 
 impl Session {
     pub fn new(
         storage: Arc<dyn Storage>,
         meta: SessionMeta,
-        messages: Vec<bend_agent::Message>,
+        transcript: Vec<TranscriptItem>,
     ) -> Arc<Self> {
         Arc::new(Self {
             storage,
             meta: RwLock::new(meta),
-            messages: RwLock::new(messages),
+            transcript: RwLock::new(transcript),
         })
     }
 
@@ -45,7 +46,7 @@ impl Session {
             None => return Ok(None),
         };
 
-        let messages = storage
+        let transcript = storage
             .list_transcript_entries(ListTranscriptEntries {
                 session_id: session_id.to_string(),
                 run_id: None,
@@ -54,18 +55,18 @@ impl Session {
             })
             .await?
             .into_iter()
-            .map(|entry| entry.message)
+            .map(|entry| entry.item)
             .collect();
 
-        Ok(Some(Self::new(storage, meta, messages)))
+        Ok(Some(Self::new(storage, meta, transcript)))
     }
 
     pub async fn set_model(&self, model: String) {
         self.meta.write().await.model = model;
     }
 
-    pub async fn apply_messages(&self, messages: Vec<bend_agent::Message>) {
-        *self.messages.write().await = messages;
+    pub async fn apply_transcript(&self, items: Vec<TranscriptItem>) {
+        *self.transcript.write().await = items;
 
         let mut meta = self.meta.write().await;
         if meta
@@ -74,7 +75,7 @@ impl Session {
             .map(|title| title.trim().is_empty())
             .unwrap_or(true)
         {
-            meta.title = first_user_title(&self.messages.read().await);
+            meta.title = first_user_title(&self.transcript.read().await);
         }
         meta.turns += 1;
         meta.updated_at = Utc::now().to_rfc3339();
@@ -82,18 +83,18 @@ impl Session {
 
     pub async fn save(&self) -> Result<()> {
         let meta = self.meta().await;
-        let messages = self.messages().await;
+        let items = self.transcript().await;
 
-        let entries = messages
+        let entries = items
             .into_iter()
             .enumerate()
-            .map(|(idx, message)| {
+            .map(|(idx, item)| {
                 TranscriptEntry::new(
                     meta.session_id.clone(),
                     None,
                     idx as u64 + 1,
                     meta.turns,
-                    message,
+                    item,
                 )
             })
             .collect();
@@ -107,8 +108,8 @@ impl Session {
         self.meta.read().await.clone()
     }
 
-    pub async fn messages(&self) -> Vec<bend_agent::Message> {
-        self.messages.read().await.clone()
+    pub async fn transcript(&self) -> Vec<TranscriptItem> {
+        self.transcript.read().await.clone()
     }
 
     pub async fn session_id(&self) -> String {
@@ -116,21 +117,23 @@ impl Session {
     }
 }
 
-fn first_user_title(messages: &[bend_agent::Message]) -> Option<String> {
-    let text = messages
-        .iter()
-        .find(|message| message.role == bend_agent::MessageRole::User)
-        .map(bend_agent::types::extract_text)?
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+fn first_user_title(items: &[TranscriptItem]) -> Option<String> {
+    let text = items.iter().find_map(|item| {
+        if let TranscriptItem::User { text } = item {
+            if !text.trim().is_empty() {
+                return Some(text.clone());
+            }
+        }
+        None
+    })?;
 
-    if text.is_empty() {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
         return None;
     }
 
-    let mut title: String = text.chars().take(56).collect();
-    if text.chars().count() > 56 {
+    let mut title: String = normalized.chars().take(56).collect();
+    if normalized.chars().count() > 56 {
         title.push_str("...");
     }
     Some(title)

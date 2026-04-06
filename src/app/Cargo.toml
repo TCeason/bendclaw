@@ -9,7 +9,7 @@ path = "src/bin/bendclaw.rs"
 
 [dependencies]
 bend-base.workspace = true
-bend-agent.workspace = true
+bend-engine.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true

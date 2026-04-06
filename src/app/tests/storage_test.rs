@@ -87,7 +87,7 @@ async fn append_and_load_events() -> TestResult {
         "run-001".into(),
         "sess-001".into(),
         1,
-        RunEventKind::AssistantMessage,
+        RunEventKind::AssistantCompleted,
         serde_json::json!({"message": "hello"}),
     );
 

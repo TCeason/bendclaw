@@ -1,3 +1,4 @@
+pub mod adapter;
 mod event;
 mod event_codec;
 mod executor;
@@ -5,6 +6,7 @@ mod request;
 mod runner;
 mod sink;
 
+pub use adapter::*;
 pub use event::*;
 pub use event_codec::*;
 pub use executor::*;

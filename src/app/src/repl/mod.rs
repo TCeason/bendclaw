@@ -12,8 +12,6 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use bend_agent::types::extract_text;
-use bend_agent::types::ToolResultContentBlock;
 use crossterm::cursor::Hide;
 use crossterm::cursor::Show;
 use crossterm::event::poll;
@@ -64,7 +62,6 @@ use crate::request::payload_as;
 use crate::request::AssistantBlock;
 use crate::request::AssistantPayload;
 use crate::request::EventSink;
-use crate::request::MessagePayload;
 use crate::request::Request;
 use crate::request::RequestExecutor;
 use crate::request::RequestFinishedPayload;
@@ -74,6 +71,7 @@ use crate::storage::model::ListSessions;
 use crate::storage::model::RunEvent;
 use crate::storage::model::RunEventKind;
 use crate::storage::model::SessionMeta;
+use crate::storage::model::TranscriptItem;
 use crate::storage::Storage;
 
 const RESET: &str = "\x1b[0m";
@@ -302,7 +300,7 @@ impl Repl {
             .await?
             .ok_or_else(|| BendclawError::Session(format!("session not found: {session_id}")))?;
         let meta = session.meta().await;
-        let messages = session.messages().await;
+        let messages = session.transcript().await;
         let provider = self.config.llm.provider.clone();
 
         self.session_id = Some(meta.session_id.clone());
@@ -344,7 +342,7 @@ impl Repl {
             Some(session) => session,
             None => return Ok(true),
         };
-        let count = session.messages().await.len();
+        let count = session.transcript().await.len();
         if count <= 4 {
             return Ok(true);
         }
@@ -463,7 +461,7 @@ impl Repl {
         let session = Session::load(session_id, self.storage.clone())
             .await?
             .ok_or_else(|| BendclawError::Session(format!("session not found: {session_id}")))?;
-        let messages = session.messages().await;
+        let messages = session.transcript().await;
 
         if messages.is_empty() {
             println!("{DIM}  session is empty{RESET}\n");
@@ -763,7 +761,8 @@ impl EventSink for ReplSink {
                 state.streamed_assistant = false;
                 state.spinner = Some(Spinner::start("Thinking..."));
             }
-            RunEventKind::AssistantMessage => {
+            RunEventKind::TurnStarted => {}
+            RunEventKind::AssistantCompleted => {
                 stop_spinner(&mut state);
                 if let Some(payload) = payload_as::<AssistantPayload>(&event.payload) {
                     for block in payload.content {
@@ -778,7 +777,7 @@ impl EventSink for ReplSink {
                                 state.assistant_prefixed = false;
                                 state.streamed_assistant = false;
                             }
-                            AssistantBlock::ToolUse { id, name, input } => {
+                            AssistantBlock::ToolCall { id, name, input } => {
                                 finish_assistant_line(&mut state);
                                 state.pending_tools.insert(id, ToolCallDisplay {
                                     name: name.clone(),
@@ -791,73 +790,41 @@ impl EventSink for ReplSink {
                     }
                 }
             }
-            RunEventKind::ToolResult => {
+            RunEventKind::ToolFinished => {
                 stop_spinner(&mut state);
                 if let Some(payload) = payload_as::<ToolResultPayload>(&event.payload) {
                     finish_assistant_line(&mut state);
-                    let tool_call = state.pending_tools.remove(&payload.tool_use_id);
+                    let tool_call = state.pending_tools.remove(&payload.tool_call_id);
                     print_tool_result(&payload, tool_call.as_ref());
                 }
             }
-            RunEventKind::PartialMessage => {
+            RunEventKind::AssistantDelta => {
                 stop_spinner(&mut state);
-                if let Some(payload) = payload_as::<MessagePayload>(&event.payload) {
+                if let Some(delta) = event.payload.get("delta").and_then(|v| v.as_str()) {
                     if !state.assistant_prefixed {
                         terminal_message_prefix();
                         state.assistant_prefixed = true;
                     }
-                    terminal_write(&payload.message);
+                    terminal_write(delta);
                     state.assistant_open = true;
                     state.streamed_assistant = true;
                 }
             }
-            RunEventKind::CompactBoundary => {
-                stop_spinner(&mut state);
-                finish_assistant_line(&mut state);
-                if let Some(summary) = event
-                    .payload
-                    .get("summary")
-                    .and_then(|value| value.as_str())
-                {
-                    terminal_writeln(&format!("[compact] {}", truncate(summary, 120)));
+            RunEventKind::ToolStarted => {
+                if let Some(name) = event.payload.get("tool_name").and_then(|v| v.as_str()) {
+                    update_spinner(&mut state, &format!("Running {name}..."));
                 }
             }
-            RunEventKind::Status => {
-                if let Some(payload) = payload_as::<MessagePayload>(&event.payload) {
-                    update_spinner(&mut state, &payload.message);
-                }
-            }
-            RunEventKind::System => {}
-            RunEventKind::TaskNotification => {
-                if let Some(message) = event
-                    .payload
-                    .get("message")
-                    .and_then(|value| value.as_str())
-                {
-                    update_spinner(&mut state, message);
-                }
-            }
-            RunEventKind::RateLimit => {
-                stop_spinner(&mut state);
-                if let Some(message) = event
-                    .payload
-                    .get("message")
-                    .and_then(|value| value.as_str())
-                {
-                    finish_assistant_line(&mut state);
-                    terminal_writeln(&format!("{YELLOW}[rate-limit] {}{RESET}", message));
-                }
-            }
-            RunEventKind::Progress => {
-                if let Some(payload) = payload_as::<MessagePayload>(&event.payload) {
-                    update_spinner(&mut state, &payload.message);
+            RunEventKind::ToolProgress => {
+                if let Some(text) = event.payload.get("text").and_then(|v| v.as_str()) {
+                    update_spinner(&mut state, text);
                 }
             }
             RunEventKind::Error => {
                 stop_spinner(&mut state);
-                if let Some(payload) = payload_as::<MessagePayload>(&event.payload) {
+                if let Some(message) = event.payload.get("message").and_then(|v| v.as_str()) {
                     finish_assistant_line(&mut state);
-                    terminal_writeln(&format!("{RED}error:{RESET} {}", payload.message));
+                    terminal_writeln(&format!("{RED}error:{RESET} {message}"));
                 }
             }
             RunEventKind::RunFinished => {
@@ -960,44 +927,48 @@ impl Drop for Spinner {
     }
 }
 
-fn print_transcript_messages(messages: &[bend_agent::Message]) {
-    for message in messages {
-        match message.role {
-            bend_agent::MessageRole::User => {
-                let text = extract_text(message);
+fn print_transcript_messages(items: &[TranscriptItem]) {
+    for item in items {
+        match item {
+            TranscriptItem::User { text } => {
                 if !text.trim().is_empty() {
                     println!("{YELLOW}> {RESET}{}", text.trim());
                     println!();
                 }
-                for block in &message.content {
-                    if let bend_agent::ContentBlock::ToolResult {
-                        content, is_error, ..
-                    } = block
-                    {
-                        print_tool_result_content("tool result", content, !*is_error);
-                    }
-                }
             }
-            bend_agent::MessageRole::Assistant => {
-                let text = extract_text(message);
+            TranscriptItem::Assistant {
+                text, tool_calls, ..
+            } => {
                 if !text.trim().is_empty() {
                     terminal_prefixed_writeln(text.trim());
                     terminal_writeln("");
                 }
-                for block in &message.content {
-                    match block {
-                        bend_agent::ContentBlock::ToolUse { name, input, .. } => {
-                            print_tool_call(name, input);
-                        }
-                        bend_agent::ContentBlock::ToolResult {
-                            content, is_error, ..
-                        } => {
-                            print_tool_result_content("tool result", content, !*is_error);
-                        }
-                        _ => {}
-                    }
+                for tc in tool_calls {
+                    print_tool_call(&tc.name, &tc.input);
                 }
             }
+            TranscriptItem::ToolResult {
+                tool_name,
+                content,
+                is_error,
+                ..
+            } => {
+                let ok = !is_error;
+                let title = if *is_error {
+                    format!("{tool_name} failed")
+                } else {
+                    format!("{tool_name} completed")
+                };
+                print_badge_line(&title, true, ok);
+                terminal_writeln(&format!(
+                    "{}  {}{}",
+                    if *is_error { RED } else { GREEN },
+                    summarize_inline(content, 160),
+                    RESET
+                ));
+                terminal_writeln("");
+            }
+            _ => {}
         }
     }
 }
@@ -1043,30 +1014,6 @@ fn print_badge_line(title: &str, is_result: bool, ok: bool) {
             "{bg}{fg}{BOLD}[{badge}]{RESET} {GRAY}{rest}{RESET}"
         ));
     }
-}
-
-fn print_tool_result_content(title: &str, content: &[ToolResultContentBlock], ok: bool) {
-    let text_blocks: Vec<_> = content
-        .iter()
-        .filter_map(|block| match block {
-            ToolResultContentBlock::Text { text } => Some(text.as_str()),
-            ToolResultContentBlock::Image { .. } => None,
-        })
-        .collect();
-    if text_blocks.is_empty() {
-        terminal_writeln(&format!(
-            "[{}] {}",
-            if ok { "done" } else { "error" },
-            title
-        ));
-    } else {
-        terminal_writeln(&format!(
-            "[{}] {}",
-            if ok { "done" } else { "error" },
-            truncate(&text_blocks.join("\n"), 160)
-        ));
-    }
-    terminal_writeln("");
 }
 
 fn tool_call_message(name: &str, input: &serde_json::Value) -> (String, Vec<String>) {
@@ -1128,33 +1075,22 @@ fn summarize_inline(value: &str, max_chars: usize) -> String {
 }
 
 fn build_run_summary(payload: &RequestFinishedPayload) -> String {
-    let summary = serde_json::from_value::<bend_agent::RunSummary>(payload.summary.clone())
-        .unwrap_or_default();
     let total_tokens = payload
         .usage
-        .get("input_tokens")
-        .and_then(|value| value.as_u64())
+        .get("input")
+        .and_then(|v| v.as_u64())
         .unwrap_or_default()
         + payload
             .usage
-            .get("output_tokens")
-            .and_then(|value| value.as_u64())
+            .get("output")
+            .and_then(|v| v.as_u64())
             .unwrap_or_default();
 
-    let mut parts = vec![
+    let parts = vec![
         format!("run {}", human_duration(payload.duration_ms)),
-        format!("turns {}", payload.num_turns),
+        format!("turns {}", payload.turn_count),
         format!("tokens {}", total_tokens),
     ];
-    if summary.api_duration_ms > 0 {
-        parts.push(format!("llm {}", human_duration(summary.api_duration_ms)));
-    }
-    if summary.tool_duration_ms > 0 {
-        parts.push(format!(
-            "tools {}",
-            human_duration(summary.tool_duration_ms)
-        ));
-    }
     parts.join("  ·  ")
 }
 

@@ -6,8 +6,8 @@ use bend_base::logx;
 use crate::conf::LlmConfig;
 use crate::error::BendclawError;
 use crate::error::Result;
-use crate::request::map_sdk_message;
-use crate::request::request_started_event;
+use crate::request::adapter;
+use crate::request::event_codec::request_started_event;
 use crate::request::EventSink;
 use crate::request::Request;
 use crate::request::RequestOptions;
@@ -104,7 +104,7 @@ impl RequestExecutor {
                 llm: self.llm.clone(),
                 cwd,
                 session_id: session_meta.session_id.clone(),
-                messages: session.messages().await,
+                transcript: session.transcript().await,
                 prompt: self.request.prompt.clone(),
                 max_turns: self.request.max_turns,
                 append_system_prompt: self.request.append_system_prompt.clone(),
@@ -129,34 +129,62 @@ impl RequestExecutor {
         };
 
         let mut turn = 0_u32;
-        let mut got_result = false;
+        let mut got_agent_end = false;
+        let mut got_assistant_response = false;
         let mut stream_error = None;
 
-        while let Some(message) = rx.recv().await {
-            if matches!(message, bend_agent::SDKMessage::Assistant { .. }) {
+        while let Some(agent_event) = rx.recv().await {
+            if matches!(agent_event, bend_engine::AgentEvent::TurnStart) {
                 turn += 1;
             }
 
-            if matches!(message, bend_agent::SDKMessage::Result { .. }) {
-                got_result = true;
+            if let bend_engine::AgentEvent::AgentEnd { ref messages } = agent_event {
+                got_agent_end = true;
+                got_assistant_response = messages.iter().any(|m| {
+                    matches!(
+                        m,
+                        bend_engine::AgentMessage::Llm(bend_engine::Message::Assistant { .. })
+                    )
+                });
+                let duration_ms = started_at.elapsed().as_millis() as u64;
+                let finished_event = adapter::build_run_finished_event(
+                    &run_id,
+                    &session_meta.session_id,
+                    turn,
+                    messages,
+                    duration_ms,
+                );
+                if let Err(error) = self.sink.publish(Arc::new(finished_event.clone())).await {
+                    stream_error = Some(error);
+                }
+                run_events.push(finished_event);
+                continue;
             }
 
-            let event = map_sdk_message(&message, &run_id, &session_meta.session_id, turn);
-            if let Err(error) = self.sink.publish(Arc::new(event.clone())).await {
-                stream_error = Some(error);
-                break;
+            if let Some(event) = adapter::map_agent_event_to_run_event(
+                &agent_event,
+                &run_id,
+                &session_meta.session_id,
+                turn,
+            ) {
+                if let Err(error) = self.sink.publish(Arc::new(event.clone())).await {
+                    stream_error = Some(error);
+                    break;
+                }
+                run_events.push(event);
             }
-            run_events.push(event);
         }
 
         let final_messages = self.runner.take_messages().await;
         if !final_messages.is_empty() {
-            session.apply_messages(final_messages).await;
+            let items = adapter::map_agent_messages_to_transcript_items(&final_messages);
+            session.apply_transcript(items).await;
         }
 
         let save_result = session.save().await;
 
-        if got_result && save_result.is_ok() && stream_error.is_none() {
+        if got_agent_end && got_assistant_response && save_result.is_ok() && stream_error.is_none()
+        {
             run_meta.finish(RunStatus::Completed);
         } else {
             run_meta.finish(RunStatus::Failed);

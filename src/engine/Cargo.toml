@@ -1,80 +1,55 @@
 [package]
-name = "bend-agent"
-version = "0.1.0"
-edition = "2021"
-description = "Bend Agent - A Rust framework for building autonomous AI agents"
+name = "bendengine"
+version.workspace = true
+edition.workspace = true
+description = "Bend Engine - autonomous agent runtime"
 license = "MIT"
-repository = "https://github.com/EvotAI/bendclaw"
 
 [dependencies]
-bend-base.workspace = true
 tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
 tokio-stream = "0.1"
-futures = "0.3"
-reqwest = { version = "0.12", features = ["json", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-eventsource-stream = "0.2"
-uuid.workspace = true
-glob = "0.3"
-regex = "1"
-chrono = "0.4"
 async-trait = "0.1"
 thiserror = "2"
-bytes = "1"
-pin-project-lite = "0.2"
-parking_lot = "0.12"
+uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest-eventsource = "0.6"
+futures = "0.3"
+rand = "0.8"
 base64 = "0.22"
-tokio-util = "0.7"
+openapiv3 = { version = "2", optional = true }
+serde_yaml = { version = "0.9", optional = true }
+
+[features]
+openapi = ["dep:openapiv3", "dep:serde_yaml"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"
+wiremock = "0.6"
 
 [lints.clippy]
 module_inception = "allow"
 
 [[example]]
-name = "01-simple-query"
-path = "examples/01-simple-query.rs"
+name = "basic"
+path = "examples/basic.rs"
 
 [[example]]
-name = "02-multi-tool"
-path = "examples/02-multi-tool.rs"
+name = "callbacks"
+path = "examples/callbacks.rs"
 
 [[example]]
-name = "03-multi-turn"
-path = "examples/03-multi-turn.rs"
+name = "cli"
+path = "examples/cli.rs"
 
 [[example]]
-name = "04-prompt-api"
-path = "examples/04-prompt-api.rs"
+name = "persistence"
+path = "examples/persistence.rs"
 
 [[example]]
-name = "05-custom-system-prompt"
-path = "examples/05-custom-system-prompt.rs"
-
-[[example]]
-name = "06-mcp-server"
-path = "examples/06-mcp-server.rs"
-
-[[example]]
-name = "07-custom-tools"
-path = "examples/07-custom-tools.rs"
-
-[[example]]
-name = "08-oneshot-query"
-path = "examples/08-oneshot-query.rs"
-
-[[example]]
-name = "09-subagents"
-path = "examples/09-subagents.rs"
-
-[[example]]
-name = "10-permissions"
-path = "examples/10-permissions.rs"
-
-[[example]]
-name = "web-chat"
-path = "examples/web/main.rs"
+name = "sub_agent"
+path = "examples/sub_agent.rs"

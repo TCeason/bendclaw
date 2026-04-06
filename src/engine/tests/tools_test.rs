@@ -1,634 +1,450 @@
-use std::sync::Arc;
+//! Tests for built-in tools.
 
-use bend_agent::tools::ToolRegistry;
-use bend_agent::types::Tool;
-use bend_agent::types::ToolUseContext;
-use serde_json::json;
-use tokio::sync::RwLock;
+use base64::Engine;
+use bendengine::tools::edit::EditFileTool;
+use bendengine::tools::list::ListFilesTool;
+use bendengine::tools::*;
+use bendengine::types::*;
+use tokio_util::sync::CancellationToken;
 
-fn create_test_context(dir: &str) -> ToolUseContext {
-    ToolUseContext {
-        working_dir: dir.to_string(),
-        abort_signal: tokio_util::sync::CancellationToken::new(),
-        read_file_state: Arc::new(RwLock::new(std::collections::HashMap::new())),
+/// Helper to build a ToolContext for tests.
+fn ctx(name: &str) -> ToolContext {
+    ToolContext {
+        tool_call_id: "t1".into(),
+        tool_name: name.into(),
+        cancel: CancellationToken::new(),
+        on_update: None,
+        on_progress: None,
     }
 }
 
-// --- Registry Tests ---
-
-#[test]
-fn test_default_registry() {
-    let registry = ToolRegistry::default_registry();
-    assert!(!registry.is_empty());
-
-    // Check core tools exist
-    assert!(registry.get("Bash").is_some());
-    assert!(registry.get("Read").is_some());
-    assert!(registry.get("Write").is_some());
-    assert!(registry.get("Edit").is_some());
-    assert!(registry.get("Glob").is_some());
-    assert!(registry.get("Grep").is_some());
-    assert!(registry.get("WebFetch").is_some());
-    assert!(registry.get("WebSearch").is_some());
-    assert!(registry.get("AskUserQuestion").is_some());
-    assert!(registry.get("TaskCreate").is_some());
-    assert!(registry.get("TaskGet").is_some());
-    assert!(registry.get("TaskList").is_some());
-    assert!(registry.get("TaskUpdate").is_some());
-    assert!(registry.get("ToolSearch").is_some());
-}
-
-#[test]
-fn test_registry_register_custom() {
-    use async_trait::async_trait;
-    use bend_agent::types::ToolError;
-    use bend_agent::types::ToolInputSchema;
-    use bend_agent::types::ToolResult;
-    use serde_json::Value;
-
-    struct CustomTool;
-
-    #[async_trait]
-    impl Tool for CustomTool {
-        fn name(&self) -> &str {
-            "CustomTool"
-        }
-        fn description(&self) -> &str {
-            "A test tool"
-        }
-        fn input_schema(&self) -> ToolInputSchema {
-            ToolInputSchema::default()
-        }
-        async fn call(
-            &self,
-            _input: Value,
-            _ctx: &ToolUseContext,
-        ) -> Result<ToolResult, ToolError> {
-            Ok(ToolResult::text("custom result"))
-        }
+fn ctx_with_cancel(name: &str, cancel: CancellationToken) -> ToolContext {
+    ToolContext {
+        tool_call_id: "t1".into(),
+        tool_name: name.into(),
+        cancel,
+        on_update: None,
+        on_progress: None,
     }
-
-    let mut registry = ToolRegistry::new();
-    assert!(registry.is_empty());
-
-    registry.register(Arc::new(CustomTool));
-    assert_eq!(registry.len(), 1);
-    assert!(registry.get("CustomTool").is_some());
 }
-
-#[test]
-fn test_registry_filter() {
-    let registry = ToolRegistry::default_registry();
-    let read_only = registry.filter(|t| t.is_read_only(&json!({})));
-    assert!(!read_only.is_empty());
-
-    // Read, Glob, Grep should be read-only
-    let names: Vec<&str> = read_only.iter().map(|t| t.name()).collect();
-    assert!(names.contains(&"Read"));
-    assert!(names.contains(&"Glob"));
-    assert!(names.contains(&"Grep"));
-}
-
-#[test]
-fn test_registry_retain() {
-    let mut registry = ToolRegistry::default_registry();
-    let initial_count = registry.len();
-
-    registry.retain(&["Read", "Glob", "Grep"]);
-    assert_eq!(registry.len(), 3);
-    assert!(registry.len() < initial_count);
-
-    assert!(registry.get("Read").is_some());
-    assert!(registry.get("Bash").is_none());
-}
-
-#[test]
-fn test_registry_remove() {
-    let mut registry = ToolRegistry::default_registry();
-    assert!(registry.get("Bash").is_some());
-
-    registry.remove(&["Bash"]);
-    assert!(registry.get("Bash").is_none());
-}
-
-// --- Bash Tool Tests ---
 
 #[tokio::test]
 async fn test_bash_echo() {
-    let registry = ToolRegistry::default_registry();
-    let bash = registry.get("Bash").unwrap();
-    let ctx = create_test_context("/tmp");
-
-    let result = bash
-        .call(json!({"command": "echo 'hello world'"}), &ctx)
+    let tool = BashTool::new();
+    let result = tool
+        .execute(serde_json::json!({"command": "echo hello"}), ctx("bash"))
         .await
         .unwrap();
 
-    assert!(!result.is_error);
-    assert!(result.get_text().contains("hello world"));
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("hello"));
+    assert!(text.contains("Exit code: 0"));
 }
 
 #[tokio::test]
-async fn test_bash_exit_code() {
-    let registry = ToolRegistry::default_registry();
-    let bash = registry.get("Bash").unwrap();
-    let ctx = create_test_context("/tmp");
-
-    let result = bash.call(json!({"command": "false"}), &ctx).await.unwrap();
-
-    assert!(result.is_error);
-    assert!(result.get_text().contains("Exit code:"));
-}
-
-#[tokio::test]
-async fn test_bash_destructive_detection() {
-    let registry = ToolRegistry::default_registry();
-    let bash = registry.get("Bash").unwrap();
-    let ctx = create_test_context("/tmp");
-
-    let result = bash
-        .call(json!({"command": "rm -rf /"}), &ctx)
+async fn test_bash_failure() {
+    // Non-zero exit codes return Ok with exit code in output (for LLM self-correction)
+    let tool = BashTool::new();
+    let result = tool
+        .execute(serde_json::json!({"command": "false"}), ctx("bash"))
         .await
         .unwrap();
 
-    assert!(result.is_error);
-    assert!(result.get_text().contains("destructive"));
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("Exit code: 1"));
 }
 
 #[tokio::test]
-async fn test_bash_is_read_only() {
-    let registry = ToolRegistry::default_registry();
-    let bash = registry.get("Bash").unwrap();
+async fn test_bash_deny_pattern() {
+    let tool = BashTool::new();
+    let result = tool
+        .execute(serde_json::json!({"command": "rm -rf /"}), ctx("bash"))
+        .await;
 
-    assert!(bash.is_read_only(&json!({"command": "ls -la"})));
-    assert!(bash.is_read_only(&json!({"command": "git status"})));
-    assert!(!bash.is_read_only(&json!({"command": "rm file.txt"})));
-    assert!(!bash.is_read_only(&json!({"command": "cargo build"})));
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("blocked"));
 }
 
-// --- File Read Tool Tests ---
+#[tokio::test]
+async fn test_bash_timeout() {
+    let tool = BashTool::new().with_timeout(std::time::Duration::from_millis(100));
+    let result = tool
+        .execute(serde_json::json!({"command": "sleep 10"}), ctx("bash"))
+        .await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("timed out"));
+}
 
 #[tokio::test]
-async fn test_read_file() {
-    let dir = tempfile::tempdir().unwrap();
-    let file_path = dir.path().join("test.txt");
-    std::fs::write(&file_path, "line 1\nline 2\nline 3\n").unwrap();
+async fn test_bash_cancel() {
+    let tool = BashTool::new();
+    let cancel = CancellationToken::new();
+    cancel.cancel();
 
-    let registry = ToolRegistry::default_registry();
-    let read = registry.get("Read").unwrap();
-    let ctx = create_test_context(dir.path().to_str().unwrap());
+    let result = tool
+        .execute(
+            serde_json::json!({"command": "echo should not run"}),
+            ctx_with_cancel("bash", cancel),
+        )
+        .await;
 
-    let result = read
-        .call(json!({"file_path": file_path.to_str().unwrap()}), &ctx)
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_read_write_file() {
+    let tmp = std::env::temp_dir().join("yoagent-test-rw.txt");
+    let path = tmp.to_str().unwrap();
+
+    // Write
+    let write_tool = WriteFileTool::new();
+    let result = write_tool
+        .execute(
+            serde_json::json!({"path": path, "content": "hello from yoagent"}),
+            ctx("write_file"),
+        )
         .await
         .unwrap();
 
-    assert!(!result.is_error);
-    let text = result.get_text();
-    assert!(text.contains("line 1"));
-    assert!(text.contains("line 2"));
-    assert!(text.contains("line 3"));
-    // Should have line numbers
-    assert!(text.contains("1\t"));
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("Wrote"));
+
+    // Read
+    let read_tool = ReadFileTool::new();
+    let result = read_tool
+        .execute(serde_json::json!({"path": path}), ctx("read_file"))
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("hello from yoagent"));
+
+    // Cleanup
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn test_read_file_with_offset_limit() {
+    let tmp = std::env::temp_dir().join("yoagent-test-lines.txt");
+    let path = tmp.to_str().unwrap();
+
+    let content = (1..=20)
+        .map(|i| format!("line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&tmp, &content).unwrap();
+
+    let tool = ReadFileTool::new();
+    let result = tool
+        .execute(
+            serde_json::json!({"path": path, "offset": 5, "limit": 3}),
+            ctx("read_file"),
+        )
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("line 5"));
+    assert!(text.contains("line 7"));
+    assert!(!text.contains("line 8"));
+
+    let _ = std::fs::remove_file(tmp);
 }
 
 #[tokio::test]
 async fn test_read_file_not_found() {
-    let registry = ToolRegistry::default_registry();
-    let read = registry.get("Read").unwrap();
-    let ctx = create_test_context("/tmp");
-
-    let result = read
-        .call(
-            json!({"file_path": "/tmp/nonexistent_file_12345.txt"}),
-            &ctx,
+    let tool = ReadFileTool::new();
+    let result = tool
+        .execute(
+            serde_json::json!({"path": "/nonexistent/file.txt"}),
+            ctx("read_file"),
         )
-        .await
-        .unwrap();
+        .await;
 
-    assert!(result.is_error);
-    assert!(result.get_text().contains("not found"));
-}
-
-#[tokio::test]
-async fn test_read_file_with_offset_and_limit() {
-    let dir = tempfile::tempdir().unwrap();
-    let file_path = dir.path().join("test.txt");
-    let content: String = (1..=100).map(|i| format!("line {}\n", i)).collect();
-    std::fs::write(&file_path, &content).unwrap();
-
-    let registry = ToolRegistry::default_registry();
-    let read = registry.get("Read").unwrap();
-    let ctx = create_test_context(dir.path().to_str().unwrap());
-
-    let result = read
-        .call(
-            json!({
-                "file_path": file_path.to_str().unwrap(),
-                "offset": 10,
-                "limit": 5
-            }),
-            &ctx,
-        )
-        .await
-        .unwrap();
-
-    assert!(!result.is_error);
-    let text = result.get_text();
-    assert!(text.contains("line 11"));
-    assert!(text.contains("line 15"));
-    assert!(!text.contains("line 16"));
-}
-
-#[tokio::test]
-async fn test_read_directory_error() {
-    let registry = ToolRegistry::default_registry();
-    let read = registry.get("Read").unwrap();
-    let ctx = create_test_context("/tmp");
-
-    let result = read.call(json!({"file_path": "/tmp"}), &ctx).await.unwrap();
-
-    assert!(result.is_error);
-    assert!(result.get_text().contains("directory"));
-}
-
-#[tokio::test]
-async fn test_read_is_read_only() {
-    let registry = ToolRegistry::default_registry();
-    let read = registry.get("Read").unwrap();
-    assert!(read.is_read_only(&json!({})));
-    assert!(read.is_concurrency_safe(&json!({})));
-}
-
-// --- File Write Tool Tests ---
-
-#[tokio::test]
-async fn test_write_new_file() {
-    let dir = tempfile::tempdir().unwrap();
-    let file_path = dir.path().join("new_file.txt");
-
-    let registry = ToolRegistry::default_registry();
-    let write = registry.get("Write").unwrap();
-    let ctx = create_test_context(dir.path().to_str().unwrap());
-
-    let result = write
-        .call(
-            json!({
-                "file_path": file_path.to_str().unwrap(),
-                "content": "hello world"
-            }),
-            &ctx,
-        )
-        .await
-        .unwrap();
-
-    assert!(!result.is_error);
-    assert!(result.get_text().contains("Created"));
-    assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "hello world");
+    assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_write_creates_directories() {
-    let dir = tempfile::tempdir().unwrap();
-    let file_path = dir.path().join("a/b/c/file.txt");
+    let tmp = std::env::temp_dir().join("yoagent-test-nested/deep/dir/file.txt");
+    let path = tmp.to_str().unwrap();
 
-    let registry = ToolRegistry::default_registry();
-    let write = registry.get("Write").unwrap();
-    let ctx = create_test_context(dir.path().to_str().unwrap());
+    let tool = WriteFileTool::new();
+    let result = tool
+        .execute(
+            serde_json::json!({"path": path, "content": "nested!"}),
+            ctx("write_file"),
+        )
+        .await;
 
-    let result = write
-        .call(
-            json!({
-                "file_path": file_path.to_str().unwrap(),
-                "content": "nested"
-            }),
-            &ctx,
+    assert!(result.is_ok());
+    assert!(tmp.exists());
+
+    // Cleanup
+    let _ = std::fs::remove_dir_all(std::env::temp_dir().join("yoagent-test-nested"));
+}
+
+#[tokio::test]
+async fn test_search_pattern() {
+    let tmp_dir = std::env::temp_dir().join("yoagent-test-search");
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    std::fs::write(tmp_dir.join("a.txt"), "hello world\nfoo bar\nhello again").unwrap();
+    std::fs::write(tmp_dir.join("b.txt"), "no match here\nhello there").unwrap();
+
+    let tool = SearchTool::new().with_root(tmp_dir.to_str().unwrap());
+    let result = tool
+        .execute(serde_json::json!({"pattern": "hello"}), ctx("search"))
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("hello"));
+    assert!(text.contains("3 matches") || text.contains("matches")); // 3 lines match
+
+    let _ = std::fs::remove_dir_all(tmp_dir);
+}
+
+#[tokio::test]
+async fn test_search_no_matches() {
+    let tmp_dir = std::env::temp_dir().join("yoagent-test-search-empty");
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    std::fs::write(tmp_dir.join("a.txt"), "nothing interesting").unwrap();
+
+    let tool = SearchTool::new().with_root(tmp_dir.to_str().unwrap());
+    let result = tool
+        .execute(
+            serde_json::json!({"pattern": "zzzznotfound"}),
+            ctx("search"),
         )
         .await
         .unwrap();
 
-    assert!(!result.is_error);
-    assert!(file_path.exists());
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("No matches"));
+
+    let _ = std::fs::remove_dir_all(tmp_dir);
 }
 
-// --- File Edit Tool Tests ---
+// --- Edit tool tests ---
 
 #[tokio::test]
 async fn test_edit_file() {
-    let dir = tempfile::tempdir().unwrap();
-    let file_path = dir.path().join("edit_test.txt");
-    std::fs::write(&file_path, "hello world").unwrap();
+    let tmp = std::env::temp_dir().join("yoagent-test-edit.txt");
+    let path = tmp.to_str().unwrap();
+    std::fs::write(&tmp, "fn main() {\n    println!(\"hello\");\n}\n").unwrap();
 
-    let registry = ToolRegistry::default_registry();
-    let edit = registry.get("Edit").unwrap();
-    let read = registry.get("Read").unwrap();
-    let ctx = create_test_context(dir.path().to_str().unwrap());
-
-    // Must read first for staleness tracking
-    read.call(json!({"file_path": file_path.to_str().unwrap()}), &ctx)
-        .await
-        .unwrap();
-
-    let result = edit
-        .call(
-            json!({
-                "file_path": file_path.to_str().unwrap(),
-                "old_string": "hello",
-                "new_string": "goodbye"
+    let tool = EditFileTool::new();
+    let result = tool
+        .execute(
+            serde_json::json!({
+                "path": path,
+                "old_text": "println!(\"hello\")",
+                "new_text": "println!(\"goodbye\")"
             }),
-            &ctx,
+            ctx("edit_file"),
         )
         .await
         .unwrap();
 
-    assert!(!result.is_error);
-    assert_eq!(
-        std::fs::read_to_string(&file_path).unwrap(),
-        "goodbye world"
-    );
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("Replaced"));
+    let content = std::fs::read_to_string(&tmp).unwrap();
+    assert!(content.contains("goodbye"));
+    let _ = std::fs::remove_file(tmp);
 }
 
 #[tokio::test]
-async fn test_edit_string_not_found() {
-    let dir = tempfile::tempdir().unwrap();
-    let file_path = dir.path().join("edit_test2.txt");
-    std::fs::write(&file_path, "hello world").unwrap();
-
-    let registry = ToolRegistry::default_registry();
-    let edit = registry.get("Edit").unwrap();
-    let read = registry.get("Read").unwrap();
-    let ctx = create_test_context(dir.path().to_str().unwrap());
-
-    read.call(json!({"file_path": file_path.to_str().unwrap()}), &ctx)
-        .await
-        .unwrap();
-
-    let result = edit
-        .call(
-            json!({
-                "file_path": file_path.to_str().unwrap(),
-                "old_string": "xyz",
-                "new_string": "abc"
-            }),
-            &ctx,
+async fn test_edit_file_no_match() {
+    let tmp = std::env::temp_dir().join("yoagent-test-edit-nomatch.txt");
+    let path = tmp.to_str().unwrap();
+    std::fs::write(&tmp, "hello world\n").unwrap();
+    let tool = EditFileTool::new();
+    let result = tool
+        .execute(
+            serde_json::json!({"path": path, "old_text": "nonexistent", "new_text": "bar"}),
+            ctx("edit_file"),
         )
-        .await
-        .unwrap();
-
-    assert!(result.is_error);
-    assert!(result.get_text().contains("not found"));
-}
-
-#[tokio::test]
-async fn test_edit_multiple_occurrences() {
-    let dir = tempfile::tempdir().unwrap();
-    let file_path = dir.path().join("edit_multi.txt");
-    std::fs::write(&file_path, "foo bar foo baz foo").unwrap();
-
-    let registry = ToolRegistry::default_registry();
-    let edit = registry.get("Edit").unwrap();
-    let read = registry.get("Read").unwrap();
-    let ctx = create_test_context(dir.path().to_str().unwrap());
-
-    read.call(json!({"file_path": file_path.to_str().unwrap()}), &ctx)
-        .await
-        .unwrap();
-
-    // Without replace_all, should fail for multiple occurrences
-    let result = edit
-        .call(
-            json!({
-                "file_path": file_path.to_str().unwrap(),
-                "old_string": "foo",
-                "new_string": "qux"
-            }),
-            &ctx,
-        )
-        .await
-        .unwrap();
-
-    assert!(result.is_error);
-    assert!(result.get_text().contains("3 times"));
-}
-
-#[tokio::test]
-async fn test_edit_replace_all() {
-    let dir = tempfile::tempdir().unwrap();
-    let file_path = dir.path().join("edit_all.txt");
-    std::fs::write(&file_path, "foo bar foo baz foo").unwrap();
-
-    let registry = ToolRegistry::default_registry();
-    let edit = registry.get("Edit").unwrap();
-    let read = registry.get("Read").unwrap();
-    let ctx = create_test_context(dir.path().to_str().unwrap());
-
-    read.call(json!({"file_path": file_path.to_str().unwrap()}), &ctx)
-        .await
-        .unwrap();
-
-    let result = edit
-        .call(
-            json!({
-                "file_path": file_path.to_str().unwrap(),
-                "old_string": "foo",
-                "new_string": "qux",
-                "replace_all": true
-            }),
-            &ctx,
-        )
-        .await
-        .unwrap();
-
-    assert!(!result.is_error);
-    assert_eq!(
-        std::fs::read_to_string(&file_path).unwrap(),
-        "qux bar qux baz qux"
-    );
-}
-
-#[tokio::test]
-async fn test_edit_same_string_error() {
-    let dir = tempfile::tempdir().unwrap();
-    let file_path = dir.path().join("edit_same.txt");
-    std::fs::write(&file_path, "hello world").unwrap();
-
-    let registry = ToolRegistry::default_registry();
-    let edit = registry.get("Edit").unwrap();
-    let ctx = create_test_context(dir.path().to_str().unwrap());
-
-    let result = edit
-        .call(
-            json!({
-                "file_path": file_path.to_str().unwrap(),
-                "old_string": "hello",
-                "new_string": "hello"
-            }),
-            &ctx,
-        )
-        .await
-        .unwrap();
-
-    assert!(result.is_error);
-    assert!(result.get_text().contains("different"));
-}
-
-// --- Glob Tool Tests ---
-
-#[tokio::test]
-async fn test_glob_find_files() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("a.rs"), "").unwrap();
-    std::fs::write(dir.path().join("b.rs"), "").unwrap();
-    std::fs::write(dir.path().join("c.txt"), "").unwrap();
-
-    let registry = ToolRegistry::default_registry();
-    let glob = registry.get("Glob").unwrap();
-    let ctx = create_test_context(dir.path().to_str().unwrap());
-
-    let result = glob.call(json!({"pattern": "*.rs"}), &ctx).await.unwrap();
-
-    assert!(!result.is_error);
-    let text = result.get_text();
-    assert!(text.contains("a.rs"));
-    assert!(text.contains("b.rs"));
-    assert!(!text.contains("c.txt"));
-}
-
-#[tokio::test]
-async fn test_glob_no_matches() {
-    let dir = tempfile::tempdir().unwrap();
-
-    let registry = ToolRegistry::default_registry();
-    let glob = registry.get("Glob").unwrap();
-    let ctx = create_test_context(dir.path().to_str().unwrap());
-
-    let result = glob.call(json!({"pattern": "*.xyz"}), &ctx).await.unwrap();
-
-    assert!(!result.is_error);
-    assert!(result.get_text().contains("No files found"));
-}
-
-// --- Grep Tool Tests ---
-
-#[tokio::test]
-async fn test_grep_search() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("test.txt"),
-        "hello world\nfoo bar\nhello again\n",
-    )
-    .unwrap();
-
-    let registry = ToolRegistry::default_registry();
-    let grep = registry.get("Grep").unwrap();
-    let ctx = create_test_context(dir.path().to_str().unwrap());
-
-    let result = grep
-        .call(
-            json!({
-                "pattern": "hello",
-                "path": dir.path().to_str().unwrap(),
-                "output_mode": "content"
-            }),
-            &ctx,
-        )
-        .await
-        .unwrap();
-
-    assert!(!result.is_error);
-    let text = result.get_text();
-    assert!(text.contains("hello world") || text.contains("hello"));
-}
-
-// --- Task Tool Tests ---
-
-#[tokio::test]
-async fn test_task_lifecycle() {
-    let registry = ToolRegistry::default_registry();
-    let ctx = create_test_context("/tmp");
-
-    // Create a task
-    let create = registry.get("TaskCreate").unwrap();
-    let result = create
-        .call(
-            json!({
-                "subject": "Test task",
-                "description": "A test task"
-            }),
-            &ctx,
-        )
-        .await
-        .unwrap();
-    assert!(!result.is_error);
-    assert!(result.get_text().contains("Created task"));
-
-    // List tasks
-    let list = registry.get("TaskList").unwrap();
-    let result = list.call(json!({}), &ctx).await.unwrap();
-    assert!(!result.is_error);
-    assert!(result.get_text().contains("Test task"));
-
-    // Get task
-    let get = registry.get("TaskGet").unwrap();
-    let result = get.call(json!({"id": "task_1"}), &ctx).await.unwrap();
-    assert!(!result.is_error);
-    assert!(result.get_text().contains("Test task"));
-
-    // Update task
-    let update = registry.get("TaskUpdate").unwrap();
-    let result = update
-        .call(json!({"id": "task_1", "status": "completed"}), &ctx)
-        .await
-        .unwrap();
-    assert!(!result.is_error);
-
-    // Verify update
-    let result = get.call(json!({"id": "task_1"}), &ctx).await.unwrap();
-    assert!(result.get_text().to_lowercase().contains("completed"));
-}
-
-#[tokio::test]
-async fn test_task_not_found() {
-    let registry = ToolRegistry::default_registry();
-    let ctx = create_test_context("/tmp");
-
-    let get = registry.get("TaskGet").unwrap();
-    let result = get.call(json!({"id": "nonexistent"}), &ctx).await.unwrap();
-    assert!(result.is_error);
-    assert!(result.get_text().contains("not found"));
-}
-
-// --- WebFetch Tool Tests ---
-
-#[tokio::test]
-async fn test_webfetch_missing_url() {
-    let registry = ToolRegistry::default_registry();
-    let webfetch = registry.get("WebFetch").unwrap();
-    let ctx = create_test_context("/tmp");
-
-    let result = webfetch.call(json!({}), &ctx).await;
+        .await;
     assert!(result.is_err());
+    let _ = std::fs::remove_file(tmp);
 }
 
-// --- Diff Tests ---
-
-#[test]
-fn test_unified_diff() {
-    let old = "line 1\nline 2\nline 3\n";
-    let new = "line 1\nline 2 modified\nline 3\n";
-    let diff = bend_agent::tools::diff::unified_diff(old, new, "test.txt");
-
-    assert!(diff.contains("--- a/test.txt"));
-    assert!(diff.contains("+++ b/test.txt"));
-    assert!(diff.contains("-line 2"));
-    assert!(diff.contains("+line 2 modified"));
+#[tokio::test]
+async fn test_list_files_tool() {
+    let tmp_dir = std::env::temp_dir().join("yoagent-test-list2");
+    let _ = std::fs::create_dir_all(tmp_dir.join("sub"));
+    std::fs::write(tmp_dir.join("a.rs"), "").unwrap();
+    std::fs::write(tmp_dir.join("sub/c.rs"), "").unwrap();
+    let tool = ListFilesTool::new();
+    let result = tool
+        .execute(
+            serde_json::json!({"path": tmp_dir.to_str().unwrap()}),
+            ctx("list_files"),
+        )
+        .await
+        .unwrap();
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("a.rs"));
+    let _ = std::fs::remove_dir_all(tmp_dir);
 }
 
-#[test]
-fn test_count_changes() {
-    let old = "a\nb\nc\n";
-    let new = "a\nx\nc\nd\n";
-    let (added, removed) = bend_agent::tools::diff::count_changes(old, new);
-    assert!(added >= 1);
-    assert!(removed >= 1);
+#[tokio::test]
+async fn test_read_file_line_numbers() {
+    let tmp = std::env::temp_dir().join("yoagent-test-lineno2.txt");
+    let path = tmp.to_str().unwrap();
+    std::fs::write(&tmp, "first\nsecond\nthird\n").unwrap();
+    let tool = ReadFileTool::new();
+    let result = tool
+        .execute(serde_json::json!({"path": path}), ctx("read_file"))
+        .await
+        .unwrap();
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("   1 | first"));
+    assert!(text.contains("   2 | second"));
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn test_bash_blocked_command() {
+    let tool = BashTool::new();
+    let result = tool
+        .execute(serde_json::json!({"command": "rm -rf /"}), ctx("bash"))
+        .await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("blocked"));
+}
+
+#[tokio::test]
+async fn test_default_tools_complete() {
+    let tools = bendengine::tools::default_tools();
+    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+    assert_eq!(names.len(), 6);
+    assert!(names.contains(&"bash"));
+    assert!(names.contains(&"edit_file"));
+    assert!(names.contains(&"list_files"));
+}
+
+// --- Image support tests ---
+
+#[tokio::test]
+async fn test_read_image_file() {
+    // Minimal valid PNG (1x1 pixel, transparent)
+    let png_bytes: Vec<u8> = vec![
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR chunk
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1
+        0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE, // 8-bit RGB
+        0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, // IDAT chunk
+        0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0xE2, 0x21, 0xBC,
+        0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, // IEND chunk
+        0xAE, 0x42, 0x60, 0x82,
+    ];
+
+    let tmp = std::env::temp_dir().join("yoagent-test-image.png");
+    std::fs::write(&tmp, &png_bytes).unwrap();
+
+    let tool = ReadFileTool::new();
+    let result = tool
+        .execute(
+            serde_json::json!({"path": tmp.to_str().unwrap()}),
+            ctx("read_file"),
+        )
+        .await
+        .unwrap();
+
+    match &result.content[0] {
+        Content::Image { data, mime_type } => {
+            assert_eq!(mime_type, "image/png");
+            assert!(!data.is_empty());
+            // Verify round-trip: decode should match original bytes
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .unwrap();
+            assert_eq!(decoded, png_bytes);
+        }
+        _ => panic!("expected Content::Image"),
+    }
+
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn test_read_jpeg_file() {
+    let tmp = std::env::temp_dir().join("yoagent-test-image.jpg");
+    std::fs::write(&tmp, b"fake-jpeg-data").unwrap();
+
+    let tool = ReadFileTool::new();
+    let result = tool
+        .execute(
+            serde_json::json!({"path": tmp.to_str().unwrap()}),
+            ctx("read_file"),
+        )
+        .await
+        .unwrap();
+
+    match &result.content[0] {
+        Content::Image { mime_type, .. } => {
+            assert_eq!(mime_type, "image/jpeg");
+        }
+        _ => panic!("expected Content::Image for .jpg"),
+    }
+
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn test_read_text_file_unchanged() {
+    // Non-image files should still return Content::Text
+    let tmp = std::env::temp_dir().join("yoagent-test-notimage.txt");
+    std::fs::write(&tmp, "just text").unwrap();
+
+    let tool = ReadFileTool::new();
+    let result = tool
+        .execute(
+            serde_json::json!({"path": tmp.to_str().unwrap()}),
+            ctx("read_file"),
+        )
+        .await
+        .unwrap();
+
+    match &result.content[0] {
+        Content::Text { text } => {
+            assert!(text.contains("just text"));
+        }
+        _ => panic!("expected Content::Text for .txt file"),
+    }
+
+    let _ = std::fs::remove_file(tmp);
 }

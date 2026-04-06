@@ -33,7 +33,56 @@ impl SessionMeta {
 pub enum TranscriptKind {
     User,
     Assistant,
+    ToolResult,
     System,
+    Extension,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallRecord {
+    pub id: String,
+    pub name: String,
+    pub input: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TranscriptItem {
+    User {
+        text: String,
+    },
+    Assistant {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        thinking: Option<String>,
+        #[serde(default)]
+        tool_calls: Vec<ToolCallRecord>,
+    },
+    ToolResult {
+        tool_call_id: String,
+        tool_name: String,
+        content: String,
+        is_error: bool,
+    },
+    System {
+        text: String,
+    },
+    Extension {
+        kind: String,
+        data: serde_json::Value,
+    },
+}
+
+impl TranscriptItem {
+    pub fn kind(&self) -> TranscriptKind {
+        match self {
+            Self::User { .. } => TranscriptKind::User,
+            Self::Assistant { .. } => TranscriptKind::Assistant,
+            Self::ToolResult { .. } => TranscriptKind::ToolResult,
+            Self::System { .. } => TranscriptKind::System,
+            Self::Extension { .. } => TranscriptKind::Extension,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,7 +92,7 @@ pub struct TranscriptEntry {
     pub seq: u64,
     pub turn: u32,
     pub kind: TranscriptKind,
-    pub message: bend_agent::Message,
+    pub item: TranscriptItem,
     pub created_at: String,
 }
 
@@ -53,20 +102,16 @@ impl TranscriptEntry {
         run_id: Option<String>,
         seq: u64,
         turn: u32,
-        message: bend_agent::Message,
+        item: TranscriptItem,
     ) -> Self {
-        let kind = match message.role {
-            bend_agent::MessageRole::User => TranscriptKind::User,
-            bend_agent::MessageRole::Assistant => TranscriptKind::Assistant,
-        };
-
+        let kind = item.kind();
         Self {
             session_id,
             run_id,
             seq,
             turn,
             kind,
-            message,
+            item,
             created_at: Utc::now().to_rfc3339(),
         }
     }
@@ -125,17 +170,14 @@ impl RunMeta {
 #[serde(rename_all = "snake_case")]
 pub enum RunEventKind {
     RunStarted,
-    System,
-    AssistantMessage,
-    ToolResult,
-    PartialMessage,
-    CompactBoundary,
-    Status,
-    TaskNotification,
-    RateLimit,
-    Progress,
-    Error,
+    TurnStarted,
+    AssistantDelta,
+    AssistantCompleted,
+    ToolStarted,
+    ToolProgress,
+    ToolFinished,
     RunFinished,
+    Error,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

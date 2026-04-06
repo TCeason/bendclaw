@@ -1,44 +1,22 @@
 use std::sync::Arc;
 
+use bend_engine::provider::AnthropicProvider;
+use bend_engine::provider::ModelConfig;
+use bend_engine::provider::OpenAiCompatProvider;
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 
+use super::adapter::transcript_items_to_agent_messages;
 use crate::conf::LlmConfig;
-use crate::error::BendclawError;
+use crate::conf::ProviderKind;
 use crate::error::Result;
-
-fn provider_kind(provider: &crate::conf::ProviderKind) -> bend_agent::ProviderKind {
-    match provider {
-        crate::conf::ProviderKind::Anthropic => bend_agent::ProviderKind::Anthropic,
-        crate::conf::ProviderKind::OpenAi => bend_agent::ProviderKind::OpenAi,
-    }
-}
-
-fn build_agent_options(
-    llm: &LlmConfig,
-    cwd: Option<String>,
-    session_id: Option<String>,
-    max_turns: Option<u32>,
-    append_system_prompt: Option<String>,
-) -> bend_agent::AgentOptions {
-    bend_agent::AgentOptions {
-        provider: Some(provider_kind(&llm.provider)),
-        model: Some(llm.model.clone()),
-        api_key: Some(llm.api_key.clone()),
-        base_url: llm.base_url.clone(),
-        cwd,
-        session_id,
-        max_turns,
-        append_system_prompt,
-        ..Default::default()
-    }
-}
+use crate::storage::model::TranscriptItem;
 
 pub struct RequestOptions {
     pub llm: LlmConfig,
     pub cwd: String,
     pub session_id: String,
-    pub messages: Vec<bend_agent::Message>,
+    pub transcript: Vec<TranscriptItem>,
     pub prompt: String,
     pub max_turns: Option<u32>,
     pub append_system_prompt: Option<String>,
@@ -47,15 +25,14 @@ pub struct RequestOptions {
 enum RunnerState {
     Agent(Box<AgentState>),
     Scripted {
-        messages_to_send: Vec<bend_agent::SDKMessage>,
-        final_messages: Vec<bend_agent::Message>,
+        events_to_send: Vec<bend_engine::AgentEvent>,
+        final_messages: Vec<bend_engine::AgentMessage>,
         closed: bool,
     },
 }
 
 struct AgentState {
-    agent: Option<bend_agent::Agent>,
-    handle: Option<tokio::task::JoinHandle<Vec<bend_agent::Message>>>,
+    agent: Option<bend_engine::Agent>,
 }
 
 pub struct RequestRunner {
@@ -65,10 +42,7 @@ pub struct RequestRunner {
 impl Default for RequestRunner {
     fn default() -> Self {
         Self {
-            state: RwLock::new(RunnerState::Agent(Box::new(AgentState {
-                agent: None,
-                handle: None,
-            }))),
+            state: RwLock::new(RunnerState::Agent(Box::new(AgentState { agent: None }))),
         }
     }
 }
@@ -79,12 +53,12 @@ impl RequestRunner {
     }
 
     pub fn scripted(
-        messages_to_send: Vec<bend_agent::SDKMessage>,
-        final_messages: Vec<bend_agent::Message>,
+        events_to_send: Vec<bend_engine::AgentEvent>,
+        final_messages: Vec<bend_engine::AgentMessage>,
     ) -> Arc<Self> {
         Arc::new(Self {
             state: RwLock::new(RunnerState::Scripted {
-                messages_to_send,
+                events_to_send,
                 final_messages,
                 closed: false,
             }),
@@ -94,36 +68,67 @@ impl RequestRunner {
     pub async fn run_query(
         &self,
         options: RequestOptions,
-    ) -> Result<mpsc::Receiver<bend_agent::SDKMessage>> {
+    ) -> Result<mpsc::UnboundedReceiver<bend_engine::AgentEvent>> {
         let mut state = self.state.write().await;
         match &mut *state {
-            RunnerState::Agent(state) => {
-                let agent_options = build_agent_options(
-                    &options.llm,
-                    Some(options.cwd),
-                    Some(options.session_id),
-                    options.max_turns,
-                    options.append_system_prompt,
+            RunnerState::Agent(agent_state) => {
+                let mut model_config = match options.llm.provider {
+                    ProviderKind::Anthropic => {
+                        ModelConfig::anthropic(&options.llm.model, &options.llm.model)
+                    }
+                    ProviderKind::OpenAi => {
+                        ModelConfig::openai(&options.llm.model, &options.llm.model)
+                    }
+                };
+                if let Some(base_url) = &options.llm.base_url {
+                    model_config.base_url = base_url.clone();
+                }
+
+                let mut system_prompt = format!(
+                    "You are a helpful assistant. Working directory: {}",
+                    options.cwd
                 );
+                if let Some(extra) = &options.append_system_prompt {
+                    system_prompt.push('\n');
+                    system_prompt.push_str(extra);
+                }
 
-                let mut next_agent = bend_agent::Agent::new(agent_options)
-                    .await
-                    .map_err(BendclawError::Agent)?;
-                next_agent.messages = options.messages;
+                let prior_messages = transcript_items_to_agent_messages(&options.transcript);
 
-                let (rx, next_handle) = next_agent.query(&options.prompt).await;
-                state.agent = Some(next_agent);
-                state.handle = Some(next_handle);
+                let mut agent = match options.llm.provider {
+                    ProviderKind::Anthropic => bend_engine::Agent::new(AnthropicProvider)
+                        .with_model(&options.llm.model)
+                        .with_api_key(&options.llm.api_key)
+                        .with_model_config(model_config)
+                        .with_system_prompt(system_prompt)
+                        .with_tools(bend_engine::tools::default_tools())
+                        .with_messages(prior_messages),
+                    ProviderKind::OpenAi => bend_engine::Agent::new(OpenAiCompatProvider)
+                        .with_model(&options.llm.model)
+                        .with_api_key(&options.llm.api_key)
+                        .with_model_config(model_config)
+                        .with_system_prompt(system_prompt)
+                        .with_tools(bend_engine::tools::default_tools())
+                        .with_messages(prior_messages),
+                };
+
+                if let Some(max_turns) = options.max_turns {
+                    agent = agent.with_execution_limits(bend_engine::context::ExecutionLimits {
+                        max_turns: max_turns as usize,
+                        ..Default::default()
+                    });
+                }
+
+                let rx = agent.prompt(options.prompt).await;
+                agent_state.agent = Some(agent);
                 Ok(rx)
             }
-            RunnerState::Scripted {
-                messages_to_send, ..
-            } => {
-                let scripted_messages = messages_to_send.clone();
-                let (tx, rx) = mpsc::channel(100);
+            RunnerState::Scripted { events_to_send, .. } => {
+                let events = events_to_send.clone();
+                let (tx, rx) = mpsc::unbounded_channel();
                 tokio::spawn(async move {
-                    for message in scripted_messages {
-                        let _ = tx.send(message).await;
+                    for event in events {
+                        let _ = tx.send(event);
                     }
                 });
                 Ok(rx)
@@ -131,31 +136,26 @@ impl RequestRunner {
         }
     }
 
-    pub async fn take_messages(&self) -> Vec<bend_agent::Message> {
-        let handle = {
-            let mut state = self.state.write().await;
-            match &mut *state {
-                RunnerState::Agent(state) => state.handle.take(),
-                RunnerState::Scripted { final_messages, .. } => return final_messages.clone(),
+    pub async fn take_messages(&self) -> Vec<bend_engine::AgentMessage> {
+        let mut state = self.state.write().await;
+        match &mut *state {
+            RunnerState::Agent(agent_state) => {
+                if let Some(agent) = agent_state.agent.as_mut() {
+                    agent.finish().await;
+                    return agent.messages().to_vec();
+                }
+                Vec::new()
             }
-        };
-
-        if let Some(handle) = handle {
-            match handle.await {
-                Ok(messages) if !messages.is_empty() => return messages,
-                _ => {}
-            }
+            RunnerState::Scripted { final_messages, .. } => final_messages.clone(),
         }
-
-        Vec::new()
     }
 
     pub async fn close(&self) {
         let mut state = self.state.write().await;
         match &mut *state {
-            RunnerState::Agent(state) => {
-                if let Some(agent) = state.agent.as_ref() {
-                    agent.close().await;
+            RunnerState::Agent(agent_state) => {
+                if let Some(agent) = agent_state.agent.as_ref() {
+                    agent.abort();
                 }
             }
             RunnerState::Scripted { closed, .. } => {

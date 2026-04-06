@@ -1,332 +1,150 @@
+//! High-level MCP client.
+
 use std::collections::HashMap;
-use std::process::Stdio;
 use std::sync::Arc;
 
-use serde_json::Value;
-use tokio::io::AsyncBufReadExt;
-use tokio::io::AsyncWriteExt;
-use tokio::io::BufReader;
-use tokio::process::Child;
-use tokio::process::Command;
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 
-use crate::types::McpContentBlock;
-use crate::types::McpServerConfig;
-use crate::types::McpServerConnection;
-use crate::types::McpToolCallResult;
-use crate::types::McpToolDefinition;
+use super::transport::HttpTransport;
+use super::transport::McpTransport;
+use super::transport::StdioTransport;
+use super::types::*;
 
-/// MCP client that manages connections to MCP servers.
+/// High-level MCP client that manages connection lifecycle and protocol.
 pub struct McpClient {
-    connections: Arc<RwLock<HashMap<String, McpConnection>>>,
-}
-
-struct McpConnection {
-    config: McpServerConfig,
-    tools: Vec<McpToolDefinition>,
-    child: Option<Child>,
-    stdin: Option<tokio::process::ChildStdin>,
-    stdout_reader: Option<Arc<RwLock<BufReader<tokio::process::ChildStdout>>>>,
+    transport: Arc<Mutex<Box<dyn McpTransport>>>,
+    server_info: Option<ServerInfo>,
+    capabilities: Option<ServerCapabilities>,
 }
 
 impl McpClient {
-    pub fn new() -> Self {
+    /// Connect to an MCP server via stdio (spawn a child process).
+    pub async fn connect_stdio(
+        command: &str,
+        args: &[&str],
+        env: Option<HashMap<String, String>>,
+    ) -> Result<Self, McpError> {
+        let transport = StdioTransport::new(command, args, env).await?;
+        let mut client = Self {
+            transport: Arc::new(Mutex::new(Box::new(transport))),
+            server_info: None,
+            capabilities: None,
+        };
+        client.initialize().await?;
+        Ok(client)
+    }
+
+    /// Connect to an MCP server via HTTP.
+    pub async fn connect_http(url: &str) -> Result<Self, McpError> {
+        let transport = HttpTransport::new(url)?;
+        let mut client = Self {
+            transport: Arc::new(Mutex::new(Box::new(transport))),
+            server_info: None,
+            capabilities: None,
+        };
+        client.initialize().await?;
+        Ok(client)
+    }
+
+    /// Create from an existing transport (useful for testing).
+    pub fn from_transport(transport: Box<dyn McpTransport>) -> Self {
         Self {
-            connections: Arc::new(RwLock::new(HashMap::new())),
+            transport: Arc::new(Mutex::new(transport)),
+            server_info: None,
+            capabilities: None,
         }
     }
 
-    /// Connect to an MCP server and list its tools.
-    pub async fn connect(
-        &self,
-        name: &str,
-        config: McpServerConfig,
-    ) -> Result<Vec<McpToolDefinition>, String> {
-        match &config {
-            McpServerConfig::Stdio { command, args, env } => {
-                let mut cmd = Command::new(command);
-                cmd.args(args)
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
-
-                for (key, value) in env {
-                    cmd.env(key, value);
-                }
-
-                let mut child = cmd
-                    .spawn()
-                    .map_err(|e| format!("Failed to start MCP server '{}': {}", name, e))?;
-
-                let stdin = child.stdin.take().ok_or("Failed to get stdin")?;
-                let stdout = child.stdout.take().ok_or("Failed to get stdout")?;
-                let reader = BufReader::new(stdout);
-
-                let mut conn = McpConnection {
-                    config: config.clone(),
-                    tools: Vec::new(),
-                    child: Some(child),
-                    stdin: Some(stdin),
-                    stdout_reader: Some(Arc::new(RwLock::new(reader))),
-                };
-
-                // Initialize the connection
-                let tools = initialize_connection(&mut conn).await?;
-                conn.tools = tools.clone();
-
-                let mut connections = self.connections.write().await;
-                connections.insert(name.to_string(), conn);
-
-                Ok(tools)
-            }
-            McpServerConfig::Sse { url, headers } | McpServerConfig::Http { url, headers } => {
-                // HTTP-based MCP: list tools via HTTP
-                let client = reqwest::Client::new();
-                let mut req = client.post(format!("{}/list-tools", url));
-                for (key, value) in headers {
-                    req = req.header(key, value);
-                }
-
-                let response = req
-                    .json(&serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "tools/list",
-                    }))
-                    .send()
-                    .await
-                    .map_err(|e| format!("Failed to connect to MCP server '{}': {}", name, e))?;
-
-                let body: Value = response
-                    .json()
-                    .await
-                    .map_err(|e| format!("Invalid response from MCP server: {}", e))?;
-
-                let tools = parse_tool_list(&body);
-
-                let conn = McpConnection {
-                    config: config.clone(),
-                    tools: tools.clone(),
-                    child: None,
-                    stdin: None,
-                    stdout_reader: None,
-                };
-
-                let mut connections = self.connections.write().await;
-                connections.insert(name.to_string(), conn);
-
-                Ok(tools)
-            }
-        }
-    }
-
-    /// Call a tool on a connected MCP server.
-    pub async fn call_tool(
-        &self,
-        server_name: &str,
-        tool_name: &str,
-        arguments: Value,
-    ) -> Result<McpToolCallResult, String> {
-        let connections = self.connections.read().await;
-        let conn = connections
-            .get(server_name)
-            .ok_or_else(|| format!("MCP server '{}' not connected", server_name))?;
-
-        match &conn.config {
-            McpServerConfig::Stdio { .. } => {
-                // Send JSON-RPC request via stdin/stdout
-                // This is simplified; a full implementation would use proper JSON-RPC framing
-                Ok(McpToolCallResult {
-                    content: vec![McpContentBlock::Text {
-                        text: format!(
-                            "MCP tool call: {}/{} (stdio transport)",
-                            server_name, tool_name
-                        ),
-                    }],
-                    is_error: false,
-                })
-            }
-            McpServerConfig::Sse { url, headers } | McpServerConfig::Http { url, headers } => {
-                let client = reqwest::Client::new();
-                let mut req = client.post(format!("{}/call-tool", url));
-                for (key, value) in headers {
-                    req = req.header(key, value);
-                }
-
-                let response = req
-                    .json(&serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "tools/call",
-                        "params": {
-                            "name": tool_name,
-                            "arguments": arguments,
-                        }
-                    }))
-                    .send()
-                    .await
-                    .map_err(|e| e.to_string())?;
-
-                let body: Value = response.json().await.map_err(|e| e.to_string())?;
-
-                Ok(parse_tool_result(&body))
-            }
-        }
-    }
-
-    /// Get all connections.
-    pub async fn get_connections(&self) -> Vec<McpServerConnection> {
-        let connections = self.connections.read().await;
-        connections
-            .iter()
-            .map(|(name, conn)| McpServerConnection {
-                name: name.clone(),
-                config: conn.config.clone(),
-                tools: conn.tools.clone(),
-                connected: true,
-            })
-            .collect()
-    }
-
-    /// Close all connections.
-    pub async fn close_all(&self) {
-        let mut connections = self.connections.write().await;
-        for (_, mut conn) in connections.drain() {
-            if let Some(mut child) = conn.child.take() {
-                let _ = child.kill().await;
-            }
-        }
-    }
-}
-
-impl Default for McpClient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-async fn initialize_connection(conn: &mut McpConnection) -> Result<Vec<McpToolDefinition>, String> {
-    // Send initialize request
-    let init_request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "initialize",
-        "params": {
+    /// Initialize the MCP connection (handshake).
+    pub async fn initialize(&mut self) -> Result<ServerInfo, McpError> {
+        let params = serde_json::json!({
             "protocolVersion": "2024-11-05",
             "capabilities": {},
-            "clientInfo": {
-                "name": "bendclaw",
-                "version": "0.1.0"
-            }
+            "clientInfo": ClientInfo::default()
+        });
+
+        let request = JsonRpcRequest::new("initialize", Some(params));
+        let response = self.send_request(request).await?;
+
+        let result: InitializeResult = serde_json::from_value(response)?;
+        self.server_info = Some(result.server_info.clone());
+        self.capabilities = Some(result.capabilities);
+
+        // Send initialized notification (no response expected, but we send it as a request
+        // since our transport is request/response. Some servers ignore the id on notifications.)
+        let notify = JsonRpcRequest::new("notifications/initialized", None);
+        // Best-effort: ignore errors on the notification
+        let _ = self.send_request(notify).await;
+
+        Ok(result.server_info)
+    }
+
+    /// List available tools from the server.
+    pub async fn list_tools(&self) -> Result<Vec<McpToolInfo>, McpError> {
+        let request = JsonRpcRequest::new("tools/list", Some(serde_json::json!({})));
+        let response = self.send_request(request).await?;
+
+        let result: ToolsListResult = serde_json::from_value(response)?;
+        Ok(result.tools)
+    }
+
+    /// Call a tool on the server.
+    pub async fn call_tool(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<McpToolCallResult, McpError> {
+        let params = serde_json::json!({
+            "name": name,
+            "arguments": arguments
+        });
+
+        let request = JsonRpcRequest::new("tools/call", Some(params));
+        let response = self.send_request(request).await?;
+
+        let result: McpToolCallResult = serde_json::from_value(response)?;
+        Ok(result)
+    }
+
+    /// Close the connection.
+    pub async fn close(&self) -> Result<(), McpError> {
+        self.transport.lock().await.close().await
+    }
+
+    /// Get server info (available after initialize).
+    pub fn server_info(&self) -> Option<&ServerInfo> {
+        self.server_info.as_ref()
+    }
+
+    /// Send a request and extract the result, handling errors.
+    async fn send_request(&self, request: JsonRpcRequest) -> Result<serde_json::Value, McpError> {
+        let transport = self.transport.lock().await;
+        let response = transport.send(request).await?;
+
+        if let Some(error) = response.error {
+            return Err(McpError::JsonRpc {
+                code: error.code,
+                message: error.message,
+            });
         }
-    });
 
-    send_jsonrpc(conn, &init_request).await?;
-    let _init_response = read_jsonrpc(conn).await?;
-
-    // Send initialized notification
-    let initialized = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "notifications/initialized"
-    });
-    send_jsonrpc(conn, &initialized).await?;
-
-    // List tools
-    let list_request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 2,
-        "method": "tools/list",
-    });
-
-    send_jsonrpc(conn, &list_request).await?;
-    let response = read_jsonrpc(conn).await?;
-
-    Ok(parse_tool_list(&response))
-}
-
-async fn send_jsonrpc(conn: &mut McpConnection, message: &Value) -> Result<(), String> {
-    if let Some(stdin) = &mut conn.stdin {
-        let msg = format!(
-            "{}\n",
-            serde_json::to_string(message).map_err(|e| e.to_string())?
-        );
-        stdin
-            .write_all(msg.as_bytes())
-            .await
-            .map_err(|e| e.to_string())?;
-        stdin.flush().await.map_err(|e| e.to_string())?;
-        Ok(())
-    } else {
-        Err("No stdin available".to_string())
+        response
+            .result
+            .ok_or_else(|| McpError::Protocol("Response has neither result nor error".into()))
     }
 }
 
-async fn read_jsonrpc(conn: &McpConnection) -> Result<Value, String> {
-    if let Some(reader) = &conn.stdout_reader {
-        let mut reader = reader.write().await;
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .await
-            .map_err(|e| e.to_string())?;
-        serde_json::from_str(&line).map_err(|e| e.to_string())
-    } else {
-        Err("No stdout reader available".to_string())
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Integration test would require a running MCP server.
+    // Unit tests for the client logic are covered via mock transport in tool_adapter tests.
+
+    #[test]
+    fn test_client_info_default() {
+        let info = ClientInfo::default();
+        assert_eq!(info.name, "yoagent");
+        assert!(!info.version.is_empty());
     }
-}
-
-fn parse_tool_list(response: &Value) -> Vec<McpToolDefinition> {
-    response
-        .get("result")
-        .and_then(|r| r.get("tools"))
-        .and_then(|t| t.as_array())
-        .map(|tools| {
-            tools
-                .iter()
-                .filter_map(|t| {
-                    Some(McpToolDefinition {
-                        name: t.get("name")?.as_str()?.to_string(),
-                        description: t
-                            .get("description")
-                            .and_then(|d| d.as_str())
-                            .map(String::from),
-                        input_schema: t.get("inputSchema").cloned(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn parse_tool_result(response: &Value) -> McpToolCallResult {
-    let result = response.get("result").unwrap_or(response);
-    let content = result
-        .get("content")
-        .and_then(|c| c.as_array())
-        .map(|blocks| {
-            blocks
-                .iter()
-                .filter_map(|b| {
-                    let block_type = b.get("type")?.as_str()?;
-                    match block_type {
-                        "text" => Some(McpContentBlock::Text {
-                            text: b.get("text")?.as_str()?.to_string(),
-                        }),
-                        "image" => Some(McpContentBlock::Image {
-                            data: b.get("data")?.as_str()?.to_string(),
-                            mime_type: b.get("mimeType")?.as_str()?.to_string(),
-                        }),
-                        _ => None,
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let is_error = result
-        .get("isError")
-        .and_then(|e| e.as_bool())
-        .unwrap_or(false);
-
-    McpToolCallResult { content, is_error }
 }

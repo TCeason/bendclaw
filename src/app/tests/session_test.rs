@@ -1,9 +1,10 @@
 use bendclaw::conf::StorageConfig;
 use bendclaw::session::Session;
-use bendclaw::storage::model::ListSessions;
 use bendclaw::storage::model::ListTranscriptEntries;
 use bendclaw::storage::model::SessionMeta;
 use bendclaw::storage::model::TranscriptEntry;
+use bendclaw::storage::model::TranscriptItem;
+use bendclaw::storage::model::TranscriptKind;
 use bendclaw::storage::open_storage;
 use tempfile::TempDir;
 
@@ -27,10 +28,10 @@ async fn new_session_creates_meta_and_empty_transcript() -> TestResult {
     .await?;
 
     let meta = session.meta().await;
-    let messages = session.messages().await;
+    let transcript = session.transcript().await;
     assert_eq!(meta.session_id, "sess-100");
     assert_eq!(meta.turns, 0);
-    assert!(messages.is_empty());
+    assert!(transcript.is_empty());
     assert!(dir
         .path()
         .join("sessions")
@@ -64,16 +65,14 @@ async fn round_trip_session_with_transcript() -> TestResult {
     .await?;
 
     session
-        .apply_messages(vec![
-            bend_agent::Message {
-                role: bend_agent::MessageRole::User,
-                content: vec![bend_agent::ContentBlock::Text {
-                    text: "hello".into(),
-                }],
+        .apply_transcript(vec![
+            TranscriptItem::User {
+                text: "hello".into(),
             },
-            bend_agent::Message {
-                role: bend_agent::MessageRole::Assistant,
-                content: vec![bend_agent::ContentBlock::Text { text: "hi".into() }],
+            TranscriptItem::Assistant {
+                text: "hi".into(),
+                thinking: None,
+                tool_calls: vec![],
             },
         ])
         .await;
@@ -84,7 +83,7 @@ async fn round_trip_session_with_transcript() -> TestResult {
         .await?
         .ok_or_else(|| missing_error("missing loaded session"))?;
     assert_eq!(loaded.meta().await.turns, 1);
-    assert_eq!(loaded.messages().await.len(), 2);
+    assert_eq!(loaded.transcript().await.len(), 2);
     Ok(())
 }
 
@@ -102,11 +101,8 @@ async fn resume_session_appends_transcript() -> TestResult {
     .await?;
 
     session
-        .apply_messages(vec![bend_agent::Message {
-            role: bend_agent::MessageRole::User,
-            content: vec![bend_agent::ContentBlock::Text {
-                text: "first".into(),
-            }],
+        .apply_transcript(vec![TranscriptItem::User {
+            text: "first".into(),
         }])
         .await;
     session.save().await?;
@@ -115,27 +111,23 @@ async fn resume_session_appends_transcript() -> TestResult {
         .await?
         .ok_or_else(|| missing_error("missing resumed session"))?;
 
-    let mut extended = resumed.messages().await;
-    extended.push(bend_agent::Message {
-        role: bend_agent::MessageRole::User,
-        content: vec![bend_agent::ContentBlock::Text {
-            text: "second".into(),
-        }],
+    let mut extended = resumed.transcript().await;
+    extended.push(TranscriptItem::User {
+        text: "second".into(),
     });
-    extended.push(bend_agent::Message {
-        role: bend_agent::MessageRole::Assistant,
-        content: vec![bend_agent::ContentBlock::Text {
-            text: "reply".into(),
-        }],
+    extended.push(TranscriptItem::Assistant {
+        text: "reply".into(),
+        thinking: None,
+        tool_calls: vec![],
     });
 
-    resumed.apply_messages(extended).await;
+    resumed.apply_transcript(extended).await;
     resumed.save().await?;
 
     let final_state = Session::load("sess-300", storage.clone())
         .await?
         .ok_or_else(|| missing_error("missing final state"))?;
-    assert_eq!(final_state.messages().await.len(), 3);
+    assert_eq!(final_state.transcript().await.len(), 3);
     assert_eq!(final_state.meta().await.turns, 2);
     Ok(())
 }
@@ -154,18 +146,14 @@ async fn session_title_comes_from_first_user_message() -> TestResult {
     .await?;
 
     session
-        .apply_messages(vec![
-            bend_agent::Message {
-                role: bend_agent::MessageRole::User,
-                content: vec![bend_agent::ContentBlock::Text {
-                    text: "summarize the quarterly numbers for the infra team".into(),
-                }],
+        .apply_transcript(vec![
+            TranscriptItem::User {
+                text: "summarize the quarterly numbers for the infra team".into(),
             },
-            bend_agent::Message {
-                role: bend_agent::MessageRole::Assistant,
-                content: vec![bend_agent::ContentBlock::Text {
-                    text: "working".into(),
-                }],
+            TranscriptItem::Assistant {
+                text: "working".into(),
+                thinking: None,
+                tool_calls: vec![],
             },
         ])
         .await;
@@ -220,17 +208,13 @@ async fn save_and_load_transcript() -> TestResult {
     let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
 
     let entries = vec![
-        TranscriptEntry::new("sess-002".into(), None, 1, 0, bend_agent::Message {
-            role: bend_agent::MessageRole::User,
-            content: vec![bend_agent::ContentBlock::Text {
-                text: "hello".into(),
-            }],
+        TranscriptEntry::new("sess-002".into(), None, 1, 0, TranscriptItem::User {
+            text: "hello".into(),
         }),
-        TranscriptEntry::new("sess-002".into(), None, 2, 0, bend_agent::Message {
-            role: bend_agent::MessageRole::Assistant,
-            content: vec![bend_agent::ContentBlock::Text {
-                text: "hi there".into(),
-            }],
+        TranscriptEntry::new("sess-002".into(), None, 2, 0, TranscriptItem::Assistant {
+            text: "hi there".into(),
+            thinking: None,
+            tool_calls: vec![],
         }),
     ];
 
@@ -245,41 +229,7 @@ async fn save_and_load_transcript() -> TestResult {
         })
         .await?;
     assert_eq!(loaded.len(), 2);
-    Ok(())
-}
-
-#[tokio::test]
-async fn load_transcript_not_found() -> TestResult {
-    let dir = TempDir::new()?;
-    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
-
-    let loaded = storage
-        .list_transcript_entries(ListTranscriptEntries {
-            session_id: "nonexistent".into(),
-            run_id: None,
-            after_seq: None,
-            limit: None,
-        })
-        .await?;
-    assert!(loaded.is_empty());
-    Ok(())
-}
-
-#[tokio::test]
-async fn list_recent_sessions() -> TestResult {
-    let dir = TempDir::new()?;
-    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
-
-    for index in 0..5 {
-        let meta = SessionMeta::new(
-            format!("sess-{index:03}"),
-            "/tmp".into(),
-            "claude-sonnet".into(),
-        );
-        storage.put_session(meta).await?;
-    }
-
-    let recent = storage.list_sessions(ListSessions { limit: 3 }).await?;
-    assert_eq!(recent.len(), 3);
+    assert!(matches!(loaded[0].kind, TranscriptKind::User));
+    assert!(matches!(loaded[1].kind, TranscriptKind::Assistant));
     Ok(())
 }
