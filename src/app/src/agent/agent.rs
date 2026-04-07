@@ -84,87 +84,58 @@ impl TurnStream {
 }
 
 // ---------------------------------------------------------------------------
-// AgentState (internal)
-// ---------------------------------------------------------------------------
-
-enum AgentState {
-    Live { handle: Box<Option<EngineHandle>> },
-    Scripted { events: Vec<ProtocolEvent> },
-}
-
-// ---------------------------------------------------------------------------
 // AppAgent
 // ---------------------------------------------------------------------------
 
 pub struct AppAgent {
     llm: RwLock<LlmConfig>,
-    system_prompt: String,
-    limits: ExecutionLimits,
+    system_prompt: RwLock<String>,
+    limits: RwLock<ExecutionLimits>,
     cwd: String,
-    storage: Arc<dyn Storage>,
-    state: RwLock<AgentState>,
+    storage: RwLock<Arc<dyn Storage>>,
+    engine: RwLock<Option<EngineHandle>>,
 }
 
 impl AppAgent {
-    pub fn new(config: &Config, cwd: impl Into<String>) -> Result<Self> {
+    pub fn new(config: &Config, cwd: impl Into<String>) -> Result<Arc<Self>> {
         let cwd = cwd.into();
         let storage = open_storage(&config.storage)?;
         let system_prompt = format!("You are a helpful assistant. Working directory: {cwd}");
-        Ok(Self {
+        Ok(Arc::new(Self {
             llm: RwLock::new(config.active_llm()),
-            system_prompt,
-            limits: ExecutionLimits::default(),
+            system_prompt: RwLock::new(system_prompt),
+            limits: RwLock::new(ExecutionLimits::default()),
             cwd,
-            storage,
-            state: RwLock::new(AgentState::Live {
-                handle: Box::new(None),
-            }),
-        })
+            storage: RwLock::new(storage),
+            engine: RwLock::new(None),
+        }))
     }
 
-    pub fn scripted(
-        events: Vec<ProtocolEvent>,
-        _transcripts: Vec<TranscriptItem>,
-        storage: Arc<dyn Storage>,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            llm: RwLock::new(LlmConfig {
-                provider: crate::conf::ProviderKind::Anthropic,
-                api_key: String::new(),
-                base_url: None,
-                model: String::new(),
-            }),
-            system_prompt: String::new(),
-            limits: ExecutionLimits::default(),
-            cwd: String::new(),
-            storage,
-            state: RwLock::new(AgentState::Scripted { events }),
-        })
+    pub fn with_system_prompt(self: &Arc<Self>, prompt: impl Into<String>) -> Arc<Self> {
+        *self.system_prompt.write() = prompt.into();
+        Arc::clone(self)
     }
 
-    pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
-        self.system_prompt = prompt.into();
-        self
+    pub fn append_system_prompt(self: &Arc<Self>, extra: &str) -> Arc<Self> {
+        let mut sp = self.system_prompt.write();
+        sp.push('\n');
+        sp.push_str(extra);
+        drop(sp);
+        Arc::clone(self)
     }
 
-    pub fn append_system_prompt(mut self, extra: &str) -> Self {
-        self.system_prompt.push('\n');
-        self.system_prompt.push_str(extra);
-        self
+    pub fn with_limits(self: &Arc<Self>, limits: ExecutionLimits) -> Arc<Self> {
+        *self.limits.write() = limits;
+        Arc::clone(self)
     }
 
-    pub fn with_limits(mut self, limits: ExecutionLimits) -> Self {
-        self.limits = limits;
-        self
+    pub fn with_storage(self: &Arc<Self>, storage: Arc<dyn Storage>) -> Arc<Self> {
+        *self.storage.write() = storage;
+        Arc::clone(self)
     }
 
-    pub fn with_storage(mut self, storage: Arc<dyn Storage>) -> Self {
-        self.storage = storage;
-        self
-    }
-
-    pub fn system_prompt(&self) -> &str {
-        &self.system_prompt
+    pub fn system_prompt(&self) -> String {
+        self.system_prompt.read().clone()
     }
 
     pub fn llm(&self) -> LlmConfig {
@@ -175,8 +146,8 @@ impl AppAgent {
         &self.cwd
     }
 
-    pub fn limits(&self) -> &ExecutionLimits {
-        &self.limits
+    pub fn limits(&self) -> ExecutionLimits {
+        self.limits.read().clone()
     }
 
     pub fn set_model(&self, model: String) {
@@ -202,7 +173,8 @@ impl AppAgent {
         let model = llm.model.clone();
 
         let mut run_meta = RunMeta::new(run_id.clone(), session_id.clone(), model.clone());
-        self.storage.put_run(run_meta.clone()).await?;
+        let storage = self.storage.read().clone();
+        storage.put_run(run_meta.clone()).await?;
 
         logx!(
             info,
@@ -222,7 +194,6 @@ impl AppAgent {
         let (tx, rx) = mpsc::unbounded_channel();
 
         // Spawn background task: consume engine events → persist → forward RunEvents
-        let storage = self.storage.clone();
         let prompt = request.prompt;
         let rid = run_id.clone();
         let sid = session_id.clone();
@@ -405,48 +376,48 @@ impl AppAgent {
     }
 
     pub fn abort(&self) {
-        let state = self.state.read();
-        match &*state {
-            AgentState::Live { handle } => {
-                if let Some(h) = handle.as_ref() {
-                    h.abort();
-                }
-            }
-            AgentState::Scripted { .. } => {}
+        let engine = self.engine.read();
+        if let Some(h) = engine.as_ref() {
+            h.abort();
         }
     }
 
     // -- session queries (for REPL / Server UI) ----------------------------
 
     pub async fn list_sessions(&self, limit: usize) -> Result<Vec<SessionMeta>> {
-        self.storage.list_sessions(ListSessions { limit }).await
+        let storage = self.storage.read().clone();
+        storage.list_sessions(ListSessions { limit }).await
     }
 
     pub async fn get_session(&self, id: &str) -> Result<Option<SessionMeta>> {
-        self.storage.get_session(id).await
+        let storage = self.storage.read().clone();
+        storage.get_session(id).await
     }
 
     pub async fn load_transcript(&self, id: &str) -> Result<Vec<TranscriptItem>> {
-        match Session::load(id, self.storage.clone()).await? {
+        let storage = self.storage.read().clone();
+        match Session::load(id, storage).await? {
             Some(session) => Ok(session.transcript().await),
             None => Ok(Vec::new()),
         }
     }
 
     pub async fn load_session(&self, id: &str) -> Result<Option<Arc<Session>>> {
-        Session::load(id, self.storage.clone()).await
+        let storage = self.storage.read().clone();
+        Session::load(id, storage).await
     }
 
-    pub fn storage(&self) -> &Arc<dyn Storage> {
-        &self.storage
+    pub fn storage(&self) -> Arc<dyn Storage> {
+        self.storage.read().clone()
     }
 
     // -- private -----------------------------------------------------------
 
     async fn open_session(&self, session_id: Option<&str>) -> Result<Arc<Session>> {
         let model = self.llm.read().model.clone();
+        let storage = self.storage.read().clone();
         match session_id {
-            Some(id) => match Session::load(id, self.storage.clone()).await? {
+            Some(id) => match Session::load(id, storage).await? {
                 Some(session) => {
                     session.set_model(model).await;
                     Ok(session)
@@ -455,7 +426,7 @@ impl AppAgent {
             },
             None => {
                 let id = crate::ids::new_id();
-                Session::create(id, self.cwd.clone(), model, self.storage.clone()).await
+                Session::create(id, self.cwd.clone(), model, storage).await
             }
         }
     }
@@ -465,48 +436,19 @@ impl AppAgent {
         prompt: String,
         prior_transcripts: &[TranscriptItem],
     ) -> Result<mpsc::UnboundedReceiver<ProtocolEvent>> {
-        // Check state under a short lock, then do async work outside the lock
-        let is_scripted = {
-            let state = self.state.read();
-            matches!(&*state, AgentState::Scripted { .. })
-        };
-
-        if is_scripted {
-            let events = {
-                let state = self.state.read();
-                match &*state {
-                    AgentState::Scripted { events } => events.clone(),
-                    _ => Vec::new(),
-                }
-            };
-            let (tx, rx) = mpsc::unbounded_channel();
-            tokio::spawn(async move {
-                for event in events {
-                    let _ = tx.send(event);
-                }
-            });
-            return Ok(rx);
-        }
-
-        // Live path: build options, then start engine, then store handle
         let llm = self.llm.read().clone();
         let options = EngineOptions {
             provider: llm.provider,
             model: llm.model,
             api_key: llm.api_key,
             base_url: llm.base_url,
-            system_prompt: self.system_prompt.clone(),
-            limits: self.limits.clone(),
+            system_prompt: self.system_prompt.read().clone(),
+            limits: self.limits.read().clone(),
         };
         let (rx, engine_handle) =
             crate::protocol::engine::start_engine(&options, prior_transcripts, prompt).await?;
 
-        {
-            let mut state = self.state.write();
-            if let AgentState::Live { handle } = &mut *state {
-                **handle = Some(engine_handle);
-            }
-        }
+        *self.engine.write() = Some(engine_handle);
         Ok(rx)
     }
 }

@@ -143,7 +143,7 @@ pub async fn start(conf: Config) -> Result<()> {
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
-    let agent = Arc::new(AppAgent::new(&conf, &cwd)?);
+    let agent = AppAgent::new(&conf, &cwd)?;
 
     let storage_backend = match conf.storage.backend {
         crate::conf::StorageBackend::Fs => "fs",

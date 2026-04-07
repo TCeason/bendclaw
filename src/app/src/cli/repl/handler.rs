@@ -64,11 +64,9 @@ impl Repl {
             .to_string();
 
         let system_prompt = Self::resolve_system_prompt(&cwd, append_system_prompt.as_deref());
-        let agent = Arc::new(
-            AppAgent::new(&config, &cwd)?
-                .with_system_prompt(system_prompt)
-                .with_limits(limits),
-        );
+        let agent = AppAgent::new(&config, &cwd)?
+            .with_system_prompt(system_prompt)
+            .with_limits(limits);
 
         Ok(Self {
             agent,

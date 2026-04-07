@@ -50,9 +50,9 @@ impl Cli {
     async fn run_prompt(&self, prompt: String) -> Result<()> {
         let config = Config::load()?.with_model(self.args.model.clone());
         let cwd = current_dir()?;
-        let mut agent = AppAgent::new(&config, &cwd)?.with_limits(self.build_limits());
+        let agent = AppAgent::new(&config, &cwd)?.with_limits(self.build_limits());
         if let Some(sp) = &self.args.append_system_prompt {
-            agent = agent.append_system_prompt(sp);
+            agent.append_system_prompt(sp);
         }
         let request = TurnRequest::text(prompt).session_id(self.args.resume.clone());
         let mut stream = agent.run(request).await?;
