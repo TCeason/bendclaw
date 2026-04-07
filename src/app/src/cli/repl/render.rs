@@ -97,7 +97,14 @@ pub fn build_run_summary(
     if tool_calls > 0 {
         parts.push(format!("tools {}", tool_calls));
     }
-    parts.push(format!("tokens {}", total_tokens));
+    parts.push(format!(
+        "tokens {} (in {} · out {})",
+        total_tokens, usage.input, usage.output
+    ));
+    let hit_rate = usage.cache_hit_rate();
+    if hit_rate > 0.0 {
+        parts.push(format!("cache {:.0}%", hit_rate * 100.0));
+    }
 
     parts.join("  ·  ")
 }
@@ -254,4 +261,105 @@ pub fn split_tool_title(title: &str) -> (String, String) {
 pub struct ToolCallSummary {
     pub name: String,
     pub summary: String,
+}
+
+// ---------------------------------------------------------------------------
+// LLM call message statistics
+// ---------------------------------------------------------------------------
+
+/// Per-role counts and estimated tokens for an LLM call's messages.
+#[derive(Debug, Default)]
+pub struct MessageStats {
+    pub user_count: usize,
+    pub assistant_count: usize,
+    pub tool_result_count: usize,
+    pub user_tokens: usize,
+    pub assistant_tokens: usize,
+    pub tool_result_tokens: usize,
+}
+
+impl MessageStats {
+    pub fn total_count(&self) -> usize {
+        self.user_count + self.assistant_count + self.tool_result_count
+    }
+
+    pub fn total_tokens(&self, system_prompt_tokens: usize) -> usize {
+        system_prompt_tokens + self.user_tokens + self.assistant_tokens + self.tool_result_tokens
+    }
+}
+
+/// Count messages by role and estimate tokens from JSON byte size.
+pub fn count_messages_by_role(messages: &[serde_json::Value]) -> MessageStats {
+    let mut stats = MessageStats::default();
+    for msg in messages {
+        let role = msg
+            .get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let est = msg.to_string().len() / 4;
+        match role {
+            "user" => {
+                stats.user_count += 1;
+                stats.user_tokens += est;
+            }
+            "assistant" => {
+                stats.assistant_count += 1;
+                stats.assistant_tokens += est;
+            }
+            "toolResult" | "tool_result" | "tool" => {
+                stats.tool_result_count += 1;
+                stats.tool_result_tokens += est;
+            }
+            _ => {
+                // Unknown roles count as user
+                stats.user_count += 1;
+                stats.user_tokens += est;
+            }
+        }
+    }
+    stats
+}
+
+/// Format the two detail lines for an LLM call badge.
+pub fn format_llm_call_lines(
+    stats: &MessageStats,
+    tool_count: usize,
+    system_prompt_tokens: usize,
+) -> (String, String) {
+    // Line 1: message counts
+    let total = stats.total_count();
+    let mut role_parts = Vec::new();
+    if stats.user_count > 0 {
+        role_parts.push(format!("user {}", stats.user_count));
+    }
+    if stats.assistant_count > 0 {
+        role_parts.push(format!("assistant {}", stats.assistant_count));
+    }
+    if stats.tool_result_count > 0 {
+        role_parts.push(format!("tool_result {}", stats.tool_result_count));
+    }
+    let msg_line = if role_parts.is_empty() {
+        format!("{total} messages · {tool_count} tools")
+    } else {
+        format!(
+            "{total} messages ({}) · {tool_count} tools",
+            role_parts.join(" · ")
+        )
+    };
+
+    // Line 2: token estimates by role
+    let est_total = stats.total_tokens(system_prompt_tokens);
+    let mut token_parts = vec![format!("sys ~{system_prompt_tokens}")];
+    if stats.user_tokens > 0 {
+        token_parts.push(format!("user ~{}", stats.user_tokens));
+    }
+    if stats.assistant_tokens > 0 {
+        token_parts.push(format!("assistant ~{}", stats.assistant_tokens));
+    }
+    if stats.tool_result_tokens > 0 {
+        token_parts.push(format!("tool_result ~{}", stats.tool_result_tokens));
+    }
+    let token_line = format!("~{est_total} est tokens ({})", token_parts.join(" · "));
+
+    (msg_line, token_line)
 }

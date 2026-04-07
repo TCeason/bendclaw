@@ -345,9 +345,16 @@ async fn run_loop(
                 let original_count = context.messages.len();
                 let original_tokens = context::total_tokens(&context.messages);
 
+                let budget = ctx_config
+                    .max_context_tokens
+                    .saturating_sub(ctx_config.system_prompt_tokens);
+
                 tx.send(AgentEvent::ContextCompactionStart {
                     message_count: original_count,
                     estimated_tokens: original_tokens,
+                    budget_tokens: budget,
+                    system_prompt_tokens: ctx_config.system_prompt_tokens,
+                    context_window: ctx_config.max_context_tokens,
                 })
                 .ok();
 

@@ -110,6 +110,8 @@ fn run_event_round_trip_assistant_completed() {
             usage: Some(UsageSummary {
                 input: 100,
                 output: 50,
+                cache_read: 0,
+                cache_write: 0,
             }),
             stop_reason: "toolUse".into(),
             error_message: None,
@@ -172,6 +174,8 @@ fn run_event_round_trip_run_finished() {
             usage: UsageSummary {
                 input: 200,
                 output: 100,
+                cache_read: 0,
+                cache_write: 0,
             },
             turn_count: 2,
             duration_ms: 1500,
@@ -292,7 +296,9 @@ fn run_event_context_maps_all_protocol_events() {
             transcripts: vec![],
             usage: UsageSummary {
                 input: 0,
-                output: 0
+                output: 0,
+                cache_read: 0,
+                cache_write: 0,
             },
             transcript_count: 0,
         })
@@ -382,6 +388,8 @@ fn sse_map_run_finished() {
             usage: UsageSummary {
                 input: 100,
                 output: 50,
+                cache_read: 0,
+                cache_write: 0,
             },
             turn_count: 2,
             duration_ms: 1500,

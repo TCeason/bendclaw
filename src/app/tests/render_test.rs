@@ -1,3 +1,5 @@
+use bendclaw::cli::repl::render::count_messages_by_role;
+use bendclaw::cli::repl::render::format_llm_call_lines;
 use bendclaw::cli::repl::render::tool_result_lines;
 use bendclaw::cli::repl::render::ToolCallSummary;
 
@@ -30,4 +32,109 @@ fn tool_result_lines_keeps_read_results_compact_even_when_multiline() {
         Some(&tool_call),
     );
     assert_eq!(lines, vec!["Result: /tmp/demo.txt"]);
+}
+
+// ---------------------------------------------------------------------------
+// count_messages_by_role
+// ---------------------------------------------------------------------------
+
+#[test]
+fn count_messages_by_role_splits_by_role() {
+    let messages: Vec<serde_json::Value> = vec![
+        serde_json::json!({"role": "user", "content": "hello"}),
+        serde_json::json!({"role": "assistant", "content": "hi there"}),
+        serde_json::json!({"role": "user", "content": "do something"}),
+        serde_json::json!({"role": "toolResult", "content": "file contents here"}),
+        serde_json::json!({"role": "toolResult", "content": "search results"}),
+    ];
+    let stats = count_messages_by_role(&messages);
+    assert_eq!(stats.user_count, 2);
+    assert_eq!(stats.assistant_count, 1);
+    assert_eq!(stats.tool_result_count, 2);
+    assert_eq!(stats.total_count(), 5);
+    assert!(stats.user_tokens > 0);
+    assert!(stats.assistant_tokens > 0);
+    assert!(stats.tool_result_tokens > 0);
+}
+
+#[test]
+fn count_messages_by_role_empty() {
+    let stats = count_messages_by_role(&[]);
+    assert_eq!(stats.total_count(), 0);
+    assert_eq!(stats.total_tokens(100), 100);
+}
+
+#[test]
+fn count_messages_by_role_unknown_role_counts_as_user() {
+    let messages: Vec<serde_json::Value> =
+        vec![serde_json::json!({"role": "system", "content": "you are helpful"})];
+    let stats = count_messages_by_role(&messages);
+    assert_eq!(stats.user_count, 1);
+    assert_eq!(stats.assistant_count, 0);
+    assert_eq!(stats.tool_result_count, 0);
+}
+
+#[test]
+fn count_messages_by_role_handles_tool_variant_names() {
+    let messages: Vec<serde_json::Value> = vec![
+        serde_json::json!({"role": "tool_result", "content": "a"}),
+        serde_json::json!({"role": "tool", "content": "b"}),
+        serde_json::json!({"role": "toolResult", "content": "c"}),
+    ];
+    let stats = count_messages_by_role(&messages);
+    assert_eq!(stats.tool_result_count, 3);
+}
+
+// ---------------------------------------------------------------------------
+// format_llm_call_lines
+// ---------------------------------------------------------------------------
+
+#[test]
+fn format_llm_call_lines_basic() {
+    let messages: Vec<serde_json::Value> = vec![
+        serde_json::json!({"role": "user", "content": "hello world"}),
+        serde_json::json!({"role": "assistant", "content": "hi"}),
+    ];
+    let stats = count_messages_by_role(&messages);
+    let (msg_line, token_line) = format_llm_call_lines(&stats, 3, 495);
+
+    assert!(msg_line.contains("2 messages"));
+    assert!(msg_line.contains("user 1"));
+    assert!(msg_line.contains("assistant 1"));
+    assert!(!msg_line.contains("tool_result"));
+    assert!(msg_line.contains("3 tools"));
+
+    assert!(token_line.contains("est tokens"));
+    assert!(token_line.contains("sys ~495"));
+    assert!(token_line.contains("user ~"));
+    assert!(token_line.contains("assistant ~"));
+    assert!(!token_line.contains("tool_result"));
+}
+
+#[test]
+fn format_llm_call_lines_with_tool_results() {
+    let messages: Vec<serde_json::Value> = vec![
+        serde_json::json!({"role": "user", "content": "read the file"}),
+        serde_json::json!({"role": "assistant", "content": "sure"}),
+        serde_json::json!({"role": "toolResult", "content": "file data here"}),
+    ];
+    let stats = count_messages_by_role(&messages);
+    let (msg_line, token_line) = format_llm_call_lines(&stats, 6, 500);
+
+    assert!(msg_line.contains("3 messages"));
+    assert!(msg_line.contains("tool_result 1"));
+    assert!(msg_line.contains("6 tools"));
+
+    assert!(token_line.contains("tool_result ~"));
+}
+
+#[test]
+fn format_llm_call_lines_empty_messages() {
+    let stats = count_messages_by_role(&[]);
+    let (msg_line, token_line) = format_llm_call_lines(&stats, 0, 200);
+
+    assert!(msg_line.contains("0 messages"));
+    assert!(msg_line.contains("0 tools"));
+    assert!(token_line.contains("~200 est tokens"));
+    assert!(token_line.contains("sys ~200"));
 }

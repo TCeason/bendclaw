@@ -194,6 +194,8 @@ pub fn assistant_blocks_from_content(content: &[bend_engine::Content]) -> Vec<As
 pub fn total_usage(messages: &[bend_engine::AgentMessage]) -> UsageSummary {
     let mut input: u64 = 0;
     let mut output: u64 = 0;
+    let mut cache_read: u64 = 0;
+    let mut cache_write: u64 = 0;
 
     for message in messages {
         if let bend_engine::AgentMessage::Llm(bend_engine::Message::Assistant { usage, .. }) =
@@ -201,10 +203,17 @@ pub fn total_usage(messages: &[bend_engine::AgentMessage]) -> UsageSummary {
         {
             input += usage.input;
             output += usage.output;
+            cache_read += usage.cache_read;
+            cache_write += usage.cache_write;
         }
     }
 
-    UsageSummary { input, output }
+    UsageSummary {
+        input,
+        output,
+        cache_read,
+        cache_write,
+    }
 }
 
 /// Extract the last assistant text from engine AgentMessages.

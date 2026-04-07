@@ -121,6 +121,8 @@ async fn forward_events(
                     let usage_summary = UsageSummary {
                         input: usage.input,
                         output: usage.output,
+                        cache_read: usage.cache_read,
+                        cache_write: usage.cache_write,
                     };
                     Some(ProtocolEvent::AssistantCompleted {
                         content: blocks,
@@ -187,6 +189,9 @@ async fn forward_events(
                 attempt,
                 request,
             } => {
+                let message_count = request.messages.len();
+                let system_prompt_tokens =
+                    bend_engine::context::estimate_tokens(&request.system_prompt);
                 let messages: Vec<serde_json::Value> = request
                     .messages
                     .iter()
@@ -204,6 +209,8 @@ async fn forward_events(
                     system_prompt: request.system_prompt.clone(),
                     messages,
                     tools,
+                    message_count,
+                    system_prompt_tokens,
                 })
             }
             bend_engine::AgentEvent::LlmCallEnd {
@@ -217,15 +224,25 @@ async fn forward_events(
                 usage: UsageSummary {
                     input: usage.input,
                     output: usage.output,
+                    cache_read: usage.cache_read,
+                    cache_write: usage.cache_write,
                 },
+                cache_read: usage.cache_read,
+                cache_write: usage.cache_write,
                 error: error.clone(),
             }),
             bend_engine::AgentEvent::ContextCompactionStart {
                 message_count,
                 estimated_tokens,
+                budget_tokens,
+                system_prompt_tokens,
+                context_window,
             } => Some(ProtocolEvent::ContextCompactionStart {
                 message_count: *message_count,
                 estimated_tokens: *estimated_tokens,
+                budget_tokens: *budget_tokens,
+                system_prompt_tokens: *system_prompt_tokens,
+                context_window: *context_window,
             }),
             bend_engine::AgentEvent::ContextCompactionEnd { stats } => {
                 Some(ProtocolEvent::ContextCompactionEnd {

@@ -81,28 +81,48 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
             }
         }
         RunEventPayload::LlmCallStarted {
+            turn,
+            attempt,
             model,
             system_prompt,
             messages,
             tools,
-            ..
+            message_count,
+            message_bytes,
+            system_prompt_tokens,
         } => {
             events.push(json!({
                 "type": "llm_call_started",
                 "data": {
+                    "turn": turn,
+                    "attempt": attempt,
                     "model": model,
                     "system_prompt": system_prompt,
                     "messages": messages,
                     "tools": tools,
+                    "message_count": message_count,
+                    "message_bytes": message_bytes,
+                    "system_prompt_tokens": system_prompt_tokens,
                 }
             }));
         }
-        RunEventPayload::LlmCallCompleted { usage, error, .. } => {
+        RunEventPayload::LlmCallCompleted {
+            turn,
+            attempt,
+            usage,
+            cache_read,
+            cache_write,
+            error,
+        } => {
             events.push(json!({
                 "type": "llm_call_completed",
                 "data": {
+                    "turn": turn,
+                    "attempt": attempt,
                     "input_tokens": usage.input,
                     "output_tokens": usage.output,
+                    "cache_read": cache_read,
+                    "cache_write": cache_write,
                     "error": error,
                 }
             }));
@@ -110,12 +130,18 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
         RunEventPayload::ContextCompactionStarted {
             message_count,
             estimated_tokens,
+            budget_tokens,
+            system_prompt_tokens,
+            context_window,
         } => {
             events.push(json!({
                 "type": "context_compaction_started",
                 "data": {
                     "message_count": message_count,
                     "estimated_tokens": estimated_tokens,
+                    "budget_tokens": budget_tokens,
+                    "system_prompt_tokens": system_prompt_tokens,
+                    "context_window": context_window,
                 }
             }));
         }

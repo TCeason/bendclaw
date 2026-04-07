@@ -2069,6 +2069,7 @@ async fn test_compaction_events_emitted_when_context_exceeds_budget() {
             AgentEvent::ContextCompactionStart {
                 message_count,
                 estimated_tokens,
+                ..
             } => Some((*message_count, *estimated_tokens)),
             _ => None,
         })

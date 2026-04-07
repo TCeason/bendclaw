@@ -28,6 +28,21 @@ pub enum AssistantBlock {
 pub struct UsageSummary {
     pub input: u64,
     pub output: u64,
+    #[serde(default)]
+    pub cache_read: u64,
+    #[serde(default)]
+    pub cache_write: u64,
+}
+
+impl UsageSummary {
+    /// Cache hit rate as a fraction (0.0–1.0).
+    pub fn cache_hit_rate(&self) -> f64 {
+        let total_input = self.input + self.cache_read + self.cache_write;
+        if total_input == 0 {
+            return 0.0;
+        }
+        self.cache_read as f64 / total_input as f64
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -73,21 +88,32 @@ pub enum RunEventPayload {
     },
     LlmCallStarted {
         turn: usize,
+        attempt: usize,
         model: String,
         system_prompt: String,
         messages: Vec<serde_json::Value>,
         tools: Vec<serde_json::Value>,
+        message_count: usize,
         message_bytes: usize,
+        system_prompt_tokens: usize,
     },
     LlmCallCompleted {
         turn: usize,
+        attempt: usize,
         usage: UsageSummary,
+        #[serde(default)]
+        cache_read: u64,
+        #[serde(default)]
+        cache_write: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
     ContextCompactionStarted {
         message_count: usize,
         estimated_tokens: usize,
+        budget_tokens: usize,
+        system_prompt_tokens: usize,
+        context_window: usize,
     },
     ContextCompactionCompleted {
         level: u8,
@@ -312,11 +338,15 @@ pub enum ProtocolEvent {
         system_prompt: String,
         messages: Vec<serde_json::Value>,
         tools: Vec<serde_json::Value>,
+        message_count: usize,
+        system_prompt_tokens: usize,
     },
     LlmCallEnd {
         turn: usize,
         attempt: usize,
         usage: UsageSummary,
+        cache_read: u64,
+        cache_write: u64,
         error: Option<String>,
     },
     InputRejected {
@@ -325,6 +355,9 @@ pub enum ProtocolEvent {
     ContextCompactionStart {
         message_count: usize,
         estimated_tokens: usize,
+        budget_tokens: usize,
+        system_prompt_tokens: usize,
+        context_window: usize,
     },
     ContextCompactionEnd {
         level: u8,
@@ -490,35 +523,54 @@ impl<'a> RunEventContext<'a> {
             },
             ProtocolEvent::LlmCallStart {
                 turn,
+                attempt,
                 model,
                 system_prompt,
                 messages,
                 tools,
-                ..
+                message_count,
+                system_prompt_tokens,
             } => {
                 let message_bytes: usize = messages.iter().map(|m| m.to_string().len()).sum();
                 RunEventPayload::LlmCallStarted {
                     turn: *turn,
+                    attempt: *attempt,
                     model: model.clone(),
                     system_prompt: system_prompt.clone(),
                     messages: messages.clone(),
                     tools: tools.clone(),
+                    message_count: *message_count,
                     message_bytes,
+                    system_prompt_tokens: *system_prompt_tokens,
                 }
             }
             ProtocolEvent::LlmCallEnd {
-                turn, usage, error, ..
+                turn,
+                attempt,
+                usage,
+                cache_read,
+                cache_write,
+                error,
             } => RunEventPayload::LlmCallCompleted {
                 turn: *turn,
+                attempt: *attempt,
                 usage: usage.clone(),
+                cache_read: *cache_read,
+                cache_write: *cache_write,
                 error: error.clone(),
             },
             ProtocolEvent::ContextCompactionStart {
                 message_count,
                 estimated_tokens,
+                budget_tokens,
+                system_prompt_tokens,
+                context_window,
             } => RunEventPayload::ContextCompactionStarted {
                 message_count: *message_count,
                 estimated_tokens: *estimated_tokens,
+                budget_tokens: *budget_tokens,
+                system_prompt_tokens: *system_prompt_tokens,
+                context_window: *context_window,
             },
             ProtocolEvent::ContextCompactionEnd {
                 level,

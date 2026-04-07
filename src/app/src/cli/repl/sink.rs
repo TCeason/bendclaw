@@ -4,6 +4,8 @@ use std::sync::Mutex;
 
 use super::markdown::MarkdownStream;
 use super::render::build_run_summary;
+use super::render::count_messages_by_role;
+use super::render::format_llm_call_lines;
 use super::render::format_tool_input;
 use super::render::print_tool_result;
 use super::render::terminal_writeln;
@@ -39,6 +41,19 @@ pub struct ToolCallDisplay {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn format_cache_info(cache_read: u64, cache_write: u64, input: u64) -> String {
+    if cache_read == 0 && cache_write == 0 {
+        return String::new();
+    }
+    let total_input = input + cache_read + cache_write;
+    let hit_rate = if total_input > 0 {
+        cache_read as f64 / total_input as f64 * 100.0
+    } else {
+        0.0
+    };
+    format!(" · cache r:{cache_read} w:{cache_write} hit:{hit_rate:.0}%")
+}
 
 pub fn finish_assistant_stream(state: &mut SinkState) {
     if let Some(stream) = state.markdown_stream.take() {
@@ -268,33 +283,45 @@ impl ReplSink {
             }
             RunEventPayload::LlmCallStarted {
                 turn,
+                attempt,
                 model,
-                messages,
                 tools,
-                message_bytes,
+                messages,
+                system_prompt_tokens,
                 ..
             } => {
                 finish_assistant_stream(&mut state);
                 state.llm_call_count += 1;
-                let title = format!("LLM call · {model} · turn {turn}");
+                let attempt_str = if *attempt > 0 {
+                    format!(" · retry {attempt}")
+                } else {
+                    String::new()
+                };
+                let title = format!("LLM call · {model} · turn {turn}{attempt_str}");
                 super::render::print_badge_line(&title, false, false);
-                terminal_writeln(&format!(
-                    "{GRAY}  {} messages · {} tools · {} bytes{RESET}",
-                    messages.len(),
-                    tools.len(),
-                    message_bytes,
-                ));
+                let stats = count_messages_by_role(messages);
+                let (msg_line, token_line) =
+                    format_llm_call_lines(&stats, tools.len(), *system_prompt_tokens);
+                terminal_writeln(&format!("{GRAY}  {msg_line}{RESET}"));
+                terminal_writeln(&format!("{GRAY}  {token_line}{RESET}"));
                 terminal_writeln("");
             }
-            RunEventPayload::LlmCallCompleted { usage, error, .. } => {
+            RunEventPayload::LlmCallCompleted {
+                usage,
+                cache_read,
+                cache_write,
+                error,
+                ..
+            } => {
                 let title = "LLM completed".to_string();
                 let ok = error.is_none();
                 super::render::print_badge_line(&title, true, ok);
                 if let Some(err) = error {
                     terminal_writeln(&format!("{RED}  {err}{RESET}"));
                 } else {
+                    let cache_str = format_cache_info(*cache_read, *cache_write, usage.input);
                     terminal_writeln(&format!(
-                        "{GRAY}  {} input · {} output tokens{RESET}",
+                        "{GRAY}  {} input · {} output tokens{cache_str}{RESET}",
                         usage.input, usage.output,
                     ));
                 }
@@ -303,37 +330,60 @@ impl ReplSink {
             RunEventPayload::ContextCompactionStarted {
                 message_count,
                 estimated_tokens,
+                budget_tokens,
+                system_prompt_tokens,
+                context_window,
             } => {
                 finish_assistant_stream(&mut state);
-                let title =
-                    format!("compact · {message_count} messages · ~{estimated_tokens} tokens");
+                let usage_pct = if *budget_tokens > 0 {
+                    *estimated_tokens as f64 / *budget_tokens as f64 * 100.0
+                } else {
+                    0.0
+                };
+                let title = format!("compact · {message_count} messages · ~{estimated_tokens} tokens · {usage_pct:.0}% of budget");
                 super::render::print_badge_line(&title, false, false);
+                terminal_writeln(&format!(
+                    "{GRAY}  budget: {budget_tokens} (window {context_window} − sys {system_prompt_tokens}){RESET}",
+                ));
             }
             RunEventPayload::ContextCompactionCompleted {
                 level,
+                before_message_count,
                 after_message_count,
+                before_estimated_tokens,
                 after_estimated_tokens,
                 tool_outputs_truncated,
                 turns_summarized,
                 messages_dropped,
-                ..
             } => {
                 if *level > 0 {
-                    let title = "compact completed".to_string();
+                    let saved = before_estimated_tokens.saturating_sub(*after_estimated_tokens);
+                    let removed = before_message_count.saturating_sub(*after_message_count);
+                    let title = format!("compact completed · level {level}");
                     super::render::print_badge_line(&title, true, true);
                     terminal_writeln(&format!(
-                        "{GRAY}  level {level} · {after_message_count} messages · ~{after_estimated_tokens} tokens{RESET}",
+                        "{GRAY}  {after_message_count} messages · ~{after_estimated_tokens} tokens · saved ~{saved} tokens · {removed} messages removed{RESET}",
                     ));
-                    if *tool_outputs_truncated > 0 || *turns_summarized > 0 || *messages_dropped > 0
-                    {
+                    let mut actions = Vec::new();
+                    if *tool_outputs_truncated > 0 {
+                        actions.push(format!("truncated {tool_outputs_truncated}"));
+                    }
+                    if *turns_summarized > 0 {
+                        actions.push(format!("summarized {turns_summarized}"));
+                    }
+                    if *messages_dropped > 0 {
+                        actions.push(format!("dropped {messages_dropped}"));
+                    }
+                    if !actions.is_empty() {
                         terminal_writeln(&format!(
-                            "{GRAY}  truncated: {tool_outputs_truncated} · summarized: {turns_summarized} · dropped: {messages_dropped}{RESET}",
+                            "{GRAY}  actions: {}{RESET}",
+                            actions.join(" · "),
                         ));
                     }
                 } else {
-                    let title = "compact completed".to_string();
+                    let title = "compact completed · level 0".to_string();
                     super::render::print_badge_line(&title, true, true);
-                    terminal_writeln(&format!("{GRAY}  no compaction needed{RESET}",));
+                    terminal_writeln(&format!("{GRAY}  no compaction needed{RESET}"));
                 }
                 terminal_writeln("");
             }

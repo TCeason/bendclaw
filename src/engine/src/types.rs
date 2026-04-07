@@ -450,6 +450,9 @@ pub enum AgentEvent {
     ContextCompactionStart {
         message_count: usize,
         estimated_tokens: usize,
+        budget_tokens: usize,
+        system_prompt_tokens: usize,
+        context_window: usize,
     },
     ContextCompactionEnd {
         stats: crate::context::CompactionStats,
