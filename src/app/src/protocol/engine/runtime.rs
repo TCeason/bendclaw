@@ -163,6 +163,7 @@ async fn forward_events(
                     tool_name: tool_name.clone(),
                     content,
                     is_error: *is_error,
+                    details: result.details.clone(),
                 })
             }
             bend_engine::AgentEvent::ProgressMessage {

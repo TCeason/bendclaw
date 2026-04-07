@@ -191,6 +191,7 @@ impl EventSink for ReplSink {
                 tool_name,
                 content,
                 is_error,
+                details,
             } => {
                 finish_assistant_stream(&mut state);
                 let tool_call =
@@ -201,6 +202,21 @@ impl EventSink for ReplSink {
                             name: tc.name,
                             summary: tc.summary,
                         });
+
+                // Show diff for file-modifying tools, fall back to normal result
+                if !is_error {
+                    if let Some(diff_text) = super::diff::diff_from_details(details) {
+                        let title = if *is_error {
+                            format!("{tool_name} failed")
+                        } else {
+                            format!("{tool_name} completed")
+                        };
+                        super::render::print_badge_line(&title, true, true);
+                        terminal_writeln(&diff_text);
+                        return Ok(());
+                    }
+                }
+
                 print_tool_result(tool_name, content, *is_error, tool_call.as_ref());
             }
             RunEventPayload::AssistantDelta { delta, .. } => {

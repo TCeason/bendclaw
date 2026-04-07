@@ -19,6 +19,7 @@ crossterm = "0.28"
 futures.workspace = true
 ratatui = "0.29"
 rustyline = "15"
+similar = { workspace = true }
 serde.workspace = true
 serde_ignored.workspace = true
 serde_json.workspace = true

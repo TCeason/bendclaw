@@ -156,6 +156,8 @@ impl AgentTool for EditFileTool {
                 "path": path,
                 "old_lines": old_lines,
                 "new_lines": new_lines,
+                "old_content": content,
+                "new_content": new_content,
             }),
         })
     }

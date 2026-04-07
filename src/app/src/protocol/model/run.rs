@@ -66,6 +66,8 @@ pub enum RunEventPayload {
         tool_name: String,
         content: String,
         is_error: bool,
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        details: serde_json::Value,
     },
     LlmCallStarted {
         turn: usize,
@@ -298,6 +300,7 @@ pub enum ProtocolEvent {
         tool_name: String,
         content: String,
         is_error: bool,
+        details: serde_json::Value,
     },
     LlmCallStart {
         turn: usize,
@@ -469,11 +472,13 @@ impl<'a> RunEventContext<'a> {
                 tool_name,
                 content,
                 is_error,
+                details,
             } => RunEventPayload::ToolFinished {
                 tool_call_id: tool_call_id.clone(),
                 tool_name: tool_name.clone(),
                 content: content.clone(),
                 is_error: *is_error,
+                details: details.clone(),
             },
             ProtocolEvent::InputRejected { reason } => RunEventPayload::Error {
                 message: reason.clone(),

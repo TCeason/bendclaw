@@ -1,5 +1,6 @@
 mod commands;
 mod completion;
+pub mod diff;
 mod handler;
 pub mod markdown;
 mod render;

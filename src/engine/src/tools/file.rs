@@ -271,6 +271,9 @@ impl AgentTool for WriteFileTool {
             return Err(ToolError::Cancelled);
         }
 
+        // Read old content before writing (for diff display)
+        let old_content = tokio::fs::read_to_string(path).await.ok();
+
         // Create parent directories
         if let Some(parent) = std::path::Path::new(path).parent() {
             if !parent.exists() {
@@ -285,11 +288,16 @@ impl AgentTool for WriteFileTool {
             .map_err(|e| ToolError::Failed(format!("Cannot write {}: {}", path, e)))?;
 
         let bytes = content.len();
+        let mut details =
+            serde_json::json!({ "path": path, "bytes": bytes, "new_content": content });
+        if let Some(old) = &old_content {
+            details["old_content"] = serde_json::Value::String(old.clone());
+        }
         Ok(ToolResult {
             content: vec![Content::Text {
                 text: format!("Wrote {} bytes to {}", bytes, path),
             }],
-            details: serde_json::json!({ "path": path, "bytes": bytes }),
+            details,
         })
     }
 }

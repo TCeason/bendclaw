@@ -205,6 +205,7 @@ pub async fn run_prompt(
                 tool_name,
                 content,
                 is_error,
+                ..
             } => {
                 run_transcripts.push(TranscriptItem::ToolResult {
                     tool_call_id: tool_call_id.clone(),

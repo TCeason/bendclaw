@@ -143,6 +143,7 @@ fn run_event_round_trip_tool_finished() {
             tool_name: "read".into(),
             content: "file contents".into(),
             is_error: false,
+            details: serde_json::Value::Null,
         },
     );
     let json = serde_json::to_string(&event).unwrap();
@@ -269,6 +270,7 @@ fn run_event_context_maps_all_protocol_events() {
         tool_name: "read".into(),
         content: "ok".into(),
         is_error: false,
+        details: serde_json::Value::Null,
     });
     assert_eq!(e.unwrap().kind_str(), "tool_finished");
 
@@ -355,6 +357,7 @@ fn sse_map_tool_result() {
             tool_name: "read".into(),
             content: "file data".into(),
             is_error: false,
+            details: serde_json::Value::Null,
         },
     );
     let payloads = map_run_event_json(&event);
