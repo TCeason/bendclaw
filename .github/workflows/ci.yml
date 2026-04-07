@@ -36,27 +36,17 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
 
-  test-fast:
-    name: Fast tests (${{ matrix.target }})
+  test:
+    name: Test
     runs-on: ubuntu-latest
     needs: check
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [unit, it, contract]
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: ./.github/actions/setup-rust
       - uses: taiki-e/install-action@nextest
-      - name: Run fast tests
-        run: |
-          if [ "${{ matrix.target }}" = "unit" ]; then
-            cargo nextest run --lib --test unit --no-fail-fast
-          else
-            cargo nextest run --test ${{ matrix.target }} --no-fail-fast
-          fi
+      - run: cargo nextest run --no-fail-fast
 
   build:
     name: Build
