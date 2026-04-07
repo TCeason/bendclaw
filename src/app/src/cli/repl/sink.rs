@@ -244,6 +244,7 @@ impl ReplSink {
                 tool_call_id,
                 tool_name,
                 args,
+                preview_command,
             } => {
                 finish_assistant_stream(&mut state);
                 state.tool_call_count += 1;
@@ -254,7 +255,7 @@ impl ReplSink {
                         name: tool_name.clone(),
                         summary: format_tool_input(args),
                     });
-                super::render::print_tool_call(tool_name, args);
+                super::render::print_tool_call(tool_name, args, preview_command.as_deref());
             }
             RunEventPayload::ToolProgress { .. } => {}
             RunEventPayload::Error { message } => {

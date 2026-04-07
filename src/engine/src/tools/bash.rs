@@ -120,6 +120,10 @@ impl AgentTool for BashTool {
         })
     }
 
+    fn preview_command(&self, params: &serde_json::Value) -> Option<String> {
+        params["command"].as_str().map(|s| s.to_string())
+    }
+
     async fn execute(
         &self,
         params: serde_json::Value,

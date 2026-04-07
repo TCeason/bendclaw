@@ -130,7 +130,7 @@ pub fn print_transcript_messages(items: &[TranscriptItem]) {
                     terminal_writeln("");
                 }
                 for tc in tool_calls {
-                    print_tool_call(&tc.name, &tc.input);
+                    print_tool_call(&tc.name, &tc.input, None);
                 }
             }
             TranscriptItem::ToolResult {
@@ -146,11 +146,14 @@ pub fn print_transcript_messages(items: &[TranscriptItem]) {
     }
 }
 
-pub fn print_tool_call(name: &str, input: &serde_json::Value) {
+pub fn print_tool_call(name: &str, input: &serde_json::Value, preview_command: Option<&str>) {
     let (title, lines) = tool_call_message(name, input);
     print_badge_line(&title, false, false);
     for line in lines {
         terminal_writeln(&format!("{GRAY}  {line}{RESET}"));
+    }
+    if let Some(cmd) = preview_command {
+        terminal_writeln(&format!("{GRAY}  ❯ {cmd}{RESET}"));
     }
     terminal_writeln("");
 }

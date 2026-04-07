@@ -49,6 +49,27 @@ impl AgentTool for ListFilesTool {
          parent directory exists and is the correct location."
     }
 
+    fn preview_command(&self, params: &serde_json::Value) -> Option<String> {
+        let path = params["path"].as_str().unwrap_or(".");
+        let max_depth = params["max_depth"].as_u64().unwrap_or(3);
+        let pattern = params["pattern"].as_str();
+
+        let mut parts = vec![
+            "find".into(),
+            path.to_string(),
+            format!("-maxdepth {max_depth}"),
+        ];
+        if let Some(pat) = pattern {
+            parts.push(format!("-name {pat}"));
+        }
+        parts.push(r#"-not -path "*/target/*""#.into());
+        parts.push(r#"-not -path "*/.git/*""#.into());
+        parts.push(r#"-not -path "*/node_modules/*""#.into());
+        parts.push("-type f".into());
+
+        Some(parts.join(" "))
+    }
+
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",

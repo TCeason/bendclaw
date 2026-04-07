@@ -354,6 +354,14 @@ pub trait AgentTool: Send + Sync {
     fn description(&self) -> &str;
     /// JSON Schema for parameters
     fn parameters_schema(&self) -> serde_json::Value;
+    /// Preview the system command that will be executed, if applicable.
+    ///
+    /// Returns `None` for tools that don't invoke external commands.
+    /// Used by the UI to display the full command being run.
+    fn preview_command(&self, _params: &serde_json::Value) -> Option<String> {
+        None
+    }
+
     /// Execute the tool.
     ///
     /// The `ctx` parameter provides per-invocation context:
@@ -416,6 +424,7 @@ pub enum AgentEvent {
         tool_call_id: String,
         tool_name: String,
         args: serde_json::Value,
+        preview_command: Option<String>,
     },
     ToolExecutionUpdate {
         tool_call_id: String,

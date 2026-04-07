@@ -85,6 +85,37 @@ impl AgentTool for SearchTool {
         })
     }
 
+    fn preview_command(&self, params: &serde_json::Value) -> Option<String> {
+        let pattern = params["pattern"].as_str()?;
+        let search_path = params["path"]
+            .as_str()
+            .map(|s| s.to_string())
+            .or_else(|| self.root.clone())
+            .unwrap_or_else(|| ".".into());
+        let include = params["include"].as_str();
+        let case_sensitive = params["case_sensitive"].as_bool().unwrap_or(false);
+
+        let (cmd_name, args) = if which_exists("rg") {
+            build_rg_args(
+                pattern,
+                &search_path,
+                include,
+                case_sensitive,
+                self.max_results,
+            )
+        } else {
+            build_grep_args(
+                pattern,
+                &search_path,
+                include,
+                case_sensitive,
+                self.max_results,
+            )
+        };
+
+        Some(format!("{} {}", cmd_name, shell_join(&args)))
+    }
+
     async fn execute(
         &self,
         params: serde_json::Value,
@@ -239,4 +270,19 @@ fn build_grep_args(
     args.push(path.into());
 
     ("grep".into(), args)
+}
+
+/// Join args into a shell-safe display string.
+/// Args containing spaces or special chars are quoted.
+fn shell_join(args: &[String]) -> String {
+    args.iter()
+        .map(|a| {
+            if a.contains(' ') || a.contains('*') || a.contains('?') {
+                format!("\"{}\"", a)
+            } else {
+                a.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }

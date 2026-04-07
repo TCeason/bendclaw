@@ -268,6 +268,7 @@ fn run_event_context_maps_all_protocol_events() {
         tool_call_id: "tc".into(),
         tool_name: "read".into(),
         args: serde_json::json!({}),
+        preview_command: None,
     });
     assert_eq!(e.unwrap().kind_str(), "tool_started");
 

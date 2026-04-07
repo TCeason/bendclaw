@@ -72,6 +72,8 @@ pub enum RunEventPayload {
         tool_call_id: String,
         tool_name: String,
         args: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        preview_command: Option<String>,
     },
     ToolProgress {
         tool_call_id: String,
@@ -318,6 +320,7 @@ pub enum ProtocolEvent {
         tool_call_id: String,
         tool_name: String,
         args: serde_json::Value,
+        preview_command: Option<String>,
     },
     ToolProgress {
         tool_call_id: String,
@@ -491,10 +494,12 @@ impl<'a> RunEventContext<'a> {
                 tool_call_id,
                 tool_name,
                 args,
+                preview_command,
             } => RunEventPayload::ToolStarted {
                 tool_call_id: tool_call_id.clone(),
                 tool_name: tool_name.clone(),
                 args: args.clone(),
+                preview_command: preview_command.clone(),
             },
             ProtocolEvent::ToolProgress {
                 tool_call_id,

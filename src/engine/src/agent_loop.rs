@@ -863,10 +863,13 @@ async fn execute_single_tool(
 ) -> (Message, bool) {
     let tool = tools.iter().find(|t| t.name() == name);
 
+    let preview_command = tool.and_then(|t| t.preview_command(args));
+
     tx.send(AgentEvent::ToolExecutionStart {
         tool_call_id: id.to_string(),
         tool_name: name.to_string(),
         args: args.clone(),
+        preview_command,
     })
     .ok();
 
@@ -974,6 +977,7 @@ fn skip_tool_call(
         tool_call_id: tool_call_id.into(),
         tool_name: tool_name.into(),
         args: serde_json::Value::Null,
+        preview_command: None,
     })
     .ok();
 

@@ -138,10 +138,12 @@ async fn forward_events(
                 tool_call_id,
                 tool_name,
                 args,
+                preview_command,
             } => Some(ProtocolEvent::ToolStart {
                 tool_call_id: tool_call_id.clone(),
                 tool_name: tool_name.clone(),
                 args: args.clone(),
+                preview_command: preview_command.clone(),
             }),
             bend_engine::AgentEvent::ToolExecutionUpdate {
                 tool_call_id,
