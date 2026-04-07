@@ -5,7 +5,7 @@ use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 use syntect::util::as_24_bit_terminal_escaped;
 
-const RESET: &str = "\x1b[0m";
+use super::theme::RESET;
 
 pub struct Highlighter {
     syntax_set: SyntaxSet,

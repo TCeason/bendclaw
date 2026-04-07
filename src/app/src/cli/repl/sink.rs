@@ -100,21 +100,21 @@ impl ReplSink {
             spinner.deactivate();
         }
     }
-}
 
-impl Default for ReplSink {
-    fn default() -> Self {
-        Self::new(Arc::new(Mutex::new(SpinnerState::new())))
-    }
-}
-
-impl ReplSink {
     pub fn render(&self, event: &RunEvent) {
-        // Lazily open transcript log on first event (session_id is now known)
+        self.write_log(event);
+        self.update_spinner(&event.payload);
+
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        self.render_output(&event.payload, &mut state);
+    }
+
+    fn write_log(&self, event: &RunEvent) {
         if let Ok(mut log_guard) = self.transcript_log.lock() {
             if log_guard.is_none() {
                 if let Some(log) = TranscriptLog::open(&event.session_id) {
-                    // Write the user prompt that was buffered before the session started
                     if let Ok(mut prompt) = self.user_prompt.lock() {
                         if let Some(p) = prompt.take() {
                             log.write_user_prompt(&p);
@@ -127,68 +127,46 @@ impl ReplSink {
                 log.write_event(event);
             }
         }
+    }
 
-        // Lock spinner, update state and clear line before any output
-        {
-            let Ok(mut spinner) = self.spinner.lock() else {
-                return;
-            };
-
-            match &event.payload {
-                RunEventPayload::RunStarted {} => {
-                    spinner.activate();
-                }
-                RunEventPayload::TurnStarted {} => {
-                    spinner.restore_verb();
-                }
-                RunEventPayload::AssistantDelta { delta, .. } => {
-                    if let Some(d) = delta {
-                        spinner.add_tokens(d.len() as u64);
-                    }
-                }
-                RunEventPayload::AssistantCompleted { .. } => {
-                    spinner.clear_if_rendered();
-                }
-                RunEventPayload::ToolStarted { tool_name, .. } => {
-                    spinner.clear_if_rendered();
-                    spinner.set_tool(tool_name);
-                }
-                RunEventPayload::ToolProgress { text, .. } => {
-                    spinner.set_progress(text);
-                }
-                RunEventPayload::ToolFinished { .. } => {
-                    spinner.clear_if_rendered();
-                    spinner.restore_verb();
-                }
-                RunEventPayload::RunFinished { .. } => {
-                    // Deferred to output block below — keep spinner alive
-                    // until the summary line is ready to print.
-                }
-                RunEventPayload::Error { .. } => {
-                    // Deferred to output block below.
-                }
-                RunEventPayload::LlmCallStarted { .. } => {
-                    spinner.clear_if_rendered();
-                }
-                RunEventPayload::LlmCallCompleted { .. } => {
-                    spinner.clear_if_rendered();
-                }
-                RunEventPayload::ContextCompactionStarted { .. } => {
-                    spinner.clear_if_rendered();
-                }
-                RunEventPayload::ContextCompactionCompleted { .. } => {
-                    spinner.clear_if_rendered();
-                }
-            }
-        };
-
-        let Ok(mut state) = self.state.lock() else {
+    fn update_spinner(&self, payload: &RunEventPayload) {
+        let Ok(mut spinner) = self.spinner.lock() else {
             return;
         };
+        match payload {
+            RunEventPayload::RunStarted {} => spinner.activate(),
+            RunEventPayload::TurnStarted {} => spinner.restore_verb(),
+            RunEventPayload::AssistantDelta { delta, .. } => {
+                if let Some(d) = delta {
+                    spinner.add_tokens(d.len() as u64);
+                }
+            }
+            RunEventPayload::AssistantCompleted { .. }
+            | RunEventPayload::LlmCallStarted { .. }
+            | RunEventPayload::LlmCallCompleted { .. }
+            | RunEventPayload::ContextCompactionStarted { .. }
+            | RunEventPayload::ContextCompactionCompleted { .. } => {
+                spinner.clear_if_rendered();
+            }
+            RunEventPayload::ToolFinished { .. } => {
+                spinner.clear_if_rendered();
+                spinner.restore_verb();
+            }
+            RunEventPayload::ToolStarted { tool_name, .. } => {
+                spinner.clear_if_rendered();
+                spinner.set_tool(tool_name);
+            }
+            RunEventPayload::ToolProgress { text, .. } => spinner.set_progress(text),
+            // RunFinished and Error are deferred — spinner stays alive
+            // until the output block deactivates it.
+            RunEventPayload::RunFinished { .. } | RunEventPayload::Error { .. } => {}
+        }
+    }
 
-        match &event.payload {
+    fn render_output(&self, payload: &RunEventPayload, state: &mut SinkState) {
+        match payload {
             RunEventPayload::RunStarted {} => {
-                finish_assistant_stream(&mut state);
+                finish_assistant_stream(state);
                 state.pending_tools.clear();
                 state.llm_call_count = 0;
                 state.tool_call_count = 0;
@@ -199,10 +177,8 @@ impl ReplSink {
                     match block {
                         AssistantBlock::Text { text } => {
                             if state.streamed_assistant {
-                                // Stream already rendered the content; just close it
-                                finish_assistant_stream(&mut state);
+                                finish_assistant_stream(state);
                             } else if !text.trim().is_empty() {
-                                // Non-streamed: render the full text through markdown
                                 let mut stream = MarkdownStream::new(self.spinner.clone());
                                 let _ = stream.push(text);
                                 let _ = stream.push("\n");
@@ -213,7 +189,7 @@ impl ReplSink {
                             state.streamed_assistant = false;
                         }
                         AssistantBlock::ToolCall { id, name, input } => {
-                            finish_assistant_stream(&mut state);
+                            finish_assistant_stream(state);
                             state.pending_tools.insert(id.clone(), ToolCallDisplay {
                                 name: name.clone(),
                                 summary: format_tool_input(input),
@@ -230,7 +206,7 @@ impl ReplSink {
                 is_error,
                 details,
             } => {
-                finish_assistant_stream(&mut state);
+                finish_assistant_stream(state);
                 let tool_call =
                     state
                         .pending_tools
@@ -240,14 +216,9 @@ impl ReplSink {
                             summary: tc.summary,
                         });
 
-                // Show diff for file-modifying tools, fall back to normal result
                 if !is_error {
                     if let Some(diff_text) = super::diff::diff_from_details(details) {
-                        let title = if *is_error {
-                            format!("{tool_name} failed")
-                        } else {
-                            format!("{tool_name} completed")
-                        };
+                        let title = format!("{tool_name} completed");
                         super::render::print_badge_line(&title, true, true);
                         terminal_writeln(&diff_text);
                         return;
@@ -258,7 +229,6 @@ impl ReplSink {
             }
             RunEventPayload::AssistantDelta { delta, .. } => {
                 if let Some(delta) = delta {
-                    // Lazily create the markdown stream on first delta
                     if state.markdown_stream.is_none() {
                         state.markdown_stream = Some(MarkdownStream::new(self.spinner.clone()));
                     }
@@ -275,7 +245,7 @@ impl ReplSink {
                 args,
                 preview_command,
             } => {
-                finish_assistant_stream(&mut state);
+                finish_assistant_stream(state);
                 state.tool_call_count += 1;
                 state
                     .pending_tools
@@ -288,7 +258,7 @@ impl ReplSink {
             }
             RunEventPayload::ToolProgress { .. } => {}
             RunEventPayload::Error { message } => {
-                finish_assistant_stream(&mut state);
+                finish_assistant_stream(state);
                 self.deactivate_spinner();
                 terminal_writeln(&format!("{RED}error:{RESET} {message}"));
             }
@@ -298,7 +268,7 @@ impl ReplSink {
                 duration_ms,
                 ..
             } => {
-                finish_assistant_stream(&mut state);
+                finish_assistant_stream(state);
                 let summary = build_run_summary(
                     usage,
                     *turn_count,
@@ -320,7 +290,7 @@ impl ReplSink {
                 system_prompt_tokens,
                 ..
             } => {
-                finish_assistant_stream(&mut state);
+                finish_assistant_stream(state);
                 state.llm_call_count += 1;
                 let attempt_str = if *attempt > 0 {
                     format!(" · retry {attempt}")
@@ -364,7 +334,7 @@ impl ReplSink {
                 system_prompt_tokens,
                 context_window,
             } => {
-                finish_assistant_stream(&mut state);
+                finish_assistant_stream(state);
                 let usage_pct = if *budget_tokens > 0 {
                     *estimated_tokens as f64 / *budget_tokens as f64 * 100.0
                 } else {
@@ -418,5 +388,11 @@ impl ReplSink {
                 terminal_writeln("");
             }
         }
+    }
+}
+
+impl Default for ReplSink {
+    fn default() -> Self {
+        Self::new(Arc::new(Mutex::new(SpinnerState::new())))
     }
 }

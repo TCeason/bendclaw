@@ -23,10 +23,10 @@ pub struct DiffResult {
     pub lines_removed: u64,
 }
 
-const RED: &str = "\x1b[31m";
-const YELLOW: &str = "\x1b[33m";
-const DIM: &str = "\x1b[2m";
-const RESET: &str = "\x1b[0m";
+use super::render::DIM;
+use super::render::RED;
+use super::render::RESET;
+use super::render::YELLOW;
 
 pub fn format_diff(old: &str, new: &str) -> DiffResult {
     let diff = TextDiff::from_lines(old, new);

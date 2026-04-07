@@ -77,7 +77,7 @@ async fn round_trip_session_with_transcript() -> TestResult {
     let loaded = Session::open("sess-200", storage.clone())
         .await?
         .ok_or_else(|| missing_error("missing loaded session"))?;
-    assert_eq!(loaded.meta().await.turns, 1);
+    assert_eq!(loaded.meta().await.turns, 0);
     assert_eq!(loaded.transcript().await.len(), 2);
     Ok(())
 }
@@ -123,7 +123,7 @@ async fn resume_session_appends_transcript() -> TestResult {
         .await?
         .ok_or_else(|| missing_error("missing final state"))?;
     assert_eq!(final_state.transcript().await.len(), 3);
-    assert_eq!(final_state.meta().await.turns, 2);
+    assert_eq!(final_state.meta().await.turns, 0);
     Ok(())
 }
 
@@ -153,6 +153,7 @@ async fn session_title_comes_from_first_user_message() -> TestResult {
             },
         ])
         .await?;
+    session.save().await?;
 
     let loaded = Session::open("sess-title", storage.clone())
         .await?

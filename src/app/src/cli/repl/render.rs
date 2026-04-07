@@ -36,23 +36,11 @@ pub fn with_terminal<T>(render: impl FnOnce(&mut Stdout) -> T) -> T {
     result
 }
 
-fn write_terminal(text: &str) {
-    let normalized = normalize_terminal_newlines(text);
+pub fn terminal_write(text: &str) {
+    let normalized = text.replace("\r\n", "\n").replace('\n', "\r\n");
     with_terminal(|stdout| {
         let _ = write!(stdout, "{normalized}");
     });
-}
-
-// ---------------------------------------------------------------------------
-// Low-level terminal output
-// ---------------------------------------------------------------------------
-
-pub fn normalize_terminal_newlines(text: &str) -> String {
-    text.replace("\r\n", "\n").replace('\n', "\r\n")
-}
-
-pub fn terminal_write(text: &str) {
-    write_terminal(text);
 }
 
 pub fn terminal_writeln(text: &str) {
@@ -61,9 +49,11 @@ pub fn terminal_writeln(text: &str) {
 }
 
 pub fn terminal_prefixed_writeln(text: &str) {
-    let normalized = normalize_terminal_newlines(text);
+    let normalized = text.replace("\r\n", "\n").replace('\n', "\r\n");
     let output = format!("{DIM}•{RESET} {normalized}\r\n");
-    write_terminal(&output);
+    with_terminal(|stdout| {
+        let _ = write!(stdout, "{output}");
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -147,7 +137,8 @@ pub fn print_transcript_messages(items: &[TranscriptItem]) {
 }
 
 pub fn print_tool_call(name: &str, input: &serde_json::Value, preview_command: Option<&str>) {
-    let (title, lines) = tool_call_message(name, input);
+    let title = format!("{name} call");
+    let lines = format_tool_input_lines(input);
     print_badge_line(&title, false, false);
     for line in lines {
         terminal_writeln(&format!("{GRAY}  {line}{RESET}"));
@@ -169,7 +160,7 @@ pub fn print_tool_result(
     } else {
         format!("{tool_name} completed")
     };
-    let lines = tool_result_lines(tool_name, content, is_error, tool_call);
+    let lines = tool_result_lines(content, is_error, tool_call);
     print_badge_line(&title, true, !is_error);
     let color = if is_error { RED } else { GREEN };
     for line in lines {
@@ -199,48 +190,31 @@ pub fn print_badge_line(title: &str, is_result: bool, ok: bool) {
     }
 }
 
-pub fn tool_call_message(name: &str, input: &serde_json::Value) -> (String, Vec<String>) {
-    let lines = format_tool_input_lines(input);
-    (format!("{name} call"), lines)
-}
-
-pub fn tool_result_line(
-    _tool_name: &str,
-    content: &str,
-    is_error: bool,
-    tool_call: Option<&ToolCallSummary>,
-) -> String {
-    if !is_error {
-        if let Some(tc) = tool_call {
-            if tc.name.to_lowercase().contains("read") {
-                return format!("Result: {}", tc.summary);
-            }
-        }
-    }
-    if content.trim().is_empty() {
-        if is_error {
-            "Result: tool returned an error".into()
-        } else {
-            "Result: completed".into()
-        }
-    } else {
-        format!("Result: {}", summarize_inline(content, 160))
-    }
-}
-
 pub fn tool_result_lines(
-    tool_name: &str,
     content: &str,
     is_error: bool,
     tool_call: Option<&ToolCallSummary>,
 ) -> Vec<String> {
-    let should_summarize = !is_error
-        && tool_call
-            .map(|tc| tc.name.to_lowercase().contains("read"))
-            .unwrap_or(false);
-    if should_summarize {
-        return vec![tool_result_line(tool_name, content, is_error, tool_call)];
+    // For read-like tools, show the call summary instead of raw content
+    if !is_error {
+        if let Some(tc) = tool_call {
+            if tc.name.to_lowercase().contains("read") {
+                return vec![format!("Result: {}", tc.summary)];
+            }
+        }
     }
+
+    let summarize = || -> String {
+        if content.trim().is_empty() {
+            if is_error {
+                "Result: tool returned an error".into()
+            } else {
+                "Result: completed".into()
+            }
+        } else {
+            format!("Result: {}", summarize_inline(content, 160))
+        }
+    };
 
     const MAX_RESULT_LINES: usize = 30;
 
@@ -248,7 +222,7 @@ pub fn tool_result_lines(
     if normalized.contains('\n') {
         let trimmed = normalized.trim_end_matches('\n');
         if trimmed.is_empty() {
-            return vec![tool_result_line(tool_name, content, is_error, tool_call)];
+            return vec![summarize()];
         }
         let all_lines: Vec<&str> = trimmed.split('\n').collect();
         if all_lines.len() > MAX_RESULT_LINES {
@@ -264,7 +238,7 @@ pub fn tool_result_lines(
         }
         return all_lines.into_iter().map(|l| l.to_string()).collect();
     }
-    vec![tool_result_line(tool_name, content, is_error, tool_call)]
+    vec![summarize()]
 }
 
 pub fn split_tool_title(title: &str) -> (String, String) {

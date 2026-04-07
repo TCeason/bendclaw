@@ -74,28 +74,41 @@ impl Session {
             return Ok(());
         }
 
+        let session_id = self.meta.read().await.session_id.clone();
+        let turn = self.meta.read().await.turns;
+
         {
             let mut transcript = self.transcript.write().await;
             transcript.extend(items.iter().cloned());
         }
 
-        self.touch_meta().await;
-        let meta = self.meta().await;
-
         for item in &items {
             let seq = self.next_seq().await;
-            let entry =
-                TranscriptEntry::new(meta.session_id.clone(), None, seq, meta.turns, item.clone());
+            let entry = TranscriptEntry::new(session_id.clone(), None, seq, turn, item.clone());
             self.storage.append_entry(entry).await?;
         }
-        self.storage.save_session(meta).await?;
         Ok(())
     }
 
+    /// Increment the turn counter. Call once per real conversation turn.
+    pub async fn increment_turn(&self) {
+        self.meta.write().await.turns += 1;
+    }
+
+    /// Persist session meta (title, updated_at, etc.).
     pub async fn save(&self) -> Result<()> {
-        let meta = self.meta().await;
-        self.storage.save_session(meta).await?;
-        Ok(())
+        let transcript = self.transcript.read().await;
+        let mut meta = self.meta.write().await;
+        if meta
+            .title
+            .as_ref()
+            .map(|title| title.trim().is_empty())
+            .unwrap_or(true)
+        {
+            meta.title = first_user_title(&transcript);
+        }
+        meta.updated_at = Utc::now().to_rfc3339();
+        self.storage.save_session(meta.clone()).await
     }
 
     pub async fn meta(&self) -> SessionMeta {
@@ -108,20 +121,6 @@ impl Session {
 
     pub async fn session_id(&self) -> String {
         self.meta.read().await.session_id.clone()
-    }
-
-    async fn touch_meta(&self) {
-        let mut meta = self.meta.write().await;
-        if meta
-            .title
-            .as_ref()
-            .map(|title| title.trim().is_empty())
-            .unwrap_or(true)
-        {
-            meta.title = first_user_title(&self.transcript.read().await);
-        }
-        meta.turns += 1;
-        meta.updated_at = Utc::now().to_rfc3339();
     }
 
     async fn next_seq(&self) -> u64 {

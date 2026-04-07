@@ -214,9 +214,25 @@ impl AppAgent {
             let mut got_agent_end = false;
             let mut engine_rx = engine_rx;
 
+            // Flush unsaved transcript items to storage.
+            let flush =
+                |session: &Arc<Session>, transcripts: &[TranscriptItem], saved: &mut usize| {
+                    let new_items = transcripts[*saved..].to_vec();
+                    let session = Arc::clone(session);
+                    *saved = transcripts.len();
+                    async move {
+                        if !new_items.is_empty() {
+                            session.write_items(new_items).await
+                        } else {
+                            Ok(())
+                        }
+                    }
+                };
+
             while let Some(protocol_event) = engine_rx.recv().await {
                 if matches!(protocol_event, ProtocolEvent::TurnStart) {
                     turn += 1;
+                    session.increment_turn().await;
                 }
 
                 // Incrementally build transcript
@@ -260,43 +276,27 @@ impl AppAgent {
                             is_error: *is_error,
                         });
                     }
-                    ProtocolEvent::TurnEnd => {
-                        let new_items = run_transcripts[saved_count..].to_vec();
-                        if !new_items.is_empty() {
-                            if let Err(e) = session.write_items(new_items).await {
-                                logx!(
-                                    error,
-                                    "run",
-                                    "incremental_save_failed",
-                                    run_id = %rid,
-                                    session_id = %sid,
-                                    error = %e,
-                                );
-                            }
-                            saved_count = run_transcripts.len();
-                        }
-                    }
                     ProtocolEvent::ContextCompactionEnd {
                         ref compacted_transcripts,
                         level,
                         ..
                     } => {
                         if *level > 0 {
-                            if let Err(e) = session
-                                .write_items(vec![TranscriptItem::Compact {
-                                    messages: compacted_transcripts.clone(),
-                                }])
-                                .await
-                            {
-                                logx!(
-                                    error,
-                                    "run",
-                                    "compaction_save_failed",
-                                    run_id = %rid,
-                                    session_id = %sid,
-                                    error = %e,
-                                );
-                            }
+                            run_transcripts.push(TranscriptItem::Compact {
+                                messages: compacted_transcripts.clone(),
+                            });
+                        }
+                    }
+                    ProtocolEvent::TurnEnd => {
+                        if let Err(e) = flush(&session, &run_transcripts, &mut saved_count).await {
+                            logx!(
+                                error,
+                                "run",
+                                "incremental_save_failed",
+                                run_id = %rid,
+                                session_id = %sid,
+                                error = %e,
+                            );
                         }
                     }
                     _ => {}
@@ -310,19 +310,15 @@ impl AppAgent {
                 {
                     got_agent_end = true;
 
-                    let new_items = run_transcripts[saved_count..].to_vec();
-                    if !new_items.is_empty() {
-                        if let Err(e) = session.write_items(new_items).await {
-                            logx!(
-                                error,
-                                "run",
-                                "transcript_save_failed",
-                                run_id = %rid,
-                                session_id = %sid,
-                                error = %e,
-                            );
-                        }
-                        saved_count = run_transcripts.len();
+                    if let Err(e) = flush(&session, &run_transcripts, &mut saved_count).await {
+                        logx!(
+                            error,
+                            "run",
+                            "transcript_save_failed",
+                            run_id = %rid,
+                            session_id = %sid,
+                            error = %e,
+                        );
                     }
 
                     let last_text = transcripts
@@ -359,10 +355,7 @@ impl AppAgent {
 
             // Fallback save
             if !got_agent_end {
-                let new_items = run_transcripts[saved_count..].to_vec();
-                if !new_items.is_empty() {
-                    let _ = session.write_items(new_items).await;
-                }
+                let _ = flush(&session, &run_transcripts, &mut saved_count).await;
             }
 
             let _ = session.save().await;

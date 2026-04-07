@@ -1,6 +1,6 @@
 //! ANSI style definitions and dark/light theme detection.
 
-const RESET: &str = "\x1b[0m";
+pub(super) const RESET: &str = "\x1b[0m";
 const BOLD: &str = "\x1b[1m";
 const ITALIC: &str = "\x1b[3m";
 const UNDERLINE: &str = "\x1b[4m";

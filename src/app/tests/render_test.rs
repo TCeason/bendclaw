@@ -5,7 +5,7 @@ use bendclaw::cli::repl::render::ToolCallSummary;
 
 #[test]
 fn tool_result_lines_preserves_multiline_content() {
-    let lines = tool_result_lines("bash", "line 1\nline 2\n\nline 4\n", false, None);
+    let lines = tool_result_lines("line 1\nline 2\n\nline 4\n", false, None);
     assert_eq!(lines, vec!["line 1", "line 2", "", "line 4"]);
 }
 
@@ -15,7 +15,7 @@ fn tool_result_lines_keeps_single_line_summary_behavior() {
         name: "read_file".into(),
         summary: "/tmp/demo.txt".into(),
     };
-    let lines = tool_result_lines("read_file", "full file contents", false, Some(&tool_call));
+    let lines = tool_result_lines("full file contents", false, Some(&tool_call));
     assert_eq!(lines, vec!["Result: /tmp/demo.txt"]);
 }
 
@@ -26,7 +26,6 @@ fn tool_result_lines_keeps_read_results_compact_even_when_multiline() {
         summary: "/tmp/demo.txt".into(),
     };
     let lines = tool_result_lines(
-        "read_file",
         "[20 lines]\n   1 | first\n   2 | second",
         false,
         Some(&tool_call),
@@ -145,7 +144,7 @@ fn tool_result_lines_truncates_large_output() {
         .map(|i| format!("line {i}"))
         .collect::<Vec<_>>()
         .join("\n");
-    let lines = tool_result_lines("web_fetch", &big_content, false, None);
+    let lines = tool_result_lines(&big_content, false, None);
     assert_eq!(lines.len(), 31); // 30 lines + 1 truncation notice
     assert!(lines[30].contains("70 more lines truncated"));
 }
@@ -156,6 +155,6 @@ fn tool_result_lines_no_truncation_under_limit() {
         .map(|i| format!("line {i}"))
         .collect::<Vec<_>>()
         .join("\n");
-    let lines = tool_result_lines("bash", &content, false, None);
+    let lines = tool_result_lines(&content, false, None);
     assert_eq!(lines.len(), 20);
 }
