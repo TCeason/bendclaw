@@ -247,7 +247,8 @@ async fn forward_events(
                 system_prompt_tokens: *system_prompt_tokens,
                 context_window: *context_window,
             }),
-            bend_engine::AgentEvent::ContextCompactionEnd { stats } => {
+            bend_engine::AgentEvent::ContextCompactionEnd { stats, messages } => {
+                let compacted_transcripts = from_agent_messages(&messages);
                 Some(ProtocolEvent::ContextCompactionEnd {
                     level: stats.level,
                     before_message_count: stats.before_message_count,
@@ -257,6 +258,7 @@ async fn forward_events(
                     tool_outputs_truncated: stats.tool_outputs_truncated,
                     turns_summarized: stats.turns_summarized,
                     messages_dropped: stats.messages_dropped,
+                    compacted_transcripts,
                 })
             }
         };

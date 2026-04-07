@@ -2,16 +2,6 @@ use serde::Deserialize;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TranscriptKind {
-    User,
-    Assistant,
-    ToolResult,
-    System,
-    Extension,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallRecord {
     pub id: String,
     pub name: String,
@@ -45,18 +35,9 @@ pub enum TranscriptItem {
         kind: String,
         data: serde_json::Value,
     },
-}
-
-impl TranscriptItem {
-    pub fn kind(&self) -> TranscriptKind {
-        match self {
-            Self::User { .. } => TranscriptKind::User,
-            Self::Assistant { .. } => TranscriptKind::Assistant,
-            Self::ToolResult { .. } => TranscriptKind::ToolResult,
-            Self::System { .. } => TranscriptKind::System,
-            Self::Extension { .. } => TranscriptKind::Extension,
-        }
-    }
+    Compact {
+        messages: Vec<TranscriptItem>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,7 +46,6 @@ pub struct TranscriptEntry {
     pub run_id: Option<String>,
     pub seq: u64,
     pub turn: u32,
-    pub kind: TranscriptKind,
     pub item: TranscriptItem,
     pub created_at: String,
 }
@@ -78,13 +58,11 @@ impl TranscriptEntry {
         turn: u32,
         item: TranscriptItem,
     ) -> Self {
-        let kind = item.kind();
         Self {
             session_id,
             run_id,
             seq,
             turn,
-            kind,
             item,
             created_at: chrono::Utc::now().to_rfc3339(),
         }

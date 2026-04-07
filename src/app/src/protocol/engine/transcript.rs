@@ -162,6 +162,14 @@ pub fn agent_message_from_transcript(item: &TranscriptItem) -> bend_engine::Agen
         TranscriptItem::Extension { kind, data } => bend_engine::AgentMessage::Extension(
             bend_engine::ExtensionMessage::new(kind.clone(), data.clone()),
         ),
+        TranscriptItem::Compact { .. } => {
+            // Compact entries are metadata for the transcript log; they should
+            // never be sent to the engine. Represent as a no-op extension.
+            bend_engine::AgentMessage::Extension(bend_engine::ExtensionMessage::new(
+                "compact",
+                serde_json::json!({}),
+            ))
+        }
     }
 }
 

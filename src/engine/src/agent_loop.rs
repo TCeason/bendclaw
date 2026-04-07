@@ -363,6 +363,7 @@ async fn run_loop(
 
                 tx.send(AgentEvent::ContextCompactionEnd {
                     stats: result.stats,
+                    messages: context.messages.clone(),
                 })
                 .ok();
             }

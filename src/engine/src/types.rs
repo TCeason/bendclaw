@@ -465,6 +465,7 @@ pub enum AgentEvent {
     },
     ContextCompactionEnd {
         stats: crate::context::CompactionStats,
+        messages: Vec<AgentMessage>,
     },
 }
 

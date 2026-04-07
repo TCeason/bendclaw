@@ -16,8 +16,6 @@ use crate::protocol::ListSessions;
 use crate::protocol::ProtocolEvent;
 use crate::protocol::RunEvent;
 use crate::protocol::RunEventContext;
-use crate::protocol::RunMeta;
-use crate::protocol::RunStatus;
 use crate::protocol::SessionMeta;
 use crate::protocol::TranscriptItem;
 use crate::session::Session;
@@ -180,10 +178,6 @@ impl AppAgent {
         let llm = self.llm.read().clone();
         let model = llm.model.clone();
 
-        let mut run_meta = RunMeta::new(run_id.clone(), session_id.clone(), model.clone());
-        let storage = self.storage.read().clone();
-        storage.put_run(run_meta.clone()).await?;
-
         logx!(
             info,
             "run",
@@ -215,10 +209,9 @@ impl AppAgent {
 
             let mut run_transcripts: Vec<TranscriptItem> =
                 vec![TranscriptItem::User { text: prompt }];
-            let mut run_events: Vec<RunEvent> = vec![started_event];
+            let mut saved_count: usize = 0;
             let mut turn = 0_u32;
             let mut got_agent_end = false;
-            let mut got_assistant_response = false;
             let mut engine_rx = engine_rx;
 
             while let Some(protocol_event) = engine_rx.recv().await {
@@ -240,7 +233,6 @@ impl AppAgent {
                                 stop_reason,
                             );
                         run_transcripts.push(item);
-                        got_assistant_response = true;
 
                         // Emit an Error RunEvent when the LLM turn ended with an error
                         if stop_reason == "error" {
@@ -250,8 +242,7 @@ impl AppAgent {
                             let error_event = RunEventContext::new(&rid, &sid, turn)
                                 .map(&ProtocolEvent::InputRejected { reason: err_msg });
                             if let Some(evt) = error_event {
-                                let _ = tx.send(evt.clone());
-                                run_events.push(evt);
+                                let _ = tx.send(evt);
                             }
                         }
                     }
@@ -270,20 +261,42 @@ impl AppAgent {
                         });
                     }
                     ProtocolEvent::TurnEnd => {
-                        let full: Vec<TranscriptItem> = prior_transcripts
-                            .iter()
-                            .chain(run_transcripts.iter())
-                            .cloned()
-                            .collect();
-                        if let Err(e) = session.apply_and_save(full).await {
-                            logx!(
-                                error,
-                                "run",
-                                "incremental_save_failed",
-                                run_id = %rid,
-                                session_id = %sid,
-                                error = %e,
-                            );
+                        let new_items = run_transcripts[saved_count..].to_vec();
+                        if !new_items.is_empty() {
+                            if let Err(e) = session.write_items(new_items).await {
+                                logx!(
+                                    error,
+                                    "run",
+                                    "incremental_save_failed",
+                                    run_id = %rid,
+                                    session_id = %sid,
+                                    error = %e,
+                                );
+                            }
+                            saved_count = run_transcripts.len();
+                        }
+                    }
+                    ProtocolEvent::ContextCompactionEnd {
+                        ref compacted_transcripts,
+                        level,
+                        ..
+                    } => {
+                        if *level > 0 {
+                            if let Err(e) = session
+                                .write_items(vec![TranscriptItem::Compact {
+                                    messages: compacted_transcripts.clone(),
+                                }])
+                                .await
+                            {
+                                logx!(
+                                    error,
+                                    "run",
+                                    "compaction_save_failed",
+                                    run_id = %rid,
+                                    session_id = %sid,
+                                    error = %e,
+                                );
+                            }
                         }
                     }
                     _ => {}
@@ -297,18 +310,9 @@ impl AppAgent {
                 {
                     got_agent_end = true;
 
-                    // Save the full transcript (prior + current run), not just
-                    // the new messages from AgentEnd.  `transcripts` here only
-                    // contains `new_messages` produced by the current agent
-                    // loop, so using it directly would overwrite the session
-                    // history and cause earlier context to be lost.
-                    if !run_transcripts.is_empty() {
-                        let full: Vec<TranscriptItem> = prior_transcripts
-                            .iter()
-                            .chain(run_transcripts.iter())
-                            .cloned()
-                            .collect();
-                        if let Err(e) = session.apply_and_save(full).await {
+                    let new_items = run_transcripts[saved_count..].to_vec();
+                    if !new_items.is_empty() {
+                        if let Err(e) = session.write_items(new_items).await {
                             logx!(
                                 error,
                                 "run",
@@ -318,6 +322,7 @@ impl AppAgent {
                                 error = %e,
                             );
                         }
+                        saved_count = run_transcripts.len();
                     }
 
                     let last_text = transcripts
@@ -340,40 +345,27 @@ impl AppAgent {
                         started_at.elapsed().as_millis() as u64,
                         transcript_count,
                     );
-                    let _ = tx.send(finished_event.clone());
-                    run_events.push(finished_event);
+                    let _ = tx.send(finished_event);
                     continue;
                 }
 
                 let event_context = RunEventContext::new(&rid, &sid, turn);
                 if let Some(event) = event_context.map(&protocol_event) {
-                    if tx.send(event.clone()).is_err() {
+                    if tx.send(event).is_err() {
                         break;
                     }
-                    run_events.push(event);
                 }
             }
 
             // Fallback save
-            if !got_agent_end && run_transcripts.len() > 1 {
-                let full: Vec<TranscriptItem> = prior_transcripts
-                    .iter()
-                    .chain(run_transcripts.iter())
-                    .cloned()
-                    .collect();
-                let _ = session.apply_and_save(full).await;
+            if !got_agent_end {
+                let new_items = run_transcripts[saved_count..].to_vec();
+                if !new_items.is_empty() {
+                    let _ = session.write_items(new_items).await;
+                }
             }
 
             let _ = session.save().await;
-
-            if got_agent_end && got_assistant_response {
-                run_meta.finish(RunStatus::Completed);
-            } else {
-                run_meta.finish(RunStatus::Failed);
-            }
-
-            let _ = storage.put_run(run_meta).await;
-            let _ = storage.put_run_events(run_events).await;
 
             logx!(
                 info,
@@ -414,7 +406,7 @@ impl AppAgent {
 
     pub async fn load_transcript(&self, id: &str) -> Result<Vec<TranscriptItem>> {
         let storage = self.storage.read().clone();
-        match Session::load(id, storage).await? {
+        match Session::open(id, storage).await? {
             Some(session) => Ok(session.transcript().await),
             None => Ok(Vec::new()),
         }
@@ -422,7 +414,7 @@ impl AppAgent {
 
     pub async fn load_session(&self, id: &str) -> Result<Option<Arc<Session>>> {
         let storage = self.storage.read().clone();
-        Session::load(id, storage).await
+        Session::open(id, storage).await
     }
 
     pub fn storage(&self) -> Arc<dyn Storage> {
@@ -435,7 +427,7 @@ impl AppAgent {
         let model = self.llm.read().model.clone();
         let storage = self.storage.read().clone();
         match session_id {
-            Some(id) => match Session::load(id, storage).await? {
+            Some(id) => match Session::open(id, storage).await? {
                 Some(session) => {
                     session.set_model(model).await;
                     Ok(session)
@@ -444,7 +436,7 @@ impl AppAgent {
             },
             None => {
                 let id = crate::ids::new_id();
-                Session::create(id, self.cwd.clone(), model, storage).await
+                Session::new(id, self.cwd.clone(), model, storage).await
             }
         }
     }

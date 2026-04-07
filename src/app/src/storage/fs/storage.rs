@@ -6,17 +6,9 @@ use tokio::fs;
 
 use crate::error::BendclawError;
 use crate::error::Result;
-use crate::protocol::ListRunEvents;
-use crate::protocol::ListRuns;
 use crate::protocol::ListSessions;
-use crate::protocol::ListTraceEvents;
-use crate::protocol::ListTraces;
 use crate::protocol::ListTranscriptEntries;
-use crate::protocol::RunEvent;
-use crate::protocol::RunMeta;
 use crate::protocol::SessionMeta;
-use crate::protocol::TraceEvent;
-use crate::protocol::TraceMeta;
 use crate::protocol::TranscriptEntry;
 use crate::storage::Storage;
 
@@ -45,30 +37,6 @@ impl FsStorage {
         self.session_dir(session_id).join("transcript.jsonl")
     }
 
-    fn run_dir(&self, session_id: &str) -> PathBuf {
-        self.session_dir(session_id).join("runs")
-    }
-
-    fn run_meta_path(&self, session_id: &str, run_id: &str) -> PathBuf {
-        self.run_dir(session_id).join(format!("{run_id}.json"))
-    }
-
-    fn run_events_path(&self, session_id: &str, run_id: &str) -> PathBuf {
-        self.run_dir(session_id).join(format!("{run_id}.jsonl"))
-    }
-
-    fn trace_dir(&self, session_id: &str) -> PathBuf {
-        self.session_dir(session_id).join("traces")
-    }
-
-    fn trace_meta_path(&self, session_id: &str, trace_id: &str) -> PathBuf {
-        self.trace_dir(session_id).join(format!("{trace_id}.json"))
-    }
-
-    fn trace_events_path(&self, session_id: &str, trace_id: &str) -> PathBuf {
-        self.trace_dir(session_id).join(format!("{trace_id}.jsonl"))
-    }
-
     async fn write_json<T: serde::Serialize>(&self, path: PathBuf, value: &T) -> Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
@@ -86,16 +54,19 @@ impl FsStorage {
         }
     }
 
-    async fn write_jsonl<T: serde::Serialize>(&self, path: PathBuf, values: &[T]) -> Result<()> {
+    async fn append_jsonl<T: serde::Serialize>(&self, path: PathBuf, value: &T) -> Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }
-        let mut lines = String::new();
-        for value in values {
-            lines.push_str(&serde_json::to_string(value)?);
-            lines.push('\n');
-        }
-        fs::write(path, lines).await?;
+        let mut line = serde_json::to_string(value)?;
+        line.push('\n');
+        use tokio::io::AsyncWriteExt;
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .await?;
+        file.write_all(line.as_bytes()).await?;
         Ok(())
     }
 
@@ -114,82 +85,11 @@ impl FsStorage {
             Err(e) => Err(BendclawError::Io(e)),
         }
     }
-
-    async fn find_run_meta_path(&self, run_id: &str) -> Result<Option<PathBuf>> {
-        let mut sessions = match fs::read_dir(self.sessions_dir()).await {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(BendclawError::Io(e)),
-        };
-
-        while let Some(entry) = sessions.next_entry().await? {
-            let path = entry.path().join("runs").join(format!("{run_id}.json"));
-            if fs::try_exists(&path).await? {
-                return Ok(Some(path));
-            }
-        }
-
-        Ok(None)
-    }
-
-    async fn find_run_events_path(&self, run_id: &str) -> Result<Option<PathBuf>> {
-        let mut sessions = match fs::read_dir(self.sessions_dir()).await {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(BendclawError::Io(e)),
-        };
-
-        while let Some(entry) = sessions.next_entry().await? {
-            let path = entry.path().join("runs").join(format!("{run_id}.jsonl"));
-            if fs::try_exists(&path).await? {
-                return Ok(Some(path));
-            }
-        }
-
-        Ok(None)
-    }
-
-    async fn find_trace_meta_path(&self, trace_id: &str) -> Result<Option<PathBuf>> {
-        let mut sessions = match fs::read_dir(self.sessions_dir()).await {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(BendclawError::Io(e)),
-        };
-
-        while let Some(entry) = sessions.next_entry().await? {
-            let path = entry.path().join("traces").join(format!("{trace_id}.json"));
-            if fs::try_exists(&path).await? {
-                return Ok(Some(path));
-            }
-        }
-
-        Ok(None)
-    }
-
-    async fn find_trace_events_path(&self, trace_id: &str) -> Result<Option<PathBuf>> {
-        let mut sessions = match fs::read_dir(self.sessions_dir()).await {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(BendclawError::Io(e)),
-        };
-
-        while let Some(entry) = sessions.next_entry().await? {
-            let path = entry
-                .path()
-                .join("traces")
-                .join(format!("{trace_id}.jsonl"));
-            if fs::try_exists(&path).await? {
-                return Ok(Some(path));
-            }
-        }
-
-        Ok(None)
-    }
 }
 
 #[async_trait]
 impl Storage for FsStorage {
-    async fn put_session(&self, session: SessionMeta) -> Result<()> {
+    async fn save_session(&self, session: SessionMeta) -> Result<()> {
         self.write_json(self.session_meta_path(&session.session_id), &session)
             .await
     }
@@ -220,18 +120,12 @@ impl Storage for FsStorage {
         Ok(sessions)
     }
 
-    async fn put_transcript_entries(&self, entries: Vec<TranscriptEntry>) -> Result<()> {
-        let Some(first) = entries.first() else {
-            return Ok(());
-        };
-        self.write_jsonl(self.transcript_path(&first.session_id), &entries)
+    async fn append_entry(&self, entry: TranscriptEntry) -> Result<()> {
+        self.append_jsonl(self.transcript_path(&entry.session_id), &entry)
             .await
     }
 
-    async fn list_transcript_entries(
-        &self,
-        params: ListTranscriptEntries,
-    ) -> Result<Vec<TranscriptEntry>> {
+    async fn list_entries(&self, params: ListTranscriptEntries) -> Result<Vec<TranscriptEntry>> {
         let mut entries = self
             .read_jsonl::<TranscriptEntry>(&self.transcript_path(&params.session_id))
             .await?;
@@ -247,151 +141,5 @@ impl Storage for FsStorage {
         }
 
         Ok(entries)
-    }
-
-    async fn put_run(&self, run: RunMeta) -> Result<()> {
-        self.write_json(self.run_meta_path(&run.session_id, &run.run_id), &run)
-            .await
-    }
-
-    async fn get_run(&self, run_id: &str) -> Result<Option<RunMeta>> {
-        let Some(path) = self.find_run_meta_path(run_id).await? else {
-            return Ok(None);
-        };
-        self.read_json(&path).await
-    }
-
-    async fn list_runs(&self, params: ListRuns) -> Result<Vec<RunMeta>> {
-        let mut runs = Vec::new();
-
-        let session_ids = if let Some(session_id) = params.session_id {
-            vec![session_id]
-        } else {
-            self.list_sessions(ListSessions { limit: 0 })
-                .await?
-                .into_iter()
-                .map(|session| session.session_id)
-                .collect()
-        };
-
-        for session_id in session_ids {
-            let dir = self.run_dir(&session_id);
-            let mut entries = match fs::read_dir(&dir).await {
-                Ok(entries) => entries,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(e) => return Err(BendclawError::Io(e)),
-            };
-
-            while let Some(entry) = entries.next_entry().await? {
-                let path = entry.path();
-                if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                    continue;
-                }
-                if let Some(run) = self.read_json::<RunMeta>(&path).await? {
-                    runs.push(run);
-                }
-            }
-        }
-
-        runs.sort_by(|a, b| b.started_at.cmp(&a.started_at));
-        if params.limit > 0 {
-            runs.truncate(params.limit);
-        }
-        Ok(runs)
-    }
-
-    async fn put_run_events(&self, events: Vec<RunEvent>) -> Result<()> {
-        let Some(first) = events.first() else {
-            return Ok(());
-        };
-        self.write_jsonl(
-            self.run_events_path(&first.session_id, &first.run_id),
-            &events,
-        )
-        .await
-    }
-
-    async fn list_run_events(&self, params: ListRunEvents) -> Result<Vec<RunEvent>> {
-        let Some(path) = self.find_run_events_path(&params.run_id).await? else {
-            return Ok(Vec::new());
-        };
-        self.read_jsonl(&path).await
-    }
-
-    async fn put_trace(&self, trace: TraceMeta) -> Result<()> {
-        self.write_json(
-            self.trace_meta_path(&trace.session_id, &trace.trace_id),
-            &trace,
-        )
-        .await
-    }
-
-    async fn get_trace(&self, trace_id: &str) -> Result<Option<TraceMeta>> {
-        let Some(path) = self.find_trace_meta_path(trace_id).await? else {
-            return Ok(None);
-        };
-        self.read_json(&path).await
-    }
-
-    async fn list_traces(&self, params: ListTraces) -> Result<Vec<TraceMeta>> {
-        let mut traces = Vec::new();
-
-        let session_ids = if let Some(session_id) = params.session_id {
-            vec![session_id]
-        } else {
-            self.list_sessions(ListSessions { limit: 0 })
-                .await?
-                .into_iter()
-                .map(|session| session.session_id)
-                .collect()
-        };
-
-        for session_id in session_ids {
-            let dir = self.trace_dir(&session_id);
-            let mut entries = match fs::read_dir(&dir).await {
-                Ok(entries) => entries,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(e) => return Err(BendclawError::Io(e)),
-            };
-
-            while let Some(entry) = entries.next_entry().await? {
-                let path = entry.path();
-                if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                    continue;
-                }
-                if let Some(trace) = self.read_json::<TraceMeta>(&path).await? {
-                    if let Some(run_id) = &params.run_id {
-                        if &trace.run_id != run_id {
-                            continue;
-                        }
-                    }
-                    traces.push(trace);
-                }
-            }
-        }
-
-        traces.sort_by(|a, b| b.started_at.cmp(&a.started_at));
-        if params.limit > 0 {
-            traces.truncate(params.limit);
-        }
-        Ok(traces)
-    }
-
-    async fn put_trace_events(&self, events: Vec<TraceEvent>) -> Result<()> {
-        let Some(first) = events.first() else {
-            return Ok(());
-        };
-        self.write_jsonl(
-            self.trace_events_path(&first.session_id, &first.trace_id),
-            &events,
-        )
-        .await
-    }
-
-    async fn list_trace_events(&self, params: ListTraceEvents) -> Result<Vec<TraceEvent>> {
-        let Some(path) = self.find_trace_events_path(&params.trace_id).await? else {
-            return Ok(Vec::new());
-        };
-        self.read_jsonl(&path).await
     }
 }

@@ -371,58 +371,8 @@ pub enum ProtocolEvent {
         tool_outputs_truncated: usize,
         turns_summarized: usize,
         messages_dropped: usize,
+        compacted_transcripts: Vec<TranscriptItem>,
     },
-}
-
-// ---------------------------------------------------------------------------
-// RunMeta — run lifecycle metadata
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RunStatus {
-    Running,
-    Completed,
-    Failed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunMeta {
-    pub run_id: String,
-    pub session_id: String,
-    pub status: RunStatus,
-    pub model: String,
-    pub started_at: String,
-    pub finished_at: Option<String>,
-}
-
-impl RunMeta {
-    pub fn new(run_id: String, session_id: String, model: String) -> Self {
-        Self {
-            run_id,
-            session_id,
-            status: RunStatus::Running,
-            model,
-            started_at: Utc::now().to_rfc3339(),
-            finished_at: None,
-        }
-    }
-
-    pub fn finish(&mut self, status: RunStatus) {
-        self.status = status;
-        self.finished_at = Some(Utc::now().to_rfc3339());
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ListRuns {
-    pub session_id: Option<String>,
-    pub limit: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ListRunEvents {
-    pub run_id: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -586,6 +536,7 @@ impl<'a> RunEventContext<'a> {
                 tool_outputs_truncated,
                 turns_summarized,
                 messages_dropped,
+                compacted_transcripts: _,
             } => RunEventPayload::ContextCompactionCompleted {
                 level: *level,
                 before_message_count: *before_message_count,

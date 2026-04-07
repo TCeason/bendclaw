@@ -2081,7 +2081,7 @@ async fn test_compaction_events_emitted_when_context_exceeds_budget() {
     let ends: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            AgentEvent::ContextCompactionEnd { stats } => Some(stats.clone()),
+            AgentEvent::ContextCompactionEnd { stats, .. } => Some(stats.clone()),
             _ => None,
         })
         .collect();
@@ -2144,7 +2144,7 @@ async fn test_compaction_events_level_zero_when_within_budget() {
     let ends: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            AgentEvent::ContextCompactionEnd { stats } => Some(stats.clone()),
+            AgentEvent::ContextCompactionEnd { stats, .. } => Some(stats.clone()),
             _ => None,
         })
         .collect();
