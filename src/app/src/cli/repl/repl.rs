@@ -302,6 +302,12 @@ impl Repl {
 
     fn print_banner(&self) -> Result<()> {
         println!("{BOLD}Bendclaw{RESET}");
+        if let Ok(env_path) = paths::env_file_path() {
+            let display = collapse_home(&env_path);
+            if env_path.exists() {
+                println!("{DIM}  env:  {display}{RESET}");
+            }
+        }
         println!(
             "{DIM}  provider: {}{RESET}",
             self.config.active_llm().provider
@@ -310,13 +316,17 @@ impl Repl {
         if let Some(base_url) = &self.config.active_llm().base_url {
             println!("{DIM}  base_url: {base_url}{RESET}");
         }
+        let session_display = self
+            .session_id
+            .as_deref()
+            .map(short_id)
+            .unwrap_or_else(|| "(new)".into());
+        println!("{DIM}  session: {session_display}{RESET}");
         if let Some(branch) = git_branch() {
             println!("{DIM}  git:   {branch}{RESET}");
         }
         println!("{DIM}  cwd:   {}{RESET}", self.cwd);
-        println!(
-            "{DIM}  prompt: /help for commands  ·  Tab for completion  ·  Ctrl+D to exit{RESET}\n"
-        );
+        println!("{DIM}  /help commands  ·  Tab complete  ·  ↑↓ history  ·  Ctrl+C exit{RESET}\n");
         Ok(())
     }
 
@@ -338,7 +348,7 @@ impl Repl {
                 .unwrap_or_else(|_| "bendclaw".to_string());
             let rule = "─".repeat(80);
             println!("\n{DIM}{rule}{RESET}");
-            println!("{DIM}Resume this session with:{RESET}\n  {exe} --resume {session_id}\n");
+            println!("{DIM}Resume this session with:{RESET}\n  {DIM}{exe} --resume {session_id}{RESET}\n");
         }
     }
 
@@ -780,4 +790,13 @@ fn relative_time(value: &str) -> String {
         }
         Err(_) => value.into(),
     }
+}
+
+fn collapse_home(path: &std::path::Path) -> String {
+    if let Ok(home) = paths::home_dir() {
+        if let Ok(suffix) = path.strip_prefix(&home) {
+            return format!("~/{}", suffix.display());
+        }
+    }
+    path.display().to_string()
 }

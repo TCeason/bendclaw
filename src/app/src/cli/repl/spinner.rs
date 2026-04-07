@@ -119,6 +119,10 @@ impl SpinnerState {
         self.active = false;
         self.rendered = false;
         self.phase = SpinnerPhase::Hidden;
+        // Reset terminal tab title
+        with_terminal(|stdout| {
+            let _ = write!(stdout, "\x1b]0;Bendclaw\x07");
+        });
     }
 
     pub fn set_tool(&mut self, name: &str) {
@@ -188,8 +192,10 @@ impl SpinnerState {
         with_terminal(|stdout| {
             let _ = write!(
                 stdout,
-                "\r{glyph_color}{glyph}{RESET} {rendered_msg} {DIM}({status}){RESET}\x1b[K"
+                "\r{glyph_color}{glyph}{RESET} {rendered_msg} {DIM}({status}) · esc to interrupt{RESET}\x1b[K"
             );
+            // Set terminal tab title to show spinner glyph
+            let _ = write!(stdout, "\x1b]0;{glyph} Bendclaw\x07");
         });
         self.rendered = true;
     }
