@@ -133,10 +133,6 @@ impl SpinnerState {
         };
     }
 
-    pub fn hide(&mut self) {
-        self.phase = SpinnerPhase::Hidden;
-    }
-
     pub fn restore_verb(&mut self) {
         self.phase = SpinnerPhase::Verb;
     }

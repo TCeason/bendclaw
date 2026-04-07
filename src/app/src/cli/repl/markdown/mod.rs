@@ -52,10 +52,9 @@ struct SpinnerWriter {
 
 impl Write for SpinnerWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // Pause spinner before writing
+        // Clear spinner line right before writing so there's no visual gap.
         if let Ok(mut sp) = self.spinner.lock() {
             sp.clear_if_rendered();
-            sp.hide();
         }
 
         let content = String::from_utf8_lossy(buf);

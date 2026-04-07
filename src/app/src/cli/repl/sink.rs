@@ -71,6 +71,13 @@ impl ReplSink {
             spinner,
         }
     }
+
+    fn deactivate_spinner(&self) {
+        if let Ok(mut spinner) = self.spinner.lock() {
+            spinner.clear_if_rendered();
+            spinner.deactivate();
+        }
+    }
 }
 
 impl Default for ReplSink {
@@ -100,12 +107,9 @@ impl EventSink for ReplSink {
                     if let Some(d) = delta {
                         spinner.add_tokens(d.len() as u64);
                     }
-                    spinner.clear_if_rendered();
-                    spinner.hide();
                 }
                 RunEventPayload::AssistantCompleted { .. } => {
                     spinner.clear_if_rendered();
-                    spinner.hide();
                 }
                 RunEventPayload::ToolStarted { tool_name, .. } => {
                     spinner.clear_if_rendered();
@@ -116,20 +120,27 @@ impl EventSink for ReplSink {
                 }
                 RunEventPayload::ToolFinished { .. } => {
                     spinner.clear_if_rendered();
-                    spinner.hide();
+                    spinner.restore_verb();
                 }
                 RunEventPayload::RunFinished { .. } => {
-                    spinner.clear_if_rendered();
-                    spinner.deactivate();
+                    // Deferred to output block below — keep spinner alive
+                    // until the summary line is ready to print.
                 }
                 RunEventPayload::Error { .. } => {
-                    spinner.clear_if_rendered();
-                    spinner.deactivate();
+                    // Deferred to output block below.
                 }
-                RunEventPayload::LlmCallStarted { .. } => {}
-                RunEventPayload::LlmCallCompleted { .. } => {}
-                RunEventPayload::ContextCompactionStarted { .. } => {}
-                RunEventPayload::ContextCompactionCompleted { .. } => {}
+                RunEventPayload::LlmCallStarted { .. } => {
+                    spinner.clear_if_rendered();
+                }
+                RunEventPayload::LlmCallCompleted { .. } => {
+                    spinner.clear_if_rendered();
+                }
+                RunEventPayload::ContextCompactionStarted { .. } => {
+                    spinner.clear_if_rendered();
+                }
+                RunEventPayload::ContextCompactionCompleted { .. } => {
+                    spinner.clear_if_rendered();
+                }
             }
         };
 
@@ -224,6 +235,7 @@ impl EventSink for ReplSink {
             RunEventPayload::ToolProgress { .. } => {}
             RunEventPayload::Error { message } => {
                 finish_assistant_stream(&mut state);
+                self.deactivate_spinner();
                 terminal_writeln(&format!("{RED}error:{RESET} {message}"));
             }
             RunEventPayload::RunFinished {
@@ -240,6 +252,7 @@ impl EventSink for ReplSink {
                     state.llm_call_count,
                     state.tool_call_count,
                 );
+                self.deactivate_spinner();
                 if !summary.is_empty() {
                     terminal_writeln(&format!("{DIM}{summary}{RESET}"));
                 }

@@ -27,9 +27,6 @@ fn phase_transitions() {
     state.restore_verb();
     assert!(state.phase().is_verb());
 
-    state.hide();
-    assert!(state.phase().is_hidden());
-
     state.deactivate();
     assert!(!state.is_active());
     assert!(state.phase().is_hidden());
@@ -63,11 +60,46 @@ fn add_tokens_accumulates() {
 }
 
 #[test]
-fn render_frame_does_nothing_when_hidden() {
+fn render_frame_does_nothing_when_inactive() {
     let mut state = SpinnerState::new();
     state.activate();
-    state.hide();
+    state.deactivate();
     state.render_frame();
-    // frame should not advance when hidden
+    // frame should not advance when inactive
     assert_eq!(state.frame_index(), 0);
+}
+
+#[test]
+fn spinner_stays_active_through_tool_cycle() {
+    let mut state = SpinnerState::new();
+    state.activate();
+
+    // Simulate ToolStarted -> ToolFinished -> restore_verb
+    state.set_tool("bash");
+    assert!(state.phase().is_tool());
+
+    state.clear_if_rendered();
+    state.restore_verb();
+    assert!(state.phase().is_verb());
+    assert!(state.is_active());
+
+    // Spinner should still render after tool cycle
+    state.render_frame();
+    assert_eq!(state.frame_index(), 1);
+}
+
+#[test]
+fn spinner_renders_continuously_while_active() {
+    let mut state = SpinnerState::new();
+    state.activate();
+
+    // Render a few frames
+    state.render_frame();
+    state.render_frame();
+    assert_eq!(state.frame_index(), 2);
+
+    // clear_if_rendered does not stop rendering on next tick
+    state.clear_if_rendered();
+    state.render_frame();
+    assert_eq!(state.frame_index(), 3);
 }
