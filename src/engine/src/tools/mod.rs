@@ -3,6 +3,7 @@ pub mod edit;
 pub mod file;
 pub mod list;
 pub mod search;
+pub mod web_fetch;
 
 pub use bash::BashTool;
 pub use edit::EditFileTool;
@@ -10,6 +11,7 @@ pub use file::ReadFileTool;
 pub use file::WriteFileTool;
 pub use list::ListFilesTool;
 pub use search::SearchTool;
+pub use web_fetch::WebFetchTool;
 
 use crate::types::AgentTool;
 
@@ -22,5 +24,6 @@ pub fn default_tools() -> Vec<Box<dyn AgentTool>> {
         Box::new(EditFileTool::new()),
         Box::new(ListFilesTool::default()),
         Box::new(SearchTool::default()),
+        Box::new(WebFetchTool::new()),
     ]
 }

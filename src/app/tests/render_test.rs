@@ -138,3 +138,24 @@ fn format_llm_call_lines_empty_messages() {
     assert!(token_line.contains("~200 est tokens"));
     assert!(token_line.contains("sys ~200"));
 }
+
+#[test]
+fn tool_result_lines_truncates_large_output() {
+    let big_content: String = (0..100)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let lines = tool_result_lines("web_fetch", &big_content, false, None);
+    assert_eq!(lines.len(), 31); // 30 lines + 1 truncation notice
+    assert!(lines[30].contains("70 more lines truncated"));
+}
+
+#[test]
+fn tool_result_lines_no_truncation_under_limit() {
+    let content: String = (0..20)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let lines = tool_result_lines("bash", &content, false, None);
+    assert_eq!(lines.len(), 20);
+}

@@ -350,10 +350,11 @@ async fn test_bash_blocked_command() {
 async fn test_default_tools_complete() {
     let tools = bendengine::tools::default_tools();
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert_eq!(names.len(), 6);
+    assert_eq!(names.len(), 7);
     assert!(names.contains(&"bash"));
     assert!(names.contains(&"edit_file"));
     assert!(names.contains(&"list_files"));
+    assert!(names.contains(&"web_fetch"));
 }
 
 // --- Image support tests ---
@@ -447,4 +448,188 @@ async fn test_read_text_file_unchanged() {
     }
 
     let _ = std::fs::remove_file(tmp);
+}
+
+// --- Web fetch tool tests ---
+
+#[tokio::test]
+async fn test_web_fetch_missing_url() {
+    let tool = bendengine::tools::web_fetch::WebFetchTool::new();
+    let result = tool.execute(serde_json::json!({}), ctx("web_fetch")).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("url"));
+}
+
+#[tokio::test]
+async fn test_web_fetch_success() {
+    use wiremock::matchers::method;
+    use wiremock::matchers::path;
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::ResponseTemplate;
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/hello"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("hello from mock"))
+        .mount(&server)
+        .await;
+
+    let tool = bendengine::tools::web_fetch::WebFetchTool::new();
+    let url = format!("{}/hello", server.uri());
+    let result = tool
+        .execute(serde_json::json!({"url": url}), ctx("web_fetch"))
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("hello from mock"));
+}
+
+#[tokio::test]
+async fn test_web_fetch_with_headers() {
+    use wiremock::matchers::header;
+    use wiremock::matchers::method;
+    use wiremock::matchers::path;
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::ResponseTemplate;
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/auth"))
+        .and(header("Authorization", "Bearer test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("authenticated"))
+        .mount(&server)
+        .await;
+
+    let tool = bendengine::tools::web_fetch::WebFetchTool::new();
+    let url = format!("{}/auth", server.uri());
+    let result = tool
+        .execute(
+            serde_json::json!({
+                "url": url,
+                "headers": { "Authorization": "Bearer test-token" }
+            }),
+            ctx("web_fetch"),
+        )
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("authenticated"));
+}
+
+#[tokio::test]
+async fn test_web_fetch_http_error() {
+    use wiremock::matchers::method;
+    use wiremock::matchers::path;
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::ResponseTemplate;
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/notfound"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    let tool = bendengine::tools::web_fetch::WebFetchTool::new();
+    let url = format!("{}/notfound", server.uri());
+    let result = tool
+        .execute(serde_json::json!({"url": url}), ctx("web_fetch"))
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("404"));
+}
+
+#[tokio::test]
+async fn test_web_fetch_cancel() {
+    use wiremock::matchers::method;
+    use wiremock::matchers::path;
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::ResponseTemplate;
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/slow"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("slow")
+                .set_delay(std::time::Duration::from_secs(10)),
+        )
+        .mount(&server)
+        .await;
+
+    let tool = bendengine::tools::web_fetch::WebFetchTool::new();
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+
+    let url = format!("{}/slow", server.uri());
+    let result = tool
+        .execute(
+            serde_json::json!({"url": url}),
+            ctx_with_cancel("web_fetch", cancel),
+        )
+        .await;
+
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_web_fetch_html_to_markdown() {
+    use wiremock::matchers::method;
+    use wiremock::matchers::path;
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::ResponseTemplate;
+
+    let html = r#"<html><head><title>Test Page</title></head><body>
+    <article>
+    <h1>Hello</h1>
+    <p>This is a paragraph with enough content for readability to extract it properly.
+    It needs to be substantial enough to pass the content length threshold that the
+    readability library uses to determine if content is worth extracting.</p>
+    <p>Here is another paragraph to add more weight to the article body so the
+    extraction algorithm considers this a real article worth converting.</p>
+    </article>
+    </body></html>"#;
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/page"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(html, "text/html; charset=utf-8"))
+        .mount(&server)
+        .await;
+
+    let tool = bendengine::tools::web_fetch::WebFetchTool::new();
+    let url = format!("{}/page", server.uri());
+    let result = tool
+        .execute(serde_json::json!({"url": url}), ctx("web_fetch"))
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    // Should be converted to markdown, not raw HTML
+    assert!(!text.contains("<html>"));
+    assert!(!text.contains("<p>"));
+    // readability extracts the title from <title>, and the body from <article>
+    assert!(text.contains("Test Page"));
+    assert!(text.contains("paragraph"));
 }

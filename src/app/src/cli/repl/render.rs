@@ -242,13 +242,27 @@ pub fn tool_result_lines(
         return vec![tool_result_line(tool_name, content, is_error, tool_call)];
     }
 
+    const MAX_RESULT_LINES: usize = 30;
+
     let normalized = content.replace("\r\n", "\n");
     if normalized.contains('\n') {
         let trimmed = normalized.trim_end_matches('\n');
         if trimmed.is_empty() {
             return vec![tool_result_line(tool_name, content, is_error, tool_call)];
         }
-        return trimmed.split('\n').map(|line| line.to_string()).collect();
+        let all_lines: Vec<&str> = trimmed.split('\n').collect();
+        if all_lines.len() > MAX_RESULT_LINES {
+            let mut result: Vec<String> = all_lines[..MAX_RESULT_LINES]
+                .iter()
+                .map(|l| l.to_string())
+                .collect();
+            result.push(format!(
+                "... ({} more lines truncated)",
+                all_lines.len() - MAX_RESULT_LINES
+            ));
+            return result;
+        }
+        return all_lines.into_iter().map(|l| l.to_string()).collect();
     }
     vec![tool_result_line(tool_name, content, is_error, tool_call)]
 }
