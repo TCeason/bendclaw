@@ -33,6 +33,10 @@ pub struct CliArgs {
     #[arg(long)]
     pub model: Option<String>,
 
+    /// Directory containing skill files (can be specified multiple times)
+    #[arg(long = "skills", value_name = "DIR")]
+    pub skills_dirs: Vec<String>,
+
     #[command(subcommand)]
     pub command: Option<CliCommand>,
 }

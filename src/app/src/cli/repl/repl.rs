@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 
@@ -58,6 +59,7 @@ impl Repl {
         limits: ExecutionLimits,
         system_prompt: String,
         session_id: Option<String>,
+        skills_dirs: Vec<PathBuf>,
     ) -> Result<Self> {
         let cwd = std::env::current_dir()
             .map_err(|e| BendclawError::Cli(format!("failed to get cwd: {e}")))?
@@ -66,7 +68,8 @@ impl Repl {
 
         let agent = AppAgent::new(&config, &cwd)?
             .with_system_prompt(system_prompt)
-            .with_limits(limits);
+            .with_limits(limits)
+            .with_skills_dirs(skills_dirs);
 
         Ok(Self {
             agent,

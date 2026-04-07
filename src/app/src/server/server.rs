@@ -148,7 +148,15 @@ pub async fn start(conf: Config) -> Result<()> {
         .with_env()
         .with_project_context()
         .build();
-    let agent = AppAgent::new(&conf, &cwd)?.with_system_prompt(system_prompt);
+
+    let mut skills_dirs = Vec::new();
+    if let Ok(global) = crate::conf::paths::skills_dir() {
+        skills_dirs.push(global);
+    }
+
+    let agent = AppAgent::new(&conf, &cwd)?
+        .with_system_prompt(system_prompt)
+        .with_skills_dirs(skills_dirs);
 
     let storage_backend = match conf.storage.backend {
         crate::conf::StorageBackend::Fs => "fs",

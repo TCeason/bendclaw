@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -91,6 +92,7 @@ pub struct AppAgent {
     llm: RwLock<LlmConfig>,
     system_prompt: RwLock<String>,
     limits: RwLock<ExecutionLimits>,
+    skills_dirs: RwLock<Vec<PathBuf>>,
     cwd: String,
     storage: RwLock<Arc<dyn Storage>>,
     engine: RwLock<Option<EngineHandle>>,
@@ -105,6 +107,7 @@ impl AppAgent {
             llm: RwLock::new(config.active_llm()),
             system_prompt: RwLock::new(system_prompt),
             limits: RwLock::new(ExecutionLimits::default()),
+            skills_dirs: RwLock::new(Vec::new()),
             cwd,
             storage: RwLock::new(storage),
             engine: RwLock::new(None),
@@ -126,6 +129,11 @@ impl AppAgent {
 
     pub fn with_limits(self: &Arc<Self>, limits: ExecutionLimits) -> Arc<Self> {
         *self.limits.write() = limits;
+        Arc::clone(self)
+    }
+
+    pub fn with_skills_dirs(self: &Arc<Self>, dirs: Vec<PathBuf>) -> Arc<Self> {
+        *self.skills_dirs.write() = dirs;
         Arc::clone(self)
     }
 
@@ -289,8 +297,18 @@ impl AppAgent {
                 {
                     got_agent_end = true;
 
-                    if !transcripts.is_empty() {
-                        if let Err(e) = session.apply_and_save(transcripts.clone()).await {
+                    // Save the full transcript (prior + current run), not just
+                    // the new messages from AgentEnd.  `transcripts` here only
+                    // contains `new_messages` produced by the current agent
+                    // loop, so using it directly would overwrite the session
+                    // history and cause earlier context to be lost.
+                    if !run_transcripts.is_empty() {
+                        let full: Vec<TranscriptItem> = prior_transcripts
+                            .iter()
+                            .chain(run_transcripts.iter())
+                            .cloned()
+                            .collect();
+                        if let Err(e) = session.apply_and_save(full).await {
                             logx!(
                                 error,
                                 "run",
@@ -444,6 +462,7 @@ impl AppAgent {
             base_url: llm.base_url,
             system_prompt: self.system_prompt.read().clone(),
             limits: self.limits.read().clone(),
+            skills_dirs: self.skills_dirs.read().clone(),
         };
         let (rx, engine_handle) =
             crate::protocol::engine::start_engine(&options, prior_transcripts, prompt).await?;

@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use bend_base::prompt::SystemPrompt;
@@ -65,7 +66,8 @@ impl Cli {
         let system_prompt = builder.build();
         let agent = AppAgent::new(&config, &cwd)?
             .with_system_prompt(system_prompt)
-            .with_limits(self.build_limits());
+            .with_limits(self.build_limits())
+            .with_skills_dirs(self.build_skills_dirs());
         let request = TurnRequest::text(prompt).session_id(self.args.resume.clone());
         let mut stream = agent.run(request).await?;
         while let Some(event) = stream.next().await {
@@ -95,6 +97,7 @@ impl Cli {
             self.build_limits(),
             system_prompt,
             self.args.resume.clone(),
+            self.build_skills_dirs(),
         )?
         .run()
         .await
@@ -108,6 +111,17 @@ impl Cli {
             max_total_tokens: self.args.max_tokens,
             max_duration_secs: self.args.max_duration,
         }
+    }
+
+    fn build_skills_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+        if let Ok(global) = crate::conf::paths::skills_dir() {
+            dirs.push(global);
+        }
+        for extra in &self.args.skills_dirs {
+            dirs.push(PathBuf::from(extra));
+        }
+        dirs
     }
 }
 

@@ -18,6 +18,7 @@ pub struct EngineOptions {
     pub base_url: Option<String>,
     pub system_prompt: String,
     pub limits: crate::agent::ExecutionLimits,
+    pub skills_dirs: Vec<std::path::PathBuf>,
 }
 
 /// Handle to a running engine instance.
@@ -295,11 +296,24 @@ fn build_agent(
         max_duration: std::time::Duration::from_secs(options.limits.max_duration_secs),
     };
 
+    let skills = if options.skills_dirs.is_empty() {
+        bend_engine::SkillSet::empty()
+    } else {
+        match bend_engine::SkillSet::load(&options.skills_dirs) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("failed to load skills: {e}");
+                bend_engine::SkillSet::empty()
+            }
+        }
+    };
+
     provider_agent
         .with_model(&options.model)
         .with_api_key(&options.api_key)
         .with_model_config(model_config)
         .with_system_prompt(&options.system_prompt)
+        .with_skills(skills)
         .with_tools(bend_engine::tools::default_tools())
         .with_messages(prior_messages)
         .with_execution_limits(limits)
