@@ -65,14 +65,11 @@ into this:
 ## Installation
 
 ```bash
-# Install cargo-binstall first (if you don't have it)
-cargo install cargo-binstall
-
-# Then install bendclaw (prebuilt binary, recommended)
-cargo binstall bendclaw
+# One-liner install (prebuilt binary, recommended)
+curl -fsSL https://raw.githubusercontent.com/evotai/bendclaw/main/install.sh | bash
 
 # Or build from source
-cargo install --git https://github.com/EvotAI/bendclaw.git
+cargo install --git https://github.com/evotai/bendclaw.git
 ```
 
 ## Quickstart

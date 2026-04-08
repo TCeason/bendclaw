@@ -2,6 +2,7 @@
 name = "bendclaw"
 version.workspace = true
 edition.workspace = true
+repository = "https://github.com/evotai/bendclaw"
 
 [[bin]]
 name = "bendclaw"
