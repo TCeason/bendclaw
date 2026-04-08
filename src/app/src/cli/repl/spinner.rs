@@ -174,7 +174,7 @@ impl SpinnerState {
         // Tokens arrived recently → slow down the animation.
         let streaming = self.last_token_at.elapsed().as_millis() < STREAMING_RECENCY_MS
             && self.response_tokens > 0;
-        if streaming && self.tick % STREAMING_FRAME_DIVISOR != 0 {
+        if streaming && !self.tick.is_multiple_of(STREAMING_FRAME_DIVISOR) {
             return;
         }
 
