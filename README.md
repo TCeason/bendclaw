@@ -42,32 +42,7 @@ Over time, BendClaw gets better at keeping what helps, compressing what matters,
 
 ## Example
 
-```text
-[LLM] Complete
-  61,001 input · 248 output tokens
-  timing   320ms ttfb · 1.8s ttft · 14.7s stream · 16.8s total
-
-[COMPACT] Complete
-  saved ~140k tokens (44%)
-  320k → 180k
-
-─── This Run Summary ──────────────────────────────────
-226.5s · 11 turns · 11 llm calls · 10 tool calls · 750142 tokens
-
-  tokens    750142 total input · 1796 output · 9.9 tok/s
-            system          12k  █░░░░░░░░░░░░░░░░░░░  1.7%
-            user             8k  █░░░░░░░░░░░░░░░░░░░  1.1%
-            assistant       25k  █░░░░░░░░░░░░░░░░░░░  3.3%
-            tool_result    702k  ███████████████████░ 93.6%
-              read_file   5 calls   312k  ████████░░░░░░░░░░░░ 41.6%
-              search      3 calls    98k  ███░░░░░░░░░░░░░░░░░ 13.1%
-
-  compact   1 compactions · saved 140k tokens
-            #1  lv1  320k→180k  saved 140k  █████░░░░░░ 44%
-
-  llm       11 calls · 181.2s (80% of run) · 9.9 tok/s avg
-            ttft avg 1.8s · stream avg 14.7s
-```
+<img width="815" height="768" alt="Image" src="https://github.com/user-attachments/assets/f0f14c8c-37f2-4aff-a91a-c30768488b3d" />
 
 ```text
 BendClaw is not trying to keep everything.
