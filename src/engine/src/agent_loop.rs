@@ -545,6 +545,7 @@ async fn stream_assistant_response(
     // Retry loop for transient provider errors
     let retry = &config.retry_config;
     let mut attempt = 0;
+    let shared_metrics = std::sync::Arc::new(std::sync::Mutex::new(LlmCallMetrics::default()));
     let result = loop {
         let stream_config = StreamConfig {
             model: config.model.clone(),
@@ -573,17 +574,29 @@ async fn stream_assistant_response(
         })
         .ok();
 
+        let call_start = std::time::Instant::now();
         let (stream_tx, mut stream_rx) = mpsc::unbounded_channel();
         let provider_cancel = cancel.clone();
+
+        // Reset metrics for this attempt.
+        if let Ok(mut m) = shared_metrics.lock() {
+            *m = LlmCallMetrics::default();
+        }
+        let metrics_handle = shared_metrics.clone();
 
         // Spawn a task to forward events in real-time as the provider streams
         let event_tx = tx.clone();
         let model_for_events = config.model.clone();
         let forward_handle = tokio::spawn(async move {
             let mut partial_message: Option<AgentMessage> = None;
+            let mut first_delta_seen = false;
+            let mut chunk_count: u64 = 0;
             while let Some(event) = stream_rx.recv().await {
                 match &event {
                     StreamEvent::Start => {
+                        if let Ok(mut m) = metrics_handle.lock() {
+                            m.ttfb_ms = call_start.elapsed().as_millis() as u64;
+                        }
                         let placeholder = AgentMessage::Llm(Message::Assistant {
                             content: Vec::new(),
                             stop_reason: StopReason::Stop,
@@ -601,6 +614,13 @@ async fn stream_assistant_response(
                             .ok();
                     }
                     StreamEvent::TextDelta { delta, .. } => {
+                        if !first_delta_seen {
+                            first_delta_seen = true;
+                            if let Ok(mut m) = metrics_handle.lock() {
+                                m.ttft_ms = call_start.elapsed().as_millis() as u64;
+                            }
+                        }
+                        chunk_count += 1;
                         if let Some(ref msg) = partial_message {
                             event_tx
                                 .send(AgentEvent::MessageUpdate {
@@ -613,6 +633,13 @@ async fn stream_assistant_response(
                         }
                     }
                     StreamEvent::ThinkingDelta { delta, .. } => {
+                        if !first_delta_seen {
+                            first_delta_seen = true;
+                            if let Ok(mut m) = metrics_handle.lock() {
+                                m.ttft_ms = call_start.elapsed().as_millis() as u64;
+                            }
+                        }
+                        chunk_count += 1;
                         if let Some(ref msg) = partial_message {
                             event_tx
                                 .send(AgentEvent::MessageUpdate {
@@ -625,6 +652,7 @@ async fn stream_assistant_response(
                         }
                     }
                     StreamEvent::ToolCallDelta { delta, .. } => {
+                        chunk_count += 1;
                         if let Some(ref msg) = partial_message {
                             event_tx
                                 .send(AgentEvent::MessageUpdate {
@@ -637,11 +665,21 @@ async fn stream_assistant_response(
                         }
                     }
                     StreamEvent::Done { message } => {
+                        let elapsed = call_start.elapsed().as_millis() as u64;
+                        if let Ok(mut m) = metrics_handle.lock() {
+                            m.duration_ms = elapsed;
+                            m.streaming_ms = elapsed.saturating_sub(m.ttft_ms);
+                            m.chunk_count = chunk_count;
+                        }
                         let am: AgentMessage = message.clone().into();
                         partial_message = Some(am.clone());
                         event_tx.send(AgentEvent::MessageEnd { message: am }).ok();
                     }
                     StreamEvent::Error { message } => {
+                        if let Ok(mut m) = metrics_handle.lock() {
+                            m.duration_ms = call_start.elapsed().as_millis() as u64;
+                            m.chunk_count = chunk_count;
+                        }
                         let am: AgentMessage = message.clone().into();
                         if partial_message.is_none() {
                             event_tx
@@ -669,12 +707,17 @@ async fn stream_assistant_response(
             Err(e) if e.is_retryable() && attempt < retry.max_retries && !cancel.is_cancelled() => {
                 // Abort forwarder to prevent forwarding events from failed attempt
                 forward_handle.abort();
+                let error_metrics = LlmCallMetrics {
+                    duration_ms: call_start.elapsed().as_millis() as u64,
+                    ..LlmCallMetrics::default()
+                };
                 // Emit LlmCallEnd for the failed attempt
                 tx.send(AgentEvent::LlmCallEnd {
                     turn,
                     attempt,
                     usage: Usage::default(),
                     error: Some(e.to_string()),
+                    metrics: error_metrics,
                 })
                 .ok();
                 attempt += 1;
@@ -693,6 +736,9 @@ async fn stream_assistant_response(
         }
     };
 
+    let collected_metrics: LlmCallMetrics =
+        shared_metrics.lock().map(|m| m.clone()).unwrap_or_default();
+
     match result {
         Ok(ref msg) => {
             let usage = match msg {
@@ -704,6 +750,7 @@ async fn stream_assistant_response(
                 attempt,
                 usage,
                 error: None,
+                metrics: collected_metrics,
             })
             .ok();
             msg.clone()
@@ -715,6 +762,7 @@ async fn stream_assistant_response(
                 attempt,
                 usage: Usage::default(),
                 error: Some(e.to_string()),
+                metrics: collected_metrics,
             })
             .ok();
             Message::Assistant {

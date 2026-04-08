@@ -141,6 +141,7 @@ fn format_llm_call_completed() {
         cache_read: 50,
         cache_write: 10,
         error: None,
+        metrics: None,
     };
     let lines = format_event(&payload);
     assert!(lines[0].contains("[llm completed]"));

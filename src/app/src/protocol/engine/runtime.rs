@@ -7,6 +7,7 @@ use super::transcript::into_agent_messages;
 use super::transcript::total_usage;
 use crate::conf::ProviderKind;
 use crate::error::Result;
+use crate::protocol::model::run::LlmCallMetrics;
 use crate::protocol::model::run::ProtocolEvent;
 use crate::protocol::model::run::UsageSummary;
 use crate::protocol::model::transcript::TranscriptItem;
@@ -237,6 +238,7 @@ async fn forward_events(
                 attempt,
                 usage,
                 error,
+                metrics,
             } => Some(ProtocolEvent::LlmCallEnd {
                 turn: *turn,
                 attempt: *attempt,
@@ -247,6 +249,13 @@ async fn forward_events(
                     cache_write: usage.cache_write,
                 },
                 error: error.clone(),
+                metrics: Some(LlmCallMetrics {
+                    duration_ms: metrics.duration_ms,
+                    ttfb_ms: metrics.ttfb_ms,
+                    ttft_ms: metrics.ttft_ms,
+                    streaming_ms: metrics.streaming_ms,
+                    chunk_count: metrics.chunk_count,
+                }),
             }),
             bend_engine::AgentEvent::ContextCompactionStart {
                 message_count,

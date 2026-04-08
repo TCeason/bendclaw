@@ -3,6 +3,7 @@ pub mod session;
 pub mod transcript;
 
 pub use run::AssistantBlock;
+pub use run::LlmCallMetrics;
 pub use run::ProtocolEvent;
 pub use run::RunEvent;
 pub use run::RunEventContext;

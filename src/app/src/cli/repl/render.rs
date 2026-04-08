@@ -97,6 +97,57 @@ pub fn build_run_summary(
     parts.join("  ·  ")
 }
 
+/// Format detail lines for the LLM completed badge.
+///
+/// Returns lines like:
+///   tokens   61001 in · 248 out · 108 tok/s
+///   timing   3.2s · ttfb 245ms (8%) · ttft 892ms (28%) · stream 2.3s (72%)
+pub fn format_llm_completed_lines(
+    usage: &UsageSummary,
+    metrics: Option<&crate::protocol::LlmCallMetrics>,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+
+    // Line 1: tokens
+    let mut token_line = format!("tokens   {} in · {} out", usage.input, usage.output,);
+    if let Some(m) = metrics {
+        if m.streaming_ms > 0 && usage.output > 0 {
+            let tok_per_sec = usage.output as f64 / (m.streaming_ms as f64 / 1000.0);
+            token_line.push_str(&format!(" · {:.0} tok/s", tok_per_sec));
+        }
+    }
+    lines.push(token_line);
+
+    // Line 2: timing (only if metrics available and duration > 0)
+    if let Some(m) = metrics {
+        if m.duration_ms > 0 {
+            let dur = m.duration_ms as f64;
+            let mut parts = vec![human_duration(m.duration_ms)];
+
+            if m.ttfb_ms > 0 {
+                let pct = m.ttfb_ms as f64 / dur * 100.0;
+                parts.push(format!("ttfb {} ({:.0}%)", human_duration(m.ttfb_ms), pct));
+            }
+            if m.ttft_ms > 0 {
+                let pct = m.ttft_ms as f64 / dur * 100.0;
+                parts.push(format!("ttft {} ({:.0}%)", human_duration(m.ttft_ms), pct));
+            }
+            if m.streaming_ms > 0 {
+                let pct = m.streaming_ms as f64 / dur * 100.0;
+                parts.push(format!(
+                    "stream {} ({:.0}%)",
+                    human_duration(m.streaming_ms),
+                    pct
+                ));
+            }
+
+            lines.push(format!("timing   {}", parts.join(" · ")));
+        }
+    }
+
+    lines
+}
+
 // ---------------------------------------------------------------------------
 // Transcript rendering
 // ---------------------------------------------------------------------------

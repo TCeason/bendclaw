@@ -198,6 +198,7 @@ pub fn format_event(payload: &RunEventPayload) -> Vec<String> {
             cache_read,
             cache_write,
             error,
+            metrics,
             ..
         } => {
             if let Some(err) = error {
@@ -207,6 +208,18 @@ pub fn format_event(payload: &RunEventPayload) -> Vec<String> {
                     "[llm completed] {} input · {} output tokens",
                     usage.input, usage.output,
                 );
+                if let Some(m) = metrics {
+                    if m.duration_ms > 0 {
+                        line.push_str(&format!(" · {}ms", m.duration_ms));
+                    }
+                    if m.ttft_ms > 0 {
+                        line.push_str(&format!(" · ttft {}ms", m.ttft_ms));
+                    }
+                    if m.streaming_ms > 0 && usage.output > 0 {
+                        let tok_per_sec = usage.output as f64 / (m.streaming_ms as f64 / 1000.0);
+                        line.push_str(&format!(" · {:.0} tok/s", tok_per_sec));
+                    }
+                }
                 if *cache_read > 0 || *cache_write > 0 {
                     line.push_str(&format!(" · cache r:{cache_read} w:{cache_write}"));
                 }

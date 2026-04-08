@@ -8,6 +8,7 @@ use super::render::build_run_summary;
 use super::render::count_messages_by_role;
 use super::render::format_budget_bar;
 use super::render::format_llm_call_lines;
+use super::render::format_llm_completed_lines;
 use super::render::format_tool_breakdown;
 use super::render::format_tool_input;
 use super::render::print_tool_result;
@@ -46,19 +47,6 @@ pub struct ToolCallDisplay {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn format_cache_info(cache_read: u64, cache_write: u64, input: u64) -> String {
-    if cache_read == 0 && cache_write == 0 {
-        return String::new();
-    }
-    let total_input = input + cache_read + cache_write;
-    let hit_rate = if total_input > 0 {
-        cache_read as f64 / total_input as f64 * 100.0
-    } else {
-        0.0
-    };
-    format!(" · cache r:{cache_read} w:{cache_write} hit:{hit_rate:.0}%")
-}
 
 pub fn finish_assistant_stream(state: &mut SinkState) {
     if let Some(stream) = state.markdown_stream.take() {
@@ -304,19 +292,21 @@ impl ReplSink {
                 }
                 terminal_writeln("");
             }
-            RunEventPayload::LlmCallCompleted { usage, error, .. } => {
+            RunEventPayload::LlmCallCompleted {
+                usage,
+                error,
+                metrics,
+                ..
+            } => {
                 let title = "LLM completed".to_string();
                 let ok = error.is_none();
                 super::render::print_badge_line(&title, true, ok);
                 if let Some(err) = error {
                     terminal_writeln(&format!("{RED}  {err}{RESET}"));
                 } else {
-                    let cache_str =
-                        format_cache_info(usage.cache_read, usage.cache_write, usage.input);
-                    terminal_writeln(&format!(
-                        "{GRAY}  {} input · {} output tokens{cache_str}{RESET}",
-                        usage.input, usage.output,
-                    ));
+                    for line in format_llm_completed_lines(usage, metrics.as_ref()) {
+                        terminal_writeln(&format!("{GRAY}  {line}{RESET}"));
+                    }
                 }
                 terminal_writeln("");
             }

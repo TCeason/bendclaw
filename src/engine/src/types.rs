@@ -198,6 +198,21 @@ impl Usage {
     }
 }
 
+/// Timing metrics collected during a single LLM streaming call.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct LlmCallMetrics {
+    /// Total wall-clock time from request start to completion (ms).
+    pub duration_ms: u64,
+    /// Time to first byte — request start to `StreamEvent::Start` (ms).
+    pub ttfb_ms: u64,
+    /// Time to first token — request start to first text/thinking delta (ms).
+    pub ttft_ms: u64,
+    /// Streaming duration — first delta to `Done` (ms).
+    pub streaming_ms: u64,
+    /// Number of delta chunks received.
+    pub chunk_count: u64,
+}
+
 // ---------------------------------------------------------------------------
 // Cache configuration
 // ---------------------------------------------------------------------------
@@ -460,6 +475,7 @@ pub enum AgentEvent {
         attempt: usize,
         usage: Usage,
         error: Option<String>,
+        metrics: LlmCallMetrics,
     },
     ContextCompactionStart {
         message_count: usize,

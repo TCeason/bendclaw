@@ -45,6 +45,21 @@ impl UsageSummary {
     }
 }
 
+/// Timing metrics for a single LLM streaming call.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LlmCallMetrics {
+    /// Total wall-clock time (ms).
+    pub duration_ms: u64,
+    /// Time to first byte — request start to stream start (ms).
+    pub ttfb_ms: u64,
+    /// Time to first token — request start to first text/thinking delta (ms).
+    pub ttft_ms: u64,
+    /// Streaming duration — first delta to completion (ms).
+    pub streaming_ms: u64,
+    /// Number of delta chunks received.
+    pub chunk_count: u64,
+}
+
 // ---------------------------------------------------------------------------
 // RunEventPayload — strongly typed event payload
 // ---------------------------------------------------------------------------
@@ -112,6 +127,8 @@ pub enum RunEventPayload {
         cache_write: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metrics: Option<LlmCallMetrics>,
     },
     ContextCompactionStarted {
         message_count: usize,
@@ -358,6 +375,7 @@ pub enum ProtocolEvent {
         attempt: usize,
         usage: UsageSummary,
         error: Option<String>,
+        metrics: Option<LlmCallMetrics>,
     },
     InputRejected {
         reason: String,
@@ -515,6 +533,7 @@ impl<'a> RunEventContext<'a> {
                 attempt,
                 usage,
                 error,
+                metrics,
             } => RunEventPayload::LlmCallCompleted {
                 turn: *turn,
                 attempt: *attempt,
@@ -522,6 +541,7 @@ impl<'a> RunEventContext<'a> {
                 cache_read: usage.cache_read,
                 cache_write: usage.cache_write,
                 error: error.clone(),
+                metrics: metrics.clone(),
             },
             ProtocolEvent::ContextCompactionStart {
                 message_count,

@@ -111,19 +111,30 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
             attempt,
             usage,
             error,
+            metrics,
             ..
         } => {
+            let mut data = json!({
+                "turn": turn,
+                "attempt": attempt,
+                "input_tokens": usage.input,
+                "output_tokens": usage.output,
+                "cache_read": usage.cache_read,
+                "cache_write": usage.cache_write,
+                "error": error,
+            });
+            if let Some(m) = metrics {
+                if let serde_json::Value::Object(ref mut map) = data {
+                    map.insert("duration_ms".into(), json!(m.duration_ms));
+                    map.insert("ttfb_ms".into(), json!(m.ttfb_ms));
+                    map.insert("ttft_ms".into(), json!(m.ttft_ms));
+                    map.insert("streaming_ms".into(), json!(m.streaming_ms));
+                    map.insert("chunk_count".into(), json!(m.chunk_count));
+                }
+            }
             events.push(json!({
                 "type": "llm_call_completed",
-                "data": {
-                    "turn": turn,
-                    "attempt": attempt,
-                    "input_tokens": usage.input,
-                    "output_tokens": usage.output,
-                    "cache_read": usage.cache_read,
-                    "cache_write": usage.cache_write,
-                    "error": error,
-                }
+                "data": data,
             }));
         }
         RunEventPayload::ContextCompactionStarted {
