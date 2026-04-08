@@ -546,6 +546,7 @@ async fn stream_assistant_response(
     let retry = &config.retry_config;
     let mut attempt = 0;
     let shared_metrics = std::sync::Arc::new(std::sync::Mutex::new(LlmCallMetrics::default()));
+    let mut last_call_start: Option<std::time::Instant> = None;
     let result = loop {
         let stream_config = StreamConfig {
             model: config.model.clone(),
@@ -575,6 +576,7 @@ async fn stream_assistant_response(
         .ok();
 
         let call_start = std::time::Instant::now();
+        last_call_start = Some(call_start);
         let (stream_tx, mut stream_rx) = mpsc::unbounded_channel();
         let provider_cancel = cancel.clone();
 
@@ -668,7 +670,9 @@ async fn stream_assistant_response(
                         let elapsed = call_start.elapsed().as_millis() as u64;
                         if let Ok(mut m) = metrics_handle.lock() {
                             m.duration_ms = elapsed;
-                            m.streaming_ms = elapsed.saturating_sub(m.ttft_ms);
+                            if first_delta_seen {
+                                m.streaming_ms = elapsed.saturating_sub(m.ttft_ms);
+                            }
                             m.chunk_count = chunk_count;
                         }
                         let am: AgentMessage = message.clone().into();
@@ -678,6 +682,9 @@ async fn stream_assistant_response(
                     StreamEvent::Error { message } => {
                         if let Ok(mut m) = metrics_handle.lock() {
                             m.duration_ms = call_start.elapsed().as_millis() as u64;
+                            if first_delta_seen {
+                                m.streaming_ms = m.duration_ms.saturating_sub(m.ttft_ms);
+                            }
                             m.chunk_count = chunk_count;
                         }
                         let am: AgentMessage = message.clone().into();
@@ -736,8 +743,14 @@ async fn stream_assistant_response(
         }
     };
 
-    let collected_metrics: LlmCallMetrics =
+    let mut collected_metrics: LlmCallMetrics =
         shared_metrics.lock().map(|m| m.clone()).unwrap_or_default();
+
+    if collected_metrics.duration_ms == 0 {
+        if let Some(started_at) = last_call_start {
+            collected_metrics.duration_ms = started_at.elapsed().as_millis() as u64;
+        }
+    }
 
     match result {
         Ok(ref msg) => {

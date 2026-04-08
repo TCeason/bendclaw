@@ -1,5 +1,6 @@
 use bendclaw::cli::repl::render::count_messages_by_role;
 use bendclaw::cli::repl::render::format_llm_call_lines;
+use bendclaw::cli::repl::render::format_llm_completed_lines;
 use bendclaw::cli::repl::render::tool_result_lines;
 use bendclaw::cli::repl::render::ToolCallSummary;
 
@@ -166,4 +167,73 @@ fn tool_result_lines_no_truncation_under_limit() {
         .join("\n");
     let lines = tool_result_lines(&content, false, None);
     assert_eq!(lines.len(), 20);
+}
+
+// ---------------------------------------------------------------------------
+// format_llm_completed_lines
+// ---------------------------------------------------------------------------
+
+#[test]
+fn format_llm_completed_lines_without_metrics() {
+    let usage = bendclaw::protocol::UsageSummary {
+        input: 61001,
+        output: 248,
+        cache_read: 0,
+        cache_write: 0,
+    };
+
+    let lines = format_llm_completed_lines(&usage, None);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0], "tokens   61001 in · 248 out");
+}
+
+#[test]
+fn format_llm_completed_lines_with_metrics_and_throughput() {
+    let usage = bendclaw::protocol::UsageSummary {
+        input: 61001,
+        output: 248,
+        cache_read: 0,
+        cache_write: 0,
+    };
+    let metrics = bendclaw::protocol::LlmCallMetrics {
+        duration_ms: 3200,
+        ttfb_ms: 245,
+        ttft_ms: 892,
+        streaming_ms: 2308,
+        chunk_count: 12,
+    };
+
+    let lines = format_llm_completed_lines(&usage, Some(&metrics));
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].contains("61001 in · 248 out"));
+    assert!(lines[0].contains("tok/s"));
+    assert!(lines[1].contains("timing   3.2s"));
+    assert!(lines[1].contains("ttfb 245ms"));
+    assert!(lines[1].contains("ttft 892ms"));
+    assert!(lines[1].contains("stream 2.3s"));
+}
+
+#[test]
+fn format_llm_completed_lines_skips_throughput_when_streaming_missing() {
+    let usage = bendclaw::protocol::UsageSummary {
+        input: 200,
+        output: 80,
+        cache_read: 0,
+        cache_write: 0,
+    };
+    let metrics = bendclaw::protocol::LlmCallMetrics {
+        duration_ms: 900,
+        ttfb_ms: 120,
+        ttft_ms: 0,
+        streaming_ms: 0,
+        chunk_count: 0,
+    };
+
+    let lines = format_llm_completed_lines(&usage, Some(&metrics));
+    assert_eq!(lines.len(), 2);
+    assert!(!lines[0].contains("tok/s"));
+    assert!(lines[1].contains("900ms"));
+    assert!(lines[1].contains("ttfb 120ms"));
+    assert!(!lines[1].contains("ttft"));
+    assert!(!lines[1].contains("stream"));
 }
