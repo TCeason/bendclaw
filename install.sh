@@ -39,7 +39,9 @@ mkdir -p "${INSTALL_DIR}"
 cp "${TMP}/bin/${BINARY}" "${INSTALL_DIR}/${BINARY}"
 chmod +x "${INSTALL_DIR}/${BINARY}"
 
-echo "Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
+echo ""
+echo "  ✓ Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
+echo ""
 
 if ! echo "${PATH}" | tr ':' '\n' | grep -qx "${INSTALL_DIR}"; then
   SHELL_NAME="$(basename "${SHELL:-/bin/bash}")"
