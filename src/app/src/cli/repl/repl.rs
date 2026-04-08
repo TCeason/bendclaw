@@ -72,7 +72,7 @@ impl rustyline::ConditionalEventHandler for ToggleModeHandler {
             }
         };
         eprintln!("{msg}");
-        Some(rustyline::Cmd::Noop)
+        Some(rustyline::Cmd::ClearScreen)
     }
 }
 
