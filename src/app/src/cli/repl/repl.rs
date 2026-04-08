@@ -42,6 +42,41 @@ use crate::error::BendclawError;
 use crate::error::Result;
 
 // ---------------------------------------------------------------------------
+// ToggleModeHandler — Shift+Tab toggles plan/act mode
+// ---------------------------------------------------------------------------
+
+struct ToggleModeHandler {
+    agent: Arc<AppAgent>,
+}
+
+impl rustyline::ConditionalEventHandler for ToggleModeHandler {
+    fn handle(
+        &self,
+        _evt: &rustyline::Event,
+        _n: rustyline::RepeatCount,
+        _positive: bool,
+        _ctx: &rustyline::EventContext,
+    ) -> Option<rustyline::Cmd> {
+        use crate::agent::ToolMode;
+        let new_mode = match self.agent.tool_mode() {
+            ToolMode::Normal => ToolMode::Planning,
+            ToolMode::Planning => ToolMode::Normal,
+        };
+        self.agent.with_tool_mode(new_mode);
+        let msg = match new_mode {
+            ToolMode::Planning => {
+                format!("\r{DIM}  planning mode — read-only tools; shift+tab to switch back{RESET}")
+            }
+            ToolMode::Normal => {
+                format!("\r{DIM}  action mode — full tool set restored{RESET}")
+            }
+        };
+        eprintln!("{msg}");
+        Some(rustyline::Cmd::Noop)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Repl
 // ---------------------------------------------------------------------------
 
@@ -97,6 +132,15 @@ impl Repl {
         let mut rl = Editor::with_config(config)
             .map_err(|e| BendclawError::Cli(format!("failed to initialize readline: {e}")))?;
         rl.set_helper(Some(ReplHelper::new(self.completion_state.clone())));
+
+        // Shift+Tab toggles plan/act mode
+        rl.bind_sequence(
+            rustyline::KeyEvent(rustyline::KeyCode::BackTab, rustyline::Modifiers::NONE),
+            rustyline::EventHandler::Conditional(Box::new(ToggleModeHandler {
+                agent: self.agent.clone(),
+            })),
+        );
+
         self.load_history(&mut rl);
 
         loop {
