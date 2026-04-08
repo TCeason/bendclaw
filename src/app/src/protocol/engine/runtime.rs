@@ -179,6 +179,7 @@ async fn forward_events(
                 result,
                 is_error,
                 result_tokens,
+                duration_ms,
             } => {
                 let content = extract_content_text(&result.content);
                 Some(ProtocolEvent::ToolEnd {
@@ -188,6 +189,7 @@ async fn forward_events(
                     is_error: *is_error,
                     details: result.details.clone(),
                     result_tokens: *result_tokens,
+                    duration_ms: *duration_ms,
                 })
             }
             bend_engine::AgentEvent::ProgressMessage {

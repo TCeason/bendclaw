@@ -456,6 +456,8 @@ pub enum AgentEvent {
         is_error: bool,
         /// Estimated token count of the tool result content.
         result_tokens: usize,
+        /// Wall-clock execution time (ms).
+        duration_ms: u64,
     },
     ProgressMessage {
         tool_call_id: String,

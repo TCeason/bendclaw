@@ -149,6 +149,281 @@ pub fn format_llm_completed_lines(
 }
 
 // ---------------------------------------------------------------------------
+// Run summary data types
+// ---------------------------------------------------------------------------
+
+/// Aggregated stats for a single tool across the run.
+#[derive(Debug, Default, Clone)]
+pub struct ToolAggStats {
+    pub calls: u32,
+    pub result_tokens: usize,
+    pub duration_ms: u64,
+    pub errors: u32,
+}
+
+/// A single compaction record.
+#[derive(Debug, Clone)]
+pub struct CompactRecord {
+    pub level: u8,
+    pub before_tokens: usize,
+    pub after_tokens: usize,
+}
+
+/// All data needed to render the run summary.
+pub struct RunSummaryData {
+    pub duration_ms: u64,
+    pub turn_count: u32,
+    pub usage: UsageSummary,
+    pub llm_call_count: u32,
+    pub tool_call_count: u32,
+    pub system_prompt_tokens: usize,
+    pub last_message_stats: Option<MessageStats>,
+    pub llm_metrics: Vec<crate::protocol::LlmCallMetrics>,
+    pub llm_output_tokens: Vec<u64>,
+    pub tool_stats: Vec<(String, ToolAggStats)>,
+    pub compact_history: Vec<CompactRecord>,
+}
+
+// ---------------------------------------------------------------------------
+// Run summary rendering
+// ---------------------------------------------------------------------------
+
+/// Human-friendly token count: "312k", "1.2m", "800".
+fn human_tokens(tokens: usize) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}m", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{}k", tokens / 1_000)
+    } else {
+        format!("{tokens}")
+    }
+}
+
+/// Render a simple bar: `████░░░░` of given width based on ratio (0.0–1.0).
+fn render_ratio_bar(ratio: f64, width: usize) -> String {
+    let capped = ratio.clamp(0.0, 1.0);
+    let filled = (capped * width as f64).round() as usize;
+    (0..width)
+        .map(|i| if i < filled { '█' } else { '░' })
+        .collect()
+}
+
+/// Format the full run summary block.
+pub fn format_run_summary(data: &RunSummaryData) -> Vec<String> {
+    let mut lines = Vec::new();
+    let total_input = data.usage.input as usize;
+    let bar_width = 20;
+
+    // Header
+    lines.push("─── This Run Summary ──────────────────────────────────".into());
+    lines.push(format!(
+        "{} · {} turns · {} llm calls · {} tool calls · {} tokens",
+        human_duration(data.duration_ms),
+        data.turn_count,
+        data.llm_call_count,
+        data.tool_call_count,
+        total_input + data.usage.output as usize,
+    ));
+    lines.push(String::new());
+
+    // --- tokens block ---
+    let total_output = data.usage.output as usize;
+    let tok_per_sec = if !data.llm_metrics.is_empty() {
+        let total_stream: u64 = data.llm_metrics.iter().map(|m| m.streaming_ms).sum();
+        if total_stream > 0 {
+            Some(total_output as f64 / (total_stream as f64 / 1000.0))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut tok_line = format!(
+        "  tokens    {} total input · {} output",
+        total_input, total_output,
+    );
+    if let Some(tps) = tok_per_sec {
+        tok_line.push_str(&format!(" · {:.1} tok/s", tps));
+    }
+    lines.push(tok_line);
+
+    // Token breakdown from last LLM call's message stats
+    if let Some(ref stats) = data.last_message_stats {
+        let sys = data.system_prompt_tokens;
+        let user = stats.user_tokens;
+        let asst = stats.assistant_tokens;
+        let tool = stats.tool_result_tokens;
+
+        let max_label_width = 12;
+        let max_val_width = 8;
+
+        for (label, tokens) in [
+            ("system", sys),
+            ("user", user),
+            ("assistant", asst),
+            ("tool_result", tool),
+        ] {
+            if tokens == 0 {
+                continue;
+            }
+            let pct = if total_input > 0 {
+                tokens as f64 / total_input as f64 * 100.0
+            } else {
+                0.0
+            };
+            let bar = render_ratio_bar(pct / 100.0, bar_width);
+            lines.push(format!(
+                "            {:<width_l$} {:>width_v$}  {bar} {pct:>5.1}%",
+                label,
+                human_tokens(tokens),
+                width_l = max_label_width,
+                width_v = max_val_width,
+            ));
+        }
+
+        // Per-tool breakdown under tool_result
+        if !data.tool_stats.is_empty() {
+            let max_name = data
+                .tool_stats
+                .iter()
+                .map(|(n, _)| n.len())
+                .max()
+                .unwrap_or(0);
+            for (name, agg) in &data.tool_stats {
+                let pct = if total_input > 0 {
+                    agg.result_tokens as f64 / total_input as f64 * 100.0
+                } else {
+                    0.0
+                };
+                let bar = render_ratio_bar(pct / 100.0, bar_width);
+                let call_word = if agg.calls == 1 { "call" } else { "calls" };
+                lines.push(format!(
+                    "              {:<width$}  {} {}  {:>6}  {bar} {pct:>5.1}%",
+                    name,
+                    agg.calls,
+                    call_word,
+                    human_tokens(agg.result_tokens),
+                    width = max_name,
+                ));
+            }
+        }
+    }
+    lines.push(String::new());
+
+    // --- compact block ---
+    let real_compacts: Vec<&CompactRecord> = data
+        .compact_history
+        .iter()
+        .filter(|c| c.level > 0)
+        .collect();
+    if !real_compacts.is_empty() {
+        let total_saved: usize = real_compacts
+            .iter()
+            .map(|c| c.before_tokens.saturating_sub(c.after_tokens))
+            .sum();
+        lines.push(format!(
+            "  compact   {} compactions · saved {} tokens",
+            real_compacts.len(),
+            human_tokens(total_saved),
+        ));
+        for (i, c) in real_compacts.iter().enumerate() {
+            let saved = c.before_tokens.saturating_sub(c.after_tokens);
+            let pct = if c.before_tokens > 0 {
+                saved as f64 / c.before_tokens as f64 * 100.0
+            } else {
+                0.0
+            };
+            let bar = render_ratio_bar(pct / 100.0, 12);
+            lines.push(format!(
+                "            #{}  lv{}  {}→{}  saved {}  {bar} {pct:.0}%",
+                i + 1,
+                c.level,
+                human_tokens(c.before_tokens),
+                human_tokens(c.after_tokens),
+                human_tokens(saved),
+            ));
+        }
+        lines.push(String::new());
+    }
+
+    // --- llm block ---
+    if !data.llm_metrics.is_empty() {
+        let total_llm_ms: u64 = data.llm_metrics.iter().map(|m| m.duration_ms).sum();
+        let llm_pct = if data.duration_ms > 0 {
+            total_llm_ms as f64 / data.duration_ms as f64 * 100.0
+        } else {
+            0.0
+        };
+        let total_output_tokens: u64 = data.llm_output_tokens.iter().sum();
+        let total_stream_ms: u64 = data.llm_metrics.iter().map(|m| m.streaming_ms).sum();
+        let avg_tps = if total_stream_ms > 0 {
+            total_output_tokens as f64 / (total_stream_ms as f64 / 1000.0)
+        } else {
+            0.0
+        };
+
+        lines.push(format!(
+            "  llm       {} calls · {} ({:.0}% of run) · {:.1} tok/s avg",
+            data.llm_metrics.len(),
+            human_duration(total_llm_ms),
+            llm_pct,
+            avg_tps,
+        ));
+
+        let count = data.llm_metrics.len() as u64;
+        let total_ttft: u64 = data.llm_metrics.iter().map(|m| m.ttft_ms).sum();
+        let total_stream: u64 = data.llm_metrics.iter().map(|m| m.streaming_ms).sum();
+        let avg_ttft = if count > 0 { total_ttft / count } else { 0 };
+        let avg_stream = if count > 0 { total_stream / count } else { 0 };
+        lines.push(format!(
+            "            ttft avg {} · stream avg {}",
+            human_duration(avg_ttft),
+            human_duration(avg_stream),
+        ));
+
+        // Top 3 LLM calls by duration
+        let mut indexed: Vec<(usize, u64)> = data
+            .llm_metrics
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (i, m.duration_ms))
+            .collect();
+        indexed.sort_by(|a, b| b.1.cmp(&a.1));
+
+        let max_dur = indexed.first().map(|(_, d)| *d).unwrap_or(1);
+        let show = indexed.len().min(3);
+        for &(idx, dur) in &indexed[..show] {
+            let bar = render_ratio_bar(dur as f64 / max_dur as f64, bar_width);
+            let pct = if total_llm_ms > 0 {
+                dur as f64 / total_llm_ms as f64 * 100.0
+            } else {
+                0.0
+            };
+            lines.push(format!(
+                "            #{}  {} {bar} {pct:.0}%",
+                idx + 1,
+                human_duration(dur),
+            ));
+        }
+        if indexed.len() > 3 {
+            let rest_count = indexed.len() - 3;
+            let rest_ms: u64 = indexed[3..].iter().map(|(_, d)| *d).sum();
+            lines.push(format!(
+                "            ... {} more calls · {} total",
+                rest_count,
+                human_duration(rest_ms),
+            ));
+        }
+    }
+
+    // Footer
+    lines.push("────────────────────────────────────────────────────────".into());
+
+    lines
+}
+
+// ---------------------------------------------------------------------------
 // Transcript rendering
 // ---------------------------------------------------------------------------
 

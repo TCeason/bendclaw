@@ -26,6 +26,7 @@ jobs:
       sha: ${{ steps.meta.outputs.sha }}
       previous: ${{ steps.next.outputs.previous }}
       name: ${{ steps.next.outputs.name }}
+      semver: ${{ steps.next.outputs.semver }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -97,6 +98,14 @@ jobs:
           echo "tag=${NEXT_TAG}" >> "${GITHUB_OUTPUT}"
           echo "version=${NEXT_VERSION}" >> "${GITHUB_OUTPUT}"
           echo "name=${RELEASE_NAME}" >> "${GITHUB_OUTPUT}"
+
+          # Compute semver for Cargo / binstall asset naming
+          IFS='.' read -r Y M D SFX <<< "${NEXT_VERSION%-beta.*}"
+          SEMVER="${Y}.$(printf '%d%02d' "${M}" "${D}").${SFX:-0}"
+          case "${NEXT_VERSION}" in
+            *-beta.*) SEMVER="${SEMVER}-beta.${NEXT_VERSION##*-beta.}" ;;
+          esac
+          echo "semver=${SEMVER}" >> "${GITHUB_OUTPUT}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -226,9 +235,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${{ needs.create_release.outputs.version }}"
-          IFS='.' read -r Y M D SUFFIX <<< "${VERSION}"
-          SEMVER="${Y}.$(printf '%d%02d' "${M}" "${D}").${SUFFIX:-0}"
+          SEMVER="${{ needs.create_release.outputs.semver }}"
           sed -i.bak "s/^version = \".*\"/version = \"${SEMVER}\"/" Cargo.toml
           rm -f Cargo.toml.bak
 
@@ -240,17 +247,19 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ needs.create_release.outputs.tag }}"
+          SEMVER="${{ needs.create_release.outputs.semver }}"
           mkdir -p distro/{bin,configs}
           cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} distro/bin/
           cp configs/bendclaw.env.example distro/configs/
-          tar -C distro -czf ${{ env.BINARY_NAME }}-${TAG}-${{ matrix.target }}.tar.gz bin configs
+          tar -C distro -czf ${{ env.BINARY_NAME }}-v${SEMVER}-${{ matrix.target }}.tar.gz bin configs
 
       - name: Upload artifact to release
         shell: bash
         run: |
           set -euo pipefail
           TAG="${{ needs.create_release.outputs.tag }}"
-          gh release upload "${TAG}" ${{ env.BINARY_NAME }}-${TAG}-${{ matrix.target }}.tar.gz --clobber
+          SEMVER="${{ needs.create_release.outputs.semver }}"
+          gh release upload "${TAG}" ${{ env.BINARY_NAME }}-v${SEMVER}-${{ matrix.target }}.tar.gz --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

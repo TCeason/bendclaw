@@ -105,6 +105,9 @@ pub enum RunEventPayload {
         /// Estimated token count of the tool result content.
         #[serde(default)]
         result_tokens: usize,
+        /// Wall-clock execution time (ms).
+        #[serde(default)]
+        duration_ms: u64,
     },
     LlmCallStarted {
         turn: usize,
@@ -359,6 +362,8 @@ pub enum ProtocolEvent {
         details: serde_json::Value,
         /// Estimated token count of the tool result content.
         result_tokens: usize,
+        /// Wall-clock execution time (ms).
+        duration_ms: u64,
     },
     LlmCallStart {
         turn: usize,
@@ -494,6 +499,7 @@ impl<'a> RunEventContext<'a> {
                 is_error,
                 details,
                 result_tokens,
+                duration_ms,
             } => RunEventPayload::ToolFinished {
                 tool_call_id: tool_call_id.clone(),
                 tool_name: tool_name.clone(),
@@ -501,6 +507,7 @@ impl<'a> RunEventContext<'a> {
                 is_error: *is_error,
                 details: details.clone(),
                 result_tokens: *result_tokens,
+                duration_ms: *duration_ms,
             },
             ProtocolEvent::InputRejected { reason } => RunEventPayload::Error {
                 message: reason.clone(),

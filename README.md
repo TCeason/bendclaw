@@ -37,6 +37,16 @@
 
 **Evolve** — Post-run recall extracts learnings from execution. Shared memory makes knowledge available to all agents on the team. The replay → memory loop means agents don't just accumulate knowledge blindly — they learn from what actually happened.
 
+## Installation
+
+```bash
+# cargo binstall (prebuilt binary, recommended)
+cargo binstall bendclaw
+
+# Or build from source
+cargo install --git https://github.com/EvotAI/bendclaw.git
+```
+
 ## Usage
 
 ```bash

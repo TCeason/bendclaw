@@ -237,3 +237,132 @@ fn format_llm_completed_lines_skips_throughput_when_streaming_missing() {
     assert!(!lines[1].contains("ttft"));
     assert!(!lines[1].contains("stream"));
 }
+
+// ---------------------------------------------------------------------------
+// format_run_summary
+// ---------------------------------------------------------------------------
+
+use bendclaw::cli::repl::render::format_run_summary;
+use bendclaw::cli::repl::render::CompactRecord;
+use bendclaw::cli::repl::render::MessageStats;
+use bendclaw::cli::repl::render::RunSummaryData;
+use bendclaw::cli::repl::render::ToolAggStats;
+
+fn make_summary_data() -> RunSummaryData {
+    RunSummaryData {
+        duration_ms: 226500,
+        turn_count: 11,
+        usage: bendclaw::protocol::UsageSummary {
+            input: 750142,
+            output: 1796,
+            cache_read: 710000,
+            cache_write: 38346,
+        },
+        llm_call_count: 11,
+        tool_call_count: 10,
+        system_prompt_tokens: 12800,
+        last_message_stats: Some(MessageStats {
+            user_count: 11,
+            assistant_count: 10,
+            tool_result_count: 10,
+            user_tokens: 8200,
+            assistant_tokens: 25000,
+            tool_result_tokens: 702346,
+            tool_details: vec![],
+        }),
+        llm_metrics: vec![
+            bendclaw::protocol::LlmCallMetrics {
+                duration_ms: 41200,
+                ttfb_ms: 300,
+                ttft_ms: 1800,
+                streaming_ms: 39000,
+                chunk_count: 50,
+            },
+            bendclaw::protocol::LlmCallMetrics {
+                duration_ms: 22800,
+                ttfb_ms: 280,
+                ttft_ms: 1400,
+                streaming_ms: 21000,
+                chunk_count: 30,
+            },
+        ],
+        llm_output_tokens: vec![900, 896],
+        tool_stats: vec![
+            ("read_file".into(), ToolAggStats {
+                calls: 5,
+                result_tokens: 312000,
+                duration_ms: 12300,
+                errors: 0,
+            }),
+            ("search".into(), ToolAggStats {
+                calls: 3,
+                result_tokens: 98000,
+                duration_ms: 8100,
+                errors: 0,
+            }),
+        ],
+        compact_history: vec![CompactRecord {
+            level: 1,
+            before_tokens: 320000,
+            after_tokens: 180000,
+        }],
+    }
+}
+
+#[test]
+fn format_run_summary_contains_header() {
+    let data = make_summary_data();
+    let lines = format_run_summary(&data);
+    assert!(lines[0].contains("This Run Summary"));
+    assert!(lines[1].contains("226.5s"));
+    assert!(lines[1].contains("11 turns"));
+    assert!(lines[1].contains("11 llm calls"));
+    assert!(lines[1].contains("10 tool calls"));
+}
+
+#[test]
+fn format_run_summary_contains_token_breakdown() {
+    let data = make_summary_data();
+    let lines = format_run_summary(&data);
+    let all = lines.join("\n");
+    assert!(all.contains("system"));
+    assert!(all.contains("user"));
+    assert!(all.contains("assistant"));
+    assert!(all.contains("tool_result"));
+    assert!(all.contains("read_file"));
+    assert!(all.contains("5 calls"));
+    assert!(all.contains("search"));
+    assert!(all.contains("3 calls"));
+}
+
+#[test]
+fn format_run_summary_contains_compact() {
+    let data = make_summary_data();
+    let lines = format_run_summary(&data);
+    let all = lines.join("\n");
+    assert!(all.contains("compact"));
+    assert!(all.contains("lv1"));
+    assert!(all.contains("320k"));
+    assert!(all.contains("180k"));
+}
+
+#[test]
+fn format_run_summary_contains_llm_block() {
+    let data = make_summary_data();
+    let lines = format_run_summary(&data);
+    let all = lines.join("\n");
+    assert!(all.contains("2 calls"));
+    assert!(all.contains("ttft avg"));
+    assert!(all.contains("stream avg"));
+    assert!(all.contains("#1"));
+    assert!(all.contains("#2"));
+}
+
+#[test]
+fn format_run_summary_no_compact_when_empty() {
+    let mut data = make_summary_data();
+    data.compact_history.clear();
+    let lines = format_run_summary(&data);
+    let all = lines.join("\n");
+    assert!(!all.contains("compact"));
+}

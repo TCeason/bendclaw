@@ -939,6 +939,8 @@ async fn execute_single_tool(
     })
     .ok();
 
+    let tool_start = std::time::Instant::now();
+
     let on_update: Option<ToolUpdateFn> = {
         let tx = tx.clone();
         let id = id.to_string();
@@ -1000,6 +1002,7 @@ async fn execute_single_tool(
     };
 
     let result_tokens = context::content_tokens(&result.content);
+    let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
 
     tx.send(AgentEvent::ToolExecutionEnd {
         tool_call_id: id.to_string(),
@@ -1007,6 +1010,7 @@ async fn execute_single_tool(
         result: result.clone(),
         is_error,
         result_tokens,
+        duration_ms: tool_duration_ms,
     })
     .ok();
 
@@ -1058,6 +1062,7 @@ fn skip_tool_call(
         result: result.clone(),
         is_error: true,
         result_tokens,
+        duration_ms: 0,
     })
     .ok();
 
