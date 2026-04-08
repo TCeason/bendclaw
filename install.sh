@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO="evotai/bendclaw"
 BINARY="bendclaw"
-INSTALL_DIR="${BENDCLAW_INSTALL_DIR:-$HOME/.local/bin}"
+INSTALL_DIR="${BENDCLAW_INSTALL_DIR:-$HOME/.evotai/bin}"
 
 # Detect platform
 OS="$(uname -s)"
