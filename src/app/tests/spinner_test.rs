@@ -103,3 +103,44 @@ fn spinner_renders_continuously_while_active() {
     state.render_frame();
     assert_eq!(state.frame_index(), 3);
 }
+
+#[test]
+fn spinner_throttles_during_active_streaming() {
+    let mut state = SpinnerState::new();
+    state.activate();
+
+    // Simulate tokens arriving (makes it "streaming")
+    state.add_tokens(10);
+
+    // With STREAMING_FRAME_DIVISOR=4, only every 4th tick advances the frame.
+    // tick 1 → skip, tick 2 → skip, tick 3 → skip, tick 4 → render (frame 1)
+    state.render_frame(); // tick 1
+    state.render_frame(); // tick 2
+    state.render_frame(); // tick 3
+    assert_eq!(state.frame_index(), 0); // no frame advanced yet
+
+    state.render_frame(); // tick 4 → advances
+    assert_eq!(state.frame_index(), 1);
+
+    // Next batch: ticks 5-7 skip, tick 8 renders
+    state.add_tokens(5); // keep it "streaming"
+    state.render_frame(); // tick 5
+    state.render_frame(); // tick 6
+    state.render_frame(); // tick 7
+    assert_eq!(state.frame_index(), 1);
+
+    state.render_frame(); // tick 8 → advances
+    assert_eq!(state.frame_index(), 2);
+}
+
+#[test]
+fn spinner_runs_full_speed_without_tokens() {
+    let mut state = SpinnerState::new();
+    state.activate();
+
+    // No tokens added → not streaming → every render_frame advances
+    state.render_frame();
+    state.render_frame();
+    state.render_frame();
+    assert_eq!(state.frame_index(), 3);
+}

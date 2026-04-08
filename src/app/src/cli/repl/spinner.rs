@@ -51,6 +51,15 @@ const STALLED_THRESHOLD_MS: u128 = 3_000;
 /// Show token count after this many ms.
 const SHOW_TOKENS_AFTER_MS: u128 = 30_000;
 
+/// When tokens are actively streaming, only advance the spinner frame
+/// every N render calls. This keeps the animation calm while markdown
+/// is being printed (the user already sees activity via the text).
+const STREAMING_FRAME_DIVISOR: usize = 4;
+
+/// Tokens are considered "actively streaming" if the last token arrived
+/// within this many milliseconds.
+const STREAMING_RECENCY_MS: u128 = 500;
+
 // ---------------------------------------------------------------------------
 // SpinnerPhase
 // ---------------------------------------------------------------------------
@@ -74,6 +83,7 @@ pub struct SpinnerState {
     active: bool,
     rendered: bool,
     frame: usize,
+    tick: usize,
     verb: String,
     response_tokens: u64,
     glimmer_pos: i32,
@@ -95,6 +105,7 @@ impl SpinnerState {
             active: false,
             rendered: false,
             frame: 0,
+            tick: 0,
             verb: pick_verb(),
             response_tokens: 0,
             glimmer_pos: -2,
@@ -113,6 +124,7 @@ impl SpinnerState {
         self.run_started_at = now;
         self.last_token_at = now;
         self.frame = 0;
+        self.tick = 0;
         self.verb = pick_verb();
         self.response_tokens = 0;
         self.glimmer_pos = -2;
@@ -150,8 +162,19 @@ impl SpinnerState {
     }
 
     /// Render one animation frame to stdout. Called from the 80ms poll loop.
+    /// When tokens are actively streaming, the frame advances slower so the
+    /// spinner doesn't feel frantic alongside the flowing markdown text.
     pub fn render_frame(&mut self) {
         if !self.active || matches!(self.phase, SpinnerPhase::Hidden) {
+            return;
+        }
+
+        self.tick += 1;
+
+        // Tokens arrived recently → slow down the animation.
+        let streaming = self.last_token_at.elapsed().as_millis() < STREAMING_RECENCY_MS
+            && self.response_tokens > 0;
+        if streaming && self.tick % STREAMING_FRAME_DIVISOR != 0 {
             return;
         }
 
