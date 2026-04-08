@@ -254,6 +254,7 @@ dependencies = [
  "htmd",
  "jsonrepair",
  "openapiv3",
+ "parking_lot",
  "rand 0.8.5",
  "readability",
  "reqwest 0.12.28",

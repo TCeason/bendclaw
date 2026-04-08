@@ -220,21 +220,24 @@ pub async fn agent_loop_continue(
     tx: mpsc::UnboundedSender<AgentEvent>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Vec<AgentMessage> {
-    assert!(
-        !context.messages.is_empty(),
-        "Cannot continue: no messages in context"
-    );
+    tx.send(AgentEvent::AgentStart).ok();
+
+    if context.messages.is_empty() {
+        warn!("Cannot continue: no messages in context");
+        tx.send(AgentEvent::AgentEnd { messages: vec![] }).ok();
+        return vec![];
+    }
 
     if let Some(last) = context.messages.last() {
-        assert!(
-            last.role() != "assistant",
-            "Cannot continue from assistant message"
-        );
+        if last.role() == "assistant" {
+            warn!("Cannot continue from assistant message");
+            tx.send(AgentEvent::AgentEnd { messages: vec![] }).ok();
+            return vec![];
+        }
     }
 
     let mut new_messages: Vec<AgentMessage> = Vec::new();
 
-    tx.send(AgentEvent::AgentStart).ok();
     tx.send(AgentEvent::TurnStart).ok();
 
     run_loop(context, &mut new_messages, config, &tx, &cancel).await;

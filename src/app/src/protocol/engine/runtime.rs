@@ -27,6 +27,20 @@ pub struct EngineHandle {
     agent: Option<bend_engine::Agent>,
 }
 
+fn serialize_or_placeholder<T: serde::Serialize>(value: &T, kind: &str) -> serde_json::Value {
+    match serde_json::to_value(value) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("failed to serialize {kind}: {e}");
+            serde_json::json!({
+                "type": "serialization_error",
+                "kind": kind,
+                "message": e.to_string(),
+            })
+        }
+    }
+}
+
 impl EngineHandle {
     /// Wait for the engine to finish, then extract final transcripts.
     /// Calls agent.finish().await first to ensure the agent loop is fully done.
@@ -200,12 +214,12 @@ async fn forward_events(
                 let messages: Vec<serde_json::Value> = request
                     .messages
                     .iter()
-                    .map(|m| serde_json::to_value(m).unwrap_or_default())
+                    .map(|m| serialize_or_placeholder(m, "message"))
                     .collect();
                 let tools: Vec<serde_json::Value> = request
                     .tools
                     .iter()
-                    .map(|t| serde_json::to_value(t).unwrap_or_default())
+                    .map(|t| serialize_or_placeholder(t, "tool"))
                     .collect();
                 Some(ProtocolEvent::LlmCallStart {
                     turn: *turn,
@@ -232,8 +246,6 @@ async fn forward_events(
                     cache_read: usage.cache_read,
                     cache_write: usage.cache_write,
                 },
-                cache_read: usage.cache_read,
-                cache_write: usage.cache_write,
                 error: error.clone(),
             }),
             bend_engine::AgentEvent::ContextCompactionStart {

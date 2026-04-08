@@ -121,7 +121,10 @@ impl ExtensionMessage {
         Self {
             role: "extension".into(),
             kind: kind.into(),
-            data: serde_json::to_value(data).unwrap_or(serde_json::Value::Null),
+            data: match serde_json::to_value(data) {
+                Ok(v) => v,
+                Err(_) => serde_json::Value::Null,
+            },
         }
     }
 }

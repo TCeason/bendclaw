@@ -357,8 +357,6 @@ pub enum ProtocolEvent {
         turn: usize,
         attempt: usize,
         usage: UsageSummary,
-        cache_read: u64,
-        cache_write: u64,
         error: Option<String>,
     },
     InputRejected {
@@ -516,15 +514,13 @@ impl<'a> RunEventContext<'a> {
                 turn,
                 attempt,
                 usage,
-                cache_read,
-                cache_write,
                 error,
             } => RunEventPayload::LlmCallCompleted {
                 turn: *turn,
                 attempt: *attempt,
                 usage: usage.clone(),
-                cache_read: *cache_read,
-                cache_write: *cache_write,
+                cache_read: usage.cache_read,
+                cache_write: usage.cache_write,
                 error: error.clone(),
             },
             ProtocolEvent::ContextCompactionStart {

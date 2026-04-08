@@ -3,8 +3,8 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::Mutex;
 
+use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -372,20 +372,20 @@ impl Agent {
 
     /// Queue a steering message (interrupts agent mid-tool-execution)
     pub fn steer(&self, msg: AgentMessage) {
-        self.steering_queue.lock().unwrap().push(msg);
+        self.steering_queue.lock().push(msg);
     }
 
     /// Queue a follow-up message (processed after agent finishes)
     pub fn follow_up(&self, msg: AgentMessage) {
-        self.follow_up_queue.lock().unwrap().push(msg);
+        self.follow_up_queue.lock().push(msg);
     }
 
     pub fn clear_steering_queue(&self) {
-        self.steering_queue.lock().unwrap().clear();
+        self.steering_queue.lock().clear();
     }
 
     pub fn clear_follow_up_queue(&self) {
-        self.follow_up_queue.lock().unwrap().clear();
+        self.follow_up_queue.lock().clear();
     }
 
     pub fn clear_all_queues(&self) {
@@ -549,14 +549,20 @@ impl Agent {
     pub async fn continue_loop(&mut self) -> mpsc::UnboundedReceiver<AgentEvent> {
         self.finish().await; // restore from previous if needed
 
-        assert!(!self.is_streaming, "Agent is already streaming.");
-        assert!(!self.messages.is_empty(), "No messages to continue from.");
+        let (tx, rx) = mpsc::unbounded_channel();
+
+        if self.is_streaming {
+            tracing::warn!("Agent is already streaming, skipping continue");
+            return rx;
+        }
+        if self.messages.is_empty() {
+            tracing::warn!("No messages to continue from, skipping continue");
+            return rx;
+        }
 
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
         self.is_streaming = true;
-
-        let (tx, rx) = mpsc::unbounded_channel();
 
         let mut context = AgentContext {
             system_prompt: self.system_prompt.clone(),
@@ -580,8 +586,14 @@ impl Agent {
     pub async fn continue_loop_with_sender(&mut self, tx: mpsc::UnboundedSender<AgentEvent>) {
         self.finish().await; // restore from previous if needed
 
-        assert!(!self.is_streaming, "Agent is already streaming.");
-        assert!(!self.messages.is_empty(), "No messages to continue from.");
+        if self.is_streaming {
+            tracing::warn!("Agent is already streaming, skipping continue");
+            return;
+        }
+        if self.messages.is_empty() {
+            tracing::warn!("No messages to continue from, skipping continue");
+            return;
+        }
 
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
@@ -651,7 +663,7 @@ impl Agent {
             convert_to_llm: None,
             transform_context: None,
             get_steering_messages: Some(Box::new(move || {
-                let mut queue = steering_queue.lock().unwrap();
+                let mut queue = steering_queue.lock();
                 match steering_mode {
                     QueueMode::OneAtATime => {
                         if queue.is_empty() {
@@ -680,7 +692,7 @@ impl Agent {
             tool_execution: self.tool_execution.clone(),
             retry_config: self.retry_config.clone(),
             get_follow_up_messages: Some(Box::new(move || {
-                let mut queue = follow_up_queue.lock().unwrap();
+                let mut queue = follow_up_queue.lock();
                 match follow_up_mode {
                     QueueMode::OneAtATime => {
                         if queue.is_empty() {

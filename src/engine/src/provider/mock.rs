@@ -1,6 +1,7 @@
 //! Mock provider for testing. No real API calls.
 
 use async_trait::async_trait;
+use parking_lot::Mutex;
 use tokio::sync::mpsc;
 
 use super::traits::*;
@@ -21,13 +22,13 @@ pub struct MockToolCall {
 
 /// Mock LLM provider for tests. Supply a sequence of responses.
 pub struct MockProvider {
-    responses: std::sync::Mutex<Vec<MockResponse>>,
+    responses: Mutex<Vec<MockResponse>>,
 }
 
 impl MockProvider {
     pub fn new(responses: Vec<MockResponse>) -> Self {
         Self {
-            responses: std::sync::Mutex::new(responses),
+            responses: Mutex::new(responses),
         }
     }
 
@@ -56,7 +57,7 @@ impl StreamProvider for MockProvider {
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<Message, ProviderError> {
         let response = {
-            let mut responses = self.responses.lock().unwrap();
+            let mut responses = self.responses.lock();
             if responses.is_empty() {
                 MockResponse::Text("(no more mock responses)".into())
             } else {

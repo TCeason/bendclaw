@@ -10,8 +10,8 @@ mod theme;
 use std::io::Write;
 use std::io::{self};
 use std::sync::Arc;
-use std::sync::Mutex;
 
+use parking_lot::Mutex;
 use streamdown_core::ParseState;
 use streamdown_parser::Parser;
 
@@ -53,9 +53,9 @@ struct SpinnerWriter {
 impl Write for SpinnerWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         // Clear spinner line right before writing so there's no visual gap.
-        if let Ok(mut sp) = self.spinner.lock() {
-            sp.clear_if_rendered();
-        }
+        let mut sp = self.spinner.lock();
+        sp.clear_if_rendered();
+        drop(sp);
 
         let content = String::from_utf8_lossy(buf);
         // Normalize newlines for raw mode terminal

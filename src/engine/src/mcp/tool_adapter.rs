@@ -137,13 +137,13 @@ mod tests {
 
     /// A mock transport that returns predefined responses.
     struct MockTransport {
-        responses: std::sync::Mutex<Vec<JsonRpcResponse>>,
+        responses: parking_lot::Mutex<Vec<JsonRpcResponse>>,
     }
 
     impl MockTransport {
         fn new(responses: Vec<JsonRpcResponse>) -> Self {
             Self {
-                responses: std::sync::Mutex::new(responses),
+                responses: parking_lot::Mutex::new(responses),
             }
         }
     }
@@ -151,7 +151,7 @@ mod tests {
     #[async_trait]
     impl McpTransport for MockTransport {
         async fn send(&self, _request: JsonRpcRequest) -> Result<JsonRpcResponse, McpError> {
-            let mut responses = self.responses.lock().unwrap();
+            let mut responses = self.responses.lock();
             if responses.is_empty() {
                 Err(McpError::ConnectionClosed)
             } else {

@@ -106,12 +106,13 @@ impl StreamProvider for AzureOpenAiProvider {
                                             name: data.name.unwrap_or_default(),
                                             arguments: String::new(),
                                         });
-                                        let buf = tool_call_buffers.last().unwrap();
-                                        let _ = tx.send(StreamEvent::ToolCallStart {
-                                            content_index: content.len() + tool_call_buffers.len() - 1,
-                                            id: buf.id.clone(),
-                                            name: buf.name.clone(),
-                                        });
+                                        if let Some(buf) = tool_call_buffers.last() {
+                                            let _ = tx.send(StreamEvent::ToolCallStart {
+                                                content_index: content.len() + tool_call_buffers.len() - 1,
+                                                id: buf.id.clone(),
+                                                name: buf.name.clone(),
+                                            });
+                                        }
                                     }
                                 }
                                 "response.function_call_arguments.delta" => {

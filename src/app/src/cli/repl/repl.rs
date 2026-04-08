@@ -185,7 +185,7 @@ impl Repl {
     async fn run_prompt(&mut self, input: &str) -> Result<bool> {
         let request = TurnRequest::text(input).session_id(self.session_id.clone());
         let agent = self.agent.clone();
-        let spinner_state = Arc::new(std::sync::Mutex::new(super::spinner::SpinnerState::new()));
+        let spinner_state = Arc::new(parking_lot::Mutex::new(super::spinner::SpinnerState::new()));
         let sink = Arc::new(ReplSink::new(spinner_state.clone()));
         sink.set_user_prompt(input);
 

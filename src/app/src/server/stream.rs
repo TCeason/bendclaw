@@ -110,9 +110,8 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
             turn,
             attempt,
             usage,
-            cache_read,
-            cache_write,
             error,
+            ..
         } => {
             events.push(json!({
                 "type": "llm_call_completed",
@@ -121,8 +120,8 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
                     "attempt": attempt,
                     "input_tokens": usage.input,
                     "output_tokens": usage.output,
-                    "cache_read": cache_read,
-                    "cache_write": cache_write,
+                    "cache_read": usage.cache_read,
+                    "cache_write": usage.cache_write,
                     "error": error,
                 }
             }));

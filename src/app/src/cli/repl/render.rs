@@ -1,7 +1,8 @@
 use std::io::Stdout;
 use std::io::Write;
-use std::sync::Mutex;
 use std::sync::OnceLock;
+
+use parking_lot::Mutex;
 
 pub use crate::cli::format::format_tool_input;
 pub use crate::cli::format::format_tool_input_lines;
@@ -26,10 +27,7 @@ pub const BG_ERR: &str = "\x1b[48;2;157;57;57m";
 static TERMINAL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 pub fn with_terminal<T>(render: impl FnOnce(&mut Stdout) -> T) -> T {
-    let _guard = TERMINAL_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = TERMINAL_LOCK.get_or_init(|| Mutex::new(())).lock();
     let mut stdout = std::io::stdout();
     let result = render(&mut stdout);
     let _ = stdout.flush();

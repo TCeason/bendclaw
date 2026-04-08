@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::Mutex;
+
+use parking_lot::Mutex;
 
 use super::markdown::MarkdownStream;
 use super::render::build_run_summary;
@@ -92,50 +93,42 @@ impl ReplSink {
     }
 
     pub fn set_user_prompt(&self, prompt: &str) {
-        if let Ok(mut p) = self.user_prompt.lock() {
-            *p = Some(prompt.to_string());
-        }
+        let mut p = self.user_prompt.lock();
+        *p = Some(prompt.to_string());
     }
 
     fn deactivate_spinner(&self) {
-        if let Ok(mut spinner) = self.spinner.lock() {
-            spinner.clear_if_rendered();
-            spinner.deactivate();
-        }
+        let mut spinner = self.spinner.lock();
+        spinner.clear_if_rendered();
+        spinner.deactivate();
     }
 
     pub fn render(&self, event: &RunEvent) {
         self.write_log(event);
         self.update_spinner(&event.payload);
 
-        let Ok(mut state) = self.state.lock() else {
-            return;
-        };
+        let mut state = self.state.lock();
         self.render_output(&event.payload, &mut state);
     }
 
     fn write_log(&self, event: &RunEvent) {
-        if let Ok(mut log_guard) = self.transcript_log.lock() {
-            if log_guard.is_none() {
-                if let Some(log) = TranscriptLog::open(&event.session_id) {
-                    if let Ok(mut prompt) = self.user_prompt.lock() {
-                        if let Some(p) = prompt.take() {
-                            log.write_user_prompt(&p);
-                        }
-                    }
-                    *log_guard = Some(log);
+        let mut log_guard = self.transcript_log.lock();
+        if log_guard.is_none() {
+            if let Some(log) = TranscriptLog::open(&event.session_id) {
+                let mut prompt = self.user_prompt.lock();
+                if let Some(p) = prompt.take() {
+                    log.write_user_prompt(&p);
                 }
+                *log_guard = Some(log);
             }
-            if let Some(log) = log_guard.as_ref() {
-                log.write_event(event);
-            }
+        }
+        if let Some(log) = log_guard.as_ref() {
+            log.write_event(event);
         }
     }
 
     fn update_spinner(&self, payload: &RunEventPayload) {
-        let Ok(mut spinner) = self.spinner.lock() else {
-            return;
-        };
+        let mut spinner = self.spinner.lock();
         match payload {
             RunEventPayload::RunStarted {} => spinner.activate(),
             RunEventPayload::TurnStarted {} => spinner.restore_verb(),
@@ -311,20 +304,15 @@ impl ReplSink {
                 }
                 terminal_writeln("");
             }
-            RunEventPayload::LlmCallCompleted {
-                usage,
-                cache_read,
-                cache_write,
-                error,
-                ..
-            } => {
+            RunEventPayload::LlmCallCompleted { usage, error, .. } => {
                 let title = "LLM completed".to_string();
                 let ok = error.is_none();
                 super::render::print_badge_line(&title, true, ok);
                 if let Some(err) = error {
                     terminal_writeln(&format!("{RED}  {err}{RESET}"));
                 } else {
-                    let cache_str = format_cache_info(*cache_read, *cache_write, usage.input);
+                    let cache_str =
+                        format_cache_info(usage.cache_read, usage.cache_write, usage.input);
                     terminal_writeln(&format!(
                         "{GRAY}  {} input · {} output tokens{cache_str}{RESET}",
                         usage.input, usage.output,
