@@ -3,7 +3,7 @@
 *.swp
 *.swo
 .DS_Store
-prompts/
+/prompts/
 .claude/settings.local.json
 .claude/worktrees/
 .factory/
