@@ -8,6 +8,7 @@ use chrono::Utc;
 
 use super::render::build_run_summary;
 use super::render::count_messages_by_role;
+use super::render::human_tokens;
 use crate::agent::AssistantBlock;
 use crate::agent::RunEvent;
 use crate::agent::RunEventPayload;
@@ -238,9 +239,10 @@ pub fn format_event(payload: &RunEventPayload) -> Vec<String> {
             } else {
                 0.0
             };
+            let h_est = human_tokens(*estimated_tokens);
             vec![
                 format!(
-                    "[compact] {message_count} messages · ~{estimated_tokens} tokens · {usage_pct:.0}% of budget"
+                    "[compact] {message_count} messages · ~{h_est} tokens · {usage_pct:.0}% of budget"
                 ),
                 String::new(),
             ]
@@ -255,9 +257,11 @@ pub fn format_event(payload: &RunEventPayload) -> Vec<String> {
         } => {
             if *level > 0 {
                 let saved = before_estimated_tokens.saturating_sub(*after_estimated_tokens);
+                let h_after = human_tokens(*after_estimated_tokens);
+                let h_saved = human_tokens(saved);
                 vec![
                     format!(
-                        "[compact completed] level {level} · {after_message_count} messages · ~{after_estimated_tokens} tokens · saved ~{saved}"
+                        "[compact completed] level {level} · {after_message_count} messages · ~{h_after} tokens · saved ~{h_saved}"
                     ),
                     String::new(),
                 ]

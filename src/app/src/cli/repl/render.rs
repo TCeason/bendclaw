@@ -615,18 +615,25 @@ pub fn format_llm_call_lines(
 
     // Line 2: token estimates by role
     let est_total = stats.total_tokens(system_prompt_tokens);
-    let mut token_parts = vec![format!("sys ~{system_prompt_tokens}")];
+    let mut token_parts = vec![format!("sys ~{}", human_tokens(system_prompt_tokens))];
     if stats.user_tokens > 0 {
-        token_parts.push(format!("user ~{}", stats.user_tokens));
+        token_parts.push(format!("user ~{}", human_tokens(stats.user_tokens)));
     }
     if stats.assistant_tokens > 0 {
-        token_parts.push(format!("assistant ~{}", stats.assistant_tokens));
+        token_parts.push(format!(
+            "assistant ~{}",
+            human_tokens(stats.assistant_tokens)
+        ));
     }
     if stats.tool_result_tokens > 0 {
-        token_parts.push(format!("tool_result ~{}", stats.tool_result_tokens));
+        token_parts.push(format!(
+            "tool_result ~{}",
+            human_tokens(stats.tool_result_tokens)
+        ));
     }
     lines.push(format!(
-        "~{est_total} est tokens ({})",
+        "~{} est tokens ({})",
+        human_tokens(est_total),
         token_parts.join(" · ")
     ));
 
