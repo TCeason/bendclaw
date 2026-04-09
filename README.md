@@ -3,93 +3,59 @@
 </p>
 
 <p align="center">
-  <strong>BendClaw</strong> — Blazing-fast autonomous coding agent
+  <strong>BendClaw</strong>
 </p>
 
 <p align="center">
-  Pure Rust. Sub-second startup. Fraction of the memory.<br/>
-  Outpaces Claude Code and Codex on long-running, high-complexity work.
+  A self-evolving agent engine for long-running, high-complexity work.
+</p>
+
+<p align="center">
+  Fully observable. Every token tracked. Every decision auditable.<br>
+  BendClaw uses this observability to evolve — so every prompt sent to the LLM is minimal, high-signal, and zero-waste.
 </p>
 
 <p align="center">
   The engine behind <a href="https://evot.ai">evot.ai</a>
 </p>
 
+<p align="center">
+  <a href="#-why-bendclaw">Why</a> &middot;
+  <a href="#installation">Install</a> &middot;
+  <a href="#quickstart">Quickstart</a> &middot;
+  <a href="#development">Dev</a> &middot;
+  <a href="#community">Community</a>
+</p>
+
 ---
 
-## Why BendClaw
+## ⚡ Why BendClaw
 
-Claude Code and Codex are powerful — but they're heavy. Node.js runtimes, slow cold starts, high memory baselines, and context windows that bloat as tasks get longer.
+Claude Code and Codex dump everything into context — bloated outputs, stale history, noise. Tokens wasted. Quality drops. No visibility into why.
 
-BendClaw is built from scratch in Rust to be the fastest coding agent you can run locally:
+BendClaw doesn't waste a single token — and proves it.
 
-- **Instant startup** — native binary, no runtime, no interpreter. Ready before your terminal prompt redraws.
-- **Tiny footprint** — a fraction of the memory of Node.js-based agents. Runs comfortably on a laptop alongside your IDE, browser, and build tools.
-- **Long tasks without choking** — adaptive context management keeps signal high and noise low, even across hundreds of tool calls. Where other agents lose coherence, BendClaw stays on track.
-- **Process-group-aware shell execution** — bash commands run in isolated process groups with streaming output, automatic cleanup on timeout/cancel, and 10-minute default timeouts for real-world builds. No orphan processes, no silent hangs.
-- **Multi-provider, zero lock-in** — Anthropic, OpenAI, or any OpenAI-compatible endpoint. Switch with one env var.
+- **Clean context, always.** Every prompt to the LLM is minimal, high-signal, zero-waste.
+- **Blazing fast.** Fewer wasted tokens → fewer turns → complex tasks done in half the time.
+- **Fully observable.** Every LLM call, tool execution, and compaction tracked end-to-end. This data feeds back into the engine — BendClaw evolves its strategy so the next prompt is always leaner than the last.
 
-## How It Compares
+Not a CLI wrapper. The agent engine you build on — ships with REPL, CLI, and server.
 
-| | BendClaw | Claude Code | Codex |
-|---|---|---|---|
-| Language | Rust | TypeScript/Node | Rust + TypeScript |
-| Cold start | ~50ms | ~2s | ~1s |
-| Memory baseline | ~15MB | ~200MB+ | ~100MB+ |
-| Long-task context | Adaptive compaction | Fixed window | Fixed window |
-| Shell cleanup | Process group kill | Process group kill | Process group kill |
-| Streaming shell output | ✓ | ✓ | ✓ |
-| Install | Single binary | npm | npm + Rust |
-
-## What BendClaw Does
-
-BendClaw is an autonomous agent for long-running, high-complexity work.
-
-It keeps tasks moving by maintaining useful working context:
-preserving what still matters, compressing what can be distilled, and shedding what has turned into noise.
-
-As runs get longer, BendClaw works to keep focus, continuity, and task signal intact instead of letting tool output and stale history take over.
-
-## Why It Gets Better Over Time
-
-BendClaw improves through an observable, auditable feedback loop: it watches execution, refines context, and evolves toward the task.
-
-Different tasks need different working memory.
-Some tasks need precise state.
-Some need compressed findings.
-Some need the latest decisions, failures, and changes.
-
-Over time, BendClaw gets better at keeping what helps, compressing what matters, and leaving behind what does not.
-
-## Example
-
-<img width="815" height="768" alt="Image" src="https://github.com/user-attachments/assets/f0f14c8c-37f2-4aff-a91a-c30768488b3d" />
-
-```text
-BendClaw is not trying to keep everything.
-
-It tries to turn this:
-
-  long prompt
-  + repeated history
-  + oversized tool results
-  + stale intermediate state
-
-into this:
-
-  larger useful context
-  + preserved task signal
-  + compressed supporting history
-  + only the tool output that still matters
-```
+<p align="center">
+  <img width="815" height="768" alt="BendClaw in action" src="https://github.com/user-attachments/assets/f0f14c8c-37f2-4aff-a91a-c30768488b3d" />
+</p>
 
 ## Installation
 
-```bash
-# One-liner install (prebuilt binary, recommended)
-curl -fsSL https://raw.githubusercontent.com/evotai/bendclaw/main/install.sh | bash
+### One-liner (recommended)
 
-# Or build from source
+```bash
+curl -fsSL https://raw.githubusercontent.com/evotai/bendclaw/main/install.sh | bash
+```
+
+### Build from source
+
+```bash
 cargo install --git https://github.com/evotai/bendclaw.git
 ```
 
@@ -97,39 +63,31 @@ cargo install --git https://github.com/evotai/bendclaw.git
 
 Create `~/.evotai/bendclaw.env`:
 
-Example:
-
 ```env
 # Provider: "anthropic" or "openai"
 BENDCLAW_LLM_PROVIDER=anthropic
 
 # Anthropic
 BENDCLAW_ANTHROPIC_API_KEY=sk-ant-...
-BENDCLAW_ANTHROPIC_MODEL=claude-opus-4-6
-BENDCLAW_ANTHROPIC_BASE_URL=https://...
+BENDCLAW_ANTHROPIC_MODEL=claude-sonnet-4-20250514
 
 # OpenAI
 BENDCLAW_OPENAI_API_KEY=sk-...
-BENDCLAW_OPENAI_MODEL=gpt-5.4
-BENDCLAW_OPENAI_BASE_URL=https://...
+BENDCLAW_OPENAI_MODEL=gpt-4o
 ```
 
-Only the active provider's keys are required. Set `BENDCLAW_LLM_PROVIDER` to switch between them.
-
-Then run:
+Only the active provider's keys are required. Set `BENDCLAW_LLM_PROVIDER` to switch.
 
 ```bash
-bendclaw
+bendclaw                              # interactive REPL
+bendclaw -p "summarize today's PRs"   # one-shot task
 ```
 
-Or a one-shot task:
-
-```bash
-bendclaw -p "summarize today's PRs"
-```
+<details>
+<summary><b>CLI flags & options</b></summary>
 
 | Flag | Description |
-|---|---|
+|------|-------------|
 | `-p, --prompt` | Run a single prompt and exit |
 | `--resume <id>` | Resume an existing session |
 | `--model <model>` | Override the configured model |
@@ -140,20 +98,41 @@ bendclaw -p "summarize today's PRs"
 | `--append-system-prompt "..."` | Inject extra system instructions |
 | `--verbose` | Enable info-level logging |
 
+</details>
+
 ## Development
 
 ```bash
 make setup      # install Rust toolchain, git hooks
 make check      # fmt + clippy
-make test       # unit + integration + contract
+make test       # unit + integration tests
 ```
 
 ## Community
 
-- [GitHub Issues](https://github.com/EvotAI/bendclaw/issues) — bug reports & feature requests
-- [Twitter @Evot_AI](https://twitter.com/Evot_AI) — updates & announcements
-- team@evot.ai — reach the team directly
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <a href="https://github.com/EvotAI/bendclaw/issues"><b>GitHub Issues</b></a><br>
+      <sub>Bug reports & feature requests</sub>
+    </td>
+    <td align="center" width="33%">
+      <a href="https://twitter.com/Evot_AI"><b>Twitter @Evot_AI</b></a><br>
+      <sub>Updates & announcements</sub>
+    </td>
+    <td align="center" width="33%">
+      <a href="mailto:team@evot.ai"><b>team@evot.ai</b></a><br>
+      <sub>Reach the team directly</sub>
+    </td>
+  </tr>
+</table>
 
 ## License
 
 Apache-2.0
+
+---
+
+<p align="center">
+  Built with 🦀 by <a href="https://evot.ai">Evot AI</a>
+</p>
