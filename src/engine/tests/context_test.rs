@@ -530,6 +530,19 @@ fn test_level1_read_file_rust_uses_outline() {
             );
             // Should be shorter than original
             assert!(text.len() < rust_output.len());
+            // Verify outline contains key structural elements
+            assert!(
+                text.contains("pub struct Foo"),
+                "outline should contain struct declaration"
+            );
+            assert!(
+                text.contains("impl Foo"),
+                "outline should contain impl block"
+            );
+            assert!(
+                text.contains("pub fn new"),
+                "outline should contain method signature"
+            );
         } else {
             panic!("expected text content");
         }
@@ -706,6 +719,15 @@ fn test_level1_read_file_python_uses_outline() {
                 &text[..text.len().min(200)]
             );
             assert!(text.len() < py_output.len());
+            // Verify outline contains key structural elements
+            assert!(
+                text.contains("class MyClass"),
+                "outline should contain class declaration"
+            );
+            assert!(
+                text.contains("def __init__"),
+                "outline should contain method signature"
+            );
         } else {
             panic!("expected text content");
         }

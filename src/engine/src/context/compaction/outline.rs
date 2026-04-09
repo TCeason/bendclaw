@@ -327,11 +327,10 @@ fn extract_outline_from_source(source: &str, spec: &OutlineSpec) -> Option<Strin
     let tree = parser.parse(source, None)?;
     let root = tree.root_node();
 
-    let source_bytes = source.as_bytes();
     let lines: Vec<&str> = source.lines().collect();
     let mut output = String::new();
 
-    extract_node_outline(root, spec, source_bytes, &lines, &mut output, 0);
+    extract_node_outline(root, spec, &lines, &mut output, 0);
 
     if output.is_empty() {
         return None;
@@ -344,7 +343,6 @@ fn extract_outline_from_source(source: &str, spec: &OutlineSpec) -> Option<Strin
 fn extract_node_outline(
     node: tree_sitter::Node,
     spec: &OutlineSpec,
-    source: &[u8],
     lines: &[&str],
     output: &mut String,
     indent: usize,
@@ -364,7 +362,7 @@ fn extract_node_outline(
 
         if spec.container_kinds.contains(&kind) {
             // Container: show signature line(s), recurse into children
-            let sig = extract_signature(child, source, lines);
+            let sig = extract_signature(child, lines);
             if span <= 3 {
                 // Short container — show entirely
                 for line in lines
@@ -379,11 +377,10 @@ fn extract_node_outline(
             } else {
                 output.push_str(&indent_str);
                 output.push_str(&sig);
-                output.push_str(&format!("  // lines {}-{}", start_line + 1, end_line + 1));
                 output.push('\n');
                 // Recurse into container children
-                extract_node_outline(child, spec, source, lines, output, indent + 1);
-                // Close brace for languages that use them
+                extract_node_outline(child, spec, lines, output, indent + 1);
+                // Close brace/end for languages that use them
                 if let Some(last_line) = lines.get(end_line) {
                     let trimmed = last_line.trim();
                     if trimmed == "}" || trimmed == "end" || trimmed.starts_with('}') {
@@ -407,11 +404,10 @@ fn extract_node_outline(
                     output.push('\n');
                 }
             } else {
-                let sig = extract_signature(child, source, lines);
+                let sig = extract_signature(child, lines);
                 output.push_str(&indent_str);
                 output.push_str(&sig);
-                output.push_str(" { ... }");
-                output.push_str(&format!("  // lines {}-{}", start_line + 1, end_line + 1));
+                output.push_str(" ...");
                 output.push('\n');
             }
         } else if start_line == end_line {
@@ -425,13 +421,16 @@ fn extract_node_outline(
                     }
                 }
             }
+        } else if child.named_child_count() > 0 {
+            // Multi-line unknown node (e.g. declaration_list, body) —
+            // recurse through it to find declarations inside.
+            extract_node_outline(child, spec, lines, output, indent);
         }
-        // Multi-line unknown nodes at depth > 0 are skipped
     }
 }
 
 /// Extract the signature (first line) of an AST node.
-fn extract_signature(node: tree_sitter::Node, _source: &[u8], lines: &[&str]) -> String {
+fn extract_signature(node: tree_sitter::Node, lines: &[&str]) -> String {
     let start_line = node.start_position().row;
     lines
         .get(start_line)
