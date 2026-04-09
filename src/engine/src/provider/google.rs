@@ -36,7 +36,7 @@ impl StreamProvider for GoogleProvider {
         let body = build_request_body(&config);
         debug!("Google GenAI request: model={}", config.model);
 
-        let client = reqwest::Client::new();
+        let client = crate::provider::http_client::new_client()?;
         let mut request = client.post(&url).header("content-type", "application/json");
 
         for (k, v) in &model_config.headers {

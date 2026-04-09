@@ -39,7 +39,7 @@ impl StreamProvider for OpenAiCompatProvider {
         let body = request::build_request_body(&config, model_config, &compat);
         debug!("OpenAI compat request: model={} url={}", config.model, url);
 
-        let client = reqwest::Client::new();
+        let client = crate::provider::http_client::new_client()?;
         let mut builder = client
             .post(&url)
             .header("content-type", "application/json")

@@ -3,6 +3,7 @@ pub mod azure_openai;
 pub mod bedrock;
 pub mod google;
 pub mod google_vertex;
+pub mod http_client;
 pub mod json_repair;
 pub mod mock;
 pub mod model;

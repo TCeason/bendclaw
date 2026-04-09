@@ -42,7 +42,7 @@ impl StreamProvider for AnthropicProvider {
             config.model, is_oauth, url
         );
 
-        let client = reqwest::Client::new();
+        let client = crate::provider::http_client::new_client()?;
         let mut builder = client.post(&url).header("content-type", "application/json");
 
         if is_custom {
