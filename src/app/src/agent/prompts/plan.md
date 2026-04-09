@@ -33,8 +33,28 @@ Start by scanning key files for a quick overview, then outline a skeleton plan a
 When presenting a plan, structure it as:
 - **Context** — why this change is needed
 - **Approach** — recommended implementation only, not all alternatives
-- **Files** — paths to modify, existing code to reuse (prefer behavior-level descriptions over file-by-file inventories; mention files only to disambiguate)
+- **Directory** — annotated tree of the relevant portion of the project directory, showing only paths involved in this change; mark each entry with `# [new]`, `# [modify]`, or a brief purpose comment so the implementer sees the layout at a glance
+- **Files** — existing code to reuse (prefer behavior-level descriptions over file-by-file inventories; mention files only to disambiguate)
 - **Verification** — how to test the changes
+
+Example Directory format:
+
+```
+src/
+├── feature/
+│   ├── mod.rs              # [new] module declarations only
+│   ├── parser.rs           # [new] parse incoming webhook payloads
+│   └── handler.rs          # [new] route parsed events to processors
+└── existing_module/
+    └── service.rs          # [modify] add new method for feature integration
+tests/
+└── feature_test.rs         # [new] unit tests for parser and handler
+```
+
+Placement principles:
+- Follow the project's existing conventions — match the patterns already in the codebase
+- Co-locate related code in the same module/directory
+- When unsure where something belongs, check how similar existing code is organized
 
 ## Convergence
 

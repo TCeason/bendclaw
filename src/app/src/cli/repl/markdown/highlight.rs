@@ -1,4 +1,10 @@
 //! Syntax highlighting for code blocks using syntect.
+//!
+//! The heavy `SyntaxSet` / `ThemeSet` are loaded once via `OnceLock` and shared
+//! for the lifetime of the process, avoiding repeated ~30ms loads on every
+//! `MarkdownStream` creation.
+
+use std::sync::OnceLock;
 
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
@@ -12,16 +18,21 @@ pub struct Highlighter {
     theme_set: ThemeSet,
 }
 
-impl Default for Highlighter {
-    fn default() -> Self {
+static GLOBAL_HIGHLIGHTER: OnceLock<Highlighter> = OnceLock::new();
+
+impl Highlighter {
+    fn new() -> Self {
         Self {
             syntax_set: SyntaxSet::load_defaults_newlines(),
             theme_set: ThemeSet::load_defaults(),
         }
     }
-}
 
-impl Highlighter {
+    /// Return a shared global instance (initialized on first call).
+    pub fn global() -> &'static Highlighter {
+        GLOBAL_HIGHLIGHTER.get_or_init(Highlighter::new)
+    }
+
     /// Highlight a single line of code, returning ANSI-escaped string.
     pub fn highlight_line(&self, line: &str, language: Option<&str>) -> String {
         let syntax = language

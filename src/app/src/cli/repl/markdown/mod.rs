@@ -3,8 +3,11 @@
 //! Buffers incoming tokens, parses complete lines, and renders with
 //! syntax highlighting and ANSI styling.
 
-mod highlight;
-mod render;
+mod ansi;
+pub mod highlight;
+mod linkify;
+pub mod render;
+mod table;
 mod theme;
 
 use std::io::Write;

@@ -6,13 +6,15 @@ use std::io::{self};
 use streamdown_parser::ParseEvent;
 
 use super::highlight::Highlighter;
+use super::linkify::format_hyperlink;
+use super::linkify::linkify_issue_refs;
+use super::table;
 use super::theme::Theme;
 
 pub struct Renderer<W: Write> {
     writer: W,
     width: usize,
     theme: Theme,
-    highlighter: Highlighter,
     current_language: Option<String>,
     in_blockquote: bool,
     blockquote_depth: usize,
@@ -25,7 +27,6 @@ impl<W: Write> Renderer<W> {
             writer,
             width,
             theme: Theme::default(),
-            highlighter: Highlighter::default(),
             current_language: None,
             in_blockquote: false,
             blockquote_depth: 0,
@@ -36,7 +37,12 @@ impl<W: Write> Renderer<W> {
     pub fn render_event(&mut self, event: &ParseEvent) -> io::Result<()> {
         match event {
             // --- Inline ---
-            ParseEvent::Text(text) => self.write(&self.theme.text.paint(text))?,
+            ParseEvent::Text(text) => self.write(
+                &self
+                    .theme
+                    .text
+                    .paint(&linkify_issue_refs(text, &self.theme.link)),
+            )?,
             ParseEvent::Bold(text) => self.write(&self.theme.bold.paint(text))?,
             ParseEvent::Italic(text) => self.write(&self.theme.italic.paint(text))?,
             ParseEvent::BoldItalic(text) => self.write(&self.theme.bold_italic.paint(text))?,
@@ -44,14 +50,11 @@ impl<W: Write> Renderer<W> {
             ParseEvent::Strikeout(text) => self.write(&self.theme.strikethrough.paint(text))?,
             ParseEvent::Underline(text) => self.write(&self.theme.underline.paint(text))?,
             ParseEvent::Link { text, url } => {
-                // OSC 8 hyperlink + fallback
-                let styled = format!(
-                    "\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\ ({})",
+                self.write(&format_hyperlink(
                     url,
-                    self.theme.link.paint(text),
-                    url
-                );
-                self.write(&styled)?;
+                    &self.theme.link.paint(text),
+                    Some(url),
+                ))?;
             }
             ParseEvent::Image { alt, .. } => self.write(&format!("[🖼 {}]", alt))?,
             ParseEvent::Footnote(text) => self.write(text)?,
@@ -75,9 +78,8 @@ impl<W: Write> Renderer<W> {
                 self.current_language = language.clone();
             }
             ParseEvent::CodeBlockLine(line) => {
-                let highlighted = self
-                    .highlighter
-                    .highlight_line(line, self.current_language.as_deref());
+                let highlighted =
+                    Highlighter::global().highlight_line(line, self.current_language.as_deref());
                 let margin = self.left_margin();
                 self.writeln(&format!("{margin}{highlighted}"))?;
             }
@@ -174,8 +176,6 @@ impl<W: Write> Renderer<W> {
         self.writer.flush()
     }
 
-    // --- helpers ---
-
     fn write(&mut self, s: &str) -> io::Result<()> {
         write!(self.writer, "{}", s)
     }
@@ -193,7 +193,6 @@ impl<W: Write> Renderer<W> {
         }
     }
 
-    /// Render inline markdown formatting within content strings (e.g. list item content).
     fn render_inline(&self, text: &str) -> String {
         use streamdown_parser::inline::InlineParser;
         let elements = InlineParser::new().parse(text);
@@ -205,10 +204,11 @@ impl<W: Write> Renderer<W> {
         elements: &[streamdown_parser::inline::InlineElement],
     ) -> String {
         use streamdown_parser::inline::InlineElement;
+
         let mut out = String::new();
         for el in elements {
             match el {
-                InlineElement::Text(t) => out.push_str(t),
+                InlineElement::Text(t) => out.push_str(&linkify_issue_refs(t, &self.theme.link)),
                 InlineElement::Bold(t) => out.push_str(&self.theme.bold.paint(t)),
                 InlineElement::Italic(t) => out.push_str(&self.theme.italic.paint(t)),
                 InlineElement::BoldItalic(t) => out.push_str(&self.theme.bold_italic.paint(t)),
@@ -216,11 +216,7 @@ impl<W: Write> Renderer<W> {
                 InlineElement::Strikeout(t) => out.push_str(&self.theme.strikethrough.paint(t)),
                 InlineElement::Underline(t) => out.push_str(&self.theme.underline.paint(t)),
                 InlineElement::Link { text, url } => {
-                    out.push_str(&format!(
-                        "\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\",
-                        url,
-                        self.theme.link.paint(text)
-                    ));
+                    out.push_str(&format_hyperlink(url, &self.theme.link.paint(text), None));
                 }
                 InlineElement::Image { alt, .. } => {
                     out.push_str(&format!("[🖼 {}]", alt));
@@ -236,47 +232,9 @@ impl<W: Write> Renderer<W> {
             return Ok(());
         }
         let rows = std::mem::take(&mut self.table_rows);
-
-        // Calculate column widths
-        let col_count = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-        let mut widths = vec![0usize; col_count];
-        for row in &rows {
-            for (i, cell) in row.iter().enumerate() {
-                widths[i] = widths[i].max(cell.len());
-            }
-        }
-
-        let border_char = self.theme.table_border.paint("│");
-        let h_border = self.theme.table_border.paint("─");
-
-        for (row_idx, row) in rows.iter().enumerate() {
-            let mut line = format!("{} ", border_char);
-            for (i, cell) in row.iter().enumerate() {
-                let w = widths.get(i).copied().unwrap_or(0);
-                let styled = if row_idx == 0 {
-                    self.theme.table_header.paint(cell)
-                } else {
-                    cell.to_string()
-                };
-                let padding = w.saturating_sub(cell.len());
-                line.push_str(&styled);
-                line.push_str(&" ".repeat(padding));
-                line.push_str(&format!(" {} ", border_char));
-            }
+        let lines = table::render_table(&self.theme, &rows, self.width);
+        for line in lines {
             self.writeln(&line)?;
-
-            // Separator after header
-            if row_idx == 0 {
-                let mut sep = format!("{} ", border_char);
-                for (i, _) in row.iter().enumerate() {
-                    let w = widths.get(i).copied().unwrap_or(0);
-                    for _ in 0..w {
-                        sep.push_str(&h_border);
-                    }
-                    sep.push_str(&format!(" {} ", border_char));
-                }
-                self.writeln(&sep)?;
-            }
         }
         Ok(())
     }
