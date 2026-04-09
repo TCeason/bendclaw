@@ -82,6 +82,7 @@ pub struct SpinnerState {
     last_token_at: Instant,
     active: bool,
     rendered: bool,
+    paused: bool,
     frame: usize,
     tick: usize,
     verb: String,
@@ -104,6 +105,7 @@ impl SpinnerState {
             last_token_at: now,
             active: false,
             rendered: false,
+            paused: false,
             frame: 0,
             tick: 0,
             verb: pick_verb(),
@@ -120,6 +122,7 @@ impl SpinnerState {
         let now = Instant::now();
         self.active = true;
         self.rendered = false;
+        self.paused = false;
         self.phase = SpinnerPhase::Verb;
         self.run_started_at = now;
         self.last_token_at = now;
@@ -133,6 +136,7 @@ impl SpinnerState {
     pub fn deactivate(&mut self) {
         self.active = false;
         self.rendered = false;
+        self.paused = false;
         self.phase = SpinnerPhase::Hidden;
         // Reset terminal tab title
         with_terminal(|stdout| {
@@ -141,6 +145,7 @@ impl SpinnerState {
     }
 
     pub fn set_tool(&mut self, name: &str) {
+        self.paused = false;
         self.phase = SpinnerPhase::Tool {
             name: name.to_string(),
         };
@@ -152,7 +157,12 @@ impl SpinnerState {
         };
     }
 
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+    }
+
     pub fn restore_verb(&mut self) {
+        self.paused = false;
         self.phase = SpinnerPhase::Verb;
     }
 
@@ -162,10 +172,9 @@ impl SpinnerState {
     }
 
     /// Render one animation frame to stdout. Called from the 80ms poll loop.
-    /// When tokens are actively streaming, the frame advances slower so the
-    /// spinner doesn't feel frantic alongside the flowing markdown text.
+    /// When paused (e.g. during LiveOutput), rendering is skipped entirely.
     pub fn render_frame(&mut self) {
-        if !self.active || matches!(self.phase, SpinnerPhase::Hidden) {
+        if !self.active || self.paused || matches!(self.phase, SpinnerPhase::Hidden) {
             return;
         }
 
@@ -294,7 +303,7 @@ fn render_glimmer(message: &str, glimmer_pos: i32) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Accessors for tests
+// Accessors for tests and external renderers (e.g. LiveOutput in sink)
 // ---------------------------------------------------------------------------
 
 impl SpinnerState {
@@ -308,6 +317,16 @@ impl SpinnerState {
 
     pub fn current_glyph(&self) -> &str {
         GLYPHS[self.frame % GLYPHS.len()]
+    }
+
+    /// Advance the frame counter (used by external renderers like LiveOutput).
+    pub fn advance_frame(&mut self) {
+        self.frame += 1;
+    }
+
+    /// Elapsed milliseconds since the run started.
+    pub fn elapsed_ms(&self) -> u64 {
+        self.run_started_at.elapsed().as_millis() as u64
     }
 
     pub fn glyph_count() -> usize {

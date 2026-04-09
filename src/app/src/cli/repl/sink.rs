@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
+use super::live_output::LiveOutput;
 use super::markdown::MarkdownStream;
 use super::render::count_messages_by_role;
 use super::render::format_budget_bar;
@@ -48,6 +49,8 @@ pub struct SinkState {
     pub tool_stats: HashMap<String, ToolAggStats>,
     pub compact_history: Vec<CompactRecord>,
     pub current_model: String,
+    /// Multi-line live output region for tool progress (below tool header, above spinner).
+    pub live_output: LiveOutput,
 }
 
 pub struct ToolCallDisplay {
@@ -151,7 +154,11 @@ impl ReplSink {
                 spinner.clear_if_rendered();
                 spinner.set_tool(tool_name);
             }
-            RunEventPayload::ToolProgress { text, .. } => spinner.set_progress(text),
+            RunEventPayload::ToolProgress { text, .. } => {
+                // Spinner renders progress lines above + spinner line below
+                // via its internal LiveOutput. Just update the phase text.
+                spinner.set_progress(text);
+            }
             // RunFinished and Error are deferred — spinner stays alive
             // until the output block deactivates it.
             RunEventPayload::RunFinished { .. } | RunEventPayload::Error { .. } => {}
@@ -162,6 +169,7 @@ impl ReplSink {
         match payload {
             RunEventPayload::RunStarted {} => {
                 finish_assistant_stream(state);
+                state.live_output.clear();
                 state.pending_tools.clear();
                 state.llm_call_count = 0;
                 state.tool_call_count = 0;
@@ -210,6 +218,8 @@ impl ReplSink {
                 duration_ms,
             } => {
                 finish_assistant_stream(state);
+                // Clear live output region before printing final result
+                state.live_output.clear();
 
                 // Accumulate tool stats for run summary
                 let entry = state.tool_stats.entry(tool_name.clone()).or_default();
@@ -259,6 +269,7 @@ impl ReplSink {
                 preview_command,
             } => {
                 finish_assistant_stream(state);
+                state.live_output.clear();
                 state.tool_call_count += 1;
                 state
                     .pending_tools
@@ -269,9 +280,33 @@ impl ReplSink {
                     });
                 super::render::print_tool_call(tool_name, args, preview_command.as_deref());
             }
-            RunEventPayload::ToolProgress { .. } => {}
+            RunEventPayload::ToolProgress { text, .. } => {
+                // Build header with spinner glyph + elapsed from the paused spinner
+                let (glyph, elapsed) = {
+                    let mut spinner = self.spinner.lock();
+                    let g = spinner.current_glyph().to_string();
+                    let e = spinner.elapsed_ms();
+                    spinner.advance_frame();
+                    (g, e)
+                };
+                let status = super::render::human_duration(elapsed);
+                let header = format!(
+                    "{GRAY}{glyph}{RESET} Running… {DIM}({status}) · esc to interrupt{RESET}"
+                );
+
+                // Show header + last N lines of progress in-place
+                let mut output_lines: Vec<String> = vec![header];
+                let lines: Vec<&str> = text.lines().collect();
+                let tail: Vec<&str> = lines.iter().rev().take(5).rev().copied().collect();
+                for l in &tail {
+                    output_lines.push(format!("{DIM}  {l}{RESET}"));
+                }
+                let refs: Vec<&str> = output_lines.iter().map(|s| s.as_str()).collect();
+                state.live_output.update(&refs);
+            }
             RunEventPayload::Error { message } => {
                 finish_assistant_stream(state);
+                state.live_output.clear();
                 self.deactivate_spinner();
                 terminal_writeln(&format!("{RED}error:{RESET} {message}"));
             }
