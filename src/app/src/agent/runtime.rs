@@ -100,6 +100,7 @@ pub(super) async fn create_engine(
     session_id: &str,
 ) -> Result<(mpsc::UnboundedReceiver<RuntimeEvent>, EngineHandle)> {
     let prior_messages = into_agent_messages(prior_transcripts);
+    let prior_messages = bend_engine::sanitize_tool_pairs(prior_messages);
     let mut agent = build_agent(options, prior_messages);
     let engine_rx = agent.prompt(prompt).await;
 
