@@ -10,6 +10,11 @@ pub use crate::cli::format::format_tool_input;
 pub use crate::cli::format::format_tool_input_lines;
 pub use crate::cli::format::summarize_inline;
 pub use crate::cli::format::truncate;
+pub use crate::types::count_messages_by_role;
+pub use crate::types::CompactRecord;
+pub use crate::types::MessageStats;
+pub use crate::types::RunSummaryData;
+pub use crate::types::ToolAggStats;
 
 pub const RESET: &str = "\x1b[0m";
 pub const BOLD: &str = "\x1b[1m";
@@ -146,42 +151,6 @@ pub fn format_llm_completed_lines(
     }
 
     lines
-}
-
-// ---------------------------------------------------------------------------
-// Run summary data types
-// ---------------------------------------------------------------------------
-
-/// Aggregated stats for a single tool across the run.
-#[derive(Debug, Default, Clone)]
-pub struct ToolAggStats {
-    pub calls: u32,
-    pub result_tokens: usize,
-    pub duration_ms: u64,
-    pub errors: u32,
-}
-
-/// A single compaction record.
-#[derive(Debug, Clone)]
-pub struct CompactRecord {
-    pub level: u8,
-    pub before_tokens: usize,
-    pub after_tokens: usize,
-}
-
-/// All data needed to render the run summary.
-pub struct RunSummaryData {
-    pub duration_ms: u64,
-    pub turn_count: u32,
-    pub usage: UsageSummary,
-    pub llm_call_count: u32,
-    pub tool_call_count: u32,
-    pub system_prompt_tokens: usize,
-    pub last_message_stats: Option<MessageStats>,
-    pub llm_metrics: Vec<crate::agent::LlmCallMetrics>,
-    pub llm_output_tokens: Vec<u64>,
-    pub tool_stats: Vec<(String, ToolAggStats)>,
-    pub compact_history: Vec<CompactRecord>,
 }
 
 // ---------------------------------------------------------------------------
@@ -612,73 +581,6 @@ pub fn split_tool_title(title: &str) -> (String, String) {
 pub struct ToolCallSummary {
     pub name: String,
     pub summary: String,
-}
-
-// ---------------------------------------------------------------------------
-// LLM call message statistics
-// ---------------------------------------------------------------------------
-
-/// Per-role counts and estimated tokens for an LLM call's messages.
-#[derive(Debug, Default)]
-pub struct MessageStats {
-    pub user_count: usize,
-    pub assistant_count: usize,
-    pub tool_result_count: usize,
-    pub user_tokens: usize,
-    pub assistant_tokens: usize,
-    pub tool_result_tokens: usize,
-    /// Per-tool token breakdown (name, tokens), sorted by tokens desc.
-    pub tool_details: Vec<(String, usize)>,
-}
-
-impl MessageStats {
-    pub fn total_count(&self) -> usize {
-        self.user_count + self.assistant_count + self.tool_result_count
-    }
-
-    pub fn total_tokens(&self, system_prompt_tokens: usize) -> usize {
-        system_prompt_tokens + self.user_tokens + self.assistant_tokens + self.tool_result_tokens
-    }
-}
-
-/// Count messages by role and estimate tokens from JSON byte size.
-pub fn count_messages_by_role(messages: &[serde_json::Value]) -> MessageStats {
-    let mut stats = MessageStats::default();
-    for msg in messages {
-        let role = msg
-            .get("role")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        let est = msg.to_string().len() / 4;
-        match role {
-            "user" => {
-                stats.user_count += 1;
-                stats.user_tokens += est;
-            }
-            "assistant" => {
-                stats.assistant_count += 1;
-                stats.assistant_tokens += est;
-            }
-            "toolResult" | "tool_result" | "tool" => {
-                stats.tool_result_count += 1;
-                stats.tool_result_tokens += est;
-                let name = msg
-                    .get("toolName")
-                    .or_else(|| msg.get("tool_name"))
-                    .or_else(|| msg.get("name"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                stats.tool_details.push((name, est));
-            }
-            _ => {
-                stats.user_count += 1;
-                stats.user_tokens += est;
-            }
-        }
-    }
-    stats.tool_details.sort_by(|a, b| b.1.cmp(&a.1));
-    stats
 }
 
 /// Format detail lines for an LLM call badge.

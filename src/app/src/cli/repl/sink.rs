@@ -13,9 +13,6 @@ use super::render::format_tool_breakdown;
 use super::render::format_tool_input;
 use super::render::print_tool_result;
 use super::render::terminal_writeln;
-use super::render::CompactRecord;
-use super::render::RunSummaryData;
-use super::render::ToolAggStats;
 use super::render::ToolCallSummary;
 use super::render::DIM;
 use super::render::GRAY;
@@ -27,6 +24,14 @@ use super::transcript_log::TranscriptLog;
 use crate::agent::AssistantBlock;
 use crate::agent::RunEvent;
 use crate::agent::RunEventPayload;
+use crate::session::observability::StatsAggregator;
+use crate::types::ContextCompactionCompletedStats;
+use crate::types::ContextCompactionStartedStats;
+use crate::types::LlmCallCompletedStats;
+use crate::types::LlmCallStartedStats;
+use crate::types::MessageStats;
+use crate::types::ToolFinishedStats;
+use crate::types::TranscriptStats;
 
 // ---------------------------------------------------------------------------
 // State
@@ -38,15 +43,10 @@ pub struct SinkState {
     pub streamed_assistant: bool,
     pub pending_tools: HashMap<String, ToolCallDisplay>,
     pub markdown_stream: Option<MarkdownStream>,
-    pub llm_call_count: u32,
-    pub tool_call_count: u32,
-    // Run summary aggregation
-    pub system_prompt_tokens: usize,
-    pub last_message_stats: Option<super::render::MessageStats>,
-    pub llm_metrics: Vec<crate::agent::LlmCallMetrics>,
-    pub llm_output_tokens: Vec<u64>,
-    pub tool_stats: HashMap<String, ToolAggStats>,
-    pub compact_history: Vec<CompactRecord>,
+    // Unified stats aggregation
+    pub aggregator: StatsAggregator,
+    // Only needed for real-time path — stats don't cover this
+    pub last_message_stats: Option<MessageStats>,
     pub current_model: String,
 }
 
@@ -166,14 +166,9 @@ impl ReplSink {
             RunEventPayload::RunStarted {} => {
                 finish_assistant_stream(state);
                 state.pending_tools.clear();
-                state.llm_call_count = 0;
-                state.tool_call_count = 0;
-                state.system_prompt_tokens = 0;
+                state.aggregator.reset();
                 state.last_message_stats = None;
-                state.llm_metrics.clear();
-                state.llm_output_tokens.clear();
-                state.tool_stats.clear();
-                state.compact_history.clear();
+                state.current_model.clear();
             }
             RunEventPayload::TurnStarted {} => {}
             RunEventPayload::AssistantCompleted { content, .. } => {
@@ -214,14 +209,16 @@ impl ReplSink {
             } => {
                 finish_assistant_stream(state);
 
-                // Accumulate tool stats for run summary
-                let entry = state.tool_stats.entry(tool_name.clone()).or_default();
-                entry.calls += 1;
-                entry.result_tokens += result_tokens;
-                entry.duration_ms += duration_ms;
-                if *is_error {
-                    entry.errors += 1;
-                }
+                // Ingest tool stats via aggregator
+                state
+                    .aggregator
+                    .ingest(&TranscriptStats::ToolFinished(ToolFinishedStats {
+                        tool_call_id: tool_call_id.clone(),
+                        tool_name: tool_name.clone(),
+                        result_tokens: *result_tokens,
+                        duration_ms: *duration_ms,
+                        is_error: *is_error,
+                    }));
 
                 let tool_call =
                     state
@@ -262,7 +259,6 @@ impl ReplSink {
                 preview_command,
             } => {
                 finish_assistant_stream(state);
-                state.tool_call_count += 1;
                 state
                     .pending_tools
                     .entry(tool_call_id.clone())
@@ -289,24 +285,10 @@ impl ReplSink {
                 finish_assistant_stream(state);
                 self.deactivate_spinner();
 
-                // Collect tool stats sorted by result_tokens desc
-                let mut tool_stats: Vec<(String, ToolAggStats)> =
-                    state.tool_stats.drain().collect();
-                tool_stats.sort_by(|a, b| b.1.result_tokens.cmp(&a.1.result_tokens));
-
-                let data = RunSummaryData {
-                    duration_ms: *duration_ms,
-                    turn_count: *turn_count,
-                    usage: usage.clone(),
-                    llm_call_count: state.llm_call_count,
-                    tool_call_count: state.tool_call_count,
-                    system_prompt_tokens: state.system_prompt_tokens,
-                    last_message_stats: state.last_message_stats.take(),
-                    llm_metrics: std::mem::take(&mut state.llm_metrics),
-                    llm_output_tokens: std::mem::take(&mut state.llm_output_tokens),
-                    tool_stats,
-                    compact_history: std::mem::take(&mut state.compact_history),
-                };
+                let mut data = state
+                    .aggregator
+                    .to_run_summary(*duration_ms, *turn_count, usage);
+                data.last_message_stats = state.last_message_stats.take();
 
                 for line in format_run_summary(&data) {
                     terminal_writeln(&format!("{DIM}{line}{RESET}"));
@@ -319,12 +301,25 @@ impl ReplSink {
                 tools,
                 messages,
                 system_prompt_tokens,
+                message_bytes,
+                message_count,
                 ..
             } => {
                 finish_assistant_stream(state);
-                state.llm_call_count += 1;
-                state.system_prompt_tokens = *system_prompt_tokens;
                 state.current_model = model.clone();
+
+                // Ingest via aggregator
+                state
+                    .aggregator
+                    .ingest(&TranscriptStats::LlmCallStarted(LlmCallStartedStats {
+                        turn: *turn,
+                        attempt: *attempt,
+                        model: model.clone(),
+                        message_count: *message_count,
+                        message_bytes: *message_bytes,
+                        system_prompt_tokens: *system_prompt_tokens,
+                    }));
+
                 let attempt_str = if *attempt > 0 {
                     format!(" · retry {attempt}")
                 } else {
@@ -342,11 +337,24 @@ impl ReplSink {
                 terminal_writeln("");
             }
             RunEventPayload::LlmCallCompleted {
+                turn,
+                attempt,
                 usage,
                 error,
                 metrics,
                 ..
             } => {
+                // Ingest via aggregator
+                state.aggregator.ingest(&TranscriptStats::LlmCallCompleted(
+                    LlmCallCompletedStats {
+                        turn: *turn,
+                        attempt: *attempt,
+                        usage: usage.clone(),
+                        metrics: metrics.clone(),
+                        error: error.clone(),
+                    },
+                ));
+
                 let title = if state.current_model.is_empty() {
                     "LLM completed".to_string()
                 } else {
@@ -361,10 +369,6 @@ impl ReplSink {
                         terminal_writeln(&format!("{GRAY}  {line}{RESET}"));
                     }
                 }
-                if let Some(m) = metrics {
-                    state.llm_metrics.push(m.clone());
-                }
-                state.llm_output_tokens.push(usage.output);
                 terminal_writeln("");
             }
             RunEventPayload::ContextCompactionStarted {
@@ -375,6 +379,20 @@ impl ReplSink {
                 context_window,
             } => {
                 finish_assistant_stream(state);
+
+                // Ingest via aggregator
+                state
+                    .aggregator
+                    .ingest(&TranscriptStats::ContextCompactionStarted(
+                        ContextCompactionStartedStats {
+                            message_count: *message_count,
+                            estimated_tokens: *estimated_tokens,
+                            budget_tokens: *budget_tokens,
+                            system_prompt_tokens: *system_prompt_tokens,
+                            context_window: *context_window,
+                        },
+                    ));
+
                 let title = "compact call";
                 super::render::print_badge_line(title, false, false);
                 terminal_writeln(&format!(
@@ -399,12 +417,21 @@ impl ReplSink {
                 before_tool_details,
                 after_tool_details,
             } => {
-                // Accumulate compact history for run summary
-                state.compact_history.push(CompactRecord {
-                    level: *level,
-                    before_tokens: *before_estimated_tokens,
-                    after_tokens: *after_estimated_tokens,
-                });
+                // Ingest via aggregator
+                state
+                    .aggregator
+                    .ingest(&TranscriptStats::ContextCompactionCompleted(
+                        ContextCompactionCompletedStats {
+                            level: *level,
+                            before_message_count: *before_message_count,
+                            after_message_count: *after_message_count,
+                            before_estimated_tokens: *before_estimated_tokens,
+                            after_estimated_tokens: *after_estimated_tokens,
+                            tool_outputs_truncated: *tool_outputs_truncated,
+                            turns_summarized: *turns_summarized,
+                            messages_dropped: *messages_dropped,
+                        },
+                    ));
 
                 if *level > 0 {
                     let saved = before_estimated_tokens.saturating_sub(*after_estimated_tokens);

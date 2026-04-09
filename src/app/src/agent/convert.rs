@@ -167,6 +167,11 @@ pub fn agent_message_from_transcript(item: &TranscriptItem) -> bend_engine::Agen
         TranscriptItem::Compact { .. } => bend_engine::AgentMessage::Extension(
             bend_engine::ExtensionMessage::new("compact", serde_json::json!({})),
         ),
+        // Stats items should never reach conversion — filtered by resolve_transcript.
+        // Defensive fallback: convert to a no-op extension that the engine will ignore.
+        TranscriptItem::Stats { .. } => bend_engine::AgentMessage::Extension(
+            bend_engine::ExtensionMessage::new("internal_stats", serde_json::json!({})),
+        ),
     }
 }
 

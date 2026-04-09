@@ -1,13 +1,9 @@
-//! Shared domain types used across agent, session, and storage modules.
+//! Transcript domain model — items, entries, and context projection.
 
-use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 
-/// Generate a new unique ID (UUID v7, time-ordered).
-pub fn new_id() -> String {
-    uuid::Uuid::now_v7().to_string()
-}
+use super::metrics::UsageSummary;
 
 // ---------------------------------------------------------------------------
 // AssistantBlock — content blocks in assistant messages
@@ -27,50 +23,6 @@ pub enum AssistantBlock {
     Thinking {
         text: String,
     },
-}
-
-// ---------------------------------------------------------------------------
-// UsageSummary — token usage statistics
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UsageSummary {
-    pub input: u64,
-    pub output: u64,
-    #[serde(default)]
-    pub cache_read: u64,
-    #[serde(default)]
-    pub cache_write: u64,
-}
-
-impl UsageSummary {
-    /// Cache hit rate as a fraction (0.0–1.0).
-    pub fn cache_hit_rate(&self) -> f64 {
-        let total_input = self.input + self.cache_read + self.cache_write;
-        if total_input == 0 {
-            return 0.0;
-        }
-        self.cache_read as f64 / total_input as f64
-    }
-}
-
-// ---------------------------------------------------------------------------
-// LlmCallMetrics — timing metrics for a single LLM streaming call
-// ---------------------------------------------------------------------------
-
-/// Timing metrics for a single LLM streaming call.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LlmCallMetrics {
-    /// Total wall-clock time (ms).
-    pub duration_ms: u64,
-    /// Time to first byte — request start to stream start (ms).
-    pub ttfb_ms: u64,
-    /// Time to first token — request start to first text/thinking delta (ms).
-    pub ttft_ms: u64,
-    /// Streaming duration — first delta to completion (ms).
-    pub streaming_ms: u64,
-    /// Number of delta chunks received.
-    pub chunk_count: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +70,22 @@ pub enum TranscriptItem {
     Compact {
         messages: Vec<TranscriptItem>,
     },
+    /// Observability fact — persisted in transcript.jsonl but never enters
+    /// the conversation context sent to the engine.
+    Stats {
+        kind: String,
+        data: serde_json::Value,
+    },
+}
+
+impl TranscriptItem {
+    /// Whether this item belongs in the conversation context view.
+    ///
+    /// Items that return `false` are observability/control facts that live in
+    /// the raw transcript but must be filtered out before sending to the engine.
+    pub fn is_context_item(&self) -> bool {
+        !matches!(self, Self::Stats { .. } | Self::Compact { .. })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -166,40 +134,12 @@ pub struct ListTranscriptEntries {
 }
 
 // ---------------------------------------------------------------------------
-// SessionMeta — session metadata
+// Helpers
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionMeta {
-    pub session_id: String,
-    pub cwd: String,
-    pub model: String,
-    pub title: Option<String>,
-    pub turns: u32,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-impl SessionMeta {
-    pub fn new(session_id: String, cwd: String, model: String) -> Self {
-        let now = Utc::now().to_rfc3339();
-        Self {
-            session_id,
-            cwd,
-            model,
-            title: None,
-            turns: 0,
-            created_at: now.clone(),
-            updated_at: now,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ListSessions — query for listing sessions
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ListSessions {
-    pub limit: usize,
+/// Build a run-finished usage summary by summing assistant-message usage.
+/// This is a convenience re-export so callers don't need to depend on metrics
+/// directly when they already have a `UsageSummary`.
+pub fn empty_usage() -> UsageSummary {
+    UsageSummary::default()
 }

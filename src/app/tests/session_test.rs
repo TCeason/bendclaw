@@ -487,3 +487,145 @@ async fn multiple_compactions_uses_last() -> TestResult {
     assert!(matches!(&transcript[1], TranscriptItem::User { text } if text == "msg3"));
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Stats filtering on resume
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn stats_items_persisted_but_filtered_on_resume() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+    let session = Session::new(
+        "sess-stats".into(),
+        "/tmp".into(),
+        "m".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    // Write a mix of conversation items and stats
+    let stats_item = bendclaw::types::TranscriptStats::LlmCallCompleted(
+        bendclaw::types::LlmCallCompletedStats {
+            turn: 1,
+            attempt: 0,
+            usage: bendclaw::types::UsageSummary {
+                input: 100,
+                output: 50,
+                cache_read: 0,
+                cache_write: 0,
+            },
+            metrics: None,
+            error: None,
+        },
+    )
+    .to_item();
+
+    session
+        .write_items(vec![
+            TranscriptItem::User {
+                text: "hello".into(),
+            },
+            stats_item,
+            TranscriptItem::Assistant {
+                text: "hi".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "end_turn".into(),
+            },
+        ])
+        .await?;
+    session.save().await?;
+
+    // Raw storage should have 3 entries
+    let raw = storage
+        .list_entries(bendclaw::types::ListTranscriptEntries {
+            session_id: "sess-stats".into(),
+            run_id: None,
+            after_seq: None,
+            limit: None,
+        })
+        .await?;
+    assert_eq!(raw.len(), 3);
+    assert!(
+        matches!(&raw[1].item, TranscriptItem::Stats { kind, .. } if kind == "llm_call_completed")
+    );
+
+    // Resumed session transcript should only have 2 items (no stats)
+    let loaded = Session::open("sess-stats", storage.clone())
+        .await?
+        .ok_or_else(|| missing_error("missing session"))?;
+    let transcript = loaded.transcript().await;
+    assert_eq!(transcript.len(), 2);
+    assert!(matches!(&transcript[0], TranscriptItem::User { text } if text == "hello"));
+    assert!(matches!(&transcript[1], TranscriptItem::Assistant { text, .. } if text == "hi"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn stats_after_compact_filtered_on_resume() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+    let session = Session::new(
+        "sess-stats-compact".into(),
+        "/tmp".into(),
+        "m".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    // Write initial messages
+    session
+        .write_items(vec![
+            TranscriptItem::User {
+                text: "old msg".into(),
+            },
+            TranscriptItem::Assistant {
+                text: "old reply".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "end_turn".into(),
+            },
+        ])
+        .await?;
+
+    // Write compact + stats + new message
+    let compact_stats = bendclaw::types::TranscriptStats::ContextCompactionCompleted(
+        bendclaw::types::ContextCompactionCompletedStats {
+            level: 1,
+            before_message_count: 10,
+            after_message_count: 4,
+            before_estimated_tokens: 30000,
+            after_estimated_tokens: 12000,
+            tool_outputs_truncated: 2,
+            turns_summarized: 3,
+            messages_dropped: 1,
+        },
+    )
+    .to_item();
+
+    session
+        .write_items(vec![
+            TranscriptItem::Compact {
+                messages: vec![TranscriptItem::User {
+                    text: "summary".into(),
+                }],
+            },
+            compact_stats,
+            TranscriptItem::User {
+                text: "new msg".into(),
+            },
+        ])
+        .await?;
+    session.save().await?;
+
+    // Resume: should see compact base + new msg, no stats
+    let loaded = Session::open("sess-stats-compact", storage.clone())
+        .await?
+        .ok_or_else(|| missing_error("missing session"))?;
+    let transcript = loaded.transcript().await;
+    assert_eq!(transcript.len(), 2);
+    assert!(matches!(&transcript[0], TranscriptItem::User { text } if text == "summary"));
+    assert!(matches!(&transcript[1], TranscriptItem::User { text } if text == "new msg"));
+    Ok(())
+}

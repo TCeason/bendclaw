@@ -152,15 +152,19 @@ fn first_user_title(items: &[TranscriptItem]) -> Option<String> {
     Some(title)
 }
 
-/// Find the last `Compact` entry in the raw transcript log and use its
-/// `messages` as the starting point, then append every entry that follows it.
-/// If no `Compact` entry exists, all entries are returned as-is.
+/// Build the conversation context view from raw transcript entries.
+///
+/// Finds the last `Compact` entry and uses its messages as the starting
+/// point, then appends every entry that follows it. Items that are not
+/// part of the conversation context (Stats, Compact itself) are filtered
+/// out — they remain in the raw transcript.jsonl but never enter the
+/// engine context.
 fn resolve_transcript(entries: Vec<TranscriptEntry>) -> Vec<TranscriptItem> {
     let last_compact_idx = entries
         .iter()
         .rposition(|e| matches!(e.item, TranscriptItem::Compact { .. }));
 
-    match last_compact_idx {
+    let mut items = match last_compact_idx {
         Some(idx) => {
             let compact = &entries[idx];
             let mut items = match &compact.item {
@@ -173,5 +177,9 @@ fn resolve_transcript(entries: Vec<TranscriptEntry>) -> Vec<TranscriptItem> {
             items
         }
         None => entries.into_iter().map(|e| e.item).collect(),
-    }
+    };
+
+    // Project: keep only conversation context items.
+    items.retain(|item| item.is_context_item());
+    items
 }

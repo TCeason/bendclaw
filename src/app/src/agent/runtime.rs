@@ -21,8 +21,15 @@ use super::event::RunEventPayload;
 use crate::conf::ProviderKind;
 use crate::error::Result;
 use crate::session::Session;
+use crate::types::ContextCompactionCompletedStats;
+use crate::types::ContextCompactionStartedStats;
+use crate::types::LlmCallCompletedStats;
 use crate::types::LlmCallMetrics;
+use crate::types::LlmCallStartedStats;
+use crate::types::RunFinishedStats;
+use crate::types::ToolFinishedStats;
 use crate::types::TranscriptItem;
+use crate::types::TranscriptStats;
 use crate::types::UsageSummary;
 
 // ---------------------------------------------------------------------------
@@ -191,6 +198,16 @@ pub(super) async fn run_loop(
             } => {
                 got_run_completed = true;
 
+                // Push RunFinished stats BEFORE flush so it gets persisted.
+                let duration_ms = started_at.elapsed().as_millis() as u64;
+                let stats = TranscriptStats::RunFinished(RunFinishedStats {
+                    usage: usage.clone(),
+                    turn_count: turn,
+                    duration_ms,
+                    transcript_count,
+                });
+                run_transcripts.push(stats.to_item());
+
                 if let Err(e) = flush(&session, &run_transcripts, &mut saved_count).await {
                     logx!(
                         error,
@@ -206,7 +223,7 @@ pub(super) async fn run_loop(
                     last_text,
                     usage,
                     turn,
-                    started_at.elapsed().as_millis() as u64,
+                    duration_ms,
                     transcript_count,
                 );
                 let _ = tx.send(finished_event);
@@ -400,6 +417,16 @@ fn map_agent_event(
                     content: content.clone(),
                     is_error: *is_error,
                 }),
+                RuntimeEvent::Transcript(
+                    TranscriptStats::ToolFinished(ToolFinishedStats {
+                        tool_call_id: tool_call_id.clone(),
+                        tool_name: tool_name.clone(),
+                        result_tokens: *result_tokens,
+                        duration_ms: *duration_ms,
+                        is_error: *is_error,
+                    })
+                    .to_item(),
+                ),
                 RuntimeEvent::Public(RunEventPayload::ToolFinished {
                     tool_call_id: tool_call_id.clone(),
                     tool_name: tool_name.clone(),
@@ -447,17 +474,30 @@ fn map_agent_event(
                 .map(|t| serialize_or_placeholder(t, "tool"))
                 .collect();
             let message_bytes: usize = messages.iter().map(|m| m.to_string().len()).sum();
-            vec![RuntimeEvent::Public(RunEventPayload::LlmCallStarted {
-                turn: *turn,
-                attempt: *attempt,
-                model: request.model.clone(),
-                system_prompt: request.system_prompt.clone(),
-                messages,
-                tools,
-                message_count,
-                message_bytes,
-                system_prompt_tokens,
-            })]
+            vec![
+                RuntimeEvent::Transcript(
+                    TranscriptStats::LlmCallStarted(LlmCallStartedStats {
+                        turn: *turn,
+                        attempt: *attempt,
+                        model: request.model.clone(),
+                        message_count,
+                        message_bytes,
+                        system_prompt_tokens,
+                    })
+                    .to_item(),
+                ),
+                RuntimeEvent::Public(RunEventPayload::LlmCallStarted {
+                    turn: *turn,
+                    attempt: *attempt,
+                    model: request.model.clone(),
+                    system_prompt: request.system_prompt.clone(),
+                    messages,
+                    tools,
+                    message_count,
+                    message_bytes,
+                    system_prompt_tokens,
+                }),
+            ]
         }
 
         bend_engine::AgentEvent::LlmCallEnd {
@@ -473,21 +513,34 @@ fn map_agent_event(
                 cache_read: usage.cache_read,
                 cache_write: usage.cache_write,
             };
-            vec![RuntimeEvent::Public(RunEventPayload::LlmCallCompleted {
-                turn: *turn,
-                attempt: *attempt,
-                usage: usage_summary.clone(),
-                cache_read: usage_summary.cache_read,
-                cache_write: usage_summary.cache_write,
-                error: error.clone(),
-                metrics: Some(LlmCallMetrics {
-                    duration_ms: metrics.duration_ms,
-                    ttfb_ms: metrics.ttfb_ms,
-                    ttft_ms: metrics.ttft_ms,
-                    streaming_ms: metrics.streaming_ms,
-                    chunk_count: metrics.chunk_count,
+            let llm_metrics = LlmCallMetrics {
+                duration_ms: metrics.duration_ms,
+                ttfb_ms: metrics.ttfb_ms,
+                ttft_ms: metrics.ttft_ms,
+                streaming_ms: metrics.streaming_ms,
+                chunk_count: metrics.chunk_count,
+            };
+            vec![
+                RuntimeEvent::Transcript(
+                    TranscriptStats::LlmCallCompleted(LlmCallCompletedStats {
+                        turn: *turn,
+                        attempt: *attempt,
+                        usage: usage_summary.clone(),
+                        metrics: Some(llm_metrics.clone()),
+                        error: error.clone(),
+                    })
+                    .to_item(),
+                ),
+                RuntimeEvent::Public(RunEventPayload::LlmCallCompleted {
+                    turn: *turn,
+                    attempt: *attempt,
+                    usage: usage_summary.clone(),
+                    cache_read: usage_summary.cache_read,
+                    cache_write: usage_summary.cache_write,
+                    error: error.clone(),
+                    metrics: Some(llm_metrics),
                 }),
-            })]
+            ]
         }
 
         bend_engine::AgentEvent::ContextCompactionStart {
@@ -496,15 +549,25 @@ fn map_agent_event(
             budget_tokens,
             system_prompt_tokens,
             context_window,
-        } => vec![RuntimeEvent::Public(
-            RunEventPayload::ContextCompactionStarted {
+        } => vec![
+            RuntimeEvent::Transcript(
+                TranscriptStats::ContextCompactionStarted(ContextCompactionStartedStats {
+                    message_count: *message_count,
+                    estimated_tokens: *estimated_tokens,
+                    budget_tokens: *budget_tokens,
+                    system_prompt_tokens: *system_prompt_tokens,
+                    context_window: *context_window,
+                })
+                .to_item(),
+            ),
+            RuntimeEvent::Public(RunEventPayload::ContextCompactionStarted {
                 message_count: *message_count,
                 estimated_tokens: *estimated_tokens,
                 budget_tokens: *budget_tokens,
                 system_prompt_tokens: *system_prompt_tokens,
                 context_window: *context_window,
-            },
-        )],
+            }),
+        ],
 
         bend_engine::AgentEvent::ContextCompactionEnd { stats, messages } => {
             let compacted_transcripts = from_agent_messages(messages);
@@ -523,6 +586,19 @@ fn map_agent_event(
                     level: stats.level,
                     transcripts: compacted_transcripts,
                 },
+                RuntimeEvent::Transcript(
+                    TranscriptStats::ContextCompactionCompleted(ContextCompactionCompletedStats {
+                        level: stats.level,
+                        before_message_count: stats.before_message_count,
+                        after_message_count: stats.after_message_count,
+                        before_estimated_tokens: stats.before_estimated_tokens,
+                        after_estimated_tokens: stats.after_estimated_tokens,
+                        tool_outputs_truncated: stats.tool_outputs_truncated,
+                        turns_summarized: stats.turns_summarized,
+                        messages_dropped: stats.messages_dropped,
+                    })
+                    .to_item(),
+                ),
                 RuntimeEvent::Public(RunEventPayload::ContextCompactionCompleted {
                     level: stats.level,
                     before_message_count: stats.before_message_count,
