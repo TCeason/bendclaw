@@ -11,8 +11,6 @@ use axum::Router;
 use bend_base::logx;
 use bend_base::prompt::SystemPrompt;
 use serde::Deserialize;
-use serde::Serialize;
-use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 
 use crate::agent::AppAgent;
@@ -27,24 +25,17 @@ const INDEX_HTML: &str = include_str!("static/index.html");
 #[derive(Deserialize)]
 struct ChatRequest {
     message: String,
-}
-
-#[derive(Serialize)]
-struct StatusResponse {
-    status: String,
+    #[serde(default)]
+    session_id: Option<String>,
 }
 
 pub struct Server {
     agent: Arc<AppAgent>,
-    session_id: RwLock<Option<String>>,
 }
 
 impl Server {
     pub fn new(agent: Arc<AppAgent>) -> Arc<Self> {
-        Arc::new(Self {
-            agent,
-            session_id: RwLock::new(None),
-        })
+        Arc::new(Self { agent })
     }
 
     pub async fn start(self: Arc<Self>, host: String, port: u16) -> Result<()> {
@@ -69,10 +60,6 @@ impl Server {
                 get(|State(server): State<Arc<Server>>| async move { server.index().await }),
             )
             .route(
-                "/api/new",
-                post(|State(server): State<Arc<Server>>| async move { server.new_session().await }),
-            )
-            .route(
                 "/api/chat",
                 post(
                     |State(server): State<Arc<Server>>, Json(req): Json<ChatRequest>| async move {
@@ -88,15 +75,8 @@ impl Server {
         Html(INDEX_HTML)
     }
 
-    async fn new_session(&self) -> Json<StatusResponse> {
-        *self.session_id.write().await = None;
-        Json(StatusResponse {
-            status: "ok".into(),
-        })
-    }
-
     async fn chat(self: Arc<Self>, req: ChatRequest) -> impl IntoResponse {
-        let stream = self.chat_stream(req.message);
+        let stream = self.chat_stream(req.message, req.session_id);
         Sse::new(stream).keep_alive(
             axum::response::sse::KeepAlive::new()
                 .interval(std::time::Duration::from_secs(15))
@@ -107,18 +87,17 @@ impl Server {
     fn chat_stream(
         self: Arc<Self>,
         message: String,
+        session_id: Option<String>,
     ) -> impl futures::stream::Stream<
         Item = std::result::Result<axum::response::sse::Event, std::convert::Infallible>,
     > {
         let (tx, rx) = tokio::sync::mpsc::channel(64);
 
         tokio::spawn(async move {
-            let session_id = self.session_id.read().await.clone();
             let request = TurnRequest::text(message).session_id(session_id);
 
-            match self.agent.run(request).await {
+            match self.agent.submit(request).await {
                 Ok(mut turn_stream) => {
-                    let sid = turn_stream.session_id.clone();
                     while let Some(event) = turn_stream.next().await {
                         for sse in stream::map_run_event(&event) {
                             if tx.send(sse).await.is_err() {
@@ -126,7 +105,6 @@ impl Server {
                             }
                         }
                     }
-                    *self.session_id.write().await = Some(sid);
                 }
                 Err(error) => {
                     let _ = tx.send(stream::error_event(error.to_string())).await;

@@ -1,4 +1,4 @@
-//! Shared data types for the agent module.
+//! Shared domain types used across agent, session, and storage modules.
 
 use chrono::Utc;
 use serde::Deserialize;

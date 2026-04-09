@@ -1,5 +1,12 @@
-//! Engine runtime — start engine, forward events, build agent.
+//! Engine runtime — create engine, forward events, orchestrate a run.
+//!
+//! This module owns the boundary between `bend_engine::AgentEvent` and the
+//! app-layer `RunEvent`. No engine types leak beyond this module.
 
+use std::sync::Arc;
+use std::time::Instant;
+
+use bend_base::logx;
 use tokio::sync::mpsc;
 
 use super::convert::assistant_blocks_from_content;
@@ -7,12 +14,20 @@ use super::convert::extract_content_text;
 use super::convert::from_agent_messages;
 use super::convert::into_agent_messages;
 use super::convert::total_usage;
-use super::event::ProtocolEvent;
-use super::types::LlmCallMetrics;
-use super::types::TranscriptItem;
-use super::types::UsageSummary;
+use super::convert::transcript_from_assistant_completed;
+use super::event::RunEvent;
+use super::event::RunEventContext;
+use super::event::RunEventPayload;
 use crate::conf::ProviderKind;
 use crate::error::Result;
+use crate::session::Session;
+use crate::types::LlmCallMetrics;
+use crate::types::TranscriptItem;
+use crate::types::UsageSummary;
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
 
 pub struct EngineOptions {
     pub provider: ProviderKind,
@@ -26,10 +41,507 @@ pub struct EngineOptions {
 }
 
 /// Handle to a running engine instance.
-/// Provides access to final transcripts and abort capability.
+/// Provides abort capability.
 pub struct EngineHandle {
     agent: Option<bend_engine::Agent>,
 }
+
+impl EngineHandle {
+    /// Abort the engine run.
+    pub fn abort(&self) {
+        if let Some(agent) = self.agent.as_ref() {
+            agent.abort();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RuntimeEvent — private orchestration signal
+// ---------------------------------------------------------------------------
+
+/// Internal event produced by the forwarder. Not exported outside the agent module.
+/// Carries both public events (for the consumer) and orchestration signals
+/// (for transcript persistence and run lifecycle).
+pub(super) enum RuntimeEvent {
+    /// Forward to the external consumer as a RunEvent.
+    Public(RunEventPayload),
+    /// A transcript item was produced (for persistence).
+    Transcript(TranscriptItem),
+    /// A turn started.
+    TurnStarted,
+    /// A turn ended (flush transcripts).
+    TurnEnded,
+    /// The agent loop finished.
+    RunCompleted {
+        last_text: String,
+        usage: UsageSummary,
+        transcript_count: usize,
+    },
+    /// Context was compacted at the given level.
+    Compacted {
+        level: u8,
+        transcripts: Vec<TranscriptItem>,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// create_engine — build and start the engine
+// ---------------------------------------------------------------------------
+
+/// Build a `bend_engine::Agent`, start it with the given prompt, and spawn
+/// a forwarder task that converts `AgentEvent` → `RuntimeEvent`.
+///
+/// Returns a `RuntimeEvent` receiver and an `EngineHandle` for abort.
+pub(super) async fn create_engine(
+    options: EngineOptions,
+    prior_transcripts: &[TranscriptItem],
+    prompt: String,
+    run_id: &str,
+    session_id: &str,
+) -> Result<(mpsc::UnboundedReceiver<RuntimeEvent>, EngineHandle)> {
+    let prior_messages = into_agent_messages(prior_transcripts);
+    let mut agent = build_agent(options, prior_messages);
+    let engine_rx = agent.prompt(prompt).await;
+
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    let rid = run_id.to_string();
+    let sid = session_id.to_string();
+    tokio::spawn(async move {
+        forward_events(engine_rx, tx, &rid, &sid).await;
+    });
+
+    let handle = EngineHandle { agent: Some(agent) };
+    Ok((rx, handle))
+}
+
+// ---------------------------------------------------------------------------
+// run_loop — orchestrate a single run (transcript persistence + event relay)
+// ---------------------------------------------------------------------------
+
+/// Consume `RuntimeEvent`s, persist transcripts, and relay `RunEvent`s to the
+/// external consumer. This is the run orchestration loop extracted from
+/// `AppAgent::run()`.
+pub(super) async fn run_loop(
+    mut rx: mpsc::UnboundedReceiver<RuntimeEvent>,
+    tx: mpsc::UnboundedSender<RunEvent>,
+    session: Arc<Session>,
+    prompt: String,
+    run_id: String,
+    session_id: String,
+) {
+    let started_at = Instant::now();
+    let ctx = RunEventContext::new(&run_id, &session_id, 0);
+
+    // Send RunStarted
+    let _ = tx.send(ctx.started());
+
+    let mut run_transcripts: Vec<TranscriptItem> = vec![TranscriptItem::User { text: prompt }];
+    let mut saved_count: usize = 0;
+    let mut turn = 0_u32;
+    let mut got_run_completed = false;
+
+    // Flush unsaved transcript items to storage.
+    let flush = |session: &Arc<Session>, transcripts: &[TranscriptItem], saved: &mut usize| {
+        let new_items = transcripts[*saved..].to_vec();
+        let session = Arc::clone(session);
+        *saved = transcripts.len();
+        async move {
+            if !new_items.is_empty() {
+                session.write_items(new_items).await
+            } else {
+                Ok(())
+            }
+        }
+    };
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            RuntimeEvent::TurnStarted => {
+                turn += 1;
+                session.increment_turn().await;
+            }
+            RuntimeEvent::Transcript(item) => {
+                run_transcripts.push(item);
+            }
+            RuntimeEvent::Compacted { level, transcripts } => {
+                if level > 0 {
+                    run_transcripts.push(TranscriptItem::Compact {
+                        messages: transcripts,
+                    });
+                }
+            }
+            RuntimeEvent::TurnEnded => {
+                if let Err(e) = flush(&session, &run_transcripts, &mut saved_count).await {
+                    logx!(
+                        error,
+                        "run",
+                        "incremental_save_failed",
+                        run_id = %run_id,
+                        session_id = %session_id,
+                        error = %e,
+                    );
+                }
+            }
+            RuntimeEvent::RunCompleted {
+                last_text,
+                usage,
+                transcript_count,
+            } => {
+                got_run_completed = true;
+
+                if let Err(e) = flush(&session, &run_transcripts, &mut saved_count).await {
+                    logx!(
+                        error,
+                        "run",
+                        "transcript_save_failed",
+                        run_id = %run_id,
+                        session_id = %session_id,
+                        error = %e,
+                    );
+                }
+
+                let finished_event = RunEventContext::new(&run_id, &session_id, turn).finished(
+                    last_text,
+                    usage,
+                    turn,
+                    started_at.elapsed().as_millis() as u64,
+                    transcript_count,
+                );
+                let _ = tx.send(finished_event);
+            }
+            RuntimeEvent::Public(payload) => {
+                let event = RunEventContext::new(&run_id, &session_id, turn).event(payload);
+                if tx.send(event).is_err() {
+                    break;
+                }
+            }
+        }
+    }
+
+    // Fallback save
+    if !got_run_completed {
+        let _ = flush(&session, &run_transcripts, &mut saved_count).await;
+    }
+
+    let _ = session.save().await;
+
+    logx!(
+        info,
+        "run",
+        "finished",
+        run_id = %run_id,
+        session_id = %session_id,
+        elapsed_ms = started_at.elapsed().as_millis() as u64,
+        turn,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// forward_events — AgentEvent → RuntimeEvent (one-step conversion)
+// ---------------------------------------------------------------------------
+
+async fn forward_events(
+    mut engine_rx: mpsc::UnboundedReceiver<bend_engine::AgentEvent>,
+    tx: mpsc::UnboundedSender<RuntimeEvent>,
+    run_id: &str,
+    session_id: &str,
+) {
+    while let Some(event) = engine_rx.recv().await {
+        let runtime_events = map_agent_event(&event, run_id, session_id);
+        for re in runtime_events {
+            if tx.send(re).is_err() {
+                return;
+            }
+        }
+    }
+}
+
+/// Map a single `AgentEvent` to zero or more `RuntimeEvent`s.
+fn map_agent_event(
+    event: &bend_engine::AgentEvent,
+    _run_id: &str,
+    _session_id: &str,
+) -> Vec<RuntimeEvent> {
+    match event {
+        bend_engine::AgentEvent::AgentStart => vec![],
+
+        bend_engine::AgentEvent::AgentEnd { messages } => {
+            let transcripts = from_agent_messages(messages);
+            let usage = total_usage(messages);
+            let transcript_count = messages.len();
+
+            let last_text = transcripts
+                .iter()
+                .rev()
+                .find_map(|t| {
+                    if let TranscriptItem::Assistant { text, .. } = t {
+                        if !text.is_empty() {
+                            return Some(text.clone());
+                        }
+                    }
+                    None
+                })
+                .unwrap_or_default();
+
+            vec![RuntimeEvent::RunCompleted {
+                last_text,
+                usage,
+                transcript_count,
+            }]
+        }
+
+        bend_engine::AgentEvent::TurnStart => {
+            vec![
+                RuntimeEvent::TurnStarted,
+                RuntimeEvent::Public(RunEventPayload::TurnStarted {}),
+            ]
+        }
+
+        bend_engine::AgentEvent::TurnEnd { .. } => {
+            vec![RuntimeEvent::TurnEnded]
+        }
+
+        bend_engine::AgentEvent::MessageStart { .. } => vec![],
+
+        bend_engine::AgentEvent::MessageUpdate {
+            delta: bend_engine::StreamDelta::Text { delta },
+            ..
+        } => vec![RuntimeEvent::Public(RunEventPayload::AssistantDelta {
+            delta: Some(delta.clone()),
+            thinking_delta: None,
+        })],
+
+        bend_engine::AgentEvent::MessageUpdate {
+            delta: bend_engine::StreamDelta::Thinking { delta },
+            ..
+        } => vec![RuntimeEvent::Public(RunEventPayload::AssistantDelta {
+            delta: None,
+            thinking_delta: Some(delta.clone()),
+        })],
+
+        bend_engine::AgentEvent::MessageUpdate {
+            delta: bend_engine::StreamDelta::ToolCallDelta { .. },
+            ..
+        } => vec![],
+
+        bend_engine::AgentEvent::MessageEnd { message } => {
+            if let bend_engine::AgentMessage::Llm(bend_engine::Message::Assistant {
+                content,
+                usage,
+                stop_reason,
+                error_message,
+                ..
+            }) = message
+            {
+                let blocks = assistant_blocks_from_content(content);
+                let usage_summary = UsageSummary {
+                    input: usage.input,
+                    output: usage.output,
+                    cache_read: usage.cache_read,
+                    cache_write: usage.cache_write,
+                };
+                let transcript_item =
+                    transcript_from_assistant_completed(&blocks, &stop_reason.to_string());
+
+                vec![
+                    RuntimeEvent::Transcript(transcript_item),
+                    RuntimeEvent::Public(RunEventPayload::AssistantCompleted {
+                        content: blocks,
+                        usage: Some(usage_summary),
+                        stop_reason: stop_reason.to_string(),
+                        error_message: error_message.clone(),
+                    }),
+                ]
+            } else {
+                vec![]
+            }
+        }
+
+        bend_engine::AgentEvent::ToolExecutionStart {
+            tool_call_id,
+            tool_name,
+            args,
+            preview_command,
+        } => vec![RuntimeEvent::Public(RunEventPayload::ToolStarted {
+            tool_call_id: tool_call_id.clone(),
+            tool_name: tool_name.clone(),
+            args: args.clone(),
+            preview_command: preview_command.clone(),
+        })],
+
+        bend_engine::AgentEvent::ToolExecutionUpdate {
+            tool_call_id,
+            tool_name,
+            partial_result,
+        } => {
+            let text = extract_content_text(&partial_result.content);
+            vec![RuntimeEvent::Public(RunEventPayload::ToolProgress {
+                tool_call_id: tool_call_id.clone(),
+                tool_name: tool_name.clone(),
+                text,
+            })]
+        }
+
+        bend_engine::AgentEvent::ToolExecutionEnd {
+            tool_call_id,
+            tool_name,
+            result,
+            is_error,
+            result_tokens,
+            duration_ms,
+        } => {
+            let content = extract_content_text(&result.content);
+            vec![
+                RuntimeEvent::Transcript(TranscriptItem::ToolResult {
+                    tool_call_id: tool_call_id.clone(),
+                    tool_name: tool_name.clone(),
+                    content: content.clone(),
+                    is_error: *is_error,
+                }),
+                RuntimeEvent::Public(RunEventPayload::ToolFinished {
+                    tool_call_id: tool_call_id.clone(),
+                    tool_name: tool_name.clone(),
+                    content,
+                    is_error: *is_error,
+                    details: result.details.clone(),
+                    result_tokens: *result_tokens,
+                    duration_ms: *duration_ms,
+                }),
+            ]
+        }
+
+        bend_engine::AgentEvent::ProgressMessage {
+            tool_call_id,
+            tool_name,
+            text,
+        } => vec![RuntimeEvent::Public(RunEventPayload::ToolProgress {
+            tool_call_id: tool_call_id.clone(),
+            tool_name: tool_name.clone(),
+            text: text.clone(),
+        })],
+
+        bend_engine::AgentEvent::Error { error } => {
+            vec![RuntimeEvent::Public(RunEventPayload::Error {
+                message: error.message.clone(),
+            })]
+        }
+
+        bend_engine::AgentEvent::LlmCallStart {
+            turn,
+            attempt,
+            request,
+        } => {
+            let message_count = request.messages.len();
+            let system_prompt_tokens =
+                bend_engine::context::estimate_tokens(&request.system_prompt);
+            let messages: Vec<serde_json::Value> = request
+                .messages
+                .iter()
+                .map(|m| serialize_or_placeholder(m, "message"))
+                .collect();
+            let tools: Vec<serde_json::Value> = request
+                .tools
+                .iter()
+                .map(|t| serialize_or_placeholder(t, "tool"))
+                .collect();
+            let message_bytes: usize = messages.iter().map(|m| m.to_string().len()).sum();
+            vec![RuntimeEvent::Public(RunEventPayload::LlmCallStarted {
+                turn: *turn,
+                attempt: *attempt,
+                model: request.model.clone(),
+                system_prompt: request.system_prompt.clone(),
+                messages,
+                tools,
+                message_count,
+                message_bytes,
+                system_prompt_tokens,
+            })]
+        }
+
+        bend_engine::AgentEvent::LlmCallEnd {
+            turn,
+            attempt,
+            usage,
+            error,
+            metrics,
+        } => {
+            let usage_summary = UsageSummary {
+                input: usage.input,
+                output: usage.output,
+                cache_read: usage.cache_read,
+                cache_write: usage.cache_write,
+            };
+            vec![RuntimeEvent::Public(RunEventPayload::LlmCallCompleted {
+                turn: *turn,
+                attempt: *attempt,
+                usage: usage_summary.clone(),
+                cache_read: usage_summary.cache_read,
+                cache_write: usage_summary.cache_write,
+                error: error.clone(),
+                metrics: Some(LlmCallMetrics {
+                    duration_ms: metrics.duration_ms,
+                    ttfb_ms: metrics.ttfb_ms,
+                    ttft_ms: metrics.ttft_ms,
+                    streaming_ms: metrics.streaming_ms,
+                    chunk_count: metrics.chunk_count,
+                }),
+            })]
+        }
+
+        bend_engine::AgentEvent::ContextCompactionStart {
+            message_count,
+            estimated_tokens,
+            budget_tokens,
+            system_prompt_tokens,
+            context_window,
+        } => vec![RuntimeEvent::Public(
+            RunEventPayload::ContextCompactionStarted {
+                message_count: *message_count,
+                estimated_tokens: *estimated_tokens,
+                budget_tokens: *budget_tokens,
+                system_prompt_tokens: *system_prompt_tokens,
+                context_window: *context_window,
+            },
+        )],
+
+        bend_engine::AgentEvent::ContextCompactionEnd { stats, messages } => {
+            let compacted_transcripts = from_agent_messages(messages);
+            let before_tool_details: Vec<(String, usize)> = stats
+                .before_tool_details
+                .iter()
+                .map(|d| (d.tool_name.clone(), d.tokens))
+                .collect();
+            let after_tool_details: Vec<(String, usize)> = stats
+                .after_tool_details
+                .iter()
+                .map(|d| (d.tool_name.clone(), d.tokens))
+                .collect();
+            vec![
+                RuntimeEvent::Compacted {
+                    level: stats.level,
+                    transcripts: compacted_transcripts,
+                },
+                RuntimeEvent::Public(RunEventPayload::ContextCompactionCompleted {
+                    level: stats.level,
+                    before_message_count: stats.before_message_count,
+                    after_message_count: stats.after_message_count,
+                    before_estimated_tokens: stats.before_estimated_tokens,
+                    after_estimated_tokens: stats.after_estimated_tokens,
+                    tool_outputs_truncated: stats.tool_outputs_truncated,
+                    turns_summarized: stats.turns_summarized,
+                    messages_dropped: stats.messages_dropped,
+                    before_tool_details,
+                    after_tool_details,
+                }),
+            ]
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 fn serialize_or_placeholder<T: serde::Serialize>(value: &T, kind: &str) -> serde_json::Value {
     match serde_json::to_value(value) {
@@ -41,272 +553,6 @@ fn serialize_or_placeholder<T: serde::Serialize>(value: &T, kind: &str) -> serde
                 "kind": kind,
                 "message": e.to_string(),
             })
-        }
-    }
-}
-
-impl EngineHandle {
-    /// Wait for the engine to finish, then extract final transcripts.
-    /// Calls agent.finish().await first to ensure the agent loop is fully done.
-    pub async fn take_transcripts(&mut self) -> Vec<TranscriptItem> {
-        if let Some(agent) = self.agent.as_mut() {
-            agent.finish().await;
-            let messages = agent.messages().to_vec();
-            return from_agent_messages(&messages);
-        }
-        Vec::new()
-    }
-
-    /// Abort the engine run.
-    pub fn abort(&self) {
-        if let Some(agent) = self.agent.as_ref() {
-            agent.abort();
-        }
-    }
-}
-
-/// Start the engine and return a ProtocolEvent receiver + handle.
-///
-/// Internally builds a `bend_engine::Agent`, starts it with the given prompt,
-/// and spawns a forwarder task that converts `AgentEvent` → `ProtocolEvent`.
-pub async fn start_engine(
-    options: EngineOptions,
-    prior_transcripts: &[TranscriptItem],
-    prompt: String,
-) -> Result<(mpsc::UnboundedReceiver<ProtocolEvent>, EngineHandle)> {
-    let prior_messages = into_agent_messages(prior_transcripts);
-    let mut agent = build_agent(options, prior_messages);
-    let engine_rx = agent.prompt(prompt).await;
-
-    let (tx, rx) = mpsc::unbounded_channel();
-
-    // Forwarder task: AgentEvent → ProtocolEvent
-    tokio::spawn(async move {
-        forward_events(engine_rx, tx).await;
-    });
-
-    let handle = EngineHandle { agent: Some(agent) };
-    Ok((rx, handle))
-}
-
-async fn forward_events(
-    mut engine_rx: mpsc::UnboundedReceiver<bend_engine::AgentEvent>,
-    tx: mpsc::UnboundedSender<ProtocolEvent>,
-) {
-    while let Some(event) = engine_rx.recv().await {
-        let protocol_event = match &event {
-            bend_engine::AgentEvent::AgentStart => Some(ProtocolEvent::AgentStart),
-            bend_engine::AgentEvent::AgentEnd { messages } => {
-                let transcripts = from_agent_messages(messages);
-                let usage = total_usage(messages);
-                let transcript_count = messages.len();
-                Some(ProtocolEvent::AgentEnd {
-                    transcripts,
-                    usage,
-                    transcript_count,
-                })
-            }
-            bend_engine::AgentEvent::TurnStart => Some(ProtocolEvent::TurnStart),
-            bend_engine::AgentEvent::TurnEnd { .. } => Some(ProtocolEvent::TurnEnd),
-            bend_engine::AgentEvent::MessageStart { .. } => None,
-            bend_engine::AgentEvent::MessageUpdate {
-                delta: bend_engine::StreamDelta::Text { delta },
-                ..
-            } => Some(ProtocolEvent::AssistantDelta {
-                delta: Some(delta.clone()),
-                thinking_delta: None,
-            }),
-            bend_engine::AgentEvent::MessageUpdate {
-                delta: bend_engine::StreamDelta::Thinking { delta },
-                ..
-            } => Some(ProtocolEvent::AssistantDelta {
-                delta: None,
-                thinking_delta: Some(delta.clone()),
-            }),
-            bend_engine::AgentEvent::MessageUpdate {
-                delta: bend_engine::StreamDelta::ToolCallDelta { .. },
-                ..
-            } => None,
-            bend_engine::AgentEvent::MessageEnd { message } => {
-                if let bend_engine::AgentMessage::Llm(bend_engine::Message::Assistant {
-                    content,
-                    usage,
-                    stop_reason,
-                    error_message,
-                    ..
-                }) = message
-                {
-                    let blocks = assistant_blocks_from_content(content);
-                    let usage_summary = UsageSummary {
-                        input: usage.input,
-                        output: usage.output,
-                        cache_read: usage.cache_read,
-                        cache_write: usage.cache_write,
-                    };
-                    Some(ProtocolEvent::AssistantCompleted {
-                        content: blocks,
-                        usage: Some(usage_summary),
-                        stop_reason: stop_reason.to_string(),
-                        error_message: error_message.clone(),
-                    })
-                } else {
-                    None
-                }
-            }
-            bend_engine::AgentEvent::ToolExecutionStart {
-                tool_call_id,
-                tool_name,
-                args,
-                preview_command,
-            } => Some(ProtocolEvent::ToolStart {
-                tool_call_id: tool_call_id.clone(),
-                tool_name: tool_name.clone(),
-                args: args.clone(),
-                preview_command: preview_command.clone(),
-            }),
-            bend_engine::AgentEvent::ToolExecutionUpdate {
-                tool_call_id,
-                tool_name,
-                partial_result,
-            } => {
-                let text = extract_content_text(&partial_result.content);
-                Some(ProtocolEvent::ToolProgress {
-                    tool_call_id: tool_call_id.clone(),
-                    tool_name: tool_name.clone(),
-                    text,
-                })
-            }
-            bend_engine::AgentEvent::ToolExecutionEnd {
-                tool_call_id,
-                tool_name,
-                result,
-                is_error,
-                result_tokens,
-                duration_ms,
-            } => {
-                let content = extract_content_text(&result.content);
-
-                Some(ProtocolEvent::ToolEnd {
-                    tool_call_id: tool_call_id.clone(),
-                    tool_name: tool_name.clone(),
-                    content,
-                    is_error: *is_error,
-                    details: result.details.clone(),
-                    result_tokens: *result_tokens,
-                    duration_ms: *duration_ms,
-                })
-            }
-            bend_engine::AgentEvent::ProgressMessage {
-                tool_call_id,
-                tool_name,
-                text,
-            } => Some(ProtocolEvent::ToolProgress {
-                tool_call_id: tool_call_id.clone(),
-                tool_name: tool_name.clone(),
-                text: text.clone(),
-            }),
-            bend_engine::AgentEvent::Error { error } => Some(ProtocolEvent::Error {
-                kind: format!("{:?}", error.kind).to_lowercase(),
-                message: error.message.clone(),
-            }),
-            bend_engine::AgentEvent::LlmCallStart {
-                turn,
-                attempt,
-                request,
-            } => {
-                let message_count = request.messages.len();
-                let system_prompt_tokens =
-                    bend_engine::context::estimate_tokens(&request.system_prompt);
-                let messages: Vec<serde_json::Value> = request
-                    .messages
-                    .iter()
-                    .map(|m| serialize_or_placeholder(m, "message"))
-                    .collect();
-                let tools: Vec<serde_json::Value> = request
-                    .tools
-                    .iter()
-                    .map(|t| serialize_or_placeholder(t, "tool"))
-                    .collect();
-                Some(ProtocolEvent::LlmCallStart {
-                    turn: *turn,
-                    attempt: *attempt,
-                    model: request.model.clone(),
-                    system_prompt: request.system_prompt.clone(),
-                    messages,
-                    tools,
-                    message_count,
-                    system_prompt_tokens,
-                })
-            }
-            bend_engine::AgentEvent::LlmCallEnd {
-                turn,
-                attempt,
-                usage,
-                error,
-                metrics,
-            } => Some(ProtocolEvent::LlmCallEnd {
-                turn: *turn,
-                attempt: *attempt,
-                usage: UsageSummary {
-                    input: usage.input,
-                    output: usage.output,
-                    cache_read: usage.cache_read,
-                    cache_write: usage.cache_write,
-                },
-                error: error.clone(),
-                metrics: Some(LlmCallMetrics {
-                    duration_ms: metrics.duration_ms,
-                    ttfb_ms: metrics.ttfb_ms,
-                    ttft_ms: metrics.ttft_ms,
-                    streaming_ms: metrics.streaming_ms,
-                    chunk_count: metrics.chunk_count,
-                }),
-            }),
-            bend_engine::AgentEvent::ContextCompactionStart {
-                message_count,
-                estimated_tokens,
-                budget_tokens,
-                system_prompt_tokens,
-                context_window,
-            } => Some(ProtocolEvent::ContextCompactionStart {
-                message_count: *message_count,
-                estimated_tokens: *estimated_tokens,
-                budget_tokens: *budget_tokens,
-                system_prompt_tokens: *system_prompt_tokens,
-                context_window: *context_window,
-            }),
-            bend_engine::AgentEvent::ContextCompactionEnd { stats, messages } => {
-                let compacted_transcripts = from_agent_messages(messages);
-                let before_tool_details: Vec<(String, usize)> = stats
-                    .before_tool_details
-                    .iter()
-                    .map(|d| (d.tool_name.clone(), d.tokens))
-                    .collect();
-                let after_tool_details: Vec<(String, usize)> = stats
-                    .after_tool_details
-                    .iter()
-                    .map(|d| (d.tool_name.clone(), d.tokens))
-                    .collect();
-                Some(ProtocolEvent::ContextCompactionEnd {
-                    level: stats.level,
-                    before_message_count: stats.before_message_count,
-                    after_message_count: stats.after_message_count,
-                    before_estimated_tokens: stats.before_estimated_tokens,
-                    after_estimated_tokens: stats.after_estimated_tokens,
-                    tool_outputs_truncated: stats.tool_outputs_truncated,
-                    turns_summarized: stats.turns_summarized,
-                    messages_dropped: stats.messages_dropped,
-                    before_tool_details,
-                    after_tool_details,
-                    compacted_transcripts,
-                })
-            }
-        };
-
-        if let Some(pe) = protocol_event {
-            if tx.send(pe).is_err() {
-                break;
-            }
         }
     }
 }

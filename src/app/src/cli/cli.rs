@@ -69,7 +69,7 @@ impl Cli {
             .with_limits(self.build_limits())
             .with_skills_dirs(self.build_skills_dirs());
         let request = TurnRequest::text(prompt).session_id(self.args.resume.clone());
-        let mut stream = agent.run(request).await?;
+        let mut stream = agent.submit(request).await?;
         while let Some(event) = stream.next().await {
             print_event(&event, &self.args.output_format);
         }

@@ -3,12 +3,12 @@ use std::sync::Arc;
 use chrono::Utc;
 use tokio::sync::RwLock;
 
-use crate::agent::ListTranscriptEntries;
-use crate::agent::SessionMeta;
-use crate::agent::TranscriptEntry;
-use crate::agent::TranscriptItem;
 use crate::error::Result;
 use crate::storage::Storage;
+use crate::types::ListTranscriptEntries;
+use crate::types::SessionMeta;
+use crate::types::TranscriptEntry;
+use crate::types::TranscriptItem;
 
 pub struct Session {
     storage: Arc<dyn Storage>,

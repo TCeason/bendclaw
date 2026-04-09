@@ -233,9 +233,7 @@ impl Repl {
     }
 
     async fn run_prompt(&mut self, input: &str) -> Result<bool> {
-        let effective_prompt = self.agent.effective_prompt(input);
-
-        let request = TurnRequest::text(&effective_prompt).session_id(self.session_id.clone());
+        let request = TurnRequest::text(input).session_id(self.session_id.clone());
         let agent = self.agent.clone();
         let spinner_state = Arc::new(parking_lot::Mutex::new(super::spinner::SpinnerState::new()));
         let sink = Arc::new(ReplSink::new(spinner_state.clone()));
@@ -245,7 +243,7 @@ impl Repl {
         let early_sid = Arc::new(parking_lot::Mutex::new(None::<String>));
         let early_sid_ref = early_sid.clone();
         let mut run_task = tokio::spawn(async move {
-            let mut stream = agent.run(request).await?;
+            let mut stream = agent.submit(request).await?;
             let session_id = stream.session_id.clone();
             *early_sid_ref.lock() = Some(session_id.clone());
             while let Some(event) = stream.next().await {
@@ -256,7 +254,6 @@ impl Repl {
         let control = wait_for_run_control(&mut run_task, &spinner_state)?;
         let outcome = match control {
             Some(action) => {
-                self.agent.abort();
                 run_task.abort();
                 let _ = run_task.await;
                 // Capture session_id even on cancel
@@ -691,7 +688,7 @@ impl Repl {
         let Some(session_id) = &self.session_id else {
             return Ok(None);
         };
-        self.agent.get_session(session_id).await
+        self.agent.find_session(session_id).await
     }
 
     async fn refresh_completion_state(&self) -> Result<()> {

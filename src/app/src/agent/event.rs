@@ -1,13 +1,12 @@
-//! Event system — RunEvent, RunEventPayload, ProtocolEvent, RunEventContext.
+//! Event system — RunEvent, RunEventPayload, RunEventContext.
 
 use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 
-use super::types::AssistantBlock;
-use super::types::LlmCallMetrics;
-use super::types::TranscriptItem;
-use super::types::UsageSummary;
+use crate::types::AssistantBlock;
+use crate::types::LlmCallMetrics;
+use crate::types::UsageSummary;
 
 // ---------------------------------------------------------------------------
 // RunEventPayload — strongly typed event payload
@@ -269,98 +268,7 @@ impl<'de> Deserialize<'de> for RunEvent {
 }
 
 // ---------------------------------------------------------------------------
-// ProtocolEvent — app-layer abstraction of engine events
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-pub enum ProtocolEvent {
-    AgentStart,
-    AgentEnd {
-        transcripts: Vec<TranscriptItem>,
-        usage: UsageSummary,
-        transcript_count: usize,
-    },
-    TurnStart,
-    TurnEnd,
-    AssistantDelta {
-        delta: Option<String>,
-        thinking_delta: Option<String>,
-    },
-    AssistantCompleted {
-        content: Vec<AssistantBlock>,
-        usage: Option<UsageSummary>,
-        stop_reason: String,
-        error_message: Option<String>,
-    },
-    ToolStart {
-        tool_call_id: String,
-        tool_name: String,
-        args: serde_json::Value,
-        preview_command: Option<String>,
-    },
-    ToolProgress {
-        tool_call_id: String,
-        tool_name: String,
-        text: String,
-    },
-    ToolEnd {
-        tool_call_id: String,
-        tool_name: String,
-        content: String,
-        is_error: bool,
-        details: serde_json::Value,
-        /// Estimated token count of the tool result content.
-        result_tokens: usize,
-        /// Wall-clock execution time (ms).
-        duration_ms: u64,
-    },
-    LlmCallStart {
-        turn: usize,
-        attempt: usize,
-        model: String,
-        system_prompt: String,
-        messages: Vec<serde_json::Value>,
-        tools: Vec<serde_json::Value>,
-        message_count: usize,
-        system_prompt_tokens: usize,
-    },
-    LlmCallEnd {
-        turn: usize,
-        attempt: usize,
-        usage: UsageSummary,
-        error: Option<String>,
-        metrics: Option<LlmCallMetrics>,
-    },
-    /// Unified error event from the engine.
-    /// Replaces the former `InputRejected` variant.
-    Error {
-        kind: String,
-        message: String,
-    },
-    ContextCompactionStart {
-        message_count: usize,
-        estimated_tokens: usize,
-        budget_tokens: usize,
-        system_prompt_tokens: usize,
-        context_window: usize,
-    },
-    ContextCompactionEnd {
-        level: u8,
-        before_message_count: usize,
-        after_message_count: usize,
-        before_estimated_tokens: usize,
-        after_estimated_tokens: usize,
-        tool_outputs_truncated: usize,
-        turns_summarized: usize,
-        messages_dropped: usize,
-        before_tool_details: Vec<(String, usize)>,
-        after_tool_details: Vec<(String, usize)>,
-        compacted_transcripts: Vec<TranscriptItem>,
-    },
-}
-
-// ---------------------------------------------------------------------------
-// RunEventContext — ProtocolEvent → RunEvent conversion (pure model→model)
+// RunEventContext — RunEvent factory with run/session context
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
@@ -400,160 +308,16 @@ impl<'a> RunEventContext<'a> {
         })
     }
 
-    pub fn map(&self, event: &ProtocolEvent) -> Option<RunEvent> {
-        let payload = match event {
-            ProtocolEvent::AgentStart => return None,
-            ProtocolEvent::AgentEnd { .. } => return None,
-            ProtocolEvent::TurnStart => RunEventPayload::TurnStarted {},
-            ProtocolEvent::TurnEnd => return None,
-            ProtocolEvent::AssistantDelta {
-                delta,
-                thinking_delta,
-            } => RunEventPayload::AssistantDelta {
-                delta: delta.clone(),
-                thinking_delta: thinking_delta.clone(),
-            },
-            ProtocolEvent::AssistantCompleted {
-                content,
-                usage,
-                stop_reason,
-                error_message,
-            } => RunEventPayload::AssistantCompleted {
-                content: content.clone(),
-                usage: usage.clone(),
-                stop_reason: stop_reason.clone(),
-                error_message: error_message.clone(),
-            },
-            ProtocolEvent::ToolStart {
-                tool_call_id,
-                tool_name,
-                args,
-                preview_command,
-            } => RunEventPayload::ToolStarted {
-                tool_call_id: tool_call_id.clone(),
-                tool_name: tool_name.clone(),
-                args: args.clone(),
-                preview_command: preview_command.clone(),
-            },
-            ProtocolEvent::ToolProgress {
-                tool_call_id,
-                tool_name,
-                text,
-            } => RunEventPayload::ToolProgress {
-                tool_call_id: tool_call_id.clone(),
-                tool_name: tool_name.clone(),
-                text: text.clone(),
-            },
-            ProtocolEvent::ToolEnd {
-                tool_call_id,
-                tool_name,
-                content,
-                is_error,
-                details,
-                result_tokens,
-                duration_ms,
-            } => RunEventPayload::ToolFinished {
-                tool_call_id: tool_call_id.clone(),
-                tool_name: tool_name.clone(),
-                content: content.clone(),
-                is_error: *is_error,
-                details: details.clone(),
-                result_tokens: *result_tokens,
-                duration_ms: *duration_ms,
-            },
-            ProtocolEvent::Error { message, .. } => RunEventPayload::Error {
-                message: message.clone(),
-            },
-            ProtocolEvent::LlmCallStart {
-                turn,
-                attempt,
-                model,
-                system_prompt,
-                messages,
-                tools,
-                message_count,
-                system_prompt_tokens,
-            } => {
-                let message_bytes: usize = messages.iter().map(|m| m.to_string().len()).sum();
-                RunEventPayload::LlmCallStarted {
-                    turn: *turn,
-                    attempt: *attempt,
-                    model: model.clone(),
-                    system_prompt: system_prompt.clone(),
-                    messages: messages.clone(),
-                    tools: tools.clone(),
-                    message_count: *message_count,
-                    message_bytes,
-                    system_prompt_tokens: *system_prompt_tokens,
-                }
-            }
-            ProtocolEvent::LlmCallEnd {
-                turn,
-                attempt,
-                usage,
-                error,
-                metrics,
-            } => RunEventPayload::LlmCallCompleted {
-                turn: *turn,
-                attempt: *attempt,
-                usage: usage.clone(),
-                cache_read: usage.cache_read,
-                cache_write: usage.cache_write,
-                error: error.clone(),
-                metrics: metrics.clone(),
-            },
-            ProtocolEvent::ContextCompactionStart {
-                message_count,
-                estimated_tokens,
-                budget_tokens,
-                system_prompt_tokens,
-                context_window,
-            } => RunEventPayload::ContextCompactionStarted {
-                message_count: *message_count,
-                estimated_tokens: *estimated_tokens,
-                budget_tokens: *budget_tokens,
-                system_prompt_tokens: *system_prompt_tokens,
-                context_window: *context_window,
-            },
-            ProtocolEvent::ContextCompactionEnd {
-                level,
-                before_message_count,
-                after_message_count,
-                before_estimated_tokens,
-                after_estimated_tokens,
-                tool_outputs_truncated,
-                turns_summarized,
-                messages_dropped,
-                before_tool_details,
-                after_tool_details,
-                compacted_transcripts: _,
-            } => RunEventPayload::ContextCompactionCompleted {
-                level: *level,
-                before_message_count: *before_message_count,
-                after_message_count: *after_message_count,
-                before_estimated_tokens: *before_estimated_tokens,
-                after_estimated_tokens: *after_estimated_tokens,
-                tool_outputs_truncated: *tool_outputs_truncated,
-                turns_summarized: *turns_summarized,
-                messages_dropped: *messages_dropped,
-                before_tool_details: before_tool_details.clone(),
-                after_tool_details: after_tool_details.clone(),
-            },
-        };
-
-        Some(self.event(payload))
-    }
-
-    fn with_turn(self, turn: u32) -> Self {
-        Self { turn, ..self }
-    }
-
-    fn event(&self, payload: RunEventPayload) -> RunEvent {
+    pub fn event(&self, payload: RunEventPayload) -> RunEvent {
         RunEvent::new(
             self.run_id.to_string(),
             self.session_id.to_string(),
             self.turn,
             payload,
         )
+    }
+
+    fn with_turn(self, turn: u32) -> Self {
+        Self { turn, ..self }
     }
 }

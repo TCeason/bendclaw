@@ -1,20 +1,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
 
 use bend_base::logx;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
-use super::convert::transcript_from_assistant_completed;
-use super::event::ProtocolEvent;
 use super::event::RunEvent;
-use super::event::RunEventContext;
 use super::runtime::EngineHandle;
 use super::runtime::EngineOptions;
-use super::types::ListSessions;
-use super::types::SessionMeta;
-use super::types::TranscriptItem;
 use crate::conf::Config;
 use crate::conf::LlmConfig;
 use crate::error::BendclawError;
@@ -22,6 +15,9 @@ use crate::error::Result;
 use crate::session::Session;
 use crate::storage::open_storage;
 use crate::storage::Storage;
+use crate::types::ListSessions;
+use crate::types::SessionMeta;
+use crate::types::TranscriptItem;
 
 // ---------------------------------------------------------------------------
 // ExecutionLimits
@@ -81,11 +77,17 @@ pub struct TurnStream {
     rx: mpsc::UnboundedReceiver<RunEvent>,
     pub session_id: String,
     pub run_id: String,
+    engine_handle: EngineHandle,
 }
 
 impl TurnStream {
     pub async fn next(&mut self) -> Option<RunEvent> {
         self.rx.recv().await
+    }
+
+    /// Abort the current run.
+    pub fn abort(&self) {
+        self.engine_handle.abort();
     }
 }
 
@@ -131,7 +133,6 @@ pub struct AppAgent {
     tool_mode: RwLock<ToolMode>,
     cwd: String,
     storage: RwLock<Arc<dyn Storage>>,
-    engine: RwLock<Option<EngineHandle>>,
 }
 
 impl AppAgent {
@@ -147,9 +148,10 @@ impl AppAgent {
             tool_mode: RwLock::new(ToolMode::Normal),
             cwd,
             storage: RwLock::new(storage),
-            engine: RwLock::new(None),
         }))
     }
+
+    // -- configuration (fluent setters) --------------------------------------
 
     pub fn with_system_prompt(self: &Arc<Self>, prompt: impl Into<String>) -> Arc<Self> {
         *self.system_prompt.write() = prompt.into();
@@ -184,6 +186,8 @@ impl AppAgent {
         Arc::clone(self)
     }
 
+    // -- getters -------------------------------------------------------------
+
     pub fn system_prompt(&self) -> String {
         self.system_prompt.read().clone()
     }
@@ -216,17 +220,10 @@ impl AppAgent {
         *self.tool_mode.read()
     }
 
-    pub fn effective_prompt(&self, input: &str) -> String {
-        match *self.tool_mode.read() {
-            ToolMode::Normal => input.to_string(),
-            ToolMode::Planning => format!("{}\n\nUser task:\n{}", PLANNING_MODE_PROMPT, input),
-        }
-    }
+    // -- core: submit a turn, return a stream of RunEvents -------------------
 
-    // -- core: run a turn, return a stream of RunEvents --------------------
-
-    pub async fn run(&self, request: TurnRequest) -> Result<TurnStream> {
-        let session = self.open_session(request.session_id.as_deref()).await?;
+    pub async fn submit(&self, request: TurnRequest) -> Result<TurnStream> {
+        let session = self.resolve_session(request.session_id.as_deref()).await?;
         let session_meta = session.meta().await;
         let session_id = session_meta.session_id.clone();
         let run_id = crate::ids::new_id();
@@ -243,194 +240,39 @@ impl AppAgent {
             model = %model,
         );
 
+        let prompt = self.build_prompt(&request.prompt);
         let prior_transcripts = session.transcript().await;
-        let engine_rx = self
-            .start_engine(request.prompt.clone(), &prior_transcripts)
+        let (runtime_rx, engine_handle) = self
+            .create_engine(&prompt, &prior_transcripts, &run_id, &session_id)
             .await?;
 
         let (tx, rx) = mpsc::unbounded_channel();
 
-        // Spawn background task: consume engine events → persist → forward RunEvents
-        let prompt = request.prompt;
-        let rid = run_id.clone();
-        let sid = session_id.clone();
-        tokio::spawn(async move {
-            let started_at = Instant::now();
-            let ctx = RunEventContext::new(&rid, &sid, 0);
-
-            // Send started event
-            let started_event = ctx.started();
-            let _ = tx.send(started_event.clone());
-
-            let mut run_transcripts: Vec<TranscriptItem> =
-                vec![TranscriptItem::User { text: prompt }];
-            let mut saved_count: usize = 0;
-            let mut turn = 0_u32;
-            let mut got_agent_end = false;
-            let mut engine_rx = engine_rx;
-
-            // Flush unsaved transcript items to storage.
-            let flush =
-                |session: &Arc<Session>, transcripts: &[TranscriptItem], saved: &mut usize| {
-                    let new_items = transcripts[*saved..].to_vec();
-                    let session = Arc::clone(session);
-                    *saved = transcripts.len();
-                    async move {
-                        if !new_items.is_empty() {
-                            session.write_items(new_items).await
-                        } else {
-                            Ok(())
-                        }
-                    }
-                };
-
-            while let Some(protocol_event) = engine_rx.recv().await {
-                if matches!(protocol_event, ProtocolEvent::TurnStart) {
-                    turn += 1;
-                    session.increment_turn().await;
-                }
-
-                // Incrementally build transcript
-                match &protocol_event {
-                    ProtocolEvent::AssistantCompleted {
-                        content,
-                        stop_reason,
-                        ..
-                    } => {
-                        let item = transcript_from_assistant_completed(content, stop_reason);
-                        run_transcripts.push(item);
-                    }
-                    ProtocolEvent::ToolEnd {
-                        tool_call_id,
-                        tool_name,
-                        content,
-                        is_error,
-                        ..
-                    } => {
-                        run_transcripts.push(TranscriptItem::ToolResult {
-                            tool_call_id: tool_call_id.clone(),
-                            tool_name: tool_name.clone(),
-                            content: content.clone(),
-                            is_error: *is_error,
-                        });
-                    }
-                    ProtocolEvent::ContextCompactionEnd {
-                        ref compacted_transcripts,
-                        level,
-                        ..
-                    } => {
-                        if *level > 0 {
-                            run_transcripts.push(TranscriptItem::Compact {
-                                messages: compacted_transcripts.clone(),
-                            });
-                        }
-                    }
-                    ProtocolEvent::TurnEnd => {
-                        if let Err(e) = flush(&session, &run_transcripts, &mut saved_count).await {
-                            logx!(
-                                error,
-                                "run",
-                                "incremental_save_failed",
-                                run_id = %rid,
-                                session_id = %sid,
-                                error = %e,
-                            );
-                        }
-                    }
-                    _ => {}
-                }
-
-                if let ProtocolEvent::AgentEnd {
-                    ref transcripts,
-                    ref usage,
-                    transcript_count,
-                } = protocol_event
-                {
-                    got_agent_end = true;
-
-                    if let Err(e) = flush(&session, &run_transcripts, &mut saved_count).await {
-                        logx!(
-                            error,
-                            "run",
-                            "transcript_save_failed",
-                            run_id = %rid,
-                            session_id = %sid,
-                            error = %e,
-                        );
-                    }
-
-                    let last_text = transcripts
-                        .iter()
-                        .rev()
-                        .find_map(|t| {
-                            if let TranscriptItem::Assistant { text, .. } = t {
-                                if !text.is_empty() {
-                                    return Some(text.clone());
-                                }
-                            }
-                            None
-                        })
-                        .unwrap_or_default();
-
-                    let finished_event = RunEventContext::new(&rid, &sid, turn).finished(
-                        last_text,
-                        usage.clone(),
-                        turn,
-                        started_at.elapsed().as_millis() as u64,
-                        transcript_count,
-                    );
-                    let _ = tx.send(finished_event);
-                    continue;
-                }
-
-                let event_context = RunEventContext::new(&rid, &sid, turn);
-                if let Some(event) = event_context.map(&protocol_event) {
-                    if tx.send(event).is_err() {
-                        break;
-                    }
-                }
-            }
-
-            // Fallback save
-            if !got_agent_end {
-                let _ = flush(&session, &run_transcripts, &mut saved_count).await;
-            }
-
-            let _ = session.save().await;
-
-            logx!(
-                info,
-                "run",
-                "finished",
-                run_id = %rid,
-                session_id = %sid,
-                elapsed_ms = started_at.elapsed().as_millis() as u64,
-                turn,
-            );
-        });
+        tokio::spawn(super::runtime::run_loop(
+            runtime_rx,
+            tx,
+            session,
+            prompt,
+            run_id.clone(),
+            session_id.clone(),
+        ));
 
         Ok(TurnStream {
             rx,
             session_id,
             run_id,
+            engine_handle,
         })
     }
 
-    pub fn abort(&self) {
-        let engine = self.engine.read();
-        if let Some(h) = engine.as_ref() {
-            h.abort();
-        }
-    }
-
-    // -- session queries (for REPL / Server UI) ----------------------------
+    // -- session queries -----------------------------------------------------
 
     pub async fn list_sessions(&self, limit: usize) -> Result<Vec<SessionMeta>> {
         let storage = self.storage.read().clone();
         storage.list_sessions(ListSessions { limit }).await
     }
 
-    pub async fn get_session(&self, id: &str) -> Result<Option<SessionMeta>> {
+    pub async fn find_session(&self, id: &str) -> Result<Option<SessionMeta>> {
         let storage = self.storage.read().clone();
         storage.get_session(id).await
     }
@@ -452,9 +294,16 @@ impl AppAgent {
         self.storage.read().clone()
     }
 
-    // -- private -----------------------------------------------------------
+    // -- private -------------------------------------------------------------
 
-    async fn open_session(&self, session_id: Option<&str>) -> Result<Arc<Session>> {
+    fn build_prompt(&self, input: &str) -> String {
+        match *self.tool_mode.read() {
+            ToolMode::Normal => input.to_string(),
+            ToolMode::Planning => format!("{}\n\nUser task:\n{}", PLANNING_MODE_PROMPT, input),
+        }
+    }
+
+    async fn resolve_session(&self, session_id: Option<&str>) -> Result<Arc<Session>> {
         let model = self.llm.read().model.clone();
         let storage = self.storage.read().clone();
         match session_id {
@@ -472,11 +321,16 @@ impl AppAgent {
         }
     }
 
-    async fn start_engine(
+    async fn create_engine(
         &self,
-        prompt: String,
+        prompt: &str,
         prior_transcripts: &[TranscriptItem],
-    ) -> Result<mpsc::UnboundedReceiver<ProtocolEvent>> {
+        run_id: &str,
+        session_id: &str,
+    ) -> Result<(
+        mpsc::UnboundedReceiver<super::runtime::RuntimeEvent>,
+        EngineHandle,
+    )> {
         let llm = self.llm.read().clone();
         let tools = match *self.tool_mode.read() {
             ToolMode::Planning => read_only_tools(),
@@ -492,10 +346,13 @@ impl AppAgent {
             skills_dirs: self.skills_dirs.read().clone(),
             tools,
         };
-        let (rx, engine_handle) =
-            super::runtime::start_engine(options, prior_transcripts, prompt).await?;
-
-        *self.engine.write() = Some(engine_handle);
-        Ok(rx)
+        super::runtime::create_engine(
+            options,
+            prior_transcripts,
+            prompt.to_string(),
+            run_id,
+            session_id,
+        )
+        .await
     }
 }

@@ -4,13 +4,13 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use tokio::fs;
 
-use crate::agent::ListSessions;
-use crate::agent::ListTranscriptEntries;
-use crate::agent::SessionMeta;
-use crate::agent::TranscriptEntry;
 use crate::error::BendclawError;
 use crate::error::Result;
 use crate::storage::Storage;
+use crate::types::ListSessions;
+use crate::types::ListTranscriptEntries;
+use crate::types::SessionMeta;
+use crate::types::TranscriptEntry;
 
 pub struct FsStorage {
     root_dir: PathBuf,
