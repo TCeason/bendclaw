@@ -113,6 +113,7 @@ fn aggregator_ingests_compaction_completed() {
             tool_outputs_truncated: 3,
             turns_summarized: 5,
             messages_dropped: 2,
+            actions: vec![],
         },
     ));
     assert_eq!(agg.compact_history.len(), 1);

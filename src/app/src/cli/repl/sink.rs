@@ -435,6 +435,15 @@ impl ReplSink {
                             tool_outputs_truncated: *tool_outputs_truncated,
                             turns_summarized: *turns_summarized,
                             messages_dropped: *messages_dropped,
+                            actions: actions
+                                .iter()
+                                .map(|a| crate::types::CompactionActionStats {
+                                    tool_name: a.tool_name.clone(),
+                                    method: a.method.clone(),
+                                    before_tokens: a.before_tokens,
+                                    after_tokens: a.after_tokens,
+                                })
+                                .collect(),
                         },
                     ));
 

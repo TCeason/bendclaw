@@ -596,6 +596,16 @@ fn map_agent_event(
                         tool_outputs_truncated: stats.tool_outputs_truncated,
                         turns_summarized: stats.turns_summarized,
                         messages_dropped: stats.messages_dropped,
+                        actions: stats
+                            .actions
+                            .iter()
+                            .map(|a| crate::types::CompactionActionStats {
+                                tool_name: a.tool_name.clone(),
+                                method: format!("{:?}", a.method),
+                                before_tokens: a.before_tokens,
+                                after_tokens: a.after_tokens,
+                            })
+                            .collect(),
                     })
                     .to_item(),
                 ),
