@@ -294,7 +294,7 @@ fn extract_cursor_ups(s: &str) -> Vec<usize> {
 #[test]
 fn progress_frame_first_render_no_cursor_up() {
     let lines = vec!["line1".to_string(), "line2".to_string()];
-    let (output, new_lines) = build_progress_frame(&lines, 0, "⠋", "\x1b[90m", "1.2s", "·");
+    let (output, new_lines) = build_progress_frame(&lines, 0, "⠋", "\x1b[90m", "bash", "1.2s", "·");
 
     // 2 progress + 1 separator + 1 spinner = 4
     assert_eq!(new_lines, 4);
@@ -314,7 +314,7 @@ fn progress_frame_first_render_no_cursor_up() {
     assert!(output.contains("line2"));
 
     // Should contain spinner text
-    assert!(output.contains("Running…"));
+    assert!(output.contains("Running bash…"));
     assert!(output.contains("1.2s"));
 }
 
@@ -322,7 +322,7 @@ fn progress_frame_first_render_no_cursor_up() {
 fn progress_frame_subsequent_render_cursor_up() {
     let lines = vec!["a".to_string(), "b".to_string(), "c".to_string()];
     // Previous render had 5 lines (3 progress + 1 separator + 1 spinner)
-    let (output, new_lines) = build_progress_frame(&lines, 5, "⠙", "\x1b[90m", "2.0s", "•");
+    let (output, new_lines) = build_progress_frame(&lines, 5, "⠙", "\x1b[90m", "bash", "2.0s", "•");
 
     assert_eq!(new_lines, 5);
 
@@ -339,7 +339,7 @@ fn progress_frame_block_shrinks_pads_to_keep_spinner_pinned() {
     let lines = vec!["only".to_string()];
     // Previous render had 5 lines (3 progress + 1 sep + 1 spinner)
     // Now 1 progress + 1 sep + 1 spinner = 3 content lines, pinned at 5
-    let (output, new_lines) = build_progress_frame(&lines, 5, "⠹", "\x1b[90m", "3.0s", "·");
+    let (output, new_lines) = build_progress_frame(&lines, 5, "⠹", "\x1b[90m", "bash", "3.0s", "·");
 
     // Block stays at 5 (pinned)
     assert_eq!(new_lines, 5);
@@ -366,7 +366,7 @@ fn progress_frame_block_shrinks_pads_to_keep_spinner_pinned() {
 fn progress_frame_block_grows_no_extra_clear() {
     let lines = vec!["a".to_string(), "b".to_string(), "c".to_string()];
     // Previous render had 3 lines, now 3 progress + 1 sep + 1 spinner = 5
-    let (output, new_lines) = build_progress_frame(&lines, 3, "⠸", "\x1b[90m", "4.0s", "·");
+    let (output, new_lines) = build_progress_frame(&lines, 3, "⠸", "\x1b[90m", "bash", "4.0s", "·");
 
     assert_eq!(new_lines, 5);
 
@@ -387,7 +387,7 @@ fn progress_frame_block_grows_no_extra_clear() {
 fn progress_frame_same_size_no_extra_clear() {
     let lines = vec!["x".to_string(), "y".to_string()];
     // 2 progress + 1 sep + 1 spinner = 4
-    let (output, new_lines) = build_progress_frame(&lines, 4, "⠼", "\x1b[90m", "5.0s", "·");
+    let (output, new_lines) = build_progress_frame(&lines, 4, "⠼", "\x1b[90m", "bash", "5.0s", "·");
 
     assert_eq!(new_lines, 4);
 
@@ -407,7 +407,7 @@ fn progress_frame_single_line_from_single_line() {
     let lines = vec!["one".to_string()];
     // Previous was single-line spinner (rendered_lines = 1)
     // Now 1 progress + 1 sep + 1 spinner = 3
-    let (output, new_lines) = build_progress_frame(&lines, 1, "⠴", "\x1b[90m", "0.5s", "·");
+    let (output, new_lines) = build_progress_frame(&lines, 1, "⠴", "\x1b[90m", "bash", "0.5s", "·");
 
     assert_eq!(new_lines, 3);
 
@@ -425,7 +425,7 @@ fn progress_frame_single_line_from_single_line() {
 #[test]
 fn progress_frame_empty_progress_lines() {
     let lines: Vec<String> = vec![];
-    let (output, new_lines) = build_progress_frame(&lines, 0, "⠋", "\x1b[90m", "0s", "·");
+    let (output, new_lines) = build_progress_frame(&lines, 0, "⠋", "\x1b[90m", "bash", "0s", "·");
 
     // 0 progress + 1 spinner = 1
     assert_eq!(new_lines, 1);
@@ -433,14 +433,14 @@ fn progress_frame_empty_progress_lines() {
     // No \r\n (no progress lines)
     assert_eq!(count_newlines(&output), 0);
 
-    // Still has spinner
-    assert!(output.contains("Running…"));
+    // Still has spinner with tool name
+    assert!(output.contains("Running bash…"));
 }
 
 #[test]
 fn progress_frame_all_newlines_are_raw_mode_safe() {
     let lines = vec!["a".to_string(), "b".to_string()];
-    let (output, _) = build_progress_frame(&lines, 0, "⠋", "\x1b[90m", "1s", "·");
+    let (output, _) = build_progress_frame(&lines, 0, "⠋", "\x1b[90m", "bash", "1s", "·");
 
     // Every \n must be preceded by \r (raw mode requirement)
     for (i, _) in output.match_indices('\n') {
@@ -454,7 +454,7 @@ fn progress_frame_all_newlines_are_raw_mode_safe() {
 #[test]
 fn progress_frame_contains_tab_title() {
     let lines = vec!["x".to_string()];
-    let (output, _) = build_progress_frame(&lines, 0, "⠋", "\x1b[90m", "1s", "•");
+    let (output, _) = build_progress_frame(&lines, 0, "⠋", "\x1b[90m", "bash", "1s", "•");
 
     assert!(output.contains("\x1b]0;• BendClaw\x07"));
 }
@@ -526,7 +526,7 @@ fn clear_two_lines() {
 fn progress_frame_shrink_keeps_spinner_pinned() {
     // First render: 3 progress + 1 sep + 1 spinner = 5 total
     let lines_big = vec!["a".into(), "b".into(), "c".into()];
-    let (out1, n1) = build_progress_frame(&lines_big, 0, "⠋", "\x1b[90m", "1s", "·");
+    let (out1, n1) = build_progress_frame(&lines_big, 0, "⠋", "\x1b[90m", "bash", "1s", "·");
     assert_eq!(n1, 5);
 
     // The spinner line is always preceded by exactly (n-1) \r\n sequences
@@ -539,7 +539,7 @@ fn progress_frame_shrink_keeps_spinner_pinned() {
     // Second render: shrink to 1 progress line.
     // The block should still occupy 5 terminal rows so the spinner stays put.
     let lines_small = vec!["x".into()];
-    let (out2, n2) = build_progress_frame(&lines_small, 5, "⠙", "\x1b[90m", "2s", "·");
+    let (out2, n2) = build_progress_frame(&lines_small, 5, "⠙", "\x1b[90m", "bash", "2s", "·");
 
     // returned new_lines should stay at prev size (pinned)
     assert_eq!(
@@ -559,7 +559,7 @@ fn progress_frame_shrink_keeps_spinner_pinned() {
 fn progress_frame_shrink_to_zero_keeps_spinner_pinned() {
     // Previous: 3 progress + 1 sep + 1 spinner = 5 lines
     let lines_empty: Vec<String> = vec![];
-    let (out, n) = build_progress_frame(&lines_empty, 5, "⠹", "\x1b[90m", "3s", "·");
+    let (out, n) = build_progress_frame(&lines_empty, 5, "⠹", "\x1b[90m", "bash", "3s", "·");
 
     // Spinner must stay on row 5
     assert_eq!(n, 5, "spinner pinned at row 5 even with 0 progress lines");
@@ -575,7 +575,7 @@ fn progress_frame_grow_expands_block() {
     // Previous: 1 progress + 1 sep + 1 spinner = 3 lines
     // New: 4 progress + 1 sep + 1 spinner = 6 lines → block grows
     let lines = vec!["a".into(), "b".into(), "c".into(), "d".into()];
-    let (out, n) = build_progress_frame(&lines, 3, "⠸", "\x1b[90m", "4s", "·");
+    let (out, n) = build_progress_frame(&lines, 3, "⠸", "\x1b[90m", "bash", "4s", "·");
 
     // Block grows to 6
     assert_eq!(n, 6);

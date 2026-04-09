@@ -74,7 +74,7 @@ const STREAMING_RECENCY_MS: u128 = 500;
 pub enum SpinnerPhase {
     Verb,
     Tool { name: String },
-    ToolProgress { text: String },
+    ToolProgress { name: String, text: String },
     Hidden,
 }
 
@@ -176,7 +176,13 @@ impl SpinnerState {
             .rev()
             .map(|l| truncate_line(l, MAX_LINE_WIDTH).to_string())
             .collect();
+        // Preserve the tool name from the current phase
+        let name = match &self.phase {
+            SpinnerPhase::Tool { name } | SpinnerPhase::ToolProgress { name, .. } => name.clone(),
+            _ => String::new(),
+        };
         self.phase = SpinnerPhase::ToolProgress {
+            name,
             text: text.to_string(),
         };
     }
@@ -234,12 +240,13 @@ impl SpinnerState {
         let glyph_color = if stalled { RED } else { GRAY };
 
         // ToolProgress: multi-line block (progress lines above, spinner line below)
-        if matches!(self.phase, SpinnerPhase::ToolProgress { .. }) {
+        if let SpinnerPhase::ToolProgress { name, .. } = &self.phase {
             let (output, new_lines) = build_progress_frame(
                 &self.progress_lines,
                 self.rendered_lines,
                 glyph,
                 glyph_color,
+                name,
                 &status,
                 title_glyph,
             );
@@ -434,6 +441,7 @@ pub fn build_progress_frame(
     prev_rendered_lines: usize,
     glyph: &str,
     glyph_color: &str,
+    tool_name: &str,
     status: &str,
     title_glyph: &str,
 ) -> (String, usize) {
@@ -470,8 +478,13 @@ pub fn build_progress_frame(
     }
 
     // Spinner line (no trailing newline — cursor stays here)
+    let tool_label = if tool_name.is_empty() {
+        "Running…".to_string()
+    } else {
+        format!("Running {tool_name}…")
+    };
     out.push_str(&format!(
-        "{ERASE_LINE}{glyph_color}{glyph}{RESET} {DIM}Running…{RESET} {DIM}({status}) · esc to interrupt{RESET}{ERASE_LINE}"
+        "{ERASE_LINE}{glyph_color}{glyph}{RESET} {DIM}{tool_label}{RESET} {DIM}({status}) · esc to interrupt{RESET}{ERASE_LINE}"
     ));
 
     // Tab title
