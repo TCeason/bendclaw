@@ -223,8 +223,10 @@ impl Repl {
             PromptExit::Finished(_result, exit_requested) => Ok(exit_requested),
             PromptExit::Cancelled(exit_requested) => {
                 println!("{DIM}[stopped]{RESET}");
-                if let Some(session_id) = &self.session_id {
-                    println!("{DIM}  resume with /resume {session_id}{RESET}");
+                if exit_requested {
+                    if let Some(session_id) = &self.session_id {
+                        println!("{DIM}  resume with /resume {session_id}{RESET}");
+                    }
                 }
                 println!();
                 Ok(exit_requested)
