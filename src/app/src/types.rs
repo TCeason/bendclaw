@@ -4,6 +4,11 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 
+/// Generate a new unique ID (UUID v7, time-ordered).
+pub fn new_id() -> String {
+    uuid::Uuid::now_v7().to_string()
+}
+
 // ---------------------------------------------------------------------------
 // AssistantBlock — content blocks in assistant messages
 // ---------------------------------------------------------------------------

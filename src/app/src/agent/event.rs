@@ -151,7 +151,7 @@ pub struct RunEvent {
 impl RunEvent {
     pub fn new(run_id: String, session_id: String, turn: u32, payload: RunEventPayload) -> Self {
         Self {
-            event_id: crate::ids::new_id(),
+            event_id: crate::types::new_id(),
             run_id,
             session_id,
             turn,

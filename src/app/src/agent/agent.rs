@@ -226,7 +226,7 @@ impl AppAgent {
         let session = self.resolve_session(request.session_id.as_deref()).await?;
         let session_meta = session.meta().await;
         let session_id = session_meta.session_id.clone();
-        let run_id = crate::ids::new_id();
+        let run_id = crate::types::new_id();
         let llm = self.llm.read().clone();
         let model = llm.model.clone();
 
@@ -315,7 +315,7 @@ impl AppAgent {
                 None => Err(BendclawError::Session(format!("session not found: {id}"))),
             },
             None => {
-                let id = crate::ids::new_id();
+                let id = crate::types::new_id();
                 Session::new(id, self.cwd.clone(), model, storage).await
             }
         }
