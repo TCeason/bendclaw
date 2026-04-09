@@ -451,3 +451,34 @@ fn format_run_summary_tool_stats_bars_are_aligned() {
         tool_lines[1],
     );
 }
+
+#[test]
+fn format_run_summary_tool_bars_align_with_parent_rows() {
+    let data = make_summary_data();
+    let lines = format_run_summary(&data);
+
+    // Find bar position of a parent row (e.g. tool_result)
+    let parent_bar_pos = lines
+        .iter()
+        .find(|l| l.contains("tool_result") && l.contains('█'))
+        .and_then(|l| l.find('█'))
+        .expect("parent tool_result bar not found");
+
+    // Find bar positions of sub-tool rows
+    let tool_bar_positions: Vec<usize> = lines
+        .iter()
+        .filter(|l| (l.contains("read_file") || l.contains("search")) && l.contains('█'))
+        .filter_map(|l| l.find('█'))
+        .collect();
+
+    assert!(
+        !tool_bar_positions.is_empty(),
+        "no sub-tool bar lines found"
+    );
+    for pos in &tool_bar_positions {
+        assert!(
+            *pos >= parent_bar_pos,
+            "sub-tool bar at col {pos} is before parent bar at col {parent_bar_pos}"
+        );
+    }
+}

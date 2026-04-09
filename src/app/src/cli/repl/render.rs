@@ -282,29 +282,31 @@ pub fn format_run_summary(data: &RunSummaryData) -> Vec<String> {
             ));
         }
 
-        // Per-tool breakdown under tool_result
+        // Per-tool breakdown under tool_result.
+        // Align bars with parent rows whose bar starts at column
+        // 12 indent + 12 label + 1 space + 8 tokens + 2 gap = 35.
+        // Sub-tool indent is 14, so minimum left content = 35 - 14 = 21.
+        // If actual content is wider, all sub-tool bars shift right together.
         if !data.tool_stats.is_empty() {
-            let max_name = data
+            let sub_indent: usize = 14;
+            let min_left = 12 + max_label_width + 1 + max_val_width + 2 - sub_indent;
+            let max_content: usize = data
                 .tool_stats
                 .iter()
-                .map(|(n, _)| n.len())
-                .max()
-                .unwrap_or(0);
-            let max_calls_width = data
-                .tool_stats
-                .iter()
-                .map(|(_, agg)| {
-                    let call_word = if agg.calls == 1 { "call" } else { "calls" };
-                    format!("{} {}", agg.calls, call_word).len()
+                .map(|(n, agg)| {
+                    let cw = if agg.calls == 1 { "call" } else { "calls" };
+                    // "name  N call(s)  Tk"
+                    n.len()
+                        + 2
+                        + format!("{}", agg.calls).len()
+                        + 1
+                        + cw.len()
+                        + 2
+                        + human_tokens(agg.result_tokens).len()
                 })
                 .max()
                 .unwrap_or(0);
-            let max_tok_width = data
-                .tool_stats
-                .iter()
-                .map(|(_, agg)| human_tokens(agg.result_tokens).len())
-                .max()
-                .unwrap_or(0);
+            let left_width = min_left.max(max_content);
             for (name, agg) in &data.tool_stats {
                 let pct = if total_input > 0 {
                     agg.result_tokens as f64 / total_input as f64 * 100.0
@@ -313,15 +315,19 @@ pub fn format_run_summary(data: &RunSummaryData) -> Vec<String> {
                 };
                 let bar = render_ratio_bar(pct / 100.0, bar_width);
                 let call_word = if agg.calls == 1 { "call" } else { "calls" };
-                let calls_str = format!("{} {}", agg.calls, call_word);
-                lines.push(format!(
-                    "              {:<name_w$}  {:<calls_w$}  {:>tok_w$}  {bar} {pct:>5.1}%",
+                let left = format!(
+                    "{}  {} {}  {}",
                     name,
-                    calls_str,
+                    agg.calls,
+                    call_word,
                     human_tokens(agg.result_tokens),
-                    name_w = max_name,
-                    calls_w = max_calls_width,
-                    tok_w = max_tok_width,
+                );
+                lines.push(format!(
+                    "{:indent$}{:<width$}{bar} {pct:>5.1}%",
+                    "",
+                    left,
+                    indent = sub_indent,
+                    width = left_width,
                 ));
             }
         }
