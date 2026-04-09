@@ -65,6 +65,16 @@ pub struct ContextCompactionCompletedStats {
     pub tool_outputs_truncated: usize,
     pub turns_summarized: usize,
     pub messages_dropped: usize,
+    #[serde(default)]
+    pub actions: Vec<CompactionActionStats>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactionActionStats {
+    pub tool_name: String,
+    pub method: String,
+    pub before_tokens: usize,
+    pub after_tokens: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -16,6 +16,8 @@ pub use compaction::compact_messages;
 pub use compaction::level1_truncate_tool_outputs;
 pub use compaction::sanitize_tool_pairs;
 pub use compaction::truncate_text_head_tail;
+pub use compaction::CompactionAction;
+pub use compaction::CompactionMethod;
 pub use compaction::CompactionResult;
 pub use compaction::CompactionStats;
 pub use compaction::CompactionStrategy;

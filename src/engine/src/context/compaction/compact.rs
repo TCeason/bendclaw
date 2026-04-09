@@ -23,6 +23,34 @@ pub struct ToolTokenDetail {
     pub tokens: usize,
 }
 
+/// Describes what happened to a single tool result during compaction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactionAction {
+    /// Tool name (e.g. "read_file", "bash")
+    pub tool_name: String,
+    /// What method was used
+    pub method: CompactionMethod,
+    /// Tokens before compaction
+    pub before_tokens: usize,
+    /// Tokens after compaction
+    pub after_tokens: usize,
+}
+
+/// The method used to compact a tool result.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum CompactionMethod {
+    /// Tree-sitter structural outline extraction
+    Outline,
+    /// Head + tail truncation
+    HeadTail,
+    /// Skipped (content was short enough)
+    Skipped,
+    /// Turn summarized (Level 2)
+    Summarized,
+    /// Dropped (Level 3)
+    Dropped,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompactionStats {
     pub level: u8,
@@ -39,6 +67,9 @@ pub struct CompactionStats {
     /// Per-tool token breakdown after compaction (sorted by tokens desc).
     #[serde(default)]
     pub after_tool_details: Vec<ToolTokenDetail>,
+    /// Per-message compaction actions (what happened to each tool result).
+    #[serde(default)]
+    pub actions: Vec<CompactionAction>,
 }
 
 #[derive(Debug, Clone)]
@@ -143,11 +174,12 @@ pub fn compact_messages(messages: Vec<AgentMessage>, config: &ContextConfig) -> 
         return make_result(messages, 0, CompactionStats::default());
     }
 
-    let (compacted, tool_outputs_truncated) =
+    let (compacted, tool_outputs_truncated, actions) =
         level1_truncate_tool_outputs(&messages, config.tool_output_max_lines);
     if total_tokens(&compacted) <= budget {
         return make_result(compacted, 1, CompactionStats {
             tool_outputs_truncated,
+            actions,
             ..Default::default()
         });
     }
@@ -157,6 +189,7 @@ pub fn compact_messages(messages: Vec<AgentMessage>, config: &ContextConfig) -> 
         return make_result(compacted, 2, CompactionStats {
             tool_outputs_truncated,
             turns_summarized,
+            actions,
             ..Default::default()
         });
     }
@@ -166,6 +199,7 @@ pub fn compact_messages(messages: Vec<AgentMessage>, config: &ContextConfig) -> 
         tool_outputs_truncated,
         turns_summarized,
         messages_dropped,
+        actions,
         ..Default::default()
     })
 }
@@ -182,9 +216,10 @@ pub fn compact_messages(messages: Vec<AgentMessage>, config: &ContextConfig) -> 
 pub fn level1_truncate_tool_outputs(
     messages: &[AgentMessage],
     max_lines: usize,
-) -> (Vec<AgentMessage>, usize) {
+) -> (Vec<AgentMessage>, usize, Vec<CompactionAction>) {
     let tool_call_index = build_tool_call_index(messages);
     let mut truncated_count = 0;
+    let mut actions = Vec::new();
     let result = messages
         .iter()
         .map(|msg| match msg {
@@ -195,7 +230,8 @@ pub fn level1_truncate_tool_outputs(
                 is_error,
                 timestamp,
             }) => {
-                let mut was_truncated = false;
+                let before_tokens = content_tokens(content);
+                let mut method = CompactionMethod::Skipped;
                 let truncated_content: Vec<Content> = content
                     .iter()
                     .map(|c| match c {
@@ -211,16 +247,27 @@ pub fn level1_truncate_tool_outputs(
                                 truncate_text_head_tail(text, max_lines)
                             };
                             if result.len() < text.len() {
-                                was_truncated = true;
+                                method = if result.contains("Structural outline") {
+                                    CompactionMethod::Outline
+                                } else {
+                                    CompactionMethod::HeadTail
+                                };
                             }
                             Content::Text { text: result }
                         }
                         other => other.clone(),
                     })
                     .collect();
-                if was_truncated {
+                let after_tokens = content_tokens(&truncated_content);
+                if method != CompactionMethod::Skipped {
                     truncated_count += 1;
                 }
+                actions.push(CompactionAction {
+                    tool_name: tool_name.clone(),
+                    method,
+                    before_tokens,
+                    after_tokens,
+                });
                 AgentMessage::Llm(Message::ToolResult {
                     tool_call_id: tool_call_id.clone(),
                     tool_name: tool_name.clone(),
@@ -232,7 +279,7 @@ pub fn level1_truncate_tool_outputs(
             other => other.clone(),
         })
         .collect();
-    (result, truncated_count)
+    (result, truncated_count, actions)
 }
 
 /// Try tree-sitter outline for a `read_file` result, fall back to head+tail.

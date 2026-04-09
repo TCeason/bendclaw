@@ -420,6 +420,7 @@ impl ReplSink {
                 messages_dropped,
                 before_tool_details,
                 after_tool_details,
+                actions,
             } => {
                 // Ingest via aggregator
                 state
@@ -473,20 +474,35 @@ impl ReplSink {
                         }
                     }
 
-                    let mut actions = Vec::new();
+                    // Per-action detail
+                    if !actions.is_empty() {
+                        terminal_writeln(&format!("{GRAY}  details:{RESET}"));
+                        for a in actions {
+                            let h_before = super::render::human_tokens(a.before_tokens);
+                            let h_after = super::render::human_tokens(a.after_tokens);
+                            let saved = a.before_tokens.saturating_sub(a.after_tokens);
+                            let h_saved = super::render::human_tokens(saved);
+                            terminal_writeln(&format!(
+                                "{GRAY}    {:<12} {:<10} ~{} → ~{} (saved ~{}){RESET}",
+                                a.tool_name, a.method, h_before, h_after, h_saved,
+                            ));
+                        }
+                    }
+
+                    let mut summary_parts = Vec::new();
                     if *tool_outputs_truncated > 0 {
-                        actions.push(format!("truncated {tool_outputs_truncated} tools"));
+                        summary_parts.push(format!("truncated {tool_outputs_truncated} tools"));
                     }
                     if *turns_summarized > 0 {
-                        actions.push(format!("summarized {turns_summarized} turns"));
+                        summary_parts.push(format!("summarized {turns_summarized} turns"));
                     }
                     if *messages_dropped > 0 {
-                        actions.push(format!("dropped {messages_dropped}"));
+                        summary_parts.push(format!("dropped {messages_dropped}"));
                     }
-                    if !actions.is_empty() {
+                    if !summary_parts.is_empty() {
                         terminal_writeln(&format!(
                             "{GRAY}  actions: {}{RESET}",
-                            actions.join(" · "),
+                            summary_parts.join(" · "),
                         ));
                     }
                 } else {

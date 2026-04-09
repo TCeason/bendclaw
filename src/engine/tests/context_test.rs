@@ -53,7 +53,7 @@ fn test_level1_truncation() {
         }),
     ];
 
-    let (compacted, count) = level1_truncate_tool_outputs(&messages, 20);
+    let (compacted, count, _actions) = level1_truncate_tool_outputs(&messages, 20);
     assert_eq!(count, 1);
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &compacted[1] {
         if let Content::Text { text } = &content[0] {
@@ -514,7 +514,7 @@ fn test_level1_read_file_rust_uses_outline() {
         make_tool_result_with_content("tc-1", "read_file", &rust_output),
     ];
 
-    let (compacted, count) = level1_truncate_tool_outputs(&messages, 20);
+    let (compacted, count, _actions) = level1_truncate_tool_outputs(&messages, 20);
     assert_eq!(count, 1);
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &compacted[2] {
         if let Content::Text { text } = &content[0] {
@@ -572,7 +572,7 @@ fn test_level1_read_file_unsupported_ext_falls_back_to_head_tail() {
         make_tool_result_with_content("tc-1", "read_file", &toml_output),
     ];
 
-    let (compacted, count) = level1_truncate_tool_outputs(&messages, 20);
+    let (compacted, count, _actions) = level1_truncate_tool_outputs(&messages, 20);
     assert_eq!(count, 1);
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &compacted[2] {
         if let Content::Text { text } = &content[0] {
@@ -605,7 +605,7 @@ fn test_level1_bash_still_uses_head_tail() {
         make_tool_result_with_content("tc-1", "bash", &big_output),
     ];
 
-    let (compacted, count) = level1_truncate_tool_outputs(&messages, 20);
+    let (compacted, count, _actions) = level1_truncate_tool_outputs(&messages, 20);
     assert_eq!(count, 1);
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &compacted[2] {
         if let Content::Text { text } = &content[0] {
@@ -631,7 +631,7 @@ fn test_level1_read_file_no_matching_tool_call_falls_back() {
         make_tool_result_with_content("tc-orphan", "read_file", &rust_output),
     ];
 
-    let (compacted, count) = level1_truncate_tool_outputs(&messages, 20);
+    let (compacted, count, _actions) = level1_truncate_tool_outputs(&messages, 20);
     assert_eq!(count, 1);
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &compacted[1] {
         if let Content::Text { text } = &content[0] {
@@ -662,7 +662,7 @@ fn test_level1_read_file_short_content_not_truncated() {
         make_tool_result_with_content("tc-1", "read_file", short_output),
     ];
 
-    let (compacted, count) = level1_truncate_tool_outputs(&messages, 20);
+    let (compacted, count, _actions) = level1_truncate_tool_outputs(&messages, 20);
     assert_eq!(count, 0, "short content should not be truncated");
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &compacted[2] {
         if let Content::Text { text } = &content[0] {
@@ -709,7 +709,7 @@ fn test_level1_read_file_python_uses_outline() {
         make_tool_result_with_content("tc-1", "read_file", &py_output),
     ];
 
-    let (compacted, count) = level1_truncate_tool_outputs(&messages, 20);
+    let (compacted, count, _actions) = level1_truncate_tool_outputs(&messages, 20);
     assert_eq!(count, 1);
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &compacted[2] {
         if let Content::Text { text } = &content[0] {

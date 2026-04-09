@@ -166,6 +166,7 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
             messages_dropped,
             before_tool_details,
             after_tool_details,
+            actions,
         } => {
             events.push(json!({
                 "type": "context_compaction_completed",
@@ -180,6 +181,7 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
                     "messages_dropped": messages_dropped,
                     "before_tool_details": before_tool_details,
                     "after_tool_details": after_tool_details,
+                    "actions": actions,
                 }
             }));
         }

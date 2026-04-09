@@ -610,6 +610,16 @@ fn map_agent_event(
                     messages_dropped: stats.messages_dropped,
                     before_tool_details,
                     after_tool_details,
+                    actions: stats
+                        .actions
+                        .iter()
+                        .map(|a| crate::agent::event::CompactionActionInfo {
+                            tool_name: a.tool_name.clone(),
+                            method: format!("{:?}", a.method),
+                            before_tokens: a.before_tokens,
+                            after_tokens: a.after_tokens,
+                        })
+                        .collect(),
                 }),
             ]
         }

@@ -9,6 +9,19 @@ use crate::types::LlmCallMetrics;
 use crate::types::UsageSummary;
 
 // ---------------------------------------------------------------------------
+// Compaction action info for REPL display
+// ---------------------------------------------------------------------------
+
+/// Per-tool-result compaction detail.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactionActionInfo {
+    pub tool_name: String,
+    pub method: String,
+    pub before_tokens: usize,
+    pub after_tokens: usize,
+}
+
+// ---------------------------------------------------------------------------
 // RunEventPayload — strongly typed event payload
 // ---------------------------------------------------------------------------
 
@@ -101,6 +114,8 @@ pub enum RunEventPayload {
         before_tool_details: Vec<(String, usize)>,
         #[serde(default)]
         after_tool_details: Vec<(String, usize)>,
+        #[serde(default)]
+        actions: Vec<CompactionActionInfo>,
     },
     RunFinished {
         text: String,
