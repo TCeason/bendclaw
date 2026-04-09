@@ -437,8 +437,9 @@ pub fn build_progress_frame(
     status: &str,
     title_glyph: &str,
 ) -> (String, usize) {
-    let content_lines = progress_lines.len() + 1; // progress + spinner
-                                                  // Pin: block never shrinks, so spinner stays on the same terminal row.
+    let separator = if progress_lines.is_empty() { 0 } else { 1 };
+    let content_lines = progress_lines.len() + separator + 1; // progress + gap + spinner
+                                                              // Pin: block never shrinks, so spinner stays on the same terminal row.
     let total_lines = content_lines.max(prev_rendered_lines);
     let padding = total_lines - content_lines; // blank lines between progress and spinner
 
@@ -456,6 +457,11 @@ pub fn build_progress_frame(
     // Progress lines
     for line in progress_lines {
         out.push_str(&format!("{ERASE_LINE}{DIM}  {line}{RESET}\r\n"));
+    }
+
+    // Blank line separating progress from spinner (only when progress is shown)
+    if separator > 0 {
+        out.push_str(&format!("{ERASE_LINE}\r\n"));
     }
 
     // Padding blank lines (keeps spinner pinned when progress shrinks)

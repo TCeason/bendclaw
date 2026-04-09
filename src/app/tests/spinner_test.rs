@@ -214,8 +214,8 @@ fn render_frame_progress_tracks_rendered_lines() {
     state.set_progress("line1\nline2\nline3");
     state.render_frame();
 
-    // 3 progress lines + 1 spinner line = 4
-    assert_eq!(state.rendered_line_count(), 4);
+    // 3 progress + 1 separator + 1 spinner = 5
+    assert_eq!(state.rendered_line_count(), 5);
     assert_eq!(state.frame_index(), 1);
 }
 
@@ -226,7 +226,8 @@ fn clear_if_rendered_resets_rendered_lines() {
 
     state.set_progress("line1\nline2");
     state.render_frame();
-    assert_eq!(state.rendered_line_count(), 3);
+    // 2 progress + 1 separator + 1 spinner = 4
+    assert_eq!(state.rendered_line_count(), 4);
 
     state.clear_if_rendered();
     assert_eq!(state.rendered_line_count(), 0);
@@ -248,7 +249,8 @@ fn activate_resets_progress_state() {
 
     state.set_progress("line1\nline2");
     state.render_frame();
-    assert_eq!(state.rendered_line_count(), 3);
+    // 2 progress + 1 separator + 1 spinner = 4
+    assert_eq!(state.rendered_line_count(), 4);
 
     // Re-activate should reset everything
     state.activate();
@@ -294,8 +296,8 @@ fn progress_frame_first_render_no_cursor_up() {
     let lines = vec!["line1".to_string(), "line2".to_string()];
     let (output, new_lines) = build_progress_frame(&lines, 0, "⠋", "\x1b[90m", "1.2s", "·");
 
-    // 2 progress + 1 spinner = 3
-    assert_eq!(new_lines, 3);
+    // 2 progress + 1 separator + 1 spinner = 4
+    assert_eq!(new_lines, 4);
 
     // No cursor-up on first render (prev_rendered_lines = 0)
     let ups = extract_cursor_ups(&output);
@@ -304,8 +306,8 @@ fn progress_frame_first_render_no_cursor_up() {
         "first render should have no cursor-up, got: {ups:?}"
     );
 
-    // Should have exactly 2 \r\n (one per progress line), spinner has none
-    assert_eq!(count_newlines(&output), 2);
+    // Should have exactly 3 \r\n (2 progress + 1 separator), spinner has none
+    assert_eq!(count_newlines(&output), 3);
 
     // Should contain both progress lines
     assert!(output.contains("line1"));
@@ -319,34 +321,34 @@ fn progress_frame_first_render_no_cursor_up() {
 #[test]
 fn progress_frame_subsequent_render_cursor_up() {
     let lines = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-    // Previous render had 4 lines (3 progress + 1 spinner)
-    let (output, new_lines) = build_progress_frame(&lines, 4, "⠙", "\x1b[90m", "2.0s", "•");
+    // Previous render had 5 lines (3 progress + 1 separator + 1 spinner)
+    let (output, new_lines) = build_progress_frame(&lines, 5, "⠙", "\x1b[90m", "2.0s", "•");
 
-    assert_eq!(new_lines, 4);
+    assert_eq!(new_lines, 5);
 
-    // Should cursor-up 3 (prev_rendered_lines - 1 = 3)
+    // Should cursor-up 4 (prev_rendered_lines - 1 = 4)
     let ups = extract_cursor_ups(&output);
     assert!(
-        ups.contains(&3),
-        "should cursor-up 3 to reach top of previous block, got: {ups:?}"
+        ups.contains(&4),
+        "should cursor-up 4 to reach top of previous block, got: {ups:?}"
     );
 }
 
 #[test]
 fn progress_frame_block_shrinks_pads_to_keep_spinner_pinned() {
     let lines = vec!["only".to_string()];
-    // Previous render had 4 lines, now 1 progress + 1 spinner = 2 content lines
-    // But block stays pinned at 4 (padding fills the gap)
-    let (output, new_lines) = build_progress_frame(&lines, 4, "⠹", "\x1b[90m", "3.0s", "·");
+    // Previous render had 5 lines (3 progress + 1 sep + 1 spinner)
+    // Now 1 progress + 1 sep + 1 spinner = 3 content lines, pinned at 5
+    let (output, new_lines) = build_progress_frame(&lines, 5, "⠹", "\x1b[90m", "3.0s", "·");
 
-    // Block stays at 4 (pinned)
-    assert_eq!(new_lines, 4);
+    // Block stays at 5 (pinned)
+    assert_eq!(new_lines, 5);
 
-    // Should have cursor-up 3 at the start (prev 4 - 1)
+    // Should have cursor-up 4 at the start (prev 5 - 1)
     let ups = extract_cursor_ups(&output);
     assert!(
-        ups.contains(&3),
-        "should cursor-up 3 at start, got: {ups:?}"
+        ups.contains(&4),
+        "should cursor-up 4 at start, got: {ups:?}"
     );
 
     // No extra cursor-up needed — padding replaces the old clear-and-return logic
@@ -356,21 +358,21 @@ fn progress_frame_block_shrinks_pads_to_keep_spinner_pinned() {
         "only 1 cursor-up (initial), no clear-return, got: {ups:?}"
     );
 
-    // 3 \r\n total: 1 progress + 2 padding, spinner on row 4
-    assert_eq!(count_newlines(&output), 3);
+    // 4 \r\n total: 1 progress + 1 separator + 2 padding, spinner on row 5
+    assert_eq!(count_newlines(&output), 4);
 }
 
 #[test]
 fn progress_frame_block_grows_no_extra_clear() {
     let lines = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-    // Previous render had 2 lines, now 4 (3 progress + 1 spinner)
-    let (output, new_lines) = build_progress_frame(&lines, 2, "⠸", "\x1b[90m", "4.0s", "·");
+    // Previous render had 3 lines, now 3 progress + 1 sep + 1 spinner = 5
+    let (output, new_lines) = build_progress_frame(&lines, 3, "⠸", "\x1b[90m", "4.0s", "·");
 
-    assert_eq!(new_lines, 4);
+    assert_eq!(new_lines, 5);
 
-    // Should cursor-up 1 at the start (prev 2 - 1)
+    // Should cursor-up 2 at the start (prev 3 - 1)
     let ups = extract_cursor_ups(&output);
-    assert!(ups.contains(&1), "should cursor-up 1, got: {ups:?}");
+    assert!(ups.contains(&2), "should cursor-up 2, got: {ups:?}");
 
     // No extra clear needed — block grew, so no leftover lines
     // Only 1 cursor-up total (the initial one)
@@ -384,13 +386,14 @@ fn progress_frame_block_grows_no_extra_clear() {
 #[test]
 fn progress_frame_same_size_no_extra_clear() {
     let lines = vec!["x".to_string(), "y".to_string()];
-    let (output, new_lines) = build_progress_frame(&lines, 3, "⠼", "\x1b[90m", "5.0s", "·");
+    // 2 progress + 1 sep + 1 spinner = 4
+    let (output, new_lines) = build_progress_frame(&lines, 4, "⠼", "\x1b[90m", "5.0s", "·");
 
-    assert_eq!(new_lines, 3);
+    assert_eq!(new_lines, 4);
 
     let ups = extract_cursor_ups(&output);
-    // cursor-up 2 at start (prev 3 - 1)
-    assert!(ups.contains(&2), "should cursor-up 2, got: {ups:?}");
+    // cursor-up 3 at start (prev 4 - 1)
+    assert!(ups.contains(&3), "should cursor-up 3, got: {ups:?}");
     // No extra clear
     assert_eq!(
         ups.len(),
@@ -402,10 +405,11 @@ fn progress_frame_same_size_no_extra_clear() {
 #[test]
 fn progress_frame_single_line_from_single_line() {
     let lines = vec!["one".to_string()];
-    // Previous was also single-line spinner (rendered_lines = 1)
+    // Previous was single-line spinner (rendered_lines = 1)
+    // Now 1 progress + 1 sep + 1 spinner = 3
     let (output, new_lines) = build_progress_frame(&lines, 1, "⠴", "\x1b[90m", "0.5s", "·");
 
-    assert_eq!(new_lines, 2);
+    assert_eq!(new_lines, 3);
 
     // prev_rendered_lines = 1, so no cursor-up (only cursor-up when > 1)
     let ups = extract_cursor_ups(&output);
@@ -520,62 +524,61 @@ fn clear_two_lines() {
 
 #[test]
 fn progress_frame_shrink_keeps_spinner_pinned() {
-    // First render: 3 progress lines → 4 total (3 progress + 1 spinner)
+    // First render: 3 progress + 1 sep + 1 spinner = 5 total
     let lines_big = vec!["a".into(), "b".into(), "c".into()];
     let (out1, n1) = build_progress_frame(&lines_big, 0, "⠋", "\x1b[90m", "1s", "·");
-    assert_eq!(n1, 4);
+    assert_eq!(n1, 5);
 
     // The spinner line is always preceded by exactly (n-1) \r\n sequences
-    // so it sits on the n-th terminal row of the block.
     assert_eq!(
         count_newlines(&out1),
-        3,
-        "first render: 3 \\r\\n before spinner"
+        4,
+        "first render: 4 \\r\\n before spinner"
     );
 
     // Second render: shrink to 1 progress line.
-    // The block should still occupy 4 terminal rows so the spinner stays put.
+    // The block should still occupy 5 terminal rows so the spinner stays put.
     let lines_small = vec!["x".into()];
-    let (out2, n2) = build_progress_frame(&lines_small, 4, "⠙", "\x1b[90m", "2s", "·");
+    let (out2, n2) = build_progress_frame(&lines_small, 5, "⠙", "\x1b[90m", "2s", "·");
 
     // returned new_lines should stay at prev size (pinned)
     assert_eq!(
-        n2, 4,
+        n2, 5,
         "spinner must stay pinned: new_lines should equal prev_rendered_lines"
     );
 
-    // There should be 3 \r\n before the spinner line (to keep it on row 4)
+    // There should be 4 \r\n before the spinner line (to keep it on row 5)
     assert_eq!(
         count_newlines(&out2),
-        3,
-        "shrunk render must still have 3 \\r\\n to keep spinner on row 4"
+        4,
+        "shrunk render must still have 4 \\r\\n to keep spinner on row 5"
     );
 }
 
 #[test]
 fn progress_frame_shrink_to_zero_keeps_spinner_pinned() {
-    // Previous: 3 progress + 1 spinner = 4 lines
+    // Previous: 3 progress + 1 sep + 1 spinner = 5 lines
     let lines_empty: Vec<String> = vec![];
-    let (out, n) = build_progress_frame(&lines_empty, 4, "⠹", "\x1b[90m", "3s", "·");
+    let (out, n) = build_progress_frame(&lines_empty, 5, "⠹", "\x1b[90m", "3s", "·");
 
-    // Spinner must stay on row 4
-    assert_eq!(n, 4, "spinner pinned at row 4 even with 0 progress lines");
+    // Spinner must stay on row 5
+    assert_eq!(n, 5, "spinner pinned at row 5 even with 0 progress lines");
     assert_eq!(
         count_newlines(&out),
-        3,
-        "3 \\r\\n needed to reach row 4 for spinner"
+        4,
+        "4 \\r\\n needed to reach row 5 for spinner"
     );
 }
 
 #[test]
 fn progress_frame_grow_expands_block() {
-    // Previous: 1 progress + 1 spinner = 2 lines
-    // New: 4 progress + 1 spinner = 5 lines → block grows, spinner moves down
+    // Previous: 1 progress + 1 sep + 1 spinner = 3 lines
+    // New: 4 progress + 1 sep + 1 spinner = 6 lines → block grows
     let lines = vec!["a".into(), "b".into(), "c".into(), "d".into()];
-    let (out, n) = build_progress_frame(&lines, 2, "⠸", "\x1b[90m", "4s", "·");
+    let (out, n) = build_progress_frame(&lines, 3, "⠸", "\x1b[90m", "4s", "·");
 
-    // Block grows to 5
-    assert_eq!(n, 5);
-    // 4 \r\n before spinner
-    assert_eq!(count_newlines(&out), 4);
+    // Block grows to 6
+    assert_eq!(n, 6);
+    // 5 \r\n before spinner (4 progress + 1 separator)
+    assert_eq!(count_newlines(&out), 5);
 }
