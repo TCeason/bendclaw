@@ -630,3 +630,53 @@ async fn stats_after_compact_filtered_on_resume() -> TestResult {
     assert!(matches!(&transcript[1], TranscriptItem::User { text } if text == "new msg"));
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Planning mode — user input must not be polluted by planning prompt
+// ---------------------------------------------------------------------------
+
+/// After the fix, planning prompt lives in system_prompt, not in the user
+/// message. This test verifies that `first_user_title` (called by
+/// `session.save()`) derives the title from the raw user input — not from
+/// any planning-mode prefix.
+#[tokio::test]
+async fn title_is_user_input_not_planning_prompt() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+
+    let session = Session::new(
+        "sess-plan".into(),
+        "/tmp".into(),
+        "claude-sonnet".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    // Simulate what run_loop now stores: only the raw user input.
+    session
+        .write_items(vec![
+            TranscriptItem::User {
+                text: "refactor the auth module to use JWT".into(),
+            },
+            TranscriptItem::Assistant {
+                text: "planning".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "stop".into(),
+            },
+        ])
+        .await?;
+    session.save().await?;
+
+    let loaded = Session::open("sess-plan", storage.clone())
+        .await?
+        .ok_or_else(|| missing_error("missing planning session"))?;
+    let title = loaded
+        .meta()
+        .await
+        .title
+        .ok_or_else(|| missing_error("missing session title"))?;
+
+    assert_eq!(title, "refactor the auth module to use JWT");
+    Ok(())
+}

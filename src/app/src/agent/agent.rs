@@ -219,11 +219,10 @@ impl AppAgent {
             model = %model,
         );
 
-        let prompt = self.build_prompt(&request.prompt);
         let prior_transcripts = session.transcript().await;
         let (runtime_rx, engine_handle) = self
             .create_engine(
-                &prompt,
+                &request.prompt,
                 &prior_transcripts,
                 &run_id,
                 &session_id,
@@ -237,7 +236,7 @@ impl AppAgent {
             runtime_rx,
             tx,
             session,
-            prompt,
+            request.prompt,
             run_id.clone(),
             session_id.clone(),
         ));
@@ -281,10 +280,11 @@ impl AppAgent {
 
     // -- private -------------------------------------------------------------
 
-    fn build_prompt(&self, input: &str) -> String {
+    fn build_system_prompt(&self) -> String {
+        let base = self.system_prompt.read().clone();
         match *self.tool_mode.read() {
-            ToolMode::Normal => input.to_string(),
-            ToolMode::Planning => format!("{}\n\nUser task:\n{}", PLANNING_MODE_PROMPT, input),
+            ToolMode::Normal => base,
+            ToolMode::Planning => format!("{base}\n\n{PLANNING_MODE_PROMPT}"),
         }
     }
 
@@ -327,7 +327,7 @@ impl AppAgent {
             model: llm.model,
             api_key: llm.api_key,
             base_url: llm.base_url,
-            system_prompt: self.system_prompt.read().clone(),
+            system_prompt: self.build_system_prompt(),
             limits: self.limits.read().clone(),
             skills_dirs: self.skills_dirs.read().clone(),
             tools,
