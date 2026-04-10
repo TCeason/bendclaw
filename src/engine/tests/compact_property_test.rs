@@ -1,44 +1,24 @@
 mod helpers;
 
 use bendengine::context::*;
-use bendengine::types::*;
-use helpers::compact_helpers::*;
+use helpers::message_pattern::*;
 use proptest::prelude::*;
 
-/// Strategy: generate a random message sequence from a pattern string.
-/// Characters: u=user, t=tool_turn, a=assistant_text
-/// Tool turns get unique ids and matched pairs.
-fn build_messages_from_pattern(pattern: &str, pad: usize, tool_output: usize) -> Vec<AgentMessage> {
-    let mut messages = Vec::new();
-    let mut tool_idx = 0usize;
-    for ch in pattern.chars() {
-        match ch {
-            'u' => messages.push(sized_user(pad)),
-            'a' => messages.push(assistant_text("assistant response")),
-            't' => {
-                let id = format!("tc-prop-{tool_idx}");
-                tool_idx += 1;
-                messages.extend(tool_turn(&id, "bash", tool_output));
-            }
-            _ => {}
-        }
-    }
-    messages
-}
-
+/// Generate a random valid pattern from atomic units: "u", "a", "tr"
 fn arb_pattern() -> impl Strategy<Value = String> {
-    proptest::string::string_regex("[uat]{1,25}")
-        .expect("valid regex")
-        .prop_filter("must have at least one user message", |s| s.contains('u'))
+    prop::collection::vec(prop_oneof!["u", "a", "tr"], 1..15)
+        .prop_map(|v| v.concat())
+        .prop_filter("must contain at least one u", |s| s.contains('u'))
 }
 
+/// Generate a random ContextConfig with ranges that cover all levels
 fn arb_config() -> impl Strategy<Value = ContextConfig> {
     (
         100..5000usize,
-        0..200usize,
-        1..15usize,
-        0..5usize,
-        10..50usize,
+        0..100usize,
+        1..8usize,
+        0..3usize,
+        8..50usize,
     )
         .prop_map(|(max, sys, recent, first, max_lines)| ContextConfig {
             max_context_tokens: max,
@@ -49,14 +29,6 @@ fn arb_config() -> impl Strategy<Value = ContextConfig> {
         })
 }
 
-fn arb_pad() -> impl Strategy<Value = usize> {
-    prop_oneof![Just(10), Just(100), Just(500), Just(2000),]
-}
-
-fn arb_tool_output() -> impl Strategy<Value = usize> {
-    prop_oneof![Just(10), Just(100), Just(1000), Just(5000),]
-}
-
 // ---------------------------------------------------------------------------
 // P1: compact never produces orphan tool_call / tool_result
 // ---------------------------------------------------------------------------
@@ -65,21 +37,18 @@ proptest! {
     #[test]
     fn compact_preserves_tool_pair_integrity(
         pattern in arb_pattern(),
+        pad in 10..3000usize,
+        tool_out in 10..5000usize,
         config in arb_config(),
-        pad in arb_pad(),
-        tool_output in arb_tool_output(),
     ) {
-        let messages = build_messages_from_pattern(&pattern, pad, tool_output);
-        if messages.is_empty() {
-            return Ok(());
-        }
+        let messages = pat(&pattern).pad(pad).tool_output(tool_out).build();
         let result = compact_messages(messages, &config);
         assert_no_orphan_tool_pairs(&result.messages);
     }
 }
 
 // ---------------------------------------------------------------------------
-// P2: level 0 is identity — no changes when within budget
+// P2: level 0 means messages are unchanged
 // ---------------------------------------------------------------------------
 
 proptest! {
@@ -87,22 +56,20 @@ proptest! {
     fn compact_level_zero_is_identity(
         pattern in arb_pattern(),
     ) {
-        let messages = build_messages_from_pattern(&pattern, 10, 10);
-        if messages.is_empty() {
-            return Ok(());
-        }
+        // Use a very large budget so compaction is never needed
+        let messages = pat(&pattern).pad(10).tool_output(10).build();
         let config = ContextConfig {
-            max_context_tokens: 999_999,
+            max_context_tokens: 500_000,
             system_prompt_tokens: 0,
             keep_recent: 100,
             keep_first: 100,
-            tool_output_max_lines: 100,
+            tool_output_max_lines: 1000,
         };
         let original_len = messages.len();
         let result = compact_messages(messages, &config);
         prop_assert_eq!(result.stats.level, 0);
-        prop_assert_eq!(result.messages.len(), original_len);
         prop_assert!(result.stats.actions.is_empty());
+        prop_assert_eq!(result.messages.len(), original_len);
     }
 }
 
@@ -114,14 +81,11 @@ proptest! {
     #[test]
     fn compact_actions_match_level(
         pattern in arb_pattern(),
+        pad in 10..3000usize,
+        tool_out in 10..5000usize,
         config in arb_config(),
-        pad in arb_pad(),
-        tool_output in arb_tool_output(),
     ) {
-        let messages = build_messages_from_pattern(&pattern, pad, tool_output);
-        if messages.is_empty() {
-            return Ok(());
-        }
+        let messages = pat(&pattern).pad(pad).tool_output(tool_out).build();
         let result = compact_messages(messages, &config);
         let level = result.stats.level;
         if level == 0 {
@@ -133,28 +97,27 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------------
-// P4: action token accounting is self-consistent
+// P4: level <= 2 respects budget
 // ---------------------------------------------------------------------------
 
 proptest! {
     #[test]
-    fn compact_action_tokens_are_consistent(
+    fn compact_respects_budget_before_level3(
         pattern in arb_pattern(),
+        pad in 10..3000usize,
+        tool_out in 10..5000usize,
         config in arb_config(),
-        pad in arb_pad(),
-        tool_output in arb_tool_output(),
     ) {
-        let messages = build_messages_from_pattern(&pattern, pad, tool_output);
-        if messages.is_empty() {
-            return Ok(());
-        }
+        let messages = pat(&pattern).pad(pad).tool_output(tool_out).build();
         let result = compact_messages(messages, &config);
-        for action in &result.stats.actions {
+        if result.stats.level > 0 && result.stats.level <= 2 {
+            let budget = config.max_context_tokens.saturating_sub(config.system_prompt_tokens);
             prop_assert!(
-                action.after_tokens <= action.before_tokens,
-                "action after_tokens ({}) should be <= before_tokens ({})",
-                action.after_tokens,
-                action.before_tokens,
+                result.stats.after_estimated_tokens <= budget,
+                "level {} should respect budget: after={} > budget={}",
+                result.stats.level,
+                result.stats.after_estimated_tokens,
+                budget,
             );
         }
     }

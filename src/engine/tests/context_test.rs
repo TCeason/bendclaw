@@ -1,5 +1,8 @@
+mod helpers;
+
 use bendengine::context::*;
 use bendengine::types::*;
+use helpers::message_pattern::*;
 
 #[test]
 fn test_estimate_tokens() {
@@ -71,25 +74,19 @@ fn test_level1_truncation() {
 
 #[test]
 fn test_compact_within_budget() {
-    let messages = vec![
-        AgentMessage::Llm(Message::user("Hello")),
-        AgentMessage::Llm(Message::user("World")),
-    ];
+    let messages = pat("u a u").pad(10).build();
     let config = ContextConfig::default();
-    let result = compact_messages(messages, &config);
-    assert_eq!(result.messages.len(), 2);
+    let result = compact_messages(messages.clone(), &config);
+    assert_eq!(result.stats.level, 0);
+    assert_eq!(result.messages.len(), messages.len());
+    assert!(result.stats.actions.is_empty());
 }
 
 #[test]
 fn test_compact_drops_middle_when_needed() {
-    let mut messages = Vec::new();
-    for i in 0..100 {
-        messages.push(AgentMessage::Llm(Message::user(format!(
-            "Message {} {}",
-            i,
-            "x".repeat(200)
-        ))));
-    }
+    let messages = pat("u a u a u a u a u a u a u a u a u a u a u a u a u")
+        .pad(200)
+        .build();
 
     let config = ContextConfig {
         max_context_tokens: 500,
@@ -99,8 +96,8 @@ fn test_compact_drops_middle_when_needed() {
         tool_output_max_lines: 20,
     };
 
-    let result = compact_messages(messages, &config);
-    assert!(result.messages.len() < 100);
+    let result = compact_messages(messages.clone(), &config);
+    assert!(result.messages.len() < messages.len());
     assert!(result.messages.len() >= 2);
 }
 
@@ -322,61 +319,11 @@ fn test_sanitize_empty_assistant_removed() {
     ));
 }
 
-/// Helper: assert no orphan tool_call / tool_result in a message list.
-fn assert_no_orphan_tool_pairs(messages: &[AgentMessage]) {
-    let mut call_ids = std::collections::HashSet::new();
-    let mut result_ids = std::collections::HashSet::new();
-    for msg in messages {
-        match msg {
-            AgentMessage::Llm(Message::Assistant { content, .. }) => {
-                for c in content {
-                    if let Content::ToolCall { id, .. } = c {
-                        call_ids.insert(id.clone());
-                    }
-                }
-            }
-            AgentMessage::Llm(Message::ToolResult { tool_call_id, .. }) => {
-                result_ids.insert(tool_call_id.clone());
-            }
-            _ => {}
-        }
-    }
-    assert_eq!(
-        call_ids, result_ids,
-        "tool_call ids and tool_result ids must match"
-    );
-}
-
 #[test]
 fn test_compact_level2_no_orphans() {
-    // Regression: level2_summarize_old_turns can split an assistant(tool_calls)
-    // from its ToolResults when the boundary falls between them.
-    //
-    // Layout (6 messages, keep_recent=2 → boundary=4):
-    //   [0] user (long padding)
-    //   [1] user (long padding)
-    //   [2] user (long padding)
-    //   [3] assistant(tool_call tc-split)   ← old zone, will be summarized
-    //   [4] tool_result(tc-split)           ← recent zone, kept as-is → orphan!
-    //   [5] user
-    //
-    // Budget is set so level1 output still exceeds it but level2 fits.
-
-    let pad = "x".repeat(800); // ~200 tokens each
-    let messages = vec![
-        AgentMessage::Llm(Message::user(&pad)),
-        AgentMessage::Llm(Message::user(&pad)),
-        AgentMessage::Llm(Message::user(&pad)),
-        make_assistant_with_tool_call("tc-split", "bash"),
-        make_tool_result("tc-split", "bash"),
-        AgentMessage::Llm(Message::user("final")),
-    ];
+    let messages = pat("u u u tr u").pad(800).build();
 
     let config = ContextConfig {
-        // Total before compaction: ~3*204 + ~16 + ~14 + ~5 = ~647 tokens
-        // Budget = 400 - 0 = 400 → exceeds budget → triggers compaction
-        // After level1 (no long tool outputs): still ~647 → triggers level2
-        // After level2 (3 old messages summarized): much smaller → fits
         max_context_tokens: 400,
         system_prompt_tokens: 0,
         keep_recent: 2,
@@ -395,26 +342,9 @@ fn test_compact_level2_no_orphans() {
 
 #[test]
 fn test_compact_level3_no_orphans() {
-    // Build a message list that triggers level 3 compaction with tool_call/tool_result
-    // groups that could be split across the drop boundary.
-    let mut messages = Vec::new();
-    // First 2 messages (keep_first=2)
-    messages.push(AgentMessage::Llm(Message::user("first")));
-    messages.push(AgentMessage::Llm(Message::user("second")));
-
-    // Middle: many assistant+tool pairs that will be dropped
-    for i in 0..20 {
-        messages.push(make_assistant_with_tool_call(
-            &format!("tc-mid-{i}"),
-            "bash",
-        ));
-        messages.push(make_tool_result(&format!("tc-mid-{i}"), "bash"));
-    }
-
-    // Recent: a tool pair that could be split at the boundary
-    messages.push(make_assistant_with_tool_call("tc-recent", "bash"));
-    messages.push(make_tool_result("tc-recent", "bash"));
-    messages.push(AgentMessage::Llm(Message::user("last question")));
+    let messages = pat("u u tr tr tr tr tr tr tr tr tr tr tr tr tr tr tr tr tr tr tr tr u")
+        .pad(10)
+        .build();
 
     let config = ContextConfig {
         max_context_tokens: 200,
@@ -737,11 +667,12 @@ fn test_level1_read_file_python_uses_outline() {
 }
 
 // ---------------------------------------------------------------------------
-// Level 1 action structure tests
+// Level 1 action structure tests (DSL)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn test_level1_actions_only_non_skipped() {
+    // Two tool turns: one big (truncated), one small (skipped)
     let big_output = (1..=200)
         .map(|i| format!("output line {}", i))
         .collect::<Vec<_>>()
@@ -762,15 +693,9 @@ fn test_level1_actions_only_non_skipped() {
         1,
         "only non-Skipped actions should be recorded"
     );
-    assert_eq!(
-        actions[0].index, 2,
-        "action index should point to the truncated ToolResult"
-    );
+    assert_eq!(actions[0].index, 2);
     assert_eq!(actions[0].tool_name, "bash");
-    assert!(
-        actions[0].before_tokens > actions[0].after_tokens,
-        "truncated output should have fewer tokens"
-    );
+    assert!(actions[0].before_tokens > actions[0].after_tokens);
 }
 
 #[test]
@@ -906,21 +831,12 @@ fn test_level1_outline_works_on_short_code_files() {
 }
 
 // ---------------------------------------------------------------------------
-// Level 2 action structure tests
+// Level 2 action structure tests (DSL)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn test_level2_actions_structure() {
-    let pad = "x".repeat(2000); // ~500 tokens each
-    let messages = vec![
-        AgentMessage::Llm(Message::user(&pad)),
-        make_assistant_with_tool_call("tc-1", "bash"),
-        make_tool_result("tc-1", "bash"),
-        make_assistant_with_tool_call("tc-2", "read_file"),
-        make_tool_result("tc-2", "read_file"),
-        AgentMessage::Llm(Message::user("recent 1")),
-        AgentMessage::Llm(Message::user("recent 2")),
-    ];
+    let messages = pat("u tr tr u u").pad(2000).build();
 
     let config = ContextConfig {
         max_context_tokens: 550,
@@ -938,24 +854,19 @@ fn test_level2_actions_structure() {
     );
 
     if result.stats.level == 2 {
-        assert!(
-            !result.stats.actions.is_empty(),
-            "level 2 should produce actions"
-        );
+        assert!(!result.stats.actions.is_empty());
         for action in &result.stats.actions {
             assert_eq!(action.method, CompactionMethod::Summarized);
             assert_eq!(action.tool_name, "assistant");
             assert!(action.related_count.is_some());
-            assert!(
-                action.before_tokens > action.after_tokens,
-                "summarized turn should save tokens"
-            );
+            assert!(action.before_tokens > action.after_tokens);
         }
     }
 }
 
 #[test]
 fn test_level2_action_related_count() {
+    // One assistant with multiple tool results following it
     let pad = "x".repeat(800);
     let messages = vec![
         AgentMessage::Llm(Message::user(&pad)),
@@ -996,26 +907,14 @@ fn test_level2_action_related_count() {
 }
 
 // ---------------------------------------------------------------------------
-// Level 3 action structure tests
+// Level 3 action structure tests (DSL)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn test_level3_actions_structure() {
-    let mut messages = Vec::new();
-    messages.push(AgentMessage::Llm(Message::user("first")));
-    messages.push(AgentMessage::Llm(Message::user("second")));
-
-    for i in 0..20 {
-        messages.push(make_assistant_with_tool_call(
-            &format!("tc-mid-{i}"),
-            "bash",
-        ));
-        messages.push(make_tool_result(&format!("tc-mid-{i}"), "bash"));
-    }
-
-    messages.push(AgentMessage::Llm(Message::user("recent 1")));
-    messages.push(AgentMessage::Llm(Message::user("recent 2")));
-    messages.push(AgentMessage::Llm(Message::user("recent 3")));
+    let messages = pat("u u tr tr tr tr tr tr tr tr tr tr tr tr tr tr tr tr tr tr tr tr u u u")
+        .pad(10)
+        .build();
 
     let config = ContextConfig {
         max_context_tokens: 150,
@@ -1027,37 +926,20 @@ fn test_level3_actions_structure() {
 
     let result = compact_messages(messages, &config);
     assert_eq!(result.stats.level, 3, "should trigger level 3");
-    assert!(
-        !result.stats.actions.is_empty(),
-        "level 3 should produce actions"
-    );
+    assert!(!result.stats.actions.is_empty());
 
     for action in &result.stats.actions {
         assert_eq!(action.method, CompactionMethod::Dropped);
         assert_eq!(action.tool_name, "messages");
-        assert!(
-            action.before_tokens > action.after_tokens,
-            "dropped range should save tokens"
-        );
+        assert!(action.before_tokens > action.after_tokens);
     }
 }
 
 #[test]
 fn test_level3_action_has_range() {
-    let mut messages = Vec::new();
-    messages.push(AgentMessage::Llm(Message::user("first")));
-    messages.push(AgentMessage::Llm(Message::user("second")));
-
-    for i in 0..15 {
-        messages.push(AgentMessage::Llm(Message::user(format!(
-            "middle {} {}",
-            i,
-            "y".repeat(100)
-        ))));
-    }
-
-    messages.push(AgentMessage::Llm(Message::user("recent 1")));
-    messages.push(AgentMessage::Llm(Message::user("recent 2")));
+    let messages = pat("u u a a a a a a a a a a a a a a a u u")
+        .pad(100)
+        .build();
 
     let config = ContextConfig {
         max_context_tokens: 300,
@@ -1088,12 +970,12 @@ fn test_level3_action_has_range() {
 }
 
 // ---------------------------------------------------------------------------
-// compact_messages only passes current level actions
+// compact_messages only passes current level actions (DSL)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn test_compact_level1_actions_are_level1_only() {
-    // 500 lines of output → ~500 tokens before truncation
+    // Large tool output that triggers level 1 truncation
     let big_output = (1..=500)
         .map(|i| format!("output line {} with some extra padding text here", i))
         .collect::<Vec<_>>()
@@ -1105,7 +987,6 @@ fn test_compact_level1_actions_are_level1_only() {
         make_tool_result_with_content("tc-1", "bash", &big_output),
     ];
 
-    // Budget: tight enough to trigger level 1, but after truncation it fits
     let config = ContextConfig {
         max_context_tokens: 800,
         system_prompt_tokens: 0,
@@ -1116,29 +997,13 @@ fn test_compact_level1_actions_are_level1_only() {
 
     let result = compact_messages(messages, &config);
     assert_eq!(result.stats.level, 1, "should trigger level 1");
-    assert!(!result.stats.actions.is_empty(), "should have actions");
-    for action in &result.stats.actions {
-        assert!(
-            action.method == CompactionMethod::Outline
-                || action.method == CompactionMethod::HeadTail,
-            "level 1 result should only contain level 1 actions, got {:?}",
-            action.method
-        );
-    }
+    assert!(!result.stats.actions.is_empty());
+    assert_actions_match_level(1, &result.stats.actions);
 }
 
 #[test]
 fn test_compact_level2_actions_are_level2_only() {
-    let pad = "x".repeat(800);
-    let messages = vec![
-        AgentMessage::Llm(Message::user(&pad)),
-        make_assistant_with_tool_call("tc-1", "bash"),
-        make_tool_result("tc-1", "bash"),
-        AgentMessage::Llm(Message::user(&pad)),
-        make_assistant_with_tool_call("tc-2", "bash"),
-        make_tool_result("tc-2", "bash"),
-        AgentMessage::Llm(Message::user("recent")),
-    ];
+    let messages = pat("u tr u tr u").pad(800).build();
 
     let config = ContextConfig {
         max_context_tokens: 400,
@@ -1150,27 +1015,15 @@ fn test_compact_level2_actions_are_level2_only() {
 
     let result = compact_messages(messages, &config);
     if result.stats.level == 2 {
-        for action in &result.stats.actions {
-            assert_eq!(
-                action.method,
-                CompactionMethod::Summarized,
-                "level 2 result should only contain Summarized actions"
-            );
-        }
+        assert_actions_match_level(2, &result.stats.actions);
     }
 }
 
 #[test]
 fn test_compact_level0_no_actions() {
-    let messages = vec![
-        AgentMessage::Llm(Message::user("Hello")),
-        AgentMessage::Llm(Message::user("World")),
-    ];
+    let messages = pat("u a u").pad(10).build();
     let config = ContextConfig::default();
     let result = compact_messages(messages, &config);
     assert_eq!(result.stats.level, 0);
-    assert!(
-        result.stats.actions.is_empty(),
-        "level 0 should have no actions"
-    );
+    assert!(result.stats.actions.is_empty());
 }
