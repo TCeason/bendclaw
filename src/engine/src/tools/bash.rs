@@ -85,6 +85,44 @@ fn tail_lines(buf: &[u8], max_lines: usize, max_bytes: usize) -> String {
     lines[start..].join("\n")
 }
 
+/// Max bytes per single output line before truncation.
+const MAX_LINE_BYTES: usize = 4096;
+
+/// Truncate lines that exceed `MAX_LINE_BYTES`, keeping a head+tail preview.
+fn truncate_long_lines(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            result.push('\n');
+        }
+        if line.len() <= MAX_LINE_BYTES {
+            result.push_str(line);
+        } else {
+            let half = MAX_LINE_BYTES / 2;
+            // Find safe char boundaries
+            let head_end = {
+                let mut e = half;
+                while e > 0 && !line.is_char_boundary(e) {
+                    e -= 1;
+                }
+                e
+            };
+            let tail_start = {
+                let mut s = line.len().saturating_sub(half);
+                while s < line.len() && !line.is_char_boundary(s) {
+                    s += 1;
+                }
+                s
+            };
+            let omitted = line.len() - head_end - (line.len() - tail_start);
+            result.push_str(&line[..head_end]);
+            result.push_str(&format!(" ... ({omitted} bytes truncated) ... "));
+            result.push_str(&line[tail_start..]);
+        }
+    }
+    result
+}
+
 /// Interval between progress updates.
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(3);
 /// Interval between partial output updates.
@@ -374,7 +412,11 @@ impl AgentTool for BashTool {
             String::from_utf8_lossy(&buf).to_string()
         };
 
-        // Mark truncation if we hit the cap
+        // Truncate individual long lines (e.g. binary/base64 blobs)
+        stdout = truncate_long_lines(&stdout);
+        stderr = truncate_long_lines(&stderr);
+
+        // Mark truncation if we hit the byte cap
         if stdout.len() >= max_bytes {
             stdout.push_str("\n... (output truncated)");
         }

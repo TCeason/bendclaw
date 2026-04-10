@@ -479,6 +479,69 @@ async fn test_bash_timeout_no_hang() {
     );
 }
 
+// --- Long line truncation tests ---
+
+#[tokio::test]
+async fn test_bash_long_line_truncated() {
+    // A single line longer than 4096 bytes should be truncated
+    let tool = BashTool::new();
+    let long = "x".repeat(8000);
+    let cmd = format!("printf '{long}'");
+    let result = tool
+        .execute(serde_json::json!({"command": cmd}), ctx("bash"))
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("bytes truncated"));
+    // Should keep head and tail
+    assert!(text.starts_with("Exit code: 0\nxx"));
+    assert!(text.ends_with("xx"));
+    // Total output should be much smaller than 8000
+    assert!(text.len() < 6000);
+}
+
+#[tokio::test]
+async fn test_bash_short_line_not_truncated() {
+    let tool = BashTool::new();
+    let short = "y".repeat(100);
+    let cmd = format!("printf '{short}'");
+    let result = tool
+        .execute(serde_json::json!({"command": cmd}), ctx("bash"))
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(!text.contains("bytes truncated"));
+    assert!(text.contains(&short));
+}
+
+#[tokio::test]
+async fn test_bash_multiline_only_long_lines_truncated() {
+    // Mix of short and long lines — only the long one gets truncated
+    let tool = BashTool::new();
+    let long = "z".repeat(8000);
+    let cmd = format!("echo short_line; printf '{long}'; echo; echo another_short");
+    let result = tool
+        .execute(serde_json::json!({"command": cmd}), ctx("bash"))
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("short_line"));
+    assert!(text.contains("another_short"));
+    assert!(text.contains("bytes truncated"));
+}
+
 // --- Image support tests ---
 
 #[tokio::test]
