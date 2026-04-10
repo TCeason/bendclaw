@@ -15,9 +15,6 @@ use super::render::RESET;
 /// Spinner glyphs — gentle pulsing dot to indicate activity.
 const GLYPHS: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// Terminal tab title prefix — soft three-state activity dots.
-const TITLE_GLYPHS: &[&str] = &["·", "•", "·"];
-
 /// Obscure database-flavored verbs for the spinner.
 const VERBS: &[&str] = &[
     "Defragmenting",
@@ -153,10 +150,6 @@ impl SpinnerState {
         self.rendered = false;
         self.paused = false;
         self.phase = SpinnerPhase::Hidden;
-        // Reset terminal tab title
-        with_terminal(|stdout| {
-            let _ = write!(stdout, "\x1b]0;BendClaw\x07");
-        });
     }
 
     pub fn set_tool(&mut self, name: &str) {
@@ -222,7 +215,6 @@ impl SpinnerState {
         }
 
         let glyph = GLYPHS[self.frame % GLYPHS.len()];
-        let title_glyph = TITLE_GLYPHS[self.frame % TITLE_GLYPHS.len()];
         self.frame += 1;
 
         let elapsed_ms = self.run_started_at.elapsed().as_millis() as u64;
@@ -248,7 +240,6 @@ impl SpinnerState {
                 glyph_color,
                 name,
                 &status,
-                title_glyph,
             );
 
             with_terminal(|stdout| {
@@ -282,8 +273,6 @@ impl SpinnerState {
                 stdout,
                 "\r{glyph_color}{glyph}{RESET} {rendered_msg} {DIM}({status}) · esc to interrupt{RESET}\x1b[K"
             );
-            // Set terminal tab title to show activity state.
-            let _ = write!(stdout, "\x1b]0;{title_glyph} BendClaw\x07");
         });
         self.rendered_lines = 1;
         self.rendered = true;
@@ -443,7 +432,6 @@ pub fn build_progress_frame(
     glyph_color: &str,
     tool_name: &str,
     status: &str,
-    title_glyph: &str,
 ) -> (String, usize) {
     let separator = if progress_lines.is_empty() { 0 } else { 1 };
     let content_lines = progress_lines.len() + separator + 1; // progress + gap + spinner
@@ -486,9 +474,6 @@ pub fn build_progress_frame(
     out.push_str(&format!(
         "{ERASE_LINE}{glyph_color}{glyph}{RESET} {DIM}{tool_label}{RESET} {DIM}({status}) · esc to interrupt{RESET}{ERASE_LINE}"
     ));
-
-    // Tab title
-    out.push_str(&format!("\x1b]0;{title_glyph} BendClaw\x07"));
 
     (out, total_lines)
 }

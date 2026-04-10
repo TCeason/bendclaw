@@ -2,7 +2,7 @@
 
 use super::theme::Style;
 
-/// Replace `owner/repo#123` patterns with OSC 8 clickable hyperlinks.
+/// Replace `owner/repo#123` patterns with styled issue references.
 pub fn linkify_issue_refs(input: &str, link_style: &Style) -> String {
     let mut out = String::new();
     let mut cursor = 0usize;
@@ -25,11 +25,11 @@ pub fn linkify_issue_refs(input: &str, link_style: &Style) -> String {
     out
 }
 
-/// Format an OSC 8 terminal hyperlink.
-pub fn format_hyperlink(url: &str, text: &str, fallback_url: Option<&str>) -> String {
+/// Format a rendered link without OSC terminal escapes.
+pub fn format_hyperlink(_url: &str, text: &str, fallback_url: Option<&str>) -> String {
     match fallback_url {
-        Some(fallback) => format!("\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\ ({fallback})"),
-        None => format!("\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\"),
+        Some(fallback) => format!("{text} ({fallback})"),
+        None => text.to_string(),
     }
 }
 
