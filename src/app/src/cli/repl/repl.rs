@@ -93,6 +93,21 @@ impl Repl {
         })
     }
 
+    pub fn new_with_agent(
+        agent: Arc<AppAgent>,
+        config: Config,
+        session_id: Option<String>,
+    ) -> Result<Self> {
+        let cwd = agent.cwd().to_string();
+        Ok(Self {
+            agent,
+            config,
+            session_id,
+            cwd,
+            completion_state: Arc::new(RwLock::new(CompletionState::default())),
+        })
+    }
+
     pub async fn run(&mut self) -> Result<()> {
         self.refresh_completion_state().await?;
         self.print_banner()?;
@@ -208,6 +223,19 @@ impl Repl {
                 self.agent.with_tool_mode(crate::agent::ToolMode::Normal);
                 println!("{DIM}  action mode on — full tool set restored{RESET}\n");
             }
+            "/env" => self.handle_env_list(),
+            s if s.starts_with("/env set ") => {
+                self.handle_env_set(s.trim_start_matches("/env set ").trim())
+                    .await?
+            }
+            s if s.starts_with("/env del ") => {
+                self.handle_env_del(s.trim_start_matches("/env del ").trim())
+                    .await?
+            }
+            s if s.starts_with("/env load ") => {
+                self.handle_env_load(s.trim_start_matches("/env load ").trim())
+                    .await?
+            }
             _ => {
                 eprintln!("{RED}  unknown command: {input}{RESET}");
                 eprintln!("{DIM}  type /help for available commands{RESET}\n");
@@ -215,6 +243,126 @@ impl Repl {
         }
 
         Ok(false)
+    }
+
+    // -- /env handlers -------------------------------------------------------
+
+    fn handle_env_list(&self) {
+        match self.agent.variables() {
+            Some(vars) => {
+                let items = vars.list_global();
+                if items.is_empty() {
+                    println!("{DIM}  no variables configured{RESET}");
+                } else {
+                    for item in items {
+                        let usage = match (&item.last_used_at, &item.last_used_by) {
+                            (Some(at), Some(by)) => {
+                                format!(
+                                    "used {} times, last {} by {}",
+                                    item.used_count,
+                                    relative_time(at),
+                                    truncate_id(by)
+                                )
+                            }
+                            (Some(at), None) => {
+                                format!(
+                                    "used {} times, last {}",
+                                    item.used_count,
+                                    relative_time(at)
+                                )
+                            }
+                            _ => format!("used {} times", item.used_count),
+                        };
+                        println!("  {:<28} {DIM}{usage}{RESET}", item.key);
+                    }
+                }
+            }
+            None => println!("{DIM}  variables not available{RESET}"),
+        }
+        println!();
+    }
+
+    async fn handle_env_set(&self, arg: &str) -> Result<()> {
+        let Some((key, value)) = arg.split_once('=') else {
+            eprintln!("{RED}  usage: /env set KEY=VALUE{RESET}\n");
+            return Ok(());
+        };
+        let key = key.trim().to_string();
+        let value = value.to_string();
+        if key.is_empty() {
+            eprintln!("{RED}  usage: /env set KEY=VALUE{RESET}\n");
+            return Ok(());
+        }
+        if let Some(vars) = self.agent.variables() {
+            vars.set_global(key.clone(), value).await?;
+            println!("{DIM}  set variable {key}{RESET}");
+            println!("{DIM}  note: variable values may appear in conversation history{RESET}\n");
+        } else {
+            println!("{DIM}  variables not available{RESET}\n");
+        }
+        Ok(())
+    }
+
+    async fn handle_env_del(&self, key: &str) -> Result<()> {
+        if key.is_empty() {
+            eprintln!("{RED}  usage: /env del KEY{RESET}\n");
+            return Ok(());
+        }
+        if let Some(vars) = self.agent.variables() {
+            if vars.delete_global(key).await? {
+                println!("{DIM}  deleted variable {key}{RESET}\n");
+            } else {
+                println!("{YELLOW}  variable {key} not found{RESET}\n");
+            }
+        } else {
+            println!("{DIM}  variables not available{RESET}\n");
+        }
+        Ok(())
+    }
+
+    async fn handle_env_load(&self, path: &str) -> Result<()> {
+        if path.is_empty() {
+            eprintln!("{RED}  usage: /env load FILE{RESET}\n");
+            return Ok(());
+        }
+        let text = match tokio::fs::read_to_string(path).await {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("{RED}  failed to read {path}: {e}{RESET}\n");
+                return Ok(());
+            }
+        };
+        if let Some(vars) = self.agent.variables() {
+            let pairs = parse_env_text(&text);
+            let non_blank_lines = text
+                .lines()
+                .filter(|l| {
+                    let t = l.trim();
+                    !t.is_empty() && !t.starts_with('#')
+                })
+                .count();
+            let skipped = non_blank_lines.saturating_sub(pairs.len());
+            let mut added = 0usize;
+            let mut overwritten = 0usize;
+            let mut seen: std::collections::HashSet<String> =
+                vars.list_global().iter().map(|i| i.key.clone()).collect();
+            for (key, value) in pairs {
+                let is_overwrite = seen.contains(&key);
+                seen.insert(key.clone());
+                vars.set_global(key, value).await?;
+                if is_overwrite {
+                    overwritten += 1;
+                } else {
+                    added += 1;
+                }
+            }
+            println!(
+                "{DIM}  loaded {path}: {added} added, {overwritten} overwritten, {skipped} skipped{RESET}\n",
+            );
+        } else {
+            println!("{DIM}  variables not available{RESET}\n");
+        }
+        Ok(())
     }
 
     async fn run_prompt(&mut self, input: &str) -> Result<bool> {
@@ -783,6 +931,14 @@ fn relative_time(value: &str) -> String {
     }
 }
 
+fn truncate_id(id: &str) -> &str {
+    if id.len() > 12 {
+        &id[..12]
+    } else {
+        id
+    }
+}
+
 fn collapse_home(path: &std::path::Path) -> String {
     if let Ok(home) = paths::home_dir() {
         if let Ok(suffix) = path.strip_prefix(&home) {
@@ -790,4 +946,36 @@ fn collapse_home(path: &std::path::Path) -> String {
         }
     }
     path.display().to_string()
+}
+
+fn parse_env_text(text: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let trimmed = trimmed
+            .strip_prefix("export ")
+            .unwrap_or(trimmed)
+            .trim_start();
+        if let Some((key, value)) = trimmed.split_once('=') {
+            let key = key.trim().to_string();
+            if key.is_empty() {
+                continue;
+            }
+            let value = strip_quotes(value.trim());
+            pairs.push((key, value));
+        }
+    }
+    pairs
+}
+
+fn strip_quotes(s: &str) -> String {
+    if s.len() >= 2
+        && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')))
+    {
+        return s[1..s.len() - 1].to_string();
+    }
+    s.to_string()
 }

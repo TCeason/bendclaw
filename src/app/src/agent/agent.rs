@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 use super::event::RunEvent;
 use super::runtime::EngineHandle;
 use super::runtime::EngineOptions;
+use super::variables::Variables;
 use crate::conf::Config;
 use crate::conf::LlmConfig;
 use crate::error::BendclawError;
@@ -104,6 +105,11 @@ impl TurnStream {
 
 const PLANNING_MODE_PROMPT: &str = include_str!("prompt/plan.md");
 
+const VARIABLES_GUIDANCE: &str = "\
+If a task or skill explicitly references a configured variable by name, \
+use the `get_variable` tool to retrieve its value. \
+Do not guess variable names and do not fetch variables unless required for the current task.";
+
 pub struct AppAgent {
     llm: RwLock<LlmConfig>,
     system_prompt: RwLock<String>,
@@ -112,6 +118,7 @@ pub struct AppAgent {
     tool_mode: RwLock<ToolMode>,
     cwd: String,
     storage: RwLock<Arc<dyn Storage>>,
+    variables: RwLock<Option<Arc<Variables>>>,
 }
 
 impl AppAgent {
@@ -127,6 +134,7 @@ impl AppAgent {
             tool_mode: RwLock::new(ToolMode::Normal),
             cwd,
             storage: RwLock::new(storage),
+            variables: RwLock::new(None),
         }))
     }
 
@@ -165,6 +173,11 @@ impl AppAgent {
         Arc::clone(self)
     }
 
+    pub fn with_variables(self: &Arc<Self>, variables: Arc<Variables>) -> Arc<Self> {
+        *self.variables.write() = Some(variables);
+        Arc::clone(self)
+    }
+
     // -- getters -------------------------------------------------------------
 
     pub fn system_prompt(&self) -> String {
@@ -197,6 +210,10 @@ impl AppAgent {
 
     pub fn tool_mode(&self) -> ToolMode {
         *self.tool_mode.read()
+    }
+
+    pub fn variables(&self) -> Option<Arc<Variables>> {
+        self.variables.read().clone()
     }
 
     // -- core: submit a turn, return a stream of RunEvents -------------------
@@ -282,10 +299,22 @@ impl AppAgent {
 
     fn build_system_prompt(&self) -> String {
         let base = self.system_prompt.read().clone();
-        match *self.tool_mode.read() {
+        let mut prompt = match *self.tool_mode.read() {
             ToolMode::Normal => base,
             ToolMode::Planning => format!("{base}\n\n{PLANNING_MODE_PROMPT}"),
+        };
+
+        if self
+            .variables
+            .read()
+            .as_ref()
+            .is_some_and(|v| v.has_variables())
+        {
+            prompt.push_str("\n\n");
+            prompt.push_str(VARIABLES_GUIDANCE);
         }
+
+        prompt
     }
 
     async fn resolve_session(&self, session_id: Option<&str>) -> Result<Arc<Session>> {
@@ -318,7 +347,7 @@ impl AppAgent {
         EngineHandle,
     )> {
         let llm = self.llm.read().clone();
-        let tools = match *self.tool_mode.read() {
+        let mut tools = match *self.tool_mode.read() {
             ToolMode::Planning => bend_engine::tools::planning_tools(
                 ask_fn,
                 "This tool is not allowed in planning mode. \
@@ -326,6 +355,14 @@ impl AppAgent {
             ),
             ToolMode::Normal => bend_engine::tools::base_tools(),
         };
+
+        if let Some(vars) = self.variables() {
+            if vars.has_variables() {
+                let get_fn = vars.as_get_fn(&self.cwd, session_id);
+                tools.push(Box::new(bend_engine::tools::GetVariableTool::new(get_fn)));
+            }
+        }
+
         let options = EngineOptions {
             provider: llm.provider,
             model: llm.model,

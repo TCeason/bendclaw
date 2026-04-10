@@ -4,6 +4,7 @@ pub mod edit;
 pub mod file;
 pub mod list;
 pub mod search;
+pub mod variables;
 pub mod web_fetch;
 
 pub use ask_user::AskUserFn;
@@ -17,6 +18,9 @@ pub use file::ReadFileTool;
 pub use file::WriteFileTool;
 pub use list::ListFilesTool;
 pub use search::SearchTool;
+pub use variables::GetVariableFn;
+pub use variables::GetVariableResponse;
+pub use variables::GetVariableTool;
 pub use web_fetch::WebFetchTool;
 
 use crate::types::AgentTool;

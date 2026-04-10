@@ -1,6 +1,8 @@
 use super::completion::CompletionState;
 
-pub const KNOWN_COMMANDS: &[&str] = &["/help", "/resume", "/new", "/model", "/plan", "/act"];
+pub const KNOWN_COMMANDS: &[&str] = &[
+    "/help", "/resume", "/new", "/model", "/plan", "/act", "/env",
+];
 
 pub fn command_short_description(cmd: &str) -> Option<&'static str> {
     match cmd {
@@ -10,6 +12,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "model" => Some("show or change model"),
         "plan" => Some("enter planning mode"),
         "act" => Some("return to normal action mode"),
+        "env" => Some("manage variables"),
         _ => None,
     }
 }
@@ -33,6 +36,9 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
         ),
         "act" => Some(
             "/act - Return to normal execution mode with the full tool set.",
+        ),
+        "env" => Some(
+            "/env - Manage variables.\n\nUsage:\n  /env              List configured variables\n  /env set KEY=VAL  Set a variable\n  /env del KEY      Delete a variable\n  /env load FILE    Import variables from .env file",
         ),
         _ => None,
     }

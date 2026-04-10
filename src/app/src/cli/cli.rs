@@ -9,6 +9,7 @@ use crate::agent::ExecutionLimits;
 use crate::agent::RunEvent;
 use crate::agent::RunEventPayload;
 use crate::agent::TurnRequest;
+use crate::agent::Variables;
 use crate::cli::args::CliArgs;
 use crate::cli::args::CliCommand;
 use crate::cli::args::OutputFormat;
@@ -71,6 +72,13 @@ impl Cli {
             .with_system_prompt(system_prompt)
             .with_limits(self.build_limits())
             .with_skills_dirs(self.build_skills_dirs());
+
+        // Load variables from storage.
+        let storage = agent.storage();
+        let records = storage.load_variables().await.unwrap_or_default();
+        let variables = Arc::new(Variables::new(storage, records));
+        agent.with_variables(variables);
+
         let request = TurnRequest::text(prompt).session_id(self.args.resume.clone());
         let mut stream = agent.submit(request).await?;
         while let Some(event) = stream.next().await {
@@ -99,15 +107,20 @@ impl Cli {
             builder = builder.with_append(extra);
         }
         let system_prompt = builder.build();
-        Repl::new(
-            config,
-            self.build_limits(),
-            system_prompt,
-            self.args.resume.clone(),
-            self.build_skills_dirs(),
-        )?
-        .run()
-        .await
+        let agent = AppAgent::new(&config, &cwd)?
+            .with_system_prompt(system_prompt)
+            .with_limits(self.build_limits())
+            .with_skills_dirs(self.build_skills_dirs());
+
+        // Load variables from storage.
+        let storage = agent.storage();
+        let records = storage.load_variables().await.unwrap_or_default();
+        let variables = Arc::new(Variables::new(storage, records));
+        agent.with_variables(variables);
+
+        Repl::new_with_agent(agent, config, self.args.resume.clone())?
+            .run()
+            .await
     }
 
     // -- helpers ------------------------------------------------------------

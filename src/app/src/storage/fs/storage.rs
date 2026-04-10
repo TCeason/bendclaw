@@ -11,6 +11,8 @@ use crate::types::ListSessions;
 use crate::types::ListTranscriptEntries;
 use crate::types::SessionMeta;
 use crate::types::TranscriptEntry;
+use crate::types::VariableRecord;
+use crate::types::VariablesDocument;
 
 pub struct FsStorage {
     root_dir: PathBuf,
@@ -35,6 +37,10 @@ impl FsStorage {
 
     fn transcript_path(&self, session_id: &str) -> PathBuf {
         self.session_dir(session_id).join("transcript.jsonl")
+    }
+
+    fn variables_path(&self) -> PathBuf {
+        self.root_dir.join("variables.json")
     }
 
     async fn write_json<T: serde::Serialize>(&self, path: PathBuf, value: &T) -> Result<()> {
@@ -141,5 +147,23 @@ impl Storage for FsStorage {
         }
 
         Ok(entries)
+    }
+
+    async fn load_variables(&self) -> Result<Vec<VariableRecord>> {
+        match self
+            .read_json::<VariablesDocument>(&self.variables_path())
+            .await?
+        {
+            Some(doc) => Ok(doc.variables),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    async fn save_variables(&self, variables: Vec<VariableRecord>) -> Result<()> {
+        let doc = VariablesDocument {
+            version: 1,
+            variables,
+        };
+        self.write_json(self.variables_path(), &doc).await
     }
 }
