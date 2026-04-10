@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  A self-evolving agent engine — every token tracked, every prompt lean, built for long-running complex work.
+  A self-evolving agent engine — fully observable, token-efficient, built for long-running complex work.
 </p>
 
 <p align="center">
