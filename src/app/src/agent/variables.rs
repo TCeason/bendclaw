@@ -20,6 +20,7 @@ use crate::types::VariableScope;
 #[derive(Debug, Clone)]
 pub struct VariableInfo {
     pub key: String,
+    pub value: String,
     pub used_count: u64,
     pub last_used_at: Option<String>,
     pub last_used_by: Option<String>,
@@ -48,6 +49,7 @@ impl Variables {
             .filter(|r| r.scope == VariableScope::Global)
             .map(|r| VariableInfo {
                 key: r.key.clone(),
+                value: r.value.clone(),
                 used_count: r.used_count,
                 last_used_at: r.last_used_at.clone(),
                 last_used_by: r.last_used_by.clone(),
@@ -107,6 +109,16 @@ impl Variables {
 
     pub fn has_variables(&self) -> bool {
         !self.records.read().is_empty()
+    }
+
+    /// Return all secret variable values (for display-layer masking).
+    pub fn secret_values(&self) -> Vec<String> {
+        self.records
+            .read()
+            .iter()
+            .filter(|r| r.secret)
+            .map(|r| r.value.clone())
+            .collect()
     }
 
     // -- Tool-facing ---------------------------------------------------------

@@ -1,6 +1,6 @@
 mod args;
 mod cli;
-pub(crate) mod format;
+pub mod format;
 pub mod repl;
 
 pub use args::*;

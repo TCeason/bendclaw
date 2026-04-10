@@ -78,12 +78,13 @@ impl Cli {
         let storage = agent.storage();
         let records = storage.load_variables().await.unwrap_or_default();
         let variables = Arc::new(Variables::new(storage, records));
-        agent.with_variables(variables);
+        agent.with_variables(variables.clone());
 
+        let secret_values = variables.secret_values();
         let request = TurnRequest::text(prompt).session_id(self.args.resume.clone());
         let mut stream = agent.submit(request).await?;
         while let Some(event) = stream.next().await {
-            print_event(&event, &self.args.output_format);
+            print_event(&event, &self.args.output_format, &secret_values);
         }
         Ok(())
     }
@@ -153,14 +154,27 @@ fn current_dir() -> Result<String> {
         .map(|p| p.to_string_lossy().to_string())
 }
 
-fn print_event(event: &RunEvent, format: &OutputFormat) {
+use super::format::mask_value;
+
+fn mask_secrets(text: &str, secret_values: &[String]) -> String {
+    let mut result = text.to_string();
+    for secret in secret_values {
+        if secret.is_empty() {
+            continue;
+        }
+        result = result.replace(secret, &mask_value(secret));
+    }
+    result
+}
+
+fn print_event(event: &RunEvent, format: &OutputFormat, secret_values: &[String]) {
     match format {
-        OutputFormat::Text => print_event_text(event),
+        OutputFormat::Text => print_event_text(event, secret_values),
         OutputFormat::StreamJson => print_event_json(event),
     }
 }
 
-fn print_event_text(event: &RunEvent) {
+fn print_event_text(event: &RunEvent, secret_values: &[String]) {
     match &event.payload {
         RunEventPayload::AssistantCompleted { content, .. } => {
             for block in content {
@@ -180,10 +194,11 @@ fn print_event_text(event: &RunEvent) {
             is_error,
             ..
         } => {
+            let masked = mask_secrets(content, secret_values);
             if *is_error {
-                eprintln!("[error: {tool_name}] {content}");
-            } else if !content.is_empty() {
-                eprintln!("[done: {tool_name}] {}", truncate(content, 120));
+                eprintln!("[error: {tool_name}] {masked}");
+            } else if !masked.is_empty() {
+                eprintln!("[done: {tool_name}] {}", truncate(&masked, 120));
             }
         }
         RunEventPayload::AssistantDelta {

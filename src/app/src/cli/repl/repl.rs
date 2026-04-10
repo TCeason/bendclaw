@@ -48,6 +48,7 @@ use crate::agent::AppAgent;
 use crate::agent::ExecutionLimits;
 use crate::agent::SessionMeta;
 use crate::agent::TurnRequest;
+use crate::cli::format::mask_value;
 use crate::conf::paths;
 use crate::conf::Config;
 use crate::conf::ProviderKind;
@@ -273,7 +274,8 @@ impl Repl {
                             }
                             _ => format!("used {} times", item.used_count),
                         };
-                        println!("  {:<28} {DIM}{usage}{RESET}", item.key);
+                        let masked = mask_value(&item.value);
+                        println!("  {:<28} {DIM}{masked}  {usage}{RESET}", item.key);
                     }
                 }
             }
@@ -385,6 +387,9 @@ impl Repl {
         let spinner_state = Arc::new(parking_lot::Mutex::new(super::spinner::SpinnerState::new()));
         let sink = Arc::new(ReplSink::new(spinner_state.clone()));
         sink.set_user_prompt(input);
+        if let Some(vars) = self.agent.variables() {
+            sink.set_secret_values(vars.secret_values());
+        }
 
         let sink_ref = sink.clone();
         let early_sid = Arc::new(parking_lot::Mutex::new(None::<String>));

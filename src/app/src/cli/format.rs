@@ -1,3 +1,17 @@
+/// Mask a secret value: show first 2 and last 2 characters, replace the middle with `*`.
+///
+/// Values with 5 or fewer characters are fully masked.
+pub fn mask_value(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= 5 {
+        return "*".repeat(chars.len());
+    }
+    let head: String = chars[..2].iter().collect();
+    let tail: String = chars[chars.len() - 2..].iter().collect();
+    let mid = "*".repeat(chars.len() - 4);
+    format!("{head}{mid}{tail}")
+}
+
 pub fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()

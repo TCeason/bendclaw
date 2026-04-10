@@ -23,6 +23,7 @@ use super::transcript_log::TranscriptLog;
 use crate::agent::AssistantBlock;
 use crate::agent::RunEvent;
 use crate::agent::RunEventPayload;
+use crate::cli::format::mask_value;
 use crate::session::observability::StatsAggregator;
 use crate::types::ContextCompactionCompletedStats;
 use crate::types::ContextCompactionStartedStats;
@@ -104,6 +105,8 @@ pub struct ReplSink {
     spinner: Arc<Mutex<SpinnerState>>,
     transcript_log: Mutex<Option<TranscriptLog>>,
     user_prompt: Mutex<Option<String>>,
+    /// Secret variable values for display-layer masking.
+    secret_values: Mutex<Vec<String>>,
 }
 
 impl ReplSink {
@@ -113,12 +116,31 @@ impl ReplSink {
             spinner,
             transcript_log: Mutex::new(None),
             user_prompt: Mutex::new(None),
+            secret_values: Mutex::new(Vec::new()),
         }
     }
 
     pub fn set_user_prompt(&self, prompt: &str) {
         let mut p = self.user_prompt.lock();
         *p = Some(prompt.to_string());
+    }
+
+    /// Update the set of secret values used for display masking.
+    pub fn set_secret_values(&self, values: Vec<String>) {
+        *self.secret_values.lock() = values;
+    }
+
+    /// Replace all known secret values in `text` with their masked form.
+    fn mask_secrets(&self, text: &str) -> String {
+        let secrets = self.secret_values.lock();
+        let mut result = text.to_string();
+        for secret in secrets.iter() {
+            if secret.is_empty() {
+                continue;
+            }
+            result = result.replace(secret, &mask_value(secret));
+        }
+        result
     }
 
     fn deactivate_spinner(&self) {
@@ -264,7 +286,8 @@ impl ReplSink {
                     }
                 }
 
-                print_tool_result(tool_name, content, *is_error, tool_call.as_ref());
+                let masked_content = self.mask_secrets(content);
+                print_tool_result(tool_name, &masked_content, *is_error, tool_call.as_ref());
             }
             RunEventPayload::AssistantDelta { delta, .. } => {
                 if let Some(delta) = delta {

@@ -314,3 +314,45 @@ async fn scope_resolution_priority() -> Result {
     assert_eq!(expect_found(resp)?, "global_val");
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// secret_values
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn secret_values_returns_secret_variable_values() -> Result {
+    let tmp = tempfile::tempdir()?;
+    let storage: Arc<dyn Storage> = Arc::new(FsStorage::new(tmp.path().to_path_buf()));
+
+    let records = vec![
+        VariableRecord {
+            key: "SECRET_KEY".into(),
+            value: "my-secret-token".into(),
+            scope: VariableScope::Global,
+            project_id: None,
+            session_id: None,
+            secret: true,
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            used_count: 0,
+            last_used_at: None,
+            last_used_by: None,
+        },
+        VariableRecord {
+            key: "PUBLIC_KEY".into(),
+            value: "not-secret".into(),
+            scope: VariableScope::Global,
+            project_id: None,
+            session_id: None,
+            secret: false,
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            used_count: 0,
+            last_used_at: None,
+            last_used_by: None,
+        },
+    ];
+
+    let vars = Arc::new(Variables::new(storage, records));
+    let secrets = vars.secret_values();
+    assert_eq!(secrets, vec!["my-secret-token"]);
+    Ok(())
+}
