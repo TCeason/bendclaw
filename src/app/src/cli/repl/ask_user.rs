@@ -8,9 +8,6 @@ use crossterm::event::Event;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
-use crossterm::terminal::disable_raw_mode;
-use crossterm::terminal::enable_raw_mode;
-use rustyline::error::ReadlineError;
 
 use super::markdown::ansi::display_width;
 use super::render::with_terminal;
@@ -56,6 +53,24 @@ pub fn build_question_block(
     selected: usize,
     term_width: usize,
 ) -> (String, usize) {
+    build_question_block_inner(request, selected, term_width, None)
+}
+
+pub fn build_question_block_typing(
+    request: &AskUserRequest,
+    selected: usize,
+    term_width: usize,
+    input: &str,
+) -> (String, usize) {
+    build_question_block_inner(request, selected, term_width, Some(input))
+}
+
+fn build_question_block_inner(
+    request: &AskUserRequest,
+    selected: usize,
+    term_width: usize,
+    typing: Option<&str>,
+) -> (String, usize) {
     let mut out = String::new();
     let mut rows: usize = 0;
 
@@ -100,13 +115,26 @@ pub fn build_question_block(
     out.push_str(&format!("{ERASE_LINE}\r\n"));
     rows += 1;
 
-    let footer_line = format!(
-        "{ERASE_LINE}  {DIM}[↑↓ select  Enter confirm  1-{} pick  0 custom  Esc skip]{RESET}",
-        request.options.len()
-    );
-    out.push_str(&footer_line);
-    out.push_str("\r\n");
-    rows += physical_row_count(&footer_line, term_width);
+    if let Some(input) = typing {
+        // Inline input mode: show input field instead of footer
+        let input_line = format!("{ERASE_LINE}  {YELLOW}> {RESET}{input}█");
+        out.push_str(&input_line);
+        out.push_str("\r\n");
+        rows += physical_row_count(&input_line, term_width);
+
+        let hint_line = format!("{ERASE_LINE}  {DIM}[Enter submit  Esc back to list]{RESET}");
+        out.push_str(&hint_line);
+        out.push_str("\r\n");
+        rows += physical_row_count(&hint_line, term_width);
+    } else {
+        let footer_line = format!(
+            "{ERASE_LINE}  {DIM}[↑↓ select  Enter confirm  1-{} pick  0 custom  Esc skip]{RESET}",
+            request.options.len()
+        );
+        out.push_str(&footer_line);
+        out.push_str("\r\n");
+        rows += physical_row_count(&footer_line, term_width);
+    }
 
     (out, rows)
 }
@@ -129,11 +157,15 @@ pub fn render_and_select(request: &AskUserRequest) -> std::io::Result<AskUserUiR
     let mut selected: usize = 0;
     let mut prev_lines: usize = 0;
     let mut needs_redraw = true;
+    let mut typing: Option<String> = None;
 
     loop {
         if needs_redraw {
             let term_width = terminal_width();
-            let (output, line_count) = build_question_block(request, selected, term_width);
+            let (output, line_count) = match &typing {
+                Some(input) => build_question_block_typing(request, selected, term_width, input),
+                None => build_question_block(request, selected, term_width),
+            };
             with_terminal(|stdout| {
                 if prev_lines > 0 {
                     let _ = write!(stdout, "\r{}", cursor_up(prev_lines));
@@ -150,78 +182,106 @@ pub fn render_and_select(request: &AskUserRequest) -> std::io::Result<AskUserUiR
         }
 
         match read()? {
-            Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if selected > 0 {
-                        selected -= 1;
-                    } else {
-                        selected = total - 1;
-                    }
-                    needs_redraw = true;
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    selected = (selected + 1) % total;
-                    needs_redraw = true;
-                }
-
-                KeyCode::Enter => {
-                    let response = if selected < request.options.len() {
-                        let label = request.options[selected].label.clone();
-                        clear_block(prev_lines);
-                        print_result(&build_confirmation(&label));
-                        AskUserResponse::Selected(label)
-                    } else {
-                        clear_block(prev_lines);
-                        match read_custom_input()? {
-                            Some(text) => {
-                                print_result(&build_confirmation(&text));
-                                AskUserResponse::Custom(text)
-                            }
-                            None => {
-                                print_result(&build_skipped());
-                                AskUserResponse::Skipped
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                if let Some(ref mut input) = typing {
+                    // Inline typing mode
+                    match key.code {
+                        KeyCode::Enter => {
+                            let trimmed = input.trim().to_string();
+                            clear_block(prev_lines);
+                            if trimmed.is_empty() {
+                                // Empty input — go back to selection
+                                typing = None;
+                                needs_redraw = true;
+                            } else {
+                                print_result(&build_confirmation(&trimmed));
+                                return Ok(AskUserUiResult::Answer(AskUserResponse::Custom(
+                                    trimmed,
+                                )));
                             }
                         }
-                    };
-                    return Ok(AskUserUiResult::Answer(response));
-                }
-
-                KeyCode::Char(ch @ '1'..='9') => {
-                    let idx = (ch as usize) - ('1' as usize);
-                    if idx < request.options.len() {
-                        let label = request.options[idx].label.clone();
-                        clear_block(prev_lines);
-                        print_result(&build_confirmation(&label));
-                        return Ok(AskUserUiResult::Answer(AskUserResponse::Selected(label)));
-                    }
-                }
-                KeyCode::Char('0') => {
-                    clear_block(prev_lines);
-                    match read_custom_input()? {
-                        Some(text) => {
-                            print_result(&build_confirmation(&text));
-                            return Ok(AskUserUiResult::Answer(AskUserResponse::Custom(text)));
+                        KeyCode::Esc => {
+                            // Back to selection mode, keep the list visible
+                            typing = None;
+                            needs_redraw = true;
                         }
-                        None => {
+                        KeyCode::Backspace => {
+                            input.pop();
+                            needs_redraw = true;
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            clear_block(prev_lines);
+                            return Ok(AskUserUiResult::ExitRun);
+                        }
+                        KeyCode::Char(ch) => {
+                            input.push(ch);
+                            needs_redraw = true;
+                        }
+                        _ => {}
+                    }
+                } else {
+                    // Selection mode
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if selected > 0 {
+                                selected -= 1;
+                            } else {
+                                selected = total - 1;
+                            }
+                            needs_redraw = true;
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            selected = (selected + 1) % total;
+                            needs_redraw = true;
+                        }
+
+                        KeyCode::Enter => {
+                            if selected < request.options.len() {
+                                let label = request.options[selected].label.clone();
+                                clear_block(prev_lines);
+                                print_result(&build_confirmation(&label));
+                                return Ok(AskUserUiResult::Answer(AskUserResponse::Selected(
+                                    label,
+                                )));
+                            } else {
+                                // Enter inline typing mode
+                                typing = Some(String::new());
+                                needs_redraw = true;
+                            }
+                        }
+
+                        KeyCode::Char(ch @ '1'..='9') => {
+                            let idx = (ch as usize) - ('1' as usize);
+                            if idx < request.options.len() {
+                                let label = request.options[idx].label.clone();
+                                clear_block(prev_lines);
+                                print_result(&build_confirmation(&label));
+                                return Ok(AskUserUiResult::Answer(AskUserResponse::Selected(
+                                    label,
+                                )));
+                            }
+                        }
+                        KeyCode::Char('0') => {
+                            // Enter inline typing mode
+                            typing = Some(String::new());
+                            needs_redraw = true;
+                        }
+
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            clear_block(prev_lines);
+                            return Ok(AskUserUiResult::ExitRun);
+                        }
+
+                        KeyCode::Esc => {
+                            clear_block(prev_lines);
                             print_result(&build_skipped());
                             return Ok(AskUserUiResult::Answer(AskUserResponse::Skipped));
                         }
+
+                        _ => {}
                     }
                 }
-
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    clear_block(prev_lines);
-                    return Ok(AskUserUiResult::ExitRun);
-                }
-
-                KeyCode::Esc => {
-                    clear_block(prev_lines);
-                    print_result(&build_skipped());
-                    return Ok(AskUserUiResult::Answer(AskUserResponse::Skipped));
-                }
-
-                _ => {}
-            },
+            }
             _ => {}
         }
     }
@@ -246,32 +306,4 @@ fn print_result(text: &str) {
         let _ = write!(stdout, "{text}\r\n\r\n");
         let _ = stdout.flush();
     });
-}
-
-fn read_custom_input() -> std::io::Result<Option<String>> {
-    let input = with_line_input(|| {
-        let mut rl: rustyline::Editor<(), rustyline::history::DefaultHistory> =
-            rustyline::Editor::new()
-                .map_err(|e| std::io::Error::other(format!("rustyline init: {e}")))?;
-        let prompt = format!("  {YELLOW}> {RESET}");
-        match rl.readline(&prompt) {
-            Ok(line) => Ok(line),
-            Err(ReadlineError::Interrupted | ReadlineError::Eof) => Ok(String::new()),
-            Err(e) => Err(std::io::Error::other(format!("readline: {e}"))),
-        }
-    })?;
-
-    let trimmed = input.trim().to_string();
-    if trimmed.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(trimmed))
-    }
-}
-
-fn with_line_input<T>(f: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
-    disable_raw_mode()?;
-    let result = f();
-    enable_raw_mode()?;
-    result
 }

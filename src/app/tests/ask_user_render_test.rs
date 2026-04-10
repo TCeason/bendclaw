@@ -2,6 +2,7 @@ use bend_engine::tools::AskUserOption;
 use bend_engine::tools::AskUserRequest;
 use bendclaw::cli::repl::ask_user::build_confirmation;
 use bendclaw::cli::repl::ask_user::build_question_block;
+use bendclaw::cli::repl::ask_user::build_question_block_typing;
 use bendclaw::cli::repl::ask_user::build_skipped;
 use bendclaw::cli::repl::ask_user::physical_row_count;
 
@@ -198,4 +199,55 @@ fn wide_terminal_matches_logical_line_count() {
     let req = two_option_request();
     let (_output, rows) = build_question_block(&req, 0, WIDE);
     assert_eq!(rows, 9);
+}
+
+// ---------------------------------------------------------------------------
+// Typing mode tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn typing_mode_shows_input_field() {
+    let req = two_option_request();
+    let (output, _) = build_question_block_typing(&req, req.options.len(), WIDE, "hello");
+    assert!(output.contains("hello█"));
+}
+
+#[test]
+fn typing_mode_shows_back_hint() {
+    let req = two_option_request();
+    let (output, _) = build_question_block_typing(&req, req.options.len(), WIDE, "");
+    assert!(output.contains("Esc back to list"));
+}
+
+#[test]
+fn typing_mode_has_extra_line_vs_selection() {
+    let req = two_option_request();
+    let (_, select_rows) = build_question_block(&req, 0, WIDE);
+    let (_, typing_rows) = build_question_block_typing(&req, req.options.len(), WIDE, "");
+    // Typing mode: input line + hint line = 2 lines vs 1 footer line
+    assert_eq!(typing_rows, select_rows + 1);
+}
+
+#[test]
+fn typing_mode_still_shows_options() {
+    let req = two_option_request();
+    let (output, _) = build_question_block_typing(&req, req.options.len(), WIDE, "test");
+    assert!(output.contains("In-memory (Recommended)"));
+    assert!(output.contains("Redis"));
+    assert!(output.contains("None of the above"));
+}
+
+#[test]
+fn typing_mode_empty_input_shows_cursor() {
+    let req = two_option_request();
+    let (output, _) = build_question_block_typing(&req, req.options.len(), WIDE, "");
+    assert!(output.contains("█"));
+}
+
+#[test]
+fn selection_mode_does_not_show_input_field() {
+    let req = two_option_request();
+    let (output, _) = build_question_block(&req, 0, WIDE);
+    assert!(!output.contains("Esc back to list"));
+    assert!(output.contains("Esc skip"));
 }
