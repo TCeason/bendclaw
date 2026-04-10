@@ -30,7 +30,7 @@
 ## 📢 News
 
 - **2026-04-11** 🧠 Auto-load Claude Code memories for the current project.
-- **2026-04-10** 🎯 Plan mode adds interactive option picker — select choices or provide custom input inline during planning.
+- **2026-04-10** 🎯 Plan mode adds interactive option picker.
 - **2026-04-10** 🌐 `web_fetch` supports SPA pages — headless Chrome fallback when static extraction fails.
 
 ---
