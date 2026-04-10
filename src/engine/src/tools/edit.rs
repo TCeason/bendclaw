@@ -9,7 +9,9 @@ use async_trait::async_trait;
 use crate::types::*;
 
 /// Surgical file editing via exact text search/replace.
-pub struct EditFileTool;
+pub struct EditFileTool {
+    disallow_message: Option<String>,
+}
 
 impl Default for EditFileTool {
     fn default() -> Self {
@@ -19,7 +21,16 @@ impl Default for EditFileTool {
 
 impl EditFileTool {
     pub fn new() -> Self {
-        Self
+        Self {
+            disallow_message: None,
+        }
+    }
+
+    /// Mark this tool as disallowed. `execute()` will return the given message
+    /// instead of performing the edit.
+    pub fn disallow(mut self, message: impl Into<String>) -> Self {
+        self.disallow_message = Some(message.into());
+        self
     }
 }
 
@@ -81,6 +92,10 @@ impl AgentTool for EditFileTool {
         params: serde_json::Value,
         ctx: ToolContext,
     ) -> Result<ToolResult, ToolError> {
+        if let Some(msg) = &self.disallow_message {
+            return Err(ToolError::Failed(format!("Error: {msg}")));
+        }
+
         let cancel = ctx.cancel;
         let path = params["path"]
             .as_str()

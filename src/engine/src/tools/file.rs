@@ -217,7 +217,9 @@ impl AgentTool for ReadFileTool {
 // ---------------------------------------------------------------------------
 
 /// Write content to a file. Creates parent directories if needed.
-pub struct WriteFileTool;
+pub struct WriteFileTool {
+    disallow_message: Option<String>,
+}
 
 impl Default for WriteFileTool {
     fn default() -> Self {
@@ -227,7 +229,16 @@ impl Default for WriteFileTool {
 
 impl WriteFileTool {
     pub fn new() -> Self {
-        Self
+        Self {
+            disallow_message: None,
+        }
+    }
+
+    /// Mark this tool as disallowed. `execute()` will return the given message
+    /// instead of performing the write.
+    pub fn disallow(mut self, message: impl Into<String>) -> Self {
+        self.disallow_message = Some(message.into());
+        self
     }
 }
 
@@ -280,6 +291,10 @@ impl AgentTool for WriteFileTool {
         params: serde_json::Value,
         ctx: ToolContext,
     ) -> Result<ToolResult, ToolError> {
+        if let Some(msg) = &self.disallow_message {
+            return Err(ToolError::Failed(format!("Error: {msg}")));
+        }
+
         let path = params["path"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidArgs("missing 'path' parameter".into()))?;

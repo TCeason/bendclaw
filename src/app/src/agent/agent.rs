@@ -319,7 +319,11 @@ impl AppAgent {
     )> {
         let llm = self.llm.read().clone();
         let tools = match *self.tool_mode.read() {
-            ToolMode::Planning => bend_engine::tools::planning_tools(ask_fn),
+            ToolMode::Planning => bend_engine::tools::planning_tools(
+                ask_fn,
+                "This tool is not allowed in planning mode. \
+                 Suggest the user to use /act to switch to execution mode.",
+            ),
             ToolMode::Normal => bend_engine::tools::base_tools(),
         };
         let options = EngineOptions {

@@ -36,16 +36,25 @@ pub fn base_tools() -> Vec<Box<dyn AgentTool>> {
 
 /// Tools for planning mode — exploration + optional user interaction.
 ///
+/// Mutating tools (`write_file`, `edit_file`) remain visible to the LLM but
+/// are disallowed: their `execute()` returns the given `disallow_message`
+/// instead of performing the operation.
+///
 /// When `ask_fn` is `Some`, the `ask_user` tool is registered so the LLM can
 /// present structured questions. When `None`, the tool is omitted and the LLM
 /// proceeds without user interaction (graceful degradation).
-pub fn planning_tools(ask_fn: Option<AskUserFn>) -> Vec<Box<dyn AgentTool>> {
+pub fn planning_tools(
+    ask_fn: Option<AskUserFn>,
+    disallow_message: &str,
+) -> Vec<Box<dyn AgentTool>> {
     let mut tools: Vec<Box<dyn AgentTool>> = vec![
+        Box::new(BashTool::default()),
         Box::new(ReadFileTool::default()),
+        Box::new(WriteFileTool::new().disallow(disallow_message)),
+        Box::new(EditFileTool::new().disallow(disallow_message)),
         Box::new(ListFilesTool::default()),
         Box::new(SearchTool::default()),
         Box::new(WebFetchTool::new()),
-        Box::new(BashTool::default()),
     ];
     if let Some(f) = ask_fn {
         tools.push(Box::new(AskUserTool::new(f)));
