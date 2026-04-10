@@ -42,11 +42,18 @@ pub struct SinkState {
     pub streamed_assistant: bool,
     pub pending_tools: HashMap<String, ToolCallDisplay>,
     pub markdown_stream: Option<MarkdownStream>,
-    // Unified stats aggregation
     pub aggregator: StatsAggregator,
-    // Only needed for real-time path — stats don't cover this
     pub last_message_stats: Option<MessageStats>,
     pub current_model: String,
+    pub pending_budget: Option<PendingBudget>,
+}
+
+pub struct PendingBudget {
+    pub message_count: usize,
+    pub estimated_tokens: usize,
+    pub budget_tokens: usize,
+    pub system_prompt_tokens: usize,
+    pub context_window: usize,
 }
 
 pub struct ToolCallDisplay {
@@ -67,6 +74,25 @@ pub fn finish_assistant_stream(state: &mut SinkState) {
     }
     state.assistant_open = false;
     state.streamed_assistant = false;
+}
+
+fn render_compact_started(budget: &PendingBudget) {
+    let title = "compact call";
+    super::render::print_badge_line(title, false, false);
+    let h_est = super::render::human_tokens(budget.estimated_tokens);
+    terminal_writeln(&format!(
+        "{GRAY}  {} messages · ~{h_est} tokens{RESET}",
+        budget.message_count,
+    ));
+    let bar = format_budget_bar(budget.estimated_tokens, budget.budget_tokens, 40);
+    terminal_writeln(&format!("{GRAY}  {bar} of budget{RESET}"));
+    let h_budget = super::render::human_tokens(budget.budget_tokens);
+    let h_window = super::render::human_tokens(budget.context_window);
+    let h_sys = super::render::human_tokens(budget.system_prompt_tokens);
+    terminal_writeln(&format!(
+        "{GRAY}  budget {h_budget} (window {h_window} − sys {h_sys}){RESET}",
+    ));
+    terminal_writeln("");
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +194,7 @@ impl ReplSink {
                 state.aggregator.reset();
                 state.last_message_stats = None;
                 state.current_model.clear();
+                state.pending_budget = None;
             }
             RunEventPayload::TurnStarted {} => {}
             RunEventPayload::AssistantCompleted { content, .. } => {
@@ -332,6 +359,11 @@ impl ReplSink {
                 for line in &detail_lines {
                     terminal_writeln(&format!("{GRAY}  {line}{RESET}"));
                 }
+                if let Some(budget) = state.pending_budget.take() {
+                    let bar = format_budget_bar(budget.estimated_tokens, budget.budget_tokens, 40);
+                    terminal_writeln(&format!("{GRAY}  {bar} of budget{RESET}"));
+                }
+
                 state.last_message_stats = Some(stats);
                 terminal_writeln("");
             }
@@ -450,6 +482,10 @@ impl ReplSink {
                     ));
 
                 if *level > 0 {
+                    if let Some(budget) = state.pending_budget.take() {
+                        render_compact_started(&budget);
+                    }
+
                     let saved = before_estimated_tokens.saturating_sub(*after_estimated_tokens);
                     let saved_pct = if *before_estimated_tokens > 0 {
                         saved as f64 / *before_estimated_tokens as f64 * 100.0
@@ -578,10 +614,6 @@ impl ReplSink {
                             }
                         }
                     }
-                } else {
-                    let title = "compact · L0".to_string();
-                    super::render::print_badge_line(&title, true, true);
-                    terminal_writeln(&format!("{GRAY}  no compaction needed{RESET}"));
                 }
                 terminal_writeln("");
             }
