@@ -63,7 +63,8 @@ impl Cli {
             .with_system()
             .with_git()
             .with_tools()
-            .with_project_context();
+            .with_project_context()
+            .with_memory();
         if let Some(extra) = self.args.append_system_prompt.as_deref() {
             builder = builder.with_append(extra);
         }
@@ -102,7 +103,8 @@ impl Cli {
             .with_system()
             .with_git()
             .with_tools()
-            .with_project_context();
+            .with_project_context()
+            .with_memory();
         if let Some(extra) = self.args.append_system_prompt.as_deref() {
             builder = builder.with_append(extra);
         }
