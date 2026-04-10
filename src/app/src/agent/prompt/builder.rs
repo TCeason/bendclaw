@@ -136,7 +136,7 @@ impl SystemPrompt {
     }
 
     /// Load memory with an explicit home directory override.
-    /// Used for testing; in production, use [`with_memory()`](Self::with_memory).
+    #[doc(hidden)]
     pub fn with_memory_home(mut self, home: &str) -> Self {
         if let Some(section) = build_memory_section(&self.cwd, Some(home)) {
             self.sections.push(section);
@@ -399,9 +399,8 @@ fn truncate_memory_entrypoint(content: &str) -> String {
     };
 
     if result.len() > MAX_ENTRYPOINT_BYTES {
-        let cut = result[..MAX_ENTRYPOINT_BYTES]
-            .rfind('\n')
-            .unwrap_or(MAX_ENTRYPOINT_BYTES);
+        let safe = truncate_to_char_boundary(&result, MAX_ENTRYPOINT_BYTES);
+        let cut = safe.rfind('\n').unwrap_or(safe.len());
         result.truncate(cut);
     }
 
@@ -412,14 +411,31 @@ fn truncate_memory_entrypoint(content: &str) -> String {
     result
 }
 
+/// Find the largest byte offset <= `max_bytes` that falls on a UTF-8 char boundary.
+fn truncate_to_char_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut cut = max_bytes;
+    while !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    &s[..cut]
+}
+
+/// Best-effort directory creation for the bendclaw memory directory.
+/// WriteFileTool also does `create_dir_all`, so this is a convenience fallback.
+fn ensure_memory_dir(dir: &Path) {
+    let _ = std::fs::create_dir_all(dir);
+}
+
 /// Build the complete `# Memory` section for the system prompt.
 /// Returns `None` if `home` is not provided.
 fn build_memory_section(cwd: &str, home: Option<&str>) -> Option<String> {
     let home = home?;
     let bendclaw_dir = bendclaw_memory_dir(cwd, home);
 
-    // Ensure directory exists (best-effort; WriteFileTool also does create_dir_all)
-    let _ = std::fs::create_dir_all(&bendclaw_dir);
+    ensure_memory_dir(&bendclaw_dir);
 
     let bendclaw_content = read_memory_entrypoint(&bendclaw_dir);
     let claude_content = claude_memory_dir(cwd, home).and_then(|d| read_memory_entrypoint(&d));
