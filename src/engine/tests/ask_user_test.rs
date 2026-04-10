@@ -158,3 +158,111 @@ async fn tool_metadata() {
         serde_json::json!(["question", "options"])
     );
 }
+
+#[tokio::test]
+async fn empty_question_rejected() {
+    let tool = make_tool(AskUserResponse::Skipped);
+    let params = serde_json::json!({
+        "question": "  ",
+        "options": [
+            { "label": "A", "description": "a" },
+            { "label": "B", "description": "b" }
+        ]
+    });
+    let result = tool.execute(params, ctx()).await;
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("question must not be empty"));
+}
+
+#[tokio::test]
+async fn empty_label_rejected() {
+    let tool = make_tool(AskUserResponse::Skipped);
+    let params = serde_json::json!({
+        "question": "Pick one?",
+        "options": [
+            { "label": "", "description": "a" },
+            { "label": "B", "description": "b" }
+        ]
+    });
+    let result = tool.execute(params, ctx()).await;
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("option[0].label must not be empty"));
+}
+
+#[tokio::test]
+async fn empty_description_rejected() {
+    let tool = make_tool(AskUserResponse::Skipped);
+    let params = serde_json::json!({
+        "question": "Pick one?",
+        "options": [
+            { "label": "A", "description": "a" },
+            { "label": "B", "description": "  " }
+        ]
+    });
+    let result = tool.execute(params, ctx()).await;
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("option[1].description must not be empty"));
+}
+
+#[tokio::test]
+async fn empty_question_rejected() {
+    let tool = make_tool(AskUserResponse::Skipped);
+    let params = serde_json::json!({
+        "question": "  ",
+        "options": [
+            { "label": "A", "description": "a" },
+            { "label": "B", "description": "b" }
+        ]
+    });
+    let result = tool.execute(params, ctx()).await;
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("question must not be empty"));
+}
+
+#[tokio::test]
+async fn empty_label_rejected() {
+    let tool = make_tool(AskUserResponse::Skipped);
+    let params = serde_json::json!({
+        "question": "Pick one?",
+        "options": [
+            { "label": "", "description": "a" },
+            { "label": "B", "description": "b" }
+        ]
+    });
+    let result = tool.execute(params, ctx()).await;
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("option[0].label must not be empty"));
+}
+
+#[tokio::test]
+async fn empty_description_rejected() {
+    let tool = make_tool(AskUserResponse::Skipped);
+    let params = serde_json::json!({
+        "question": "Pick one?",
+        "options": [
+            { "label": "A", "description": "valid" },
+            { "label": "B", "description": "   " }
+        ]
+    });
+    let result = tool.execute(params, ctx()).await;
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("option[1].description must not be empty"));
+}

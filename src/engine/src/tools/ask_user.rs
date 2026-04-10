@@ -143,8 +143,29 @@ impl AgentTool for AskUserTool {
         let request: AskUserRequest =
             serde_json::from_value(params).map_err(|e| ToolError::InvalidArgs(e.to_string()))?;
 
+        if request.question.trim().is_empty() {
+            return Err(ToolError::InvalidArgs("question must not be empty".into()));
+        }
         if request.options.len() < 2 || request.options.len() > 4 {
             return Err(ToolError::InvalidArgs("options must have 2-4 items".into()));
+        }
+        if let Some(i) = request
+            .options
+            .iter()
+            .position(|o| o.label.trim().is_empty())
+        {
+            return Err(ToolError::InvalidArgs(format!(
+                "option[{i}].label must not be empty"
+            )));
+        }
+        if let Some(i) = request
+            .options
+            .iter()
+            .position(|o| o.description.trim().is_empty())
+        {
+            return Err(ToolError::InvalidArgs(format!(
+                "option[{i}].description must not be empty"
+            )));
         }
 
         let response = (self.ask_fn)(request).await.map_err(ToolError::Failed)?;

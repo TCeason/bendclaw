@@ -111,9 +111,9 @@ pub fn build_question_block(request: &AskUserRequest, selected: usize) -> (Strin
     out.push_str(&format!("{ERASE_LINE}\r\n"));
     lines += 1;
 
-    // Footer hint
+    // Footer hint (with \r\n so cursor lands on the line below the block)
     out.push_str(&format!(
-        "{ERASE_LINE}  {DIM}[↑↓ select  Enter confirm  1-{} pick  0 custom  Esc skip]{RESET}",
+        "{ERASE_LINE}  {DIM}[↑↓ select  Enter confirm  1-{} pick  0 custom  Esc skip]{RESET}\r\n",
         request.options.len()
     ));
     lines += 1;
@@ -151,20 +151,22 @@ pub fn render_and_select(request: &AskUserRequest) -> std::io::Result<AskUserUiR
     let total = total_options(request);
     let mut selected: usize = 0;
     let mut prev_lines: usize = 0;
+    let mut needs_redraw = true;
 
     loop {
-        // Erase previous frame
-        if prev_lines > 0 {
+        if needs_redraw {
+            let (output, line_count) = build_question_block(request, selected);
             with_terminal(|stdout| {
-                let _ = write!(stdout, "{}\r", cursor_up(prev_lines.saturating_sub(1)));
+                // Cursor is on the line below the block; move up to line 1
+                if prev_lines > 0 {
+                    let _ = write!(stdout, "\r{}", cursor_up(prev_lines));
+                }
+                let _ = write!(stdout, "{output}");
+                let _ = stdout.flush();
             });
+            prev_lines = line_count;
+            needs_redraw = false;
         }
-
-        let (output, line_count) = build_question_block(request, selected);
-        with_terminal(|stdout| {
-            let _ = write!(stdout, "{output}");
-        });
-        prev_lines = line_count;
 
         // Wait for key
         if !poll(std::time::Duration::from_millis(100))? {
@@ -180,9 +182,11 @@ pub fn render_and_select(request: &AskUserRequest) -> std::io::Result<AskUserUiR
                     } else {
                         selected = total - 1;
                     }
+                    needs_redraw = true;
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
                     selected = (selected + 1) % total;
+                    needs_redraw = true;
                 }
 
                 // Confirm current selection
@@ -254,20 +258,21 @@ pub fn render_and_select(request: &AskUserRequest) -> std::io::Result<AskUserUiR
 }
 
 /// Clear the rendered question block.
+/// Cursor starts on the line below the block (all lines end with \r\n).
 fn clear_block(line_count: usize) {
+    if line_count == 0 {
+        return;
+    }
     with_terminal(|stdout| {
-        if line_count > 1 {
-            let _ = write!(stdout, "{}\r", cursor_up(line_count.saturating_sub(1)));
-        } else {
-            let _ = write!(stdout, "\r");
-        }
+        // Move to the first line of the block
+        let _ = write!(stdout, "\r{}", cursor_up(line_count));
+        // Erase each line
         for _ in 0..line_count {
             let _ = write!(stdout, "{ERASE_LINE}\r\n");
         }
-        // Move back up
-        if line_count > 0 {
-            let _ = write!(stdout, "{}\r", cursor_up(line_count));
-        }
+        // Move back to the top so the next output starts at the right place
+        let _ = write!(stdout, "\r{}", cursor_up(line_count));
+        let _ = stdout.flush();
     });
 }
 
@@ -275,30 +280,35 @@ fn clear_block(line_count: usize) {
 fn print_result(text: &str) {
     with_terminal(|stdout| {
         let _ = write!(stdout, "{text}\r\n\r\n");
+        let _ = stdout.flush();
     });
 }
 
 /// Temporarily exit raw mode to read a line of free-form text.
 /// Returns `None` if the user enters an empty string.
 fn read_custom_input() -> std::io::Result<Option<String>> {
-    // Exit raw mode so the user gets normal line editing
-    let _ = disable_raw_mode();
+    let input = with_line_input(|| {
+        with_terminal(|stdout| {
+            let _ = write!(stdout, "  {YELLOW}> {RESET}");
+        });
+        let mut buf = String::new();
+        std::io::stdin().read_line(&mut buf)?;
+        Ok(buf)
+    })?;
 
-    with_terminal(|stdout| {
-        let _ = write!(stdout, "  {YELLOW}> {RESET}");
-    });
-
-    let mut input = String::new();
-    let result = std::io::stdin().read_line(&mut input);
-
-    // Re-enter raw mode
-    let _ = enable_raw_mode();
-
-    result?;
     let trimmed = input.trim().to_string();
     if trimmed.is_empty() {
         Ok(None)
     } else {
         Ok(Some(trimmed))
     }
+}
+
+/// Suspend raw mode, run a closure that needs normal line editing, then
+/// restore raw mode. Errors from mode switching are propagated.
+fn with_line_input<T>(f: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
+    disable_raw_mode()?;
+    let result = f();
+    enable_raw_mode()?;
+    result
 }
