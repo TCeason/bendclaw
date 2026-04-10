@@ -1,3 +1,4 @@
+pub mod ask_user;
 pub mod bash;
 pub mod edit;
 pub mod file;
@@ -5,6 +6,11 @@ pub mod list;
 pub mod search;
 pub mod web_fetch;
 
+pub use ask_user::AskUserFn;
+pub use ask_user::AskUserOption;
+pub use ask_user::AskUserRequest;
+pub use ask_user::AskUserResponse;
+pub use ask_user::AskUserTool;
 pub use bash::BashTool;
 pub use edit::EditFileTool;
 pub use file::ReadFileTool;
@@ -26,6 +32,25 @@ pub fn base_tools() -> Vec<Box<dyn AgentTool>> {
         Box::new(SearchTool::default()),
         Box::new(WebFetchTool::new()),
     ]
+}
+
+/// Tools for planning mode — exploration + optional user interaction.
+///
+/// When `ask_fn` is `Some`, the `ask_user` tool is registered so the LLM can
+/// present structured questions. When `None`, the tool is omitted and the LLM
+/// proceeds without user interaction (graceful degradation).
+pub fn planning_tools(ask_fn: Option<AskUserFn>) -> Vec<Box<dyn AgentTool>> {
+    let mut tools: Vec<Box<dyn AgentTool>> = vec![
+        Box::new(ReadFileTool::default()),
+        Box::new(ListFilesTool::default()),
+        Box::new(SearchTool::default()),
+        Box::new(WebFetchTool::new()),
+        Box::new(BashTool::default()),
+    ];
+    if let Some(f) = ask_fn {
+        tools.push(Box::new(AskUserTool::new(f)));
+    }
+    tools
 }
 
 /// Backward-compatible alias for the full normal tool set.

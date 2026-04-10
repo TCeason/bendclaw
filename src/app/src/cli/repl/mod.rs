@@ -1,3 +1,4 @@
+pub mod ask_user;
 pub mod commands;
 pub mod completion;
 pub mod diff;

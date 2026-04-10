@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use bend_engine::tools::AskUserRequest;
+use bend_engine::tools::AskUserResponse;
 use crossterm::cursor::Hide;
 use crossterm::cursor::Show;
 use crossterm::event::poll;
@@ -32,6 +34,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::Row;
 use ratatui::widgets::Table;
 use ratatui::Terminal;
+use tokio::sync::oneshot;
 
 use crate::conf::Config;
 use crate::error::BendclawError;
@@ -332,12 +335,20 @@ impl Drop for SelectorTerminal {
 }
 
 // ---------------------------------------------------------------------------
+// Ask-user channel type
+// ---------------------------------------------------------------------------
+
+pub type AskUserChannel =
+    tokio::sync::mpsc::UnboundedReceiver<(AskUserRequest, oneshot::Sender<AskUserResponse>)>;
+
+// ---------------------------------------------------------------------------
 // Run control
 // ---------------------------------------------------------------------------
 
 pub fn wait_for_run_control(
     run_task: &mut tokio::task::JoinHandle<Result<String>>,
     spinner: &parking_lot::Mutex<super::spinner::SpinnerState>,
+    ask_rx: &mut AskUserChannel,
 ) -> Result<Option<RunControl>> {
     let _guard = RawModeGuard::enter()?;
     loop {
@@ -346,6 +357,25 @@ pub fn wait_for_run_control(
             state.clear_if_rendered();
             return Ok(None);
         }
+
+        // Check for ask_user requests from the engine
+        if let Ok((request, responder)) = ask_rx.try_recv() {
+            // Freeze spinner output during question modal
+            let mut state = spinner.lock();
+            state.clear_if_rendered();
+            state.set_paused(true);
+            drop(state);
+
+            let response = super::ask_user::render_and_select(&request)?;
+            let _ = responder.send(response);
+
+            // Resume spinner
+            let mut state = spinner.lock();
+            state.set_paused(false);
+            drop(state);
+            continue;
+        }
+
         if !poll(Duration::from_millis(80))? {
             let mut state = spinner.lock();
             if state.is_active() {

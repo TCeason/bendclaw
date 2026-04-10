@@ -5,9 +5,12 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::RwLock;
 
+use bend_engine::tools::AskUserFn;
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
 use rustyline::Editor;
+use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 
 use super::commands::command_help;
 use super::commands::command_short_description;
@@ -202,7 +205,21 @@ impl Repl {
     }
 
     async fn run_prompt(&mut self, input: &str) -> Result<bool> {
-        let request = TurnRequest::text(input).session_id(self.session_id.clone());
+        // Create ask_user channel for structured questions during planning
+        let (ask_tx, mut ask_rx) = mpsc::unbounded_channel();
+
+        let ask_fn: AskUserFn = Arc::new(move |request| {
+            let tx = ask_tx.clone();
+            Box::pin(async move {
+                let (resp_tx, resp_rx) = oneshot::channel();
+                tx.send((request, resp_tx)).map_err(|e| e.to_string())?;
+                resp_rx.await.map_err(|e| e.to_string())
+            })
+        });
+
+        let request = TurnRequest::text(input)
+            .session_id(self.session_id.clone())
+            .ask_fn(ask_fn);
         let agent = self.agent.clone();
         let spinner_state = Arc::new(parking_lot::Mutex::new(super::spinner::SpinnerState::new()));
         let sink = Arc::new(ReplSink::new(spinner_state.clone()));
@@ -220,7 +237,7 @@ impl Repl {
             }
             Ok::<_, BendclawError>(session_id)
         });
-        let control = wait_for_run_control(&mut run_task, &spinner_state)?;
+        let control = wait_for_run_control(&mut run_task, &spinner_state, &mut ask_rx)?;
         let outcome = match control {
             Some(action) => {
                 run_task.abort();

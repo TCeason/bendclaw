@@ -47,6 +47,7 @@ impl Default for ExecutionLimits {
 pub struct TurnRequest {
     pub prompt: String,
     pub session_id: Option<String>,
+    pub ask_fn: Option<bend_engine::tools::AskUserFn>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,11 +61,17 @@ impl TurnRequest {
         Self {
             prompt: prompt.into(),
             session_id: None,
+            ask_fn: None,
         }
     }
 
     pub fn session_id(mut self, id: Option<String>) -> Self {
         self.session_id = id;
+        self
+    }
+
+    pub fn ask_fn(mut self, f: bend_engine::tools::AskUserFn) -> Self {
+        self.ask_fn = Some(f);
         self
     }
 }
@@ -96,18 +103,6 @@ impl TurnStream {
 // ---------------------------------------------------------------------------
 
 const PLANNING_MODE_PROMPT: &str = include_str!("prompts/plan.md");
-
-/// Read-only tools for planning/investigation mode.
-fn read_only_tools() -> Vec<Box<dyn bend_engine::AgentTool>> {
-    use bend_engine::tools::*;
-    vec![
-        Box::new(ReadFileTool::default()),
-        Box::new(ListFilesTool::default()),
-        Box::new(SearchTool::default()),
-        Box::new(WebFetchTool::new()),
-        Box::new(BashTool::default()),
-    ]
-}
 
 pub struct AppAgent {
     llm: RwLock<LlmConfig>,
@@ -227,7 +222,13 @@ impl AppAgent {
         let prompt = self.build_prompt(&request.prompt);
         let prior_transcripts = session.transcript().await;
         let (runtime_rx, engine_handle) = self
-            .create_engine(&prompt, &prior_transcripts, &run_id, &session_id)
+            .create_engine(
+                &prompt,
+                &prior_transcripts,
+                &run_id,
+                &session_id,
+                request.ask_fn,
+            )
             .await?;
 
         let (tx, rx) = mpsc::unbounded_channel();
@@ -311,13 +312,14 @@ impl AppAgent {
         prior_transcripts: &[TranscriptItem],
         run_id: &str,
         session_id: &str,
+        ask_fn: Option<bend_engine::tools::AskUserFn>,
     ) -> Result<(
         mpsc::UnboundedReceiver<super::runtime::RuntimeEvent>,
         EngineHandle,
     )> {
         let llm = self.llm.read().clone();
         let tools = match *self.tool_mode.read() {
-            ToolMode::Planning => read_only_tools(),
+            ToolMode::Planning => bend_engine::tools::planning_tools(ask_fn),
             ToolMode::Normal => bend_engine::tools::base_tools(),
         };
         let options = EngineOptions {
