@@ -7,17 +7,17 @@ use serde::Deserialize;
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
-pub(crate) struct OpenAiChunk {
+pub struct OpenAiChunk {
     #[serde(default)]
-    pub choices: Vec<OpenAiChoice>,
+    pub(crate) choices: Vec<OpenAiChoice>,
     #[serde(default)]
-    pub usage: Option<OpenAiUsage>,
+    pub(crate) usage: Option<OpenAiUsage>,
     #[serde(default)]
     pub error: Option<OpenAiErrorBody>,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct OpenAiErrorBody {
+pub struct OpenAiErrorBody {
     #[serde(default)]
     pub message: String,
 }

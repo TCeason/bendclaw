@@ -249,13 +249,6 @@ struct ReadFileOutput {
 }
 
 /// Parse the numbered output from `read_file` into header + raw source lines.
-///
-/// `read_file` produces output like:
-/// ```text
-/// [123 lines]
-///    1 | use std::io;
-///    2 | fn main() {
-/// ```
 fn parse_read_file_output(text: &str) -> Option<ReadFileOutput> {
     let mut lines = text.lines();
     let header = lines.next()?;

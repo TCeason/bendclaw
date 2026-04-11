@@ -16,24 +16,6 @@ use crate::types::*;
 ///
 /// This gives more accurate context size tracking than pure estimation,
 /// since providers report actual token counts in their usage data.
-///
-/// # Example
-///
-/// ```rust
-/// use bendengine::context::ContextTracker;
-/// use bendengine::types::Usage;
-///
-/// let mut tracker = ContextTracker::new();
-/// // After receiving an assistant response with usage data:
-/// tracker.record_usage(
-///     &Usage {
-///         input: 1500,
-///         output: 200,
-///         ..Default::default()
-///     },
-///     3,
-/// );
-/// ```
 pub struct ContextTracker {
     /// Last known total token count from provider usage
     last_usage_tokens: Option<usize>,

@@ -1,6 +1,6 @@
 mod json_fallback;
 mod provider;
-mod request;
+pub mod request;
 mod sse_decode;
 mod types;
 

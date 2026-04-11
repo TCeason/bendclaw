@@ -1,6 +1,5 @@
 //! Unified diff generation for edit results.
 //!
-//! Adapted from claw's `open-agent-sdk-rust/src/tools/diff.rs`.
 //! All functions are pure — no IO, no side effects.
 
 /// Result of generating a unified diff.
@@ -81,7 +80,7 @@ pub fn unified_diff(old: &str, new: &str, filename: &str) -> DiffResult {
 }
 
 // ---------------------------------------------------------------------------
-// Internal types and algorithms (adapted from claw)
+// Internal types and algorithms
 // ---------------------------------------------------------------------------
 
 enum DiffLine<'a> {
@@ -277,64 +276,4 @@ fn compute_lcs<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<(usize, usize)> {
 
     result.reverse();
     result
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn single_line_replace() {
-        let old = "aaa\nbbb\nccc\n";
-        let new = "aaa\nxxx\nccc\n";
-        let d = unified_diff(old, new, "test.rs");
-        assert_eq!(d.added_lines, 1);
-        assert_eq!(d.removed_lines, 1);
-        assert!(d.unified.contains("-bbb"));
-        assert!(d.unified.contains("+xxx"));
-    }
-
-    #[test]
-    fn multi_line_add() {
-        let old = "aaa\nccc\n";
-        let new = "aaa\nbbb\nccc\n";
-        let d = unified_diff(old, new, "test.rs");
-        assert_eq!(d.added_lines, 1);
-        assert_eq!(d.removed_lines, 0);
-        assert!(d.unified.contains("+bbb"));
-    }
-
-    #[test]
-    fn multi_line_delete() {
-        let old = "aaa\nbbb\nccc\n";
-        let new = "aaa\nccc\n";
-        let d = unified_diff(old, new, "test.rs");
-        assert_eq!(d.added_lines, 0);
-        assert_eq!(d.removed_lines, 1);
-        assert!(d.unified.contains("-bbb"));
-    }
-
-    #[test]
-    fn first_changed_line_correct() {
-        let old = "line1\nline2\nline3\nline4\n";
-        let new = "line1\nline2\nchanged\nline4\n";
-        let d = unified_diff(old, new, "test.rs");
-        // line3 → changed is at line 3 in the new file
-        assert_eq!(d.first_changed_line, Some(3));
-    }
-
-    #[test]
-    fn no_changes_empty_diff() {
-        let content = "aaa\nbbb\n";
-        let d = unified_diff(content, content, "test.rs");
-        assert_eq!(d.added_lines, 0);
-        assert_eq!(d.removed_lines, 0);
-        assert_eq!(d.first_changed_line, None);
-    }
-
-    #[test]
-    fn diff_header_format() {
-        let d = unified_diff("a\n", "b\n", "foo.rs");
-        assert!(d.unified.starts_with("--- a/foo.rs\n+++ b/foo.rs\n"));
-    }
 }

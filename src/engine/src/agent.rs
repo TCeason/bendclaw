@@ -388,21 +388,6 @@ impl Agent {
     /// before calling this method. This method blocks until the loop finishes
     /// and state is restored — unlike [`prompt()`](Self::prompt) which spawns
     /// the loop concurrently and returns immediately.
-    ///
-    /// ```rust,no_run
-    /// # use bendengine::Agent;
-    /// # use bendengine::provider::MockProvider;
-    /// # async fn example() {
-    /// let mut agent = Agent::new(MockProvider::text("hi"))
-    ///     .with_model("mock")
-    ///     .with_api_key("test");
-    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    /// tokio::spawn(async move {
-    ///     while let Some(event) = rx.recv().await { /* real-time */ }
-    /// });
-    /// agent.prompt_with_sender("hello", tx).await;
-    /// # }
-    /// ```
     pub async fn prompt_with_sender(
         &mut self,
         text: impl Into<String>,

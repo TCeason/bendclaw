@@ -10,21 +10,6 @@
 //! - **Depth limiting**: sub-agents are not given other SubAgentTools (static, no runtime counter)
 //! - **Cancellation propagation**: the parent's cancel token is forwarded
 //! - **Event forwarding**: sub-agent events stream to the parent via `on_update`
-//!
-//! # Example
-//!
-//! ```rust,no_run
-//! use std::sync::Arc;
-//!
-//! use bendengine::provider::AnthropicProvider;
-//! use bendengine::sub_agent::SubAgentTool;
-//!
-//! let researcher = SubAgentTool::new("researcher", Arc::new(AnthropicProvider))
-//!     .with_description("Searches codebases and documents")
-//!     .with_system_prompt("You are a research assistant.")
-//!     .with_model("claude-sonnet-4-20250514")
-//!     .with_api_key("sk-...");
-//! ```
 
 use std::sync::Arc;
 

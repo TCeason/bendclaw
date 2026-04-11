@@ -1,7 +1,7 @@
 mod json_fallback;
 mod provider;
-mod request;
+pub mod request;
 mod sse_decode;
-mod types;
+pub mod types;
 
 pub use provider::OpenAiCompatProvider;
