@@ -288,14 +288,13 @@ impl Repl {
         };
         let key = key.trim().to_string();
         let value = value.to_string();
-        if key.is_empty() {
-            eprintln!("{RED}  usage: /env set KEY=VALUE{RESET}\n");
+        if key.is_empty() || !is_valid_env_key(&key) {
+            eprintln!("{RED}  invalid key: must match [A-Za-z_][A-Za-z0-9_]*{RESET}\n");
             return Ok(());
         }
         if let Some(vars) = self.agent.variables() {
             vars.set_global(key.clone(), value).await?;
-            println!("{DIM}  set variable {key}{RESET}");
-            println!("{DIM}  note: variable values may appear in conversation history{RESET}\n");
+            println!("{DIM}  set variable {key} — available in bash as ${key}{RESET}\n");
         } else {
             println!("{DIM}  variables not available{RESET}\n");
         }
@@ -1069,7 +1068,7 @@ fn parse_env_text(text: &str) -> Vec<(String, String)> {
             .trim_start();
         if let Some((key, value)) = trimmed.split_once('=') {
             let key = key.trim().to_string();
-            if key.is_empty() {
+            if key.is_empty() || !is_valid_env_key(&key) {
                 continue;
             }
             let value = strip_quotes(value.trim());
@@ -1086,4 +1085,14 @@ fn strip_quotes(s: &str) -> String {
         return s[1..s.len() - 1].to_string();
     }
     s.to_string()
+}
+
+/// Validate that a key is a valid shell environment variable name: [A-Za-z_][A-Za-z0-9_]*
+fn is_valid_env_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
