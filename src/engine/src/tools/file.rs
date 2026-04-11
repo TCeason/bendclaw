@@ -5,6 +5,7 @@ use std::path::Path;
 use async_trait::async_trait;
 use base64::Engine;
 
+use super::edit::diff;
 use crate::types::*;
 
 /// 20 MB limit for image files
@@ -328,6 +329,8 @@ impl AgentTool for WriteFileTool {
 
         let bytes = content.len();
         let existed = old_content.is_some();
+        let old = old_content.as_deref().unwrap_or("");
+        let diff_result = diff::unified_diff(old, content, path);
         Ok(ToolResult {
             content: vec![Content::Text {
                 text: format!("Wrote {} bytes to {}", bytes, path),
@@ -336,6 +339,7 @@ impl AgentTool for WriteFileTool {
                 "path": path,
                 "bytes": bytes,
                 "created": !existed,
+                "diff": diff_result.unified,
             }),
         })
     }
