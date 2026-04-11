@@ -106,11 +106,6 @@ impl TurnStream {
 
 const PLANNING_MODE_PROMPT: &str = include_str!("prompt/plan.md");
 
-const VARIABLES_GUIDANCE: &str = "\
-If a task or skill explicitly references a configured variable by name, \
-use the `get_variable` tool to retrieve its value. \
-Do not guess variable names and do not fetch variables unless required for the current task.";
-
 /// Factory function that produces a tool set.
 type ToolSetFactory = fn() -> Vec<Box<dyn bend_engine::AgentTool>>;
 
@@ -312,14 +307,17 @@ impl AppAgent {
             ToolMode::Planning => format!("{base}\n\n{PLANNING_MODE_PROMPT}"),
         };
 
-        if self
-            .variables
-            .read()
-            .as_ref()
-            .is_some_and(|v| v.has_variables())
-        {
-            prompt.push_str("\n\n");
-            prompt.push_str(VARIABLES_GUIDANCE);
+        if let Some(vars) = self.variables.read().as_ref() {
+            let names = vars.variable_names();
+            if !names.is_empty() {
+                prompt.push_str("\n\nAvailable variables: ");
+                prompt.push_str(&names.join(", "));
+                prompt.push_str(
+                    "\n\nThese variables are automatically available in all bash commands \
+                     as environment variables. Use $VAR_NAME to reference them.\n\
+                     Do not print, echo, or expose variable values.",
+                );
+            }
         }
 
         prompt
@@ -355,7 +353,11 @@ impl AppAgent {
         EngineHandle,
     )> {
         let llm = self.llm.read().clone();
-        let mut tools = if let Some(tools_fn) = self.tools_override {
+        let env_pairs = self
+            .variables()
+            .map(|v| v.all_env_pairs())
+            .unwrap_or_default();
+        let tools = if let Some(tools_fn) = self.tools_override {
             tools_fn()
         } else {
             match *self.tool_mode.read() {
@@ -363,17 +365,11 @@ impl AppAgent {
                     ask_fn,
                     "This tool is not allowed in planning mode. \
                      Suggest the user to use /act to switch to execution mode.",
+                    env_pairs,
                 ),
-                ToolMode::Normal => bend_engine::tools::base_tools(),
+                ToolMode::Normal => bend_engine::tools::base_tools(env_pairs),
             }
         };
-
-        if let Some(vars) = self.variables() {
-            if vars.has_variables() {
-                let get_fn = vars.as_get_fn(&self.cwd, session_id);
-                tools.push(Box::new(bend_engine::tools::GetVariableTool::new(get_fn)));
-            }
-        }
 
         let options = EngineOptions {
             provider: llm.provider,

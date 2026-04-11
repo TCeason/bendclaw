@@ -139,7 +139,7 @@ async fn edit_file_normal_still_works() {
 
 #[test]
 fn planning_tools_include_write_and_edit() {
-    let tools = planning_tools(None, "blocked");
+    let tools = planning_tools(None, "blocked", Vec::new());
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     assert!(names.contains(&"write_file"));
     assert!(names.contains(&"edit_file"));
@@ -147,7 +147,7 @@ fn planning_tools_include_write_and_edit() {
 
 #[tokio::test]
 async fn planning_tools_write_is_disallowed() {
-    let tools = planning_tools(None, "plan mode");
+    let tools = planning_tools(None, "plan mode", Vec::new());
     let write_tool = tools.iter().find(|t| t.name() == "write_file").unwrap();
     let result = write_tool
         .execute(
@@ -162,7 +162,7 @@ async fn planning_tools_write_is_disallowed() {
 
 #[tokio::test]
 async fn planning_tools_edit_is_disallowed() {
-    let tools = planning_tools(None, "plan mode");
+    let tools = planning_tools(None, "plan mode", Vec::new());
     let edit_tool = tools.iter().find(|t| t.name() == "edit_file").unwrap();
     let result = edit_tool
         .execute(
@@ -180,7 +180,7 @@ async fn planning_tools_read_still_works() {
     let path = std::env::temp_dir().join("disallow-test-plan-read.txt");
     std::fs::write(&path, "readable").unwrap();
 
-    let tools = planning_tools(None, "blocked");
+    let tools = planning_tools(None, "blocked", Vec::new());
     let read_tool = tools.iter().find(|t| t.name() == "read_file").unwrap();
     let result = read_tool
         .execute(

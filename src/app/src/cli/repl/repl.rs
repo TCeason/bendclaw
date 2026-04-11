@@ -271,26 +271,8 @@ impl Repl {
                     println!("{DIM}  no variables configured{RESET}");
                 } else {
                     for item in items {
-                        let usage = match (&item.last_used_at, &item.last_used_by) {
-                            (Some(at), Some(by)) => {
-                                format!(
-                                    "used {} times, last {} by {}",
-                                    item.used_count,
-                                    relative_time(at),
-                                    truncate_id(by)
-                                )
-                            }
-                            (Some(at), None) => {
-                                format!(
-                                    "used {} times, last {}",
-                                    item.used_count,
-                                    relative_time(at)
-                                )
-                            }
-                            _ => format!("used {} times", item.used_count),
-                        };
                         let masked = mask_value(&item.value);
-                        println!("  {:<28} {DIM}{masked}  {usage}{RESET}", item.key);
+                        println!("  {:<28} {DIM}{masked}{RESET}", item.key);
                     }
                 }
             }
@@ -1062,14 +1044,6 @@ fn relative_time(value: &str) -> String {
             }
         }
         Err(_) => value.into(),
-    }
-}
-
-fn truncate_id(id: &str) -> &str {
-    if id.len() > 12 {
-        &id[..12]
-    } else {
-        id
     }
 }
 

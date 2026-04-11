@@ -264,3 +264,58 @@ async fn test_bash_multiline_only_long_lines_truncated() {
     assert!(text.contains("another_short"));
     assert!(text.contains("bytes truncated"));
 }
+
+#[tokio::test]
+async fn test_bash_with_envs_injects_variables() {
+    let tool = BashTool::new().with_envs(vec![
+        ("MY_VAR".to_string(), "hello_from_env".to_string()),
+        ("OTHER_VAR".to_string(), "other_value".to_string()),
+    ]);
+    let result = tool
+        .execute(
+            serde_json::json!({"command": "printf '%s %s' \"$MY_VAR\" \"$OTHER_VAR\""}),
+            ctx("bash"),
+        )
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("hello_from_env other_value"));
+}
+
+#[tokio::test]
+async fn test_bash_empty_envs_works() {
+    let tool = BashTool::new().with_envs(Vec::<(String, String)>::new());
+    let result = tool
+        .execute(serde_json::json!({"command": "echo ok"}), ctx("bash"))
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("ok"));
+}
+
+#[tokio::test]
+async fn test_bash_without_envs_variable_is_empty() {
+    let tool = BashTool::new();
+    let result = tool
+        .execute(
+            serde_json::json!({"command": "printf '%s' \"$NONEXISTENT_VAR_12345\""}),
+            ctx("bash"),
+        )
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    // Variable not set, printf outputs empty string
+    assert!(!text.contains("hello"));
+}

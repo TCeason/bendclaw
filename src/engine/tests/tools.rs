@@ -16,8 +16,6 @@ mod list;
 mod search;
 #[path = "tools/tool_sets.rs"]
 mod tool_sets;
-#[path = "tools/variables.rs"]
-mod variables;
 #[path = "tools/web_fetch.rs"]
 mod web_fetch;
 

@@ -25,6 +25,8 @@ pub struct BashTool {
     pub deny_patterns: Vec<String>,
     /// Optional callback for confirming dangerous commands
     pub confirm_fn: Option<ConfirmFn>,
+    /// Environment variables injected into every bash subprocess.
+    pub envs: Vec<(String, String)>,
 }
 
 impl Default for BashTool {
@@ -41,6 +43,7 @@ impl Default for BashTool {
                 ":(){:|:&};:".into(), // fork bomb
             ],
             confirm_fn: None,
+            envs: Vec::new(),
         }
     }
 }
@@ -67,6 +70,11 @@ impl BashTool {
 
     pub fn with_confirm(mut self, f: impl Fn(&str) -> bool + Send + Sync + 'static) -> Self {
         self.confirm_fn = Some(Box::new(f));
+        self
+    }
+
+    pub fn with_envs(mut self, envs: impl IntoIterator<Item = (String, String)>) -> Self {
+        self.envs = envs.into_iter().collect();
         self
     }
 }
@@ -239,6 +247,10 @@ impl AgentTool for BashTool {
 
         if let Some(ref cwd) = self.cwd {
             cmd.current_dir(cwd);
+        }
+
+        if !self.envs.is_empty() {
+            cmd.envs(self.envs.iter().map(|(k, v)| (k, v)));
         }
 
         cmd.stdout(std::process::Stdio::piped());

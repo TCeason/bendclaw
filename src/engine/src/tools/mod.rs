@@ -4,7 +4,6 @@ pub mod edit;
 pub mod file;
 pub mod list;
 pub mod search;
-pub mod variables;
 pub mod web_fetch;
 
 pub use ask_user::AskUserFn;
@@ -18,17 +17,14 @@ pub use file::ReadFileTool;
 pub use file::WriteFileTool;
 pub use list::ListFilesTool;
 pub use search::SearchTool;
-pub use variables::GetVariableFn;
-pub use variables::GetVariableResponse;
-pub use variables::GetVariableTool;
 pub use web_fetch::WebFetchTool;
 
 use crate::types::AgentTool;
 
 /// Base tools for a coding agent.
-pub fn base_tools() -> Vec<Box<dyn AgentTool>> {
+pub fn base_tools(envs: Vec<(String, String)>) -> Vec<Box<dyn AgentTool>> {
     vec![
-        Box::new(BashTool::default()),
+        Box::new(BashTool::default().with_envs(envs)),
         Box::new(ReadFileTool::default()),
         Box::new(WriteFileTool::new()),
         Box::new(EditFileTool::new()),
@@ -50,9 +46,10 @@ pub fn base_tools() -> Vec<Box<dyn AgentTool>> {
 pub fn planning_tools(
     ask_fn: Option<AskUserFn>,
     disallow_message: &str,
+    envs: Vec<(String, String)>,
 ) -> Vec<Box<dyn AgentTool>> {
     let mut tools: Vec<Box<dyn AgentTool>> = vec![
-        Box::new(BashTool::default()),
+        Box::new(BashTool::default().with_envs(envs)),
         Box::new(ReadFileTool::default()),
         Box::new(WriteFileTool::new().disallow(disallow_message)),
         Box::new(EditFileTool::new().disallow(disallow_message)),
@@ -78,5 +75,5 @@ pub fn readonly_tools() -> Vec<Box<dyn AgentTool>> {
 
 /// Backward-compatible alias for the full normal tool set.
 pub fn default_tools() -> Vec<Box<dyn AgentTool>> {
-    base_tools()
+    base_tools(Vec::new())
 }

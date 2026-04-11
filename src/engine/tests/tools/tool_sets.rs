@@ -13,7 +13,7 @@ async fn test_default_tools_complete() {
 
 #[tokio::test]
 async fn test_base_tools_complete() {
-    let tools = bendengine::tools::base_tools();
+    let tools = bendengine::tools::base_tools(Vec::new());
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     assert_eq!(names.len(), 7);
     assert!(names.contains(&"bash"));
