@@ -143,6 +143,12 @@ impl Repl {
                     let is_empty = line_empty.load(Ordering::Relaxed);
                     match interrupt.on_interrupt(is_empty) {
                         InterruptAction::Clear => {
+                            // Erase the ^C line and stay in place so the
+                            // next prompt appears on the same line.
+                            super::render::with_terminal(|stdout| {
+                                use std::io::Write;
+                                let _ = write!(stdout, "\x1b[A\r\x1b[K");
+                            });
                             continue;
                         }
                         InterruptAction::ShowHint => {
@@ -237,6 +243,7 @@ impl Repl {
                 self.handle_env_load(s.trim_start_matches("/env load ").trim())
                     .await?
             }
+            "/log" => self.handle_log(),
             _ => {
                 eprintln!("{RED}  unknown command: {input}{RESET}");
                 eprintln!("{DIM}  type /help for available commands{RESET}\n");
@@ -634,6 +641,20 @@ impl Repl {
 
     fn print_model(&self) {
         println!("current model: {}\n", self.config.active_llm().model);
+    }
+
+    fn handle_log(&self) {
+        match &self.session_id {
+            Some(session_id) => {
+                if let Some(log) = super::transcript_log::TranscriptLog::open(session_id) {
+                    println!("{}", log.path().display());
+                } else {
+                    println!("{DIM}  failed to resolve log path{RESET}");
+                }
+            }
+            None => println!("{DIM}  no active session{RESET}"),
+        }
+        println!();
     }
 
     async fn choose_model(&mut self) -> Result<()> {

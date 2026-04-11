@@ -23,7 +23,10 @@ pub struct DiffResult {
     pub lines_removed: u64,
 }
 
+use super::render::BOLD;
 use super::render::DIM;
+use super::render::GRAY;
+use super::render::GREEN;
 use super::render::RED;
 use super::render::RESET;
 use super::render::YELLOW;
@@ -115,5 +118,24 @@ pub fn diff_from_details(details: &serde_json::Value) -> Option<String> {
     if diff.is_empty() {
         return None;
     }
-    Some(diff.to_string())
+    Some(colorize_unified_diff(diff))
+}
+
+/// Colorize a unified diff string in git-diff style.
+fn colorize_unified_diff(diff: &str) -> String {
+    let mut out = String::new();
+    for line in diff.lines() {
+        if line.starts_with("--- ") || line.starts_with("+++ ") {
+            out.push_str(&format!("{BOLD}{line}{RESET}\n"));
+        } else if line.starts_with("@@") {
+            out.push_str(&format!("{GRAY}{line}{RESET}\n"));
+        } else if line.starts_with('+') {
+            out.push_str(&format!("{GREEN}{line}{RESET}\n"));
+        } else if line.starts_with('-') {
+            out.push_str(&format!("{RED}{line}{RESET}\n"));
+        } else {
+            out.push_str(&format!("{DIM}{line}{RESET}\n"));
+        }
+    }
+    out
 }
