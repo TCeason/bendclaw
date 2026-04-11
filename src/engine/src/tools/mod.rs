@@ -66,6 +66,16 @@ pub fn planning_tools(
     tools
 }
 
+/// Read-only tools for side conversations (log analysis, inspection, etc.).
+/// No mutation, no execution, no network.
+pub fn readonly_tools() -> Vec<Box<dyn AgentTool>> {
+    vec![
+        Box::new(ReadFileTool::default()),
+        Box::new(ListFilesTool::default()),
+        Box::new(SearchTool::default()),
+    ]
+}
+
 /// Backward-compatible alias for the full normal tool set.
 pub fn default_tools() -> Vec<Box<dyn AgentTool>> {
     base_tools()

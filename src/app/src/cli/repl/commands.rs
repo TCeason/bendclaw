@@ -1,7 +1,7 @@
 use super::completion::CompletionState;
 
 pub const KNOWN_COMMANDS: &[&str] = &[
-    "/help", "/resume", "/new", "/model", "/plan", "/act", "/env",
+    "/help", "/resume", "/new", "/model", "/plan", "/act", "/env", "/log",
 ];
 
 pub fn command_short_description(cmd: &str) -> Option<&'static str> {
@@ -13,6 +13,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "plan" => Some("enter planning mode"),
         "act" => Some("return to normal action mode"),
         "env" => Some("manage variables"),
+        "log" => Some("analyze session log in a side conversation"),
         _ => None,
     }
 }
@@ -40,6 +41,9 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
         "env" => Some(
             "/env - Manage variables.\n\nUsage:\n  /env              List configured variables\n  /env set KEY=VAL  Set a variable\n  /env del KEY      Delete a variable\n  /env load FILE    Import variables from .env file",
         ),
+        "log" => Some(
+            "/log [question] - Analyze the current session log.\n\nWithout an argument it shows the log file path.\nWith a question it opens a side conversation for log analysis.\nType /done to return to the main session.",
+        ),
         _ => None,
     }
 }
@@ -56,7 +60,7 @@ pub fn help_command_completions(partial_lower: &str) -> Vec<String> {
 
 /// Hidden commands that are recognised but not shown in `/help` or tab
 /// completion.
-const HIDDEN_COMMANDS: &[&str] = &["/log"];
+const HIDDEN_COMMANDS: &[&str] = &[];
 
 /// Returns `true` when `input` starts with a known slash command
 /// (including hidden ones).

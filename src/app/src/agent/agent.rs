@@ -15,6 +15,7 @@ use crate::error::BendclawError;
 use crate::error::Result;
 use crate::session::Session;
 use crate::storage::open_storage;
+use crate::storage::MemoryStorage;
 use crate::storage::Storage;
 use crate::types::ListSessions;
 use crate::types::SessionMeta;
@@ -110,6 +111,9 @@ If a task or skill explicitly references a configured variable by name, \
 use the `get_variable` tool to retrieve its value. \
 Do not guess variable names and do not fetch variables unless required for the current task.";
 
+/// Factory function that produces a tool set.
+type ToolSetFactory = fn() -> Vec<Box<dyn bend_engine::AgentTool>>;
+
 pub struct AppAgent {
     llm: RwLock<LlmConfig>,
     system_prompt: RwLock<String>,
@@ -119,6 +123,9 @@ pub struct AppAgent {
     cwd: String,
     storage: RwLock<Arc<dyn Storage>>,
     variables: RwLock<Option<Arc<Variables>>>,
+    /// When set, `create_engine` uses these tools instead of `tool_mode`.
+    /// Used by side conversations to inject readonly tools.
+    tools_override: Option<ToolSetFactory>,
 }
 
 impl AppAgent {
@@ -135,6 +142,7 @@ impl AppAgent {
             cwd,
             storage: RwLock::new(storage),
             variables: RwLock::new(None),
+            tools_override: None,
         }))
     }
 
@@ -347,13 +355,17 @@ impl AppAgent {
         EngineHandle,
     )> {
         let llm = self.llm.read().clone();
-        let mut tools = match *self.tool_mode.read() {
-            ToolMode::Planning => bend_engine::tools::planning_tools(
-                ask_fn,
-                "This tool is not allowed in planning mode. \
-                 Suggest the user to use /act to switch to execution mode.",
-            ),
-            ToolMode::Normal => bend_engine::tools::base_tools(),
+        let mut tools = if let Some(tools_fn) = self.tools_override {
+            tools_fn()
+        } else {
+            match *self.tool_mode.read() {
+                ToolMode::Planning => bend_engine::tools::planning_tools(
+                    ask_fn,
+                    "This tool is not allowed in planning mode. \
+                     Suggest the user to use /act to switch to execution mode.",
+                ),
+                ToolMode::Normal => bend_engine::tools::base_tools(),
+            }
         };
 
         if let Some(vars) = self.variables() {
@@ -381,5 +393,73 @@ impl AppAgent {
             session_id,
         )
         .await
+    }
+
+    /// Start a side conversation — an independent, non-persisted agent loop.
+    ///
+    /// Uses the current LLM configuration with readonly tools and `MemoryStorage`
+    /// so nothing is written to disk. The returned `SideAgent` reuses the
+    /// standard `submit()` → `run_loop()` → `TurnStream` pipeline; multi-turn
+    /// context is maintained in-memory by `Session`.
+    pub fn start_side_conversation(self: &Arc<Self>, request: SideRequest) -> Result<SideAgent> {
+        let llm = self.llm.read().clone();
+        let mem_storage: Arc<dyn Storage> = Arc::new(MemoryStorage::new());
+
+        let side_agent = Arc::new(Self {
+            llm: RwLock::new(llm),
+            system_prompt: RwLock::new(request.system_prompt),
+            limits: RwLock::new(self.limits.read().clone()),
+            skills_dirs: RwLock::new(vec![]),
+            tool_mode: RwLock::new(ToolMode::Normal),
+            cwd: self.cwd.clone(),
+            storage: RwLock::new(mem_storage),
+            variables: RwLock::new(None),
+            tools_override: Some(bend_engine::tools::readonly_tools),
+        });
+
+        Ok(SideAgent {
+            agent: side_agent,
+            session_id: None,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SideRequest
+// ---------------------------------------------------------------------------
+
+/// Request to start a side conversation.
+/// Separate type from `TurnRequest` — different intent, different lifecycle.
+pub struct SideRequest {
+    /// System prompt for the side conversation.
+    pub system_prompt: String,
+}
+
+// ---------------------------------------------------------------------------
+// SideAgent
+// ---------------------------------------------------------------------------
+
+/// Handle for a side conversation.
+///
+/// Wraps an ephemeral `AppAgent` backed by `MemoryStorage`. Multi-turn context
+/// is maintained in-memory by `Session`. Drop to discard — nothing is persisted.
+///
+/// The `session_id` on the returned `TurnStream` is a temporary identifier
+/// (not resumable).
+pub struct SideAgent {
+    agent: Arc<AppAgent>,
+    session_id: Option<String>,
+}
+
+impl SideAgent {
+    /// Send a message. The first call creates a new in-memory session;
+    /// subsequent calls reuse the same session for multi-turn context.
+    pub async fn send(&mut self, prompt: &str) -> Result<TurnStream> {
+        let request = TurnRequest::text(prompt).session_id(self.session_id.clone());
+        let stream = self.agent.submit(request).await?;
+        if self.session_id.is_none() {
+            self.session_id = Some(stream.session_id.clone());
+        }
+        Ok(stream)
     }
 }

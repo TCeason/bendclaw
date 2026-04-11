@@ -660,7 +660,7 @@ fn serialize_or_placeholder<T: serde::Serialize>(value: &T, kind: &str) -> serde
     }
 }
 
-fn build_agent(
+pub(crate) fn build_agent(
     options: EngineOptions,
     prior_messages: Vec<bend_engine::AgentMessage>,
 ) -> bend_engine::Agent {

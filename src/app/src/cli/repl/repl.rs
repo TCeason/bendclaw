@@ -244,6 +244,14 @@ impl Repl {
                     .await?
             }
             "/log" => self.handle_log(),
+            s if s.starts_with("/log ") => {
+                let query = s.trim_start_matches("/log ").trim();
+                if query.is_empty() {
+                    self.handle_log();
+                } else {
+                    self.run_log_side_conversation(query).await?;
+                }
+            }
             _ => {
                 eprintln!("{RED}  unknown command: {input}{RESET}");
                 eprintln!("{DIM}  type /help for available commands{RESET}\n");
@@ -655,6 +663,106 @@ impl Repl {
             None => println!("{DIM}  no active session{RESET}"),
         }
         println!();
+    }
+
+    async fn run_log_side_conversation(&mut self, query: &str) -> Result<()> {
+        // 1. Resolve log file path
+        let session_id = match &self.session_id {
+            Some(id) => id.clone(),
+            None => {
+                println!("{DIM}  no active session{RESET}\n");
+                return Ok(());
+            }
+        };
+        let log = super::transcript_log::TranscriptLog::open(&session_id);
+        let log_path = match &log {
+            Some(l) if l.path().exists() => l.path().display().to_string(),
+            _ => {
+                println!(
+                    "  log file not found for session {}\n",
+                    short_id(&session_id)
+                );
+                return Ok(());
+            }
+        };
+
+        // 2. Build side conversation
+        let system_prompt = format!(
+            "You are in a temporary log analysis session.\n\
+             This session is not persisted and does not affect the main session context.\n\n\
+             Log file to analyze:\n{log_path}\n\n\
+             Rules:\n\
+             - Read relevant log sections before answering; do not guess\n\
+             - Prefer partial reads; avoid loading the entire file at once\n\
+             - Use search to locate key information when needed\n\
+             - Do not modify any files"
+        );
+        let request = crate::agent::SideRequest { system_prompt };
+        let mut side = self.agent.start_side_conversation(request)?;
+
+        // 3. Enter side mode
+        println!("\n  {DIM}[log mode] analyzing: {log_path}{RESET}");
+        println!("  {DIM}not persisted. type /done to return.{RESET}\n");
+
+        // 4. First turn
+        self.consume_side_turn(&mut side, query).await?;
+
+        // 5. Multi-turn mini REPL
+        let mut rl: Editor<(), DefaultHistory> =
+            Editor::new().map_err(|e| BendclawError::Cli(format!("readline init failed: {e}")))?;
+
+        loop {
+            println!("  {DIM}[log mode] /done to return{RESET}");
+            match rl.readline("log (/done to exit)> ") {
+                Ok(line) => {
+                    let trimmed = line.trim();
+                    if trimmed == "/done" {
+                        break;
+                    }
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    self.consume_side_turn(&mut side, trimmed).await?;
+                }
+                Err(ReadlineError::Interrupted) => continue,
+                Err(ReadlineError::Eof) => break,
+                Err(e) => {
+                    return Err(BendclawError::Cli(format!("readline error: {e}")));
+                }
+            }
+        }
+
+        println!("  {DIM}[log mode ended]{RESET}\n");
+        Ok(())
+    }
+
+    async fn consume_side_turn(
+        &self,
+        side: &mut crate::agent::SideAgent,
+        prompt: &str,
+    ) -> Result<()> {
+        let spinner_state = Arc::new(parking_lot::Mutex::new(super::spinner::SpinnerState::new()));
+        let sink = Arc::new(ReplSink::new(spinner_state.clone()));
+        sink.set_user_prompt(prompt);
+
+        let mut stream = side.send(prompt).await?;
+        let sink_ref = sink.clone();
+        let mut run_task = tokio::spawn(async move {
+            while let Some(event) = stream.next().await {
+                sink_ref.render(&event);
+            }
+            Ok::<_, BendclawError>(String::new())
+        });
+
+        let mut dummy_ask_rx = mpsc::unbounded_channel().1;
+        let _ = wait_for_run_control(&mut run_task, &spinner_state, &mut dummy_ask_rx)?;
+        match run_task.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => return Err(e),
+            Err(e) if e.is_cancelled() => {}
+            Err(e) => return Err(BendclawError::Cli(format!("side turn failed: {e}"))),
+        }
+        Ok(())
     }
 
     async fn choose_model(&mut self) -> Result<()> {
