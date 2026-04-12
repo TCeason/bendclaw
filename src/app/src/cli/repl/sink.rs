@@ -376,10 +376,6 @@ impl ReplSink {
                 for line in &detail_lines {
                     terminal_writeln(&format!("{GRAY}  {line}{RESET}"));
                 }
-                if let Some(budget) = state.pending_budget.take() {
-                    let bar = format_budget_bar(budget.estimated_tokens, budget.budget_tokens, 40);
-                    terminal_writeln(&format!("{GRAY}  {bar}{RESET}"));
-                }
 
                 state.last_message_stats = Some(stats);
                 terminal_writeln("");
@@ -459,6 +455,11 @@ impl ReplSink {
                         },
                     ));
 
+                // Always render compact started info when available
+                if let Some(budget) = state.pending_budget.take() {
+                    render_compact_started(&budget);
+                }
+
                 match result {
                     crate::types::CompactionResult::LevelCompacted {
                         level,
@@ -470,10 +471,6 @@ impl ReplSink {
                         actions,
                         ..
                     } => {
-                        if let Some(budget) = state.pending_budget.take() {
-                            render_compact_started(&budget);
-                        }
-
                         let saved = before_estimated_tokens.saturating_sub(*after_estimated_tokens);
                         let saved_pct = if *before_estimated_tokens > 0 {
                             saved as f64 / *before_estimated_tokens as f64 * 100.0
