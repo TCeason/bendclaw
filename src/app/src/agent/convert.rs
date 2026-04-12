@@ -157,6 +157,7 @@ pub fn agent_message_from_transcript(item: &TranscriptItem) -> bend_engine::Agen
             }],
             is_error: *is_error,
             timestamp: bend_engine::types::now_ms(),
+            retention: bend_engine::Retention::Normal,
         }),
         TranscriptItem::System { text } => bend_engine::AgentMessage::Extension(
             bend_engine::ExtensionMessage::new("system", serde_json::json!({ "text": text })),

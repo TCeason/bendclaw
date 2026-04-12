@@ -142,6 +142,7 @@ async fn test_tool_call_and_response() {
                     text: "hello".into(),
                 }],
                 details: serde_json::Value::Null,
+                retention: Retention::Normal,
             })
         }
     }
@@ -239,6 +240,7 @@ async fn test_continue_from_tool_result() {
                 }],
                 is_error: false,
                 timestamp: 0,
+                retention: Retention::Normal,
             }),
         ],
         tools: Vec::new(),
@@ -380,6 +382,7 @@ impl AgentTool for TimedTool {
                 text: format!("done:{}", self.name),
             }],
             details: serde_json::Value::Null,
+            retention: Retention::Normal,
         })
     }
 }
@@ -624,6 +627,7 @@ impl AgentTool for ProgressTool {
                         text: format!("step {}/3", i),
                     }],
                     details: serde_json::Value::Null,
+                    retention: Retention::Normal,
                 });
             }
         }
@@ -632,6 +636,7 @@ impl AgentTool for ProgressTool {
                 text: "done".into(),
             }],
             details: serde_json::Value::Null,
+            retention: Retention::Normal,
         })
     }
 }
@@ -1237,6 +1242,7 @@ impl AgentTool for ProgressMessageTool {
                 text: "done".into(),
             }],
             details: serde_json::Value::Null,
+            retention: Retention::Normal,
         })
     }
 }
@@ -1310,6 +1316,7 @@ impl AgentTool for SilentTool {
                 text: "quiet".into(),
             }],
             details: serde_json::Value::Null,
+            retention: Retention::Normal,
         })
     }
 }
@@ -1378,6 +1385,7 @@ impl AgentTool for NamedProgressTool {
                 text: format!("done:{}", self.tool_name),
             }],
             details: serde_json::Value::Null,
+            retention: Retention::Normal,
         })
     }
 }

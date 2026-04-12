@@ -181,6 +181,7 @@ impl AgentTool for AskUserTool {
         Ok(ToolResult {
             content: vec![Content::Text { text }],
             details: serde_json::Value::Null,
+            retention: Retention::Normal,
         })
     }
 }

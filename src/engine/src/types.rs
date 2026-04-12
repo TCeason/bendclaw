@@ -7,6 +7,24 @@ use serde::Serialize;
 use crate::provider::ToolDefinition;
 
 // ---------------------------------------------------------------------------
+// Retention
+// ---------------------------------------------------------------------------
+
+/// Controls how long a tool result's content stays in context.
+///
+/// Only the compaction system consumes this — other modules pass it through.
+/// `CurrentRun` cleanup is keyed off `Message::User`. Tool-generated
+/// interactions (e.g. ask_user responses) are `Message::ToolResult` and
+/// do NOT trigger cleanup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Retention {
+    #[default]
+    Normal,
+    CurrentRun,
+}
+
+// ---------------------------------------------------------------------------
 // Content types
 // ---------------------------------------------------------------------------
 
@@ -69,6 +87,8 @@ pub enum Message {
         #[serde(rename = "isError")]
         is_error: bool,
         timestamp: u64,
+        #[serde(default)]
+        retention: Retention,
     },
 }
 
@@ -406,6 +426,8 @@ pub struct ToolResult {
     pub content: Vec<Content>,
     #[serde(default)]
     pub details: serde_json::Value,
+    #[serde(default)]
+    pub retention: Retention,
 }
 
 #[derive(Debug, thiserror::Error)]

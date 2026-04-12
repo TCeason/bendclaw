@@ -102,6 +102,7 @@ impl MessagePattern {
                         }],
                         is_error: false,
                         timestamp: 0,
+                        retention: Retention::Normal,
                     }));
                     msg_index += 1;
                 }
@@ -161,8 +162,12 @@ pub fn assert_no_orphan_tool_pairs(messages: &[AgentMessage]) {
 /// Assert all actions match the expected level's methods.
 pub fn assert_actions_match_level(level: u8, actions: &[CompactionAction]) {
     for action in actions {
+        // LifecycleCleared runs at every level (level 0 cleanup)
+        if action.method == CompactionMethod::LifecycleCleared {
+            continue;
+        }
         match level {
-            0 => panic!("level 0 should have no actions"),
+            0 => panic!("level 0 should only have LifecycleCleared actions"),
             1 => assert!(
                 action.method == CompactionMethod::Outline
                     || action.method == CompactionMethod::HeadTail,

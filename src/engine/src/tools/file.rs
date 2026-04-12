@@ -158,6 +158,7 @@ impl AgentTool for ReadFileTool {
                     mime_type: mime_type.to_string(),
                 }],
                 details: serde_json::json!({ "path": path, "bytes": bytes.len() }),
+                retention: Retention::Normal,
             });
         }
 
@@ -211,6 +212,7 @@ impl AgentTool for ReadFileTool {
         Ok(ToolResult {
             content: vec![Content::Text { text: output }],
             details: serde_json::json!({ "path": path }),
+            retention: Retention::Normal,
         })
     }
 }
@@ -341,6 +343,7 @@ impl AgentTool for WriteFileTool {
                 "created": !existed,
                 "diff": diff_result.unified,
             }),
+            retention: Retention::Normal,
         })
     }
 }

@@ -176,20 +176,28 @@ impl Agent {
         self
     }
 
-    /// Load skills and append their index to the system prompt.
+    /// Load skills and register the skill tool.
     ///
-    /// The skills index is appended as XML per the [AgentSkills standard](https://agentskills.io).
-    /// The agent can then read individual SKILL.md files using the `read_file` tool
-    /// when it decides a skill is relevant.
-    pub fn with_skills(mut self, skills: crate::skills::SkillSet) -> Self {
-        let prompt_fragment = skills.format_for_prompt();
-        if !prompt_fragment.is_empty() {
-            if self.system_prompt.is_empty() {
-                self.system_prompt = prompt_fragment;
-            } else {
-                self.system_prompt = format!("{}\n\n{}", self.system_prompt, prompt_fragment);
-            }
+    /// Appends the skills index to the system prompt (XML per the
+    /// [AgentSkills standard](https://agentskills.io)) and registers a
+    /// `SkillTool` so the LLM can activate skills by name.
+    ///
+    /// **Must be called after `with_tools()`** — `with_tools()` replaces the
+    /// tool list, so calling it afterwards would remove the SkillTool.
+    pub fn with_skills(mut self, skills: crate::tools::skill::SkillSet) -> Self {
+        if skills.is_empty() {
+            return self;
         }
+        let prompt_fragment = skills.format_for_prompt();
+        if self.system_prompt.is_empty() {
+            self.system_prompt = prompt_fragment;
+        } else {
+            self.system_prompt = format!("{}\n\n{}", self.system_prompt, prompt_fragment);
+        }
+        self.tools
+            .push(Box::new(crate::tools::skill::SkillTool::new(
+                std::sync::Arc::new(skills),
+            )));
         self
     }
 

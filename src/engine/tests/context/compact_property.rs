@@ -89,7 +89,9 @@ proptest! {
         let result = compact_messages(messages, &config);
         let level = result.stats.level;
         if level == 0 {
-            prop_assert!(result.stats.actions.is_empty());
+            for action in &result.stats.actions {
+                prop_assert_eq!(action.method.clone(), CompactionMethod::LifecycleCleared);
+            }
         } else {
             assert_actions_match_level(level, &result.stats.actions);
         }

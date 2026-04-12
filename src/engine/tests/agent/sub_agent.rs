@@ -120,6 +120,7 @@ impl AgentTool for EchoTool {
                 text: format!("echoed: {}", text),
             }],
             details: serde_json::Value::Null,
+            retention: Retention::Normal,
         })
     }
 }

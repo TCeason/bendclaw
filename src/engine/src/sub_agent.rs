@@ -276,6 +276,7 @@ impl AgentTool for SubAgentTool {
                             on_update(ToolResult {
                                 content: vec![Content::Text { text }],
                                 details: serde_json::json!({ "sub_agent": tool_name }),
+                                retention: Retention::Normal,
                             });
                         }
                     }
@@ -306,6 +307,7 @@ impl AgentTool for SubAgentTool {
         Ok(ToolResult {
             content: vec![Content::Text { text: result_text }],
             details,
+            retention: Retention::Normal,
         })
     }
 }

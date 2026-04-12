@@ -391,6 +391,7 @@ impl AgentTool for BashTool {
                                 on_update(ToolResult {
                                     content: vec![Content::Text { text: snippet }],
                                     details: serde_json::Value::Null,
+                                    retention: Retention::Normal,
                                 });
                             }
                         }
@@ -453,6 +454,7 @@ impl AgentTool for BashTool {
         Ok(ToolResult {
             content: vec![Content::Text { text: output }],
             details: serde_json::json!({ "exit_code": exit_code, "success": exit_code == 0 }),
+            retention: Retention::Normal,
         })
     }
 }

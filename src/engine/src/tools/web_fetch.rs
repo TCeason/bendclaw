@@ -138,6 +138,7 @@ impl AgentTool for WebFetchTool {
                     text: format!("HTTP {status} error fetching {url}"),
                 }],
                 details: serde_json::json!({ "status": status, "error": true, "body": body }),
+                retention: Retention::Normal,
             });
         }
 
@@ -151,6 +152,7 @@ impl AgentTool for WebFetchTool {
             return Ok(ToolResult {
                 content: vec![Content::Text { text }],
                 details: serde_json::json!({ "status": status, "renderer": "reqwest" }),
+                retention: Retention::Normal,
             });
         }
 
@@ -161,6 +163,7 @@ impl AgentTool for WebFetchTool {
             return Ok(ToolResult {
                 content: vec![Content::Text { text }],
                 details: serde_json::json!({ "status": status, "renderer": "reqwest" }),
+                retention: Retention::Normal,
             });
         }
 
@@ -180,6 +183,7 @@ impl AgentTool for WebFetchTool {
             return Ok(ToolResult {
                 content: vec![Content::Text { text }],
                 details: serde_json::json!({ "status": status, "renderer": "browser_fallback" }),
+                retention: Retention::Normal,
             });
         }
 
@@ -187,6 +191,7 @@ impl AgentTool for WebFetchTool {
         Ok(ToolResult {
             content: vec![Content::Text { text }],
             details: serde_json::json!({ "status": status, "renderer": "reqwest" }),
+            retention: Retention::Normal,
         })
     }
 }

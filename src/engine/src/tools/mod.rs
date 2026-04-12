@@ -4,6 +4,7 @@ pub mod edit;
 pub mod file;
 pub mod list;
 pub mod search;
+pub mod skill;
 pub mod web_fetch;
 
 pub use ask_user::AskUserFn;

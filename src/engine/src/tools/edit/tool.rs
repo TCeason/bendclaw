@@ -209,6 +209,7 @@ impl AgentTool for EditFileTool {
                 "added_lines": diff_result.added_lines,
                 "removed_lines": diff_result.removed_lines,
             }),
+            retention: Retention::Normal,
         })
     }
 }

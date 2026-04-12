@@ -76,6 +76,7 @@ async fn test_agent_with_tools() {
             Ok(ToolResult {
                 content: vec![Content::Text { text }],
                 details: serde_json::Value::Null,
+                retention: Retention::Normal,
             })
         }
     }
@@ -360,6 +361,7 @@ async fn test_prompt_with_sender_tools_restored() {
             Ok(ToolResult {
                 content: vec![Content::Text { text: "ok".into() }],
                 details: serde_json::Value::Null,
+                retention: Retention::Normal,
             })
         }
     }

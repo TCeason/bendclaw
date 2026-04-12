@@ -193,6 +193,7 @@ impl AgentTool for SearchTool {
                     text: format!("No matches found for '{}'", pattern),
                 }],
                 details: serde_json::json!({ "matches": 0 }),
+                retention: Retention::Normal,
             });
         }
 
@@ -210,6 +211,7 @@ impl AgentTool for SearchTool {
         Ok(ToolResult {
             content: vec![Content::Text { text }],
             details: serde_json::json!({ "matches": match_count }),
+            retention: Retention::Normal,
         })
     }
 }

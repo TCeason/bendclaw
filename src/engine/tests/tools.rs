@@ -14,6 +14,8 @@ mod file;
 mod list;
 #[path = "tools/search.rs"]
 mod search;
+#[path = "tools/skill.rs"]
+mod skill;
 #[path = "tools/tool_sets.rs"]
 mod tool_sets;
 #[path = "tools/web_fetch.rs"]

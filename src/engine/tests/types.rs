@@ -64,6 +64,7 @@ fn test_message_tool_result_roundtrip() {
         }],
         is_error: false,
         timestamp: 999,
+        retention: Retention::Normal,
     };
     roundtrip(&msg);
 }
@@ -140,6 +141,7 @@ fn test_full_conversation_roundtrip() {
             }],
             is_error: false,
             timestamp: 200,
+            retention: Retention::Normal,
         }),
         AgentMessage::Llm(Message::Assistant {
             content: vec![Content::Text {

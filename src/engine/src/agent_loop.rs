@@ -1057,6 +1057,7 @@ async fn execute_single_tool(
                         text: e.to_string(),
                     }],
                     details: serde_json::Value::Null,
+                    retention: Retention::Normal,
                 },
                 true,
             ),
@@ -1067,6 +1068,7 @@ async fn execute_single_tool(
                     text: format!("Tool {} not found", name),
                 }],
                 details: serde_json::Value::Null,
+                retention: Retention::Normal,
             },
             true,
         ),
@@ -1091,6 +1093,7 @@ async fn execute_single_tool(
         content: result.content,
         is_error,
         timestamp: now_ms(),
+        retention: result.retention,
     };
 
     tx.send(AgentEvent::MessageStart {
@@ -1115,6 +1118,7 @@ fn skip_tool_call(
             text: "Skipped due to queued user message.".into(),
         }],
         details: serde_json::Value::Null,
+        retention: Retention::Normal,
     };
 
     tx.send(AgentEvent::ToolExecutionStart {
@@ -1143,6 +1147,7 @@ fn skip_tool_call(
         content: result.content,
         is_error: true,
         timestamp: now_ms(),
+        retention: Retention::Normal,
     };
 
     tx.send(AgentEvent::MessageStart {

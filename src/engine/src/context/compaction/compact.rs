@@ -57,6 +57,8 @@ pub enum CompactionMethod {
     Summarized,
     /// Dropped (Level 3)
     Dropped,
+    /// CurrentRun result cleared after run completed
+    LifecycleCleared,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -69,6 +71,7 @@ pub struct CompactionStats {
     pub tool_outputs_truncated: usize,
     pub turns_summarized: usize,
     pub messages_dropped: usize,
+    pub current_run_cleared: usize,
     /// Per-tool token breakdown before compaction (sorted by tokens desc).
     #[serde(default)]
     pub before_tool_details: Vec<ToolTokenDetail>,
@@ -178,16 +181,26 @@ pub fn compact_messages(messages: Vec<AgentMessage>, config: &ContextConfig) -> 
         }
     };
 
-    if before_estimated_tokens <= budget {
-        return make_result(messages, 0, CompactionStats::default());
+    // Level 0: lifecycle cleanup (unconditional)
+    let (messages, current_run_cleared, lifecycle_actions) = compact_run_once(messages);
+
+    if total_tokens(&messages) <= budget {
+        return make_result(messages, 0, CompactionStats {
+            current_run_cleared,
+            actions: lifecycle_actions,
+            ..Default::default()
+        });
     }
 
     let (compacted, tool_outputs_truncated, l1_actions) =
         level1_truncate_tool_outputs(&messages, config.tool_output_max_lines);
     if total_tokens(&compacted) <= budget {
+        let mut actions = lifecycle_actions.clone();
+        actions.extend(l1_actions);
         return make_result(compacted, 1, CompactionStats {
+            current_run_cleared,
             tool_outputs_truncated,
-            actions: l1_actions,
+            actions,
             ..Default::default()
         });
     }
@@ -195,22 +208,102 @@ pub fn compact_messages(messages: Vec<AgentMessage>, config: &ContextConfig) -> 
     let (compacted, turns_summarized, l2_actions) =
         level2_summarize_old_turns(&compacted, config.keep_recent);
     if total_tokens(&compacted) <= budget {
+        let mut actions = lifecycle_actions.clone();
+        actions.extend(l2_actions);
         return make_result(compacted, 2, CompactionStats {
+            current_run_cleared,
             tool_outputs_truncated,
             turns_summarized,
-            actions: l2_actions,
+            actions,
             ..Default::default()
         });
     }
 
     let (compacted, messages_dropped, l3_actions) = level3_drop_middle(&compacted, config, budget);
+    let mut actions = lifecycle_actions;
+    actions.extend(l3_actions);
     make_result(compacted, 3, CompactionStats {
+        current_run_cleared,
         tool_outputs_truncated,
         turns_summarized,
         messages_dropped,
-        actions: l3_actions,
+        actions,
         ..Default::default()
     })
+}
+
+// ---------------------------------------------------------------------------
+// Level 0: Lifecycle cleanup
+// ---------------------------------------------------------------------------
+
+fn compact_run_once(
+    messages: Vec<AgentMessage>,
+) -> (Vec<AgentMessage>, usize, Vec<CompactionAction>) {
+    let mut has_user_after = vec![false; messages.len()];
+    let mut seen_user = false;
+    for i in (0..messages.len()).rev() {
+        has_user_after[i] = seen_user;
+        if matches!(&messages[i], AgentMessage::Llm(Message::User { .. })) {
+            seen_user = true;
+        }
+    }
+
+    let mut cleared = 0;
+    let mut actions = Vec::new();
+
+    let result = messages
+        .into_iter()
+        .enumerate()
+        .map(|(idx, msg)| match msg {
+            AgentMessage::Llm(Message::ToolResult {
+                retention: Retention::CurrentRun,
+                ref tool_name,
+                ref content,
+                ..
+            }) if has_user_after[idx] => {
+                let before_tokens = content_tokens(content);
+                let replacement = vec![Content::Text {
+                    text: format!("[{tool_name} output consumed]"),
+                }];
+                let after_tokens = content_tokens(&replacement);
+
+                cleared += 1;
+                actions.push(CompactionAction {
+                    index: idx,
+                    tool_name: tool_name.clone(),
+                    method: CompactionMethod::LifecycleCleared,
+                    before_tokens,
+                    after_tokens,
+                    end_index: None,
+                    related_count: None,
+                });
+
+                if let AgentMessage::Llm(Message::ToolResult {
+                    tool_call_id,
+                    tool_name,
+                    is_error,
+                    timestamp,
+                    retention,
+                    ..
+                }) = msg
+                {
+                    AgentMessage::Llm(Message::ToolResult {
+                        tool_call_id,
+                        tool_name,
+                        content: replacement,
+                        is_error,
+                        timestamp,
+                        retention,
+                    })
+                } else {
+                    unreachable!()
+                }
+            }
+            other => other,
+        })
+        .collect();
+
+    (result, cleared, actions)
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +332,7 @@ pub fn level1_truncate_tool_outputs(
                 content,
                 is_error,
                 timestamp,
+                retention,
             }) => {
                 let before_tokens = content_tokens(content);
                 let mut method = CompactionMethod::Skipped;
@@ -287,6 +381,7 @@ pub fn level1_truncate_tool_outputs(
                     content: truncated_content,
                     is_error: *is_error,
                     timestamp: *timestamp,
+                    retention: *retention,
                 })
             }
             other => other.clone(),
