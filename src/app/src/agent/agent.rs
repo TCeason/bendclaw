@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use bend_base::logx;
+use bend_engine::tools::*;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
@@ -43,27 +44,98 @@ impl Default for ExecutionLimits {
 }
 
 // ---------------------------------------------------------------------------
-// TurnRequest
+// ToolMode — determines which tools are registered for a query
 // ---------------------------------------------------------------------------
 
-pub struct TurnRequest {
+pub enum ToolMode {
+    /// REPL interactive: full tools + ask_user
+    Interactive {
+        ask_fn: AskUserFn,
+        envs: Vec<(String, String)>,
+    },
+    /// Oneshot / API / headless: full tools, no ask_user
+    Headless { envs: Vec<(String, String)> },
+    /// Plan mode: write tools degraded, optional ask_user
+    Planning {
+        ask_fn: Option<AskUserFn>,
+        envs: Vec<(String, String)>,
+    },
+    /// Forked conversation: read-only
+    Readonly,
+}
+
+impl ToolMode {
+    pub fn is_planning(&self) -> bool {
+        matches!(self, Self::Planning { .. })
+    }
+
+    pub fn is_readonly(&self) -> bool {
+        matches!(self, Self::Readonly)
+    }
+}
+
+fn build_tools(mode: &ToolMode) -> Vec<Box<dyn bend_engine::AgentTool>> {
+    match mode {
+        ToolMode::Interactive { ask_fn, envs } => vec![
+            Box::new(BashTool::default().with_envs(envs.clone())),
+            Box::new(ReadFileTool::default()),
+            Box::new(WriteFileTool::new()),
+            Box::new(EditFileTool::new()),
+            Box::new(ListFilesTool::default()),
+            Box::new(SearchTool::default()),
+            Box::new(WebFetchTool::new()),
+            Box::new(AskUserTool::new(ask_fn.clone())),
+        ],
+        ToolMode::Headless { envs } => vec![
+            Box::new(BashTool::default().with_envs(envs.clone())),
+            Box::new(ReadFileTool::default()),
+            Box::new(WriteFileTool::new()),
+            Box::new(EditFileTool::new()),
+            Box::new(ListFilesTool::default()),
+            Box::new(SearchTool::default()),
+            Box::new(WebFetchTool::new()),
+        ],
+        ToolMode::Planning { ask_fn, envs } => {
+            let msg = "Not allowed in planning mode. Use /act to switch.";
+            let mut t: Vec<Box<dyn bend_engine::AgentTool>> = vec![
+                Box::new(BashTool::default().with_envs(envs.clone())),
+                Box::new(ReadFileTool::default()),
+                Box::new(WriteFileTool::new().disallow(msg)),
+                Box::new(EditFileTool::new().disallow(msg)),
+                Box::new(ListFilesTool::default()),
+                Box::new(SearchTool::default()),
+                Box::new(WebFetchTool::new()),
+            ];
+            if let Some(f) = ask_fn {
+                t.push(Box::new(AskUserTool::new(f.clone())));
+            }
+            t
+        }
+        ToolMode::Readonly => vec![
+            Box::new(ReadFileTool::default()),
+            Box::new(ListFilesTool::default()),
+            Box::new(SearchTool::default()),
+        ],
+    }
+}
+
+// ---------------------------------------------------------------------------
+// QueryRequest
+// ---------------------------------------------------------------------------
+
+pub struct QueryRequest {
     pub prompt: String,
     pub session_id: Option<String>,
-    pub ask_fn: Option<bend_engine::tools::AskUserFn>,
+    pub mode: ToolMode,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToolMode {
-    Normal,
-    Planning,
-}
-
-impl TurnRequest {
+impl QueryRequest {
+    /// Headless query — no user interaction (default for oneshot / API).
     pub fn text(prompt: impl Into<String>) -> Self {
         Self {
             prompt: prompt.into(),
             session_id: None,
-            ask_fn: None,
+            mode: ToolMode::Headless { envs: Vec::new() },
         }
     }
 
@@ -72,58 +144,50 @@ impl TurnRequest {
         self
     }
 
-    pub fn ask_fn(mut self, f: bend_engine::tools::AskUserFn) -> Self {
-        self.ask_fn = Some(f);
+    pub fn mode(mut self, mode: ToolMode) -> Self {
+        self.mode = mode;
         self
     }
 }
 
 // ---------------------------------------------------------------------------
-// TurnStream
+// QueryStream
 // ---------------------------------------------------------------------------
 
-pub struct TurnStream {
+pub struct QueryStream {
     rx: mpsc::UnboundedReceiver<RunEvent>,
     pub session_id: String,
     pub run_id: String,
     engine_handle: EngineHandle,
 }
 
-impl TurnStream {
+impl QueryStream {
     pub async fn next(&mut self) -> Option<RunEvent> {
         self.rx.recv().await
     }
 
-    /// Abort the current run.
     pub fn abort(&self) {
         self.engine_handle.abort();
     }
 }
 
 // ---------------------------------------------------------------------------
-// AppAgent
+// Agent
 // ---------------------------------------------------------------------------
 
 const PLANNING_MODE_PROMPT: &str = include_str!("prompt/plan.md");
 
-/// Factory function that produces a tool set.
-type ToolSetFactory = fn() -> Vec<Box<dyn bend_engine::AgentTool>>;
-
-pub struct AppAgent {
+pub struct Agent {
     llm: RwLock<LlmConfig>,
     system_prompt: RwLock<String>,
     limits: RwLock<ExecutionLimits>,
     skills_dirs: RwLock<Vec<PathBuf>>,
-    tool_mode: RwLock<ToolMode>,
     cwd: String,
     storage: RwLock<Arc<dyn Storage>>,
     variables: RwLock<Option<Arc<Variables>>>,
-    /// When set, `create_engine` uses these tools instead of `tool_mode`.
-    /// Used by side conversations to inject readonly tools.
-    tools_override: Option<ToolSetFactory>,
 }
 
-impl AppAgent {
+impl Agent {
     pub fn new(config: &Config, cwd: impl Into<String>) -> Result<Arc<Self>> {
         let cwd = cwd.into();
         let storage = open_storage(&config.storage)?;
@@ -133,11 +197,9 @@ impl AppAgent {
             system_prompt: RwLock::new(system_prompt),
             limits: RwLock::new(ExecutionLimits::default()),
             skills_dirs: RwLock::new(Vec::new()),
-            tool_mode: RwLock::new(ToolMode::Normal),
             cwd,
             storage: RwLock::new(storage),
             variables: RwLock::new(None),
-            tools_override: None,
         }))
     }
 
@@ -166,7 +228,6 @@ impl AppAgent {
         self.with_claude_skills_dirs()
     }
 
-    /// Temporary compatibility: load skills from ~/.claude/skills if it exists.
     fn with_claude_skills_dirs(self: &Arc<Self>) -> Arc<Self> {
         if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
             let claude_dir = PathBuf::from(home).join(".claude").join("skills");
@@ -174,11 +235,6 @@ impl AppAgent {
                 self.skills_dirs.write().push(claude_dir);
             }
         }
-        Arc::clone(self)
-    }
-
-    pub fn with_tool_mode(self: &Arc<Self>, mode: ToolMode) -> Arc<Self> {
-        *self.tool_mode.write() = mode;
         Arc::clone(self)
     }
 
@@ -222,23 +278,22 @@ impl AppAgent {
         *self.llm.write() = llm;
     }
 
-    pub fn tool_mode(&self) -> ToolMode {
-        *self.tool_mode.read()
-    }
-
     pub fn variables(&self) -> Option<Arc<Variables>> {
         self.variables.read().clone()
     }
 
-    // -- core: submit a turn, return a stream of RunEvents -------------------
+    pub fn storage(&self) -> Arc<dyn Storage> {
+        self.storage.read().clone()
+    }
 
-    pub async fn submit(&self, request: TurnRequest) -> Result<TurnStream> {
+    // -- query ---------------------------------------------------------------
+
+    pub async fn query(&self, request: QueryRequest) -> Result<QueryStream> {
         let session = self.resolve_session(request.session_id.as_deref()).await?;
         let session_meta = session.meta().await;
         let session_id = session_meta.session_id.clone();
         let run_id = crate::types::new_id();
         let llm = self.llm.read().clone();
-        let model = llm.model.clone();
 
         logx!(
             info,
@@ -247,17 +302,17 @@ impl AppAgent {
             run_id = %run_id,
             session_id = %session_id,
             provider = ?llm.provider,
-            model = %model,
+            model = %llm.model,
         );
 
         let prior_transcripts = session.transcript().await;
         let (runtime_rx, engine_handle) = self
-            .create_engine(
+            .create_turn(
                 &request.prompt,
                 &prior_transcripts,
                 &run_id,
                 &session_id,
-                request.ask_fn,
+                request.mode,
             )
             .await?;
 
@@ -272,11 +327,34 @@ impl AppAgent {
             session_id.clone(),
         ));
 
-        Ok(TurnStream {
+        Ok(QueryStream {
             rx,
             session_id,
             run_id,
             engine_handle,
+        })
+    }
+
+    // -- fork ----------------------------------------------------------------
+
+    /// Fork an independent, non-persisted agent for side conversations.
+    ///
+    /// Uses the current LLM configuration with readonly tools and in-memory
+    /// storage. The returned `ForkedAgent` maintains multi-turn context
+    /// in-memory via `Session`. Drop to discard — nothing is persisted.
+    pub fn fork(self: &Arc<Self>, request: ForkRequest) -> Result<ForkedAgent> {
+        let forked = Arc::new(Self {
+            llm: RwLock::new(self.llm.read().clone()),
+            system_prompt: RwLock::new(request.system_prompt),
+            limits: RwLock::new(self.limits.read().clone()),
+            skills_dirs: RwLock::new(vec![]),
+            cwd: self.cwd.clone(),
+            storage: RwLock::new(Arc::new(MemoryStorage::new())),
+            variables: RwLock::new(None),
+        });
+        Ok(ForkedAgent {
+            agent: forked,
+            session_id: None,
         })
     }
 
@@ -305,17 +383,13 @@ impl AppAgent {
         Session::open(id, storage).await
     }
 
-    pub fn storage(&self) -> Arc<dyn Storage> {
-        self.storage.read().clone()
-    }
-
     // -- private -------------------------------------------------------------
 
-    fn build_system_prompt(&self) -> String {
+    fn build_system_prompt(&self, mode: &ToolMode) -> String {
         let base = self.system_prompt.read().clone();
-        let mut prompt = match *self.tool_mode.read() {
-            ToolMode::Normal => base,
-            ToolMode::Planning => format!("{base}\n\n{PLANNING_MODE_PROMPT}"),
+        let mut prompt = match mode {
+            ToolMode::Planning { .. } => format!("{base}\n\n{PLANNING_MODE_PROMPT}"),
+            _ => base,
         };
 
         if let Some(vars) = self.variables.read().as_ref() {
@@ -352,58 +426,40 @@ impl AppAgent {
         }
     }
 
-    async fn create_engine(
+    async fn create_turn(
         &self,
         prompt: &str,
         prior_transcripts: &[TranscriptItem],
         run_id: &str,
         session_id: &str,
-        ask_fn: Option<bend_engine::tools::AskUserFn>,
+        mode: ToolMode,
     ) -> Result<(
         mpsc::UnboundedReceiver<super::runtime::RuntimeEvent>,
         EngineHandle,
     )> {
         let llm = self.llm.read().clone();
-        let env_pairs = self
-            .variables()
-            .map(|v| v.all_env_pairs())
-            .unwrap_or_default();
-        let tools = if let Some(tools_fn) = self.tools_override {
-            // tools_override provides a fixed tool set (e.g. readonly for side
-            // conversations) — do not append extra tools like MemoryTool.
-            tools_fn()
-        } else {
-            let mut t = match *self.tool_mode.read() {
-                ToolMode::Planning => bend_engine::tools::planning_tools(
-                    ask_fn,
-                    "This tool is not allowed in planning mode. \
-                     Suggest the user to use /act to switch to execution mode.",
-                    env_pairs,
-                ),
-                ToolMode::Normal => bend_engine::tools::base_tools(env_pairs),
-            };
+        let system_prompt = self.build_system_prompt(&mode);
+        let mut tools = build_tools(&mode);
 
-            // Append MemoryTool (same pattern as SkillTool — constructed by app layer)
-            if let Some(memory_tool) = super::prompt::memory::load_memory_tool(&self.cwd) {
-                let memory_tool = match *self.tool_mode.read() {
-                    ToolMode::Planning => memory_tool.disallow_writes(
-                        "This tool is not allowed in planning mode. \
-                         Suggest the user to use /act to switch to execution mode.",
-                    ),
-                    ToolMode::Normal => memory_tool,
-                };
-                t.push(Box::new(memory_tool));
+        // MemoryTool
+        if !mode.is_readonly() {
+            if let Some(mt) = super::prompt::memory::load_memory_tool(&self.cwd) {
+                if mode.is_planning() {
+                    tools.push(Box::new(mt.disallow_writes(
+                        "Not allowed in planning mode. Use /act to switch.",
+                    )));
+                } else {
+                    tools.push(Box::new(mt));
+                }
             }
-
-            t
-        };
+        }
 
         let options = EngineOptions {
             provider: llm.provider,
             model: llm.model,
             api_key: llm.api_key,
             base_url: llm.base_url,
-            system_prompt: self.build_system_prompt(),
+            system_prompt,
             limits: self.limits.read().clone(),
             skills_dirs: self.skills_dirs.read().clone(),
             tools,
@@ -417,69 +473,31 @@ impl AppAgent {
         )
         .await
     }
-
-    /// Start a side conversation — an independent, non-persisted agent loop.
-    ///
-    /// Uses the current LLM configuration with readonly tools and `MemoryStorage`
-    /// so nothing is written to disk. The returned `SideAgent` reuses the
-    /// standard `submit()` → `run_loop()` → `TurnStream` pipeline; multi-turn
-    /// context is maintained in-memory by `Session`.
-    pub fn start_side_conversation(self: &Arc<Self>, request: SideRequest) -> Result<SideAgent> {
-        let llm = self.llm.read().clone();
-        let mem_storage: Arc<dyn Storage> = Arc::new(MemoryStorage::new());
-
-        let side_agent = Arc::new(Self {
-            llm: RwLock::new(llm),
-            system_prompt: RwLock::new(request.system_prompt),
-            limits: RwLock::new(self.limits.read().clone()),
-            skills_dirs: RwLock::new(vec![]),
-            tool_mode: RwLock::new(ToolMode::Normal),
-            cwd: self.cwd.clone(),
-            storage: RwLock::new(mem_storage),
-            variables: RwLock::new(None),
-            tools_override: Some(bend_engine::tools::readonly_tools),
-        });
-
-        Ok(SideAgent {
-            agent: side_agent,
-            session_id: None,
-        })
-    }
 }
 
 // ---------------------------------------------------------------------------
-// SideRequest
+// ForkRequest / ForkedAgent
 // ---------------------------------------------------------------------------
 
-/// Request to start a side conversation.
-/// Separate type from `TurnRequest` — different intent, different lifecycle.
-pub struct SideRequest {
-    /// System prompt for the side conversation.
+pub struct ForkRequest {
     pub system_prompt: String,
 }
 
-// ---------------------------------------------------------------------------
-// SideAgent
-// ---------------------------------------------------------------------------
-
-/// Handle for a side conversation.
+/// Handle for a forked conversation.
 ///
-/// Wraps an ephemeral `AppAgent` backed by `MemoryStorage`. Multi-turn context
+/// Wraps an ephemeral `Agent` backed by `MemoryStorage`. Multi-turn context
 /// is maintained in-memory by `Session`. Drop to discard — nothing is persisted.
-///
-/// The `session_id` on the returned `TurnStream` is a temporary identifier
-/// (not resumable).
-pub struct SideAgent {
-    agent: Arc<AppAgent>,
+pub struct ForkedAgent {
+    agent: Arc<Agent>,
     session_id: Option<String>,
 }
 
-impl SideAgent {
-    /// Send a message. The first call creates a new in-memory session;
-    /// subsequent calls reuse the same session for multi-turn context.
-    pub async fn send(&mut self, prompt: &str) -> Result<TurnStream> {
-        let request = TurnRequest::text(prompt).session_id(self.session_id.clone());
-        let stream = self.agent.submit(request).await?;
+impl ForkedAgent {
+    pub async fn query(&mut self, prompt: &str) -> Result<QueryStream> {
+        let request = QueryRequest::text(prompt)
+            .session_id(self.session_id.clone())
+            .mode(ToolMode::Readonly);
+        let stream = self.agent.query(request).await?;
         if self.session_id.is_none() {
             self.session_id = Some(stream.session_id.clone());
         }

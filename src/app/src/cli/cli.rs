@@ -4,11 +4,11 @@ use std::sync::Arc;
 use super::format::format_tool_input;
 use super::format::truncate;
 use crate::agent::prompt::SystemPrompt;
-use crate::agent::AppAgent;
+use crate::agent::Agent;
 use crate::agent::ExecutionLimits;
+use crate::agent::QueryRequest;
 use crate::agent::RunEvent;
 use crate::agent::RunEventPayload;
-use crate::agent::TurnRequest;
 use crate::agent::Variables;
 use crate::cli::args::CliArgs;
 use crate::cli::args::CliCommand;
@@ -70,7 +70,7 @@ impl Cli {
             builder = builder.with_append(extra);
         }
         let system_prompt = builder.build();
-        let agent = AppAgent::new(&config, &cwd)?
+        let agent = Agent::new(&config, &cwd)?
             .with_system_prompt(system_prompt)
             .with_limits(self.build_limits())
             .with_skills_dirs(self.build_skills_dirs());
@@ -82,8 +82,8 @@ impl Cli {
         agent.with_variables(variables.clone());
 
         let secret_values = variables.secret_values();
-        let request = TurnRequest::text(prompt).session_id(self.args.resume.clone());
-        let mut stream = agent.submit(request).await?;
+        let request = QueryRequest::text(prompt).session_id(self.args.resume.clone());
+        let mut stream = agent.query(request).await?;
         while let Some(event) = stream.next().await {
             print_event(&event, &self.args.output_format, &secret_values);
         }
@@ -112,7 +112,7 @@ impl Cli {
             builder = builder.with_append(extra);
         }
         let system_prompt = builder.build();
-        let agent = AppAgent::new(&config, &cwd)?
+        let agent = Agent::new(&config, &cwd)?
             .with_system_prompt(system_prompt)
             .with_limits(self.build_limits())
             .with_skills_dirs(self.build_skills_dirs());

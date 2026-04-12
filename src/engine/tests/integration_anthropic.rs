@@ -137,7 +137,15 @@ async fn test_anthropic_tool_use() {
         system_prompt:
             "You are a helpful assistant. Use the bash tool to answer questions. Be concise.".into(),
         messages: Vec::new(),
-        tools: tools::default_tools(),
+        tools: vec![
+            Box::new(tools::BashTool::default()),
+            Box::new(tools::ReadFileTool::default()),
+            Box::new(tools::WriteFileTool::new()),
+            Box::new(tools::EditFileTool::new()),
+            Box::new(tools::ListFilesTool::default()),
+            Box::new(tools::SearchTool::default()),
+            Box::new(tools::WebFetchTool::new()),
+        ],
     };
 
     let prompt = AgentMessage::Llm(Message::user(

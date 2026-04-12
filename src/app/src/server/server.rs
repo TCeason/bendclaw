@@ -13,8 +13,8 @@ use serde::Deserialize;
 use tower_http::cors::CorsLayer;
 
 use crate::agent::prompt::SystemPrompt;
-use crate::agent::AppAgent;
-use crate::agent::TurnRequest;
+use crate::agent::Agent;
+use crate::agent::QueryRequest;
 use crate::conf::Config;
 use crate::error::BendclawError;
 use crate::error::Result;
@@ -30,11 +30,11 @@ struct ChatRequest {
 }
 
 pub struct Server {
-    agent: Arc<AppAgent>,
+    agent: Arc<Agent>,
 }
 
 impl Server {
-    pub fn new(agent: Arc<AppAgent>) -> Arc<Self> {
+    pub fn new(agent: Arc<Agent>) -> Arc<Self> {
         Arc::new(Self { agent })
     }
 
@@ -94,11 +94,11 @@ impl Server {
         let (tx, rx) = tokio::sync::mpsc::channel(64);
 
         tokio::spawn(async move {
-            let request = TurnRequest::text(message).session_id(session_id);
+            let request = QueryRequest::text(message).session_id(session_id);
 
-            match self.agent.submit(request).await {
-                Ok(mut turn_stream) => {
-                    while let Some(event) = turn_stream.next().await {
+            match self.agent.query(request).await {
+                Ok(mut query_stream) => {
+                    while let Some(event) = query_stream.next().await {
                         for sse in stream::map_run_event(&event) {
                             if tx.send(sse).await.is_err() {
                                 break;
@@ -136,7 +136,7 @@ pub async fn start(conf: Config) -> Result<()> {
         skills_dirs.push(global);
     }
 
-    let agent = AppAgent::new(&conf, &cwd)?
+    let agent = Agent::new(&conf, &cwd)?
         .with_system_prompt(system_prompt)
         .with_skills_dirs(skills_dirs);
 

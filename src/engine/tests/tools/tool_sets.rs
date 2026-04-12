@@ -1,8 +1,18 @@
-//! Tests for tool set functions (default_tools, base_tools, readonly_tools).
+//! Tests for tool construction — verifying tools can be built directly.
+
+use bendengine::tools::*;
 
 #[tokio::test]
-async fn test_default_tools_complete() {
-    let tools = bendengine::tools::default_tools();
+async fn test_full_tools_complete() {
+    let tools: Vec<Box<dyn bendengine::AgentTool>> = vec![
+        Box::new(BashTool::default()),
+        Box::new(ReadFileTool::default()),
+        Box::new(WriteFileTool::new()),
+        Box::new(EditFileTool::new()),
+        Box::new(ListFilesTool::default()),
+        Box::new(SearchTool::default()),
+        Box::new(WebFetchTool::new()),
+    ];
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     assert_eq!(names.len(), 7);
     assert!(names.contains(&"bash"));
@@ -12,16 +22,12 @@ async fn test_default_tools_complete() {
 }
 
 #[tokio::test]
-async fn test_base_tools_complete() {
-    let tools = bendengine::tools::base_tools(Vec::new());
-    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert_eq!(names.len(), 7);
-    assert!(names.contains(&"bash"));
-}
-
-#[tokio::test]
 async fn test_readonly_tools_contains_only_safe_tools() {
-    let tools = bendengine::tools::readonly_tools();
+    let tools: Vec<Box<dyn bendengine::AgentTool>> = vec![
+        Box::new(ReadFileTool::default()),
+        Box::new(ListFilesTool::default()),
+        Box::new(SearchTool::default()),
+    ];
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     assert_eq!(names.len(), 3);
     assert!(names.contains(&"read_file"));

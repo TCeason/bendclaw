@@ -129,7 +129,7 @@ pub(super) async fn create_engine(
 
 /// Consume `RuntimeEvent`s, persist transcripts, and relay `RunEvent`s to the
 /// external consumer. This is the run orchestration loop extracted from
-/// `AppAgent::run()`.
+/// `Agent::query()`.
 pub(super) async fn run_loop(
     mut rx: mpsc::UnboundedReceiver<RuntimeEvent>,
     tx: mpsc::UnboundedSender<RunEvent>,

@@ -6,13 +6,13 @@ pub mod runtime;
 #[allow(hidden_glob_reexports)]
 pub(crate) mod variables;
 
-pub use agent::AppAgent;
+pub use agent::Agent;
 pub use agent::ExecutionLimits;
-pub use agent::SideAgent;
-pub use agent::SideRequest;
+pub use agent::ForkRequest;
+pub use agent::ForkedAgent;
+pub use agent::QueryRequest;
+pub use agent::QueryStream;
 pub use agent::ToolMode;
-pub use agent::TurnRequest;
-pub use agent::TurnStream;
 pub use event::RunEvent;
 pub use event::RunEventContext;
 pub use event::RunEventPayload;

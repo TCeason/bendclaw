@@ -46,10 +46,10 @@ use super::selector::PromptExit;
 use super::selector::RunControl;
 use super::selector::SelectorOption;
 use super::sink::ReplSink;
-use crate::agent::AppAgent;
+use crate::agent::Agent;
 use crate::agent::ExecutionLimits;
+use crate::agent::QueryRequest;
 use crate::agent::SessionMeta;
-use crate::agent::TurnRequest;
 use crate::cli::format::mask_value;
 use crate::conf::paths;
 use crate::conf::Config;
@@ -62,11 +62,12 @@ use crate::error::Result;
 // ---------------------------------------------------------------------------
 
 pub struct Repl {
-    agent: Arc<AppAgent>,
+    agent: Arc<Agent>,
     config: Config,
     session_id: Option<String>,
     cwd: String,
     completion_state: CompletionStateRef,
+    planning: bool,
 }
 
 impl Repl {
@@ -82,7 +83,7 @@ impl Repl {
             .to_string_lossy()
             .to_string();
 
-        let agent = AppAgent::new(&config, &cwd)?
+        let agent = Agent::new(&config, &cwd)?
             .with_system_prompt(system_prompt)
             .with_limits(limits)
             .with_skills_dirs(skills_dirs);
@@ -93,11 +94,12 @@ impl Repl {
             session_id,
             cwd,
             completion_state: Arc::new(RwLock::new(CompletionState::default())),
+            planning: false,
         })
     }
 
     pub fn new_with_agent(
-        agent: Arc<AppAgent>,
+        agent: Arc<Agent>,
         config: Config,
         session_id: Option<String>,
     ) -> Result<Self> {
@@ -108,6 +110,7 @@ impl Repl {
             session_id,
             cwd,
             completion_state: Arc::new(RwLock::new(CompletionState::default())),
+            planning: false,
         })
     }
 
@@ -236,13 +239,13 @@ impl Repl {
                 self.set_model(s.trim_start_matches("/model ").trim())?
             }
             "/plan" => {
-                self.agent.with_tool_mode(crate::agent::ToolMode::Planning);
+                self.planning = true;
                 println!(
                     "{DIM}  planning mode on — read-only tools only; use /act to resume execution{RESET}\n"
                 );
             }
             "/act" => {
-                self.agent.with_tool_mode(crate::agent::ToolMode::Normal);
+                self.planning = false;
                 println!("{DIM}  action mode on — full tool set restored{RESET}\n");
             }
             "/env" => self.handle_env_list(),
@@ -391,9 +394,22 @@ impl Repl {
             })
         });
 
-        let request = TurnRequest::text(input)
+        let envs = self
+            .agent
+            .variables()
+            .map(|v| v.all_env_pairs())
+            .unwrap_or_default();
+        let mode = if self.planning {
+            crate::agent::ToolMode::Planning {
+                ask_fn: Some(ask_fn),
+                envs,
+            }
+        } else {
+            crate::agent::ToolMode::Interactive { ask_fn, envs }
+        };
+        let request = QueryRequest::text(input)
             .session_id(self.session_id.clone())
-            .ask_fn(ask_fn);
+            .mode(mode);
         let agent = self.agent.clone();
         let spinner_state = Arc::new(parking_lot::Mutex::new(super::spinner::SpinnerState::new()));
         let sink = Arc::new(ReplSink::new(spinner_state.clone()));
@@ -406,7 +422,7 @@ impl Repl {
         let early_sid = Arc::new(parking_lot::Mutex::new(None::<String>));
         let early_sid_ref = early_sid.clone();
         let mut run_task = tokio::spawn(async move {
-            let mut stream = agent.submit(request).await?;
+            let mut stream = agent.query(request).await?;
             let session_id = stream.session_id.clone();
             *early_sid_ref.lock() = Some(session_id.clone());
             while let Some(event) = stream.next().await {
@@ -710,8 +726,8 @@ impl Repl {
              - Use search to locate key information when needed\n\
              - Do not modify any files"
         );
-        let request = crate::agent::SideRequest { system_prompt };
-        let mut side = self.agent.start_side_conversation(request)?;
+        let request = crate::agent::ForkRequest { system_prompt };
+        let mut side = self.agent.fork(request)?;
 
         // 3. Enter side mode
         println!("\n  {DIM}[log mode] analyzing: {log_path}{RESET}");
@@ -751,14 +767,14 @@ impl Repl {
 
     async fn consume_side_turn(
         &self,
-        side: &mut crate::agent::SideAgent,
+        side: &mut crate::agent::ForkedAgent,
         prompt: &str,
     ) -> Result<()> {
         let spinner_state = Arc::new(parking_lot::Mutex::new(super::spinner::SpinnerState::new()));
         let sink = Arc::new(ReplSink::new(spinner_state.clone()));
         sink.set_user_prompt(prompt);
 
-        let mut stream = side.send(prompt).await?;
+        let mut stream = side.query(prompt).await?;
         let sink_ref = sink.clone();
         let mut run_task = tokio::spawn(async move {
             while let Some(event) = stream.next().await {
@@ -888,10 +904,7 @@ impl Repl {
             .as_deref()
             .map(short_id)
             .unwrap_or_else(|| "new".into());
-        let mode = match self.agent.tool_mode() {
-            crate::agent::ToolMode::Normal => "",
-            crate::agent::ToolMode::Planning => " plan",
-        };
+        let mode = if self.planning { " plan" } else { "" };
         let model = &self.config.active_llm().model;
         match branch {
             Some(branch) => format!(
