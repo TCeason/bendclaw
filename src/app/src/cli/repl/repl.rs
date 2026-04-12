@@ -640,6 +640,15 @@ impl Repl {
                 } else {
                     println!("{DIM}  failed to resolve log path{RESET}");
                 }
+                let transcript_path = self
+                    .config
+                    .storage
+                    .fs
+                    .root_dir
+                    .join("sessions")
+                    .join(session_id)
+                    .join("transcript.jsonl");
+                println!("{}", transcript_path.display());
             }
             None => println!("{DIM}  no active session{RESET}"),
         }
