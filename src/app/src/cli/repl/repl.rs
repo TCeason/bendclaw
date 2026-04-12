@@ -21,8 +21,10 @@ use tokio::sync::oneshot;
 
 use super::commands::command_help;
 use super::commands::command_short_description;
-use super::commands::is_slash_command;
+use super::commands::resolve_slash_command;
+use super::commands::ResolvedSlashCommand;
 use super::commands::KNOWN_COMMANDS;
+use super::completion::is_slash_prefix;
 use super::completion::CompletionState;
 use super::completion::CompletionStateRef;
 use super::completion::ReplHelper;
@@ -186,9 +188,22 @@ impl Repl {
             };
             let input = input.trim();
 
-            if is_slash_command(input) {
-                if self.handle_command(input).await? {
-                    break;
+            if is_slash_like(input) {
+                match resolve_slash_command(input) {
+                    ResolvedSlashCommand::Resolved(command) => {
+                        if self.handle_command(&command).await? {
+                            break;
+                        }
+                    }
+                    ResolvedSlashCommand::Ambiguous(candidates) => {
+                        let list = candidates.join(", ");
+                        eprintln!("{YELLOW}  ambiguous command: {list}{RESET}");
+                        eprintln!("{DIM}  type more characters or /help for commands{RESET}\n");
+                    }
+                    ResolvedSlashCommand::Unknown => {
+                        eprintln!("{RED}  unknown command: {input}{RESET}");
+                        eprintln!("{DIM}  type /help for available commands{RESET}\n");
+                    }
                 }
             } else if self.run_prompt(input).await? {
                 break;
@@ -1104,4 +1119,12 @@ fn is_valid_env_key(key: &str) -> bool {
         _ => return false,
     }
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Returns `true` when the input looks like a hand-typed slash command
+/// (as opposed to a pasted file path or normal prompt text).
+/// This is used to decide whether to attempt command resolution at all.
+fn is_slash_like(input: &str) -> bool {
+    let first_word = input.split_whitespace().next().unwrap_or("");
+    is_slash_prefix(first_word) && first_word.len() > 1
 }
