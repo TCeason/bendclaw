@@ -16,12 +16,15 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
             }
             Message::Assistant { content, .. } => {
                 let blocks = content_to_anthropic(content);
-                // Skip assistant messages with empty content — Anthropic rejects them
-                // with "Improperly formed request". These can arise from empty provider
-                // responses (e.g. proxy returning 200 with no actual content).
-                if blocks.is_empty() {
-                    continue;
-                }
+                // Empty assistant messages can arise from empty provider responses
+                // (e.g. proxy returning 200 with no actual content). Anthropic
+                // rejects truly empty content arrays, so emit a placeholder text
+                // block to preserve the required user/assistant alternation.
+                let blocks = if blocks.is_empty() {
+                    vec![serde_json::json!({"type": "text", "text": "[empty response]"})]
+                } else {
+                    blocks
+                };
                 messages.push(serde_json::json!({
                     "role": "assistant",
                     "content": blocks,
@@ -60,6 +63,11 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
             }
         }
     }
+
+    // Merge consecutive messages with the same role — Anthropic API requires
+    // strict user/assistant alternation. Consecutive same-role messages can
+    // arise when empty assistant responses are skipped above.
+    let mut messages = merge_consecutive_roles(messages);
 
     // -----------------------------------------------------------------------
     // Prompt caching — place cache_control breakpoints based on CacheConfig.
@@ -207,12 +215,79 @@ pub fn content_to_anthropic(content: &[Content]) -> Vec<serde_json::Value> {
                 id,
                 name,
                 arguments,
-            } => serde_json::json!({
-                "type": "tool_use",
-                "id": id,
-                "name": name,
-                "input": arguments,
-            }),
+            } => {
+                // Sanitise malformed tool_use input that can crash Bedrock's
+                // Anthropic-to-Converse translator. When the model produces
+                // garbled JSON (e.g. empty-string keys, nested objects where
+                // strings are expected) the gateway returns
+                // UnknownOperationException. Replace such inputs with an empty
+                // object — the original error is already captured in the
+                // corresponding tool_result.
+                let input = if is_malformed_tool_input(arguments) {
+                    serde_json::json!({})
+                } else {
+                    arguments.clone()
+                };
+                serde_json::json!({
+                    "type": "tool_use",
+                    "id": id,
+                    "name": name,
+                    "input": input,
+                })
+            }
         })
         .collect()
+}
+
+/// Detect malformed tool_use input that would crash the Bedrock gateway.
+///
+/// The model occasionally produces garbled JSON under high context pressure —
+/// e.g. empty-string keys, nested objects where flat strings are expected.
+/// Bedrock's Anthropic-to-Converse translator cannot handle these and returns
+/// `UnknownOperationException`.
+fn is_malformed_tool_input(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, _val) in map {
+                // Empty-string keys are never valid tool parameters
+                if key.is_empty() {
+                    return true;
+                }
+            }
+            false
+        }
+        // input should always be an object
+        _ => true,
+    }
+}
+
+/// Merge consecutive messages that share the same `role`.
+///
+/// Anthropic requires strict user/assistant alternation. When empty assistant
+/// messages are skipped, two user messages can end up adjacent. This function
+/// merges their `content` arrays into a single message.
+fn merge_consecutive_roles(messages: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    let mut merged: Vec<serde_json::Value> = Vec::with_capacity(messages.len());
+    for msg in messages {
+        let same_role = match merged.last() {
+            Some(prev) => prev["role"].as_str() == msg["role"].as_str(),
+            None => false,
+        };
+        if same_role {
+            // Same role — append content blocks to the previous message
+            if let Some(prev) = merged.last_mut() {
+                if let (Some(prev_content), Some(new_content)) = (
+                    prev["content"].as_array().cloned(),
+                    msg["content"].as_array().cloned(),
+                ) {
+                    let mut combined = prev_content;
+                    combined.extend(new_content);
+                    prev["content"] = serde_json::json!(combined);
+                }
+            }
+        } else {
+            merged.push(msg);
+        }
+    }
+    merged
 }
