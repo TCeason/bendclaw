@@ -4,7 +4,9 @@ use bendengine::provider::AnthropicProvider;
 use bendengine::provider::StreamEvent;
 use bendengine::types::*;
 
-use super::super::helpers::provider_helper::*;
+use super::super::fixtures::mock_server::*;
+use super::super::fixtures::sse::anthropic as anthropic_sse;
+use super::super::fixtures::stream_config::*;
 
 // ---------------------------------------------------------------------------
 // SSE streaming — text response

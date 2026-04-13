@@ -2,7 +2,7 @@ use bendengine::provider::anthropic::request::*;
 use bendengine::provider::traits::*;
 use bendengine::types::*;
 
-use super::super::helpers::provider_helper::*;
+use super::super::fixtures::stream_config::*;
 
 /// Helper: assistant message with text content.
 fn assistant(text: &str) -> Message {

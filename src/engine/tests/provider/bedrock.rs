@@ -1,7 +1,7 @@
 use bendengine::provider::bedrock::*;
 use bendengine::types::*;
 
-use super::helpers::provider_helper::*;
+use super::fixtures::stream_config::*;
 
 #[test]
 fn test_build_bedrock_body() {

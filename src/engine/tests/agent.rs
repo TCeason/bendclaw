@@ -3,4 +3,4 @@ mod agent;
 #[path = "agent/agent_loop.rs"]
 mod agent_loop;
 
-mod helpers;
+mod fixtures;

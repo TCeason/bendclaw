@@ -8,10 +8,10 @@ use bendengine::*;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use super::helpers::loop_runner::collect_events;
-use super::helpers::loop_runner::make_config;
-use super::helpers::loop_runner::MockTool;
-use super::helpers::loop_runner::TestHarness;
+use super::fixtures::agent_harness::collect_events;
+use super::fixtures::agent_harness::make_config;
+use super::fixtures::agent_harness::MockTool;
+use super::fixtures::agent_harness::TestHarness;
 
 // ---------------------------------------------------------------------------
 // Tests using TestHarness

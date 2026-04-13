@@ -1,8 +1,9 @@
 use bendengine::context::*;
 use bendengine::types::*;
-use helpers::message_pattern::*;
+use fixtures::compaction_assert::*;
+use fixtures::message_dsl::*;
 
-use super::helpers;
+use super::fixtures;
 
 #[test]
 fn test_estimate_tokens() {

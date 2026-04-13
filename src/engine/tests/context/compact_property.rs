@@ -1,9 +1,10 @@
 use bendengine::context::*;
 use bendengine::types::*;
-use helpers::message_pattern::*;
+use fixtures::compaction_assert::*;
+use fixtures::message_dsl::*;
 use proptest::prelude::*;
 
-use super::helpers;
+use super::fixtures;
 
 /// Generate a random valid pattern from atomic units: "u", "a", "tr"
 fn arb_pattern() -> impl Strategy<Value = String> {

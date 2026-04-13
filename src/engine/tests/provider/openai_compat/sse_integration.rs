@@ -5,7 +5,9 @@ use bendengine::provider::OpenAiCompatProvider;
 use bendengine::provider::StreamEvent;
 use bendengine::types::*;
 
-use super::super::helpers::provider_helper::*;
+use super::super::fixtures::mock_server::*;
+use super::super::fixtures::sse::openai as openai_sse;
+use super::super::fixtures::stream_config::*;
 
 /// OpenAI config pointing at a mock server base_url.
 fn openai_config() -> StreamConfig {

@@ -7,7 +7,7 @@ use bendengine::provider::ProviderError;
 use bendengine::provider::StreamEvent;
 use bendengine::types::*;
 
-use super::super::helpers::provider_helper::collect_stream_events;
+use super::super::fixtures::stream_config::collect_stream_events;
 
 // ---------------------------------------------------------------------------
 // Error-shaped JSON classification

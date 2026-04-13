@@ -4,7 +4,7 @@ use bendengine::provider::stream_fallback::FallbackEmitter;
 use bendengine::provider::StreamEvent;
 use bendengine::types::*;
 
-use super::helpers::provider_helper::collect_stream_events;
+use super::fixtures::stream_config::collect_stream_events;
 
 #[test]
 fn fallback_emitter_text_only() {

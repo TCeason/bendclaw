@@ -4,7 +4,7 @@ use bendengine::provider::openai_compat::request::*;
 use bendengine::provider::openai_compat::types::OpenAiChunk;
 use bendengine::types::*;
 
-use super::super::helpers::provider_helper::*;
+use super::super::fixtures::stream_config::*;
 
 #[test]
 fn test_build_request_body_basic() {
