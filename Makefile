@@ -103,3 +103,9 @@ build-napi:
 
 build-ui: build-napi
 	cd cli && bun install
+
+run-ui: build-ui
+	cd cli && bun run src/index.tsx
+
+check-ui:
+	cd cli && bun run src/index.tsx --version >/dev/null
