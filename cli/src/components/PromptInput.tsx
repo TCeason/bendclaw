@@ -10,6 +10,7 @@
 
 import React, { useState, useRef, useEffect } from 'react'
 import { Text, Box, useInput, useStdout } from 'ink'
+import { complete } from '../commands/completion.js'
 
 interface PromptInputProps {
   model: string
@@ -31,6 +32,7 @@ export function PromptInput({
   const [lines, setLines] = useState<string[]>([''])
   const [cursorLine, setCursorLine] = useState(0)
   const [cursorCol, setCursorCol] = useState(0)
+  const [completionCandidates, setCompletionCandidates] = useState<string[]>([])
   const historyRef = useRef<string[]>([])
   const historyIndexRef = useRef(-1)
   const savedInputRef = useRef('')
@@ -264,15 +266,33 @@ export function PromptInput({
       return
     }
 
-    // Tab — insert 2 spaces
+    // Tab — completion
     if (key.tab) {
-      setLines((prev) => {
-        const newLines = [...prev]
-        const line = newLines[cursorLine]!
-        newLines[cursorLine] = line.slice(0, cursorCol) + '  ' + line.slice(cursorCol)
-        return newLines
-      })
-      setCursorCol((prev) => prev + 2)
+      const line = lines[cursorLine]!
+      const result = complete(line, cursorCol)
+      if (result) {
+        if (result.candidates.length === 1) {
+          // Single match — apply and clear candidates
+          setLines((prev) => {
+            const newLines = [...prev]
+            const l = newLines[cursorLine]!
+            newLines[cursorLine] = l.slice(0, result.wordStart) + result.replacement + l.slice(cursorCol)
+            return newLines
+          })
+          setCursorCol(result.wordStart + result.replacement.length)
+          setCompletionCandidates([])
+        } else {
+          // Multiple matches — apply common prefix and show candidates
+          setLines((prev) => {
+            const newLines = [...prev]
+            const l = newLines[cursorLine]!
+            newLines[cursorLine] = l.slice(0, result.wordStart) + result.replacement + l.slice(cursorCol)
+            return newLines
+          })
+          setCursorCol(result.wordStart + result.replacement.length)
+          setCompletionCandidates(result.candidates)
+        }
+      }
       return
     }
 
@@ -281,6 +301,7 @@ export function PromptInput({
 
     // Regular character input
     if (ch) {
+      setCompletionCandidates([])
       setLines((prev) => {
         const newLines = [...prev]
         const line = newLines[cursorLine]!
@@ -321,6 +342,14 @@ export function PromptInput({
           )}
         </Box>
       ))}
+
+      {/* Completion candidates */}
+      {completionCandidates.length > 1 && (
+        <Box>
+          <Text dimColor>  </Text>
+          <Text dimColor>{completionCandidates.join('  ')}</Text>
+        </Box>
+      )}
 
       {/* Bottom border */}
       <Text dimColor>{borderLine}</Text>
