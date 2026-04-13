@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/132aa3cc-5c79-445a-8c18-5da152f7745d" alt="Evot" />
+  <img src="https://pbs.twimg.com/profile_banners/2024395183564214273/1773027467/1500x500" alt="Evot" />
 </p>
 
 <p align="center">
@@ -29,6 +29,7 @@
 
 ## 📢 News
 
+- **2026-04-13** 🏷️ Project renamed from BendClaw to Evot.
 - **2026-04-13** 🔌 [Skills] Auto-load Claude Code skills.
 - **2026-04-11** 🧠 [Memory] Auto-load Claude Code memories for the current project.
 - **2026-04-10** 🎯 [Plan Mode] Add `ask_user` tool for interactive option selection.
