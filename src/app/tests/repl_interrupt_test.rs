@@ -1,5 +1,5 @@
-use bendclaw::cli::repl::interrupt::Action;
-use bendclaw::cli::repl::interrupt::InterruptHandler;
+use evot::cli::repl::interrupt::Action;
+use evot::cli::repl::interrupt::InterruptHandler;
 
 #[test]
 fn first_ctrl_c_on_empty_returns_show_hint() {

@@ -4,7 +4,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::conf::paths;
-use crate::error::BendclawError;
+use crate::error::EvotError;
 use crate::error::Result;
 
 #[derive(Debug, Clone)]
@@ -73,21 +73,21 @@ impl Config {
     pub fn validate(&self) -> Result<()> {
         let llm = self.active_llm();
         if llm.api_key.is_empty() {
-            return Err(BendclawError::Conf("active llm api_key not set".into()));
+            return Err(EvotError::Conf("active llm api_key not set".into()));
         }
 
         match self.storage.backend {
             StorageBackend::Fs => {
                 if self.storage.fs.root_dir.as_os_str().is_empty() {
-                    return Err(BendclawError::Conf("storage.fs.root_dir not set".into()));
+                    return Err(EvotError::Conf("storage.fs.root_dir not set".into()));
                 }
             }
             StorageBackend::Cloud => {
                 if self.storage.cloud.endpoint.is_empty() {
-                    return Err(BendclawError::Conf("storage.cloud.endpoint not set".into()));
+                    return Err(EvotError::Conf("storage.cloud.endpoint not set".into()));
                 }
                 if self.storage.cloud.api_key.is_empty() {
-                    return Err(BendclawError::Conf("storage.cloud.api_key not set".into()));
+                    return Err(EvotError::Conf("storage.cloud.api_key not set".into()));
                 }
             }
         }
@@ -199,7 +199,7 @@ impl ProviderKind {
         match value.to_lowercase().as_str() {
             "anthropic" => Ok(Self::Anthropic),
             "openai" => Ok(Self::OpenAi),
-            other => Err(BendclawError::Conf(format!("unknown provider: {other}"))),
+            other => Err(EvotError::Conf(format!("unknown provider: {other}"))),
         }
     }
 }

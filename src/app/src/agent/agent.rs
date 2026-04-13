@@ -12,7 +12,7 @@ use super::runtime::EngineOptions;
 use super::variables::Variables;
 use crate::conf::Config;
 use crate::conf::LlmConfig;
-use crate::error::BendclawError;
+use crate::error::EvotError;
 use crate::error::Result;
 use crate::session::Session;
 use crate::storage::open_storage;
@@ -414,7 +414,7 @@ impl Agent {
                     session.set_model(model).await;
                     Ok(session)
                 }
-                None => Err(BendclawError::Session(format!("session not found: {id}"))),
+                None => Err(EvotError::Session(format!("session not found: {id}"))),
             },
             None => {
                 let id = crate::types::new_id();

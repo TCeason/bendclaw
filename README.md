@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/132aa3cc-5c79-445a-8c18-5da152f7745d" alt="BendClaw" />
+  <img src="https://github.com/user-attachments/assets/132aa3cc-5c79-445a-8c18-5da152f7745d" alt="Evot" />
 </p>
 
 <p align="center">
-  <strong>BendClaw</strong>
+  <strong>Evot</strong>
 </p>
 
 <p align="center">
@@ -20,7 +20,7 @@
 
 <p align="center">
   <a href="#-news">News</a> &middot;
-  <a href="#-why-bendclaw">Why</a> &middot;
+  <a href="#-why-evot">Why</a> &middot;
   <a href="#installation">Install</a> &middot;
   <a href="#quickstart">Quickstart</a> &middot;
   <a href="#development">Dev</a> &middot;
@@ -36,20 +36,20 @@
 
 ---
 
-## ⚡ Why BendClaw
+## ⚡ Why Evot
 
 Claude Code and Codex dump everything into context — bloated outputs, stale history, noise. Tokens wasted. Quality drops. No visibility into why.
 
-BendClaw doesn't waste a single token — and proves it.
+Evot doesn't waste a single token — and proves it.
 
 - **Clean context, always.** Every prompt to the LLM is minimal, high-signal, zero-waste.
 - **Blazing fast.** Fewer wasted tokens → fewer turns → complex tasks done in half the time.
-- **Fully observable.** Every LLM call, tool execution, and compaction tracked end-to-end. This data feeds back into the engine — BendClaw evolves its strategy so the next prompt is always leaner than the last.
+- **Fully observable.** Every LLM call, tool execution, and compaction tracked end-to-end. This data feeds back into the engine — Evot evolves its strategy so the next prompt is always leaner than the last.
 
 Not a CLI wrapper. The agent engine you build on — ships with REPL, CLI, and server.
 
 <p align="center">
-  <img width="815" height="768" alt="BendClaw in action" src="https://github.com/user-attachments/assets/f0f14c8c-37f2-4aff-a91a-c30768488b3d" />
+  <img width="815" height="768" alt="Evot in action" src="https://github.com/user-attachments/assets/f0f14c8c-37f2-4aff-a91a-c30768488b3d" />
 </p>
 
 ## Installation
@@ -57,39 +57,39 @@ Not a CLI wrapper. The agent engine you build on — ships with REPL, CLI, and s
 ### One-liner (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/evotai/bendclaw/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/evotai/evot/main/install.sh | bash
 ```
 
 ### Build from source
 
 ```bash
-cargo install --git https://github.com/evotai/bendclaw.git
+cargo install --git https://github.com/evotai/evot.git
 ```
 
 ## Quickstart
 
-Create `~/.evotai/bendclaw.env`:
+Create `~/.evotai/evot.env`:
 
 ```env
 # Provider: "anthropic" or "openai"
-BENDCLAW_LLM_PROVIDER=anthropic
+EVOT_LLM_PROVIDER=anthropic
 
 # Anthropic
-BENDCLAW_ANTHROPIC_API_KEY=sk-ant-...
-BENDCLAW_ANTHROPIC_BASE_URL=https://your-api-endpoint.com
-BENDCLAW_ANTHROPIC_MODEL=claude-opus-4-6
+EVOT_ANTHROPIC_API_KEY=sk-ant-...
+EVOT_ANTHROPIC_BASE_URL=https://your-api-endpoint.com
+EVOT_ANTHROPIC_MODEL=claude-opus-4-6
 
 # OpenAI
-BENDCLAW_OPENAI_API_KEY=sk-...
-BENDCLAW_OPENAI_BASE_URL=https://your-api-endpoint.com/v1
-BENDCLAW_OPENAI_MODEL=gpt-5.4
+EVOT_OPENAI_API_KEY=sk-...
+EVOT_OPENAI_BASE_URL=https://your-api-endpoint.com/api/v1
+EVOT_OPENAI_MODEL=gpt-5.4
 ```
 
-Only the active provider's keys are required. Set `BENDCLAW_LLM_PROVIDER` to switch.
+Only the active provider's keys are required. Set `EVOT_LLM_PROVIDER` to switch.
 
 ```bash
-bendclaw                              # interactive REPL
-bendclaw -p "summarize today's PRs"   # one-shot task
+evot                              # interactive REPL
+evot -p "summarize today's PRs"   # one-shot task
 ```
 
 <details>
@@ -122,7 +122,7 @@ make test       # unit + integration tests
 <table>
   <tr>
     <td align="center" width="33%">
-      <a href="https://github.com/EvotAI/bendclaw/issues"><b>GitHub Issues</b></a><br>
+      <a href="https://github.com/EvotAI/evot/issues"><b>GitHub Issues</b></a><br>
       <sub>Bug reports / Feature</sub>
     </td>
     <td align="center" width="33%">

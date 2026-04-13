@@ -154,7 +154,7 @@ fn is_overloaded_message(message: &str) -> bool {
 // HTTP client
 // ---------------------------------------------------------------------------
 
-const USER_AGENT: &str = "bendclaw/0.1.0";
+const USER_AGENT: &str = "evot/0.1.0";
 
 pub fn new_client() -> Result<reqwest::Client, ProviderError> {
     reqwest::Client::builder()

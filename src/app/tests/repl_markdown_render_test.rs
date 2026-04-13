@@ -1,4 +1,4 @@
-use bendclaw::cli::repl::markdown::render::Renderer;
+use evot::cli::repl::markdown::render::Renderer;
 use streamdown_parser::inline::InlineElement;
 use streamdown_parser::ListBullet;
 use streamdown_parser::ParseEvent;
@@ -70,21 +70,21 @@ fn narrow_table_falls_back_to_vertical_format() {
 
 #[test]
 fn issue_references_are_rendered_without_osc_links() {
-    let output = render_events(80, &[ParseEvent::Text("see evotai/bendclaw#123".into())]);
+    let output = render_events(80, &[ParseEvent::Text("see evotai/evot#123".into())]);
 
-    assert!(!output.contains("https://github.com/evotai/bendclaw/issues/123"));
-    assert!(output.contains("evotai/bendclaw#123"));
+    assert!(!output.contains("https://github.com/evotai/evot/issues/123"));
+    assert!(output.contains("evotai/evot#123"));
     assert!(!output.contains("\x1b]8;;"));
 }
 
 #[test]
 fn inline_text_issue_references_are_rendered_without_osc_links() {
     let output = render_events(80, &[ParseEvent::InlineElements(vec![
-        InlineElement::Text("refs evotai/bendclaw#456".into()),
+        InlineElement::Text("refs evotai/evot#456".into()),
     ])]);
 
-    assert!(!output.contains("https://github.com/evotai/bendclaw/issues/456"));
-    assert!(output.contains("evotai/bendclaw#456"));
+    assert!(!output.contains("https://github.com/evotai/evot/issues/456"));
+    assert!(output.contains("evotai/evot#456"));
     assert!(!output.contains("\x1b]8;;"));
 }
 

@@ -4,7 +4,7 @@ use clap::Subcommand;
 use clap::ValueEnum;
 
 #[derive(Parser, Debug)]
-#[command(name = "bendclaw", about = "Self-evolving AI agent runtime")]
+#[command(name = "evot", about = "Self-evolving AI agent runtime")]
 pub struct CliArgs {
     #[arg(short = 'p', long)]
     pub prompt: Option<String>,

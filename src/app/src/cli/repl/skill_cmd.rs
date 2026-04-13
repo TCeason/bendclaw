@@ -13,7 +13,7 @@ use crate::agent::Agent;
 use crate::agent::ForkRequest;
 use crate::agent::RunEventPayload;
 use crate::conf::paths;
-use crate::error::BendclawError;
+use crate::error::EvotError;
 use crate::error::Result;
 
 // ---------------------------------------------------------------------------
@@ -62,7 +62,7 @@ fn skill_list() -> Result<()> {
     }
 
     let entries = fs::read_dir(&skills_dir)
-        .map_err(|e| BendclawError::Cli(format!("failed to read skills dir: {e}")))?;
+        .map_err(|e| EvotError::Cli(format!("failed to read skills dir: {e}")))?;
 
     let mut found = false;
     for entry in entries.flatten() {
@@ -104,7 +104,7 @@ async fn skill_install(source: &str, agent: &Arc<Agent>) -> Result<()> {
 
     let src = parse_github_source(source)?;
     let tmp_dir = tempfile::tempdir()
-        .map_err(|e| BendclawError::Cli(format!("failed to create temp dir: {e}")))?;
+        .map_err(|e| EvotError::Cli(format!("failed to create temp dir: {e}")))?;
     let clone_dir = tmp_dir.path().join("repo");
 
     // Clone with progress hint
@@ -113,20 +113,20 @@ async fn skill_install(source: &str, agent: &Arc<Agent>) -> Result<()> {
 
     let skills_dir = paths::skills_dir()?;
     fs::create_dir_all(&skills_dir)
-        .map_err(|e| BendclawError::Cli(format!("failed to create skills dir: {e}")))?;
+        .map_err(|e| EvotError::Cli(format!("failed to create skills dir: {e}")))?;
 
     // Determine what to install
     let installed = if let Some(ref subpath) = src.subpath {
         let sub_dir = clone_dir.join(subpath);
         if !sub_dir.is_dir() {
-            return Err(BendclawError::Cli(format!(
+            return Err(EvotError::Cli(format!(
                 "subpath \"{}\" not found in repository",
                 subpath.display()
             )));
         }
         let skill_md = sub_dir.join("SKILL.md");
         if !skill_md.exists() {
-            return Err(BendclawError::Cli(format!(
+            return Err(EvotError::Cli(format!(
                 "no SKILL.md found in {}",
                 subpath.display()
             )));
@@ -147,7 +147,7 @@ async fn skill_install(source: &str, agent: &Arc<Agent>) -> Result<()> {
         // Multi-skill repo: scan top-level subdirectories
         let mut names = Vec::new();
         let entries = fs::read_dir(&clone_dir)
-            .map_err(|e| BendclawError::Cli(format!("failed to read cloned repo: {e}")))?;
+            .map_err(|e| EvotError::Cli(format!("failed to read cloned repo: {e}")))?;
         for entry in entries.flatten() {
             let path = entry.path();
             if !path.is_dir() {
@@ -165,7 +165,7 @@ async fn skill_install(source: &str, agent: &Arc<Agent>) -> Result<()> {
             names.push(name);
         }
         if names.is_empty() {
-            return Err(BendclawError::Cli(
+            return Err(EvotError::Cli(
                 "no skills found in repository (no SKILL.md in root or subdirectories)".into(),
             ));
         }
@@ -198,7 +198,7 @@ fn install_skill_dir(src: &Path, skills_dir: &Path, name: &str) -> Result<()> {
     // Remove existing
     if target.exists() {
         fs::remove_dir_all(&target)
-            .map_err(|e| BendclawError::Cli(format!("failed to remove existing skill: {e}")))?;
+            .map_err(|e| EvotError::Cli(format!("failed to remove existing skill: {e}")))?;
     }
     copy_dir_excluding_git(src, &target)?;
     Ok(())
@@ -206,13 +206,13 @@ fn install_skill_dir(src: &Path, skills_dir: &Path, name: &str) -> Result<()> {
 
 pub fn copy_dir_excluding_git(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst)
-        .map_err(|e| BendclawError::Cli(format!("failed to create dir {}: {e}", dst.display())))?;
+        .map_err(|e| EvotError::Cli(format!("failed to create dir {}: {e}", dst.display())))?;
 
     let entries = fs::read_dir(src)
-        .map_err(|e| BendclawError::Cli(format!("failed to read {}: {e}", src.display())))?;
+        .map_err(|e| EvotError::Cli(format!("failed to read {}: {e}", src.display())))?;
 
     for entry in entries {
-        let entry = entry.map_err(|e| BendclawError::Cli(format!("failed to read entry: {e}")))?;
+        let entry = entry.map_err(|e| EvotError::Cli(format!("failed to read entry: {e}")))?;
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
 
@@ -228,7 +228,7 @@ pub fn copy_dir_excluding_git(src: &Path, dst: &Path) -> Result<()> {
             copy_dir_excluding_git(&src_path, &dst_path)?;
         } else {
             fs::copy(&src_path, &dst_path).map_err(|e| {
-                BendclawError::Cli(format!(
+                EvotError::Cli(format!(
                     "failed to copy {} → {}: {e}",
                     src_path.display(),
                     dst_path.display()
@@ -359,7 +359,7 @@ fn collect_skill_context(skill_dir: &Path) -> String {
 
 fn skill_remove(name: &str) -> Result<()> {
     if !is_valid_skill_name(name) {
-        return Err(BendclawError::Cli(format!(
+        return Err(EvotError::Cli(format!(
             "invalid skill name: \"{name}\" — only [A-Za-z0-9._-] allowed"
         )));
     }
@@ -373,7 +373,7 @@ fn skill_remove(name: &str) -> Result<()> {
     }
 
     fs::remove_dir_all(&target)
-        .map_err(|e| BendclawError::Cli(format!("failed to remove skill \"{name}\": {e}")))?;
+        .map_err(|e| EvotError::Cli(format!("failed to remove skill \"{name}\": {e}")))?;
 
     println!("{DIM}  removed skill: {name}{RESET}\n");
     Ok(())
@@ -420,7 +420,7 @@ pub fn parse_github_source(input: &str) -> Result<GitHubSource> {
         });
     }
 
-    Err(BendclawError::Cli(format!(
+    Err(EvotError::Cli(format!(
         "invalid source: \"{input}\"\n  expected: owner/repo or https://github.com/owner/repo[/tree/ref/path]"
     )))
 }
@@ -438,7 +438,7 @@ fn parse_github_url(url: &str) -> Result<GitHubSource> {
     let segments: Vec<&str> = path.split('/').collect();
 
     if segments.len() < 2 {
-        return Err(BendclawError::Cli(format!(
+        return Err(EvotError::Cli(format!(
             "invalid GitHub URL: \"{url}\" — expected at least owner/repo"
         )));
     }
@@ -470,7 +470,7 @@ fn parse_github_url(url: &str) -> Result<GitHubSource> {
     }
 
     // Reject unknown URL structures (e.g. /blob/..., /commit/..., etc.)
-    Err(BendclawError::Cli(format!(
+    Err(EvotError::Cli(format!(
         "unsupported GitHub URL: \"{url}\"\n  only /tree/<ref>/<path> URLs are supported; use owner/repo to install the whole repository"
     )))
 }
@@ -487,7 +487,7 @@ fn check_gh_available() -> Result<()> {
     let result = Command::new("gh").arg("--version").output();
     match result {
         Ok(output) if output.status.success() => Ok(()),
-        _ => Err(BendclawError::Cli(
+        _ => Err(EvotError::Cli(
             "gh command not found; install GitHub CLI first: https://cli.github.com".into(),
         )),
     }
@@ -503,15 +503,15 @@ fn clone_repo(repo: &str, git_ref: Option<&str>, target: &Path) -> Result<()> {
 
     let output = cmd
         .output()
-        .map_err(|e| BendclawError::Cli(format!("failed to run gh: {e}")))?;
+        .map_err(|e| EvotError::Cli(format!("failed to run gh: {e}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let msg = stderr.trim();
         if msg.contains("Could not resolve") || msg.contains("not found") {
-            return Err(BendclawError::Cli(format!("repository not found: {repo}")));
+            return Err(EvotError::Cli(format!("repository not found: {repo}")));
         }
-        return Err(BendclawError::Cli(format!("gh repo clone failed: {msg}")));
+        return Err(EvotError::Cli(format!("gh repo clone failed: {msg}")));
     }
 
     Ok(())

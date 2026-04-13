@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use bendclaw::agent::*;
-use bendclaw::session::Session;
-use bendclaw::storage::MemoryStorage;
+use evot::agent::*;
+use evot::session::Session;
+use evot::storage::MemoryStorage;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -14,7 +14,7 @@ type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
 #[tokio::test]
 async fn memory_storage_save_and_get_session() -> TestResult {
-    let storage: Arc<dyn bendclaw::storage::Storage> = Arc::new(MemoryStorage::new());
+    let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
 
     let meta = SessionMeta::new("mem-001".into(), "/tmp".into(), "test-model".into());
     storage.save_session(meta).await?;
@@ -29,7 +29,7 @@ async fn memory_storage_save_and_get_session() -> TestResult {
 
 #[tokio::test]
 async fn memory_storage_get_missing_session_returns_none() -> TestResult {
-    let storage: Arc<dyn bendclaw::storage::Storage> = Arc::new(MemoryStorage::new());
+    let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
     let loaded = storage.get_session("nonexistent").await?;
     assert!(loaded.is_none());
     Ok(())
@@ -37,7 +37,7 @@ async fn memory_storage_get_missing_session_returns_none() -> TestResult {
 
 #[tokio::test]
 async fn memory_storage_append_and_list_entries() -> TestResult {
-    let storage: Arc<dyn bendclaw::storage::Storage> = Arc::new(MemoryStorage::new());
+    let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
 
     storage
         .append_entry(TranscriptEntry::new(
@@ -81,7 +81,7 @@ async fn memory_storage_append_and_list_entries() -> TestResult {
 
 #[tokio::test]
 async fn memory_storage_filters_entries_by_session_id() -> TestResult {
-    let storage: Arc<dyn bendclaw::storage::Storage> = Arc::new(MemoryStorage::new());
+    let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
 
     storage
         .append_entry(TranscriptEntry::new(
@@ -132,7 +132,7 @@ async fn memory_storage_filters_entries_by_session_id() -> TestResult {
 
 #[tokio::test]
 async fn memory_storage_list_sessions() -> TestResult {
-    let storage: Arc<dyn bendclaw::storage::Storage> = Arc::new(MemoryStorage::new());
+    let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
 
     storage
         .save_session(SessionMeta::new("s1".into(), "/tmp".into(), "m".into()))
@@ -152,7 +152,7 @@ async fn memory_storage_list_sessions() -> TestResult {
 
 #[tokio::test]
 async fn session_new_with_memory_storage() -> TestResult {
-    let storage: Arc<dyn bendclaw::storage::Storage> = Arc::new(MemoryStorage::new());
+    let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
 
     let session = Session::new(
         "mem-sess-001".into(),
@@ -170,7 +170,7 @@ async fn session_new_with_memory_storage() -> TestResult {
 
 #[tokio::test]
 async fn session_write_and_read_transcript_in_memory() -> TestResult {
-    let storage: Arc<dyn bendclaw::storage::Storage> = Arc::new(MemoryStorage::new());
+    let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
 
     let session = Session::new(
         "mem-sess-002".into(),
@@ -203,7 +203,7 @@ async fn session_write_and_read_transcript_in_memory() -> TestResult {
 
 #[tokio::test]
 async fn session_open_with_memory_storage_restores_transcript() -> TestResult {
-    let storage: Arc<dyn bendclaw::storage::Storage> = Arc::new(MemoryStorage::new());
+    let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
 
     // Create and populate a session
     let session = Session::new(
@@ -243,7 +243,7 @@ async fn session_open_with_memory_storage_restores_transcript() -> TestResult {
 
 #[tokio::test]
 async fn session_multi_turn_with_memory_storage() -> TestResult {
-    let storage: Arc<dyn bendclaw::storage::Storage> = Arc::new(MemoryStorage::new());
+    let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
 
     // Turn 1: create session, write items
     let session = Session::new(
@@ -312,8 +312,8 @@ async fn session_multi_turn_with_memory_storage() -> TestResult {
 
 #[tokio::test]
 async fn memory_storage_is_isolated_between_instances() -> TestResult {
-    let storage1: Arc<dyn bendclaw::storage::Storage> = Arc::new(MemoryStorage::new());
-    let storage2: Arc<dyn bendclaw::storage::Storage> = Arc::new(MemoryStorage::new());
+    let storage1: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
+    let storage2: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
 
     storage1
         .save_session(SessionMeta::new(
@@ -330,7 +330,7 @@ async fn memory_storage_is_isolated_between_instances() -> TestResult {
 
 #[tokio::test]
 async fn memory_storage_dropped_leaves_no_trace() -> TestResult {
-    let storage: Arc<dyn bendclaw::storage::Storage> = Arc::new(MemoryStorage::new());
+    let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
 
     let session = Session::new(
         "ephemeral".into(),
@@ -354,7 +354,7 @@ async fn memory_storage_dropped_leaves_no_trace() -> TestResult {
     drop(storage);
 
     // A new MemoryStorage has no data — confirms nothing leaked to disk
-    let fresh: Arc<dyn bendclaw::storage::Storage> = Arc::new(MemoryStorage::new());
+    let fresh: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
     assert!(fresh.get_session("ephemeral").await?.is_none());
     Ok(())
 }

@@ -55,7 +55,7 @@ use crate::cli::format::mask_value;
 use crate::conf::paths;
 use crate::conf::Config;
 use crate::conf::ProviderKind;
-use crate::error::BendclawError;
+use crate::error::EvotError;
 use crate::error::Result;
 
 // ---------------------------------------------------------------------------
@@ -80,7 +80,7 @@ impl Repl {
         skills_dirs: Vec<PathBuf>,
     ) -> Result<Self> {
         let cwd = std::env::current_dir()
-            .map_err(|e| BendclawError::Cli(format!("failed to get cwd: {e}")))?
+            .map_err(|e| EvotError::Cli(format!("failed to get cwd: {e}")))?
             .to_string_lossy()
             .to_string();
 
@@ -131,7 +131,7 @@ impl Repl {
             .completion_prompt_limit(50)
             .build();
         let mut rl = Editor::with_config(config)
-            .map_err(|e| BendclawError::Cli(format!("failed to initialize readline: {e}")))?;
+            .map_err(|e| EvotError::Cli(format!("failed to initialize readline: {e}")))?;
         rl.set_helper(Some(ReplHelper::new(
             self.completion_state.clone(),
             line_empty.clone(),
@@ -174,7 +174,7 @@ impl Repl {
                 }
                 Err(ReadlineError::Eof) => break,
                 Err(error) => {
-                    return Err(BendclawError::Cli(format!("failed to read input: {error}")));
+                    return Err(EvotError::Cli(format!("failed to read input: {error}")));
                 }
             };
 
@@ -431,7 +431,7 @@ impl Repl {
             while let Some(event) = stream.next().await {
                 sink_ref.render(&event);
             }
-            Ok::<_, BendclawError>(session_id)
+            Ok::<_, EvotError>(session_id)
         });
         let control = wait_for_run_control(&mut run_task, &spinner_state, &mut ask_rx)?;
         let outcome = match control {
@@ -447,7 +447,7 @@ impl Repl {
             None => {
                 let session_id = run_task
                     .await
-                    .map_err(|e| BendclawError::Cli(format!("request task failed: {e}")))??;
+                    .map_err(|e| EvotError::Cli(format!("request task failed: {e}")))??;
 
                 self.session_id = Some(session_id.clone());
                 PromptExit::Finished(session_id, false)
@@ -470,10 +470,11 @@ impl Repl {
     }
 
     async fn resume_session(&mut self, session_id: &str, print_transcript: bool) -> Result<()> {
-        let session =
-            self.agent.load_session(session_id).await?.ok_or_else(|| {
-                BendclawError::Session(format!("session not found: {session_id}"))
-            })?;
+        let session = self
+            .agent
+            .load_session(session_id)
+            .await?
+            .ok_or_else(|| EvotError::Session(format!("session not found: {session_id}")))?;
         let meta = session.meta().await;
         let messages = session.transcript().await;
 
@@ -515,8 +516,8 @@ impl Repl {
 
     fn print_banner(&self) -> Result<()> {
         let version = env!("CARGO_PKG_VERSION");
-        let git_sha = env!("BENDCLAW_GIT_SHA");
-        println!("{BOLD}Bendclaw v{version}{RESET} {DIM}({git_sha}){RESET}");
+        let git_sha = env!("EVOT_GIT_SHA");
+        println!("{BOLD}Evot v{version}{RESET} {DIM}({git_sha}){RESET}");
         if let Ok(env_path) = paths::env_file_path() {
             let display = collapse_home(&env_path);
             if env_path.exists() {
@@ -562,7 +563,7 @@ impl Repl {
         if let Some(session_id) = &self.session_id {
             let exe = std::env::current_exe()
                 .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| "bendclaw".to_string());
+                .unwrap_or_else(|_| "evot".to_string());
             let rule = "─".repeat(80);
             println!("\n{DIM}{rule}{RESET}");
             println!("{DIM}Resume this session with:{RESET}\n  {DIM}{exe} --resume {session_id}{RESET}\n");
@@ -741,7 +742,7 @@ impl Repl {
 
         // 5. Multi-turn mini REPL
         let mut rl: Editor<(), DefaultHistory> =
-            Editor::new().map_err(|e| BendclawError::Cli(format!("readline init failed: {e}")))?;
+            Editor::new().map_err(|e| EvotError::Cli(format!("readline init failed: {e}")))?;
 
         loop {
             println!("  {DIM}[log mode] /done to return{RESET}");
@@ -759,7 +760,7 @@ impl Repl {
                 Err(ReadlineError::Interrupted) => continue,
                 Err(ReadlineError::Eof) => break,
                 Err(e) => {
-                    return Err(BendclawError::Cli(format!("readline error: {e}")));
+                    return Err(EvotError::Cli(format!("readline error: {e}")));
                 }
             }
         }
@@ -783,7 +784,7 @@ impl Repl {
             while let Some(event) = stream.next().await {
                 sink_ref.render(&event);
             }
-            Ok::<_, BendclawError>(String::new())
+            Ok::<_, EvotError>(String::new())
         });
 
         let mut dummy_ask_rx = mpsc::unbounded_channel().1;
@@ -792,7 +793,7 @@ impl Repl {
             Ok(Ok(_)) => {}
             Ok(Err(e)) => return Err(e),
             Err(e) if e.is_cancelled() => {}
-            Err(e) => return Err(BendclawError::Cli(format!("side turn failed: {e}"))),
+            Err(e) => return Err(EvotError::Cli(format!("side turn failed: {e}"))),
         }
         Ok(())
     }
@@ -875,7 +876,7 @@ impl Repl {
     async fn resolve_session_id(&self, value: &str) -> Result<String> {
         let value = value.trim();
         if value.is_empty() {
-            return Err(BendclawError::Cli("missing session id".into()));
+            return Err(EvotError::Cli("missing session id".into()));
         }
 
         let sessions = self.agent.list_sessions(100).await?;
@@ -885,11 +886,9 @@ impl Repl {
             .collect();
 
         match matches.len() {
-            0 => Err(BendclawError::Session(format!(
-                "session not found: {value}"
-            ))),
+            0 => Err(EvotError::Session(format!("session not found: {value}"))),
             1 => Ok(matches[0].session_id.clone()),
-            _ => Err(BendclawError::Session(format!(
+            _ => Err(EvotError::Session(format!(
                 "session id is ambiguous: {value}"
             ))),
         }
@@ -906,7 +905,7 @@ impl Repl {
         let mut state = self
             .completion_state
             .write()
-            .map_err(|_| BendclawError::Cli("completion state lock poisoned".into()))?;
+            .map_err(|_| EvotError::Cli("completion state lock poisoned".into()))?;
         state.models = models;
         state.session_ids = session_ids;
         Ok(())
@@ -915,7 +914,7 @@ impl Repl {
     fn prompt(&self) -> String {
         let mode = if self.planning { " plan" } else { "" };
         let model = &self.config.active_llm().model;
-        let tag = format!("{BG_PROMPT}{WHITE}{BOLD} bendclaw {RESET}");
+        let tag = format!("{BG_PROMPT}{WHITE}{BOLD} evot {RESET}");
         format!(
             "{tag} {DIM}{}{}{RESET} {BOLD}{YELLOW}>{RESET} ",
             model, mode,

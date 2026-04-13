@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use tokio::fs;
 
-use crate::error::BendclawError;
+use crate::error::EvotError;
 use crate::error::Result;
 use crate::storage::Storage;
 use crate::types::ListSessions;
@@ -56,7 +56,7 @@ impl FsStorage {
         match fs::read_to_string(path).await {
             Ok(content) => Ok(Some(serde_json::from_str(&content)?)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(BendclawError::Io(e)),
+            Err(e) => Err(EvotError::Io(e)),
         }
     }
 
@@ -88,7 +88,7 @@ impl FsStorage {
                 Ok(values)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-            Err(e) => Err(BendclawError::Io(e)),
+            Err(e) => Err(EvotError::Io(e)),
         }
     }
 }
@@ -108,7 +108,7 @@ impl Storage for FsStorage {
         let mut entries = match fs::read_dir(self.sessions_dir()).await {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(BendclawError::Io(e)),
+            Err(e) => return Err(EvotError::Io(e)),
         };
 
         let mut sessions = Vec::new();

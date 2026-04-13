@@ -154,7 +154,7 @@ impl SpinnerState {
         self.paused = false;
         self.phase = SpinnerPhase::Hidden;
         with_terminal(|stdout| {
-            let _ = write!(stdout, "\x1b]0;BendClaw\x07");
+            let _ = write!(stdout, "\x1b]0;Evot\x07");
         });
     }
 
@@ -251,7 +251,7 @@ impl SpinnerState {
 
             with_terminal(|stdout| {
                 let _ = write!(stdout, "{output}");
-                let _ = write!(stdout, "\x1b]0;{title_glyph} BendClaw\x07");
+                let _ = write!(stdout, "\x1b]0;{title_glyph} Evot\x07");
             });
 
             self.rendered_lines = new_lines;
@@ -281,7 +281,7 @@ impl SpinnerState {
                 stdout,
                 "\r{glyph_color}{glyph}{RESET} {rendered_msg} {DIM}({status}) · esc to interrupt{RESET}\x1b[K"
             );
-            let _ = write!(stdout, "\x1b]0;{title_glyph} BendClaw\x07");
+            let _ = write!(stdout, "\x1b]0;{title_glyph} Evot\x07");
         });
         self.rendered_lines = 1;
         self.rendered = true;

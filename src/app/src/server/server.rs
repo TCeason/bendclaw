@@ -16,7 +16,7 @@ use crate::agent::prompt::SystemPrompt;
 use crate::agent::Agent;
 use crate::agent::QueryRequest;
 use crate::conf::Config;
-use crate::error::BendclawError;
+use crate::error::EvotError;
 use crate::error::Result;
 use crate::server::stream;
 
@@ -44,11 +44,11 @@ impl Server {
 
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
-            .map_err(|e| BendclawError::Run(format!("failed to bind {addr}: {e}")))?;
+            .map_err(|e| EvotError::Run(format!("failed to bind {addr}: {e}")))?;
 
         axum::serve(listener, self.router())
             .await
-            .map_err(|e| BendclawError::Run(format!("server error: {e}")))?;
+            .map_err(|e| EvotError::Run(format!("server error: {e}")))?;
 
         Ok(())
     }
@@ -121,7 +121,7 @@ impl Server {
 pub async fn start(conf: Config) -> Result<()> {
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
-        .map_err(|e| BendclawError::Run(format!("failed to get cwd: {e}")))?;
+        .map_err(|e| EvotError::Run(format!("failed to get cwd: {e}")))?;
     let system_prompt = SystemPrompt::new(&cwd)
         .with_system()
         .with_git()
@@ -169,7 +169,7 @@ pub async fn start(conf: Config) -> Result<()> {
     );
 
     eprintln!();
-    eprintln!("  bendclaw server");
+    eprintln!("  evot server");
     eprintln!("  ───────────────────────────────────");
     eprintln!("  address:  http://{addr}");
     eprintln!("  provider: {provider:?}");

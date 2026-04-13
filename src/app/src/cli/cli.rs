@@ -15,7 +15,7 @@ use crate::cli::args::CliCommand;
 use crate::cli::args::OutputFormat;
 use crate::cli::repl::Repl;
 use crate::conf::Config;
-use crate::error::BendclawError;
+use crate::error::EvotError;
 use crate::error::Result;
 use crate::server;
 
@@ -42,7 +42,7 @@ impl Cli {
 
     pub async fn run(&self) -> Result<()> {
         match (&self.args.prompt, &self.args.command) {
-            (Some(_), Some(_)) => Err(BendclawError::Cli(
+            (Some(_), Some(_)) => Err(EvotError::Cli(
                 "prompt mode and subcommand cannot be used together".into(),
             )),
             (None, None) => self.run_repl().await,
@@ -152,7 +152,7 @@ impl Cli {
 
 fn current_dir() -> Result<String> {
     std::env::current_dir()
-        .map_err(|e| BendclawError::Run(format!("failed to get cwd: {e}")))
+        .map_err(|e| EvotError::Run(format!("failed to get cwd: {e}")))
         .map(|p| p.to_string_lossy().to_string())
 }
 

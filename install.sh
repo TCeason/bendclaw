@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="evotai/bendclaw"
-BINARY="bendclaw"
-INSTALL_DIR="${BENDCLAW_INSTALL_DIR:-$HOME/.evotai/bin}"
+REPO="evotai/evot"
+BINARY="evot"
+INSTALL_DIR="${EVOT_INSTALL_DIR:-$HOME/.evotai/bin}"
 
 # Detect platform
 OS="$(uname -s)"

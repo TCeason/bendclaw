@@ -2,9 +2,9 @@ use std::ffi::OsString;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
-use bendclaw::conf::Config;
-use bendclaw::conf::ProviderKind;
-use bendclaw::conf::StorageBackend;
+use evot::conf::Config;
+use evot::conf::ProviderKind;
+use evot::conf::StorageBackend;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -78,23 +78,23 @@ fn load_config_prefers_process_env_over_env_file() -> TestResult {
     let env_home = temp.path().join("home");
     std::fs::create_dir_all(env_home.join(".evotai"))?;
     std::fs::write(
-        env_home.join(".evotai").join("bendclaw.env"),
-        "BENDCLAW_ANTHROPIC_API_KEY=file-key\nBENDCLAW_SERVER_PORT=9010\n",
+        env_home.join(".evotai").join("evot.env"),
+        "EVOT_ANTHROPIC_API_KEY=file-key\nEVOT_SERVER_PORT=9010\n",
     )?;
 
     let original_home = std::env::var_os("HOME");
-    let original_key = std::env::var_os("BENDCLAW_ANTHROPIC_API_KEY");
-    let original_port = std::env::var_os("BENDCLAW_SERVER_PORT");
+    let original_key = std::env::var_os("EVOT_ANTHROPIC_API_KEY");
+    let original_port = std::env::var_os("EVOT_SERVER_PORT");
 
     std::env::set_var("HOME", &env_home);
-    std::env::set_var("BENDCLAW_ANTHROPIC_API_KEY", "process-key");
-    std::env::set_var("BENDCLAW_SERVER_PORT", "9020");
+    std::env::set_var("EVOT_ANTHROPIC_API_KEY", "process-key");
+    std::env::set_var("EVOT_SERVER_PORT", "9020");
 
     let result = Config::load();
 
     restore_env_var("HOME", original_home);
-    restore_env_var("BENDCLAW_ANTHROPIC_API_KEY", original_key);
-    restore_env_var("BENDCLAW_SERVER_PORT", original_port);
+    restore_env_var("EVOT_ANTHROPIC_API_KEY", original_key);
+    restore_env_var("EVOT_SERVER_PORT", original_port);
 
     let config = result?;
     assert_eq!(config.active_llm().api_key, "process-key");
@@ -114,7 +114,7 @@ fn load_config_uses_toml_then_env_then_cli() -> TestResult {
     let env_home = temp.path().join("home");
     std::fs::create_dir_all(env_home.join(".evotai"))?;
     std::fs::write(
-        env_home.join(".evotai").join("bendclaw.toml"),
+        env_home.join(".evotai").join("evot.toml"),
         r#"
 [llm]
 provider = "anthropic"
@@ -135,8 +135,8 @@ root_dir = "~/custom-store"
 "#,
     )?;
     std::fs::write(
-        env_home.join(".evotai").join("bendclaw.env"),
-        "export BENDCLAW_ANTHROPIC_MODEL=env-model\nexport BENDCLAW_SERVER_PORT=9010\n",
+        env_home.join(".evotai").join("evot.env"),
+        "export EVOT_ANTHROPIC_MODEL=env-model\nexport EVOT_SERVER_PORT=9010\n",
     )?;
 
     let original_home = std::env::var_os("HOME");
@@ -165,18 +165,18 @@ fn load_config_keeps_both_provider_configs() -> TestResult {
     let env_home = temp.path().join("home");
     std::fs::create_dir_all(env_home.join(".evotai"))?;
     std::fs::write(
-        env_home.join(".evotai").join("bendclaw.toml"),
+        env_home.join(".evotai").join("evot.toml"),
         r#"
 [llm]
 provider = "anthropic"
 "#,
     )?;
     std::fs::write(
-        env_home.join(".evotai").join("bendclaw.env"),
+        env_home.join(".evotai").join("evot.env"),
         r#"
-export BENDCLAW_ANTHROPIC_API_KEY=anthropic-key
-export BENDCLAW_OPENAI_API_KEY=openai-key
-export BENDCLAW_OPENAI_MODEL=gpt-5
+export EVOT_ANTHROPIC_API_KEY=anthropic-key
+export EVOT_OPENAI_API_KEY=openai-key
+export EVOT_OPENAI_MODEL=gpt-5
 "#,
     )?;
 
@@ -207,7 +207,7 @@ fn load_config_normalizes_empty_optional_values() -> TestResult {
     let env_home = temp.path().join("home");
     std::fs::create_dir_all(env_home.join(".evotai"))?;
     std::fs::write(
-        env_home.join(".evotai").join("bendclaw.toml"),
+        env_home.join(".evotai").join("evot.toml"),
         r#"
 [llm]
 provider = "anthropic"

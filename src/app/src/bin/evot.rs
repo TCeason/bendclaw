@@ -2,7 +2,7 @@ use bend_base::logx;
 use clap::Parser;
 
 fn main() -> anyhow::Result<()> {
-    let args = bendclaw::cli::CliArgs::parse();
+    let args = evot::cli::CliArgs::parse();
 
     let quiet_prompt_mode = args.command.is_none() && args.prompt.is_some() && !args.verbose;
 
@@ -25,15 +25,15 @@ fn main() -> anyhow::Result<()> {
             "app",
             "started",
             msg = "build info",
-            git_sha = env!("BENDCLAW_GIT_SHA"),
-            git_branch = env!("BENDCLAW_GIT_BRANCH"),
-            build_timestamp = env!("BENDCLAW_BUILD_TIMESTAMP"),
+            git_sha = env!("EVOT_GIT_SHA"),
+            git_branch = env!("EVOT_GIT_BRANCH"),
+            build_timestamp = env!("EVOT_BUILD_TIMESTAMP"),
         );
     }
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
-        bendclaw::cli::run_cli(args)
+        evot::cli::run_cli(args)
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))
     })

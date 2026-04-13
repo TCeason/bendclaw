@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 
-const PROJECT_CONTEXT_FILES: &[&str] = &["BENDCLAW.md", "CLAUDE.md", "AGENTS.md"];
+const PROJECT_CONTEXT_FILES: &[&str] = &["EVOT.md", "CLAUDE.md", "AGENTS.md"];
 const MAX_GIT_STATUS_CHARS: usize = 2000;
 
 /// Builder for assembling the system prompt.
@@ -112,7 +112,7 @@ impl SystemPrompt {
         self
     }
 
-    /// Load memory from bendclaw directories, inject into system prompt.
+    /// Load memory from evot directories, inject into system prompt.
     /// Global (`~/.evotai/memory/`) and project (`~/.evotai/projects/<slug>/memory/`).
     pub fn with_memory(mut self) -> Self {
         let home = std::env::var("HOME")

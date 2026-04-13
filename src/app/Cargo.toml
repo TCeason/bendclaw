@@ -1,12 +1,12 @@
 [package]
-name = "bendclaw"
+name = "evot"
 version.workspace = true
 edition.workspace = true
-repository = "https://github.com/evotai/bendclaw"
+repository = "https://github.com/evotai/evot"
 
 [[bin]]
-name = "bendclaw"
-path = "src/bin/bendclaw.rs"
+name = "evot"
+path = "src/bin/evot.rs"
 
 [dependencies]
 bend-base.workspace = true

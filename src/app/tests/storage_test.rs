@@ -1,6 +1,6 @@
-use bendclaw::agent::*;
-use bendclaw::conf::StorageConfig;
-use bendclaw::storage::open_storage;
+use evot::agent::*;
+use evot::conf::StorageConfig;
+use evot::storage::open_storage;
 use tempfile::TempDir;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;

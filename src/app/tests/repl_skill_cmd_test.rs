@@ -1,11 +1,11 @@
 use std::fs;
 use std::path::PathBuf;
 
-use bendclaw::cli::repl::skill_cmd::copy_dir_excluding_git;
-use bendclaw::cli::repl::skill_cmd::extract_frontmatter;
-use bendclaw::cli::repl::skill_cmd::is_valid_skill_name;
-use bendclaw::cli::repl::skill_cmd::parse_github_source;
-use bendclaw::cli::repl::skill_cmd::parse_variables_from_frontmatter;
+use evot::cli::repl::skill_cmd::copy_dir_excluding_git;
+use evot::cli::repl::skill_cmd::extract_frontmatter;
+use evot::cli::repl::skill_cmd::is_valid_skill_name;
+use evot::cli::repl::skill_cmd::parse_github_source;
+use evot::cli::repl::skill_cmd::parse_variables_from_frontmatter;
 
 // ---------------------------------------------------------------------------
 // parse_github_source

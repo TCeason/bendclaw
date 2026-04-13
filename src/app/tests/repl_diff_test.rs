@@ -1,5 +1,5 @@
-use bendclaw::cli::repl::diff::diff_from_details;
-use bendclaw::cli::repl::diff::format_diff;
+use evot::cli::repl::diff::diff_from_details;
+use evot::cli::repl::diff::format_diff;
 
 #[test]
 fn no_changes_shows_message() {

@@ -1,6 +1,6 @@
-# BendClaw
+# Evot
 
-DEV_CONFIG ?= $(HOME)/.evotai/bendclaw.env
+DEV_CONFIG ?= $(HOME)/.evotai/evot.env
 CARGO ?= cargo
 NEXTEST := $(CARGO) nextest run --no-tests=pass
 COVERAGE_TARGETS := --lib --test unit --test it --test contract
@@ -84,7 +84,7 @@ dev-env:
 	@if [ ! -f $(DEV_CONFIG) ]; then \
 		echo "==> creating dev config at $(DEV_CONFIG)"; \
 		mkdir -p $$(dirname $(DEV_CONFIG)); \
-		cp configs/bendclaw.env.example $(DEV_CONFIG); \
+		cp configs/evot.env.example $(DEV_CONFIG); \
 	fi
 	@echo ""
 	@echo "  DEV MODE"
@@ -92,6 +92,6 @@ dev-env:
 	@echo ""
 
 run: dev-env
-	cargo run -p bendclaw -- repl
+	cargo run -p evot -- repl
 
 ci: check test

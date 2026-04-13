@@ -1,4 +1,4 @@
-use bendclaw::cli::repl::spinner::SpinnerState;
+use evot::cli::repl::spinner::SpinnerState;
 
 #[test]
 fn new_spinner_is_inactive() {
@@ -262,8 +262,8 @@ fn activate_resets_progress_state() {
 // build_progress_frame / build_clear_sequence tests
 // ---------------------------------------------------------------------------
 
-use bendclaw::cli::repl::spinner::build_clear_sequence;
-use bendclaw::cli::repl::spinner::build_progress_frame;
+use evot::cli::repl::spinner::build_clear_sequence;
+use evot::cli::repl::spinner::build_progress_frame;
 
 /// Helper: count occurrences of a substring.
 fn count_occurrences(haystack: &str, needle: &str) -> usize {

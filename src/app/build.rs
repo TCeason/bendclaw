@@ -8,19 +8,16 @@ fn main() {
         println!("cargo:rerun-if-changed={}", git_head.display());
     }
 
+    set_env("EVOT_GIT_SHA", &git(&["rev-parse", "--short=10", "HEAD"]));
     set_env(
-        "BENDCLAW_GIT_SHA",
-        &git(&["rev-parse", "--short=10", "HEAD"]),
-    );
-    set_env(
-        "BENDCLAW_GIT_BRANCH",
+        "EVOT_GIT_BRANCH",
         &git(&["rev-parse", "--abbrev-ref", "HEAD"]),
     );
-    set_env("BENDCLAW_GIT_TAG", &git_tag());
-    set_env("BENDCLAW_BUILD_TIMESTAMP", &build_timestamp());
-    set_env("BENDCLAW_RUSTC_VERSION", &rustc_version());
+    set_env("EVOT_GIT_TAG", &git_tag());
+    set_env("EVOT_BUILD_TIMESTAMP", &build_timestamp());
+    set_env("EVOT_RUSTC_VERSION", &rustc_version());
     set_env(
-        "BENDCLAW_BUILD_PROFILE",
+        "EVOT_BUILD_PROFILE",
         &std::env::var("PROFILE").unwrap_or_else(|_| "unknown".into()),
     );
 }

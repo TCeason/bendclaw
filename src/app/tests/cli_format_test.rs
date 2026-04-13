@@ -1,9 +1,9 @@
-use bendclaw::agent::RunEvent;
-use bendclaw::agent::RunEventPayload;
-use bendclaw::cli::format::mask_run_event_for_display;
-use bendclaw::cli::format::mask_secrets;
-use bendclaw::cli::format::mask_value;
-use bendclaw::cli::repl::render::truncate_head_tail;
+use evot::agent::RunEvent;
+use evot::agent::RunEventPayload;
+use evot::cli::format::mask_run_event_for_display;
+use evot::cli::format::mask_secrets;
+use evot::cli::format::mask_value;
+use evot::cli::repl::render::truncate_head_tail;
 
 #[test]
 fn short_string_unchanged() {

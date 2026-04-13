@@ -37,7 +37,7 @@ use ratatui::Terminal;
 use tokio::sync::oneshot;
 
 use crate::conf::Config;
-use crate::error::BendclawError;
+use crate::error::EvotError;
 use crate::error::Result;
 
 pub const MAX_SELECTOR_ROWS: usize = 12;
@@ -313,7 +313,7 @@ impl SelectorTerminal {
         execute!(stdout, EnterAlternateScreen, Hide)?;
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)
-            .map_err(|e| BendclawError::Cli(format!("failed to initialize selector: {e}")))?;
+            .map_err(|e| EvotError::Cli(format!("failed to initialize selector: {e}")))?;
         Ok(Self { terminal })
     }
 
@@ -321,7 +321,7 @@ impl SelectorTerminal {
     where F: FnOnce(&mut ratatui::Frame<'_>) {
         self.terminal
             .draw(render)
-            .map_err(|e| BendclawError::Cli(format!("failed to draw selector: {e}")))?;
+            .map_err(|e| EvotError::Cli(format!("failed to draw selector: {e}")))?;
         Ok(())
     }
 }

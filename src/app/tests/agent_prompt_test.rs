@@ -1,4 +1,4 @@
-use bendclaw::agent::prompt::SystemPrompt;
+use evot::agent::prompt::SystemPrompt;
 
 fn build_prompt(cwd: &str) -> String {
     SystemPrompt::new(cwd)
@@ -25,7 +25,7 @@ fn no_context_files_produces_base_prompt_with_system() {
 #[test]
 fn reads_single_context_file() {
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
-    std::fs::write(tmp.path().join("BENDCLAW.md"), "# My Project\nDo X.")
+    std::fs::write(tmp.path().join("EVOT.md"), "# My Project\nDo X.")
         .expect("failed to write file");
     let prompt = build_prompt(&tmp.path().to_string_lossy());
     assert!(prompt.contains("Project Instructions"));
@@ -35,7 +35,7 @@ fn reads_single_context_file() {
 #[test]
 fn concatenates_multiple_context_files() {
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
-    std::fs::write(tmp.path().join("BENDCLAW.md"), "part one").expect("failed to write file");
+    std::fs::write(tmp.path().join("EVOT.md"), "part one").expect("failed to write file");
     std::fs::write(tmp.path().join("CLAUDE.md"), "part two").expect("failed to write file");
     let prompt = build_prompt(&tmp.path().to_string_lossy());
     assert!(prompt.contains("part one"));
@@ -45,7 +45,7 @@ fn concatenates_multiple_context_files() {
 #[test]
 fn skips_empty_context_files() {
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
-    std::fs::write(tmp.path().join("BENDCLAW.md"), "   ").expect("failed to write file");
+    std::fs::write(tmp.path().join("EVOT.md"), "   ").expect("failed to write file");
     let prompt = build_prompt(&tmp.path().to_string_lossy());
     assert!(!prompt.contains("Project Instructions"));
 }
@@ -170,8 +170,8 @@ fn sanitize_for_path_test(name: &str) -> String {
         .collect()
 }
 
-/// Helper: create the bendclaw memory dir for a given home + cwd, write MEMORY.md.
-fn write_bendclaw_memory(home: &std::path::Path, cwd: &str, content: &str) {
+/// Helper: create the evot memory dir for a given home + cwd, write MEMORY.md.
+fn write_evot_memory(home: &std::path::Path, cwd: &str, content: &str) {
     let slug = sanitize_for_path_test(cwd);
     let mem_dir = home
         .join(".evotai")
@@ -205,9 +205,9 @@ fn memory_section_present_when_empty() {
 }
 
 #[test]
-fn memory_loads_bendclaw_entrypoint() {
+fn memory_loads_evot_entrypoint() {
     let (home, cwd) = setup_memory_env();
-    write_bendclaw_memory(
+    write_evot_memory(
         home.path(),
         &cwd,
         "- [User prefs](user_prefs.md) — likes Rust",
@@ -244,7 +244,7 @@ fn memory_loads_claude_readonly() {
 #[test]
 fn memory_both_sources_ordered() {
     let (home, cwd) = setup_memory_env();
-    write_bendclaw_memory(home.path(), &cwd, "- bendclaw entry");
+    write_evot_memory(home.path(), &cwd, "- evot entry");
     write_claude_memory(home.path(), &cwd, "- claude entry");
     let home_str = home.path().to_string_lossy().to_string();
     let prompt = SystemPrompt::new(&cwd)
@@ -261,7 +261,7 @@ fn memory_both_sources_ordered() {
         bc_pos < cc_pos,
         "Project MEMORY.md should come before Claude Code Memory"
     );
-    assert!(prompt.contains("bendclaw entry"));
+    assert!(prompt.contains("evot entry"));
     assert!(prompt.contains("claude entry"));
 }
 
@@ -269,7 +269,7 @@ fn memory_both_sources_ordered() {
 fn memory_truncates_long_entrypoint() {
     let (home, cwd) = setup_memory_env();
     let long_content: String = (0..300).map(|i| format!("- line {i}\n")).collect();
-    write_bendclaw_memory(home.path(), &cwd, &long_content);
+    write_evot_memory(home.path(), &cwd, &long_content);
     let home_str = home.path().to_string_lossy().to_string();
     let prompt = SystemPrompt::new(&cwd).with_memory_home(&home_str).build();
     assert!(prompt.contains("WARNING"));
@@ -309,7 +309,7 @@ fn memory_git_subdirs_share_slug() {
     let sub = repo_canonical.join("sub");
     std::fs::create_dir_all(&sub).expect("create subdir");
 
-    write_bendclaw_memory(home.path(), &repo_str, "- shared memory");
+    write_evot_memory(home.path(), &repo_str, "- shared memory");
 
     let home_str = home.path().to_string_lossy().to_string();
     let prompt_root = SystemPrompt::new(&repo_str)
@@ -325,7 +325,7 @@ fn memory_git_subdirs_share_slug() {
 #[test]
 fn memory_non_git_fallback() {
     let (home, cwd) = setup_memory_env();
-    write_bendclaw_memory(home.path(), &cwd, "- non-git memory");
+    write_evot_memory(home.path(), &cwd, "- non-git memory");
     let home_str = home.path().to_string_lossy().to_string();
     let prompt = SystemPrompt::new(&cwd).with_memory_home(&home_str).build();
     assert!(prompt.contains("non-git memory"));
@@ -335,7 +335,7 @@ fn memory_non_git_fallback() {
 fn memory_section_after_project_instructions() {
     let (home, cwd) = setup_memory_env();
     let cwd_path = std::path::Path::new(&cwd);
-    std::fs::write(cwd_path.join("BENDCLAW.md"), "# My Project").expect("write");
+    std::fs::write(cwd_path.join("EVOT.md"), "# My Project").expect("write");
     let home_str = home.path().to_string_lossy().to_string();
     let prompt = SystemPrompt::new(&cwd)
         .with_project_context()
