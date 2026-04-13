@@ -101,10 +101,19 @@ ci: check test
 build-napi:
 	cd cli && napi build --manifest-path ../src/napi/Cargo.toml --release --platform
 
+build-napi-dev:
+	cd cli && napi build --manifest-path ../src/napi/Cargo.toml --platform
+
 build-ui: build-napi
 	cd cli && bun install
 
+build-ui-dev: build-napi-dev
+	cd cli && bun install
+
 run-ui: build-ui
+	cd cli && bun run src/index.tsx
+
+dev-ui: build-ui-dev
 	cd cli && bun run src/index.tsx
 
 check-ui:
