@@ -112,19 +112,8 @@ pub fn truncate_error(text: &str) -> String {
     if text.len() <= MAX {
         return text.to_string();
     }
-    // Find the char boundary at or before HALF bytes from the start.
-    let start_end = text
-        .char_indices()
-        .map(|(i, _)| i)
-        .take_while(|&i| i <= HALF)
-        .last()
-        .unwrap_or(0);
-    // Find the char boundary at or after (len - HALF) bytes from the end.
-    let tail_start = text
-        .char_indices()
-        .map(|(i, _)| i)
-        .find(|&i| i >= text.len() - HALF)
-        .unwrap_or(text.len());
+    let start_end = text.floor_char_boundary(HALF);
+    let tail_start = text.ceil_char_boundary(text.len() - HALF);
     let truncated = tail_start - start_end;
     format!(
         "{}\n\n... [{truncated} characters truncated] ...\n\n{}",
@@ -248,17 +237,8 @@ pub fn truncate_tool_text(text: &str, max_bytes: usize) -> String {
         return text.to_string();
     }
     let half = max_bytes / 2;
-    let head_end = text
-        .char_indices()
-        .map(|(i, _)| i)
-        .take_while(|&i| i <= half)
-        .last()
-        .unwrap_or(0);
-    let tail_start = text
-        .char_indices()
-        .map(|(i, _)| i)
-        .find(|&i| i >= text.len() - half)
-        .unwrap_or(text.len());
+    let head_end = text.floor_char_boundary(half);
+    let tail_start = text.ceil_char_boundary(text.len() - half);
     let omitted = tail_start - head_end;
     format!(
         "{}\n\n... [{omitted} bytes truncated] ...\n\n{}",

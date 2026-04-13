@@ -77,11 +77,6 @@ pub fn truncate_str(s: &str, max_chars: usize) -> String {
     if s.len() <= max_chars {
         return s.to_string();
     }
-    let end = s
-        .char_indices()
-        .take_while(|(i, _)| *i < max_chars)
-        .last()
-        .map(|(i, c)| i + c.len_utf8())
-        .unwrap_or(max_chars);
+    let end = s.floor_char_boundary(max_chars);
     format!("{}\u{2026}", &s[..end])
 }

@@ -509,9 +509,5 @@ fn truncate_line(line: &str, max_width: usize) -> &str {
     if line.len() <= max_width {
         return line;
     }
-    let mut end = max_width;
-    while end > 0 && !line.is_char_boundary(end) {
-        end -= 1;
-    }
-    &line[..end]
+    &line[..line.floor_char_boundary(max_width)]
 }

@@ -83,7 +83,7 @@ impl BashTool {
 fn tail_lines(buf: &[u8], max_lines: usize, max_bytes: usize) -> String {
     let text = String::from_utf8_lossy(buf);
     let end = if text.len() > max_bytes {
-        text.len().saturating_sub(max_bytes)
+        text.ceil_char_boundary(text.len().saturating_sub(max_bytes))
     } else {
         0
     };
@@ -108,20 +108,8 @@ fn truncate_long_lines(text: &str) -> String {
         } else {
             let half = MAX_LINE_BYTES / 2;
             // Find safe char boundaries
-            let head_end = {
-                let mut e = half;
-                while e > 0 && !line.is_char_boundary(e) {
-                    e -= 1;
-                }
-                e
-            };
-            let tail_start = {
-                let mut s = line.len().saturating_sub(half);
-                while s < line.len() && !line.is_char_boundary(s) {
-                    s += 1;
-                }
-                s
-            };
+            let head_end = line.floor_char_boundary(half);
+            let tail_start = line.ceil_char_boundary(line.len().saturating_sub(half));
             let omitted = line.len() - head_end - (line.len() - tail_start);
             result.push_str(&line[..head_end]);
             result.push_str(&format!(" ... ({omitted} bytes truncated) ... "));

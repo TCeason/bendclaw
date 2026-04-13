@@ -226,7 +226,7 @@ fn collect_git_info(cwd: &str) -> Option<String> {
         } else if st.len() > MAX_GIT_STATUS_CHARS {
             format!(
                 "{}\n... (truncated, run `git status` for full output)",
-                &st[..MAX_GIT_STATUS_CHARS]
+                &st[..st.floor_char_boundary(MAX_GIT_STATUS_CHARS)]
             )
         } else {
             st

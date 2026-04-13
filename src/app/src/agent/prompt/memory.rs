@@ -235,9 +235,5 @@ fn truncate_to_char_boundary(s: &str, max_bytes: usize) -> &str {
     if s.len() <= max_bytes {
         return s;
     }
-    let mut cut = max_bytes;
-    while !s.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    &s[..cut]
+    &s[..s.floor_char_boundary(max_bytes)]
 }

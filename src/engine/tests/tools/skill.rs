@@ -108,8 +108,9 @@ fn truncate_str_long_gets_ellipsis() {
 
 #[test]
 fn truncate_str_utf8_safe() {
+    // "你好" = 6 bytes, "你好世" = 9 bytes; floor_char_boundary(7) = 6
     let result = truncate_str("你好世界", 7);
-    assert_eq!(result, "你好世\u{2026}");
+    assert_eq!(result, "你好\u{2026}");
 }
 
 // ---------------------------------------------------------------------------

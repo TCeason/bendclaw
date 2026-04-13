@@ -302,6 +302,29 @@ async fn test_bash_empty_envs_works() {
 }
 
 #[tokio::test]
+async fn test_bash_timeout_multibyte_no_panic() {
+    // Regression: tail_lines used to panic when the byte offset landed in the
+    // middle of a multi-byte UTF-8 character (e.g. emoji / CJK).
+    // We trigger the timeout path which calls tail_lines on the captured output.
+    let tool = BashTool::new().with_timeout(std::time::Duration::from_millis(300));
+    // Emit a large block of multi-byte chars so the tail_lines truncation offset
+    // is likely to land inside a multi-byte sequence.
+    let result = tool
+        .execute(
+            serde_json::json!({
+                "command": "python3 -c \"print('🚀' * 2000)\"; sleep 10"
+            }),
+            ctx("bash"),
+        )
+        .await;
+
+    // Should be a timeout error, NOT a panic
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("timed out"));
+}
+
+#[tokio::test]
 async fn test_bash_without_envs_variable_is_empty() {
     let tool = BashTool::new();
     let result = tool
