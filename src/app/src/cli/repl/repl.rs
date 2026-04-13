@@ -132,6 +132,11 @@ impl Repl {
             .build();
         let mut rl = Editor::with_config(config)
             .map_err(|e| BendclawError::Cli(format!("failed to initialize readline: {e}")))?;
+        // Alt+Enter inserts a newline instead of submitting.
+        rl.bind_sequence(
+            rustyline::KeyEvent(rustyline::KeyCode::Enter, rustyline::Modifiers::ALT),
+            rustyline::Cmd::Newline,
+        );
         rl.set_helper(Some(ReplHelper::new(
             self.completion_state.clone(),
             line_empty.clone(),
@@ -739,6 +744,10 @@ impl Repl {
         // 5. Multi-turn mini REPL
         let mut rl: Editor<(), DefaultHistory> =
             Editor::new().map_err(|e| BendclawError::Cli(format!("readline init failed: {e}")))?;
+        rl.bind_sequence(
+            rustyline::KeyEvent(rustyline::KeyCode::Enter, rustyline::Modifiers::ALT),
+            rustyline::Cmd::Newline,
+        );
 
         loop {
             println!("  {DIM}[log mode] /done to return{RESET}");
