@@ -12,6 +12,7 @@ use super::render::format_run_summary;
 use super::render::format_tool_input;
 use super::render::print_tool_result;
 use super::render::terminal_writeln;
+use super::render::truncate_head_tail;
 use super::render::ToolCallSummary;
 use super::render::DIM;
 use super::render::GRAY;
@@ -32,6 +33,48 @@ use crate::types::LlmCallStartedStats;
 use crate::types::MessageStats;
 use crate::types::ToolFinishedStats;
 use crate::types::TranscriptStats;
+
+// ---------------------------------------------------------------------------
+// Error truncation for REPL display
+// ---------------------------------------------------------------------------
+
+/// Max lines to show for an error message before head+tail compaction.
+const ERROR_HEAD_LINES: usize = 4;
+const ERROR_TAIL_LINES: usize = 2;
+const ERROR_COMPACT_THRESHOLD: usize = ERROR_HEAD_LINES + ERROR_TAIL_LINES + 2;
+/// Max width per error line before truncation.
+const ERROR_MAX_LINE_WIDTH: usize = 256;
+
+/// Truncate a potentially long error message for REPL display.
+///
+/// - Caps individual lines at [`ERROR_MAX_LINE_WIDTH`] chars (head+tail).
+/// - If the message has more than [`ERROR_COMPACT_THRESHOLD`] lines, keeps
+///   the first few and last few with an omission marker.
+pub fn truncate_error_lines(message: &str) -> Vec<String> {
+    let cap = |l: &str| -> String { truncate_head_tail(l, ERROR_MAX_LINE_WIDTH) };
+
+    let normalized = message.replace("\r\n", "\n");
+    let trimmed = normalized.trim_end_matches('\n');
+    if trimmed.is_empty() {
+        return vec!["(empty error)".into()];
+    }
+
+    let all_lines: Vec<&str> = trimmed.split('\n').collect();
+    if all_lines.len() > ERROR_COMPACT_THRESHOLD {
+        let mut result: Vec<String> = Vec::new();
+        result.extend(all_lines[..ERROR_HEAD_LINES].iter().map(|l| cap(l)));
+        let omitted = all_lines.len() - ERROR_HEAD_LINES - ERROR_TAIL_LINES;
+        result.push(format!("... ({omitted} more lines)"));
+        result.extend(
+            all_lines[all_lines.len() - ERROR_TAIL_LINES..]
+                .iter()
+                .map(|l| cap(l)),
+        );
+        result
+    } else {
+        all_lines.into_iter().map(cap).collect()
+    }
+}
 
 // ---------------------------------------------------------------------------
 // State
@@ -317,7 +360,13 @@ impl ReplSink {
             RunEventPayload::Error { message } => {
                 finish_assistant_stream(state);
                 self.deactivate_spinner();
-                terminal_writeln(&format!("{RED}error:{RESET} {message}"));
+                for (i, line) in truncate_error_lines(message).iter().enumerate() {
+                    if i == 0 {
+                        terminal_writeln(&format!("{RED}error:{RESET} {line}"));
+                    } else {
+                        terminal_writeln(&format!("{RED}  {line}{RESET}"));
+                    }
+                }
             }
             RunEventPayload::RunFinished {
                 usage,
@@ -407,7 +456,9 @@ impl ReplSink {
                 let ok = error.is_none();
                 super::render::print_badge_line(&title, true, ok);
                 if let Some(err) = error {
-                    terminal_writeln(&format!("{RED}  {err}{RESET}"));
+                    for line in truncate_error_lines(err) {
+                        terminal_writeln(&format!("{RED}  {line}{RESET}"));
+                    }
                 } else {
                     for line in format_llm_completed_lines(usage, metrics.as_ref()) {
                         terminal_writeln(&format!("{GRAY}  {line}{RESET}"));

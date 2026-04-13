@@ -4,6 +4,7 @@ use std::sync::OnceLock;
 
 use parking_lot::Mutex;
 
+pub use super::sink::truncate_error_lines;
 use crate::agent::TranscriptItem;
 use crate::agent::UsageSummary;
 pub use crate::cli::format::format_tool_input;

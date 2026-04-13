@@ -7,7 +7,7 @@ pub mod markdown;
 pub mod render;
 mod repl;
 mod selector;
-mod sink;
+pub(crate) mod sink;
 pub mod spinner;
 pub mod transcript_log;
 

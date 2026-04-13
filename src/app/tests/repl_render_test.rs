@@ -614,3 +614,70 @@ fn format_run_summary_no_budget_when_none() {
         "should not contain context when budget is None, got:\n{all}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// truncate_error_lines
+// ---------------------------------------------------------------------------
+
+use bendclaw::cli::repl::render::truncate_error_lines;
+
+#[test]
+fn truncate_error_lines_short_message_unchanged() {
+    let lines = truncate_error_lines("something went wrong");
+    assert_eq!(lines, vec!["something went wrong"]);
+}
+
+#[test]
+fn truncate_error_lines_empty_message() {
+    let lines = truncate_error_lines("");
+    assert_eq!(lines, vec!["(empty error)"]);
+}
+
+#[test]
+fn truncate_error_lines_few_lines_unchanged() {
+    let msg = (0..8)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let lines = truncate_error_lines(&msg);
+    assert_eq!(lines.len(), 8);
+    assert_eq!(lines[0], "line 0");
+    assert_eq!(lines[7], "line 7");
+}
+
+#[test]
+fn truncate_error_lines_many_lines_compacted() {
+    let msg = (0..50)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let lines = truncate_error_lines(&msg);
+    // head 4 + ellipsis + tail 2 = 7 lines
+    assert_eq!(lines.len(), 7);
+    assert_eq!(lines[0], "line 0");
+    assert_eq!(lines[3], "line 3");
+    assert!(lines[4].contains("44 more lines"));
+    assert_eq!(lines[5], "line 48");
+    assert_eq!(lines[6], "line 49");
+}
+
+#[test]
+fn truncate_error_lines_long_single_line_capped() {
+    let long = "x".repeat(500);
+    let lines = truncate_error_lines(&long);
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].len() < 500, "long line should be truncated");
+    assert!(
+        lines[0].contains(" ... "),
+        "should use head_tail truncation"
+    );
+}
+
+#[test]
+fn truncate_error_lines_crlf_normalized() {
+    let msg = "line 0\r\nline 1\r\nline 2";
+    let lines = truncate_error_lines(msg);
+    assert_eq!(lines.len(), 3);
+    assert_eq!(lines[0], "line 0");
+    assert_eq!(lines[2], "line 2");
+}
