@@ -13,6 +13,7 @@ import { PromptInput } from '../components/PromptInput.js'
 import { StreamingText } from '../components/StreamingText.js'
 import { StatusLine } from '../components/StatusLine.js'
 import { ToolCallDisplay } from '../components/ToolCallDisplay.js'
+import { isSlashCommand, resolveCommand, formatHelp } from '../commands/index.js'
 
 interface REPLProps {
   agent: Agent
@@ -23,10 +24,10 @@ export function REPL({ agent }: REPLProps) {
   const [state, setState] = useState<AppState>(() =>
     createInitialState(agent.model, agent.cwd)
   )
+  const [systemMessages, setSystemMessages] = useState<SystemMsg[]>([])
   const streamRef = useRef<QueryStream | null>(null)
   const sessionIdRef = useRef<string | null>(null)
 
-  // Keep sessionId ref in sync for use in async callbacks
   useEffect(() => {
     sessionIdRef.current = state.sessionId
   }, [state.sessionId])
@@ -44,15 +45,23 @@ export function REPL({ agent }: REPLProps) {
           currentThinkingText: '',
           activeToolCalls: new Map(),
         }))
-      } else if (!state.isLoading) {
-        exit()
+        pushSystem(setSystemMessages, 'info', 'Interrupted.')
       }
     }
   }, { isActive: state.isLoading })
 
   const handleSubmit = useCallback(
     (text: string) => {
-      // Add user message immediately
+      // Clear system messages on new input
+      setSystemMessages([])
+
+      // Handle slash commands
+      if (isSlashCommand(text)) {
+        handleSlashCommand(text, agent, state, setState, setSystemMessages, exit)
+        return
+      }
+
+      // Add user message
       const userMsg: UIMessage = {
         id: `user-${Date.now()}`,
         role: 'user',
@@ -69,10 +78,9 @@ export function REPL({ agent }: REPLProps) {
         activeToolCalls: new Map(),
       }))
 
-      // Fire-and-forget async query — state updates via setState
       runQuery(agent, text, sessionIdRef.current, streamRef, setState)
     },
-    [agent]
+    [agent, state, exit]
   )
 
   const handleInterrupt = useCallback(() => {
@@ -86,6 +94,7 @@ export function REPL({ agent }: REPLProps) {
         currentThinkingText: '',
         activeToolCalls: new Map(),
       }))
+      pushSystem(setSystemMessages, 'info', 'Interrupted.')
     } else {
       exit()
     }
@@ -97,7 +106,6 @@ export function REPL({ agent }: REPLProps) {
 
   return (
     <Box flexDirection="column" padding={0}>
-      {/* Banner */}
       <Banner model={state.model} cwd={state.cwd} />
 
       {/* Message history */}
@@ -118,7 +126,7 @@ export function REPL({ agent }: REPLProps) {
         <ToolCallDisplay tools={state.activeToolCalls} />
       )}
 
-      {/* Spinner — only when waiting with no output yet */}
+      {/* Spinner */}
       {state.isLoading && !hasStreamText && !hasThinkingText && !hasActiveTools && (
         <Spinner text="Thinking..." />
       )}
@@ -129,6 +137,16 @@ export function REPL({ agent }: REPLProps) {
           <Text color="red">Error: {state.error}</Text>
         </Box>
       )}
+
+      {/* System messages (from slash commands) */}
+      {systemMessages.map((msg, i) => (
+        <Box key={i} marginBottom={0}>
+          <Text color={msg.level === 'error' ? 'red' : msg.level === 'warn' ? 'yellow' : undefined} dimColor={msg.level === 'info'}>
+            {msg.text}
+          </Text>
+        </Box>
+      ))}
+      {systemMessages.length > 0 && <Text>{''}</Text>}
 
       {/* Prompt input */}
       <PromptInput
@@ -150,7 +168,144 @@ export function REPL({ agent }: REPLProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Async query runner (outside component to avoid closure issues)
+// System messages
+// ---------------------------------------------------------------------------
+
+interface SystemMsg {
+  level: 'info' | 'warn' | 'error'
+  text: string
+}
+
+function pushSystem(
+  setter: React.Dispatch<React.SetStateAction<SystemMsg[]>>,
+  level: SystemMsg['level'],
+  text: string,
+) {
+  setter((prev) => [...prev, { level, text }])
+}
+
+// ---------------------------------------------------------------------------
+// Slash command handler
+// ---------------------------------------------------------------------------
+
+async function handleSlashCommand(
+  input: string,
+  agent: Agent,
+  state: AppState,
+  setState: React.Dispatch<React.SetStateAction<AppState>>,
+  setSystem: React.Dispatch<React.SetStateAction<SystemMsg[]>>,
+  exit: () => void,
+) {
+  const resolved = resolveCommand(input)
+
+  if (resolved.kind === 'unknown') {
+    pushSystem(setSystem, 'error', `Unknown command: ${input}`)
+    pushSystem(setSystem, 'info', 'Type /help for available commands')
+    return
+  }
+
+  if (resolved.kind === 'ambiguous') {
+    pushSystem(setSystem, 'warn', `Ambiguous command: ${resolved.candidates.join(', ')}`)
+    pushSystem(setSystem, 'info', 'Type more characters or /help for commands')
+    return
+  }
+
+  const { name, args } = resolved
+
+  switch (name) {
+    case '/help':
+      pushSystem(setSystem, 'info', formatHelp())
+      break
+
+    case '/exit':
+      exit()
+      break
+
+    case '/clear':
+      setState((prev) => ({ ...prev, messages: [] }))
+      pushSystem(setSystem, 'info', 'Messages cleared.')
+      break
+
+    case '/new':
+      setState((prev) => ({
+        ...prev,
+        messages: [],
+        sessionId: null,
+        error: null,
+      }))
+      pushSystem(setSystem, 'info', 'New session started.')
+      break
+
+    case '/model': {
+      if (args.trim()) {
+        agent.model = args.trim()
+        setState((prev) => ({ ...prev, model: args.trim() }))
+        pushSystem(setSystem, 'info', `Model → ${args.trim()}`)
+      } else {
+        pushSystem(setSystem, 'info', `Current model: ${state.model}`)
+      }
+      break
+    }
+
+    case '/resume': {
+      try {
+        const sessions = await agent.listSessions(20)
+        if (sessions.length === 0) {
+          pushSystem(setSystem, 'info', 'No sessions found.')
+          break
+        }
+
+        if (args.trim()) {
+          // Resume specific session by prefix
+          const prefix = args.trim()
+          const matches = sessions.filter(
+            (s) => s.session_id === prefix || s.session_id.startsWith(prefix)
+          )
+          if (matches.length === 0) {
+            pushSystem(setSystem, 'error', `Session not found: ${prefix}`)
+          } else if (matches.length > 1) {
+            pushSystem(setSystem, 'error', `Ambiguous session id: ${prefix}`)
+          } else {
+            const session = matches[0]!
+            setState((prev) => ({
+              ...prev,
+              sessionId: session.session_id,
+              messages: [],
+            }))
+            pushSystem(setSystem, 'info', `Resumed session ${session.session_id.slice(0, 8)} — ${session.title || '(untitled)'}`)
+          }
+        } else {
+          // List recent sessions
+          const lines = sessions.slice(0, 10).map((s) => {
+            const id = s.session_id.slice(0, 8)
+            const title = s.title || '(untitled)'
+            const time = relativeTime(s.updated_at)
+            return `  ${id}  ${padRight(title, 40)}  ${time}`
+          })
+          pushSystem(setSystem, 'info', 'Recent sessions:\n' + lines.join('\n'))
+          pushSystem(setSystem, 'info', 'Use /resume <id> to resume a session')
+        }
+      } catch (err: any) {
+        pushSystem(setSystem, 'error', `Failed to list sessions: ${err?.message ?? err}`)
+      }
+      break
+    }
+
+    case '/plan':
+      pushSystem(setSystem, 'info', 'Planning mode on — read-only tools only. Use /act to resume execution.')
+      break
+
+    case '/act':
+      pushSystem(setSystem, 'info', 'Action mode on — full tool set restored.')
+      break
+
+    default:
+      pushSystem(setSystem, 'error', `Unhandled command: ${name}`)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Async query runner
 // ---------------------------------------------------------------------------
 
 async function runQuery(
@@ -200,9 +355,33 @@ function Banner({ model, cwd }: { model: string; cwd: string }) {
       </Box>
       <Box>
         <Text dimColor>
-          Type a message to start. Ctrl+C to interrupt or exit.
+          Type a message to start. /help for commands. Ctrl+C to exit.
         </Text>
       </Box>
     </Box>
   )
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function relativeTime(iso: string): string {
+  try {
+    const ms = Date.now() - new Date(iso).getTime()
+    const mins = Math.floor(ms / 60000)
+    if (mins < 1) return 'just now'
+    if (mins < 60) return `${mins}m ago`
+    const hours = Math.floor(mins / 60)
+    if (hours < 24) return `${hours}h ago`
+    const days = Math.floor(hours / 24)
+    return `${days}d ago`
+  } catch {
+    return iso
+  }
+}
+
+function padRight(s: string, n: number): string {
+  if (s.length > n) return s.slice(0, n - 1) + '…'
+  return s + ' '.repeat(Math.max(0, n - s.length))
 }
