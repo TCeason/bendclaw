@@ -1,8 +1,5 @@
-use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::RwLock;
 
@@ -13,9 +10,6 @@ use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
 use crossterm::terminal::disable_raw_mode;
 use crossterm::terminal::enable_raw_mode;
-use rustyline::error::ReadlineError;
-use rustyline::history::DefaultHistory;
-use rustyline::Editor;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
@@ -24,10 +18,11 @@ use super::commands::command_short_description;
 use super::commands::resolve_slash_command;
 use super::commands::ResolvedSlashCommand;
 use super::commands::KNOWN_COMMANDS;
-use super::completion::is_slash_prefix;
-use super::completion::CompletionState;
-use super::completion::CompletionStateRef;
-use super::completion::ReplHelper;
+use super::completer::is_slash_prefix;
+use super::completer::CompletionState;
+use super::completer::CompletionStateRef;
+use super::editor::ReadLineOutput;
+use super::editor::ReplEditor;
 use super::interrupt::Action as InterruptAction;
 use super::interrupt::InterruptHandler;
 use super::render::print_transcript_messages;
@@ -125,36 +120,18 @@ impl Repl {
             self.print_resume_hint().await?;
         }
 
-        let line_empty = Arc::new(AtomicBool::new(true));
-        let config = rustyline::config::Builder::new()
-            .completion_type(rustyline::config::CompletionType::List)
-            .completion_prompt_limit(50)
-            .build();
-        let mut rl = Editor::with_config(config)
-            .map_err(|e| EvotError::Cli(format!("failed to initialize readline: {e}")))?;
-        rl.set_helper(Some(ReplHelper::new(
-            self.completion_state.clone(),
-            line_empty.clone(),
-        )));
-
-        self.load_history(&mut rl);
+        let mut editor = ReplEditor::new(self.completion_state.clone())
+            .map_err(|e| EvotError::Cli(format!("failed to initialize editor: {e}")))?;
 
         let mut interrupt = InterruptHandler::new();
         loop {
-            let prompt = self.prompt();
-            line_empty.store(true, Ordering::Relaxed);
-            let line = match rl.readline(&prompt) {
-                Ok(line) => line,
-                Err(ReadlineError::Interrupted) => {
-                    let is_empty = line_empty.load(Ordering::Relaxed);
+            editor.set_prompt(self.prompt());
+            let line = match editor.read_line() {
+                ReadLineOutput::Line(line) => line,
+                ReadLineOutput::Interrupted => {
+                    let is_empty = true;
                     match interrupt.on_interrupt(is_empty) {
                         InterruptAction::Clear => {
-                            // Erase the ^C line and stay in place so the
-                            // next prompt appears on the same line.
-                            super::render::with_terminal(|stdout| {
-                                use std::io::Write;
-                                let _ = write!(stdout, "\x1b[A\r\x1b[K");
-                            });
                             continue;
                         }
                         InterruptAction::ShowHint => {
@@ -172,10 +149,7 @@ impl Repl {
                         }
                     }
                 }
-                Err(ReadlineError::Eof) => break,
-                Err(error) => {
-                    return Err(EvotError::Cli(format!("failed to read input: {error}")));
-                }
+                ReadLineOutput::Eof => break,
             };
 
             interrupt.on_input();
@@ -184,13 +158,7 @@ impl Repl {
                 continue;
             }
 
-            let _ = rl.add_history_entry(&line);
-            let input = if needs_continuation(trimmed) {
-                collect_multiline_rl(trimmed, &mut rl)
-            } else {
-                line
-            };
-            let input = input.trim();
+            let input = trimmed;
 
             if is_slash_like(input) {
                 match resolve_slash_command(input) {
@@ -216,7 +184,7 @@ impl Repl {
             self.refresh_completion_state().await?;
         }
 
-        self.save_history(&mut rl);
+        editor.sync_history();
         self.print_resume_hint_on_exit();
         Ok(())
     }
@@ -741,13 +709,14 @@ impl Repl {
         self.consume_side_turn(&mut side, query).await?;
 
         // 5. Multi-turn mini REPL
-        let mut rl: Editor<(), DefaultHistory> =
-            Editor::new().map_err(|e| EvotError::Cli(format!("readline init failed: {e}")))?;
+        let mut log_editor = ReplEditor::new(self.completion_state.clone())
+            .map_err(|e| EvotError::Cli(format!("editor init failed: {e}")))?;
 
         loop {
             println!("  {DIM}[log mode] /done to return{RESET}");
-            match rl.readline("log (/done to exit)> ") {
-                Ok(line) => {
+            log_editor.set_prompt("log (/done to exit)> ".to_string());
+            match log_editor.read_line() {
+                ReadLineOutput::Line(line) => {
                     let trimmed = line.trim();
                     if trimmed == "/done" {
                         break;
@@ -757,11 +726,8 @@ impl Repl {
                     }
                     self.consume_side_turn(&mut side, trimmed).await?;
                 }
-                Err(ReadlineError::Interrupted) => continue,
-                Err(ReadlineError::Eof) => break,
-                Err(e) => {
-                    return Err(EvotError::Cli(format!("readline error: {e}")));
-                }
+                ReadLineOutput::Interrupted => continue,
+                ReadLineOutput::Eof => break,
             }
         }
 
@@ -920,23 +886,6 @@ impl Repl {
             model, mode,
         )
     }
-
-    fn load_history(&self, rl: &mut Editor<ReplHelper, DefaultHistory>) {
-        let Ok(path) = paths::history_file_path() else {
-            return;
-        };
-        let _ = rl.load_history(&path);
-    }
-
-    fn save_history(&self, rl: &mut Editor<ReplHelper, DefaultHistory>) {
-        let Ok(path) = paths::history_file_path() else {
-            return;
-        };
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let _ = rl.save_history(&path);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -999,52 +948,6 @@ fn poll_for_ctrl_c(timeout: std::time::Duration) -> bool {
             }
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Multiline input
-// ---------------------------------------------------------------------------
-
-pub fn needs_continuation(line: &str) -> bool {
-    line.ends_with('\\') || line.starts_with("```")
-}
-
-pub fn collect_multiline_rl(
-    first_line: &str,
-    rl: &mut Editor<ReplHelper, DefaultHistory>,
-) -> String {
-    let mut buf = String::new();
-    let cont_prompt = format!("{DIM}  ...{RESET} ");
-
-    if first_line.starts_with("```") {
-        buf.push_str(first_line);
-        buf.push('\n');
-        while let Ok(line) = rl.readline(&cont_prompt) {
-            buf.push_str(&line);
-            buf.push('\n');
-            if line.trim() == "```" {
-                break;
-            }
-        }
-    } else {
-        let mut current = first_line.to_string();
-        loop {
-            if current.ends_with('\\') {
-                current.truncate(current.len() - 1);
-                buf.push_str(&current);
-                buf.push('\n');
-                match rl.readline(&cont_prompt) {
-                    Ok(line) => current = line,
-                    Err(_) => break,
-                }
-            } else {
-                buf.push_str(&current);
-                break;
-            }
-        }
-    }
-
-    buf
 }
 
 // ---------------------------------------------------------------------------

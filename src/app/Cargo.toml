@@ -19,7 +19,7 @@ crossterm = "0.28"
 futures.workspace = true
 parking_lot.workspace = true
 ratatui = "0.29"
-rustyline = "15"
+reedline = "0.47.0"
 similar = { workspace = true }
 serde.workspace = true
 serde_ignored.workspace = true

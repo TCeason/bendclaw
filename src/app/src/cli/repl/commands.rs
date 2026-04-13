@@ -1,4 +1,4 @@
-use super::completion::CompletionState;
+use super::completer::CompletionState;
 
 pub const KNOWN_COMMANDS: &[&str] = &[
     "/help", "/resume", "/new", "/model", "/plan", "/act", "/env", "/log", "/skill",
