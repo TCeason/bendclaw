@@ -2152,3 +2152,191 @@ async fn test_compaction_not_emitted_without_context_config() {
         .count();
     assert_eq!(compaction_events, 0);
 }
+
+// ---------------------------------------------------------------------------
+// Empty response retry tests
+// ---------------------------------------------------------------------------
+
+/// A provider that returns empty Ok(Message) N times, then delegates to inner.
+struct EmptyThenSucceedProvider {
+    call_count: std::sync::atomic::AtomicUsize,
+    empty_count: usize,
+    inner: MockProvider,
+}
+
+#[async_trait::async_trait]
+impl StreamProvider for EmptyThenSucceedProvider {
+    async fn stream(
+        &self,
+        config: StreamConfig,
+        tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<bendengine::Message, ProviderError> {
+        let attempt = self
+            .call_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if attempt < self.empty_count {
+            let _ = tx.send(StreamEvent::Start);
+            let msg = Message::Assistant {
+                content: vec![],
+                stop_reason: StopReason::Stop,
+                model: "mock".into(),
+                provider: "mock".into(),
+                usage: Usage::default(),
+                timestamp: 0,
+                error_message: None,
+            };
+            let _ = tx.send(StreamEvent::Done {
+                message: msg.clone(),
+            });
+            return Ok(msg);
+        }
+        self.inner.stream(config, tx, cancel).await
+    }
+}
+
+#[tokio::test]
+async fn test_empty_response_retried_then_succeeds() {
+    let provider: std::sync::Arc<EmptyThenSucceedProvider> =
+        std::sync::Arc::new(EmptyThenSucceedProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+            empty_count: 2,
+            inner: MockProvider::text("Success after empty"),
+        });
+
+    let config = AgentLoopConfig {
+        provider: provider.clone(),
+        model: "mock".into(),
+        api_key: "test".into(),
+        thinking_level: ThinkingLevel::Off,
+        max_tokens: None,
+        temperature: None,
+        model_config: None,
+        convert_to_llm: None,
+        transform_context: None,
+        get_steering_messages: None,
+        get_follow_up_messages: None,
+        context_config: None,
+        compaction_strategy: None,
+        execution_limits: None,
+        cache_config: CacheConfig::default(),
+        tool_execution: ToolExecutionStrategy::default(),
+        retry_policy: bendengine::RetryPolicy::new(3),
+        before_turn: None,
+        after_turn: None,
+        input_filters: vec![],
+    };
+
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: Vec::new(),
+        tools: Vec::new(),
+    };
+
+    let prompt = AgentMessage::Llm(Message::user("hi"));
+    let (tx, rx) = mpsc::unbounded_channel();
+    let cancel = CancellationToken::new();
+
+    let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
+
+    // Should succeed: 2 empty responses retried, 3rd call returns real text
+    assert_eq!(new_messages.len(), 2); // user + assistant
+    assert_eq!(new_messages[1].role(), "assistant");
+
+    // Provider called 3 times: 2 empty + 1 success
+    assert_eq!(
+        provider
+            .call_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        3
+    );
+
+    let events = collect_events(rx);
+
+    // Should have LlmCallEnd events with errors for the empty attempts
+    let llm_call_errors: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::LlmCallEnd {
+                error: Some(err), ..
+            } => Some(err.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(llm_call_errors.len(), 2);
+    assert!(llm_call_errors[0].contains("Empty response"));
+}
+
+#[tokio::test]
+async fn test_empty_response_exhausts_retries() {
+    let provider: std::sync::Arc<EmptyThenSucceedProvider> =
+        std::sync::Arc::new(EmptyThenSucceedProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+            empty_count: 10, // more empties than retries
+            inner: MockProvider::text("never reached"),
+        });
+
+    let config = AgentLoopConfig {
+        provider: provider.clone(),
+        model: "mock".into(),
+        api_key: "test".into(),
+        thinking_level: ThinkingLevel::Off,
+        max_tokens: None,
+        temperature: None,
+        model_config: None,
+        convert_to_llm: None,
+        transform_context: None,
+        get_steering_messages: None,
+        get_follow_up_messages: None,
+        context_config: None,
+        compaction_strategy: None,
+        execution_limits: None,
+        cache_config: CacheConfig::default(),
+        tool_execution: ToolExecutionStrategy::default(),
+        retry_policy: bendengine::RetryPolicy::new(2),
+        before_turn: None,
+        after_turn: None,
+        input_filters: vec![],
+    };
+
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: Vec::new(),
+        tools: Vec::new(),
+    };
+
+    let prompt = AgentMessage::Llm(Message::user("hi"));
+    let (tx, rx) = mpsc::unbounded_channel();
+    let cancel = CancellationToken::new();
+
+    let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
+
+    // Last message should be an error
+    let last = new_messages.last().map(|m| match m {
+        AgentMessage::Llm(msg) => msg.clone(),
+        _ => panic!("expected Llm message"),
+    });
+    if let Some(Message::Assistant {
+        stop_reason,
+        error_message,
+        ..
+    }) = last
+    {
+        assert_eq!(stop_reason, StopReason::Error);
+        assert!(error_message.as_ref().unwrap().contains("Empty response"));
+    } else {
+        panic!("Expected error assistant message");
+    }
+
+    // 1 initial + 2 retries = 3 attempts
+    assert_eq!(
+        provider
+            .call_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        3
+    );
+
+    let events = collect_events(rx);
+    // Should have an Error event
+    assert!(events.iter().any(|e| matches!(e, AgentEvent::Error { .. })));
+}

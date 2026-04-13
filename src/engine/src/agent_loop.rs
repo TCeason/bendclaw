@@ -14,6 +14,7 @@ use crate::context::ExecutionLimits;
 use crate::context::ExecutionTracker;
 use crate::context::{self};
 use crate::provider::ModelConfig;
+use crate::provider::ProviderError;
 use crate::provider::StreamConfig;
 use crate::provider::StreamEvent;
 use crate::provider::StreamProvider;
@@ -719,6 +720,35 @@ async fn stream_assistant_response(
             .stream(stream_config, stream_tx, provider_cancel)
             .await;
 
+        // Promote empty Ok(Message) to a retryable error so the retry loop
+        // handles it uniformly instead of terminating the agent loop.
+        let result = match result {
+            Ok(ref msg) => {
+                let is_empty = match msg {
+                    Message::Assistant {
+                        content,
+                        usage,
+                        stop_reason,
+                        ..
+                    } => {
+                        content.is_empty()
+                            && usage.input == 0
+                            && usage.output == 0
+                            && *stop_reason != StopReason::Error
+                    }
+                    _ => false,
+                };
+                if is_empty {
+                    Err(ProviderError::Api(
+                        "Empty response from provider (no content, no usage)".into(),
+                    ))
+                } else {
+                    result
+                }
+            }
+            err => err,
+        };
+
         match &result {
             Err(e)
                 if crate::retry::should_retry(e)
@@ -766,44 +796,10 @@ async fn stream_assistant_response(
 
     match result {
         Ok(ref msg) => {
-            let (usage, is_empty) = match msg {
-                Message::Assistant {
-                    content,
-                    usage,
-                    stop_reason,
-                    ..
-                } => {
-                    let empty = content.is_empty()
-                        && usage.input == 0
-                        && usage.output == 0
-                        && *stop_reason != StopReason::Error;
-                    (usage.clone(), empty)
-                }
-                _ => (Usage::default(), false),
+            let usage = match msg {
+                Message::Assistant { usage, .. } => usage.clone(),
+                _ => Usage::default(),
             };
-
-            if is_empty {
-                let err_msg = "Empty response from provider (no content, no usage)".to_string();
-                tx.send(AgentEvent::LlmCallEnd {
-                    turn,
-                    attempt,
-                    usage,
-                    error: Some(err_msg.clone()),
-                    metrics: collected_metrics,
-                })
-                .ok();
-                return Message::Assistant {
-                    content: vec![Content::Text {
-                        text: String::new(),
-                    }],
-                    stop_reason: StopReason::Error,
-                    model: config.model.clone(),
-                    provider: "unknown".into(),
-                    usage: Usage::default(),
-                    timestamp: now_ms(),
-                    error_message: Some(err_msg),
-                };
-            }
 
             tx.send(AgentEvent::LlmCallEnd {
                 turn,
