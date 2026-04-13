@@ -2,47 +2,42 @@ use bendengine::provider::anthropic::request::*;
 use bendengine::provider::traits::*;
 use bendengine::types::*;
 
-fn make_config(cache: CacheConfig) -> StreamConfig {
-    StreamConfig {
-        model: "claude-sonnet-4-20250514".into(),
-        system_prompt: "You are helpful.".into(),
-        messages: vec![
-            Message::user("Hello"),
-            Message::Assistant {
-                content: vec![Content::Text {
-                    text: "Hi there!".into(),
-                }],
-                stop_reason: StopReason::Stop,
-                model: "test".into(),
-                provider: "test".into(),
-                usage: Usage::default(),
-                timestamp: 0,
-                error_message: None,
-            },
-            Message::User {
-                content: vec![Content::Text {
-                    text: "What is 2+2?".into(),
-                }],
-                timestamp: 0,
-            },
-        ],
-        tools: vec![ToolDefinition {
-            name: "bash".into(),
-            description: "Run commands".into(),
-            parameters: serde_json::json!({"type": "object"}),
-        }],
-        thinking_level: ThinkingLevel::Off,
-        api_key: "test-key".into(),
-        max_tokens: Some(1024),
-        temperature: None,
-        model_config: None,
-        cache_config: cache,
+use super::super::helpers::provider_helper::*;
+
+/// Helper: assistant message with text content.
+fn assistant(text: &str) -> Message {
+    Message::Assistant {
+        content: vec![Content::Text { text: text.into() }],
+        stop_reason: StopReason::Stop,
+        model: "test".into(),
+        provider: "test".into(),
+        usage: Usage::default(),
+        timestamp: 0,
+        error_message: None,
     }
 }
 
+/// Helper: multi-turn config used by cache tests.
+fn cache_config(cache: CacheConfig) -> StreamConfig {
+    StreamConfigBuilder::anthropic()
+        .system_prompt("You are helpful.")
+        .messages(vec![
+            Message::user("Hello"),
+            assistant("Hi there!"),
+            Message::user("What is 2+2?"),
+        ])
+        .tools(vec![tool_def("bash", "Run commands")])
+        .cache_config(cache)
+        .build()
+}
+
+// ---------------------------------------------------------------------------
+// Cache breakpoint tests
+// ---------------------------------------------------------------------------
+
 #[test]
 fn test_cache_auto_places_all_breakpoints() {
-    let body = build_request_body(&make_config(CacheConfig::default()), false);
+    let body = build_request_body(&cache_config(CacheConfig::default()), false);
 
     let system = &body["system"][0];
     assert_eq!(system["cache_control"]["type"], "ephemeral");
@@ -64,7 +59,7 @@ fn test_cache_disabled_no_breakpoints() {
         enabled: false,
         strategy: CacheStrategy::Auto,
     };
-    let body = build_request_body(&make_config(config), false);
+    let body = build_request_body(&cache_config(config), false);
 
     let system = &body["system"][0];
     assert!(system.get("cache_control").is_none());
@@ -92,7 +87,7 @@ fn test_cache_manual_system_only() {
             cache_messages: false,
         },
     };
-    let body = build_request_body(&make_config(config), false);
+    let body = build_request_body(&cache_config(config), false);
 
     assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
     assert!(body["tools"]
@@ -107,6 +102,10 @@ fn test_cache_manual_system_only() {
     let content = second["content"].as_array().unwrap();
     assert!(content.last().unwrap().get("cache_control").is_none());
 }
+
+// ---------------------------------------------------------------------------
+// Usage
+// ---------------------------------------------------------------------------
 
 #[test]
 fn test_usage_cache_hit_rate() {
@@ -124,12 +123,15 @@ fn test_usage_cache_hit_rate() {
     assert_eq!(empty.cache_hit_rate(), 0.0);
 }
 
+// ---------------------------------------------------------------------------
+// Tool result serialization
+// ---------------------------------------------------------------------------
+
 #[test]
 fn test_tool_result_with_image() {
-    let config = StreamConfig {
-        model: "claude-sonnet-4-20250514".into(),
-        system_prompt: "".into(),
-        messages: vec![
+    let config = StreamConfigBuilder::anthropic()
+        .cache_disabled()
+        .messages(vec![
             Message::Assistant {
                 content: vec![Content::ToolCall {
                     id: "tc-1".into(),
@@ -159,18 +161,8 @@ fn test_tool_result_with_image() {
                 timestamp: 0,
                 retention: Retention::Normal,
             },
-        ],
-        tools: vec![],
-        thinking_level: ThinkingLevel::Off,
-        api_key: "test-key".into(),
-        max_tokens: Some(1024),
-        temperature: None,
-        model_config: None,
-        cache_config: CacheConfig {
-            enabled: false,
-            strategy: CacheStrategy::Disabled,
-        },
-    };
+        ])
+        .build();
 
     let body = build_request_body(&config, false);
     let msgs = body["messages"].as_array().unwrap();
@@ -185,10 +177,9 @@ fn test_tool_result_with_image() {
 
 #[test]
 fn test_tool_result_text_only_uses_string() {
-    let config = StreamConfig {
-        model: "claude-sonnet-4-20250514".into(),
-        system_prompt: "".into(),
-        messages: vec![
+    let config = StreamConfigBuilder::anthropic()
+        .cache_disabled()
+        .messages(vec![
             Message::Assistant {
                 content: vec![Content::ToolCall {
                     id: "tc-1".into(),
@@ -212,24 +203,18 @@ fn test_tool_result_text_only_uses_string() {
                 timestamp: 0,
                 retention: Retention::Normal,
             },
-        ],
-        tools: vec![],
-        thinking_level: ThinkingLevel::Off,
-        api_key: "test-key".into(),
-        max_tokens: Some(1024),
-        temperature: None,
-        model_config: None,
-        cache_config: CacheConfig {
-            enabled: false,
-            strategy: CacheStrategy::Disabled,
-        },
-    };
+        ])
+        .build();
 
     let body = build_request_body(&config, false);
     let msgs = body["messages"].as_array().unwrap();
     let tool_result = &msgs[1]["content"][0];
     assert_eq!(tool_result["content"], "hello");
 }
+
+// ---------------------------------------------------------------------------
+// Content filtering
+// ---------------------------------------------------------------------------
 
 #[test]
 fn test_content_to_anthropic_filters_empty_text() {
@@ -245,63 +230,34 @@ fn test_content_to_anthropic_filters_empty_text() {
     assert_eq!(result[0]["text"], "hello");
 }
 
+// ---------------------------------------------------------------------------
+// Cache breakpoint edge cases (empty content blocks)
+// ---------------------------------------------------------------------------
+
+/// Messages with alternating roles including an empty-text user message.
+fn empty_text_messages() -> Vec<Message> {
+    vec![
+        Message::user("first message"),
+        assistant("ok"),
+        Message::User {
+            content: vec![Content::Text { text: "".into() }],
+            timestamp: 0,
+        },
+        assistant("sure"),
+        Message::user("last"),
+    ]
+}
+
 #[test]
 fn test_cache_control_not_set_on_empty_text_block() {
-    // After merge, consecutive user messages become one. Use alternating roles
-    // so the empty-text user message stays separate and tests the cache fallback.
-    let config = StreamConfig {
-        model: "claude-sonnet-4-20250514".into(),
-        system_prompt: "You are helpful.".into(),
-        messages: vec![
-            Message::User {
-                content: vec![Content::Text {
-                    text: "first message".into(),
-                }],
-                timestamp: 0,
-            },
-            Message::Assistant {
-                content: vec![Content::Text { text: "ok".into() }],
-                stop_reason: StopReason::Stop,
-                model: "test".into(),
-                provider: "test".into(),
-                usage: Usage::default(),
-                timestamp: 0,
-                error_message: None,
-            },
-            // This user message has only empty text — content_to_anthropic filters it out
-            Message::User {
-                content: vec![Content::Text { text: "".into() }],
-                timestamp: 0,
-            },
-            Message::Assistant {
-                content: vec![Content::Text {
-                    text: "sure".into(),
-                }],
-                stop_reason: StopReason::Stop,
-                model: "test".into(),
-                provider: "test".into(),
-                usage: Usage::default(),
-                timestamp: 0,
-                error_message: None,
-            },
-            Message::User {
-                content: vec![Content::Text {
-                    text: "last".into(),
-                }],
-                timestamp: 0,
-            },
-        ],
-        tools: vec![],
-        thinking_level: ThinkingLevel::Off,
-        api_key: "test-key".into(),
-        max_tokens: Some(1024),
-        temperature: None,
-        model_config: None,
-        cache_config: CacheConfig::default(),
-    };
+    let config = StreamConfigBuilder::anthropic()
+        .system_prompt("You are helpful.")
+        .messages(empty_text_messages())
+        .build();
+
     let body = build_request_body(&config, false);
     let msgs = body["messages"].as_array().unwrap();
-    // The empty-text user message produces an empty content array
+
     let empty_msg = &msgs[2];
     let content = empty_msg["content"].as_array().unwrap();
     assert!(
@@ -309,8 +265,6 @@ fn test_cache_control_not_set_on_empty_text_block() {
         "empty text blocks should be filtered out"
     );
 
-    // Cache breakpoint scans backwards from second-to-last. Index 3 (assistant "sure")
-    // has content, so it gets the breakpoint.
     let cached_msg = &msgs[3];
     let cached_content = cached_msg["content"].as_array().unwrap();
     let last_block = cached_content.last().unwrap();
@@ -322,62 +276,23 @@ fn test_cache_control_not_set_on_empty_text_block() {
 
 #[test]
 fn test_cache_breakpoint_falls_back_when_second_to_last_is_empty() {
-    let config = StreamConfig {
-        model: "claude-sonnet-4-20250514".into(),
-        system_prompt: "You are helpful.".into(),
-        messages: vec![
-            Message::User {
-                content: vec![Content::Text {
-                    text: "first message".into(),
-                }],
-                timestamp: 0,
-            },
-            Message::Assistant {
-                content: vec![Content::Text { text: "ok".into() }],
-                stop_reason: StopReason::Stop,
-                model: "test".into(),
-                provider: "test".into(),
-                usage: Usage::default(),
-                timestamp: 0,
-                error_message: None,
-            },
-            // Empty-text user message — second to last
+    let config = StreamConfigBuilder::anthropic()
+        .system_prompt("You are helpful.")
+        .messages(vec![
+            Message::user("first message"),
+            assistant("ok"),
             Message::User {
                 content: vec![Content::Text { text: "".into() }],
                 timestamp: 0,
             },
-            Message::Assistant {
-                content: vec![Content::Text {
-                    text: "sure".into(),
-                }],
-                stop_reason: StopReason::Stop,
-                model: "test".into(),
-                provider: "test".into(),
-                usage: Usage::default(),
-                timestamp: 0,
-                error_message: None,
-            },
-            Message::User {
-                content: vec![Content::Text {
-                    text: "last message".into(),
-                }],
-                timestamp: 0,
-            },
-        ],
-        tools: vec![],
-        thinking_level: ThinkingLevel::Off,
-        api_key: "test-key".into(),
-        max_tokens: Some(1024),
-        temperature: None,
-        model_config: None,
-        cache_config: CacheConfig::default(),
-    };
+            assistant("sure"),
+            Message::user("last message"),
+        ])
+        .build();
 
     let body = build_request_body(&config, false);
     let msgs = body["messages"].as_array().unwrap();
 
-    // Cache breakpoint scans backwards from second-to-last, skipping empty content.
-    // Index 3 (assistant "sure") has content, so it gets the breakpoint.
     let cached_content = msgs[3]["content"].as_array().unwrap();
     assert_eq!(
         cached_content.last().unwrap()["cache_control"]["type"],
@@ -387,12 +302,9 @@ fn test_cache_breakpoint_falls_back_when_second_to_last_is_empty() {
 
 #[test]
 fn test_empty_assistant_preserved_as_placeholder() {
-    // When an assistant response has empty content, it should be preserved
-    // with a placeholder text block to maintain user/assistant alternation.
-    let config = StreamConfig {
-        model: "claude-sonnet-4-20250514".into(),
-        system_prompt: "".into(),
-        messages: vec![
+    let config = StreamConfigBuilder::anthropic()
+        .cache_disabled()
+        .messages(vec![
             Message::user("first"),
             Message::Assistant {
                 content: vec![Content::Text { text: "".into() }],
@@ -404,29 +316,17 @@ fn test_empty_assistant_preserved_as_placeholder() {
                 error_message: Some("Empty response".into()),
             },
             Message::user("second"),
-        ],
-        tools: vec![],
-        thinking_level: ThinkingLevel::Off,
-        api_key: "test-key".into(),
-        max_tokens: Some(1024),
-        temperature: None,
-        model_config: None,
-        cache_config: CacheConfig {
-            enabled: false,
-            strategy: CacheStrategy::Disabled,
-        },
-    };
+        ])
+        .build();
 
     let body = build_request_body(&config, false);
     let msgs = body["messages"].as_array().unwrap();
 
-    // All 3 messages preserved — assistant gets placeholder
     assert_eq!(msgs.len(), 3);
     assert_eq!(msgs[0]["role"], "user");
     assert_eq!(msgs[1]["role"], "assistant");
     assert_eq!(msgs[2]["role"], "user");
 
-    // Assistant placeholder
     let assistant_content = msgs[1]["content"].as_array().unwrap();
     assert_eq!(assistant_content[0]["text"], "[empty response]");
 }

@@ -1,8 +1,13 @@
 //! Tests for Anthropic JSON fallback handling.
 
+use bendengine::provider::stream_fallback::FallbackEmitter;
 use bendengine::provider::stream_http::classify_json_error;
 use bendengine::provider::stream_http::extract_json_error_message;
 use bendengine::provider::ProviderError;
+use bendengine::provider::StreamEvent;
+use bendengine::types::*;
+
+use super::super::helpers::provider_helper::collect_stream_events;
 
 // ---------------------------------------------------------------------------
 // Error-shaped JSON classification
@@ -55,10 +60,6 @@ fn anthropic_error_message_extraction() {
 
 #[test]
 fn anthropic_success_text_response() {
-    use bendengine::provider::stream_fallback::FallbackEmitter;
-    use bendengine::provider::StreamEvent;
-    use bendengine::types::*;
-
     let value = serde_json::json!({
         "id": "msg_123",
         "type": "message",
@@ -78,7 +79,6 @@ fn anthropic_success_text_response() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
     let mut emitter = FallbackEmitter::new(tx);
 
-    // Simulate what json_fallback::parse_success_response does
     if let Some(blocks) = value.get("content").and_then(|c| c.as_array()) {
         for block in blocks {
             if let Some("text") = block.get("type").and_then(|t| t.as_str()) {
@@ -128,7 +128,7 @@ fn anthropic_success_text_response() {
         _ => panic!("Expected Assistant message"),
     }
 
-    let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    let events = collect_stream_events(&mut rx);
     assert!(matches!(events[0], StreamEvent::Start));
     assert!(matches!(&events[1], StreamEvent::TextDelta { delta, .. } if delta == "Hello, world!"));
     assert!(matches!(&events[2], StreamEvent::Done { .. }));
@@ -136,10 +136,6 @@ fn anthropic_success_text_response() {
 
 #[test]
 fn anthropic_success_tool_use_response() {
-    use bendengine::provider::stream_fallback::FallbackEmitter;
-    use bendengine::provider::StreamEvent;
-    use bendengine::types::*;
-
     let value = serde_json::json!({
         "content": [
             {
@@ -193,7 +189,7 @@ fn anthropic_success_tool_use_response() {
         _ => panic!("Expected Assistant message"),
     }
 
-    let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    let events = collect_stream_events(&mut rx);
     assert!(matches!(events[0], StreamEvent::Start));
     assert!(matches!(&events[1], StreamEvent::ToolCallStart { .. }));
     assert!(matches!(&events[2], StreamEvent::ToolCallEnd { .. }));

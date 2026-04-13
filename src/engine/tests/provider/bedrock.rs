@@ -1,21 +1,15 @@
 use bendengine::provider::bedrock::*;
-use bendengine::provider::traits::*;
 use bendengine::types::*;
+
+use super::helpers::provider_helper::*;
 
 #[test]
 fn test_build_bedrock_body() {
-    let config = StreamConfig {
-        model: "anthropic.claude-3-sonnet-20240229-v1:0".into(),
-        system_prompt: "Be helpful".into(),
-        messages: vec![Message::user("Hello")],
-        tools: vec![],
-        thinking_level: ThinkingLevel::Off,
-        api_key: "key:secret".into(),
-        max_tokens: Some(1024),
-        temperature: None,
-        model_config: None,
-        cache_config: CacheConfig::default(),
-    };
+    let config = StreamConfigBuilder::new()
+        .model("anthropic.claude-3-sonnet-20240229-v1:0")
+        .system_prompt("Be helpful")
+        .api_key("key:secret")
+        .build();
 
     let body = build_bedrock_body(&config);
     assert!(body["messages"].is_array());
