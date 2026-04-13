@@ -1,11 +1,15 @@
 /**
- * PromptInput component — bordered input box with status footer.
- * Modeled after Claude Code's PromptInput: rounded border, mode indicator,
- * footer with shortcuts and status info.
+ * PromptInput component — Claude Code-style bordered input box.
+ * 
+ * Layout:
+ *   ────────────────────────────────────
+ *   ❯ user input text here
+ *   ────────────────────────────────────
+ *   ? for shortcuts                model
  */
 
-import React, { useState, useRef } from 'react'
-import { Text, Box, useInput } from 'ink'
+import React, { useState, useRef, useEffect } from 'react'
+import { Text, Box, useInput, useStdout } from 'ink'
 
 interface PromptInputProps {
   model: string
@@ -24,11 +28,30 @@ export function PromptInput({
   onInterrupt,
   onToggleVerbose,
 }: PromptInputProps) {
-  const [input, setInput] = useState('')
-  const [cursorPos, setCursorPos] = useState(0)
+  const [lines, setLines] = useState<string[]>([''])
+  const [cursorLine, setCursorLine] = useState(0)
+  const [cursorCol, setCursorCol] = useState(0)
   const historyRef = useRef<string[]>([])
   const historyIndexRef = useRef(-1)
   const savedInputRef = useRef('')
+  const { stdout } = useStdout()
+  const columns = stdout?.columns ?? 120
+
+  const currentText = () => lines.join('\n')
+  const setInputText = (text: string) => {
+    const newLines = text.split('\n')
+    setLines(newLines)
+    const lastLine = newLines.length - 1
+    setCursorLine(lastLine)
+    setCursorCol(newLines[lastLine]!.length)
+  }
+
+  const clearInput = () => {
+    setLines([''])
+    setCursorLine(0)
+    setCursorCol(0)
+    historyIndexRef.current = -1
+  }
 
   useInput((ch, key) => {
     if (isLoading) {
@@ -40,59 +63,11 @@ export function PromptInput({
 
     // Ctrl+C — clear input or exit
     if (key.ctrl && ch === 'c') {
-      if (input.length === 0) {
+      if (currentText().length === 0) {
         onInterrupt()
       } else {
-        setInput('')
-        setCursorPos(0)
-        historyIndexRef.current = -1
+        clearInput()
       }
-      return
-    }
-
-    // Ctrl+D — exit if empty, otherwise delete char at cursor
-    if (key.ctrl && ch === 'd') {
-      if (input.length === 0) {
-        onInterrupt()
-      } else if (cursorPos < input.length) {
-        setInput((prev) => prev.slice(0, cursorPos) + prev.slice(cursorPos + 1))
-      }
-      return
-    }
-
-    // Ctrl+U — clear from cursor to start
-    if (key.ctrl && ch === 'u') {
-      setInput((prev) => prev.slice(cursorPos))
-      setCursorPos(0)
-      return
-    }
-
-    // Ctrl+K — clear from cursor to end
-    if (key.ctrl && ch === 'k') {
-      setInput((prev) => prev.slice(0, cursorPos))
-      return
-    }
-
-    // Ctrl+A — move to start
-    if (key.ctrl && ch === 'a') {
-      setCursorPos(0)
-      return
-    }
-
-    // Ctrl+E — move to end
-    if (key.ctrl && ch === 'e') {
-      setCursorPos(input.length)
-      return
-    }
-
-    // Ctrl+W — delete word backward
-    if (key.ctrl && ch === 'w') {
-      const before = input.slice(0, cursorPos)
-      const trimmed = before.replace(/\s+$/, '')
-      const lastSpace = trimmed.lastIndexOf(' ')
-      const newPos = lastSpace === -1 ? 0 : lastSpace + 1
-      setInput(input.slice(0, newPos) + input.slice(cursorPos))
-      setCursorPos(newPos)
       return
     }
 
@@ -102,100 +77,217 @@ export function PromptInput({
       return
     }
 
-    // Submit: Enter sends, Alt+Enter / Shift+Enter inserts newline
-    if (key.return) {
-      if (key.meta || key.shift) {
-        // Insert newline at cursor
-        setInput((prev) => prev.slice(0, cursorPos) + '\n' + prev.slice(cursorPos))
-        setCursorPos((prev) => prev + 1)
+    // Ctrl+U — clear line before cursor
+    if (key.ctrl && ch === 'u') {
+      setLines((prev) => {
+        const newLines = [...prev]
+        newLines[cursorLine] = newLines[cursorLine]!.slice(cursorCol)
+        return newLines
+      })
+      setCursorCol(0)
+      return
+    }
+
+    // Ctrl+K — clear line after cursor
+    if (key.ctrl && ch === 'k') {
+      setLines((prev) => {
+        const newLines = [...prev]
+        newLines[cursorLine] = newLines[cursorLine]!.slice(0, cursorCol)
+        return newLines
+      })
+      return
+    }
+
+    // Ctrl+A — move to start of line
+    if (key.ctrl && ch === 'a') {
+      setCursorCol(0)
+      return
+    }
+
+    // Ctrl+E — move to end of line
+    if (key.ctrl && ch === 'e') {
+      setCursorCol(lines[cursorLine]!.length)
+      return
+    }
+
+    // Ctrl+D — delete char at cursor (or exit if empty)
+    if (key.ctrl && ch === 'd') {
+      const line = lines[cursorLine]!
+      if (currentText().length === 0) {
+        onInterrupt()
         return
       }
-      const trimmed = input.trim()
-      if (trimmed.length > 0) {
+      if (cursorCol < line.length) {
+        setLines((prev) => {
+          const newLines = [...prev]
+          newLines[cursorLine] = line.slice(0, cursorCol) + line.slice(cursorCol + 1)
+          return newLines
+        })
+      } else if (cursorLine < lines.length - 1) {
+        // Join with next line
+        setLines((prev) => {
+          const newLines = [...prev]
+          newLines[cursorLine] = newLines[cursorLine]! + newLines[cursorLine + 1]!
+          newLines.splice(cursorLine + 1, 1)
+          return newLines
+        })
+      }
+      return
+    }
+
+    // Ctrl+W — delete word before cursor
+    if (key.ctrl && ch === 'w') {
+      const line = lines[cursorLine]!
+      const before = line.slice(0, cursorCol)
+      const trimmed = before.replace(/\s+\S*$/, '')
+      const newCol = trimmed.length
+      setLines((prev) => {
+        const newLines = [...prev]
+        newLines[cursorLine] = trimmed + line.slice(cursorCol)
+        return newLines
+      })
+      setCursorCol(newCol)
+      return
+    }
+
+    // Enter — submit (single line) or newline (if Alt/Option+Enter)
+    if (key.return) {
+      if (key.meta) {
+        // Alt+Enter → insert newline
+        setLines((prev) => {
+          const line = prev[cursorLine]!
+          const newLines = [...prev]
+          newLines.splice(cursorLine, 1, line.slice(0, cursorCol), line.slice(cursorCol))
+          return newLines
+        })
+        setCursorLine((prev) => prev + 1)
+        setCursorCol(0)
+        return
+      }
+
+      const text = currentText().trim()
+      if (text.length > 0) {
+        // Add to history
         const history = historyRef.current
-        if (history.length === 0 || history[history.length - 1] !== trimmed) {
-          history.push(trimmed)
+        if (history.length === 0 || history[history.length - 1] !== text) {
+          history.push(text)
         }
         historyIndexRef.current = -1
-        onSubmit(trimmed)
-        setInput('')
-        setCursorPos(0)
+        onSubmit(text)
+        clearInput()
       }
       return
     }
 
     // Backspace
     if (key.backspace || key.delete) {
-      if (cursorPos > 0) {
-        setInput((prev) => prev.slice(0, cursorPos - 1) + prev.slice(cursorPos))
-        setCursorPos((prev) => prev - 1)
+      if (cursorCol > 0) {
+        setLines((prev) => {
+          const newLines = [...prev]
+          const line = newLines[cursorLine]!
+          newLines[cursorLine] = line.slice(0, cursorCol - 1) + line.slice(cursorCol)
+          return newLines
+        })
+        setCursorCol((prev) => prev - 1)
+      } else if (cursorLine > 0) {
+        // Join with previous line
+        const prevLineLen = lines[cursorLine - 1]!.length
+        setLines((prev) => {
+          const newLines = [...prev]
+          newLines[cursorLine - 1] = newLines[cursorLine - 1]! + newLines[cursorLine]!
+          newLines.splice(cursorLine, 1)
+          return newLines
+        })
+        setCursorLine((prev) => prev - 1)
+        setCursorCol(prevLineLen)
       }
       return
     }
 
-    // Arrow up — history previous
+    // Arrow up — history or move cursor up
     if (key.upArrow) {
-      const history = historyRef.current
-      if (history.length === 0) return
-      if (historyIndexRef.current === -1) {
-        savedInputRef.current = input
-        historyIndexRef.current = history.length - 1
-      } else if (historyIndexRef.current > 0) {
-        historyIndexRef.current--
+      if (lines.length === 1) {
+        // Single line → navigate history
+        const history = historyRef.current
+        if (history.length === 0) return
+        if (historyIndexRef.current === -1) {
+          savedInputRef.current = currentText()
+          historyIndexRef.current = history.length - 1
+        } else if (historyIndexRef.current > 0) {
+          historyIndexRef.current--
+        }
+        setInputText(history[historyIndexRef.current] ?? '')
+      } else if (cursorLine > 0) {
+        setCursorLine((prev) => prev - 1)
+        setCursorCol((prev) => Math.min(prev, lines[cursorLine - 1]!.length))
       }
-      const entry = history[historyIndexRef.current] ?? ''
-      setInput(entry)
-      setCursorPos(entry.length)
       return
     }
 
-    // Arrow down — history next
+    // Arrow down — history or move cursor down
     if (key.downArrow) {
-      const history = historyRef.current
-      if (historyIndexRef.current === -1) return
-      if (historyIndexRef.current < history.length - 1) {
-        historyIndexRef.current++
-        const entry = history[historyIndexRef.current] ?? ''
-        setInput(entry)
-        setCursorPos(entry.length)
-      } else {
-        historyIndexRef.current = -1
-        setInput(savedInputRef.current)
-        setCursorPos(savedInputRef.current.length)
+      if (lines.length === 1) {
+        const history = historyRef.current
+        if (historyIndexRef.current === -1) return
+        if (historyIndexRef.current < history.length - 1) {
+          historyIndexRef.current++
+          setInputText(history[historyIndexRef.current] ?? '')
+        } else {
+          historyIndexRef.current = -1
+          setInputText(savedInputRef.current)
+        }
+      } else if (cursorLine < lines.length - 1) {
+        setCursorLine((prev) => prev + 1)
+        setCursorCol((prev) => Math.min(prev, lines[cursorLine + 1]!.length))
       }
       return
     }
 
     // Arrow left/right
     if (key.leftArrow) {
-      setCursorPos((prev) => Math.max(0, prev - 1))
+      if (cursorCol > 0) {
+        setCursorCol((prev) => prev - 1)
+      } else if (cursorLine > 0) {
+        setCursorLine((prev) => prev - 1)
+        setCursorCol(lines[cursorLine - 1]!.length)
+      }
       return
     }
     if (key.rightArrow) {
-      setCursorPos((prev) => Math.min(input.length, prev + 1))
+      const lineLen = lines[cursorLine]!.length
+      if (cursorCol < lineLen) {
+        setCursorCol((prev) => prev + 1)
+      } else if (cursorLine < lines.length - 1) {
+        setCursorLine((prev) => prev + 1)
+        setCursorCol(0)
+      }
       return
     }
 
-    // Home / End
-    if (key.home) {
-      setCursorPos(0)
+    // Tab — insert 2 spaces
+    if (key.tab) {
+      setLines((prev) => {
+        const newLines = [...prev]
+        const line = newLines[cursorLine]!
+        newLines[cursorLine] = line.slice(0, cursorCol) + '  ' + line.slice(cursorCol)
+        return newLines
+      })
+      setCursorCol((prev) => prev + 2)
       return
     }
-    if (key.end) {
-      setCursorPos(input.length)
-      return
-    }
-
-    // Tab — ignore
-    if (key.tab) return
 
     // Ignore other control sequences
     if (key.ctrl || key.escape) return
 
     // Regular character input
     if (ch) {
-      setInput((prev) => prev.slice(0, cursorPos) + ch + prev.slice(cursorPos))
-      setCursorPos((prev) => prev + ch.length)
+      setLines((prev) => {
+        const newLines = [...prev]
+        const line = newLines[cursorLine]!
+        newLines[cursorLine] = line.slice(0, cursorCol) + ch + line.slice(cursorCol)
+        return newLines
+      })
+      setCursorCol((prev) => prev + ch.length)
     }
   })
 
@@ -203,73 +295,54 @@ export function PromptInput({
     return null
   }
 
-  // Render input lines
-  const lines = input.split('\n')
-  const isMultiline = lines.length > 1
-
-  // Calculate cursor line and column
-  let charCount = 0
-  let cursorLine = 0
-  let cursorCol = 0
-  for (let i = 0; i < lines.length; i++) {
-    const lineLen = lines[i]!.length
-    if (charCount + lineLen >= cursorPos && cursorPos <= charCount + lineLen) {
-      cursorLine = i
-      cursorCol = cursorPos - charCount
-      break
-    }
-    charCount += lineLen + 1 // +1 for \n
-  }
+  const borderLine = '─'.repeat(columns)
 
   return (
-    <Box flexDirection="column" marginTop={1}>
-      {/* Input box with border */}
-      <Box
-        borderStyle="round"
-        borderColor="#7c3aed"
-        borderLeft={false}
-        borderRight={false}
-        borderBottom
-        flexDirection="column"
-        width="100%"
-      >
-        {lines.map((line, lineIdx) => (
-          <Box key={lineIdx} flexDirection="row">
-            {lineIdx === 0 && (
-              <Text color="#7c3aed" bold>{'❯ '}</Text>
-            )}
-            {lineIdx > 0 && (
-              <Text dimColor>{'  '}</Text>
-            )}
-            {lineIdx === cursorLine ? (
-              <InputLineWithCursor line={line} cursorCol={cursorCol} />
-            ) : (
-              <Text>{line}</Text>
-            )}
-          </Box>
-        ))}
-        {input.length === 0 && (
-          <Box>
-            <Text color="#7c3aed" bold>{'❯ '}</Text>
-            <Text dimColor>Type a message...</Text>
-          </Box>
-        )}
-      </Box>
+    <Box flexDirection="column">
+      {/* Top border */}
+      <Text dimColor>{borderLine}</Text>
 
-      {/* Footer status line */}
-      <PromptFooter model={model} verbose={verbose} isMultiline={isMultiline} />
+      {/* Input area */}
+      {lines.map((line, lineIdx) => (
+        <Box key={lineIdx}>
+          <Text color="cyan" bold>{lineIdx === 0 ? '❯ ' : '  '}</Text>
+          {lineIdx === cursorLine ? (
+            line === '' && lines.length === 1 ? (
+              // Empty input — show placeholder with cursor
+              <Text>
+                <Text inverse>{' '}</Text>
+                <Text dimColor>Type a message...</Text>
+              </Text>
+            ) : (
+              <CursorLine text={line} cursorCol={cursorCol} />
+            )
+          ) : (
+            <Text>{line || ' '}</Text>
+          )}
+        </Box>
+      ))}
+
+      {/* Bottom border */}
+      <Text dimColor>{borderLine}</Text>
+
+      {/* Footer */}
+      <Footer
+        model={model}
+        verbose={verbose}
+        columns={columns}
+      />
     </Box>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Input line with cursor rendering
+// CursorLine — renders a line with an inverse cursor at the right position
 // ---------------------------------------------------------------------------
 
-function InputLineWithCursor({ line, cursorCol }: { line: string; cursorCol: number }) {
-  const before = line.slice(0, cursorCol)
-  const cursorChar = line[cursorCol] ?? ' '
-  const after = line.slice(cursorCol + 1)
+function CursorLine({ text, cursorCol }: { text: string; cursorCol: number }) {
+  const before = text.slice(0, cursorCol)
+  const cursorChar = text[cursorCol] ?? ' '
+  const after = text.slice(cursorCol + 1)
 
   return (
     <Text>
@@ -281,29 +354,27 @@ function InputLineWithCursor({ line, cursorCol }: { line: string; cursorCol: num
 }
 
 // ---------------------------------------------------------------------------
-// Footer — shortcuts and model info
+// Footer — shortcuts hint + model name
 // ---------------------------------------------------------------------------
 
-function PromptFooter({
+function Footer({
   model,
   verbose,
-  isMultiline,
+  columns,
 }: {
   model: string
   verbose: boolean
-  isMultiline: boolean
+  columns: number
 }) {
+  const left = `Ctrl+L ${verbose ? 'brief' : 'verbose'} · /help`
+  const right = model
+  const gap = Math.max(1, columns - left.length - right.length)
+
   return (
-    <Box flexDirection="row" justifyContent="space-between" width="100%">
-      <Box>
-        <Text dimColor>
-          {isMultiline ? 'Alt+Enter newline · ' : ''}
-          Ctrl+L {verbose ? 'brief' : 'verbose'} · /help
-        </Text>
-      </Box>
-      <Box>
-        <Text dimColor>{model}</Text>
-      </Box>
+    <Box>
+      <Text dimColor>{left}</Text>
+      <Text>{' '.repeat(gap)}</Text>
+      <Text dimColor>{right}</Text>
     </Box>
   )
 }

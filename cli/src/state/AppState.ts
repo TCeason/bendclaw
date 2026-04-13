@@ -264,8 +264,8 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const stats = { ...state.currentRunStats }
       stats.llmCalls++
       if (usage) {
-        stats.inputTokens += (usage.input_tokens as number) ?? 0
-        stats.outputTokens += (usage.output_tokens as number) ?? 0
+        stats.inputTokens += (usage.input as number) ?? 0
+        stats.outputTokens += (usage.output as number) ?? 0
         stats.cacheReadTokens += (usage.cache_read as number) ?? 0
         stats.cacheWriteTokens += (usage.cache_write as number) ?? 0
       }

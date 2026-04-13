@@ -105,11 +105,6 @@ export function REPL({ agent }: REPLProps) {
   const hasThinkingText = state.currentThinkingText.length > 0
   const hasActiveTools = state.activeToolCalls.size > 0
 
-  // Find the last run stats for display
-  const lastRunStats = state.verbose
-    ? [...state.messages].reverse().find((m) => m.runStats)?.runStats
-    : undefined
-
   return (
     <Box flexDirection="column" padding={0}>
       <Banner model={state.model} cwd={state.cwd} />
@@ -117,8 +112,7 @@ export function REPL({ agent }: REPLProps) {
       {/* Message history */}
       {state.messages.map((msg) => (
         <React.Fragment key={msg.id}>
-          <Message message={msg} verbose={state.verbose} />
-          {/* Show run summary after the last assistant message of each run */}
+          <Message key={msg.id} message={msg} />
           {state.verbose && msg.runStats && (
             <RunSummary stats={msg.runStats} />
           )}
@@ -163,7 +157,7 @@ export function REPL({ agent }: REPLProps) {
       ))}
       {systemMessages.length > 0 && <Text>{''}</Text>}
 
-      {/* Prompt input with bordered box + footer */}
+      {/* Prompt input (Claude Code-style bordered box) */}
       <PromptInput
         model={state.model}
         isLoading={state.isLoading}
@@ -256,12 +250,10 @@ async function handleSlashCommand(
       break
     }
 
-    case '/verbose': {
+    case '/verbose':
       setState((prev) => ({ ...prev, verbose: !prev.verbose }))
-      const newVerbose = !state.verbose
-      pushSystem(setSystem, 'info', `Verbose mode ${newVerbose ? 'on' : 'off'}`)
+      pushSystem(setSystem, 'info', `Verbose mode ${state.verbose ? 'off' : 'on'}`)
       break
-    }
 
     case '/resume': {
       try {
@@ -365,11 +357,6 @@ function Banner({ model, cwd }: { model: string; cwd: string }) {
       <Box>
         <Text dimColor>
           {shortCwd} · {model}
-        </Text>
-      </Box>
-      <Box>
-        <Text dimColor>
-          /help for commands · Ctrl+L toggle verbose · Ctrl+C exit
         </Text>
       </Box>
     </Box>

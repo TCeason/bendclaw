@@ -1,6 +1,7 @@
 /**
- * RunSummary component — displays detailed stats after a run completes.
+ * RunSummary — displays detailed stats after a run completes.
  * Only shown when verbose mode is enabled (Ctrl+L toggle).
+ * Mirrors the Rust REPL's "This Run Summary" format.
  */
 
 import React from 'react'
@@ -12,70 +13,57 @@ interface RunSummaryProps {
 }
 
 export function RunSummary({ stats }: RunSummaryProps) {
-  const duration = formatDuration(stats.durationMs)
-  const turns = stats.turnCount
-  const toolCalls = stats.toolCallCount
-  const toolErrors = stats.toolErrorCount
+  const totalTokens = stats.inputTokens + stats.outputTokens
+  const durationSec = stats.durationMs / 1000
+  const tokPerSec = durationSec > 0 ? (totalTokens / durationSec).toFixed(1) : '—'
 
   return (
-    <Box flexDirection="column" marginBottom={1} marginTop={0}>
-      <Box>
-        <Text dimColor>{'─── Run Summary '}</Text>
-        <Text dimColor>{'─'.repeat(40)}</Text>
-      </Box>
+    <Box flexDirection="column" marginBottom={1}>
+      <Text dimColor>─── This Run Summary ──────────────────────────────────</Text>
 
-      <Box>
+      {/* Top line */}
+      <Text dimColor>
+        {formatDuration(stats.durationMs)} · {stats.turnCount} turns · {stats.llmCalls} llm calls · {stats.toolCallCount} tool calls · {humanTokens(totalTokens)} tokens
+      </Text>
+
+      {/* Token breakdown */}
+      <Text dimColor>{''}</Text>
+      <Text dimColor>
+        {'  tokens    '}{humanTokens(stats.inputTokens)} total input · {stats.outputTokens} output · {tokPerSec} tok/s
+      </Text>
+
+      {stats.cacheReadTokens > 0 && (
         <Text dimColor>
-          {duration} · {turns} turn{turns !== 1 ? 's' : ''} · {toolCalls} tool call{toolCalls !== 1 ? 's' : ''}
-          {toolErrors > 0 ? ` · ${toolErrors} error${toolErrors !== 1 ? 's' : ''}` : ''}
+          {'            cache read '}{humanTokens(stats.cacheReadTokens)} · cache write {humanTokens(stats.cacheWriteTokens)}
         </Text>
-      </Box>
-
-      {/* Token usage */}
-      {(stats.inputTokens > 0 || stats.outputTokens > 0) && (
-        <Box flexDirection="column">
-          <Box>
-            <Text dimColor>
-              tokens  {formatTokens(stats.inputTokens)} in · {formatTokens(stats.outputTokens)} out
-              {stats.cacheReadTokens > 0 ? ` · ${formatTokens(stats.cacheReadTokens)} cache` : ''}
-            </Text>
-          </Box>
-        </Box>
       )}
 
-      {/* LLM calls breakdown */}
+      {/* LLM calls */}
       {stats.llmCalls > 0 && (
-        <Box>
+        <>
+          <Text dimColor>{''}</Text>
           <Text dimColor>
-            llm     {stats.llmCalls} call{stats.llmCalls !== 1 ? 's' : ''} · {duration}
+            {'  llm       '}{stats.llmCalls} calls · {formatDuration(stats.durationMs)} · {tokPerSec} tok/s avg
           </Text>
-        </Box>
+        </>
       )}
 
       {/* Tool breakdown */}
       {stats.toolBreakdown.length > 0 && (
-        <Box flexDirection="column">
-          {stats.toolBreakdown.slice(0, 5).map((tb) => (
-            <Box key={tb.name}>
-              <Text dimColor>
-                {'  '}{padRight(tb.name, 16)} {tb.count} call{tb.count !== 1 ? 's' : ''}
-                {tb.totalDurationMs > 0 ? `  ${formatDuration(tb.totalDurationMs)}` : ''}
-                {tb.errors > 0 ? `  ${tb.errors} err` : ''}
+        <>
+          <Text dimColor>{''}</Text>
+          {stats.toolBreakdown
+            .sort((a, b) => b.count - a.count)
+            .map((tc, i) => (
+              <Text key={i} dimColor>
+                {'              '}{tc.name}  {tc.count} call{tc.count > 1 ? 's' : ''}  {formatDuration(tc.totalDurationMs)}
+                {tc.errors > 0 ? `  (${tc.errors} error${tc.errors > 1 ? 's' : ''})` : ''}
               </Text>
-            </Box>
-          ))}
-        </Box>
+            ))}
+        </>
       )}
 
-      {/* Context info */}
-      {stats.contextTokens > 0 && (
-        <Box>
-          <Text dimColor>
-            context {formatTokens(stats.contextTokens)} tokens
-            {stats.contextWindow > 0 ? ` · ${Math.round(stats.contextTokens / stats.contextWindow * 100)}% of ${formatTokens(stats.contextWindow)}` : ''}
-          </Text>
-        </Box>
-      )}
+      <Text dimColor>────────────────────────────────────────────────────────</Text>
     </Box>
   )
 }
@@ -84,21 +72,13 @@ export function RunSummary({ stats }: RunSummaryProps) {
 // Helpers
 // ---------------------------------------------------------------------------
 
+function humanTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`
+  return `${n}`
+}
+
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
-  const secs = ms / 1000
-  if (secs < 60) return `${secs.toFixed(1)}s`
-  const mins = Math.floor(secs / 60)
-  const remainSecs = secs % 60
-  return `${mins}m${remainSecs.toFixed(0)}s`
-}
-
-function formatTokens(n: number): string {
-  if (n < 1000) return String(n)
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`
-  return `${(n / 1_000_000).toFixed(2)}M`
-}
-
-function padRight(s: string, n: number): string {
-  return s + ' '.repeat(Math.max(0, n - s.length))
+  return `${(ms / 1000).toFixed(1)}s`
 }
