@@ -1,8 +1,8 @@
-use bendengine::provider::model::ModelConfig;
-use bendengine::provider::model::OpenAiCompat;
-use bendengine::provider::openai_compat::request::*;
-use bendengine::provider::openai_compat::types::OpenAiChunk;
-use bendengine::types::*;
+use evotengine::provider::model::ModelConfig;
+use evotengine::provider::model::OpenAiCompat;
+use evotengine::provider::openai_compat::request::*;
+use evotengine::provider::openai_compat::types::OpenAiChunk;
+use evotengine::types::*;
 
 use super::super::fixtures::stream_config::*;
 

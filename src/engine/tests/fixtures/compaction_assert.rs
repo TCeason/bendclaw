@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
-use bendengine::context::*;
-use bendengine::types::*;
+use evotengine::context::*;
+use evotengine::types::*;
 
 /// Assert no orphan tool_call / tool_result in a message list.
 pub fn assert_no_orphan_tool_pairs(messages: &[AgentMessage]) {

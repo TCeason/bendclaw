@@ -1,9 +1,9 @@
 //! Tests for shared stream HTTP helpers.
 
-use bendengine::provider::stream_http::classify_json_error;
-use bendengine::provider::stream_http::extract_json_error_message;
-use bendengine::provider::stream_http::StreamResponseKind;
-use bendengine::provider::ProviderError;
+use evotengine::provider::stream_http::classify_json_error;
+use evotengine::provider::stream_http::extract_json_error_message;
+use evotengine::provider::stream_http::StreamResponseKind;
+use evotengine::provider::ProviderError;
 
 // ---------------------------------------------------------------------------
 // extract_json_error_message
@@ -72,7 +72,7 @@ fn classify_overflow_json() {
     });
     let err = classify_json_error(&value);
     assert!(err.is_context_overflow());
-    assert!(!bendengine::retry::should_retry(&err));
+    assert!(!evotengine::retry::should_retry(&err));
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn classify_generic_json_error_is_retryable() {
     });
     let err = classify_json_error(&value);
     assert!(matches!(err, ProviderError::Api(_)));
-    assert!(bendengine::retry::should_retry(&err));
+    assert!(evotengine::retry::should_retry(&err));
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn classify_overloaded_json_is_retryable() {
     });
     let err = classify_json_error(&value);
     assert!(matches!(err, ProviderError::Api(_)));
-    assert!(bendengine::retry::should_retry(&err));
+    assert!(evotengine::retry::should_retry(&err));
 }
 
 #[test]
@@ -107,7 +107,7 @@ fn classify_no_message_uses_full_json() {
     let value = serde_json::json!({"foo": "bar"});
     let err = classify_json_error(&value);
     assert!(matches!(err, ProviderError::Api(_)));
-    assert!(bendengine::retry::should_retry(&err));
+    assert!(evotengine::retry::should_retry(&err));
 }
 
 // ---------------------------------------------------------------------------

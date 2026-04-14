@@ -1,4 +1,4 @@
-use bendengine::tools::edit::diff::*;
+use evotengine::tools::edit::diff::*;
 
 #[test]
 fn single_line_replace() {

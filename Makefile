@@ -6,7 +6,7 @@ NEXTEST := $(CARGO) nextest run --no-tests=pass
 COVERAGE_TARGETS := --lib --test unit --test it --test contract
 COVERAGE_CMD := $(CARGO) llvm-cov nextest $(COVERAGE_TARGETS)
 
-.PHONY: setup check build run test test-fast test-unit test-it test-contract test-ui coverage coverage-report snapshot-review dev-env ci build-napi build-ui
+.PHONY: setup check build run test test-fast test-unit test-it test-contract test-cli coverage coverage-report snapshot-review dev-env ci build-napi
 
 setup:
 	@set -e; \
@@ -50,8 +50,7 @@ check:
 	cargo fmt --all -- --check
 	cargo clippy --all-targets -- -D warnings
 
-build:
-	cargo build --release
+build: build-napi
 
 test: test-fast
 
@@ -66,7 +65,7 @@ test-it:
 test-contract:
 	$(NEXTEST) --test contract --no-fail-fast
 
-test-ui:
+test-cli:
 	cd cli && bun test tests/
 
 coverage: coverage-core-check
@@ -94,30 +93,21 @@ dev-env:
 	@echo "  config: $(DEV_CONFIG)"
 	@echo ""
 
-run: dev-env
-	cargo run -p evot -- repl
+run: dev-env build
+	./cli/bin/evot
 
 ci: check test
 
-# -- TS CLI (Ink UI) ---------------------------------------------------------
+# -- TS CLI -------------------------------------------------------------------
 
 build-napi:
-	cd cli && napi build --manifest-path ../src/napi/Cargo.toml --release --platform
+	cd cli && bun install && npx napi build --manifest-path ../src/napi/Cargo.toml --release --platform --output-dir .
 
 build-napi-dev:
-	cd cli && napi build --manifest-path ../src/napi/Cargo.toml --platform -o .
+	cd cli && bun install && npx napi build --manifest-path ../src/napi/Cargo.toml --platform --output-dir .
 
-build-ui: build-napi
-	cd cli && bun install
+dev: build-napi-dev
+	cd cli && bun install && bun run src/index.tsx
 
-build-ui-dev: build-napi-dev
-	cd cli && bun install
-
-run-ui: build-ui
-	cd cli && bun run src/index.tsx
-
-dev-ui: build-ui-dev
-	cd cli && bun run src/index.tsx
-
-check-ui:
+check-cli:
 	cd cli && bun run src/index.tsx --version >/dev/null

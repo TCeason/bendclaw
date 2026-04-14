@@ -1,7 +1,7 @@
 //! Tests for EditFileTool execute and preview.
 
-use bendengine::tools::edit::EditFileTool;
-use bendengine::types::*;
+use evotengine::tools::edit::EditFileTool;
+use evotengine::types::*;
 
 use super::super::ctx;
 

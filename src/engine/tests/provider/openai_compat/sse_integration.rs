@@ -1,9 +1,9 @@
 //! Integration tests: OpenAI-compat provider → wiremock SSE server → Message.
 
-use bendengine::provider::traits::StreamConfig;
-use bendengine::provider::OpenAiCompatProvider;
-use bendengine::provider::StreamEvent;
-use bendengine::types::*;
+use evotengine::provider::traits::StreamConfig;
+use evotengine::provider::OpenAiCompatProvider;
+use evotengine::provider::StreamEvent;
+use evotengine::types::*;
 
 use super::super::fixtures::mock_server::*;
 use super::super::fixtures::sse::openai as openai_sse;
@@ -113,7 +113,7 @@ async fn openai_sse_empty_response_is_error() {
         .await
         .unwrap_err();
 
-    assert!(matches!(err, bendengine::provider::ProviderError::Api(_)));
+    assert!(matches!(err, evotengine::provider::ProviderError::Api(_)));
 }
 
 // ---------------------------------------------------------------------------
@@ -139,7 +139,7 @@ async fn openai_sse_inline_error() {
 
     assert!(matches!(
         err,
-        bendengine::provider::ProviderError::Api(ref msg) if msg.contains("upstream failed")
+        evotengine::provider::ProviderError::Api(ref msg) if msg.contains("upstream failed")
     ));
 }
 
@@ -160,7 +160,7 @@ async fn openai_http_429_rate_limited() {
 
     assert!(matches!(
         err,
-        bendengine::provider::ProviderError::RateLimited { .. }
+        evotengine::provider::ProviderError::RateLimited { .. }
     ));
 }
 
@@ -257,5 +257,5 @@ async fn openai_json_fallback_error() {
     .await
     .unwrap_err();
 
-    assert!(matches!(err, bendengine::provider::ProviderError::Api(_)));
+    assert!(matches!(err, evotengine::provider::ProviderError::Api(_)));
 }

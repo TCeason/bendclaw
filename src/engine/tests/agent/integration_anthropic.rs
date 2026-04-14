@@ -3,11 +3,11 @@
 //!
 //! These tests are #[ignore] by default so they don't run in CI without a key.
 
-use bendengine::agent_loop::agent_loop;
-use bendengine::agent_loop::AgentLoopConfig;
-use bendengine::provider::AnthropicProvider;
-use bendengine::tools;
-use bendengine::types::*;
+use evotengine::agent_loop::agent_loop;
+use evotengine::agent_loop::AgentLoopConfig;
+use evotengine::provider::AnthropicProvider;
+use evotengine::tools;
+use evotengine::types::*;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -33,7 +33,7 @@ fn make_config(provider: AnthropicProvider) -> AgentLoopConfig {
         execution_limits: None,
         cache_config: CacheConfig::default(),
         tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: bendengine::RetryPolicy::default(),
+        retry_policy: evotengine::RetryPolicy::default(),
         before_turn: None,
         after_turn: None,
         input_filters: vec![],

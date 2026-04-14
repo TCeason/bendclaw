@@ -1,5 +1,5 @@
-use bendengine::context::*;
-use bendengine::types::*;
+use evotengine::context::*;
+use evotengine::types::*;
 use fixtures::compaction_assert::*;
 use fixtures::message_dsl::*;
 

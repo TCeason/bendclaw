@@ -1,8 +1,8 @@
 //! Tests for the shared FallbackEmitter.
 
-use bendengine::provider::stream_fallback::FallbackEmitter;
-use bendengine::provider::StreamEvent;
-use bendengine::types::*;
+use evotengine::provider::stream_fallback::FallbackEmitter;
+use evotengine::provider::StreamEvent;
+use evotengine::types::*;
 
 use super::fixtures::stream_config::collect_stream_events;
 

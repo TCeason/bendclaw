@@ -1,10 +1,10 @@
 //! Wiremock-based mock server runners for provider integration tests.
 
-use bendengine::provider::error::ProviderError;
-use bendengine::provider::model::ModelConfig;
-use bendengine::provider::traits::*;
-use bendengine::provider::StreamProvider;
-use bendengine::types::*;
+use evotengine::provider::error::ProviderError;
+use evotengine::provider::model::ModelConfig;
+use evotengine::provider::traits::*;
+use evotengine::provider::StreamProvider;
+use evotengine::types::*;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::method;
 use wiremock::Mock;

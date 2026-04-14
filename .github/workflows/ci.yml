@@ -57,9 +57,13 @@ jobs:
         with:
           submodules: recursive
       - uses: ./.github/actions/setup-rust
-      - run: cargo build --release
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: cd cli && bun install
+      - run: cd cli && npx napi build --manifest-path ../src/napi/Cargo.toml --release --platform --output-dir .
 
-  test-ui:
+  test-cli:
     name: Test CLI (TypeScript)
     runs-on: ubuntu-latest
     steps:

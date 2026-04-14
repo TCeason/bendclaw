@@ -1,8 +1,8 @@
 //! Tests for the disallow mechanism on WriteFileTool and EditFileTool.
 
-use bendengine::tools::edit::EditFileTool;
-use bendengine::tools::file::WriteFileTool;
-use bendengine::types::*;
+use evotengine::tools::edit::EditFileTool;
+use evotengine::tools::file::WriteFileTool;
+use evotengine::types::*;
 use tokio_util::sync::CancellationToken;
 
 fn ctx(name: &str) -> ToolContext {
@@ -177,7 +177,7 @@ async fn read_file_still_works_alongside_disallowed() {
     let path = std::env::temp_dir().join("disallow-test-plan-read.txt");
     std::fs::write(&path, "readable").unwrap();
 
-    let tool = bendengine::tools::ReadFileTool::default();
+    let tool = evotengine::tools::ReadFileTool::default();
     let result = tool
         .execute(
             serde_json::json!({"path": path.to_str().unwrap()}),

@@ -1,6 +1,6 @@
 //! Engine runtime — create engine, forward events, orchestrate a run.
 //!
-//! This module owns the boundary between `bend_engine::AgentEvent` and the
+//! This module owns the boundary between `evot_engine::AgentEvent` and the
 //! app-layer `RunEvent`. No engine types leak beyond this module.
 
 use std::sync::Arc;
@@ -43,13 +43,13 @@ pub struct EngineOptions {
     pub system_prompt: String,
     pub limits: super::ExecutionLimits,
     pub skills_dirs: Vec<std::path::PathBuf>,
-    pub tools: Vec<Box<dyn bend_engine::AgentTool>>,
+    pub tools: Vec<Box<dyn evot_engine::AgentTool>>,
 }
 
 /// Handle to a running engine instance.
 /// Provides abort capability.
 pub struct EngineHandle {
-    agent: Option<bend_engine::Agent>,
+    agent: Option<evot_engine::Agent>,
 }
 
 impl EngineHandle {
@@ -94,7 +94,7 @@ pub(super) enum RuntimeEvent {
 // create_engine — build and start the engine
 // ---------------------------------------------------------------------------
 
-/// Build a `bend_engine::Agent`, start it with the given prompt, and spawn
+/// Build a `evot_engine::Agent`, start it with the given prompt, and spawn
 /// a forwarder task that converts `AgentEvent` → `RuntimeEvent`.
 ///
 /// Returns a `RuntimeEvent` receiver and an `EngineHandle` for abort.
@@ -106,7 +106,7 @@ pub(super) async fn create_engine(
     session_id: &str,
 ) -> Result<(mpsc::UnboundedReceiver<RuntimeEvent>, EngineHandle)> {
     let prior_messages = into_agent_messages(prior_transcripts);
-    let prior_messages = bend_engine::sanitize_tool_pairs(prior_messages);
+    let prior_messages = evot_engine::sanitize_tool_pairs(prior_messages);
     let mut agent = build_agent(options, prior_messages);
     let engine_rx = agent.prompt(prompt).await;
 
@@ -256,7 +256,7 @@ pub(super) async fn run_loop(
 // ---------------------------------------------------------------------------
 
 async fn forward_events(
-    mut engine_rx: mpsc::UnboundedReceiver<bend_engine::AgentEvent>,
+    mut engine_rx: mpsc::UnboundedReceiver<evot_engine::AgentEvent>,
     tx: mpsc::UnboundedSender<RuntimeEvent>,
     run_id: &str,
     session_id: &str,
@@ -273,14 +273,14 @@ async fn forward_events(
 
 /// Map a single `AgentEvent` to zero or more `RuntimeEvent`s.
 fn map_agent_event(
-    event: &bend_engine::AgentEvent,
+    event: &evot_engine::AgentEvent,
     _run_id: &str,
     _session_id: &str,
 ) -> Vec<RuntimeEvent> {
     match event {
-        bend_engine::AgentEvent::AgentStart => vec![],
+        evot_engine::AgentEvent::AgentStart => vec![],
 
-        bend_engine::AgentEvent::AgentEnd { messages } => {
+        evot_engine::AgentEvent::AgentEnd { messages } => {
             let transcripts = from_agent_messages(messages);
             let usage = total_usage(messages);
             let transcript_count = messages.len();
@@ -305,42 +305,42 @@ fn map_agent_event(
             }]
         }
 
-        bend_engine::AgentEvent::TurnStart => {
+        evot_engine::AgentEvent::TurnStart => {
             vec![
                 RuntimeEvent::TurnStarted,
                 RuntimeEvent::Public(RunEventPayload::TurnStarted {}),
             ]
         }
 
-        bend_engine::AgentEvent::TurnEnd { .. } => {
+        evot_engine::AgentEvent::TurnEnd { .. } => {
             vec![RuntimeEvent::TurnEnded]
         }
 
-        bend_engine::AgentEvent::MessageStart { .. } => vec![],
+        evot_engine::AgentEvent::MessageStart { .. } => vec![],
 
-        bend_engine::AgentEvent::MessageUpdate {
-            delta: bend_engine::StreamDelta::Text { delta },
+        evot_engine::AgentEvent::MessageUpdate {
+            delta: evot_engine::StreamDelta::Text { delta },
             ..
         } => vec![RuntimeEvent::Public(RunEventPayload::AssistantDelta {
             delta: Some(delta.clone()),
             thinking_delta: None,
         })],
 
-        bend_engine::AgentEvent::MessageUpdate {
-            delta: bend_engine::StreamDelta::Thinking { delta },
+        evot_engine::AgentEvent::MessageUpdate {
+            delta: evot_engine::StreamDelta::Thinking { delta },
             ..
         } => vec![RuntimeEvent::Public(RunEventPayload::AssistantDelta {
             delta: None,
             thinking_delta: Some(delta.clone()),
         })],
 
-        bend_engine::AgentEvent::MessageUpdate {
-            delta: bend_engine::StreamDelta::ToolCallDelta { .. },
+        evot_engine::AgentEvent::MessageUpdate {
+            delta: evot_engine::StreamDelta::ToolCallDelta { .. },
             ..
         } => vec![],
 
-        bend_engine::AgentEvent::MessageEnd { message } => {
-            if let bend_engine::AgentMessage::Llm(bend_engine::Message::Assistant {
+        evot_engine::AgentEvent::MessageEnd { message } => {
+            if let evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant {
                 content,
                 usage,
                 stop_reason,
@@ -372,7 +372,7 @@ fn map_agent_event(
             }
         }
 
-        bend_engine::AgentEvent::ToolExecutionStart {
+        evot_engine::AgentEvent::ToolExecutionStart {
             tool_call_id,
             tool_name,
             args,
@@ -384,7 +384,7 @@ fn map_agent_event(
             preview_command: preview_command.clone(),
         })],
 
-        bend_engine::AgentEvent::ToolExecutionUpdate {
+        evot_engine::AgentEvent::ToolExecutionUpdate {
             tool_call_id,
             tool_name,
             partial_result,
@@ -397,7 +397,7 @@ fn map_agent_event(
             })]
         }
 
-        bend_engine::AgentEvent::ToolExecutionEnd {
+        evot_engine::AgentEvent::ToolExecutionEnd {
             tool_call_id,
             tool_name,
             result,
@@ -435,7 +435,7 @@ fn map_agent_event(
             ]
         }
 
-        bend_engine::AgentEvent::ProgressMessage {
+        evot_engine::AgentEvent::ProgressMessage {
             tool_call_id,
             tool_name,
             text,
@@ -445,20 +445,20 @@ fn map_agent_event(
             text: text.clone(),
         })],
 
-        bend_engine::AgentEvent::Error { error } => {
+        evot_engine::AgentEvent::Error { error } => {
             vec![RuntimeEvent::Public(RunEventPayload::Error {
                 message: error.message.clone(),
             })]
         }
 
-        bend_engine::AgentEvent::LlmCallStart {
+        evot_engine::AgentEvent::LlmCallStart {
             turn,
             attempt,
             request,
         } => {
             let message_count = request.messages.len();
             let system_prompt_tokens =
-                bend_engine::context::estimate_tokens(&request.system_prompt);
+                evot_engine::context::estimate_tokens(&request.system_prompt);
             let messages: Vec<serde_json::Value> = request
                 .messages
                 .iter()
@@ -496,7 +496,7 @@ fn map_agent_event(
             ]
         }
 
-        bend_engine::AgentEvent::LlmCallEnd {
+        evot_engine::AgentEvent::LlmCallEnd {
             turn,
             attempt,
             usage,
@@ -539,7 +539,7 @@ fn map_agent_event(
             ]
         }
 
-        bend_engine::AgentEvent::ContextCompactionStart {
+        evot_engine::AgentEvent::ContextCompactionStart {
             message_count,
             estimated_tokens,
             budget_tokens,
@@ -565,7 +565,7 @@ fn map_agent_event(
             }),
         ],
 
-        bend_engine::AgentEvent::ContextCompactionEnd { stats, messages } => {
+        evot_engine::AgentEvent::ContextCompactionEnd { stats, messages } => {
             let compacted_transcripts = from_agent_messages(messages);
 
             let result = if stats.level > 0 {
@@ -642,11 +642,11 @@ fn serialize_or_placeholder<T: serde::Serialize>(value: &T, kind: &str) -> serde
 
 pub(crate) fn build_agent(
     options: EngineOptions,
-    prior_messages: Vec<bend_engine::AgentMessage>,
-) -> bend_engine::Agent {
-    use bend_engine::provider::AnthropicProvider;
-    use bend_engine::provider::ModelConfig;
-    use bend_engine::provider::OpenAiCompatProvider;
+    prior_messages: Vec<evot_engine::AgentMessage>,
+) -> evot_engine::Agent {
+    use evot_engine::provider::AnthropicProvider;
+    use evot_engine::provider::ModelConfig;
+    use evot_engine::provider::OpenAiCompatProvider;
 
     let mut model_config = match options.provider {
         ProviderKind::Anthropic => ModelConfig::anthropic(&options.model, &options.model),
@@ -657,24 +657,24 @@ pub(crate) fn build_agent(
     }
 
     let provider_agent = match options.provider {
-        ProviderKind::Anthropic => bend_engine::Agent::new(AnthropicProvider),
-        ProviderKind::OpenAi => bend_engine::Agent::new(OpenAiCompatProvider),
+        ProviderKind::Anthropic => evot_engine::Agent::new(AnthropicProvider),
+        ProviderKind::OpenAi => evot_engine::Agent::new(OpenAiCompatProvider),
     };
 
-    let limits = bend_engine::context::ExecutionLimits {
+    let limits = evot_engine::context::ExecutionLimits {
         max_turns: options.limits.max_turns as usize,
         max_total_tokens: options.limits.max_total_tokens as usize,
         max_duration: std::time::Duration::from_secs(options.limits.max_duration_secs),
     };
 
     let skills = if options.skills_dirs.is_empty() {
-        bend_engine::SkillSet::empty()
+        evot_engine::SkillSet::empty()
     } else {
         match crate::agent::prompt::skill::load_skills(&options.skills_dirs) {
-            Ok(specs) => bend_engine::SkillSet::new(specs),
+            Ok(specs) => evot_engine::SkillSet::new(specs),
             Err(e) => {
                 tracing::warn!("failed to load skills: {e}");
-                bend_engine::SkillSet::empty()
+                evot_engine::SkillSet::empty()
             }
         }
     };

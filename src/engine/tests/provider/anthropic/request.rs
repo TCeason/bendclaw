@@ -1,6 +1,6 @@
-use bendengine::provider::anthropic::request::*;
-use bendengine::provider::traits::*;
-use bendengine::types::*;
+use evotengine::provider::anthropic::request::*;
+use evotengine::provider::traits::*;
+use evotengine::types::*;
 
 use super::super::fixtures::stream_config::*;
 

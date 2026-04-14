@@ -1,8 +1,8 @@
 //! Builder for `StreamConfig` and stream event collection utilities.
 
-use bendengine::provider::model::ModelConfig;
-use bendengine::provider::traits::*;
-use bendengine::types::*;
+use evotengine::provider::model::ModelConfig;
+use evotengine::provider::traits::*;
+use evotengine::types::*;
 
 /// Builder for `StreamConfig` with sensible defaults.
 pub struct StreamConfigBuilder {

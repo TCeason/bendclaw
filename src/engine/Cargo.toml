@@ -1,5 +1,5 @@
 [package]
-name = "bendengine"
+name = "evotengine"
 version.workspace = true
 edition.workspace = true
 description = "Bend Engine - autonomous agent runtime"

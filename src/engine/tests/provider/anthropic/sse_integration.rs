@@ -1,8 +1,8 @@
 //! Integration tests: Anthropic provider → wiremock SSE server → Message.
 
-use bendengine::provider::AnthropicProvider;
-use bendengine::provider::StreamEvent;
-use bendengine::types::*;
+use evotengine::provider::AnthropicProvider;
+use evotengine::provider::StreamEvent;
+use evotengine::types::*;
 
 use super::super::fixtures::mock_server::*;
 use super::super::fixtures::sse::anthropic as anthropic_sse;
@@ -159,7 +159,7 @@ async fn anthropic_sse_error_event() {
         .await
         .unwrap_err();
 
-    assert!(bendengine::retry::should_retry(&err));
+    assert!(evotengine::retry::should_retry(&err));
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +209,7 @@ async fn anthropic_http_429_rate_limited() {
 
     assert!(matches!(
         err,
-        bendengine::provider::ProviderError::RateLimited { .. }
+        evotengine::provider::ProviderError::RateLimited { .. }
     ));
 }
 

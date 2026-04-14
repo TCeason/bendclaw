@@ -7,7 +7,7 @@ edition = "2021"
 version = "0.1.0"
 
 [workspace.dependencies]
-bend-engine = { path = "src/engine", package = "bendengine" }
+evot-engine = { path = "src/engine", package = "evotengine" }
 anyhow = "1"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["macros"] }

@@ -1,4 +1,4 @@
-use bendengine::provider::error::*;
+use evotengine::provider::error::*;
 
 #[test]
 fn classify_anthropic_overflow() {
@@ -93,21 +93,21 @@ fn classify_auth_error() {
 fn classify_400_not_retryable() {
     let err = ProviderError::classify(400, "invalid request format", None);
     assert!(matches!(err, ProviderError::Other(_)));
-    assert!(!bendengine::retry::should_retry(&err));
+    assert!(!evotengine::retry::should_retry(&err));
 }
 
 #[test]
 fn classify_529_overloaded() {
     let err = ProviderError::classify(529, "overloaded", None);
     assert!(matches!(err, ProviderError::Api(_)));
-    assert!(bendengine::retry::should_retry(&err));
+    assert!(evotengine::retry::should_retry(&err));
 }
 
 #[test]
 fn classify_sse_overloaded_error() {
     let err = classify_sse_error_event(r#"{"type":"overloaded_error","message":"Overloaded"}"#);
     assert!(matches!(err, ProviderError::Api(_)));
-    assert!(bendengine::retry::should_retry(&err));
+    assert!(evotengine::retry::should_retry(&err));
 }
 
 #[test]
@@ -127,19 +127,19 @@ fn non_overflow_messages() {
 fn classify_404_not_retryable() {
     let err = ProviderError::classify(404, "model not found", None);
     assert!(matches!(err, ProviderError::Other(_)));
-    assert!(!bendengine::retry::should_retry(&err));
+    assert!(!evotengine::retry::should_retry(&err));
 }
 
 #[test]
 fn classify_405_not_retryable() {
     let err = ProviderError::classify(405, "method not allowed", None);
     assert!(matches!(err, ProviderError::Other(_)));
-    assert!(!bendengine::retry::should_retry(&err));
+    assert!(!evotengine::retry::should_retry(&err));
 }
 
 #[test]
 fn classify_422_not_retryable() {
     let err = ProviderError::classify(422, "unprocessable entity", None);
     assert!(matches!(err, ProviderError::Other(_)));
-    assert!(!bendengine::retry::should_retry(&err));
+    assert!(!evotengine::retry::should_retry(&err));
 }

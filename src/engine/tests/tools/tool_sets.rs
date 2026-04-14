@@ -1,10 +1,10 @@
 //! Tests for tool construction — verifying tools can be built directly.
 
-use bendengine::tools::*;
+use evotengine::tools::*;
 
 #[tokio::test]
 async fn test_full_tools_complete() {
-    let tools: Vec<Box<dyn bendengine::AgentTool>> = vec![
+    let tools: Vec<Box<dyn evotengine::AgentTool>> = vec![
         Box::new(BashTool::default()),
         Box::new(ReadFileTool::default()),
         Box::new(WriteFileTool::new()),
@@ -23,7 +23,7 @@ async fn test_full_tools_complete() {
 
 #[tokio::test]
 async fn test_readonly_tools_contains_only_safe_tools() {
-    let tools: Vec<Box<dyn bendengine::AgentTool>> = vec![
+    let tools: Vec<Box<dyn evotengine::AgentTool>> = vec![
         Box::new(ReadFileTool::default()),
         Box::new(ListFilesTool::default()),
         Box::new(SearchTool::default()),

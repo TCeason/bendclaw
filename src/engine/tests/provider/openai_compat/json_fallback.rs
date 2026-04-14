@@ -1,10 +1,10 @@
 //! Tests for OpenAI-compatible JSON fallback handling.
 
-use bendengine::provider::stream_fallback::FallbackEmitter;
-use bendengine::provider::stream_http::classify_json_error;
-use bendengine::provider::ProviderError;
-use bendengine::provider::StreamEvent;
-use bendengine::types::*;
+use evotengine::provider::stream_fallback::FallbackEmitter;
+use evotengine::provider::stream_http::classify_json_error;
+use evotengine::provider::ProviderError;
+use evotengine::provider::StreamEvent;
+use evotengine::types::*;
 
 use super::super::fixtures::stream_config::collect_stream_events;
 
@@ -22,7 +22,7 @@ fn openai_error_generic() {
     });
     let err = classify_json_error(&value);
     assert!(matches!(err, ProviderError::Api(_)));
-    assert!(bendengine::retry::should_retry(&err));
+    assert!(evotengine::retry::should_retry(&err));
 }
 
 #[test]
@@ -35,7 +35,7 @@ fn openai_error_context_overflow() {
     });
     let err = classify_json_error(&value);
     assert!(err.is_context_overflow());
-    assert!(!bendengine::retry::should_retry(&err));
+    assert!(!evotengine::retry::should_retry(&err));
 }
 
 // ---------------------------------------------------------------------------

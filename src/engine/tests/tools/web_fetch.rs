@@ -1,6 +1,6 @@
 //! Tests for WebFetchTool.
 
-use bendengine::types::*;
+use evotengine::types::*;
 use tokio_util::sync::CancellationToken;
 
 use super::ctx;
@@ -8,7 +8,7 @@ use super::ctx_with_cancel;
 
 #[tokio::test]
 async fn test_web_fetch_missing_url() {
-    let tool = bendengine::tools::web_fetch::WebFetchTool::new();
+    let tool = evotengine::tools::web_fetch::WebFetchTool::new();
     let result = tool.execute(serde_json::json!({}), ctx("web_fetch")).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("url"));
@@ -29,7 +29,7 @@ async fn test_web_fetch_success() {
         .mount(&server)
         .await;
 
-    let tool = bendengine::tools::web_fetch::WebFetchTool::new();
+    let tool = evotengine::tools::web_fetch::WebFetchTool::new();
     let url = format!("{}/hello", server.uri());
     let result = tool
         .execute(serde_json::json!({"url": url}), ctx("web_fetch"))
@@ -60,7 +60,7 @@ async fn test_web_fetch_with_headers() {
         .mount(&server)
         .await;
 
-    let tool = bendengine::tools::web_fetch::WebFetchTool::new();
+    let tool = evotengine::tools::web_fetch::WebFetchTool::new();
     let url = format!("{}/auth", server.uri());
     let result = tool
         .execute(
@@ -95,7 +95,7 @@ async fn test_web_fetch_http_error() {
         .mount(&server)
         .await;
 
-    let tool = bendengine::tools::web_fetch::WebFetchTool::new();
+    let tool = evotengine::tools::web_fetch::WebFetchTool::new();
     let url = format!("{}/notfound", server.uri());
     let result = tool
         .execute(serde_json::json!({"url": url}), ctx("web_fetch"))
@@ -128,7 +128,7 @@ async fn test_web_fetch_cancel() {
         .mount(&server)
         .await;
 
-    let tool = bendengine::tools::web_fetch::WebFetchTool::new();
+    let tool = evotengine::tools::web_fetch::WebFetchTool::new();
     let cancel = CancellationToken::new();
     cancel.cancel();
 
@@ -166,7 +166,7 @@ async fn test_web_fetch_html_to_text() {
         .mount(&server)
         .await;
 
-    let tool = bendengine::tools::web_fetch::WebFetchTool::new();
+    let tool = evotengine::tools::web_fetch::WebFetchTool::new();
     let url = format!("{}/page", server.uri());
     let result = tool
         .execute(serde_json::json!({"url": url}), ctx("web_fetch"))
@@ -187,20 +187,20 @@ async fn test_web_fetch_html_to_text() {
 
 #[test]
 fn test_should_try_browser_fallback_short_text() {
-    use bendengine::tools::web_fetch::should_try_browser_fallback;
+    use evotengine::tools::web_fetch::should_try_browser_fallback;
     assert!(should_try_browser_fallback("short", false));
 }
 
 #[test]
 fn test_should_try_browser_fallback_sufficient_text() {
-    use bendengine::tools::web_fetch::should_try_browser_fallback;
+    use evotengine::tools::web_fetch::should_try_browser_fallback;
     let long_text = "x".repeat(200);
     assert!(!should_try_browser_fallback(&long_text, false));
 }
 
 #[test]
 fn test_should_try_browser_fallback_with_custom_headers() {
-    use bendengine::tools::web_fetch::should_try_browser_fallback;
+    use evotengine::tools::web_fetch::should_try_browser_fallback;
     assert!(!should_try_browser_fallback("", true));
     assert!(!should_try_browser_fallback("short", true));
 }
@@ -224,7 +224,7 @@ async fn test_web_fetch_json_no_browser_fallback() {
         .mount(&server)
         .await;
 
-    let tool = bendengine::tools::web_fetch::WebFetchTool::new();
+    let tool = evotengine::tools::web_fetch::WebFetchTool::new();
     let url = format!("{}/api/data", server.uri());
     let result = tool
         .execute(serde_json::json!({"url": url}), ctx("web_fetch"))
@@ -268,7 +268,7 @@ async fn test_web_fetch_html_good_content_no_fallback() {
         .mount(&server)
         .await;
 
-    let tool = bendengine::tools::web_fetch::WebFetchTool::new();
+    let tool = evotengine::tools::web_fetch::WebFetchTool::new();
     let url = format!("{}/good-page", server.uri());
     let result = tool
         .execute(serde_json::json!({"url": url}), ctx("web_fetch"))
@@ -303,7 +303,7 @@ async fn test_web_fetch_headers_skip_browser_fallback() {
         .mount(&server)
         .await;
 
-    let tool = bendengine::tools::web_fetch::WebFetchTool::new();
+    let tool = evotengine::tools::web_fetch::WebFetchTool::new();
     let url = format!("{}/spa", server.uri());
     let result = tool
         .execute(

@@ -1,4 +1,4 @@
-use bendengine::tools::edit::matching::*;
+use evotengine::tools::edit::matching::*;
 
 #[test]
 fn exact_unique() {

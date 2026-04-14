@@ -1,5 +1,5 @@
-use bendengine::provider::model::ApiProtocol;
-use bendengine::provider::registry::ProviderRegistry;
+use evotengine::provider::model::ApiProtocol;
+use evotengine::provider::registry::ProviderRegistry;
 
 #[test]
 fn default_registry_has_all_providers() {
@@ -24,7 +24,7 @@ fn custom_registry() {
 
     registry.register(
         ApiProtocol::AnthropicMessages,
-        bendengine::provider::AnthropicProvider,
+        evotengine::provider::AnthropicProvider,
     );
     assert!(registry.has(&ApiProtocol::AnthropicMessages));
 }
