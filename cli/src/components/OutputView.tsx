@@ -67,7 +67,7 @@ function OutputLineView({ line }: { line: OutputLine }) {
       )
     case 'run_summary':
       return (
-        <Box marginTop={1}>
+        <Box>
           <Text dimColor>{line.text}</Text>
         </Box>
       )
