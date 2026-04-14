@@ -368,12 +368,9 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
     }
 
     case 'tool_progress': {
-      const id = p.tool_call_id as string
-      const existing = state.activeToolCalls.get(id)
-      if (!existing) return state
-      const newMap = new Map(state.activeToolCalls)
-      newMap.set(id, { ...existing, previewCommand: p.text })
-      return { ...state, activeToolCalls: newMap }
+      // Progress text is handled by toolProgress state in REPL.tsx
+      // Don't update previewCommand — keep the initial command preview
+      return state
     }
 
     case 'llm_call_started': {

@@ -79,7 +79,6 @@ export function ActiveResponse({
       <Box marginTop={progressLines.length > 0 ? 0 : 1}>
         <Spinner
           toolName={hasTools ? [...activeToolCalls.values()][0]?.name : undefined}
-          progressText={hasTools ? [...activeToolCalls.values()][0]?.previewCommand : undefined}
           tokenCount={outputTokens}
           lastTokenAt={lastTokenAt || undefined}
         />

@@ -41,7 +41,6 @@ function formatTokens(count: number): string {
 
 interface SpinnerProps {
   toolName?: string
-  progressText?: string
   tokenCount?: number
   lastTokenAt?: number
 }
@@ -53,7 +52,7 @@ interface SpinnerTick {
   stalled: boolean
 }
 
-export function Spinner({ toolName, progressText, tokenCount = 0, lastTokenAt }: SpinnerProps) {
+export function Spinner({ toolName, tokenCount = 0, lastTokenAt }: SpinnerProps) {
   const [tick, setTick] = useState<SpinnerTick>({ frame: 0, elapsed: 0, glimmerPos: -2, stalled: false })
   const verbRef = useRef(pickVerb())
   const startRef = useRef(Date.now())
@@ -107,20 +106,10 @@ export function Spinner({ toolName, progressText, tokenCount = 0, lastTokenAt }:
   // Glimmer effect: sweep bright chars across the label
   const glimmerCurrent = glimmerPos
 
-  // Progress lines (tool output preview)
-  const progressLines = progressText
-    ? progressText.split('\n').slice(-5).map(l => l.slice(0, 120))
-    : []
+  // Progress lines (tool output preview) — removed, handled by ActiveResponse
 
   return (
     <Box flexDirection="column">
-      {/* Progress lines above spinner */}
-      {progressLines.length > 0 && progressLines.map((line, i) => (
-        <Box key={i}>
-          <Text dimColor>  {line}</Text>
-        </Box>
-      ))}
-
       {/* Spinner line */}
       <Box>
         <Text color={stalled ? 'red' : 'cyan'}>{SPINNER_FRAMES[frame]} </Text>
