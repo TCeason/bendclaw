@@ -3,6 +3,7 @@
  */
 
 import { type RunEvent } from '../native/index.js'
+import { humanTokens as humanTokensInline, renderBar } from '../utils/format.js'
 
 // ---------------------------------------------------------------------------
 // Message types for the UI
@@ -461,16 +462,4 @@ function updateToolCallInMessages(
     }
   }
   return messages
-}
-
-function humanTokensInline(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`
-  return `${n}`
-}
-
-function renderBar(value: number, max: number, width: number): string {
-  if (max <= 0) return '░'.repeat(width)
-  const filled = Math.round((value / max) * width)
-  return '█'.repeat(Math.min(filled, width)) + '░'.repeat(Math.max(0, width - filled))
 }

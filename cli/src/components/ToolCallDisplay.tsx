@@ -5,6 +5,7 @@
 import React from 'react'
 import { Text, Box } from 'ink'
 import type { UIToolCall } from '../state/AppState.js'
+import { truncate } from '../utils/format.js'
 
 interface ToolCallDisplayProps {
   tools: Map<string, UIToolCall>
@@ -71,9 +72,4 @@ function formatToolDetail(tool: UIToolCall): string {
   if ('question' in args) return truncate(String(args.question), 60)
 
   return ''
-}
-
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s
-  return s.slice(0, max - 1) + '…'
 }

@@ -24,13 +24,16 @@ import { skillList, skillInstall, skillRemove } from '../commands/skill.js'
 
 interface REPLProps {
   agent: Agent
+  initialVerbose?: boolean
+  initialResume?: string
 }
 
-export function REPL({ agent }: REPLProps) {
+export function REPL({ agent, initialVerbose = false, initialResume }: REPLProps) {
   const { exit } = useApp()
-  const [state, setState] = useState<AppState>(() =>
-    createInitialState(agent.model, agent.cwd)
-  )
+  const [state, setState] = useState<AppState>(() => ({
+    ...createInitialState(agent.model, agent.cwd),
+    verbose: initialVerbose,
+  }))
   const [systemMessages, setSystemMessages] = useState<SystemMsg[]>([])
   const [showHelp, setShowHelp] = useState(false)
   const [messageQueue, setMessageQueue] = useState<string[]>([])
@@ -39,19 +42,31 @@ export function REPL({ agent }: REPLProps) {
   const [planning, setPlanning] = useState(false)
   const streamRef = useRef<QueryStream | null>(null)
   const sessionIdRef = useRef<string | null>(null)
+  const isLoadingRef = useRef(false)
   const [historyManager] = useState(() => new HistoryManager())
   const [cachedConfigInfo] = useState(() => {
     try { return agent.configInfo() } catch { return undefined }
   })
 
-  // Startup: show resume hint for most recent CWD-matching session
+  // Startup: auto-resume or show resume hint
   useEffect(() => {
     (async () => {
       try {
-        const sessions = await agent.listSessions(20)
-        const match = sessions.find((s) => s.cwd === agent.cwd)
-        if (match) {
-          pushSystem(setSystemMessages, 'info', `  previous session found. Use /resume ${match.session_id.slice(0, 8)} to continue.`)
+        if (initialResume) {
+          // Auto-resume from --resume flag
+          const sessions = await agent.listSessions(20)
+          const match = sessions.find((s) => s.session_id === initialResume || s.session_id.startsWith(initialResume))
+          if (match) {
+            await resumeSession(agent, match, setState, setSystemMessages)
+          } else {
+            pushSystem(setSystemMessages, 'error', `Session not found: ${initialResume}`)
+          }
+        } else {
+          const sessions = await agent.listSessions(20)
+          const match = sessions.find((s) => s.cwd === agent.cwd)
+          if (match) {
+            pushSystem(setSystemMessages, 'info', `  previous session found. Use /resume ${match.session_id.slice(0, 8)} to continue.`)
+          }
         }
       } catch { /* ignore */ }
     })()
@@ -61,12 +76,17 @@ export function REPL({ agent }: REPLProps) {
     sessionIdRef.current = state.sessionId
   }, [state.sessionId])
 
+  useEffect(() => {
+    isLoadingRef.current = state.isLoading
+  }, [state.isLoading])
+
   // Interrupt handler during loading — Ctrl+C or Escape
   useInput((_ch, key) => {
     const isInterrupt = (key.ctrl && _ch === 'c') || key.escape
-    if (isInterrupt && streamRef.current) {
-      streamRef.current.abort()
+    const stream = streamRef.current
+    if (isInterrupt && stream) {
       streamRef.current = null
+      stream.abort()
       setState((prev) => ({
         ...prev,
         isLoading: false,
@@ -83,12 +103,12 @@ export function REPL({ agent }: REPLProps) {
       setSystemMessages([])
 
       if (isSlashCommand(text)) {
-        handleSlashCommand(text, agent, state, setState, setSystemMessages, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, exit)
+        handleSlashCommand(text, agent, state, setState, setSystemMessages, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, cachedConfigInfo, exit)
         return
       }
 
       // If loading, queue the message instead of running immediately
-      if (state.isLoading) {
+      if (isLoadingRef.current) {
         setMessageQueue((prev) => [...prev, text])
         return
       }
@@ -257,10 +277,7 @@ export function REPL({ agent }: REPLProps) {
       {/* Model selector for /model */}
       {showModelSelector && (
         <ModelSelector
-          models={(() => {
-            const configured = getAvailableModels(agent)
-            return [...configured, ...FALLBACK_MODELS.filter((m) => !configured.includes(m))]
-          })()}
+          models={agent.availableModels()}
           currentModel={state.model}
           onSelect={(model) => {
             setShowModelSelector(false)
@@ -320,6 +337,7 @@ async function handleSlashCommand(
   setResumeSessions: React.Dispatch<React.SetStateAction<import('../native/index.js').SessionMeta[] | null>>,
   setPlanning: React.Dispatch<React.SetStateAction<boolean>>,
   setShowModelSelector: React.Dispatch<React.SetStateAction<boolean>>,
+  configInfo: import('../native/index.js').ConfigInfo | undefined,
   exit: () => void,
 ) {
   const resolved = resolveCommand(input)
@@ -366,7 +384,7 @@ async function handleSlashCommand(
       const arg = args.trim()
       if (arg === 'n') {
         // Cycle to next model
-        const models = getAvailableModels(agent)
+        const models = configInfo?.availableModels ?? [state.model]
         if (models.length <= 1) {
           pushSystem(setSystem, 'info', 'Only one model available.')
         } else {
@@ -374,11 +392,12 @@ async function handleSlashCommand(
           const next = models[(idx + 1) % models.length]!
           agent.model = next
           // Auto-switch provider if needed
-          const config = agent.configInfo()
-          if (next === config.anthropicModel && next !== config.openaiModel) {
-            try { agent.setProvider('anthropic') } catch {}
-          } else if (next === config.openaiModel && next !== config.anthropicModel) {
-            try { agent.setProvider('openai') } catch {}
+          if (configInfo) {
+            if (next === configInfo.anthropicModel && next !== configInfo.openaiModel) {
+              try { agent.setProvider('anthropic') } catch {}
+            } else if (next === configInfo.openaiModel && next !== configInfo.anthropicModel) {
+              try { agent.setProvider('openai') } catch {}
+            }
           }
           setState((prev) => ({ ...prev, model: next }))
           pushSystem(setSystem, 'info', `Model → ${next}`)
@@ -552,9 +571,6 @@ async function handleSlashCommand(
             }
           }
           if (text) pushSystem(setSystem, 'info', text)
-
-          // Enter mini-REPL loop via state — store forked agent for subsequent turns
-          setState((prev) => ({ ...prev, forkedAgent: forked } as any))
         } catch (err: any) {
           pushSystem(setSystem, 'error', `Fork failed: ${err?.message ?? err}`)
         }
@@ -669,30 +685,6 @@ async function resumeSession(
 }
 
 // ---------------------------------------------------------------------------
-// Available models (from config + fallback list)
-// ---------------------------------------------------------------------------
-
-function getAvailableModels(agent: Agent): string[] {
-  const config = agent.configInfo()
-  const models: string[] = []
-  for (const m of [config.anthropicModel, config.openaiModel, agent.model]) {
-    if (m && m.trim() && !models.includes(m)) models.push(m)
-  }
-  return models
-}
-
-const FALLBACK_MODELS = [
-  'claude-opus-4-6',
-  'claude-sonnet-4-6',
-  'claude-haiku-4-5-20251001',
-  'gpt-4o',
-  'gpt-4o-mini',
-  'o3',
-  'o3-mini',
-  'gemini-2.5-pro',
-  'gemini-2.5-flash',
-]
-
 // ---------------------------------------------------------------------------
 // Async query runner
 // ---------------------------------------------------------------------------

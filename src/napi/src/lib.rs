@@ -198,6 +198,20 @@ impl NapiAgent {
             .map_err(|e| Error::from_reason(format!("serialize: {e}")))
     }
 
+    /// Get the list of available models from config (unique, non-empty).
+    #[napi]
+    pub fn available_models(&self) -> Vec<String> {
+        let llm = self.agent.llm();
+        let mut models = Vec::new();
+        for m in [&self.config.anthropic.model, &self.config.openai.model, &llm.model] {
+            let trimmed = m.trim();
+            if !trimmed.is_empty() && !models.contains(&trimmed.to_string()) {
+                models.push(trimmed.to_string());
+            }
+        }
+        models
+    }
+
     /// Switch the active provider ("anthropic" or "openai") and update the LLM config.
     #[napi]
     pub fn set_provider(&self, provider: String) -> Result<()> {

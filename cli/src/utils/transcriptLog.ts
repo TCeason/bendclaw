@@ -83,12 +83,12 @@ function formatEvent(event: RunEvent): string[] {
       return lines
     }
     case 'tool_started': {
-      const name = p.name ?? 'unknown'
-      const args = p.input ? JSON.stringify(p.input).slice(0, 200) : ''
+      const name = p.tool_name ?? 'unknown'
+      const args = p.args ? JSON.stringify(p.args).slice(0, 200) : ''
       return [`[${name} call] ${args}`]
     }
     case 'tool_finished': {
-      const name = p.name ?? 'unknown'
+      const name = p.tool_name ?? 'unknown'
       const ok = p.is_error ? 'failed' : 'completed'
       const content = typeof p.content === 'string' ? p.content.slice(0, 200) : ''
       return [`[${name} ${ok}] ${content}`]

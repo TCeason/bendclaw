@@ -57,7 +57,10 @@ export function Spinner({ toolName, progressText, tokenCount = 0, lastTokenAt }:
     const timer = setInterval(() => {
       setFrame((prev) => (prev + 1) % SPINNER_FRAMES.length)
       setElapsed(Date.now() - startRef.current)
-      setGlimmerPos((prev) => prev + 1)
+      setGlimmerPos((prev) => {
+        const next = prev + 1
+        return next > 30 ? -2 : next  // reset glimmer sweep
+      })
     }, SPINNER_INTERVAL)
     return () => clearInterval(timer)
   }, [])
@@ -87,7 +90,7 @@ export function Spinner({ toolName, progressText, tokenCount = 0, lastTokenAt }:
   }
 
   // Glimmer effect: sweep bright chars across the label
-  const glimmerChars = glimmerPos > label.length + 10 ? (() => { setGlimmerPos(-2); return -2 })() : glimmerPos
+  const glimmerCurrent = glimmerPos
 
   // Progress lines (tool output preview)
   const progressLines = progressText
@@ -106,7 +109,7 @@ export function Spinner({ toolName, progressText, tokenCount = 0, lastTokenAt }:
       {/* Spinner line */}
       <Box>
         <Text color={stalled ? 'red' : 'cyan'}>{SPINNER_FRAMES[frame]} </Text>
-        <GlimmerText text={label} pos={glimmerChars ?? glimmerPos} stalled={stalled} />
+        <GlimmerText text={label} pos={glimmerCurrent} stalled={stalled} />
         <Text dimColor> ({status}) · esc to interrupt</Text>
       </Box>
     </Box>

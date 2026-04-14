@@ -47,6 +47,7 @@ export interface ConfigInfo {
   baseUrl: string | null
   anthropicModel: string
   openaiModel: string
+  availableModels: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +146,10 @@ export class Agent {
 
   configInfo(): ConfigInfo {
     return JSON.parse(this.raw.configInfo()) as ConfigInfo
+  }
+
+  availableModels(): string[] {
+    return this.configInfo().availableModels
   }
 
   setProvider(provider: string): void {

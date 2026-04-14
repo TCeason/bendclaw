@@ -487,13 +487,11 @@ function Footer({
   verbose: boolean
   columns: number
 }) {
-  const tags = [
-    planning ? '[plan]' : '',
-    verbose ? '[verbose]' : '',
-  ].filter(Boolean).join(' ')
-  const left = `/help` + (tags ? ` ${tags}` : '')
-  const right = model
-  const gap = Math.max(1, columns - left.length - right.length)
+  // Compute actual rendered width for gap calculation
+  let leftLen = 5 // "/help"
+  if (planning) leftLen += 7 // " [plan]"
+  if (verbose) leftLen += 10 // " [verbose]"
+  const gap = Math.max(1, columns - leftLen - model.length)
 
   return (
     <Box>
@@ -501,7 +499,7 @@ function Footer({
       {planning && <Text color="yellow" bold>{' [plan]'}</Text>}
       {verbose && <Text color="cyan">{' [verbose]'}</Text>}
       <Text>{' '.repeat(gap)}</Text>
-      <Text dimColor>{right}</Text>
+      <Text dimColor>{model}</Text>
     </Box>
   )
 }

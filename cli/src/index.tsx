@@ -149,6 +149,7 @@ async function runPrompt(opts: CliOptions) {
       printEventText(event)
     }
   }
+  process.exit(0)
 }
 
 function printEventText(event: any) {
@@ -181,7 +182,11 @@ function runRepl(opts: CliOptions) {
 
   process.on('SIGINT', () => {})
 
-  const { waitUntilExit } = render(React.createElement(REPL, { agent }), {
+  const { waitUntilExit } = render(React.createElement(REPL, {
+    agent,
+    initialVerbose: opts.verbose,
+    initialResume: opts.resume,
+  }), {
     exitOnCtrlC: false,
   })
   waitUntilExit().then(() => {
