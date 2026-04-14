@@ -18,6 +18,7 @@ import { TranscriptLog } from '../utils/transcriptLog.js'
 import { transcriptToMessages, type TranscriptItem } from '../utils/transcript.js'
 import { isSlashCommand, resolveCommand } from '../commands/index.js'
 import { skillList, skillInstall, skillRemove } from '../commands/skill.js'
+import { StreamWriter } from '../utils/streamWriter.js'
 
 interface REPLProps {
   agent: Agent
@@ -684,6 +685,7 @@ async function runQuery(
   toolMode?: string,
 ) {
   const gen = ++streamGenRef.current  // claim a new generation
+  const writer = new StreamWriter()
   try {
     const stream = await agent.query(text, sessionId ?? undefined, toolMode)
     // If generation changed while awaiting, another command took over — bail
@@ -699,10 +701,29 @@ async function runQuery(
 
     for await (const event of stream) {
       if (gen !== streamGenRef.current) break  // stale — stop processing
+
+      // Push streaming text directly to stdout via StreamWriter
+      if (event.kind === 'assistant_delta') {
+        const p = event.payload as Record<string, any>
+        const delta = p.delta as string | undefined
+        if (delta) {
+          writer.push(delta)
+        }
+      }
+
+      // Flush writer before turn boundaries
+      if (event.kind === 'assistant_completed' || event.kind === 'turn_started') {
+        writer.finish()
+      }
+
       setState((prev) => applyEvent(prev, event))
       try { log?.writeEvent(event) } catch { /* ignore */ }
     }
+
+    // Flush any remaining content
+    writer.finish()
   } catch (err: any) {
+    writer.finish()
     if (gen !== streamGenRef.current) return  // stale — don't overwrite new session's state
     setState((prev) => ({
       ...prev,
