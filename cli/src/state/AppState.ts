@@ -116,6 +116,8 @@ export interface AppState {
   runStartTime: number
   /** Verbose inline events (LLM calls, compaction) shown during streaming */
   verboseEvents: VerboseEvent[]
+  /** Timestamp of the last received token (for stall detection) */
+  lastTokenAt: number
 }
 
 export function createInitialState(model: string, cwd: string): AppState {
@@ -134,6 +136,7 @@ export function createInitialState(model: string, cwd: string): AppState {
     currentRunStats: emptyRunStats(),
     runStartTime: 0,
     verboseEvents: [],
+    lastTokenAt: 0,
   }
 }
 
@@ -180,6 +183,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         ...state,
         currentStreamText: state.currentStreamText + (delta ?? ''),
         currentThinkingText: state.currentThinkingText + (thinkingDelta ?? ''),
+        lastTokenAt: Date.now(),
       }
     }
 

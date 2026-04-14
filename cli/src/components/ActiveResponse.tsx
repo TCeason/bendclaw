@@ -18,16 +18,17 @@ interface Props {
   tailMessage?: UIMessage
   streamText: string
   thinkingText: string
+  streamBoundary: number
   activeToolCalls: Map<string, UIToolCall>
   outputTokens: number
   verbose: boolean
   verboseEvents: VerboseEvent[]
-  onFreezeBlocks?: (blocks: string[]) => void
+  lastTokenAt: number
 }
 
 export function ActiveResponse({
-  isLoading, tailMessage, streamText, thinkingText,
-  activeToolCalls, outputTokens, verbose, verboseEvents, onFreezeBlocks,
+  isLoading, tailMessage, streamText, thinkingText, streamBoundary,
+  activeToolCalls, outputTokens, verbose, verboseEvents, lastTokenAt,
 }: Props) {
   if (!isLoading && !tailMessage) return null
 
@@ -55,7 +56,7 @@ export function ActiveResponse({
 
       {/* Streaming text */}
       {isLoading && (hasStream || hasThinking) && (
-        <StreamingText text={streamText} thinkingText={thinkingText} onFreezeBlocks={onFreezeBlocks} />
+        <StreamingText text={streamText} thinkingText={thinkingText} streamBoundary={streamBoundary} />
       )}
 
       {/* Active tool calls */}
@@ -69,6 +70,7 @@ export function ActiveResponse({
           toolName={hasTools ? [...activeToolCalls.values()][0]?.name : undefined}
           progressText={hasTools ? [...activeToolCalls.values()][0]?.previewCommand : undefined}
           tokenCount={outputTokens}
+          lastTokenAt={lastTokenAt || undefined}
         />
       )}
     </Box>

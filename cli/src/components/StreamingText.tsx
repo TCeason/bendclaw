@@ -1,60 +1,30 @@
 /**
  * StreamingText component — renders only the active (growing) tail block.
  *
- * Completed markdown blocks are reported via onFreezeBlocks callback so they
- * can be rendered in the parent's <Static> zone. This component only handles
- * the last incomplete block that needs dynamic re-rendering.
+ * The parent manages the boundary via splitStableBlocks and passes
+ * streamBoundary to indicate where frozen content ends. This component
+ * only renders text after that boundary.
  */
 
-import React, { useRef, useEffect } from 'react'
+import React from 'react'
 import { Text, Box } from 'ink'
 import { renderMarkdown } from '../utils/markdown.js'
-import { splitStableBlocks } from '../utils/streaming.js'
 
 interface StreamingTextProps {
   text: string
   thinkingText: string
-  onFreezeBlocks?: (blocks: string[]) => void
+  /** Character offset: text before this is already in <Static> */
+  streamBoundary: number
 }
 
-export function StreamingText({ text, thinkingText, onFreezeBlocks }: StreamingTextProps) {
+export function StreamingText({ text, thinkingText, streamBoundary }: StreamingTextProps) {
   if (text.length === 0 && thinkingText.length === 0) {
     return null
   }
 
-  const boundaryRef = useRef(0)
-
-  // Reset if text was replaced (component unmounts between turns)
-  if (text.length < boundaryRef.current) {
-    boundaryRef.current = 0
-  }
-
-  // Split new stable blocks from the tail
-  const { stableTexts, newBoundary } = splitStableBlocks(text, boundaryRef.current)
-
-  // Report frozen blocks to parent for <Static> rendering
-  if (stableTexts.length > 0) {
-    boundaryRef.current = newBoundary
-    // Fire in useEffect to avoid setState-during-render warnings
-  }
-
-  const pendingBlocksRef = useRef<string[]>([])
-  if (stableTexts.length > 0) {
-    pendingBlocksRef.current = stableTexts
-  }
-
-  useEffect(() => {
-    if (pendingBlocksRef.current.length > 0 && onFreezeBlocks) {
-      onFreezeBlocks(pendingBlocksRef.current)
-      pendingBlocksRef.current = []
-    }
-  })
-
-  // The active tail — only this part re-renders per delta
-  const activeTail = text.substring(boundaryRef.current)
+  const activeTail = text.substring(streamBoundary)
   const activeRendered = activeTail ? renderMarkdown(activeTail) : ''
-
-  const hasFrozen = boundaryRef.current > 0
+  const hasFrozen = streamBoundary > 0
 
   return (
     <Box flexDirection="column" marginBottom={1}>
