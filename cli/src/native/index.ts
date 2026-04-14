@@ -149,7 +149,7 @@ export class Agent {
   }
 
   availableModels(): string[] {
-    return this.configInfo().availableModels
+    return this.raw.availableModels()
   }
 
   setProvider(provider: string): void {
