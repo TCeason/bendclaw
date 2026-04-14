@@ -1,0 +1,291 @@
+/**
+ * OutputLine — a single line of REPL output.
+ *
+ * All REPL output (user messages, assistant text, tool results, verbose events)
+ * is modeled as an append-only list of OutputLines. These are rendered by
+ * Ink's <Static> component, which writes them once and never re-renders.
+ *
+ * This module is pure logic — no React, no stdout. Easy to test.
+ */
+
+import { renderMarkdown } from './markdown.js'
+import { colorizeUnifiedDiff } from './diff.js'
+import { truncate, truncateResult } from './format.js'
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface OutputLine {
+  id: string
+  kind: 'user' | 'assistant' | 'tool' | 'verbose' | 'error' | 'system' | 'run_summary'
+  text: string
+  /** ANSI-styled text ready for display. If absent, `text` is used. */
+  styled?: string
+}
+
+// ---------------------------------------------------------------------------
+// ID generator
+// ---------------------------------------------------------------------------
+
+let nextId = 0
+
+function genId(prefix: string): string {
+  return `${prefix}-${nextId++}`
+}
+
+/** Reset ID counter (for tests). */
+export function resetIdCounter(): void {
+  nextId = 0
+}
+
+// ---------------------------------------------------------------------------
+// Builders — pure functions that create OutputLines from events
+// ---------------------------------------------------------------------------
+
+export function buildUserMessage(text: string): OutputLine[] {
+  return [{ id: genId('user'), kind: 'user', text }]
+}
+
+export function buildAssistantLines(markdownText: string, withPrefix = false): OutputLine[] {
+  if (!markdownText.trim()) return []
+  const rendered = renderMarkdown(markdownText)
+  if (!rendered || !rendered.trim()) return []
+  const cleaned = rendered.replace(/^\n+/, '').replace(/\n+$/, '')
+  const lines = cleaned.split('\n')
+  return lines.map((line, i) => ({
+    id: genId('asst'),
+    kind: 'assistant' as const,
+    text: (i === 0 && withPrefix) ? `⏺ ${line}` : line,
+  }))
+}
+
+export function buildToolResult(
+  name: string,
+  args: Record<string, unknown>,
+  status: 'done' | 'error',
+  result?: string,
+  durationMs?: number,
+): OutputLine[] {
+  const lines: OutputLine[] = []
+
+  const icon = status === 'error' ? '✗' : '✓'
+  const detail = formatToolDetail(args)
+  const dur = durationMs !== undefined ? ` (${durationMs}ms)` : ''
+  lines.push({
+    id: genId('tool'),
+    kind: 'tool',
+    text: `${icon} ${name}${detail ? ` ${detail}` : ''}${dur}`,
+    styled: undefined, // styled in the React component
+  })
+
+  // Diff
+  const diff = args?.diff as string | undefined
+  if (diff && typeof diff === 'string' && diff.length > 0) {
+    lines.push({
+      id: genId('tool-diff'),
+      kind: 'tool',
+      text: colorizeUnifiedDiff(diff),
+    })
+  }
+
+  // Error preview
+  if (status === 'error' && result) {
+    lines.push({
+      id: genId('tool-err'),
+      kind: 'error',
+      text: truncateResult(result, 200),
+    })
+  }
+
+  return lines
+}
+
+export function buildVerboseEvent(eventText: string): OutputLine[] {
+  const lines = eventText.split('\n').map((line) => ({
+    id: genId('verb'),
+    kind: 'verbose' as const,
+    text: line,
+  }))
+  // Add empty separator line after each verbose block (matches Rust REPL style)
+  lines.push({ id: genId('verb'), kind: 'verbose' as const, text: '' })
+  return lines
+}
+
+export function buildRunSummary(stats: {
+  durationMs: number
+  turnCount: number
+  toolCallCount: number
+  inputTokens: number
+  outputTokens: number
+}): OutputLine[] {
+  const dur = stats.durationMs < 1000
+    ? `${stats.durationMs}ms`
+    : `${(stats.durationMs / 1000).toFixed(1)}s`
+  return [{
+    id: genId('summary'),
+    kind: 'run_summary',
+    text: `${dur} · ${stats.turnCount} turns · ${stats.toolCallCount} tools · ${stats.inputTokens + stats.outputTokens} tokens`,
+  }]
+}
+
+export function buildError(message: string): OutputLine[] {
+  return [{ id: genId('err'), kind: 'error', text: `Error: ${message}` }]
+}
+
+export function buildSystem(text: string): OutputLine[] {
+  return [{ id: genId('sys'), kind: 'system', text }]
+}
+
+// ---------------------------------------------------------------------------
+// Convert UIMessages to OutputLines (for resume)
+// ---------------------------------------------------------------------------
+
+export function messagesToOutputLines(messages: import('../state/AppState.js').UIMessage[]): OutputLine[] {
+  const lines: OutputLine[] = []
+  for (const msg of messages) {
+    if (msg.role === 'user') {
+      lines.push(...buildUserMessage(msg.text))
+    } else if (msg.role === 'assistant') {
+      // Tool calls first
+      if (msg.toolCalls) {
+        for (const tc of msg.toolCalls) {
+          lines.push(...buildToolResult(
+            tc.name,
+            tc.args,
+            tc.status === 'error' ? 'error' : 'done',
+            tc.result,
+            tc.durationMs,
+          ))
+        }
+      }
+      // Assistant text
+      if (msg.text.trim()) {
+        lines.push(...buildAssistantLines(msg.text, true))
+      }
+    }
+  }
+  return lines
+}
+
+// ---------------------------------------------------------------------------
+// Code-block-aware split (inspired by qwen-code's markdownUtilities)
+// ---------------------------------------------------------------------------
+
+/**
+ * Check if a character index falls inside an unclosed fenced code block.
+ */
+function isInsideCodeBlock(content: string, index: number): boolean {
+  let fenceCount = 0
+  let pos = 0
+  while (pos < content.length) {
+    const next = content.indexOf('```', pos)
+    if (next === -1 || next >= index) break
+    fenceCount++
+    pos = next + 3
+  }
+  return fenceCount % 2 === 1
+}
+
+/**
+ * Find the last safe split point in `content` — a position where we can
+ * cut without breaking a code block.  Prefers `\n\n` (paragraph boundary),
+ * falls back to `\n`.  Returns `content.length` when no safe split exists.
+ */
+export function findSafeSplitPoint(content: string): number {
+  // If the tail is inside an unclosed code block, don't split at all.
+  if (isInsideCodeBlock(content, content.length)) return content.length
+
+  // Prefer paragraph boundary (\n\n) not inside a code block.
+  let search = content.length
+  while (search >= 0) {
+    const idx = content.lastIndexOf('\n\n', search)
+    if (idx === -1) break
+    const splitAt = idx + 2
+    if (!isInsideCodeBlock(content, splitAt)) return splitAt
+    search = idx - 1
+  }
+
+  // Fall back to last single newline not inside a code block.
+  const nlPos = content.lastIndexOf('\n')
+  if (nlPos > 0 && !isInsideCodeBlock(content, nlPos + 1)) return nlPos + 1
+
+  return content.length
+}
+
+// ---------------------------------------------------------------------------
+// AssistantStreamBuffer — accumulates streaming tokens, emits lines
+// ---------------------------------------------------------------------------
+
+export class AssistantStreamBuffer {
+  private buffer = ''
+  private started = false
+  private prefixEmitted = false
+
+  /** Push a token. Returns OutputLines to append (may be empty). */
+  push(token: string): OutputLine[] {
+    if (!token) return []
+    this.buffer += token
+
+    if (!this.started) {
+      this.buffer = this.buffer.replace(/^[\n\r]+/, '')
+      if (this.buffer.length === 0) return []
+      this.started = true
+    }
+
+    return this.flushSafe()
+  }
+
+  /** Flush remaining buffer. Returns OutputLines to append. */
+  finish(): OutputLine[] {
+    if (!this.started) return []
+    const needsPrefix = !this.prefixEmitted
+    const lines = this.buffer.trim().length > 0
+      ? buildAssistantLines(this.buffer, needsPrefix)
+      : []
+    if (needsPrefix && lines.length > 0) this.prefixEmitted = true
+    this.buffer = ''
+    this.started = false
+    return lines
+  }
+
+  /** The current incomplete text (for display in dynamic zone). */
+  get pendingText(): string {
+    return this.started ? this.buffer : ''
+  }
+
+  get isStarted(): boolean {
+    return this.started
+  }
+
+  /**
+   * Flush completed content using code-block-aware splitting.
+   * Only the portion before the safe split point is rendered and emitted;
+   * the rest stays in the buffer for the dynamic zone.
+   */
+  private flushSafe(): OutputLine[] {
+    if (!this.buffer.includes('\n')) return []
+
+    const splitAt = findSafeSplitPoint(this.buffer)
+    if (splitAt === this.buffer.length || splitAt === 0) return []
+
+    const completeText = this.buffer.slice(0, splitAt)
+    this.buffer = this.buffer.slice(splitAt)
+
+    return buildAssistantLines(completeText)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function formatToolDetail(args: Record<string, unknown>): string {
+  if (!args || typeof args !== 'object') return ''
+  if ('command' in args) return truncate(String(args.command), 80)
+  if ('path' in args) return truncate(String(args.path), 80)
+  if ('file_path' in args) return truncate(String(args.file_path), 80)
+  if ('pattern' in args) return truncate(String(args.pattern), 60)
+  if ('url' in args) return truncate(String(args.url), 80)
+  return ''
+}

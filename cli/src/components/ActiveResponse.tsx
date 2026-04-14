@@ -1,76 +1,75 @@
 /**
- * ActiveResponse — dynamic zone that re-renders during streaming.
- * Contains the tail message (still updating), streaming text, tool calls, and spinner.
+ * ActiveResponse — minimal dynamic zone during loading.
+ * Shows pending (incomplete) streaming text, tool calls, and Spinner.
+ * pendingText holds the full streaming markdown for the current turn;
+ * it is rendered with markdown formatting so it looks the same as the
+ * final Static output.
+ *
+ * To keep the spinner and input box pinned at the bottom, we cap the
+ * visible pending text to the last N lines that fit the terminal height.
  */
 
-import React from 'react'
-import { Box } from 'ink'
-import { Message } from './Message.js'
-import { StreamingText } from './StreamingText.js'
+import React, { useMemo } from 'react'
+import { Box, Text, useStdout } from 'ink'
 import { ToolCallDisplay } from './ToolCallDisplay.js'
 import { Spinner } from './Spinner.js'
-import { RunSummary } from './RunSummary.js'
-import { VerboseEventLine } from './VerboseEventLine.js'
-import type { UIMessage, UIToolCall, VerboseEvent } from '../state/AppState.js'
+import { renderMarkdown } from '../utils/markdown.js'
+import type { UIToolCall } from '../state/AppState.js'
+
+/** Lines reserved for spinner + prompt + padding */
+const RESERVED_LINES = 6
 
 interface Props {
   isLoading: boolean
-  tailMessage?: UIMessage
-  streamText: string
-  thinkingText: string
+  pendingText: string
   activeToolCalls: Map<string, UIToolCall>
   outputTokens: number
-  verbose: boolean
-  verboseEvents: VerboseEvent[]
   lastTokenAt: number
 }
 
 export function ActiveResponse({
-  isLoading, tailMessage, streamText, thinkingText,
-  activeToolCalls, outputTokens, verbose, verboseEvents, lastTokenAt,
+  isLoading, pendingText, activeToolCalls, outputTokens, lastTokenAt,
 }: Props) {
-  if (!isLoading && !tailMessage) return null
+  if (!isLoading) return null
 
-  const hasThinking = thinkingText.length > 0
+  const { stdout } = useStdout()
+  const termRows = stdout?.rows ?? 24
+  const maxLines = Math.max(termRows - RESERVED_LINES, 4)
+
   const hasTools = activeToolCalls.size > 0
 
+  const rendered = useMemo(() => {
+    if (!pendingText) return ''
+    const full = renderMarkdown(pendingText).replace(/\n+$/, '')
+    // Tail the output to fit the terminal
+    const lines = full.split('\n')
+    if (lines.length <= maxLines) return full
+    return lines.slice(-maxLines).join('\n')
+  }, [pendingText, maxLines])
+
+  // Show ⏺ prefix on first line of pending text
+  const displayText = rendered ? `⏺ ${rendered}` : ''
+
   return (
-    <Box flexDirection="column" minHeight={isLoading ? 1 : 0}>
-      {/* Tail message — tool status may still be updating */}
-      {tailMessage && (
-        <React.Fragment>
-          {verbose && tailMessage.verboseEvents?.map((evt, i) => (
-            <VerboseEventLine key={`tail-evt-${i}`} event={evt} />
-          ))}
-          <Message message={tailMessage} />
-          {verbose && tailMessage.runStats && <RunSummary stats={tailMessage.runStats} />}
-        </React.Fragment>
+    <Box flexDirection="column">
+      {displayText.length > 0 && (
+        <Box>
+          <Text>{'  '}{displayText}</Text>
+        </Box>
       )}
 
-      {/* Pending verbose events for current turn */}
-      {isLoading && verbose && verboseEvents.map((evt, i) => (
-        <VerboseEventLine key={`pending-evt-${i}`} event={evt} />
-      ))}
-
-      {/* Thinking text (assistant text goes directly to stdout) */}
-      {isLoading && hasThinking && (
-        <StreamingText text={streamText} thinkingText={thinkingText} />
-      )}
-
-      {/* Active tool calls */}
-      {isLoading && hasTools && (
+      {hasTools && (
         <ToolCallDisplay tools={activeToolCalls} />
       )}
 
-      {/* Spinner — always visible during loading */}
-      {isLoading && (
+      <Box marginTop={1}>
         <Spinner
           toolName={hasTools ? [...activeToolCalls.values()][0]?.name : undefined}
           progressText={hasTools ? [...activeToolCalls.values()][0]?.previewCommand : undefined}
           tokenCount={outputTokens}
           lastTokenAt={lastTokenAt || undefined}
         />
-      )}
+      </Box>
     </Box>
   )
 }

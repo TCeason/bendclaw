@@ -8,17 +8,27 @@ import { Box, Text, useApp, useInput } from 'ink'
 import { Agent, type RunEvent, QueryStream } from '../native/index.js'
 import { type AppState, createInitialState, applyEvent, type UIMessage } from '../state/AppState.js'
 import { PromptInput } from '../components/PromptInput.js'
-import { MessageHistory } from '../components/MessageHistory.js'
+import { OutputView } from '../components/OutputView.js'
 import { ActiveResponse } from '../components/ActiveResponse.js'
 import { HelpPane } from '../components/HelpPane.js'
 import { ModelSelector } from '../components/ModelSelector.js'
 import { SessionSelector } from '../components/SessionSelector.js'
 import { HistoryManager } from '../utils/history.js'
-import { TranscriptLog } from '../utils/transcriptLog.js'
+import { ScreenLog } from '../utils/screenLog.js'
 import { transcriptToMessages, type TranscriptItem } from '../utils/transcript.js'
 import { isSlashCommand, resolveCommand } from '../commands/index.js'
 import { skillList, skillInstall, skillRemove } from '../commands/skill.js'
-import { StreamWriter } from '../utils/streamWriter.js'
+import {
+  type OutputLine,
+  buildUserMessage,
+  buildAssistantLines,
+  buildToolResult,
+  buildVerboseEvent,
+  buildError,
+  buildRunSummary,
+  messagesToOutputLines,
+  findSafeSplitPoint,
+} from '../utils/outputLines.js'
 
 interface REPLProps {
   agent: Agent
@@ -35,6 +45,8 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
   const [systemMessages, setSystemMessages] = useState<SystemMsg[]>([])
   const [showHelp, setShowHelp] = useState(false)
   const [messageQueue, setMessageQueue] = useState<string[]>([])
+  const [outputLines, setOutputLines] = useState<OutputLine[]>([])
+  const [pendingText, setPendingText] = useState('')
   const [resumeSessions, setResumeSessions] = useState<import('../native/index.js').SessionMeta[] | null>(null)
   const [showModelSelector, setShowModelSelector] = useState(false)
   const [planning, setPlanning] = useState(false)
@@ -62,7 +74,7 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
           const sessions = await agent.listSessions(20)
           const match = sessions.find((s) => s.session_id === initialResume || s.session_id.startsWith(initialResume))
           if (match) {
-            await resumeSession(agent, match, setState, setSystemMessages)
+            await resumeSession(agent, match, setState, setSystemMessages, setOutputLines)
           } else {
             pushSystem(setSystemMessages, 'error', `Session not found: ${initialResume}`)
           }
@@ -145,7 +157,7 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
       currentThinkingText: '',
       activeToolCalls: new Map(),
     }))
-    runQuery(agent, text, sessionIdRef.current, streamRef, streamGenRef, setState, planning ? 'planning' : undefined)
+    runQuery(agent, text, sessionIdRef.current, streamRef, streamGenRef, setState, setOutputLines, setPendingText, stateRef, planning ? 'planning' : undefined)
   }, [agent, planning])
 
   const handleSubmit = useCallback(
@@ -153,7 +165,7 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
       setSystemMessages([])
 
       if (isSlashCommand(text)) {
-        handleSlashCommand(text, { agent, state: stateRef.current, setState, setSystem: setSystemMessages, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, configInfo: configInfoState, abortCurrentStream, exit })
+        handleSlashCommand(text, { agent, state: stateRef.current, setState, setSystem: setSystemMessages, setOutputLines, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, configInfo: configInfoState, abortCurrentStream, exit })
         return
       }
 
@@ -194,56 +206,20 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
     setState((prev) => ({ ...prev, verbose: !prev.verbose }))
   }, [])
 
-  // Track how many messages have been committed to the static zone.
-  // This only grows — once a message enters <Static>, it stays forever.
-  const committedRef = useRef(0)
-
-  // Reset watermark when messages are cleared (/clear, /new)
-  if (state.messages.length === 0) {
-    committedRef.current = 0
-  }
-
-  // Advance the committed watermark:
-  // - Not loading: commit everything
-  // - Loading: commit all but the last (the tail stays dynamic for tool status updates)
-  const target = state.isLoading && state.messages.length > 0
-    ? state.messages.length - 1
-    : state.messages.length
-  if (target > committedRef.current) {
-    committedRef.current = target
-  }
-
-  const staticMessages = state.messages.slice(0, committedRef.current)
-  const tailMessage = committedRef.current < state.messages.length
-    ? state.messages[state.messages.length - 1]
-    : undefined
-
   return (
     <Box flexDirection="column" padding={0}>
-      <MessageHistory
+      <OutputView
         banner={<Banner model={state.model} cwd={state.cwd} sessionId={state.sessionId} configInfo={configInfoState} />}
-        messages={staticMessages}
-        verbose={state.verbose}
+        lines={outputLines}
       />
 
       <ActiveResponse
         isLoading={state.isLoading}
-        tailMessage={tailMessage}
-        streamText={state.currentStreamText}
-        thinkingText={state.currentThinkingText}
+        pendingText={pendingText}
         activeToolCalls={state.activeToolCalls}
         outputTokens={state.currentRunStats.outputTokens}
-        verbose={state.verbose}
-        verboseEvents={state.verboseEvents}
         lastTokenAt={state.lastTokenAt}
       />
-
-      {/* Error */}
-      {state.error && (
-        <Box marginBottom={1}>
-          <Text color="red">Error: {state.error}</Text>
-        </Box>
-      )}
 
       {/* System messages */}
       {systemMessages.map((msg, i) => (
@@ -258,25 +234,22 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
       ))}
       {systemMessages.length > 0 && <Text>{''}</Text>}
 
-      {/* Help overlay */}
       {showHelp && (
         <HelpPane onDismiss={() => setShowHelp(false)} />
       )}
 
-      {/* Session selector for /resume */}
       {resumeSessions !== null && (
         <SessionSelector
           sessions={resumeSessions}
           currentCwd={agent.cwd}
           onSelect={async (session) => {
             setResumeSessions(null)
-            await resumeSession(agent, session, setState, setSystemMessages)
+            await resumeSession(agent, session, setState, setSystemMessages, setOutputLines)
           }}
           onCancel={() => setResumeSessions(null)}
         />
       )}
 
-      {/* Model selector for /model */}
       {showModelSelector && (
         <ModelSelector
           models={configInfoState?.availableModels ?? [state.model]}
@@ -335,6 +308,7 @@ interface CommandContext {
   state: AppState
   setState: React.Dispatch<React.SetStateAction<AppState>>
   setSystem: React.Dispatch<React.SetStateAction<SystemMsg[]>>
+  setOutputLines: React.Dispatch<React.SetStateAction<OutputLine[]>>
   setShowHelp: React.Dispatch<React.SetStateAction<boolean>>
   setResumeSessions: React.Dispatch<React.SetStateAction<import('../native/index.js').SessionMeta[] | null>>
   setPlanning: React.Dispatch<React.SetStateAction<boolean>>
@@ -345,7 +319,7 @@ interface CommandContext {
 }
 
 async function handleSlashCommand(input: string, ctx: CommandContext) {
-  const { agent, state, setState, setSystem, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, configInfo, abortCurrentStream, exit } = ctx
+  const { agent, state, setState, setSystem, setOutputLines, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, configInfo, abortCurrentStream, exit } = ctx
   const resolved = resolveCommand(input)
 
   if (resolved.kind === 'unknown') {
@@ -375,11 +349,13 @@ async function handleSlashCommand(input: string, ctx: CommandContext) {
     case '/clear':
       abortCurrentStream()
       setState((prev) => ({ ...prev, messages: [] }))
+      setOutputLines([])
       pushSystem(setSystem, 'info', 'Messages cleared.')
       break
 
     case '/new':
       abortCurrentStream()
+      setOutputLines([])
       setState((prev) => ({
         ...createInitialState(prev.model, prev.cwd),
         verbose: prev.verbose,
@@ -442,7 +418,7 @@ async function handleSlashCommand(input: string, ctx: CommandContext) {
             pushSystem(setSystem, 'error', `Ambiguous session id: ${prefix}`)
           } else {
             const session = matches[0]!
-            await resumeSession(agent, session, setState, setSystem)
+            await resumeSession(agent, session, setState, setSystem, setOutputLines)
           }
         } else {
           // Show interactive session selector
@@ -543,7 +519,7 @@ async function handleSlashCommand(input: string, ctx: CommandContext) {
       if (!query) {
         // Just show log path
         if (sid) {
-          pushSystem(setSystem, 'info', `Log: ${join(logDir, `${sid}.log`)}`)
+          pushSystem(setSystem, 'info', `Log: ${join(logDir, `${sid}.screen.log`)}`)
         } else {
           pushSystem(setSystem, 'info', `Log dir: ${logDir} (no active session)`)
         }
@@ -551,7 +527,7 @@ async function handleSlashCommand(input: string, ctx: CommandContext) {
         pushSystem(setSystem, 'error', 'No active session to analyze.')
       } else {
         // Side conversation: fork agent to analyze the log
-        const logPath = join(logDir, `${sid}.log`)
+        const logPath = join(logDir, `${sid}.screen.log`)
         const systemPrompt = [
           'You are in a temporary log analysis session.',
           `The session log file is at: ${logPath}`,
@@ -625,6 +601,7 @@ async function resumeSession(
   session: import('../native/index.js').SessionMeta,
   setState: React.Dispatch<React.SetStateAction<AppState>>,
   setSystem: React.Dispatch<React.SetStateAction<SystemMsg[]>>,
+  setOutputLines: React.Dispatch<React.SetStateAction<OutputLine[]>>,
 ) {
   let messages: UIMessage[] = []
   try {
@@ -637,6 +614,10 @@ async function resumeSession(
     agent.model = session.model
     syncProvider(agent, session.model)
   }
+
+  // Convert messages to OutputLines so they appear in <Static>
+  const lines = messagesToOutputLines(messages)
+  setOutputLines(lines)
 
   setState((prev) => ({
     ...createInitialState(session.model || prev.model, prev.cwd),
@@ -682,49 +663,156 @@ async function runQuery(
   streamRef: React.MutableRefObject<QueryStream | null>,
   streamGenRef: React.MutableRefObject<number>,
   setState: React.Dispatch<React.SetStateAction<AppState>>,
+  setOutputLines: React.Dispatch<React.SetStateAction<OutputLine[]>>,
+  setPendingText: React.Dispatch<React.SetStateAction<string>>,
+  stateRef: React.MutableRefObject<AppState>,
   toolMode?: string,
 ) {
   const gen = ++streamGenRef.current  // claim a new generation
-  const writer = new StreamWriter()
+  let streamingText = ''  // accumulates all assistant text for current turn
+  let prefixEmitted = false
+
+  // Helper: append OutputLines to Static and write them to the screen log
+  let screenLog: ScreenLog | null = null
+  const appendLines = (lines: OutputLine[]) => {
+    if (lines.length === 0) return
+    setOutputLines((prev) => [...prev, ...lines])
+    try { screenLog?.writeLines(lines) } catch { /* ignore */ }
+  }
+
+  // Commit accumulated streaming text to Static
+  const commitStreamingText = () => {
+    if (!streamingText.trim()) {
+      streamingText = ''
+      setPendingText('')
+      return
+    }
+    const needsPrefix = !prefixEmitted
+    const lines = buildAssistantLines(streamingText, needsPrefix)
+    if (needsPrefix && lines.length > 0) prefixEmitted = true
+    appendLines(lines)
+    streamingText = ''
+    setPendingText('')
+  }
+
   try {
     const stream = await agent.query(text, sessionId ?? undefined, toolMode)
     // If generation changed while awaiting, another command took over — bail
     if (gen !== streamGenRef.current) { stream.abort(); return }
     streamRef.current = stream
 
-    // Start transcript log for this session
-    let log: TranscriptLog | null = null
+    // Start screen log for this session
     try {
-      log = new TranscriptLog(stream.sessionId)
-      log.writeUserPrompt(text)
+      screenLog = new ScreenLog(stream.sessionId)
+      screenLog.writeLines(buildUserMessage(text))
     } catch { /* ignore log failures */ }
 
     for await (const event of stream) {
       if (gen !== streamGenRef.current) break  // stale — stop processing
 
-      // Push streaming text directly to stdout via StreamWriter
+      // Emit verbose events BEFORE processing — so [LLM] badges appear
+      // before the content they describe (matching the old MessageHistory order).
+      if (stateRef.current.verbose) {
+        // llm_call_started → commit pending text, then show badge
+        if (event.kind === 'llm_call_started' || event.kind === 'context_compaction_started') {
+          commitStreamingText()
+          const nextState = applyEvent(stateRef.current, event)
+          const newEvents = nextState.verboseEvents.slice(stateRef.current.verboseEvents.length)
+          for (const evt of newEvents) {
+            appendLines(buildVerboseEvent(evt.text))
+          }
+        }
+      }
+
+      // Accumulate streaming text in dynamic zone (pendingText)
       if (event.kind === 'assistant_delta') {
         const p = event.payload as Record<string, any>
         const delta = p.delta as string | undefined
         if (delta) {
-          writer.push(delta)
+          streamingText += delta
+          // Strip leading whitespace on first content
+          if (!prefixEmitted) {
+            const trimmed = streamingText.replace(/^[\n\r]+/, '')
+            if (trimmed.length > 0) {
+              streamingText = trimmed
+            }
+          }
+          // When streaming text gets long, commit completed paragraphs to
+          // Static so the dynamic zone stays small and the spinner/input
+          // remain pinned at the bottom.
+          const termRows = process.stdout.rows ?? 24
+          const lineCount = streamingText.split('\n').length
+          if (lineCount > termRows - 8) {
+            const splitAt = findSafeSplitPoint(streamingText)
+            if (splitAt > 0 && splitAt < streamingText.length) {
+              const completed = streamingText.slice(0, splitAt)
+              streamingText = streamingText.slice(splitAt)
+              const needsPrefix = !prefixEmitted
+              const lines = buildAssistantLines(completed, needsPrefix)
+              if (needsPrefix && lines.length > 0) prefixEmitted = true
+              appendLines(lines)
+            }
+          }
+          setPendingText(streamingText)
         }
       }
 
-      // Flush writer before turn boundaries
+      // Commit text to Static at turn boundaries
       if (event.kind === 'assistant_completed' || event.kind === 'turn_started') {
-        writer.finish()
+        commitStreamingText()
+      }
+
+      // Emit verbose events AFTER content — llm_call_completed and
+      // context_compaction_completed appear after the assistant message.
+      if (stateRef.current.verbose) {
+        if (event.kind === 'llm_call_completed' || event.kind === 'context_compaction_completed') {
+          commitStreamingText()
+          const nextState = applyEvent(stateRef.current, event)
+          const newEvents = nextState.verboseEvents.slice(stateRef.current.verboseEvents.length)
+          for (const evt of newEvents) {
+            appendLines(buildVerboseEvent(evt.text))
+          }
+        }
+      }
+
+      // Emit tool results — commit any pending text first
+      if (event.kind === 'tool_finished') {
+        commitStreamingText()
+        const p = event.payload as Record<string, any>
+        const toolName = p.tool_name ?? 'unknown'
+        const args = p.args ?? {}
+        const details = p.details as Record<string, any> | undefined
+        const mergedArgs = details?.diff ? { ...args, diff: details.diff } : args
+        const status = p.is_error ? 'error' as const : 'done' as const
+        const lines = buildToolResult(toolName, mergedArgs, status, p.content, p.duration_ms)
+        appendLines(lines)
+      }
+
+      // Emit run summary on finish
+      if (event.kind === 'run_finished' && stateRef.current.verbose) {
+        commitStreamingText()
+        const nextState = applyEvent(stateRef.current, event)
+        const stats = nextState.currentRunStats
+        appendLines(buildRunSummary({
+          durationMs: stats.durationMs,
+          turnCount: stats.turnCount,
+          toolCallCount: stats.toolCallCount,
+          inputTokens: stats.inputTokens,
+          outputTokens: stats.outputTokens,
+        }))
       }
 
       setState((prev) => applyEvent(prev, event))
-      try { log?.writeEvent(event) } catch { /* ignore */ }
     }
 
     // Flush any remaining content
-    writer.finish()
+    commitStreamingText()
   } catch (err: any) {
-    writer.finish()
+    commitStreamingText()
+
     if (gen !== streamGenRef.current) return  // stale — don't overwrite new session's state
+    const errLines = buildError(err?.message ?? String(err))
+    appendLines(errLines)
     setState((prev) => ({
       ...prev,
       isLoading: false,
