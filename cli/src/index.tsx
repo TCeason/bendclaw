@@ -7,7 +7,7 @@
 import React from 'react'
 import { render } from 'ink'
 import { Agent, version, startServer } from './native/index.js'
-import { REPL } from './screens/REPL.js'
+import { REPL } from './ui/REPL.js'
 
 // ---------------------------------------------------------------------------
 // Arg parsing
