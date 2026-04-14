@@ -132,92 +132,68 @@ export function buildRunSummary(stats: import('../state/AppState.js').RunStats):
   const dur = formatDuration(stats.durationMs)
   const totalTokens = stats.inputTokens + stats.outputTokens
   const pl = (n: number, s: string) => n === 1 ? s : `${s}s`
+  const line = (text: string) => lines.push({ id: genId('summary'), kind: 'run_summary' as const, text })
 
   // Header
-  lines.push({ id: genId('summary'), kind: 'run_summary', text: '─── Run Summary ──────────────────────────────────' })
-  lines.push({
-    id: genId('summary'), kind: 'run_summary',
-    text: `${dur} · ${stats.turnCount} ${pl(stats.turnCount, 'turn')} · ${stats.llmCalls} llm · ${stats.toolCallCount} ${pl(stats.toolCallCount, 'tool')} · ${totalTokens} tokens`,
-  })
+  line('─── This Run Summary ──────────────────────────────────')
+  line(`${dur} · ${stats.turnCount} ${pl(stats.turnCount, 'turn')} · ${stats.llmCalls} llm ${pl(stats.llmCalls, 'call')} · ${stats.toolCallCount} tool ${pl(stats.toolCallCount, 'call')} · ${humanTokens(totalTokens)} tokens`)
 
   // Context budget bar (only if meaningful)
   if (stats.contextWindow > 0 && stats.contextTokens > 0) {
     const budget = stats.contextWindow
-    const pct = ((stats.contextTokens / budget) * 100).toFixed(0)
-    if (Number(pct) > 0) {
+    const pct = (stats.contextTokens / budget) * 100
+    if (pct > 0) {
       const bar = renderBar(stats.contextTokens, budget, 20)
-      lines.push({
-        id: genId('summary'), kind: 'run_summary',
-        text: `  context   ${bar}  ${pct}%(${humanTokens(stats.contextTokens)}) of budget(${humanTokens(budget)})`,
-      })
+      line(`  context   ${bar}  ${pct.toFixed(0)}%(${humanTokens(stats.contextTokens)}) of budget(${humanTokens(budget)})`)
     }
   }
 
   // Tokens
-  let tokLine = `  tokens    ${humanTokens(stats.inputTokens)} in · ${stats.outputTokens} out`
+  const totalStreamMs = stats.llmCallDetails.reduce((s, c) => s + (c.durationMs - c.ttftMs), 0)
+  const overallTps = totalStreamMs > 0 ? (stats.outputTokens / (totalStreamMs / 1000)).toFixed(1) : '0'
+  let tokLine = `  tokens    ${humanTokens(stats.inputTokens)} input · ${stats.outputTokens} output · ${overallTps} tok/s`
   if (stats.cacheReadTokens > 0 || stats.cacheWriteTokens > 0) {
     const hitRate = stats.inputTokens > 0
       ? (stats.cacheReadTokens / stats.inputTokens * 100).toFixed(0)
       : '0'
     tokLine += ` · cache ${hitRate}%`
   }
-  lines.push({ id: genId('summary'), kind: 'run_summary', text: tokLine })
-
-  // Tool breakdown
-  if (stats.toolBreakdown.length > 0) {
-    lines.push({ id: genId('summary'), kind: 'run_summary', text: '  tools' })
-    for (const tb of stats.toolBreakdown) {
-      const errStr = tb.errors > 0 ? ` · ${tb.errors} err` : ''
-      lines.push({
-        id: genId('summary'), kind: 'run_summary',
-        text: `            ${tb.name.padEnd(20)} ${tb.count}× · ${formatDuration(tb.totalDurationMs)}${errStr}`,
-      })
-    }
-  }
+  line(tokLine)
 
   // LLM call details
   if (stats.llmCallDetails.length > 0) {
     const totalLlmMs = stats.llmCallDetails.reduce((s, c) => s + c.durationMs, 0)
-    const llmPct = stats.durationMs > 0 ? (totalLlmMs / stats.durationMs * 100).toFixed(0) : '0'
-    const avgTps = stats.llmCallDetails.length > 0
-      ? (stats.llmCallDetails.reduce((s, c) => s + c.tokPerSec, 0) / stats.llmCallDetails.length).toFixed(1)
-      : '0'
-    lines.push({
-      id: genId('summary'), kind: 'run_summary',
-      text: `  llm       ${stats.llmCallDetails.length} ${pl(stats.llmCallDetails.length, 'call')} · ${formatDuration(totalLlmMs)} (${llmPct}% of run) · ${avgTps} tok/s`,
-    })
+    const llmPct = stats.durationMs > 0 ? (totalLlmMs / stats.durationMs * 100).toFixed(1) : '0'
+    const avgTps = (stats.llmCallDetails.reduce((s, c) => s + c.tokPerSec, 0) / stats.llmCallDetails.length).toFixed(1)
+    line(`  llm       ${stats.llmCallDetails.length} ${pl(stats.llmCallDetails.length, 'call')} · ${formatDuration(totalLlmMs)} (${llmPct}% of run) · ${avgTps} tok/s avg`)
 
     const avgTtft = stats.llmCallDetails.reduce((s, c) => s + c.ttftMs, 0) / stats.llmCallDetails.length
     const avgStream = stats.llmCallDetails.reduce((s, c) => s + (c.durationMs - c.ttftMs), 0) / stats.llmCallDetails.length
-    lines.push({
-      id: genId('summary'), kind: 'run_summary',
-      text: `            ttft avg ${formatDuration(Math.round(avgTtft))} · stream avg ${formatDuration(Math.round(avgStream))}`,
-    })
+    line(`            ttft avg ${formatDuration(Math.round(avgTtft))} · stream avg ${formatDuration(Math.round(avgStream))}`)
 
-    // Top 3 by duration
+    // All calls by duration
     const sorted = [...stats.llmCallDetails].sort((a, b) => b.durationMs - a.durationMs)
     const show = Math.min(sorted.length, 3)
     const maxDur = sorted[0]?.durationMs ?? 1
     for (let i = 0; i < show; i++) {
       const c = sorted[i]!
       const bar = renderBar(c.durationMs, maxDur, 20)
-      const pct = totalLlmMs > 0 ? (c.durationMs / totalLlmMs * 100).toFixed(0) : '0'
-      lines.push({
-        id: genId('summary'), kind: 'run_summary',
-        text: `            #${i + 1}  ${formatDuration(c.durationMs).padEnd(6)} ${bar} ${pct}%`,
-      })
+      const pct = totalLlmMs > 0 ? (c.durationMs / totalLlmMs * 100).toFixed(1) : '0'
+      line(`            #${i + 1}  ${formatDuration(c.durationMs)} ${bar} ${pct}%`)
     }
     if (sorted.length > 3) {
       const restMs = sorted.slice(3).reduce((s, c) => s + c.durationMs, 0)
-      lines.push({
-        id: genId('summary'), kind: 'run_summary',
-        text: `            ... ${sorted.length - 3} more · ${formatDuration(restMs)} total`,
-      })
+      line(`            ... ${sorted.length - 3} more · ${formatDuration(restMs)} total`)
     }
   }
 
-  // Footer
-  lines.push({ id: genId('summary'), kind: 'run_summary', text: '──────────────────────────────────────────────────' })
+  // Tool breakdown (compact, under llm section)
+  if (stats.toolBreakdown.length > 0) {
+    for (const tb of stats.toolBreakdown) {
+      const errStr = tb.errors > 0 ? ` · ${tb.errors} err` : ''
+      line(`              ${tb.name}  ${tb.count} ${pl(tb.count, 'call')}  ${formatDuration(tb.totalDurationMs)}${errStr}`)
+    }
+  }
 
   return lines
 }

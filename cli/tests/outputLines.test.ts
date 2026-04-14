@@ -110,16 +110,12 @@ describe('buildRunSummary', () => {
       llmCallDetails: [],
     })
     expect(lines.length).toBeGreaterThan(1)
-    // Header line
-    expect(lines[0]!.text).toContain('Run Summary')
-    // Stats line
+    expect(lines[0]!.text).toContain('This Run Summary')
     const statsLine = lines.find((l) => l.text.includes('turn'))!
     expect(statsLine.text).toContain('2.5s')
     expect(statsLine.text).toContain('3 turns')
-    expect(statsLine.text).toContain('5 tools')
-    expect(statsLine.text).toContain('1200 tokens')
-    // Footer
-    expect(lines[lines.length - 1]!.text).toContain('───')
+    expect(statsLine.text).toContain('5 tool calls')
+    expect(statsLine.text).toContain('1k tokens')
   })
 
   test('includes llm call details', () => {
@@ -142,7 +138,8 @@ describe('buildRunSummary', () => {
       ],
     })
     expect(lines.some((l) => l.text.includes('llm'))).toBe(true)
-    expect(lines.some((l) => l.text.includes('tok/s'))).toBe(true)
+    expect(lines.some((l) => l.text.includes('ttft avg'))).toBe(true)
+    expect(lines.some((l) => l.text.includes('#1'))).toBe(true)
     expect(lines.some((l) => l.text.includes('cache'))).toBe(true)
   })
 })
