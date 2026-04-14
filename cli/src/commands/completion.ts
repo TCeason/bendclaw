@@ -60,7 +60,11 @@ export function getCommandHints(line: string, cursorCol: number): CommandHint[] 
 
 /**
  * Compute inline ghost hint for the current input.
- * Returns gray text to show after the cursor.
+ * Returns gray text to show after the cursor (Rust REPL style).
+ *
+ * - Bare `/` → compact list of all commands
+ * - `/he` → `lp — Show help` (single match: completion + description)
+ * - `/m` → `odel | /model /memory` (ambiguous: completion + candidates)
  */
 export function getGhostHint(line: string, cursorCol: number): string {
   const beforeCursor = line.slice(0, cursorCol)
@@ -75,15 +79,28 @@ export function getGhostHint(line: string, cursorCol: number): string {
 
   if (parts.length > 1) return ''
 
-  // Single match — show completion suffix only
+  // Bare `/` → show all command names
+  if (cmd === '/') {
+    return COMMANDS.map(c => c.name.slice(1)).join('  ')
+  }
+
   const allCmds = COMMANDS.flatMap(c => [c, ...(c.aliases ?? []).map(a => ({ ...c, name: a }))])
   const matches = allCmds.filter(c => c.name.startsWith(cmd))
 
-  if (matches.length === 1 && cmd !== matches[0]!.name) {
-    return matches[0]!.name.slice(cmd.length)
+  if (matches.length === 0) return ''
+
+  // Single match — show completion suffix + description
+  if (matches.length === 1) {
+    const m = matches[0]!
+    const suffix = m.name.slice(cmd.length)
+    return `${suffix} — ${m.description}`
   }
 
-  return ''
+  // Multiple matches — show common suffix + candidate names
+  const common = commonPrefix(matches.map(m => m.name))
+  const suffix = common.slice(cmd.length)
+  const names = matches.map(m => m.name).join('  ')
+  return suffix ? `${suffix}  [${names}]` : `  [${names}]`
 }
 
 // ---------------------------------------------------------------------------

@@ -10,7 +10,7 @@
 
 import React, { useState, useRef, useEffect } from 'react'
 import { Text, Box, useInput, useStdout } from 'ink'
-import { complete, getGhostHint, getCommandHints, type CommandHint } from '../commands/completion.js'
+import { complete, getGhostHint } from '../commands/completion.js'
 import type { HistoryManager } from '../utils/history.js'
 import { InterruptHandler } from '../utils/interrupt.js'
 import { needsContinuation } from '../utils/continuation.js'
@@ -425,26 +425,6 @@ export const PromptInput = React.memo(function PromptInput({
 
       {/* Bottom border */}
       <Text dimColor>{borderLine}</Text>
-
-      {/* Command hints dropdown */}
-      {(() => {
-        const line = lines[cursorLine] ?? ''
-        const hints = getCommandHints(line, cursorCol)
-        if (hints.length === 0 || !line.startsWith('/')) return null
-        // Find max command name length for alignment
-        const maxLen = Math.max(...hints.map(h => h.name.length))
-        return (
-          <Box flexDirection="column">
-            {hints.map((h) => (
-              <Box key={h.name}>
-                <Text dimColor>  </Text>
-                <Text color="cyan">{h.name.padEnd(maxLen + 2)}</Text>
-                <Text dimColor>{h.description.length > 80 ? h.description.slice(0, 79) + '…' : h.description}</Text>
-              </Box>
-            ))}
-          </Box>
-        )
-      })()}
 
       {/* Exit hint */}
       {exitHint && (
