@@ -43,6 +43,7 @@ export function REPL({ agent, initialVerbose = false, initialResume }: REPLProps
   const streamRef = useRef<QueryStream | null>(null)
   const sessionIdRef = useRef<string | null>(null)
   const isLoadingRef = useRef(false)
+  const streamGenRef = useRef(0)  // generation counter to reject stale stream events
   const [historyManager] = useState(() => new HistoryManager())
   const [configInfoState, setConfigInfoState] = useState(() => {
     try { return agent.configInfo() } catch { return undefined }
@@ -84,20 +85,30 @@ export function REPL({ agent, initialVerbose = false, initialResume }: REPLProps
     isLoadingRef.current = state.isLoading
   }, [state.isLoading])
 
+  // Abort current stream and reset transient state
+  const abortCurrentStream = useCallback(() => {
+    const stream = streamRef.current
+    if (stream) {
+      streamRef.current = null
+      streamGenRef.current++  // invalidate any in-flight event loop
+      stream.abort()
+    }
+    setState((prev) => ({
+      ...prev,
+      isLoading: false,
+      currentStreamText: '',
+      currentThinkingText: '',
+      activeToolCalls: new Map(),
+      turnToolCalls: [],
+      verboseEvents: [],
+    }))
+  }, [])
+
   // Interrupt handler during loading — Ctrl+C or Escape
   useInput((_ch, key) => {
     const isInterrupt = (key.ctrl && _ch === 'c') || key.escape
-    const stream = streamRef.current
-    if (isInterrupt && stream) {
-      streamRef.current = null
-      stream.abort()
-      setState((prev) => ({
-        ...prev,
-        isLoading: false,
-        currentStreamText: '',
-        currentThinkingText: '',
-        activeToolCalls: new Map(),
-      }))
+    if (isInterrupt && streamRef.current) {
+      abortCurrentStream()
       pushSystem(setSystemMessages, 'info', 'Interrupted.')
     }
   }, { isActive: state.isLoading })
@@ -118,7 +129,7 @@ export function REPL({ agent, initialVerbose = false, initialResume }: REPLProps
       currentThinkingText: '',
       activeToolCalls: new Map(),
     }))
-    runQuery(agent, text, sessionIdRef.current, streamRef, setState, planning ? 'planning' : undefined)
+    runQuery(agent, text, sessionIdRef.current, streamRef, streamGenRef, setState, planning ? 'planning' : undefined)
   }, [agent, planning])
 
   const handleSubmit = useCallback(
@@ -126,7 +137,7 @@ export function REPL({ agent, initialVerbose = false, initialResume }: REPLProps
       setSystemMessages([])
 
       if (isSlashCommand(text)) {
-        handleSlashCommand(text, { agent, state, setState, setSystem: setSystemMessages, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, configInfo: configInfoState, exit })
+        handleSlashCommand(text, { agent, state, setState, setSystem: setSystemMessages, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, configInfo: configInfoState, abortCurrentStream, exit })
         return
       }
 
@@ -151,15 +162,7 @@ export function REPL({ agent, initialVerbose = false, initialResume }: REPLProps
 
   const handleInterrupt = useCallback(() => {
     if (streamRef.current) {
-      streamRef.current.abort()
-      streamRef.current = null
-      setState((prev) => ({
-        ...prev,
-        isLoading: false,
-        currentStreamText: '',
-        currentThinkingText: '',
-        activeToolCalls: new Map(),
-      }))
+      abortCurrentStream()
       pushSystem(setSystemMessages, 'info', 'Interrupted.')
     } else {
       // Show resume hint on exit
@@ -169,7 +172,7 @@ export function REPL({ agent, initialVerbose = false, initialResume }: REPLProps
       }
       exit()
     }
-  }, [exit])
+  }, [exit, abortCurrentStream])
 
   const handleToggleVerbose = useCallback(() => {
     setState((prev) => ({ ...prev, verbose: !prev.verbose }))
@@ -329,11 +332,12 @@ interface CommandContext {
   setPlanning: React.Dispatch<React.SetStateAction<boolean>>
   setShowModelSelector: React.Dispatch<React.SetStateAction<boolean>>
   configInfo: import('../native/index.js').ConfigInfo | undefined
+  abortCurrentStream: () => void
   exit: () => void
 }
 
 async function handleSlashCommand(input: string, ctx: CommandContext) {
-  const { agent, state, setState, setSystem, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, configInfo, exit } = ctx
+  const { agent, state, setState, setSystem, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, configInfo, abortCurrentStream, exit } = ctx
   const resolved = resolveCommand(input)
 
   if (resolved.kind === 'unknown') {
@@ -356,20 +360,21 @@ async function handleSlashCommand(input: string, ctx: CommandContext) {
       break
 
     case '/exit':
+      abortCurrentStream()
       exit()
       break
 
     case '/clear':
+      abortCurrentStream()
       setState((prev) => ({ ...prev, messages: [] }))
       pushSystem(setSystem, 'info', 'Messages cleared.')
       break
 
     case '/new':
+      abortCurrentStream()
       setState((prev) => ({
-        ...prev,
-        messages: [],
-        sessionId: null,
-        error: null,
+        ...createInitialState(prev.model, prev.cwd),
+        verbose: prev.verbose,
       }))
       pushSystem(setSystem, 'info', 'New session started.')
       break
@@ -406,6 +411,7 @@ async function handleSlashCommand(input: string, ctx: CommandContext) {
       break
 
     case '/resume': {
+      abortCurrentStream()
       try {
         const allSessions = await agent.listSessions(20)
         if (allSessions.length === 0) {
@@ -658,9 +664,9 @@ async function resumeSession(
   }
 
   setState((prev) => ({
-    ...prev,
+    ...createInitialState(session.model || prev.model, prev.cwd),
+    verbose: prev.verbose,
     sessionId: session.session_id,
-    model: session.model || prev.model,
     messages,
   }))
   pushSystem(setSystem, 'info', `Resumed session ${session.session_id.slice(0, 8)} — ${session.title || '(untitled)'}`)
@@ -699,11 +705,15 @@ async function runQuery(
   text: string,
   sessionId: string | null,
   streamRef: React.MutableRefObject<QueryStream | null>,
+  streamGenRef: React.MutableRefObject<number>,
   setState: React.Dispatch<React.SetStateAction<AppState>>,
   toolMode?: string,
 ) {
+  const gen = ++streamGenRef.current  // claim a new generation
   try {
     const stream = await agent.query(text, sessionId ?? undefined, toolMode)
+    // If generation changed while awaiting, another command took over — bail
+    if (gen !== streamGenRef.current) { stream.abort(); return }
     streamRef.current = stream
 
     // Start transcript log for this session
@@ -714,10 +724,12 @@ async function runQuery(
     } catch { /* ignore log failures */ }
 
     for await (const event of stream) {
+      if (gen !== streamGenRef.current) break  // stale — stop processing
       setState((prev) => applyEvent(prev, event))
       try { log?.writeEvent(event) } catch { /* ignore */ }
     }
   } catch (err: any) {
+    if (gen !== streamGenRef.current) return  // stale — don't overwrite new session's state
     setState((prev) => ({
       ...prev,
       isLoading: false,
