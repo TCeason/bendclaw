@@ -3,11 +3,14 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use evot::agent::Agent;
+use evot::agent::ForkRequest;
+use evot::agent::ForkedAgent;
+use evot::agent::QueryRequest;
+use evot::agent::ToolMode;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use tokio::sync::Mutex;
-
-use evot::agent::{Agent, ForkRequest, ForkedAgent, QueryRequest, ToolMode};
 
 // ---------------------------------------------------------------------------
 // NapiAgent — wraps the app-level Agent for JS consumption
@@ -149,9 +152,11 @@ impl NapiAgent {
     pub fn list_variables(&self) -> Result<String> {
         match self.agent.variables() {
             Some(vars) => {
-                let items: Vec<_> = vars.list_global().iter().map(|v| {
-                    serde_json::json!({ "key": v.key, "value": v.value })
-                }).collect();
+                let items: Vec<_> = vars
+                    .list_global()
+                    .iter()
+                    .map(|v| serde_json::json!({ "key": v.key, "value": v.value }))
+                    .collect();
                 serde_json::to_string(&items)
                     .map_err(|e| Error::from_reason(format!("serialize: {e}")))
             }
@@ -163,7 +168,9 @@ impl NapiAgent {
     #[napi]
     pub async fn set_variable(&self, key: String, value: String) -> Result<()> {
         match self.agent.variables() {
-            Some(vars) => vars.set_global(key, value).await
+            Some(vars) => vars
+                .set_global(key, value)
+                .await
                 .map_err(|e| Error::from_reason(format!("set variable: {e}"))),
             None => Err(Error::from_reason("variables not available")),
         }
@@ -173,7 +180,9 @@ impl NapiAgent {
     #[napi]
     pub async fn delete_variable(&self, key: String) -> Result<bool> {
         match self.agent.variables() {
-            Some(vars) => vars.delete_global(&key).await
+            Some(vars) => vars
+                .delete_global(&key)
+                .await
                 .map_err(|e| Error::from_reason(format!("delete variable: {e}"))),
             None => Err(Error::from_reason("variables not available")),
         }
@@ -194,8 +203,7 @@ impl NapiAgent {
             "anthropicModel": self.config.anthropic.model,
             "openaiModel": self.config.openai.model,
         });
-        serde_json::to_string(&info)
-            .map_err(|e| Error::from_reason(format!("serialize: {e}")))
+        serde_json::to_string(&info).map_err(|e| Error::from_reason(format!("serialize: {e}")))
     }
 
     /// Get the list of available models from config (unique, non-empty).
@@ -203,7 +211,11 @@ impl NapiAgent {
     pub fn available_models(&self) -> Vec<String> {
         let llm = self.agent.llm();
         let mut models = Vec::new();
-        for m in [&self.config.anthropic.model, &self.config.openai.model, &llm.model] {
+        for m in [
+            &self.config.anthropic.model,
+            &self.config.openai.model,
+            &llm.model,
+        ] {
             let trimmed = m.trim();
             if !trimmed.is_empty() && !models.contains(&trimmed.to_string()) {
                 models.push(trimmed.to_string());
