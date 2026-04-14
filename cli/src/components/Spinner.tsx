@@ -9,7 +9,7 @@ import { Text, Box } from 'ink'
 import { shouldAnimateTerminalTitle } from '../utils/streaming.js'
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-const SPINNER_INTERVAL = 1000
+const SPINNER_INTERVAL = 80
 const STALLED_THRESHOLD_MS = 3000
 const SHOW_TOKENS_AFTER_MS = 30000
 
