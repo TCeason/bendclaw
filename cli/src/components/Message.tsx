@@ -34,7 +34,8 @@ function UserMessage({ message }: { message: UIMessage }) {
 }
 
 function AssistantMessage({ message, verbose }: { message: UIMessage; verbose: boolean }) {
-  const rendered = message.text.length > 0 ? renderMarkdown(message.text) : ''
+  // Skip text rendering if already streamed directly to stdout
+  const rendered = (!message.streamed && message.text.length > 0) ? renderMarkdown(message.text) : ''
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -43,7 +44,7 @@ function AssistantMessage({ message, verbose }: { message: UIMessage; verbose: b
         <ToolCallResult key={tc.id} tool={tc} verbose={verbose} />
       ))}
 
-      {/* Assistant text — rendered as markdown */}
+      {/* Assistant text — rendered as markdown (skipped if streamed to stdout) */}
       {rendered.length > 0 && (
         <Box marginTop={1}>
           <Text color="magenta" bold>{'⏺ '}</Text>

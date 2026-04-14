@@ -21,6 +21,8 @@ export interface UIMessage {
   runStats?: RunStats
   /** Verbose events that occurred before this message */
   verboseEvents?: VerboseEvent[]
+  /** Text was already streamed to stdout — skip rendering in Message component */
+  streamed?: boolean
 }
 
 export interface UIToolCall {
@@ -222,6 +224,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         timestamp: Date.now(),
         toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
         verboseEvents: state.verboseEvents.length > 0 ? [...state.verboseEvents] : undefined,
+        streamed: state.currentStreamText.length > 0,
       }
 
       return {

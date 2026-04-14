@@ -31,7 +31,6 @@ export function ActiveResponse({
 }: Props) {
   if (!isLoading && !tailMessage) return null
 
-  const hasStream = streamText.length > 0
   const hasThinking = thinkingText.length > 0
   const hasTools = activeToolCalls.size > 0
 
@@ -53,8 +52,8 @@ export function ActiveResponse({
         <VerboseEventLine key={`pending-evt-${i}`} event={evt} />
       ))}
 
-      {/* Streaming text */}
-      {isLoading && (hasStream || hasThinking) && (
+      {/* Thinking text (assistant text goes directly to stdout) */}
+      {isLoading && hasThinking && (
         <StreamingText text={streamText} thinkingText={thinkingText} />
       )}
 
