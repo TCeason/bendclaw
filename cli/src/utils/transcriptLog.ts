@@ -71,11 +71,12 @@ function formatEvent(event: RunEvent): string[] {
         for (const block of content) {
           if (block.type === 'text' && block.text) {
             lines.push(block.text)
-          } else if (block.type === 'tool_use') {
+          } else if (block.type === 'tool_call' || block.type === 'tool_use') {
             lines.push(`[${block.name} call]`)
-            if (block.input) {
-              const input = typeof block.input === 'string' ? block.input : JSON.stringify(block.input)
-              lines.push(`  ${input.slice(0, 200)}`)
+            const input = block.input ?? block.args
+            if (input) {
+              const str = typeof input === 'string' ? input : JSON.stringify(input)
+              lines.push(`  ${str.slice(0, 200)}`)
             }
           }
         }

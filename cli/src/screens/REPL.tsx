@@ -44,9 +44,13 @@ export function REPL({ agent, initialVerbose = false, initialResume }: REPLProps
   const sessionIdRef = useRef<string | null>(null)
   const isLoadingRef = useRef(false)
   const [historyManager] = useState(() => new HistoryManager())
-  const [cachedConfigInfo] = useState(() => {
+  const [configInfoState, setConfigInfoState] = useState(() => {
     try { return agent.configInfo() } catch { return undefined }
   })
+  // Refresh configInfo when model changes (provider may have switched)
+  useEffect(() => {
+    try { setConfigInfoState(agent.configInfo()) } catch { /* ignore */ }
+  }, [state.model])
 
   // Startup: auto-resume or show resume hint
   useEffect(() => {
@@ -122,7 +126,7 @@ export function REPL({ agent, initialVerbose = false, initialResume }: REPLProps
       setSystemMessages([])
 
       if (isSlashCommand(text)) {
-        handleSlashCommand(text, { agent, state, setState, setSystem: setSystemMessages, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, configInfo: cachedConfigInfo, exit })
+        handleSlashCommand(text, { agent, state, setState, setSystem: setSystemMessages, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, configInfo: configInfoState, exit })
         return
       }
 
@@ -177,7 +181,7 @@ export function REPL({ agent, initialVerbose = false, initialResume }: REPLProps
 
   return (
     <Box flexDirection="column" padding={0}>
-      <Banner model={state.model} cwd={state.cwd} sessionId={state.sessionId} configInfo={cachedConfigInfo} />
+      <Banner model={state.model} cwd={state.cwd} sessionId={state.sessionId} configInfo={configInfoState} />
 
       {/* Message history with interleaved verbose events */}
       {state.messages.map((msg) => (
@@ -264,11 +268,12 @@ export function REPL({ agent, initialVerbose = false, initialResume }: REPLProps
       {/* Model selector for /model */}
       {showModelSelector && (
         <ModelSelector
-          models={cachedConfigInfo?.availableModels ?? [state.model]}
+          models={configInfoState?.availableModels ?? [state.model]}
           currentModel={state.model}
           onSelect={(model) => {
             setShowModelSelector(false)
             agent.model = model
+            syncProvider(agent, model, configInfoState)
             setState((prev) => ({ ...prev, model }))
             pushSystem(setSystemMessages, 'info', `Model → ${model}`)
           }}
@@ -380,19 +385,13 @@ async function handleSlashCommand(input: string, ctx: CommandContext) {
           const idx = models.indexOf(state.model)
           const next = models[(idx + 1) % models.length]!
           agent.model = next
-          // Auto-switch provider if needed
-          if (configInfo) {
-            if (next === configInfo.anthropicModel && next !== configInfo.openaiModel) {
-              try { agent.setProvider('anthropic') } catch {}
-            } else if (next === configInfo.openaiModel && next !== configInfo.anthropicModel) {
-              try { agent.setProvider('openai') } catch {}
-            }
-          }
+          syncProvider(agent, next, configInfo)
           setState((prev) => ({ ...prev, model: next }))
           pushSystem(setSystem, 'info', `Model → ${next}`)
         }
       } else if (arg) {
         agent.model = arg
+        syncProvider(agent, arg, configInfo)
         setState((prev) => ({ ...prev, model: arg }))
         pushSystem(setSystem, 'info', `Model → ${arg}`)
       } else {
@@ -655,13 +654,7 @@ async function resumeSession(
   // Restore model from session
   if (session.model) {
     agent.model = session.model
-    // Auto-switch provider
-    const config = agent.configInfo()
-    if (session.model === config.anthropicModel) {
-      try { agent.setProvider('anthropic') } catch {}
-    } else if (session.model === config.openaiModel) {
-      try { agent.setProvider('openai') } catch {}
-    }
+    syncProvider(agent, session.model)
   }
 
   setState((prev) => ({
@@ -674,6 +667,29 @@ async function resumeSession(
 }
 
 // ---------------------------------------------------------------------------
+// Provider sync — infer provider from model name and switch if needed
+// ---------------------------------------------------------------------------
+
+function syncProvider(
+  agent: Agent,
+  model: string,
+  configInfo?: import('../native/index.js').ConfigInfo,
+): void {
+  try {
+    // First try exact match against configured models
+    if (configInfo) {
+      if (model === configInfo.anthropicModel) { agent.setProvider('anthropic'); return }
+      if (model === configInfo.openaiModel) { agent.setProvider('openai'); return }
+    }
+    // Fall back to prefix heuristic
+    if (model.startsWith('claude-') || model.startsWith('anthropic/')) {
+      agent.setProvider('anthropic')
+    } else if (model.startsWith('gpt-') || model.startsWith('o1-') || model.startsWith('o3-') || model === 'o1' || model === 'o3') {
+      agent.setProvider('openai')
+    }
+  } catch { /* ignore — provider may not support the model */ }
+}
+
 // ---------------------------------------------------------------------------
 // Async query runner
 // ---------------------------------------------------------------------------

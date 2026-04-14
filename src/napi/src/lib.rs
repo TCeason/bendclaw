@@ -196,12 +196,14 @@ impl NapiAgent {
         let env_path = evot::conf::paths::env_file_path()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
+        let available = self.collect_models();
         let info = serde_json::json!({
             "provider": provider,
             "envPath": env_path,
             "baseUrl": llm.base_url,
             "anthropicModel": self.config.anthropic.model,
             "openaiModel": self.config.openai.model,
+            "availableModels": available,
         });
         serde_json::to_string(&info).map_err(|e| Error::from_reason(format!("serialize: {e}")))
     }
@@ -209,6 +211,10 @@ impl NapiAgent {
     /// Get the list of available models from config (unique, non-empty).
     #[napi]
     pub fn available_models(&self) -> Vec<String> {
+        self.collect_models()
+    }
+
+    fn collect_models(&self) -> Vec<String> {
         let llm = self.agent.llm();
         let mut models = Vec::new();
         for m in [
