@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use bendengine::tools::skill::truncate_str;
-use bendengine::tools::skill::SkillSet;
-use bendengine::tools::skill::SkillSpec;
-use bendengine::types::AgentTool;
-use bendengine::types::Retention;
-use bendengine::types::ToolContext;
-use bendengine::SkillTool;
+use evotengine::tools::skill::truncate_str;
+use evotengine::tools::skill::SkillSet;
+use evotengine::tools::skill::SkillSpec;
+use evotengine::types::AgentTool;
+use evotengine::types::Retention;
+use evotengine::types::ToolContext;
+use evotengine::SkillTool;
 use tokio_util::sync::CancellationToken;
 
 fn spec(name: &str, description: &str, instructions: &str) -> SkillSpec {
@@ -140,7 +140,7 @@ async fn execute_returns_instructions() {
     let result = tool.execute(params, make_ctx()).await.unwrap();
 
     let text = match &result.content[0] {
-        bendengine::Content::Text { text } => text,
+        evotengine::Content::Text { text } => text,
         _ => panic!("expected text content"),
     };
     assert!(text.starts_with("Activated skill: weather"));
@@ -194,7 +194,7 @@ async fn execute_strips_leading_slash() {
     let result = tool.execute(params, make_ctx()).await.unwrap();
 
     let text = match &result.content[0] {
-        bendengine::Content::Text { text } => text,
+        evotengine::Content::Text { text } => text,
         _ => panic!("expected text content"),
     };
     assert!(text.starts_with("Activated skill: weather"));

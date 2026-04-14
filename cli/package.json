@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "evot-ui": "./bin/evot-ui"
+    "evot": "./bin/evot"
   },
   "napi": {
     "binaryName": "evot-napi",
@@ -16,7 +16,7 @@
     ]
   },
   "scripts": {
-    "build:napi": "napi build --manifest-path ../src/napi/Cargo.toml --release --platform --js src/native/binding.js --dts src/native/binding.d.ts",
+    "build:napi": "napi build --manifest-path ../src/napi/Cargo.toml --output-dir . --release --platform --js src/native/binding.js --dts src/native/binding.d.ts",
     "dev": "bun run src/index.tsx",
     "test": "bun test tests/"
   },
@@ -29,6 +29,7 @@
     "react": "^18.3.1"
   },
   "devDependencies": {
+    "@napi-rs/cli": "^3.6.1",
     "@types/bun": "^1.2.0",
     "@types/diff": "^8.0.0",
     "@types/react": "^18.3.0",

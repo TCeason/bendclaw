@@ -1,5 +1,5 @@
-use bendengine::tools::validation::truncate_error;
-use bendengine::tools::validation::validate_and_coerce;
+use evotengine::tools::validation::truncate_error;
+use evotengine::tools::validation::validate_and_coerce;
 use serde_json::json;
 
 // ── helper: a typical tool schema ───────────────────────────────────────
@@ -268,8 +268,8 @@ fn extra_fields_preserved() {
 
 // ── tool result truncation ──────────────────────────────────────────────
 
-use bendengine::tools::validation::truncate_tool_text;
-use bendengine::tools::validation::MAX_TOOL_RESULT_BYTES;
+use evotengine::tools::validation::truncate_tool_text;
+use evotengine::tools::validation::MAX_TOOL_RESULT_BYTES;
 
 #[test]
 fn tool_text_within_limit_unchanged() {
@@ -296,8 +296,8 @@ fn tool_text_truncation_utf8_safe() {
 
 // ── multi-block tool result capping ─────────────────────────────────────
 
-use bendengine::tools::validation::cap_tool_result_content;
-use bendengine::types::Content;
+use evotengine::tools::validation::cap_tool_result_content;
+use evotengine::types::Content;
 
 #[test]
 fn cap_single_block_within_limit_unchanged() {

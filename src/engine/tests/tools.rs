@@ -25,7 +25,7 @@ mod validation;
 #[path = "tools/web_fetch.rs"]
 mod web_fetch;
 
-use bendengine::types::*;
+use evotengine::types::*;
 use tokio_util::sync::CancellationToken;
 
 /// Helper to build a ToolContext for tests.

@@ -4,10 +4,10 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use bendengine::agent::Agent;
-use bendengine::provider::mock::*;
-use bendengine::provider::MockProvider;
-use bendengine::*;
+use evotengine::agent::Agent;
+use evotengine::provider::mock::*;
+use evotengine::provider::MockProvider;
+use evotengine::*;
 use tokio::sync::mpsc;
 
 #[tokio::test]

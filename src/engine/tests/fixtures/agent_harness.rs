@@ -14,14 +14,14 @@
 
 use std::sync::Arc;
 
-use bendengine::agent_loop::agent_loop;
-use bendengine::agent_loop::agent_loop_continue;
-use bendengine::agent_loop::AgentLoopConfig;
-use bendengine::context::ContextConfig;
-use bendengine::context::ExecutionLimits;
-use bendengine::provider::mock::*;
-use bendengine::provider::MockProvider;
-use bendengine::*;
+use evotengine::agent_loop::agent_loop;
+use evotengine::agent_loop::agent_loop_continue;
+use evotengine::agent_loop::AgentLoopConfig;
+use evotengine::context::ContextConfig;
+use evotengine::context::ExecutionLimits;
+use evotengine::provider::mock::*;
+use evotengine::provider::MockProvider;
+use evotengine::*;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -453,7 +453,7 @@ pub fn make_config(provider: MockProvider) -> AgentLoopConfig {
         execution_limits: None,
         cache_config: CacheConfig::default(),
         tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: bendengine::RetryPolicy::default(),
+        retry_policy: evotengine::RetryPolicy::default(),
         before_turn: None,
         after_turn: None,
         input_filters: vec![],

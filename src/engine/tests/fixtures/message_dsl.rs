@@ -1,5 +1,5 @@
-use bendengine::context::*;
-use bendengine::types::*;
+use evotengine::context::*;
+use evotengine::types::*;
 
 /// Converts a condensed string pattern into a Vec<AgentMessage>.
 ///

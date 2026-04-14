@@ -1,4 +1,4 @@
-use bendengine::tools::edit::normalize::*;
+use evotengine::tools::edit::normalize::*;
 
 #[test]
 fn detect_pure_lf() {

@@ -1,5 +1,5 @@
-use bendengine::provider::bedrock::*;
-use bendengine::types::*;
+use evotengine::provider::bedrock::*;
+use evotengine::types::*;
 
 use super::fixtures::stream_config::*;
 

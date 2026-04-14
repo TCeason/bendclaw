@@ -1,4 +1,4 @@
-use bendengine::provider::model::*;
+use evotengine::provider::model::*;
 
 #[test]
 fn model_config_anthropic() {

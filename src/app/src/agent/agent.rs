@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use bend_engine::tools::*;
+use evot_engine::tools::*;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
@@ -70,7 +70,7 @@ impl ToolMode {
 fn build_tools(
     mode: &ToolMode,
     envs: Vec<(String, String)>,
-) -> Vec<Box<dyn bend_engine::AgentTool>> {
+) -> Vec<Box<dyn evot_engine::AgentTool>> {
     match mode {
         ToolMode::Interactive { ask_fn } => vec![
             Box::new(BashTool::default().with_envs(envs)),
@@ -93,7 +93,7 @@ fn build_tools(
         ],
         ToolMode::Planning { ask_fn } => {
             let msg = "Not allowed in planning mode. Use /act to switch.";
-            let mut t: Vec<Box<dyn bend_engine::AgentTool>> = vec![
+            let mut t: Vec<Box<dyn evot_engine::AgentTool>> = vec![
                 Box::new(BashTool::default().with_envs(envs)),
                 Box::new(ReadFileTool::default()),
                 Box::new(WriteFileTool::new().disallow(msg)),

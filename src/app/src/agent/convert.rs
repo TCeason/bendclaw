@@ -6,11 +6,11 @@ use crate::types::TranscriptItem;
 use crate::types::UsageSummary;
 
 /// Extract text content from engine Content blocks.
-pub fn extract_content_text(content: &[bend_engine::Content]) -> String {
+pub fn extract_content_text(content: &[evot_engine::Content]) -> String {
     content
         .iter()
         .filter_map(|c| {
-            if let bend_engine::Content::Text { text } = c {
+            if let evot_engine::Content::Text { text } = c {
                 Some(text.as_str())
             } else {
                 None
@@ -21,23 +21,23 @@ pub fn extract_content_text(content: &[bend_engine::Content]) -> String {
 }
 
 /// Convert engine AgentMessages to TranscriptItems.
-pub fn from_agent_messages(messages: &[bend_engine::AgentMessage]) -> Vec<TranscriptItem> {
+pub fn from_agent_messages(messages: &[evot_engine::AgentMessage]) -> Vec<TranscriptItem> {
     messages.iter().map(transcript_from_agent_message).collect()
 }
 
 /// Convert TranscriptItems to engine AgentMessages.
-pub fn into_agent_messages(items: &[TranscriptItem]) -> Vec<bend_engine::AgentMessage> {
+pub fn into_agent_messages(items: &[TranscriptItem]) -> Vec<evot_engine::AgentMessage> {
     items.iter().map(agent_message_from_transcript).collect()
 }
 
 /// Convert a single engine AgentMessage to a TranscriptItem.
-pub fn transcript_from_agent_message(message: &bend_engine::AgentMessage) -> TranscriptItem {
+pub fn transcript_from_agent_message(message: &evot_engine::AgentMessage) -> TranscriptItem {
     match message {
-        bend_engine::AgentMessage::Llm(bend_engine::Message::User { content, .. }) => {
+        evot_engine::AgentMessage::Llm(evot_engine::Message::User { content, .. }) => {
             let text = extract_content_text(content);
             TranscriptItem::User { text }
         }
-        bend_engine::AgentMessage::Llm(bend_engine::Message::Assistant {
+        evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant {
             content,
             stop_reason,
             ..
@@ -48,18 +48,18 @@ pub fn transcript_from_agent_message(message: &bend_engine::AgentMessage) -> Tra
 
             for block in content {
                 match block {
-                    bend_engine::Content::Text { text: chunk } => {
+                    evot_engine::Content::Text { text: chunk } => {
                         if !text.is_empty() {
                             text.push('\n');
                         }
                         text.push_str(chunk);
                     }
-                    bend_engine::Content::Thinking {
+                    evot_engine::Content::Thinking {
                         thinking: chunk, ..
                     } => {
                         thinking = Some(chunk.clone());
                     }
-                    bend_engine::Content::ToolCall {
+                    evot_engine::Content::ToolCall {
                         id,
                         name,
                         arguments,
@@ -81,7 +81,7 @@ pub fn transcript_from_agent_message(message: &bend_engine::AgentMessage) -> Tra
                 stop_reason: stop_reason.to_string(),
             }
         }
-        bend_engine::AgentMessage::Llm(bend_engine::Message::ToolResult {
+        evot_engine::AgentMessage::Llm(evot_engine::Message::ToolResult {
             tool_call_id,
             tool_name,
             content,
@@ -96,7 +96,7 @@ pub fn transcript_from_agent_message(message: &bend_engine::AgentMessage) -> Tra
                 is_error: *is_error,
             }
         }
-        bend_engine::AgentMessage::Extension(ext) => TranscriptItem::Extension {
+        evot_engine::AgentMessage::Extension(ext) => TranscriptItem::Extension {
             kind: ext.kind.clone(),
             data: ext.data.clone(),
         },
@@ -104,10 +104,10 @@ pub fn transcript_from_agent_message(message: &bend_engine::AgentMessage) -> Tra
 }
 
 /// Convert a single TranscriptItem to an engine AgentMessage.
-pub fn agent_message_from_transcript(item: &TranscriptItem) -> bend_engine::AgentMessage {
+pub fn agent_message_from_transcript(item: &TranscriptItem) -> evot_engine::AgentMessage {
     match item {
         TranscriptItem::User { text } => {
-            bend_engine::AgentMessage::Llm(bend_engine::Message::user(text.clone()))
+            evot_engine::AgentMessage::Llm(evot_engine::Message::user(text.clone()))
         }
         TranscriptItem::Assistant {
             text,
@@ -118,29 +118,29 @@ pub fn agent_message_from_transcript(item: &TranscriptItem) -> bend_engine::Agen
             let mut content = Vec::new();
 
             if let Some(thinking) = thinking {
-                content.push(bend_engine::Content::Thinking {
+                content.push(evot_engine::Content::Thinking {
                     thinking: thinking.clone(),
                     signature: None,
                 });
             }
             if !text.is_empty() {
-                content.push(bend_engine::Content::Text { text: text.clone() });
+                content.push(evot_engine::Content::Text { text: text.clone() });
             }
             for tool_call in tool_calls {
-                content.push(bend_engine::Content::ToolCall {
+                content.push(evot_engine::Content::ToolCall {
                     id: tool_call.id.clone(),
                     name: tool_call.name.clone(),
                     arguments: tool_call.input.clone(),
                 });
             }
 
-            bend_engine::AgentMessage::Llm(bend_engine::Message::Assistant {
+            evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant {
                 content,
                 stop_reason: parse_stop_reason(stop_reason),
                 model: String::new(),
                 provider: String::new(),
-                usage: bend_engine::Usage::default(),
-                timestamp: bend_engine::types::now_ms(),
+                usage: evot_engine::Usage::default(),
+                timestamp: evot_engine::types::now_ms(),
                 error_message: None,
             })
         }
@@ -149,45 +149,45 @@ pub fn agent_message_from_transcript(item: &TranscriptItem) -> bend_engine::Agen
             tool_name,
             content,
             is_error,
-        } => bend_engine::AgentMessage::Llm(bend_engine::Message::ToolResult {
+        } => evot_engine::AgentMessage::Llm(evot_engine::Message::ToolResult {
             tool_call_id: tool_call_id.clone(),
             tool_name: tool_name.clone(),
-            content: vec![bend_engine::Content::Text {
+            content: vec![evot_engine::Content::Text {
                 text: content.clone(),
             }],
             is_error: *is_error,
-            timestamp: bend_engine::types::now_ms(),
-            retention: bend_engine::Retention::Normal,
+            timestamp: evot_engine::types::now_ms(),
+            retention: evot_engine::Retention::Normal,
         }),
-        TranscriptItem::System { text } => bend_engine::AgentMessage::Extension(
-            bend_engine::ExtensionMessage::new("system", serde_json::json!({ "text": text })),
+        TranscriptItem::System { text } => evot_engine::AgentMessage::Extension(
+            evot_engine::ExtensionMessage::new("system", serde_json::json!({ "text": text })),
         ),
-        TranscriptItem::Extension { kind, data } => bend_engine::AgentMessage::Extension(
-            bend_engine::ExtensionMessage::new(kind.clone(), data.clone()),
+        TranscriptItem::Extension { kind, data } => evot_engine::AgentMessage::Extension(
+            evot_engine::ExtensionMessage::new(kind.clone(), data.clone()),
         ),
-        TranscriptItem::Compact { .. } => bend_engine::AgentMessage::Extension(
-            bend_engine::ExtensionMessage::new("compact", serde_json::json!({})),
+        TranscriptItem::Compact { .. } => evot_engine::AgentMessage::Extension(
+            evot_engine::ExtensionMessage::new("compact", serde_json::json!({})),
         ),
         // Stats items should never reach conversion — filtered by resolve_transcript.
         // Defensive fallback: convert to a no-op extension that the engine will ignore.
-        TranscriptItem::Stats { .. } => bend_engine::AgentMessage::Extension(
-            bend_engine::ExtensionMessage::new("internal_stats", serde_json::json!({})),
+        TranscriptItem::Stats { .. } => evot_engine::AgentMessage::Extension(
+            evot_engine::ExtensionMessage::new("internal_stats", serde_json::json!({})),
         ),
     }
 }
 
 /// Convert engine Content blocks to AssistantBlocks (for ProtocolEvent).
-pub fn assistant_blocks_from_content(content: &[bend_engine::Content]) -> Vec<AssistantBlock> {
+pub fn assistant_blocks_from_content(content: &[evot_engine::Content]) -> Vec<AssistantBlock> {
     content
         .iter()
         .filter_map(|block| match block {
-            bend_engine::Content::Text { text } => {
+            evot_engine::Content::Text { text } => {
                 Some(AssistantBlock::Text { text: text.clone() })
             }
-            bend_engine::Content::Thinking { thinking, .. } => Some(AssistantBlock::Thinking {
+            evot_engine::Content::Thinking { thinking, .. } => Some(AssistantBlock::Thinking {
                 text: thinking.clone(),
             }),
-            bend_engine::Content::ToolCall {
+            evot_engine::Content::ToolCall {
                 id,
                 name,
                 arguments,
@@ -202,14 +202,14 @@ pub fn assistant_blocks_from_content(content: &[bend_engine::Content]) -> Vec<As
 }
 
 /// Compute total usage from engine AgentMessages.
-pub fn total_usage(messages: &[bend_engine::AgentMessage]) -> UsageSummary {
+pub fn total_usage(messages: &[evot_engine::AgentMessage]) -> UsageSummary {
     let mut input: u64 = 0;
     let mut output: u64 = 0;
     let mut cache_read: u64 = 0;
     let mut cache_write: u64 = 0;
 
     for message in messages {
-        if let bend_engine::AgentMessage::Llm(bend_engine::Message::Assistant { usage, .. }) =
+        if let evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant { usage, .. }) =
             message
         {
             input += usage.input;
@@ -232,14 +232,14 @@ pub fn scrub_tool_args(_tool_name: &str, args: &serde_json::Value) -> serde_json
 }
 
 /// Parse a stop_reason string back into the engine StopReason enum.
-fn parse_stop_reason(s: &str) -> bend_engine::StopReason {
+fn parse_stop_reason(s: &str) -> evot_engine::StopReason {
     match s {
-        "stop" => bend_engine::StopReason::Stop,
-        "length" => bend_engine::StopReason::Length,
-        "toolUse" => bend_engine::StopReason::ToolUse,
-        "error" => bend_engine::StopReason::Error,
-        "aborted" => bend_engine::StopReason::Aborted,
-        _ => bend_engine::StopReason::Stop,
+        "stop" => evot_engine::StopReason::Stop,
+        "length" => evot_engine::StopReason::Length,
+        "toolUse" => evot_engine::StopReason::ToolUse,
+        "error" => evot_engine::StopReason::Error,
+        "aborted" => evot_engine::StopReason::Aborted,
+        _ => evot_engine::StopReason::Stop,
     }
 }
 

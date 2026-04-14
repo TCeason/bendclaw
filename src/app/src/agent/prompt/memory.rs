@@ -4,7 +4,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
-use bend_engine::tools::memory::MemoryTool;
+use evot_engine::tools::memory::MemoryTool;
 
 const MAX_SANITIZED_LENGTH: usize = 200;
 const MEMORY_PROMPT: &str = include_str!("memory.md");

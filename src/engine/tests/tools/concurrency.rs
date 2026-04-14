@@ -1,7 +1,7 @@
 //! Tests for is_concurrency_safe declarations on tools.
 
-use bendengine::tools::*;
-use bendengine::types::AgentTool;
+use evotengine::tools::*;
+use evotengine::types::AgentTool;
 
 #[test]
 fn read_only_tools_are_concurrency_safe() {

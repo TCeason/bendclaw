@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
-use bend_engine::SkillSpec;
+use evot_engine::SkillSpec;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SkillLoadError {

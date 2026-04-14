@@ -1,10 +1,10 @@
 //! Tests for the core agent loop using MockProvider.
 
-use bendengine::agent_loop::agent_loop;
-use bendengine::agent_loop::AgentLoopConfig;
-use bendengine::provider::mock::*;
-use bendengine::provider::MockProvider;
-use bendengine::*;
+use evotengine::agent_loop::agent_loop;
+use evotengine::agent_loop::AgentLoopConfig;
+use evotengine::provider::mock::*;
+use evotengine::provider::MockProvider;
+use evotengine::*;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -488,10 +488,10 @@ struct FailThenSucceedProvider {
     inner: MockProvider,
 }
 
-use bendengine::provider::ProviderError;
-use bendengine::provider::StreamConfig;
-use bendengine::provider::StreamEvent;
-use bendengine::provider::StreamProvider;
+use evotengine::provider::ProviderError;
+use evotengine::provider::StreamConfig;
+use evotengine::provider::StreamEvent;
+use evotengine::provider::StreamProvider;
 
 #[async_trait::async_trait]
 impl StreamProvider for FailThenSucceedProvider {
@@ -500,7 +500,7 @@ impl StreamProvider for FailThenSucceedProvider {
         config: StreamConfig,
         tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
         cancel: tokio_util::sync::CancellationToken,
-    ) -> Result<bendengine::Message, ProviderError> {
+    ) -> Result<evotengine::Message, ProviderError> {
         let attempt = self
             .fail_count
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -547,7 +547,7 @@ async fn test_retry_on_rate_limit_succeeds() {
         execution_limits: None,
         cache_config: CacheConfig::default(),
         tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: bendengine::RetryPolicy::new(3),
+        retry_policy: evotengine::RetryPolicy::new(3),
         before_turn: None,
         after_turn: None,
         input_filters: vec![],
@@ -608,7 +608,7 @@ async fn test_retry_exhausted_returns_error() {
         execution_limits: None,
         cache_config: CacheConfig::default(),
         tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: bendengine::RetryPolicy::new(2),
+        retry_policy: evotengine::RetryPolicy::new(2),
         before_turn: None,
         after_turn: None,
         input_filters: vec![],
@@ -676,7 +676,7 @@ async fn test_retry_on_auth_error_succeeds() {
         execution_limits: None,
         cache_config: CacheConfig::default(),
         tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: bendengine::RetryPolicy::new(3),
+        retry_policy: evotengine::RetryPolicy::new(3),
         before_turn: None,
         after_turn: None,
         input_filters: vec![],
@@ -735,7 +735,7 @@ async fn test_retry_none_disables_retries() {
         execution_limits: None,
         cache_config: CacheConfig::default(),
         tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: bendengine::RetryPolicy::disabled(), // disabled
+        retry_policy: evotengine::RetryPolicy::disabled(), // disabled
         before_turn: None,
         after_turn: None,
         input_filters: vec![],
@@ -927,7 +927,7 @@ async fn test_error_event_fires_on_provider_error() {
 
     let mut config = make_config(MockProvider::text("unused"));
     config.provider = std::sync::Arc::new(provider);
-    config.retry_policy = bendengine::RetryPolicy::disabled();
+    config.retry_policy = evotengine::RetryPolicy::disabled();
 
     let mut context = AgentContext {
         system_prompt: "test".into(),
@@ -1480,10 +1480,10 @@ async fn test_filter_non_text_content_only_text_extracted() {
 
 #[tokio::test]
 async fn test_default_compaction_matches_compact_messages() {
-    use bendengine::context::compact_messages;
-    use bendengine::context::ContextConfig;
-    use bendengine::context::DefaultCompaction;
-    use bendengine::CompactionStrategy;
+    use evotengine::context::compact_messages;
+    use evotengine::context::ContextConfig;
+    use evotengine::context::DefaultCompaction;
+    use evotengine::CompactionStrategy;
 
     let mut messages = Vec::new();
     for i in 0..100 {
@@ -1518,10 +1518,10 @@ async fn test_default_compaction_matches_compact_messages() {
 
 #[tokio::test]
 async fn test_custom_compaction_strategy_is_called() {
-    use bendengine::context::ContextConfig;
-    use bendengine::CompactionResult;
-    use bendengine::CompactionStats;
-    use bendengine::CompactionStrategy;
+    use evotengine::context::ContextConfig;
+    use evotengine::CompactionResult;
+    use evotengine::CompactionStats;
+    use evotengine::CompactionStrategy;
 
     struct MarkerCompaction;
 
@@ -1568,7 +1568,7 @@ async fn test_custom_compaction_strategy_is_called() {
         execution_limits: None,
         cache_config: CacheConfig::default(),
         tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: bendengine::RetryPolicy::disabled(),
+        retry_policy: evotengine::RetryPolicy::disabled(),
         before_turn: None,
         after_turn: None,
         input_filters: vec![],
@@ -1614,7 +1614,7 @@ async fn test_custom_compaction_strategy_is_called() {
 
 #[tokio::test]
 async fn test_none_compaction_strategy_uses_default() {
-    use bendengine::context::ContextConfig;
+    use evotengine::context::ContextConfig;
 
     // Provider returns a simple text response
     let provider = MockProvider::text("Got it.");
@@ -1642,7 +1642,7 @@ async fn test_none_compaction_strategy_uses_default() {
         execution_limits: None,
         cache_config: CacheConfig::default(),
         tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: bendengine::RetryPolicy::disabled(),
+        retry_policy: evotengine::RetryPolicy::disabled(),
         before_turn: None,
         after_turn: None,
         input_filters: vec![],
@@ -1674,7 +1674,7 @@ async fn test_none_compaction_strategy_uses_default() {
 
 #[tokio::test]
 async fn test_compaction_events_emitted_when_context_exceeds_budget() {
-    use bendengine::context::ContextConfig;
+    use evotengine::context::ContextConfig;
 
     let mut prior_messages = Vec::new();
     for i in 0..20 {
@@ -1707,7 +1707,7 @@ async fn test_compaction_events_emitted_when_context_exceeds_budget() {
             keep_first: 2,
             tool_output_max_lines: 20,
         })
-        .retry_policy(bendengine::RetryPolicy::disabled())
+        .retry_policy(evotengine::RetryPolicy::disabled())
         .run("hello")
         .await;
 
@@ -1744,7 +1744,7 @@ async fn test_compaction_events_emitted_when_context_exceeds_budget() {
 
 #[tokio::test]
 async fn test_compaction_events_level_zero_when_within_budget() {
-    use bendengine::context::ContextConfig;
+    use evotengine::context::ContextConfig;
 
     let output = TestHarness::new()
         .responses(vec![MockResponse::Text("ok".into())])
@@ -1756,7 +1756,7 @@ async fn test_compaction_events_level_zero_when_within_budget() {
             keep_first: 2,
             tool_output_max_lines: 50,
         })
-        .retry_policy(bendengine::RetryPolicy::disabled())
+        .retry_policy(evotengine::RetryPolicy::disabled())
         .run("hi")
         .await;
 
@@ -1803,7 +1803,7 @@ impl StreamProvider for EmptyThenSucceedProvider {
         config: StreamConfig,
         tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
         cancel: tokio_util::sync::CancellationToken,
-    ) -> Result<bendengine::Message, ProviderError> {
+    ) -> Result<evotengine::Message, ProviderError> {
         let attempt = self
             .call_count
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1853,7 +1853,7 @@ async fn test_empty_response_retried_then_succeeds() {
         execution_limits: None,
         cache_config: CacheConfig::default(),
         tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: bendengine::RetryPolicy::new(3),
+        retry_policy: evotengine::RetryPolicy::new(3),
         before_turn: None,
         after_turn: None,
         input_filters: vec![],
@@ -1925,7 +1925,7 @@ async fn test_empty_response_exhausts_retries() {
         execution_limits: None,
         cache_config: CacheConfig::default(),
         tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: bendengine::RetryPolicy::new(2),
+        retry_policy: evotengine::RetryPolicy::new(2),
         before_turn: None,
         after_turn: None,
         input_filters: vec![],

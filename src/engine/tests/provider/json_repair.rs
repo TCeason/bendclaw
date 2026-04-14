@@ -1,4 +1,4 @@
-use bendengine::provider::json_repair::try_repair_json;
+use evotengine::provider::json_repair::try_repair_json;
 
 #[test]
 fn valid_json_passes_through() {

@@ -5,7 +5,7 @@ edition.workspace = true
 repository = "https://github.com/evotai/evot"
 
 [dependencies]
-bend-engine.workspace = true
+evot-engine.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true

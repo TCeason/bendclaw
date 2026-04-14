@@ -1,6 +1,6 @@
 //! Serde round-trip tests for core types.
 
-use bendengine::*;
+use evotengine::*;
 
 fn roundtrip<T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug>(
     value: &T,
@@ -171,7 +171,7 @@ fn test_full_conversation_roundtrip() {
 
 #[test]
 fn test_execution_limits_roundtrip() {
-    use bendengine::context::ExecutionLimits;
+    use evotengine::context::ExecutionLimits;
     let limits = ExecutionLimits {
         max_turns: 25,
         max_total_tokens: 500_000,
