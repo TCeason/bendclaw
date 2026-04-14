@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use bendclaw::agent::Variables;
-use bendclaw::storage::fs::FsStorage;
-use bendclaw::storage::Storage;
+use evot::agent::Variables;
+use evot::storage::fs::FsStorage;
+use evot::storage::Storage;
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 

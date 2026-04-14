@@ -1,7 +1,7 @@
 use std::io;
 
 #[derive(Debug, thiserror::Error)]
-pub enum BendclawError {
+pub enum EvotError {
     #[error("conf error: {0}")]
     Conf(String),
 
@@ -27,4 +27,4 @@ pub enum BendclawError {
     Cli(String),
 }
 
-pub type Result<T> = std::result::Result<T, BendclawError>;
+pub type Result<T> = std::result::Result<T, EvotError>;

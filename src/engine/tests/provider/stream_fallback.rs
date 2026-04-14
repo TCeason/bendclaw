@@ -4,6 +4,8 @@ use bendengine::provider::stream_fallback::FallbackEmitter;
 use bendengine::provider::StreamEvent;
 use bendengine::types::*;
 
+use super::fixtures::stream_config::collect_stream_events;
+
 #[test]
 fn fallback_emitter_text_only() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
@@ -13,7 +15,6 @@ fn fallback_emitter_text_only() {
     emitter.set_stop_reason(StopReason::Stop);
     let msg = emitter.finalize("test-model", "test-provider");
 
-    // Verify message
     match &msg {
         Message::Assistant {
             content,
@@ -31,8 +32,7 @@ fn fallback_emitter_text_only() {
         _ => panic!("Expected Assistant message"),
     }
 
-    // Verify events
-    let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    let events = collect_stream_events(&mut rx);
     assert!(matches!(events[0], StreamEvent::Start));
     assert!(matches!(&events[1], StreamEvent::TextDelta { delta, .. } if delta == "Hello world"));
     assert!(matches!(&events[2], StreamEvent::Done { .. }));
@@ -62,7 +62,7 @@ fn fallback_emitter_tool_call() {
         _ => panic!("Expected Assistant message"),
     }
 
-    let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    let events = collect_stream_events(&mut rx);
     assert!(matches!(events[0], StreamEvent::Start));
     assert!(
         matches!(&events[1], StreamEvent::ToolCallStart { id, name, .. } if id == "tc-1" && name == "bash")
@@ -91,7 +91,7 @@ fn fallback_emitter_thinking() {
         _ => panic!("Expected Assistant message"),
     }
 
-    let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    let events = collect_stream_events(&mut rx);
     assert!(matches!(events[0], StreamEvent::Start));
     assert!(matches!(&events[1], StreamEvent::ThinkingDelta { .. }));
     assert!(matches!(&events[2], StreamEvent::TextDelta { .. }));
@@ -114,7 +114,7 @@ fn fallback_emitter_empty_text_skipped() {
         _ => panic!("Expected Assistant message"),
     }
 
-    let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    let events = collect_stream_events(&mut rx);
     // Only Start + Done, no text/thinking deltas
     assert_eq!(events.len(), 2);
     assert!(matches!(events[0], StreamEvent::Start));

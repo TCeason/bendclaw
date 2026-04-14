@@ -1,6 +1,6 @@
-use bendclaw::session::observability::StatsAggregator;
-use bendclaw::types::observability::*;
-use bendclaw::types::*;
+use evot::session::observability::StatsAggregator;
+use evot::types::observability::*;
+use evot::types::*;
 
 // ---------------------------------------------------------------------------
 // Basic ingest + summary
@@ -105,7 +105,7 @@ fn aggregator_ingests_compaction_completed() {
     let mut agg = StatsAggregator::new();
     agg.ingest(&TranscriptStats::ContextCompactionCompleted(
         ContextCompactionCompletedStats {
-            result: bendclaw::types::CompactionResult::LevelCompacted {
+            result: evot::types::CompactionResult::LevelCompacted {
                 level: 1,
                 before_message_count: 20,
                 after_message_count: 10,

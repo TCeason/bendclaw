@@ -1,7 +1,7 @@
-use bendclaw::agent::*;
-use bendclaw::conf::StorageConfig;
-use bendclaw::session::Session;
-use bendclaw::storage::open_storage;
+use evot::agent::*;
+use evot::conf::StorageConfig;
+use evot::session::Session;
+use evot::storage::open_storage;
 use tempfile::TempDir;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -505,11 +505,11 @@ async fn stats_items_persisted_but_filtered_on_resume() -> TestResult {
     .await?;
 
     // Write a mix of conversation items and stats
-    let stats_item = bendclaw::types::TranscriptStats::LlmCallCompleted(
-        bendclaw::types::LlmCallCompletedStats {
+    let stats_item =
+        evot::types::TranscriptStats::LlmCallCompleted(evot::types::LlmCallCompletedStats {
             turn: 1,
             attempt: 0,
-            usage: bendclaw::types::UsageSummary {
+            usage: evot::types::UsageSummary {
                 input: 100,
                 output: 50,
                 cache_read: 0,
@@ -517,9 +517,8 @@ async fn stats_items_persisted_but_filtered_on_resume() -> TestResult {
             },
             metrics: None,
             error: None,
-        },
-    )
-    .to_item();
+        })
+        .to_item();
 
     session
         .write_items(vec![
@@ -539,7 +538,7 @@ async fn stats_items_persisted_but_filtered_on_resume() -> TestResult {
 
     // Raw storage should have 3 entries
     let raw = storage
-        .list_entries(bendclaw::types::ListTranscriptEntries {
+        .list_entries(evot::types::ListTranscriptEntries {
             session_id: "sess-stats".into(),
             run_id: None,
             after_seq: None,
@@ -590,9 +589,9 @@ async fn stats_after_compact_filtered_on_resume() -> TestResult {
         .await?;
 
     // Write compact + stats + new message
-    let compact_stats = bendclaw::types::TranscriptStats::ContextCompactionCompleted(
-        bendclaw::types::ContextCompactionCompletedStats {
-            result: bendclaw::types::CompactionResult::LevelCompacted {
+    let compact_stats = evot::types::TranscriptStats::ContextCompactionCompleted(
+        evot::types::ContextCompactionCompletedStats {
+            result: evot::types::CompactionResult::LevelCompacted {
                 level: 1,
                 before_message_count: 10,
                 after_message_count: 4,

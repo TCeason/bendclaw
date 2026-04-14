@@ -16,3 +16,5 @@ mod registry;
 mod stream_fallback;
 #[path = "provider/stream_http.rs"]
 mod stream_http;
+
+mod fixtures;

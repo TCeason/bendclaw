@@ -14,7 +14,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  BINARY_NAME: bendclaw
+  BINARY_NAME: evot
 
 jobs:
   create_release:
@@ -78,7 +78,7 @@ jobs:
             done
             NEXT_TAG="v${BASE}-beta.${SUFFIX}"
             NEXT_VERSION="${BASE}-beta.${SUFFIX}"
-            RELEASE_NAME="bendclaw ${BASE}-beta.${SUFFIX}"
+            RELEASE_NAME="evot ${BASE}-beta.${SUFFIX}"
           else
             if ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${BASE}" >/dev/null 2>&1; then
               NEXT_TAG="v${BASE}"
@@ -91,7 +91,7 @@ jobs:
               NEXT_TAG="v${BASE}.${SUFFIX}"
               NEXT_VERSION="${BASE}.${SUFFIX}"
             fi
-            RELEASE_NAME="bendclaw ${NEXT_VERSION}"
+            RELEASE_NAME="evot ${NEXT_VERSION}"
           fi
 
           echo "previous=${PREV}" >> "${GITHUB_OUTPUT}"
@@ -250,7 +250,7 @@ jobs:
           VERSION="${{ needs.create_release.outputs.version }}"
           mkdir -p distro/{bin,configs}
           cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} distro/bin/
-          cp configs/bendclaw.env.example distro/configs/
+          cp configs/evot.env.example distro/configs/
           tar -C distro -czf ${{ env.BINARY_NAME }}-v${VERSION}-${{ matrix.target }}.tar.gz bin configs
 
       - name: Upload artifact to release

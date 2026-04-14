@@ -9,7 +9,7 @@ use serde_json::Value;
 /// trivial type mismatches (string→integer, string→boolean) so the model
 /// doesn't waste a round-trip.
 ///
-/// Only the JSON Schema subset actually used by bendclaw tools is supported:
+/// Only the JSON Schema subset actually used by evot tools is supported:
 /// flat objects, `required`, `properties.*.type`, `properties.*.enum`.
 ///
 /// Not supported (and silently ignored): nested/recursive schemas, `anyOf`,

@@ -7,24 +7,24 @@ use crate::conf::paths;
 use crate::conf::Config;
 use crate::conf::ProviderKind;
 use crate::conf::StorageBackend;
-use crate::error::BendclawError;
+use crate::error::EvotError;
 use crate::error::Result;
 
 const RELEVANT_KEYS: &[&str] = &[
-    "BENDCLAW_LLM_PROVIDER",
-    "BENDCLAW_ANTHROPIC_API_KEY",
-    "BENDCLAW_ANTHROPIC_BASE_URL",
-    "BENDCLAW_ANTHROPIC_MODEL",
-    "BENDCLAW_OPENAI_API_KEY",
-    "BENDCLAW_OPENAI_BASE_URL",
-    "BENDCLAW_OPENAI_MODEL",
-    "BENDCLAW_SERVER_HOST",
-    "BENDCLAW_SERVER_PORT",
-    "BENDCLAW_STORAGE_BACKEND",
-    "BENDCLAW_STORAGE_FS_ROOT_DIR",
-    "BENDCLAW_STORAGE_CLOUD_ENDPOINT",
-    "BENDCLAW_STORAGE_CLOUD_API_KEY",
-    "BENDCLAW_STORAGE_CLOUD_WORKSPACE",
+    "EVOT_LLM_PROVIDER",
+    "EVOT_ANTHROPIC_API_KEY",
+    "EVOT_ANTHROPIC_BASE_URL",
+    "EVOT_ANTHROPIC_MODEL",
+    "EVOT_OPENAI_API_KEY",
+    "EVOT_OPENAI_BASE_URL",
+    "EVOT_OPENAI_MODEL",
+    "EVOT_SERVER_HOST",
+    "EVOT_SERVER_PORT",
+    "EVOT_STORAGE_BACKEND",
+    "EVOT_STORAGE_FS_ROOT_DIR",
+    "EVOT_STORAGE_CLOUD_ENDPOINT",
+    "EVOT_STORAGE_CLOUD_API_KEY",
+    "EVOT_STORAGE_CLOUD_WORKSPACE",
 ];
 
 fn optional_string(value: String) -> Option<String> {
@@ -147,13 +147,13 @@ fn load_file_source(path: &Path) -> Result<ConfigSource> {
     }
 
     let content = std::fs::read_to_string(path)
-        .map_err(|e| BendclawError::Conf(format!("failed to read {}: {e}", path.display())))?;
+        .map_err(|e| EvotError::Conf(format!("failed to read {}: {e}", path.display())))?;
 
     let parser = toml::Deserializer::new(&content);
     serde_ignored::deserialize(parser, |unknown| {
         tracing::warn!(path = %unknown, "unknown config field");
     })
-    .map_err(|e| BendclawError::Conf(format!("failed to parse {}: {e}", path.display())))
+    .map_err(|e| EvotError::Conf(format!("failed to parse {}: {e}", path.display())))
 }
 
 fn load_env_file(path: &Path) -> Result<HashMap<String, String>> {
@@ -162,12 +162,12 @@ fn load_env_file(path: &Path) -> Result<HashMap<String, String>> {
     }
 
     let content = std::fs::read(path)
-        .map_err(|e| BendclawError::Conf(format!("failed to read {}: {e}", path.display())))?;
+        .map_err(|e| EvotError::Conf(format!("failed to read {}: {e}", path.display())))?;
     let mut vars = HashMap::new();
 
     for line in content.lines() {
         let line = line.map_err(|e| {
-            BendclawError::Conf(format!("failed to read line in {}: {e}", path.display()))
+            EvotError::Conf(format!("failed to read line in {}: {e}", path.display()))
         })?;
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -210,14 +210,14 @@ fn load_process_env() -> HashMap<String, String> {
 fn provider_keys(provider: &ProviderKind) -> (&'static str, &'static str, &'static str) {
     match provider {
         ProviderKind::Anthropic => (
-            "BENDCLAW_ANTHROPIC_API_KEY",
-            "BENDCLAW_ANTHROPIC_BASE_URL",
-            "BENDCLAW_ANTHROPIC_MODEL",
+            "EVOT_ANTHROPIC_API_KEY",
+            "EVOT_ANTHROPIC_BASE_URL",
+            "EVOT_ANTHROPIC_MODEL",
         ),
         ProviderKind::OpenAi => (
-            "BENDCLAW_OPENAI_API_KEY",
-            "BENDCLAW_OPENAI_BASE_URL",
-            "BENDCLAW_OPENAI_MODEL",
+            "EVOT_OPENAI_API_KEY",
+            "EVOT_OPENAI_BASE_URL",
+            "EVOT_OPENAI_MODEL",
         ),
     }
 }
@@ -238,43 +238,43 @@ fn apply_provider_env(config: &mut Config, provider: ProviderKind, vars: &HashMa
 }
 
 fn apply_env(config: &mut Config, vars: &HashMap<String, String>) -> Result<()> {
-    if let Some(provider) = vars.get("BENDCLAW_LLM_PROVIDER") {
+    if let Some(provider) = vars.get("EVOT_LLM_PROVIDER") {
         config.llm.provider = ProviderKind::from_str_loose(provider)?;
     }
 
     apply_provider_env(config, ProviderKind::Anthropic, vars);
     apply_provider_env(config, ProviderKind::OpenAi, vars);
 
-    if let Some(host) = vars.get("BENDCLAW_SERVER_HOST") {
+    if let Some(host) = vars.get("EVOT_SERVER_HOST") {
         config.server.host = host.clone();
     }
-    if let Some(port) = vars.get("BENDCLAW_SERVER_PORT") {
-        config.server.port = port.parse::<u16>().map_err(|e| {
-            BendclawError::Conf(format!("invalid BENDCLAW_SERVER_PORT value {port}: {e}"))
-        })?;
+    if let Some(port) = vars.get("EVOT_SERVER_PORT") {
+        config.server.port = port
+            .parse::<u16>()
+            .map_err(|e| EvotError::Conf(format!("invalid EVOT_SERVER_PORT value {port}: {e}")))?;
     }
 
-    if let Some(backend) = vars.get("BENDCLAW_STORAGE_BACKEND") {
+    if let Some(backend) = vars.get("EVOT_STORAGE_BACKEND") {
         config.storage.backend = match backend.as_str() {
             "fs" => StorageBackend::Fs,
             "cloud" => StorageBackend::Cloud,
             other => {
-                return Err(BendclawError::Conf(format!(
-                    "unknown BENDCLAW_STORAGE_BACKEND: {other}"
+                return Err(EvotError::Conf(format!(
+                    "unknown EVOT_STORAGE_BACKEND: {other}"
                 )))
             }
         };
     }
-    if let Some(root_dir) = vars.get("BENDCLAW_STORAGE_FS_ROOT_DIR") {
+    if let Some(root_dir) = vars.get("EVOT_STORAGE_FS_ROOT_DIR") {
         config.storage.fs.root_dir = paths::expand_home_path(root_dir)?;
     }
-    if let Some(endpoint) = vars.get("BENDCLAW_STORAGE_CLOUD_ENDPOINT") {
+    if let Some(endpoint) = vars.get("EVOT_STORAGE_CLOUD_ENDPOINT") {
         config.storage.cloud.endpoint = endpoint.clone();
     }
-    if let Some(api_key) = vars.get("BENDCLAW_STORAGE_CLOUD_API_KEY") {
+    if let Some(api_key) = vars.get("EVOT_STORAGE_CLOUD_API_KEY") {
         config.storage.cloud.api_key = api_key.clone();
     }
-    if let Some(workspace) = vars.get("BENDCLAW_STORAGE_CLOUD_WORKSPACE") {
+    if let Some(workspace) = vars.get("EVOT_STORAGE_CLOUD_WORKSPACE") {
         config.storage.cloud.workspace = Some(workspace.clone());
     }
 

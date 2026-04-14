@@ -1,7 +1,6 @@
 //! Tests for the core agent loop using MockProvider.
 
 use bendengine::agent_loop::agent_loop;
-use bendengine::agent_loop::agent_loop_continue;
 use bendengine::agent_loop::AgentLoopConfig;
 use bendengine::provider::mock::*;
 use bendengine::provider::MockProvider;
@@ -9,197 +8,61 @@ use bendengine::*;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-fn make_config(provider: MockProvider) -> AgentLoopConfig {
-    AgentLoopConfig {
-        provider: std::sync::Arc::new(provider),
-        model: "mock".into(),
-        api_key: "test".into(),
-        thinking_level: ThinkingLevel::Off,
-        max_tokens: None,
-        temperature: None,
-        model_config: None,
-        convert_to_llm: None,
-        transform_context: None,
-        get_steering_messages: None,
-        get_follow_up_messages: None,
-        context_config: None,
-        compaction_strategy: None,
-        execution_limits: None,
-        cache_config: CacheConfig::default(),
-        tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: bendengine::RetryPolicy::default(),
-        before_turn: None,
-        after_turn: None,
-        input_filters: vec![],
-    }
-}
+use super::fixtures::agent_harness::collect_events;
+use super::fixtures::agent_harness::make_config;
+use super::fixtures::agent_harness::MockTool;
+use super::fixtures::agent_harness::TestHarness;
 
-fn collect_events(mut rx: mpsc::UnboundedReceiver<AgentEvent>) -> Vec<AgentEvent> {
-    let mut events = Vec::new();
-    while let Ok(e) = rx.try_recv() {
-        events.push(e);
-    }
-    events
-}
+// ---------------------------------------------------------------------------
+// Tests using TestHarness
+// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_simple_text_response() {
-    let provider = MockProvider::text("Hello, world!");
-    let config = make_config(provider);
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("Hello, world!".into())])
+        .system_prompt("You are helpful.")
+        .run("Hi")
+        .await;
 
-    let mut context = AgentContext {
-        system_prompt: "You are helpful.".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-    };
+    output.assert_completed();
+    assert!(output.has_event("TurnStart"));
+    assert!(output.has_event("TurnEnd"));
 
-    let prompt = AgentMessage::Llm(Message::user("Hi"));
-    let (tx, rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-
-    let events = collect_events(rx);
-
-    // Should have: AgentStart, TurnStart, MessageStart(user), MessageEnd(user),
-    //              MessageStart(assistant), MessageEnd(assistant), TurnEnd, AgentEnd
-    let event_types: Vec<&str> = events
-        .iter()
-        .map(|e| match e {
-            AgentEvent::AgentStart => "AgentStart",
-            AgentEvent::AgentEnd { .. } => "AgentEnd",
-            AgentEvent::TurnStart => "TurnStart",
-            AgentEvent::TurnEnd { .. } => "TurnEnd",
-            AgentEvent::MessageStart { .. } => "MessageStart",
-            AgentEvent::MessageEnd { .. } => "MessageEnd",
-            AgentEvent::MessageUpdate { .. } => "MessageUpdate",
-            AgentEvent::ToolExecutionStart { .. } => "ToolExecStart",
-            AgentEvent::ToolExecutionUpdate { .. } => "ToolExecUpdate",
-            AgentEvent::ToolExecutionEnd { .. } => "ToolExecEnd",
-            AgentEvent::ProgressMessage { .. } => "ProgressMessage",
-            AgentEvent::Error { .. } => "Error",
-            AgentEvent::LlmCallStart { .. } => "LlmCallStart",
-            AgentEvent::LlmCallEnd { .. } => "LlmCallEnd",
-            AgentEvent::ContextCompactionStart { .. } => "CompactionStart",
-            AgentEvent::ContextCompactionEnd { .. } => "CompactionEnd",
-        })
-        .collect();
-
-    assert!(event_types.contains(&"AgentStart"));
-    assert!(event_types.contains(&"AgentEnd"));
-    assert!(event_types.contains(&"TurnStart"));
-    assert!(event_types.contains(&"TurnEnd"));
-
-    // new_messages should contain user prompt + assistant response
-    assert_eq!(new_messages.len(), 2);
-    assert_eq!(new_messages[0].role(), "user");
-    assert_eq!(new_messages[1].role(), "assistant");
-
-    // Context should have both messages
-    assert_eq!(context.messages.len(), 2);
+    output.assert_message_count(2);
+    assert_eq!(output.messages[0].role(), "user");
+    assert_eq!(output.messages[1].role(), "assistant");
+    assert_eq!(output.context_messages.len(), 2);
 }
 
 #[tokio::test]
 async fn test_tool_call_and_response() {
-    // Mock: first call returns tool use, second returns text
-    let provider = MockProvider::new(vec![
-        MockResponse::ToolCalls(vec![MockToolCall {
-            name: "read_file".into(),
-            arguments: serde_json::json!({"path": "test.txt"}),
-        }]),
-        MockResponse::Text("The file contains: hello".into()),
-    ]);
+    let output = TestHarness::new()
+        .responses(vec![
+            MockResponse::ToolCalls(vec![MockToolCall {
+                name: "read_file".into(),
+                arguments: serde_json::json!({"path": "test.txt"}),
+            }]),
+            MockResponse::Text("The file contains: hello".into()),
+        ])
+        .tool(MockTool::ok("read_file", "hello"))
+        .run("Read test.txt")
+        .await;
 
-    // Define a simple tool
-    struct ReadFileTool;
-
-    #[async_trait::async_trait]
-    impl AgentTool for ReadFileTool {
-        fn name(&self) -> &str {
-            "read_file"
-        }
-        fn label(&self) -> &str {
-            "Read File"
-        }
-        fn description(&self) -> &str {
-            "Read a file"
-        }
-        fn parameters_schema(&self) -> serde_json::Value {
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"}
-                }
-            })
-        }
-        async fn execute(
-            &self,
-            _params: serde_json::Value,
-            _ctx: ToolContext,
-        ) -> Result<ToolResult, ToolError> {
-            Ok(ToolResult {
-                content: vec![Content::Text {
-                    text: "hello".into(),
-                }],
-                details: serde_json::Value::Null,
-                retention: Retention::Normal,
-            })
-        }
-    }
-
-    let config = make_config(provider);
-
-    let mut context = AgentContext {
-        system_prompt: "You are helpful.".into(),
-        messages: Vec::new(),
-        tools: vec![Box::new(ReadFileTool)],
-    };
-
-    let prompt = AgentMessage::Llm(Message::user("Read test.txt"));
-    let (tx, rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-
-    let events = collect_events(rx);
-
-    let event_types: Vec<&str> = events
-        .iter()
-        .map(|e| match e {
-            AgentEvent::AgentStart => "AgentStart",
-            AgentEvent::AgentEnd { .. } => "AgentEnd",
-            AgentEvent::TurnStart => "TurnStart",
-            AgentEvent::TurnEnd { .. } => "TurnEnd",
-            AgentEvent::MessageStart { .. } => "MessageStart",
-            AgentEvent::MessageEnd { .. } => "MessageEnd",
-            AgentEvent::MessageUpdate { .. } => "MessageUpdate",
-            AgentEvent::ToolExecutionStart { .. } => "ToolExecStart",
-            AgentEvent::ToolExecutionUpdate { .. } => "ToolExecUpdate",
-            AgentEvent::ToolExecutionEnd { .. } => "ToolExecEnd",
-            AgentEvent::ProgressMessage { .. } => "ProgressMessage",
-            AgentEvent::Error { .. } => "Error",
-            AgentEvent::LlmCallStart { .. } => "LlmCallStart",
-            AgentEvent::LlmCallEnd { .. } => "LlmCallEnd",
-            AgentEvent::ContextCompactionStart { .. } => "CompactionStart",
-            AgentEvent::ContextCompactionEnd { .. } => "CompactionEnd",
-        })
-        .collect();
-
-    // Should have tool execution events
-    assert!(event_types.contains(&"ToolExecStart"));
-    assert!(event_types.contains(&"ToolExecEnd"));
+    assert!(output.has_event("ToolExecStart"));
+    assert!(output.has_event("ToolExecEnd"));
 
     // Messages: user, assistant(tool_call), toolResult, assistant(text)
-    assert_eq!(new_messages.len(), 4);
-    assert_eq!(new_messages[0].role(), "user");
-    assert_eq!(new_messages[1].role(), "assistant");
-    assert_eq!(new_messages[2].role(), "toolResult");
-    assert_eq!(new_messages[3].role(), "assistant");
+    output.assert_message_count(4);
+    assert_eq!(output.messages[0].role(), "user");
+    assert_eq!(output.messages[1].role(), "assistant");
+    assert_eq!(output.messages[2].role(), "toolResult");
+    assert_eq!(output.messages[3].role(), "assistant");
 }
 
 #[tokio::test]
 async fn test_abort_cancels_loop() {
-    // Provider that returns text — but we cancel before it runs
+    // This test needs direct cancel token access — keep manual setup
     let provider = MockProvider::text("Should not appear");
     let config = make_config(provider);
 
@@ -212,25 +75,17 @@ async fn test_abort_cancels_loop() {
     let prompt = AgentMessage::Llm(Message::user("Hi"));
     let (tx, _rx) = mpsc::unbounded_channel();
     let cancel = CancellationToken::new();
-
-    // Cancel immediately
     cancel.cancel();
 
     let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-
-    // Should have user message but loop should exit early
-    // The prompt is added before the loop checks cancellation
-    assert!(new_messages.len() <= 2); // user + possibly error
+    assert!(new_messages.len() <= 2);
 }
 
 #[tokio::test]
 async fn test_continue_from_tool_result() {
-    let provider = MockProvider::text("Done processing.");
-    let config = make_config(provider);
-
-    let mut context = AgentContext {
-        system_prompt: "test".into(),
-        messages: vec![
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("Done processing.".into())])
+        .prior_messages(vec![
             AgentMessage::Llm(Message::user("do something")),
             AgentMessage::Llm(Message::ToolResult {
                 tool_call_id: "tc-1".into(),
@@ -242,109 +97,46 @@ async fn test_continue_from_tool_result() {
                 timestamp: 0,
                 retention: Retention::Normal,
             }),
-        ],
-        tools: Vec::new(),
-    };
+        ])
+        .run_continue()
+        .await;
 
-    let (tx, _rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    let new_messages = agent_loop_continue(&mut context, &config, tx, cancel).await;
-
-    assert!(!new_messages.is_empty());
-    assert_eq!(new_messages[0].role(), "assistant");
+    assert!(!output.messages.is_empty());
+    assert_eq!(output.messages[0].role(), "assistant");
 }
 
 #[tokio::test]
 async fn test_tool_error_is_reported() {
-    let provider = MockProvider::new(vec![
-        MockResponse::ToolCalls(vec![MockToolCall {
-            name: "failing_tool".into(),
-            arguments: serde_json::json!({}),
-        }]),
-        MockResponse::Text("Tool failed, sorry.".into()),
-    ]);
+    let output = TestHarness::new()
+        .responses(vec![
+            MockResponse::ToolCalls(vec![MockToolCall {
+                name: "failing_tool".into(),
+                arguments: serde_json::json!({}),
+            }]),
+            MockResponse::Text("Tool failed, sorry.".into()),
+        ])
+        .tool(MockTool::err("failing_tool", "Something went wrong"))
+        .run("Use the tool")
+        .await;
 
-    struct FailingTool;
-
-    #[async_trait::async_trait]
-    impl AgentTool for FailingTool {
-        fn name(&self) -> &str {
-            "failing_tool"
-        }
-        fn label(&self) -> &str {
-            "Failing Tool"
-        }
-        fn description(&self) -> &str {
-            "Always fails"
-        }
-        fn parameters_schema(&self) -> serde_json::Value {
-            serde_json::json!({})
-        }
-        async fn execute(
-            &self,
-            _params: serde_json::Value,
-            _ctx: ToolContext,
-        ) -> Result<ToolResult, ToolError> {
-            Err(ToolError::Failed("Something went wrong".into()))
-        }
-    }
-
-    let config = make_config(provider);
-    let mut context = AgentContext {
-        system_prompt: "test".into(),
-        messages: Vec::new(),
-        tools: vec![Box::new(FailingTool)],
-    };
-
-    let prompt = AgentMessage::Llm(Message::user("Use the tool"));
-    let (tx, rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-
-    let events = collect_events(rx);
-
-    // Tool error should be reported
-    let tool_end_events: Vec<_> = events
-        .iter()
-        .filter(|e| matches!(e, AgentEvent::ToolExecutionEnd { is_error: true, .. }))
-        .collect();
-    assert_eq!(tool_end_events.len(), 1);
-
-    // Should still get a final assistant response
-    assert_eq!(new_messages.last().unwrap().role(), "assistant");
+    assert_eq!(output.tool_errors().len(), 1);
+    output.assert_last_role("assistant");
 }
 
 #[tokio::test]
 async fn test_unknown_tool_reports_error() {
-    let provider = MockProvider::new(vec![
-        MockResponse::ToolCalls(vec![MockToolCall {
-            name: "nonexistent".into(),
-            arguments: serde_json::json!({}),
-        }]),
-        MockResponse::Text("I couldn't find that tool.".into()),
-    ]);
+    let output = TestHarness::new()
+        .responses(vec![
+            MockResponse::ToolCalls(vec![MockToolCall {
+                name: "nonexistent".into(),
+                arguments: serde_json::json!({}),
+            }]),
+            MockResponse::Text("I couldn't find that tool.".into()),
+        ])
+        .run("Use nonexistent tool")
+        .await;
 
-    let config = make_config(provider);
-    let mut context = AgentContext {
-        system_prompt: "test".into(),
-        messages: Vec::new(),
-        tools: Vec::new(), // No tools registered
-    };
-
-    let prompt = AgentMessage::Llm(Message::user("Use nonexistent tool"));
-    let (tx, rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    let _new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-
-    let events = collect_events(rx);
-    let tool_errors: Vec<_> = events
-        .iter()
-        .filter(|e| matches!(e, AgentEvent::ToolExecutionEnd { is_error: true, .. }))
-        .collect();
-    assert_eq!(tool_errors.len(), 1);
+    assert_eq!(output.tool_errors().len(), 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -976,28 +768,14 @@ async fn test_retry_none_disables_retries() {
 
 #[tokio::test]
 async fn test_message_update_events_emitted_during_streaming() {
-    // This test verifies the fix for: text deltas not emitted because
-    // partial_message was None when deltas arrived (MessageStart was only
-    // emitted on Done, after all deltas had already been processed).
-    let provider = MockProvider::text("Hello, world!");
-    let config = make_config(provider);
-
-    let mut context = AgentContext {
-        system_prompt: "test".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-    };
-
-    let prompt = AgentMessage::Llm(Message::user("hi"));
-    let (tx, rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-
-    let events = collect_events(rx);
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("Hello, world!".into())])
+        .run("hi")
+        .await;
 
     // Collect MessageUpdate text deltas
-    let deltas: Vec<String> = events
+    let deltas: Vec<String> = output
+        .events
         .iter()
         .filter_map(|e| match e {
             AgentEvent::MessageUpdate {
@@ -1008,7 +786,6 @@ async fn test_message_update_events_emitted_during_streaming() {
         })
         .collect();
 
-    // Should have at least one text delta with "Hello, world!"
     assert!(
         !deltas.is_empty(),
         "Expected MessageUpdate events with text deltas, got none"
@@ -1017,7 +794,8 @@ async fn test_message_update_events_emitted_during_streaming() {
     assert_eq!(full_text, "Hello, world!");
 
     // Verify event ordering: MessageStart before MessageUpdate before MessageEnd
-    let event_types: Vec<&str> = events
+    let event_types: Vec<&str> = output
+        .events
         .iter()
         .filter_map(|e| match e {
             AgentEvent::MessageStart { .. } => Some("Start"),
@@ -1027,12 +805,9 @@ async fn test_message_update_events_emitted_during_streaming() {
         })
         .collect();
 
-    // Should be: Start (user), End (user), Start (assistant), Update(s), End (assistant)
-    // Find the assistant sequence
     let assistant_start = event_types.iter().rposition(|&e| e == "Start").unwrap();
     let assistant_end = event_types.iter().rposition(|&e| e == "End").unwrap();
 
-    // All Updates should be between the last Start and last End
     for (i, &et) in event_types.iter().enumerate() {
         if et == "Update" {
             assert!(
@@ -1184,28 +959,13 @@ async fn test_error_event_fires_on_provider_error() {
 
 #[tokio::test]
 async fn test_callbacks_are_optional() {
-    // Verify the loop works fine with all callbacks set to None (same as before)
-    let provider = MockProvider::text("Hello!");
-    let config = make_config(provider);
-    // make_config already sets all callbacks to None
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("Hello!".into())])
+        .run("Hi")
+        .await;
 
-    let mut context = AgentContext {
-        system_prompt: "test".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-    };
-
-    let prompt = AgentMessage::Llm(Message::user("Hi"));
-    let (tx, rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-    let events = collect_events(rx);
-
-    assert_eq!(new_messages.len(), 2);
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, AgentEvent::AgentEnd { .. })));
+    output.assert_message_count(2);
+    output.assert_completed();
 }
 
 // ---------------------------------------------------------------------------
@@ -1518,54 +1278,28 @@ impl InputFilter for RejectFilter {
 
 #[tokio::test]
 async fn test_filter_pass_message_goes_through() {
-    let provider = MockProvider::text("Hello!");
-    let mut config = make_config(provider);
-    config.input_filters = vec![Arc::new(PassFilter)];
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("Hello!".into())])
+        .input_filter(PassFilter)
+        .run("Hi")
+        .await;
 
-    let mut context = AgentContext {
-        system_prompt: "test".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-    };
-
-    let prompt = AgentMessage::Llm(Message::user("Hi"));
-    let (tx, rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-    let events = collect_events(rx);
-
-    // Message went through normally
-    assert_eq!(new_messages.len(), 2); // user + assistant
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, AgentEvent::AgentEnd { .. })));
+    output.assert_message_count(2);
+    output.assert_completed();
 }
 
 #[tokio::test]
 async fn test_filter_warn_injects_warning_message() {
-    let provider = MockProvider::text("Got it.");
-    let mut config = make_config(provider);
-    config.input_filters = vec![Arc::new(WarnFilter {
-        warning: "danger".into(),
-    })];
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("Got it.".into())])
+        .input_filter(WarnFilter {
+            warning: "danger".into(),
+        })
+        .run("Hi")
+        .await;
 
-    let mut context = AgentContext {
-        system_prompt: "test".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-    };
-
-    let prompt = AgentMessage::Llm(Message::user("Hi"));
-    let (tx, _rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-
-    // user (with appended warning) + assistant = 2
-    assert_eq!(new_messages.len(), 2);
-    // The warning should be appended to the user message's content
-    if let AgentMessage::Llm(Message::User { content, .. }) = &new_messages[0] {
+    assert_eq!(output.messages.len(), 2);
+    if let AgentMessage::Llm(Message::User { content, .. }) = &output.messages[0] {
         assert_eq!(content.len(), 2, "expected original text + warning");
         let warning = match &content[1] {
             Content::Text { text } => text.as_str(),
@@ -1579,41 +1313,27 @@ async fn test_filter_warn_injects_warning_message() {
 
 #[tokio::test]
 async fn test_filter_reject_returns_empty() {
-    let provider = MockProvider::text("Should not reach");
-    let mut config = make_config(provider);
-    config.input_filters = vec![Arc::new(RejectFilter {
-        reason: "blocked".into(),
-    })];
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("Should not reach".into())])
+        .input_filter(RejectFilter {
+            reason: "blocked".into(),
+        })
+        .run("Bad input")
+        .await;
 
-    let mut context = AgentContext {
-        system_prompt: "test".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-    };
-
-    let prompt = AgentMessage::Llm(Message::user("Bad input"));
-    let (tx, rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-    let events = collect_events(rx);
-
-    // Rejected — empty messages returned
-    assert!(new_messages.is_empty());
-    // Context should NOT contain the rejected prompt
+    assert!(output.messages.is_empty());
     assert!(
-        context.messages.is_empty(),
+        output.context_messages.is_empty(),
         "Rejected prompts should not leak into context, got {} messages",
-        context.messages.len()
+        output.context_messages.len()
     );
-    // Error event should carry the reason
-    assert!(events.iter().any(|e| matches!(
+    assert!(output.events.iter().any(|e| matches!(
         e,
         AgentEvent::Error { error } if error.kind == AgentErrorKind::InputRejected && error.message == "blocked"
     )));
-    // AgentStart + Error + AgentEnd
-    assert!(events.iter().any(|e| matches!(e, AgentEvent::AgentStart)));
-    assert!(events
+    assert!(output.has_event("AgentStart"));
+    assert!(output
+        .events
         .iter()
         .any(|e| matches!(e, AgentEvent::AgentEnd { messages } if messages.is_empty())));
 }
@@ -1678,33 +1398,19 @@ async fn test_filter_chain_first_reject_wins() {
 
 #[tokio::test]
 async fn test_filter_multiple_warns_accumulate() {
-    let provider = MockProvider::text("Got warnings.");
-    let mut config = make_config(provider);
-    config.input_filters = vec![
-        Arc::new(WarnFilter {
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("Got warnings.".into())])
+        .input_filter(WarnFilter {
             warning: "warn1".into(),
-        }),
-        Arc::new(WarnFilter {
+        })
+        .input_filter(WarnFilter {
             warning: "warn2".into(),
-        }),
-    ];
+        })
+        .run("Hi")
+        .await;
 
-    let mut context = AgentContext {
-        system_prompt: "test".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-    };
-
-    let prompt = AgentMessage::Llm(Message::user("Hi"));
-    let (tx, _rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-
-    // user (with appended warnings) + assistant = 2
-    assert_eq!(new_messages.len(), 2);
-    if let AgentMessage::Llm(Message::User { content, .. }) = &new_messages[0] {
-        // Original text + appended warning block
+    assert_eq!(output.messages.len(), 2);
+    if let AgentMessage::Llm(Message::User { content, .. }) = &output.messages[0] {
         assert!(content.len() >= 2, "expected original text + warning");
         let warning = match content.last().unwrap() {
             Content::Text { text } => text.as_str(),
@@ -1970,8 +1676,6 @@ async fn test_none_compaction_strategy_uses_default() {
 async fn test_compaction_events_emitted_when_context_exceeds_budget() {
     use bendengine::context::ContextConfig;
 
-    let provider = MockProvider::text("Got it.");
-
     let mut prior_messages = Vec::new();
     for i in 0..20 {
         prior_messages.push(AgentMessage::Llm(Message::user(format!(
@@ -1992,49 +1696,23 @@ async fn test_compaction_events_emitted_when_context_exceeds_budget() {
         }));
     }
 
-    let config = AgentLoopConfig {
-        provider: std::sync::Arc::new(provider),
-        model: "test".into(),
-        api_key: "test".into(),
-        thinking_level: ThinkingLevel::Off,
-        max_tokens: None,
-        temperature: None,
-        model_config: None,
-        convert_to_llm: None,
-        transform_context: None,
-        get_steering_messages: None,
-        get_follow_up_messages: None,
-        context_config: Some(ContextConfig {
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("Got it.".into())])
+        .system_prompt("")
+        .prior_messages(prior_messages)
+        .context_config(ContextConfig {
             max_context_tokens: 500,
             system_prompt_tokens: 0,
             keep_recent: 4,
             keep_first: 2,
             tool_output_max_lines: 20,
-        }),
-        compaction_strategy: None,
-        execution_limits: None,
-        cache_config: CacheConfig::default(),
-        tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: bendengine::RetryPolicy::disabled(),
-        before_turn: None,
-        after_turn: None,
-        input_filters: vec![],
-    };
+        })
+        .retry_policy(bendengine::RetryPolicy::disabled())
+        .run("hello")
+        .await;
 
-    let prompt = AgentMessage::Llm(Message::user("hello"));
-    let mut context = AgentContext {
-        system_prompt: String::new(),
-        messages: prior_messages,
-        tools: vec![],
-    };
-
-    let (tx, rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-    let events = collect_events(rx);
-
-    let starts: Vec<_> = events
+    let starts: Vec<_> = output
+        .events
         .iter()
         .filter_map(|e| match e {
             AgentEvent::ContextCompactionStart {
@@ -2049,7 +1727,8 @@ async fn test_compaction_events_emitted_when_context_exceeds_budget() {
     assert!(starts[0].0 > 20);
     assert!(starts[0].1 > 500);
 
-    let ends: Vec<_> = events
+    let ends: Vec<_> = output
+        .events
         .iter()
         .filter_map(|e| match e {
             AgentEvent::ContextCompactionEnd { stats, .. } => Some(stats.clone()),
@@ -2067,51 +1746,22 @@ async fn test_compaction_events_emitted_when_context_exceeds_budget() {
 async fn test_compaction_events_level_zero_when_within_budget() {
     use bendengine::context::ContextConfig;
 
-    let provider = MockProvider::text("ok");
-
-    let config = AgentLoopConfig {
-        provider: std::sync::Arc::new(provider),
-        model: "test".into(),
-        api_key: "test".into(),
-        thinking_level: ThinkingLevel::Off,
-        max_tokens: None,
-        temperature: None,
-        model_config: None,
-        convert_to_llm: None,
-        transform_context: None,
-        get_steering_messages: None,
-        get_follow_up_messages: None,
-        context_config: Some(ContextConfig {
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("ok".into())])
+        .system_prompt("")
+        .context_config(ContextConfig {
             max_context_tokens: 1_000_000,
             system_prompt_tokens: 0,
             keep_recent: 10,
             keep_first: 2,
             tool_output_max_lines: 50,
-        }),
-        compaction_strategy: None,
-        execution_limits: None,
-        cache_config: CacheConfig::default(),
-        tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: bendengine::RetryPolicy::disabled(),
-        before_turn: None,
-        after_turn: None,
-        input_filters: vec![],
-    };
+        })
+        .retry_policy(bendengine::RetryPolicy::disabled())
+        .run("hi")
+        .await;
 
-    let prompt = AgentMessage::Llm(Message::user("hi"));
-    let mut context = AgentContext {
-        system_prompt: String::new(),
-        messages: vec![],
-        tools: vec![],
-    };
-
-    let (tx, rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-    let events = collect_events(rx);
-
-    let ends: Vec<_> = events
+    let ends: Vec<_> = output
+        .events
         .iter()
         .filter_map(|e| match e {
             AgentEvent::ContextCompactionEnd { stats, .. } => Some(stats.clone()),
@@ -2125,30 +1775,200 @@ async fn test_compaction_events_level_zero_when_within_budget() {
 
 #[tokio::test]
 async fn test_compaction_not_emitted_without_context_config() {
-    let provider = MockProvider::text("ok");
-    let config = make_config(provider);
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("ok".into())])
+        .system_prompt("")
+        .run("hi")
+        .await;
 
-    let prompt = AgentMessage::Llm(Message::user("hi"));
-    let mut context = AgentContext {
-        system_prompt: String::new(),
-        messages: vec![],
-        tools: vec![],
+    assert_eq!(output.event_count("CompactionStart"), 0);
+    assert_eq!(output.event_count("CompactionEnd"), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Empty response retry tests
+// ---------------------------------------------------------------------------
+
+/// A provider that returns empty Ok(Message) N times, then delegates to inner.
+struct EmptyThenSucceedProvider {
+    call_count: std::sync::atomic::AtomicUsize,
+    empty_count: usize,
+    inner: MockProvider,
+}
+
+#[async_trait::async_trait]
+impl StreamProvider for EmptyThenSucceedProvider {
+    async fn stream(
+        &self,
+        config: StreamConfig,
+        tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<bendengine::Message, ProviderError> {
+        let attempt = self
+            .call_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if attempt < self.empty_count {
+            let _ = tx.send(StreamEvent::Start);
+            let msg = Message::Assistant {
+                content: vec![],
+                stop_reason: StopReason::Stop,
+                model: "mock".into(),
+                provider: "mock".into(),
+                usage: Usage::default(),
+                timestamp: 0,
+                error_message: None,
+            };
+            let _ = tx.send(StreamEvent::Done {
+                message: msg.clone(),
+            });
+            return Ok(msg);
+        }
+        self.inner.stream(config, tx, cancel).await
+    }
+}
+
+#[tokio::test]
+async fn test_empty_response_retried_then_succeeds() {
+    let provider: std::sync::Arc<EmptyThenSucceedProvider> =
+        std::sync::Arc::new(EmptyThenSucceedProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+            empty_count: 2,
+            inner: MockProvider::text("Success after empty"),
+        });
+
+    let config = AgentLoopConfig {
+        provider: provider.clone(),
+        model: "mock".into(),
+        api_key: "test".into(),
+        thinking_level: ThinkingLevel::Off,
+        max_tokens: None,
+        temperature: None,
+        model_config: None,
+        convert_to_llm: None,
+        transform_context: None,
+        get_steering_messages: None,
+        get_follow_up_messages: None,
+        context_config: None,
+        compaction_strategy: None,
+        execution_limits: None,
+        cache_config: CacheConfig::default(),
+        tool_execution: ToolExecutionStrategy::default(),
+        retry_policy: bendengine::RetryPolicy::new(3),
+        before_turn: None,
+        after_turn: None,
+        input_filters: vec![],
     };
 
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: Vec::new(),
+        tools: Vec::new(),
+    };
+
+    let prompt = AgentMessage::Llm(Message::user("hi"));
     let (tx, rx) = mpsc::unbounded_channel();
     let cancel = CancellationToken::new();
 
-    agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
+    let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
+
+    // Should succeed: 2 empty responses retried, 3rd call returns real text
+    assert_eq!(new_messages.len(), 2); // user + assistant
+    assert_eq!(new_messages[1].role(), "assistant");
+
+    // Provider called 3 times: 2 empty + 1 success
+    assert_eq!(
+        provider
+            .call_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        3
+    );
+
     let events = collect_events(rx);
 
-    let compaction_events = events
+    // Should have LlmCallEnd events with errors for the empty attempts
+    let llm_call_errors: Vec<_> = events
         .iter()
-        .filter(|e| {
-            matches!(
-                e,
-                AgentEvent::ContextCompactionStart { .. } | AgentEvent::ContextCompactionEnd { .. }
-            )
+        .filter_map(|e| match e {
+            AgentEvent::LlmCallEnd {
+                error: Some(err), ..
+            } => Some(err.clone()),
+            _ => None,
         })
-        .count();
-    assert_eq!(compaction_events, 0);
+        .collect();
+    assert_eq!(llm_call_errors.len(), 2);
+    assert!(llm_call_errors[0].contains("Empty response"));
+}
+
+#[tokio::test]
+async fn test_empty_response_exhausts_retries() {
+    let provider: std::sync::Arc<EmptyThenSucceedProvider> =
+        std::sync::Arc::new(EmptyThenSucceedProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+            empty_count: 10, // more empties than retries
+            inner: MockProvider::text("never reached"),
+        });
+
+    let config = AgentLoopConfig {
+        provider: provider.clone(),
+        model: "mock".into(),
+        api_key: "test".into(),
+        thinking_level: ThinkingLevel::Off,
+        max_tokens: None,
+        temperature: None,
+        model_config: None,
+        convert_to_llm: None,
+        transform_context: None,
+        get_steering_messages: None,
+        get_follow_up_messages: None,
+        context_config: None,
+        compaction_strategy: None,
+        execution_limits: None,
+        cache_config: CacheConfig::default(),
+        tool_execution: ToolExecutionStrategy::default(),
+        retry_policy: bendengine::RetryPolicy::new(2),
+        before_turn: None,
+        after_turn: None,
+        input_filters: vec![],
+    };
+
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: Vec::new(),
+        tools: Vec::new(),
+    };
+
+    let prompt = AgentMessage::Llm(Message::user("hi"));
+    let (tx, rx) = mpsc::unbounded_channel();
+    let cancel = CancellationToken::new();
+
+    let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
+
+    // Last message should be an error
+    let last = new_messages.last().map(|m| match m {
+        AgentMessage::Llm(msg) => msg.clone(),
+        _ => panic!("expected Llm message"),
+    });
+    if let Some(Message::Assistant {
+        stop_reason,
+        error_message,
+        ..
+    }) = last
+    {
+        assert_eq!(stop_reason, StopReason::Error);
+        assert!(error_message.as_ref().unwrap().contains("Empty response"));
+    } else {
+        panic!("Expected error assistant message");
+    }
+
+    // 1 initial + 2 retries = 3 attempts
+    assert_eq!(
+        provider
+            .call_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        3
+    );
+
+    let events = collect_events(rx);
+    // Should have an Error event
+    assert!(events.iter().any(|e| matches!(e, AgentEvent::Error { .. })));
 }

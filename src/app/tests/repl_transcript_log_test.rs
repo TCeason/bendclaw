@@ -1,5 +1,5 @@
-use bendclaw::agent::RunEventPayload;
-use bendclaw::cli::repl::transcript_log::format_event;
+use evot::agent::RunEventPayload;
+use evot::cli::repl::transcript_log::format_event;
 
 #[test]
 fn format_tool_started() {
@@ -67,7 +67,7 @@ fn format_delta_is_empty() {
 #[test]
 fn format_assistant_text() {
     let payload = RunEventPayload::AssistantCompleted {
-        content: vec![bendclaw::agent::AssistantBlock::Text {
+        content: vec![evot::agent::AssistantBlock::Text {
             text: "Hello world".into(),
         }],
         usage: None,
@@ -94,7 +94,7 @@ fn format_assistant_error_stop_reason() {
 fn format_run_finished() {
     let payload = RunEventPayload::RunFinished {
         text: "done".into(),
-        usage: bendclaw::agent::UsageSummary {
+        usage: evot::agent::UsageSummary {
             input: 100,
             output: 50,
             cache_read: 0,
@@ -134,7 +134,7 @@ fn format_llm_call_completed() {
     let payload = RunEventPayload::LlmCallCompleted {
         turn: 1,
         attempt: 0,
-        usage: bendclaw::agent::UsageSummary {
+        usage: evot::agent::UsageSummary {
             input: 200,
             output: 80,
             cache_read: 0,
@@ -154,7 +154,7 @@ fn format_llm_call_completed() {
 
 #[test]
 fn format_timestamp_valid_rfc3339() {
-    use bendclaw::cli::repl::transcript_log::format_timestamp;
+    use evot::cli::repl::transcript_log::format_timestamp;
     let ts = format_timestamp("2026-04-07T10:30:45+00:00");
     // Should produce HH:MM:SS in local time
     assert_eq!(ts.len(), 8);
@@ -163,16 +163,16 @@ fn format_timestamp_valid_rfc3339() {
 
 #[test]
 fn format_timestamp_invalid_falls_back() {
-    use bendclaw::cli::repl::transcript_log::format_timestamp;
+    use evot::cli::repl::transcript_log::format_timestamp;
     let ts = format_timestamp("not-a-date");
     assert_eq!(ts, "not-a-date");
 }
 
 #[test]
 fn write_event_includes_timestamp() {
-    use bendclaw::agent::RunEvent;
-    use bendclaw::agent::RunEventPayload;
-    use bendclaw::cli::repl::transcript_log::TranscriptLog;
+    use evot::agent::RunEvent;
+    use evot::agent::RunEventPayload;
+    use evot::cli::repl::transcript_log::TranscriptLog;
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test.log");
@@ -192,7 +192,7 @@ fn write_event_includes_timestamp() {
 
 #[test]
 fn write_user_prompt_includes_timestamp() {
-    use bendclaw::cli::repl::transcript_log::TranscriptLog;
+    use evot::cli::repl::transcript_log::TranscriptLog;
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test.log");

@@ -2,24 +2,16 @@ use bendengine::provider::model::ModelConfig;
 use bendengine::provider::model::OpenAiCompat;
 use bendengine::provider::openai_compat::request::*;
 use bendengine::provider::openai_compat::types::OpenAiChunk;
-use bendengine::provider::traits::*;
 use bendengine::types::*;
+
+use super::super::fixtures::stream_config::*;
 
 #[test]
 fn test_build_request_body_basic() {
     let model_config = ModelConfig::openai("gpt-4o", "GPT-4o");
-    let config = StreamConfig {
-        model: "gpt-4o".into(),
-        system_prompt: "You are helpful.".into(),
-        messages: vec![Message::user("Hello")],
-        tools: vec![],
-        thinking_level: ThinkingLevel::Off,
-        api_key: "test".into(),
-        max_tokens: None,
-        temperature: None,
-        model_config: Some(model_config.clone()),
-        cache_config: CacheConfig::default(),
-    };
+    let config = StreamConfigBuilder::openai()
+        .system_prompt("You are helpful.")
+        .build();
 
     let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
     assert_eq!(body["model"], "gpt-4o");
@@ -33,22 +25,12 @@ fn test_build_request_body_basic() {
 fn test_build_request_body_with_tools() {
     let model_config = ModelConfig::openai("gpt-4o", "GPT-4o");
     let compat = OpenAiCompat::openai();
-    let config = StreamConfig {
-        model: "gpt-4o".into(),
-        system_prompt: String::new(),
-        messages: vec![Message::user("List files")],
-        tools: vec![ToolDefinition {
-            name: "bash".into(),
-            description: "Run a command".into(),
-            parameters: serde_json::json!({"type": "object"}),
-        }],
-        thinking_level: ThinkingLevel::Off,
-        api_key: "test".into(),
-        max_tokens: Some(1024),
-        temperature: Some(0.5),
-        model_config: Some(model_config.clone()),
-        cache_config: CacheConfig::default(),
-    };
+    let config = StreamConfigBuilder::openai()
+        .messages(vec![Message::user("List files")])
+        .tools(vec![tool_def("bash", "Run a command")])
+        .max_tokens(1024)
+        .temperature(0.5)
+        .build();
 
     let body = build_request_body(&config, &model_config, &compat);
     assert!(body["tools"].is_array());
@@ -109,10 +91,8 @@ fn test_content_to_openai_multipart() {
 fn test_tool_result_with_image() {
     let model_config = ModelConfig::openai("gpt-4o", "GPT-4o");
     let compat = OpenAiCompat::openai();
-    let config = StreamConfig {
-        model: "gpt-4o".into(),
-        system_prompt: String::new(),
-        messages: vec![
+    let config = StreamConfigBuilder::openai()
+        .messages(vec![
             Message::Assistant {
                 content: vec![Content::ToolCall {
                     id: "call-1".into(),
@@ -137,15 +117,8 @@ fn test_tool_result_with_image() {
                 timestamp: 0,
                 retention: Retention::Normal,
             },
-        ],
-        tools: vec![],
-        thinking_level: ThinkingLevel::Off,
-        api_key: "test".into(),
-        max_tokens: None,
-        temperature: None,
-        model_config: Some(model_config.clone()),
-        cache_config: CacheConfig::default(),
-    };
+        ])
+        .build();
 
     let body = build_request_body(&config, &model_config, &compat);
     let msgs = body["messages"].as_array().unwrap();
@@ -159,10 +132,8 @@ fn test_tool_result_with_image() {
 fn test_tool_result_text_only_uses_string() {
     let model_config = ModelConfig::openai("gpt-4o", "GPT-4o");
     let compat = OpenAiCompat::openai();
-    let config = StreamConfig {
-        model: "gpt-4o".into(),
-        system_prompt: String::new(),
-        messages: vec![
+    let config = StreamConfigBuilder::openai()
+        .messages(vec![
             Message::Assistant {
                 content: vec![Content::ToolCall {
                     id: "call-1".into(),
@@ -186,15 +157,8 @@ fn test_tool_result_text_only_uses_string() {
                 timestamp: 0,
                 retention: Retention::Normal,
             },
-        ],
-        tools: vec![],
-        thinking_level: ThinkingLevel::Off,
-        api_key: "test".into(),
-        max_tokens: None,
-        temperature: None,
-        model_config: Some(model_config.clone()),
-        cache_config: CacheConfig::default(),
-    };
+        ])
+        .build();
 
     let body = build_request_body(&config, &model_config, &compat);
     let msgs = body["messages"].as_array().unwrap();

@@ -1,4 +1,4 @@
-use bendclaw::agent::*;
+use evot::agent::*;
 
 #[test]
 fn run_event_round_trip_run_started() {
@@ -244,7 +244,7 @@ fn run_event_deserialize_rejects_missing_fields() {
 // SSE mapping tests (server/stream.rs::map_run_event_json)
 // ---------------------------------------------------------------------------
 
-use bendclaw::server::stream::map_run_event_json;
+use evot::server::stream::map_run_event_json;
 
 #[test]
 fn sse_map_assistant_delta() {

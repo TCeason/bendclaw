@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use bend_base::logx;
 use bend_engine::tools::*;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
@@ -12,7 +11,7 @@ use super::runtime::EngineOptions;
 use super::variables::Variables;
 use crate::conf::Config;
 use crate::conf::LlmConfig;
-use crate::error::BendclawError;
+use crate::error::EvotError;
 use crate::error::Result;
 use crate::session::Session;
 use crate::storage::open_storage;
@@ -292,10 +291,9 @@ impl Agent {
         let run_id = crate::types::new_id();
         let llm = self.llm.read().clone();
 
-        logx!(
-            info,
-            "run",
-            "started",
+        tracing::info!(
+            stage = "run",
+            status = "started",
             run_id = %run_id,
             session_id = %session_id,
             provider = ?llm.provider,
@@ -414,7 +412,7 @@ impl Agent {
                     session.set_model(model).await;
                     Ok(session)
                 }
-                None => Err(BendclawError::Session(format!("session not found: {id}"))),
+                None => Err(EvotError::Session(format!("session not found: {id}"))),
             },
             None => {
                 let id = crate::types::new_id();

@@ -1,9 +1,9 @@
-use bendclaw::cli::repl::commands::is_slash_command;
-use bendclaw::cli::repl::commands::resolve_slash_command;
-use bendclaw::cli::repl::commands::ResolvedSlashCommand;
-use bendclaw::cli::repl::commands::KNOWN_COMMANDS;
-use bendclaw::cli::repl::completion::bare_slash_hint_display;
-use bendclaw::cli::repl::completion::is_slash_prefix;
+use evot::cli::repl::commands::is_slash_command;
+use evot::cli::repl::commands::resolve_slash_command;
+use evot::cli::repl::commands::ResolvedSlashCommand;
+use evot::cli::repl::commands::KNOWN_COMMANDS;
+use evot::cli::repl::completer::bare_slash_hint_display;
+use evot::cli::repl::completer::is_slash_prefix;
 
 // ---------------------------------------------------------------------------
 // is_slash_prefix

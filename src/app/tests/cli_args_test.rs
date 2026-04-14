@@ -1,14 +1,14 @@
-use bendclaw::cli::CliArgs;
-use bendclaw::cli::CliCommand;
-use bendclaw::cli::OutputFormat;
 use clap::Parser;
+use evot::cli::CliArgs;
+use evot::cli::CliCommand;
+use evot::cli::OutputFormat;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
 #[test]
 fn parse_prompt_mode_args() -> TestResult {
     let args = CliArgs::try_parse_from([
-        "bendclaw",
+        "evot",
         "--verbose",
         "--max-turns",
         "3",
@@ -37,8 +37,7 @@ fn parse_prompt_mode_args() -> TestResult {
 
 #[test]
 fn parse_server_subcommand_args() -> TestResult {
-    let args =
-        CliArgs::try_parse_from(["bendclaw", "--model", "gpt-4o", "server", "--port", "9090"])?;
+    let args = CliArgs::try_parse_from(["evot", "--model", "gpt-4o", "server", "--port", "9090"])?;
 
     assert!(args.prompt.is_none());
     assert_eq!(args.model.as_deref(), Some("gpt-4o"));
@@ -60,7 +59,7 @@ fn parse_server_subcommand_args() -> TestResult {
 
 #[test]
 fn parse_repl_subcommand_args() -> TestResult {
-    let args = CliArgs::try_parse_from(["bendclaw", "--model", "gpt-4o", "repl"])?;
+    let args = CliArgs::try_parse_from(["evot", "--model", "gpt-4o", "repl"])?;
     assert!(args.prompt.is_none());
     assert_eq!(args.model.as_deref(), Some("gpt-4o"));
     assert!(matches!(args.command, Some(CliCommand::Repl)));
@@ -69,7 +68,7 @@ fn parse_repl_subcommand_args() -> TestResult {
 
 #[test]
 fn parse_default_repl_args() -> TestResult {
-    let args = CliArgs::try_parse_from(["bendclaw"])?;
+    let args = CliArgs::try_parse_from(["evot"])?;
     assert!(args.prompt.is_none());
     assert!(args.command.is_none());
     Ok(())
