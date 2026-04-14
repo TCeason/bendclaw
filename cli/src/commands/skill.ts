@@ -18,20 +18,22 @@ const SKILLS_DIR = join(homedir(), '.evotai', 'skills')
 // ---------------------------------------------------------------------------
 
 export function skillList(): string {
-  if (!existsSync(SKILLS_DIR)) return '  No skills installed.'
+  if (!existsSync(SKILLS_DIR)) return '  no skills installed'
 
   const entries = readdirSync(SKILLS_DIR).filter((name) => {
     const skillMd = join(SKILLS_DIR, name, 'SKILL.md')
     return existsSync(skillMd)
   })
 
-  if (entries.length === 0) return '  No skills installed.'
+  if (entries.length === 0) return '  no skills installed'
 
   const lines = entries.map((name) => {
     const desc = extractDescription(join(SKILLS_DIR, name, 'SKILL.md'))
-    return `  ${name.padEnd(24)} ${desc}`
+    return desc && desc !== '(no description)'
+      ? `  ${name}  — ${desc}`
+      : `  ${name}`
   })
-  return `Installed skills:\n${lines.join('\n')}`
+  return lines.join('\n')
 }
 
 // ---------------------------------------------------------------------------
@@ -71,10 +73,13 @@ export function isValidSkillName(name: string): boolean {
   return /^[a-zA-Z0-9._-]+$/.test(name) && name.length <= 64
 }
 
+export type ProgressFn = (msg: string, level: 'info' | 'warn' | 'error') => void
+
 export async function skillInstall(
   source: string,
   forkedAgent?: ForkedAgent,
-): Promise<string> {
+  progress?: ProgressFn,
+): Promise<string | null> {
   const parsed = parseGitHubSource(source)
   const repoName = parsed.repo.split('/')[1] ?? parsed.repo
 
@@ -123,17 +128,23 @@ export async function skillInstall(
       }
     }
 
-    let result = `Installed: ${installed.join(', ')}`
-
-    // Post-install LLM analysis
-    if (forkedAgent && installed.length > 0) {
-      for (const name of installed) {
-        const guide = await printSetupGuide(forkedAgent, name)
-        if (guide) result += `\n\n${guide}`
-      }
+    // Report installed skills
+    for (const name of installed) {
+      progress?.(`  ✓ installed skill: ${name}`, 'info')
     }
 
-    return result
+    // Post-install LLM analysis (single skill only)
+    if (forkedAgent && installed.length === 1) {
+      progress?.('  analyzing skill...', 'info')
+      const guide = await printSetupGuide(forkedAgent, installed[0]!)
+      if (guide) {
+        progress?.(guide, 'info')
+      }
+    } else if (installed.length > 1) {
+      progress?.(`  installed ${installed.length} skills; use the skill tool to explore each one`, 'info')
+    }
+
+    return null
   } finally {
     rmSync(tempDir, { recursive: true, force: true })
   }
@@ -162,14 +173,14 @@ function installSkillDir(srcDir: string, name: string): void {
 
 export function skillRemove(name: string): string {
   if (!isValidSkillName(name)) {
-    return `Invalid skill name: ${name}`
+    return `  invalid skill name: ${name}`
   }
   const skillDir = join(SKILLS_DIR, name)
   if (!existsSync(skillDir)) {
-    return `Skill not found: ${name}`
+    return `  skill not found: ${name}`
   }
   rmSync(skillDir, { recursive: true, force: true })
-  return `Removed skill: ${name}`
+  return `  ✓ removed skill: ${name}`
 }
 
 // ---------------------------------------------------------------------------

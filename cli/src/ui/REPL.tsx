@@ -567,13 +567,15 @@ async function handleSlashCommand(input: string, ctx: CommandContext) {
           pushSystem(setSystem, 'error', 'Usage: /skill install <owner/repo>')
           break
         }
-        pushSystem(setSystem, 'info', `Installing skill from ${source}...`)
+        pushSystem(setSystem, 'info', `  cloning ${source}`)
         try {
           const forked = agent.fork('You analyze skills and provide setup guides.')
-          const result = await skillInstall(source, forked)
-          pushSystem(setSystem, 'info', result)
+          const result = await skillInstall(source, forked, (msg, level) => {
+            pushSystem(setSystem, level, msg)
+          })
+          if (result) pushSystem(setSystem, 'info', result)
         } catch (err: any) {
-          pushSystem(setSystem, 'error', `Install failed: ${err?.message ?? err}`)
+          pushSystem(setSystem, 'error', `  install failed: ${err?.message ?? err}`)
         }
       } else if (sub.startsWith('remove ')) {
         const name = sub.slice(7).trim()
