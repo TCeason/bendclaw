@@ -704,8 +704,11 @@ async function runQuery(
     // Start screen log for this session
     try {
       screenLog = new ScreenLog(stream.sessionId)
-      screenLog.writeLines(buildUserMessage(text))
     } catch { /* ignore log failures */ }
+
+    // Show user message on screen and log it
+    const userLines = buildUserMessage(text)
+    appendLines(userLines)
 
     for await (const event of stream) {
       if (gen !== streamGenRef.current) break  // stale — stop processing
