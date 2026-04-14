@@ -68,7 +68,7 @@ export function buildToolCall(
   lines.push({
     id: genId('tool'),
     kind: 'tool',
-    text: `[${name}] call`,
+    text: `[${name.toUpperCase()}] call`,
   })
   // Detail: preview command takes priority, otherwise show args
   if (previewCommand) {
@@ -91,7 +91,8 @@ export function buildToolResult(
   const lines: OutputLine[] = []
 
   const dur = durationMs !== undefined ? ` · ${durationMs}ms` : ''
-  const label = status === 'error' ? `[${name}] failed${dur}` : `[${name}] completed${dur}`
+  const badge = name.toUpperCase()
+  const label = status === 'error' ? `[${badge}] failed${dur}` : `[${badge}] completed${dur}`
   lines.push({
     id: genId('tool'),
     kind: 'tool',
