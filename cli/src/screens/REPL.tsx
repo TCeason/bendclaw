@@ -277,7 +277,7 @@ export function REPL({ agent, initialVerbose = false, initialResume }: REPLProps
       {/* Model selector for /model */}
       {showModelSelector && (
         <ModelSelector
-          models={agent.availableModels()}
+          models={cachedConfigInfo?.availableModels ?? [state.model]}
           currentModel={state.model}
           onSelect={(model) => {
             setShowModelSelector(false)

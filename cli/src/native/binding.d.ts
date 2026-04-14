@@ -11,7 +11,6 @@ export interface NapiAgent {
   setVariable(key: string, value: string): Promise<void>
   deleteVariable(key: string): Promise<boolean>
   configInfo(): string
-  availableModels(): string[]
   setProvider(provider: string): void
 }
 
