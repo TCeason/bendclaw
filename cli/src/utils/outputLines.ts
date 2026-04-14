@@ -10,7 +10,7 @@
 
 import { renderMarkdown } from './markdown.js'
 import { colorizeUnifiedDiff } from './diff.js'
-import { truncate, truncateResult } from './format.js'
+import { truncate, truncateResult, humanTokens, formatDuration, renderBar } from './format.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -58,6 +58,21 @@ export function buildAssistantLines(markdownText: string, withPrefix = false): O
     kind: 'assistant' as const,
     text: (i === 0 && withPrefix) ? `⏺ ${line}` : line,
   }))
+}
+
+export function buildToolCall(
+  name: string,
+  args: Record<string, unknown>,
+  previewCommand?: string,
+): OutputLine[] {
+  const lines: OutputLine[] = []
+  const detail = previewCommand || formatToolDetail(args)
+  lines.push({
+    id: genId('tool'),
+    kind: 'tool',
+    text: `⚙ ${name}${detail ? ` ${detail}` : ''}`,
+  })
+  return lines
 }
 
 export function buildToolResult(
@@ -112,21 +127,101 @@ export function buildVerboseEvent(eventText: string): OutputLine[] {
   return lines
 }
 
-export function buildRunSummary(stats: {
-  durationMs: number
-  turnCount: number
-  toolCallCount: number
-  inputTokens: number
-  outputTokens: number
-}): OutputLine[] {
-  const dur = stats.durationMs < 1000
-    ? `${stats.durationMs}ms`
-    : `${(stats.durationMs / 1000).toFixed(1)}s`
-  return [{
-    id: genId('summary'),
-    kind: 'run_summary',
-    text: `${dur} · ${stats.turnCount} turns · ${stats.toolCallCount} tools · ${stats.inputTokens + stats.outputTokens} tokens`,
-  }]
+export function buildRunSummary(stats: import('../state/AppState.js').RunStats): OutputLine[] {
+  const lines: OutputLine[] = []
+  const dur = formatDuration(stats.durationMs)
+  const totalTokens = stats.inputTokens + stats.outputTokens
+
+  // Header
+  lines.push({ id: genId('summary'), kind: 'run_summary', text: '─── Run Summary ──────────────────────────────────' })
+  lines.push({
+    id: genId('summary'), kind: 'run_summary',
+    text: `${dur} · ${stats.turnCount} turns · ${stats.llmCalls} llm calls · ${stats.toolCallCount} tool calls · ${totalTokens} tokens`,
+  })
+
+  // Context budget bar
+  if (stats.contextWindow > 0 && stats.contextTokens > 0) {
+    const budget = stats.contextWindow
+    const bar = renderBar(stats.contextTokens, budget, 20)
+    const pct = ((stats.contextTokens / budget) * 100).toFixed(0)
+    lines.push({
+      id: genId('summary'), kind: 'run_summary',
+      text: `  context   ${bar}  ${pct}%(${humanTokens(stats.contextTokens)}) of budget(${humanTokens(budget)})`,
+    })
+  }
+
+  // Tokens
+  const tokLine = `  tokens    ${humanTokens(stats.inputTokens)} input · ${stats.outputTokens} output`
+  lines.push({ id: genId('summary'), kind: 'run_summary', text: tokLine })
+
+  if (stats.cacheReadTokens > 0 || stats.cacheWriteTokens > 0) {
+    const cacheHitRate = stats.inputTokens > 0
+      ? (stats.cacheReadTokens / stats.inputTokens * 100).toFixed(0)
+      : '0'
+    lines.push({
+      id: genId('summary'), kind: 'run_summary',
+      text: `            cache read ${humanTokens(stats.cacheReadTokens)} · write ${humanTokens(stats.cacheWriteTokens)} · hit ${cacheHitRate}%`,
+    })
+  }
+
+  // Tool breakdown
+  if (stats.toolBreakdown.length > 0) {
+    lines.push({ id: genId('summary'), kind: 'run_summary', text: '' })
+    lines.push({ id: genId('summary'), kind: 'run_summary', text: '  tools' })
+    for (const tb of stats.toolBreakdown) {
+      const errStr = tb.errors > 0 ? ` · ${tb.errors} errors` : ''
+      lines.push({
+        id: genId('summary'), kind: 'run_summary',
+        text: `            ${tb.name.padEnd(20)} ${tb.count} calls · ${formatDuration(tb.totalDurationMs)}${errStr}`,
+      })
+    }
+  }
+
+  // LLM call details
+  if (stats.llmCallDetails.length > 0) {
+    lines.push({ id: genId('summary'), kind: 'run_summary', text: '' })
+    const totalLlmMs = stats.llmCallDetails.reduce((s, c) => s + c.durationMs, 0)
+    const llmPct = stats.durationMs > 0 ? (totalLlmMs / stats.durationMs * 100).toFixed(0) : '0'
+    const avgTps = stats.llmCallDetails.length > 0
+      ? (stats.llmCallDetails.reduce((s, c) => s + c.tokPerSec, 0) / stats.llmCallDetails.length).toFixed(1)
+      : '0'
+    lines.push({
+      id: genId('summary'), kind: 'run_summary',
+      text: `  llm       ${stats.llmCallDetails.length} calls · ${formatDuration(totalLlmMs)} (${llmPct}% of run) · ${avgTps} tok/s avg`,
+    })
+
+    const avgTtft = stats.llmCallDetails.reduce((s, c) => s + c.ttftMs, 0) / stats.llmCallDetails.length
+    lines.push({
+      id: genId('summary'), kind: 'run_summary',
+      text: `            ttft avg ${formatDuration(Math.round(avgTtft))}`,
+    })
+
+    // Top 3 by duration
+    const sorted = [...stats.llmCallDetails].sort((a, b) => b.durationMs - a.durationMs)
+    const show = Math.min(sorted.length, 3)
+    const maxDur = sorted[0]?.durationMs ?? 1
+    for (let i = 0; i < show; i++) {
+      const c = sorted[i]!
+      const bar = renderBar(c.durationMs, maxDur, 20)
+      const pct = totalLlmMs > 0 ? (c.durationMs / totalLlmMs * 100).toFixed(0) : '0'
+      lines.push({
+        id: genId('summary'), kind: 'run_summary',
+        text: `            #${i + 1}  ${formatDuration(c.durationMs).padEnd(6)} ${bar} ${pct}%`,
+      })
+    }
+    if (sorted.length > 3) {
+      const restMs = sorted.slice(3).reduce((s, c) => s + c.durationMs, 0)
+      lines.push({
+        id: genId('summary'), kind: 'run_summary',
+        text: `            ... ${sorted.length - 3} more calls · ${formatDuration(restMs)} total`,
+      })
+    }
+  }
+
+  // Footer
+  lines.push({ id: genId('summary'), kind: 'run_summary', text: '──────────────────────────────────────────────────' })
+
+  return lines
 }
 
 export function buildError(message: string): OutputLine[] {

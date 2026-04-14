@@ -93,19 +93,57 @@ describe('buildVerboseEvent', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildRunSummary', () => {
-  test('formats stats', () => {
+  test('formats stats with header and footer', () => {
     const lines = buildRunSummary({
       durationMs: 2500,
       turnCount: 3,
       toolCallCount: 5,
+      toolErrorCount: 0,
       inputTokens: 1000,
       outputTokens: 200,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      llmCalls: 2,
+      contextTokens: 0,
+      contextWindow: 0,
+      toolBreakdown: [],
+      llmCallDetails: [],
     })
-    expect(lines).toHaveLength(1)
-    expect(lines[0]!.text).toContain('2.5s')
-    expect(lines[0]!.text).toContain('3 turns')
-    expect(lines[0]!.text).toContain('5 tools')
-    expect(lines[0]!.text).toContain('1200 tokens')
+    expect(lines.length).toBeGreaterThan(1)
+    // Header line
+    expect(lines[0]!.text).toContain('Run Summary')
+    // Stats line
+    const statsLine = lines.find((l) => l.text.includes('turns'))!
+    expect(statsLine.text).toContain('2.5s')
+    expect(statsLine.text).toContain('3 turns')
+    expect(statsLine.text).toContain('5 tool calls')
+    expect(statsLine.text).toContain('1200 tokens')
+    // Footer
+    expect(lines[lines.length - 1]!.text).toContain('───')
+  })
+
+  test('includes llm call details', () => {
+    const lines = buildRunSummary({
+      durationMs: 5000,
+      turnCount: 2,
+      toolCallCount: 3,
+      toolErrorCount: 0,
+      inputTokens: 5000,
+      outputTokens: 500,
+      cacheReadTokens: 1000,
+      cacheWriteTokens: 200,
+      llmCalls: 2,
+      contextTokens: 0,
+      contextWindow: 0,
+      toolBreakdown: [],
+      llmCallDetails: [
+        { model: 'test', durationMs: 2000, inputTokens: 3000, outputTokens: 300, ttfbMs: 100, ttftMs: 200, tokPerSec: 150 },
+        { model: 'test', durationMs: 1500, inputTokens: 2000, outputTokens: 200, ttfbMs: 80, ttftMs: 150, tokPerSec: 133 },
+      ],
+    })
+    expect(lines.some((l) => l.text.includes('llm'))).toBe(true)
+    expect(lines.some((l) => l.text.includes('tok/s'))).toBe(true)
+    expect(lines.some((l) => l.text.includes('cache'))).toBe(true)
   })
 })
 

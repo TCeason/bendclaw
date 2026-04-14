@@ -671,6 +671,7 @@ async function runQuery(
   const gen = ++streamGenRef.current  // claim a new generation
   let streamingText = ''  // accumulates all assistant text for current turn
   let prefixEmitted = false
+  let localState = stateRef.current  // local copy, updated synchronously
 
   // Helper: append OutputLines to Static and write them to the screen log
   let screenLog: ScreenLog | null = null
@@ -715,12 +716,12 @@ async function runQuery(
 
       // Emit verbose events BEFORE processing — so [LLM] badges appear
       // before the content they describe (matching the old MessageHistory order).
-      if (stateRef.current.verbose) {
+      if (localState.verbose) {
         // llm_call_started → commit pending text, then show badge
         if (event.kind === 'llm_call_started' || event.kind === 'context_compaction_started') {
           commitStreamingText()
-          const nextState = applyEvent(stateRef.current, event)
-          const newEvents = nextState.verboseEvents.slice(stateRef.current.verboseEvents.length)
+          const nextState = applyEvent(localState, event)
+          const newEvents = nextState.verboseEvents.slice(localState.verboseEvents.length)
           for (const evt of newEvents) {
             appendLines(buildVerboseEvent(evt.text))
           }
@@ -767,11 +768,11 @@ async function runQuery(
 
       // Emit verbose events AFTER content — llm_call_completed and
       // context_compaction_completed appear after the assistant message.
-      if (stateRef.current.verbose) {
+      if (localState.verbose) {
         if (event.kind === 'llm_call_completed' || event.kind === 'context_compaction_completed') {
           commitStreamingText()
-          const nextState = applyEvent(stateRef.current, event)
-          const newEvents = nextState.verboseEvents.slice(stateRef.current.verboseEvents.length)
+          const nextState = applyEvent(localState, event)
+          const newEvents = nextState.verboseEvents.slice(localState.verboseEvents.length)
           for (const evt of newEvents) {
             appendLines(buildVerboseEvent(evt.text))
           }
@@ -792,20 +793,14 @@ async function runQuery(
       }
 
       // Emit run summary on finish
-      if (event.kind === 'run_finished' && stateRef.current.verbose) {
+      if (event.kind === 'run_finished' && localState.verbose) {
         commitStreamingText()
-        const nextState = applyEvent(stateRef.current, event)
-        const stats = nextState.currentRunStats
-        appendLines(buildRunSummary({
-          durationMs: stats.durationMs,
-          turnCount: stats.turnCount,
-          toolCallCount: stats.toolCallCount,
-          inputTokens: stats.inputTokens,
-          outputTokens: stats.outputTokens,
-        }))
+        const nextState = applyEvent(localState, event)
+        appendLines(buildRunSummary(nextState.currentRunStats))
       }
 
-      setState((prev) => applyEvent(prev, event))
+      localState = applyEvent(localState, event)
+      setState(() => localState)
     }
 
     // Flush any remaining content
