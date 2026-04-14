@@ -77,29 +77,30 @@ function OutputLineView({ line }: { line: OutputLine }) {
 }
 
 function ToolLineView({ text }: { text: string }) {
-  if (text.startsWith('⚙')) {
-    const rest = text.slice(text.indexOf(' ') + 1)
+  // Badge line: [tool_name] call / [tool_name] completed / [tool_name] failed
+  const badgeMatch = text.match(/^\[([^\]]+)\]\s*(.*)$/)
+  if (badgeMatch) {
+    const badge = badgeMatch[1]!
+    const rest = badgeMatch[2] ?? ''
+    const isCompleted = rest.startsWith('completed')
+    const isFailed = rest.startsWith('failed')
+    const isCall = rest.startsWith('call')
+    let color: string = 'yellow'
+    if (isCompleted) color = 'green'
+    if (isFailed) color = 'red'
+    if (isCall) color = 'yellow'
     return (
       <Box marginTop={1}>
-        <Text dimColor>⚙ {rest}</Text>
+        <Text color={color} bold>[{badge}]</Text>
+        {rest ? <Text dimColor> {rest}</Text> : null}
       </Box>
     )
   }
-  if (text.startsWith('✓')) {
-    const rest = text.slice(text.indexOf(' ') + 1)
+  // Detail line (preview command, args, diff)
+  if (text.startsWith('  ')) {
     return (
       <Box>
-        <Text color="green">✓</Text>
-        <Text dimColor> {rest}</Text>
-      </Box>
-    )
-  }
-  if (text.startsWith('✗')) {
-    const rest = text.slice(text.indexOf(' ') + 1)
-    return (
-      <Box>
-        <Text color="red">✗</Text>
-        <Text dimColor> {rest}</Text>
+        <Text dimColor>{text}</Text>
       </Box>
     )
   }

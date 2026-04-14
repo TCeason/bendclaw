@@ -50,19 +50,19 @@ describe('buildAssistantLines', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildToolResult', () => {
-  test('creates tool line with name and duration', () => {
+  test('creates tool badge with name and duration', () => {
     const lines = buildToolResult('bash', { command: 'ls -la' }, 'done', undefined, 42)
     expect(lines.length).toBeGreaterThanOrEqual(1)
     expect(lines[0]!.kind).toBe('tool')
-    expect(lines[0]!.text).toContain('✓')
-    expect(lines[0]!.text).toContain('bash')
-    expect(lines[0]!.text).toContain('ls -la')
+    expect(lines[0]!.text).toContain('[bash]')
+    expect(lines[0]!.text).toContain('completed')
     expect(lines[0]!.text).toContain('42ms')
   })
 
-  test('creates error tool line', () => {
+  test('creates error tool badge', () => {
     const lines = buildToolResult('bash', { command: 'fail' }, 'error', 'command not found', 10)
-    expect(lines[0]!.text).toContain('✗')
+    expect(lines[0]!.text).toContain('[bash]')
+    expect(lines[0]!.text).toContain('failed')
     expect(lines.some((l) => l.kind === 'error')).toBe(true)
   })
 

@@ -20,8 +20,6 @@ export interface OutputLine {
   id: string
   kind: 'user' | 'assistant' | 'tool' | 'verbose' | 'error' | 'system' | 'run_summary'
   text: string
-  /** ANSI-styled text ready for display. If absent, `text` is used. */
-  styled?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -66,12 +64,21 @@ export function buildToolCall(
   previewCommand?: string,
 ): OutputLine[] {
   const lines: OutputLine[] = []
-  const detail = previewCommand || formatToolDetail(args)
+  // Badge line: [tool_name] call
   lines.push({
     id: genId('tool'),
     kind: 'tool',
-    text: `⚙ ${name}${detail ? ` ${detail}` : ''}`,
+    text: `[${name}] call`,
   })
+  // Detail: preview command or args
+  if (previewCommand) {
+    lines.push({ id: genId('tool'), kind: 'tool', text: `  ❯ ${previewCommand}` })
+  } else {
+    const detail = formatToolDetail(args)
+    if (detail) {
+      lines.push({ id: genId('tool'), kind: 'tool', text: `  ${detail}` })
+    }
+  }
   return lines
 }
 
@@ -84,14 +91,12 @@ export function buildToolResult(
 ): OutputLine[] {
   const lines: OutputLine[] = []
 
-  const icon = status === 'error' ? '✗' : '✓'
-  const detail = formatToolDetail(args)
-  const dur = durationMs !== undefined ? ` (${durationMs}ms)` : ''
+  const dur = durationMs !== undefined ? ` · ${durationMs}ms` : ''
+  const label = status === 'error' ? `[${name}] failed${dur}` : `[${name}] completed${dur}`
   lines.push({
     id: genId('tool'),
     kind: 'tool',
-    text: `${icon} ${name}${detail ? ` ${detail}` : ''}${dur}`,
-    styled: undefined, // styled in the React component
+    text: label,
   })
 
   // Diff
