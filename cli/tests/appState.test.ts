@@ -3,7 +3,7 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { createInitialState, applyEvent } from '../src/state/AppState.js'
+import { createInitialState, applyEvent, countMessagesByRole } from '../src/state/AppState.js'
 import type { RunEvent } from '../src/native/index.js'
 
 function makeEvent(kind: string, turn: number, payload: Record<string, any>): RunEvent {
@@ -20,6 +20,13 @@ describe('applyEvent llm_call_started', () => {
     const next = applyEvent(state, makeEvent('llm_call_started', 1, {
       model: 'claude-opus-4-6',
       message_count: 5,
+      messages: [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi there' },
+        { role: 'user', content: 'do something' },
+        { role: 'tool_result', toolName: 'bash', content: 'output' },
+        { role: 'assistant', content: 'done' },
+      ],
       tools: [{}, {}, {}],
       system_prompt_tokens: 1200,
       attempt: 0,
@@ -31,6 +38,10 @@ describe('applyEvent llm_call_started', () => {
     expect(evt.text).toContain('turn 1')
     expect(evt.text).toContain('5 messages')
     expect(evt.text).toContain('3 tools')
+    expect(evt.text).toContain('user 2')
+    expect(evt.text).toContain('assistant 2')
+    expect(evt.text).toContain('tool_result 1')
+    expect(evt.text).toContain('est tokens')
     expect(evt.text).not.toContain('retry')
   })
 
@@ -45,6 +56,30 @@ describe('applyEvent llm_call_started', () => {
     }))
     const evt = next.verboseEvents[next.verboseEvents.length - 1]!
     expect(evt.text).toContain('retry 2')
+  })
+
+  test('shows per-tool breakdown when >= 2 tool types', () => {
+    const state = createInitialState('test-model', '/tmp')
+    const next = applyEvent(state, makeEvent('llm_call_started', 1, {
+      model: 'test-model',
+      message_count: 6,
+      messages: [
+        { role: 'user', content: 'do stuff' },
+        { role: 'tool_result', toolName: 'bash', content: 'x'.repeat(400) },
+        { role: 'tool_result', toolName: 'read', content: 'y'.repeat(800) },
+        { role: 'tool_result', toolName: 'bash', content: 'z'.repeat(200) },
+        { role: 'assistant', content: 'ok' },
+        { role: 'user', content: 'more' },
+      ],
+      tools: [{}, {}],
+      system_prompt_tokens: 1000,
+      attempt: 0,
+    }))
+    const evt = next.verboseEvents[next.verboseEvents.length - 1]!
+    expect(evt.text).toContain('tool results:')
+    expect(evt.text).toContain('bash')
+    expect(evt.text).toContain('read')
+    expect(evt.text).toContain('%')
   })
 })
 
@@ -205,5 +240,51 @@ describe('applyEvent run_finished', () => {
     }))
     expect(next.currentRunStats.durationMs).toBe(5000)
     expect(next.isLoading).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// countMessagesByRole
+// ---------------------------------------------------------------------------
+
+describe('countMessagesByRole', () => {
+  test('counts messages by role', () => {
+    const stats = countMessagesByRole([
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'hi' },
+      { role: 'user', content: 'do something' },
+    ])
+    expect(stats.userCount).toBe(2)
+    expect(stats.assistantCount).toBe(1)
+    expect(stats.toolResultCount).toBe(0)
+    expect(stats.userTokens).toBeGreaterThan(0)
+    expect(stats.assistantTokens).toBeGreaterThan(0)
+  })
+
+  test('counts tool results and extracts tool names', () => {
+    const stats = countMessagesByRole([
+      { role: 'tool_result', toolName: 'bash', content: 'output' },
+      { role: 'tool_result', toolName: 'read', content: 'file content here' },
+      { role: 'tool_result', toolName: 'bash', content: 'more output' },
+    ])
+    expect(stats.toolResultCount).toBe(3)
+    expect(stats.toolDetails).toHaveLength(3)
+    // Sorted by tokens desc
+    expect(stats.toolDetails[0]![0]).toBe('read') // longest content
+  })
+
+  test('handles empty messages', () => {
+    const stats = countMessagesByRole([])
+    expect(stats.userCount).toBe(0)
+    expect(stats.assistantCount).toBe(0)
+    expect(stats.toolResultCount).toBe(0)
+    expect(stats.toolDetails).toHaveLength(0)
+  })
+
+  test('unknown roles count as user', () => {
+    const stats = countMessagesByRole([
+      { role: 'system', content: 'you are helpful' },
+    ])
+    expect(stats.userCount).toBe(1)
   })
 })

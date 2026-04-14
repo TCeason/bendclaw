@@ -79,6 +79,58 @@ export interface CompactRecord {
   afterTokens: number
 }
 
+// ---------------------------------------------------------------------------
+// Message stats — token breakdown by role (estimated from JSON size)
+// ---------------------------------------------------------------------------
+
+export interface MessageStats {
+  userCount: number
+  assistantCount: number
+  toolResultCount: number
+  userTokens: number
+  assistantTokens: number
+  toolResultTokens: number
+  /** Per-tool token breakdown: [name, tokens], sorted by tokens desc */
+  toolDetails: [string, number][]
+}
+
+export function countMessagesByRole(messages: any[]): MessageStats {
+  const stats: MessageStats = {
+    userCount: 0, assistantCount: 0, toolResultCount: 0,
+    userTokens: 0, assistantTokens: 0, toolResultTokens: 0,
+    toolDetails: [],
+  }
+  for (const msg of messages) {
+    const role = (msg?.role as string) ?? 'unknown'
+    const est = Math.round(JSON.stringify(msg).length / 4)
+    switch (role) {
+      case 'user':
+        stats.userCount++
+        stats.userTokens += est
+        break
+      case 'assistant':
+        stats.assistantCount++
+        stats.assistantTokens += est
+        break
+      case 'toolResult':
+      case 'tool_result':
+      case 'tool': {
+        stats.toolResultCount++
+        stats.toolResultTokens += est
+        const name = (msg?.toolName ?? msg?.tool_name ?? msg?.name ?? 'unknown') as string
+        stats.toolDetails.push([name, est])
+        break
+      }
+      default:
+        stats.userCount++
+        stats.userTokens += est
+        break
+    }
+  }
+  stats.toolDetails.sort((a, b) => b[1] - a[1])
+  return stats
+}
+
 function emptyRunStats(): RunStats {
   return {
     durationMs: 0,
@@ -332,8 +384,54 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const tools = p.tools as any[] | undefined
       const toolCount = tools?.length ?? 0
       const sysTok = (p.system_prompt_tokens as number) ?? 0
+      const messages = p.messages as any[] | undefined
       const retryStr = attempt > 0 ? ` · retry ${attempt}` : ''
-      const text = `[LLM] call · ${model} · turn ${turn}${retryStr}\n  ${msgCount} messages · ${toolCount} tools\n  ~${humanTokensInline(sysTok)} sys tokens`
+
+      // Message stats breakdown
+      const msgStats = messages ? countMessagesByRole(messages) : null
+      let msgLine = `  ${msgCount} messages`
+      if (msgStats) {
+        const parts: string[] = []
+        if (msgStats.userCount > 0) parts.push(`user ${msgStats.userCount}`)
+        if (msgStats.assistantCount > 0) parts.push(`assistant ${msgStats.assistantCount}`)
+        if (msgStats.toolResultCount > 0) parts.push(`tool_result ${msgStats.toolResultCount}`)
+        if (parts.length > 0) msgLine = `  ${msgCount} messages (${parts.join(' · ')})`
+      }
+      msgLine += ` · ${toolCount} tools`
+
+      // Token estimates by role
+      let tokLine = `  ~${humanTokensInline(sysTok)} sys tokens`
+      if (msgStats) {
+        const estTotal = sysTok + msgStats.userTokens + msgStats.assistantTokens + msgStats.toolResultTokens
+        const tokParts = [`sys ~${humanTokensInline(sysTok)}`]
+        if (msgStats.userTokens > 0) tokParts.push(`user ~${humanTokensInline(msgStats.userTokens)}`)
+        if (msgStats.assistantTokens > 0) tokParts.push(`assistant ~${humanTokensInline(msgStats.assistantTokens)}`)
+        if (msgStats.toolResultTokens > 0) tokParts.push(`tool_result ~${humanTokensInline(msgStats.toolResultTokens)}`)
+        tokLine = `  ~${humanTokensInline(estTotal)} est tokens (${tokParts.join(' · ')})`
+      }
+
+      // Per-tool breakdown (only if >= 2 tool types)
+      let toolBreakdownLines = ''
+      if (msgStats && msgStats.toolDetails.length >= 2) {
+        // Aggregate by tool name
+        const agg = new Map<string, number>()
+        for (const [name, tokens] of msgStats.toolDetails) {
+          agg.set(name, (agg.get(name) ?? 0) + tokens)
+        }
+        const sorted = [...agg.entries()].sort((a, b) => b[1] - a[1])
+        const total = msgStats.toolResultTokens || 1
+        const maxNameLen = Math.max(...sorted.map(([n]) => n.length), 4)
+        for (const [name, tokens] of sorted) {
+          const pct = (tokens / total * 100).toFixed(1)
+          const bar = renderBar(tokens, total, 20)
+          toolBreakdownLines += `\n    ${name.padEnd(maxNameLen)}  ~${humanTokensInline(tokens).padEnd(8)} (${pct.padStart(5)}%)  ${bar}`
+        }
+        if (toolBreakdownLines) {
+          toolBreakdownLines = '\n  tool results:' + toolBreakdownLines
+        }
+      }
+
+      const text = `[LLM] call · ${model} · turn ${turn}${retryStr}\n${msgLine}\n${tokLine}${toolBreakdownLines}`
       return {
         ...state,
         verboseEvents: [...state.verboseEvents, { kind: 'llm_call', text }],
