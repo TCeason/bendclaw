@@ -13,8 +13,6 @@ import { ActiveResponse } from '../components/ActiveResponse.js'
 import { HelpPane } from '../components/HelpPane.js'
 import { ModelSelector } from '../components/ModelSelector.js'
 import { SessionSelector } from '../components/SessionSelector.js'
-import { renderMarkdown } from '../utils/markdown.js'
-import { splitStableBlocks } from '../utils/streaming.js'
 import { HistoryManager } from '../utils/history.js'
 import { TranscriptLog } from '../utils/transcriptLog.js'
 import { transcriptToMessages, type TranscriptItem } from '../utils/transcript.js'
@@ -199,12 +197,6 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
   // This only grows — once a message enters <Static>, it stays forever.
   const committedRef = useRef(0)
 
-  // Frozen stream blocks — completed markdown blocks from the current streaming response.
-  // These are rendered in <Static> to avoid flicker.
-  const frozenBlocksRef = useRef<Array<{ id: string; rendered: string }>>([])
-  const frozenIdRef = useRef(0)
-  const streamBoundaryRef = useRef(0)
-
   // Reset watermark when messages are cleared (/clear, /new)
   if (state.messages.length === 0) {
     committedRef.current = 0
@@ -220,40 +212,6 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
     committedRef.current = target
   }
 
-  // Reset frozen blocks when a new run starts or loading finishes
-  if (!state.isLoading && frozenBlocksRef.current.length > 0) {
-    frozenBlocksRef.current = []
-    frozenIdRef.current = 0
-    streamBoundaryRef.current = 0
-  }
-  // Reset boundary when stream text is cleared (new turn)
-  if (state.currentStreamText.length === 0 && streamBoundaryRef.current > 0) {
-    streamBoundaryRef.current = 0
-  }
-
-  // Freeze completed markdown blocks from the current stream text.
-  // This runs synchronously during render so boundary and frozen blocks
-  // are always consistent — no one-frame gap.
-  if (state.currentStreamText.length > streamBoundaryRef.current) {
-    const { stableTexts, newBoundary } = splitStableBlocks(state.currentStreamText, streamBoundaryRef.current)
-    if (stableTexts.length > 0) {
-      const newBlocks: Array<{ id: string; rendered: string }> = []
-      for (const blockText of stableTexts) {
-        const rendered = renderMarkdown(blockText)
-        if (rendered.length > 0) {
-          newBlocks.push({ id: `sb-${frozenIdRef.current++}`, rendered })
-        }
-      }
-      if (newBlocks.length > 0) {
-        frozenBlocksRef.current = [...frozenBlocksRef.current, ...newBlocks]
-      }
-      streamBoundaryRef.current = newBoundary
-    }
-  }
-
-  const frozenStreamBlocks = frozenBlocksRef.current
-  const streamBoundary = streamBoundaryRef.current
-
   const staticMessages = state.messages.slice(0, committedRef.current)
   const tailMessage = committedRef.current < state.messages.length
     ? state.messages[state.messages.length - 1]
@@ -264,7 +222,6 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
       <MessageHistory
         banner={<Banner model={state.model} cwd={state.cwd} sessionId={state.sessionId} configInfo={configInfoState} />}
         messages={staticMessages}
-        frozenStreamBlocks={frozenStreamBlocks}
         verbose={state.verbose}
       />
 
@@ -273,7 +230,6 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
         tailMessage={tailMessage}
         streamText={state.currentStreamText}
         thinkingText={state.currentThinkingText}
-        streamBoundary={streamBoundary}
         activeToolCalls={state.activeToolCalls}
         outputTokens={state.currentRunStats.outputTokens}
         verbose={state.verbose}

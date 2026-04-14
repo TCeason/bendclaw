@@ -18,7 +18,6 @@ interface Props {
   tailMessage?: UIMessage
   streamText: string
   thinkingText: string
-  streamBoundary: number
   activeToolCalls: Map<string, UIToolCall>
   outputTokens: number
   verbose: boolean
@@ -26,8 +25,8 @@ interface Props {
   lastTokenAt: number
 }
 
-export const ActiveResponse = React.memo(function ActiveResponse({
-  isLoading, tailMessage, streamText, thinkingText, streamBoundary,
+export function ActiveResponse({
+  isLoading, tailMessage, streamText, thinkingText,
   activeToolCalls, outputTokens, verbose, verboseEvents, lastTokenAt,
 }: Props) {
   if (!isLoading && !tailMessage) return null
@@ -56,7 +55,7 @@ export const ActiveResponse = React.memo(function ActiveResponse({
 
       {/* Streaming text */}
       {isLoading && (hasStream || hasThinking) && (
-        <StreamingText text={streamText} thinkingText={thinkingText} streamBoundary={streamBoundary} />
+        <StreamingText text={streamText} thinkingText={thinkingText} />
       )}
 
       {/* Active tool calls */}

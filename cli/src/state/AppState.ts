@@ -425,6 +425,8 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         ...state,
         messages,
         isLoading: false,
+        currentStreamText: '',
+        currentThinkingText: '',
         activeToolCalls: new Map(),
         currentRunStats: stats,
       }
