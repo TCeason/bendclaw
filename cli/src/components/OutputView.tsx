@@ -78,26 +78,28 @@ function OutputLineView({ line }: { line: OutputLine }) {
 
 function ToolLineView({ text }: { text: string }) {
   if (text.startsWith('⚙')) {
+    const rest = text.slice(text.indexOf(' ') + 1)
     return (
       <Box marginTop={1}>
-        <Text backgroundColor="yellow" color="black" bold>{` ${text.split(' ')[0]} `}</Text>
-        <Text dimColor> {text.slice(text.indexOf(' ') + 1)}</Text>
+        <Text dimColor>⚙ {rest}</Text>
       </Box>
     )
   }
   if (text.startsWith('✓')) {
+    const rest = text.slice(text.indexOf(' ') + 1)
     return (
       <Box>
-        <Text backgroundColor="green" color="black" bold>{` ${text.split(' ')[0]} `}</Text>
-        <Text dimColor> {text.slice(text.indexOf(' ') + 1)}</Text>
+        <Text color="green">✓</Text>
+        <Text dimColor> {rest}</Text>
       </Box>
     )
   }
   if (text.startsWith('✗')) {
+    const rest = text.slice(text.indexOf(' ') + 1)
     return (
       <Box>
-        <Text backgroundColor="red" color="white" bold>{` ${text.split(' ')[0]} `}</Text>
-        <Text dimColor> {text.slice(text.indexOf(' ') + 1)}</Text>
+        <Text color="red">✗</Text>
+        <Text dimColor> {rest}</Text>
       </Box>
     )
   }
