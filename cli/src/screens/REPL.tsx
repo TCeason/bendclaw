@@ -42,6 +42,8 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
   const streamRef = useRef<QueryStream | null>(null)
   const sessionIdRef = useRef<string | null>(null)
   const isLoadingRef = useRef(false)
+  const stateRef = useRef(state)
+  stateRef.current = state
   const streamGenRef = useRef(0)  // generation counter to reject stale stream events
   const [historyManager] = useState(() => new HistoryManager())
   const [configInfoState, setConfigInfoState] = useState(() => {
@@ -152,7 +154,7 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
       setSystemMessages([])
 
       if (isSlashCommand(text)) {
-        handleSlashCommand(text, { agent, state, setState, setSystem: setSystemMessages, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, configInfo: configInfoState, abortCurrentStream, exit })
+        handleSlashCommand(text, { agent, state: stateRef.current, setState, setSystem: setSystemMessages, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, configInfo: configInfoState, abortCurrentStream, exit })
         return
       }
 
@@ -163,7 +165,7 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
 
       dispatchQuery(text)
     },
-    [agent, state, exit, planning, dispatchQuery]
+    [agent, exit, configInfoState, dispatchQuery, abortCurrentStream]
   )
 
   // Auto-drain queue when response finishes (skip if last run errored)

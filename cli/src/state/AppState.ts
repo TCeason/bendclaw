@@ -128,7 +128,7 @@ export function createInitialState(model: string, cwd: string): AppState {
     model,
     cwd,
     error: null,
-    verbose: false,
+    verbose: true,
     currentStreamText: '',
     currentThinkingText: '',
     activeToolCalls: new Map(),

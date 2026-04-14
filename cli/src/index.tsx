@@ -32,7 +32,7 @@ function parseArgs(argv: string[]): CliOptions {
   const opts: CliOptions = {
     command: 'repl',
     outputFormat: 'text',
-    verbose: false,
+    verbose: true,
     maxTurns: 512,
     maxTokens: 100_000_000,
     maxDuration: 3600,

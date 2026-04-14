@@ -26,7 +26,7 @@ interface Props {
   lastTokenAt: number
 }
 
-export function ActiveResponse({
+export const ActiveResponse = React.memo(function ActiveResponse({
   isLoading, tailMessage, streamText, thinkingText, streamBoundary,
   activeToolCalls, outputTokens, verbose, verboseEvents, lastTokenAt,
 }: Props) {
@@ -37,7 +37,7 @@ export function ActiveResponse({
   const hasTools = activeToolCalls.size > 0
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" minHeight={isLoading ? 1 : 0}>
       {/* Tail message — tool status may still be updating */}
       {tailMessage && (
         <React.Fragment>

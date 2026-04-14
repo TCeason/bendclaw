@@ -28,7 +28,7 @@ interface PromptInputProps {
   onToggleVerbose: () => void
 }
 
-export function PromptInput({
+export const PromptInput = React.memo(function PromptInput({
   model,
   isLoading,
   isActive,
@@ -451,7 +451,7 @@ export function PromptInput({
       />
     </Box>
   )
-}
+})
 
 // ---------------------------------------------------------------------------
 // CursorLine — renders a line with an inverse cursor at the right position

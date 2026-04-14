@@ -47,21 +47,30 @@ interface SpinnerProps {
   lastTokenAt?: number
 }
 
+interface SpinnerTick {
+  frame: number
+  elapsed: number
+  glimmerPos: number
+  stalled: boolean
+}
+
 export function Spinner({ toolName, progressText, tokenCount = 0, lastTokenAt }: SpinnerProps) {
-  const [frame, setFrame] = useState(0)
+  const [tick, setTick] = useState<SpinnerTick>({ frame: 0, elapsed: 0, glimmerPos: -2, stalled: false })
   const verbRef = useRef(pickVerb())
   const startRef = useRef(Date.now())
-  const [elapsed, setElapsed] = useState(0)
-  const [glimmerPos, setGlimmerPos] = useState(-2)
+  const lastTokenAtRef = useRef(lastTokenAt)
+  lastTokenAtRef.current = lastTokenAt
 
   useEffect(() => {
     const timer = setInterval(() => {
-      setFrame((prev) => (prev + 1) % SPINNER_FRAMES.length)
-      setElapsed(Date.now() - startRef.current)
-      setGlimmerPos((prev) => {
-        const next = prev + 1
-        return next > 30 ? -2 : next  // reset glimmer sweep
-      })
+      const now = Date.now()
+      const lta = lastTokenAtRef.current
+      setTick((prev) => ({
+        frame: (prev.frame + 1) % SPINNER_FRAMES.length,
+        elapsed: now - startRef.current,
+        glimmerPos: prev.glimmerPos + 1 > 30 ? -2 : prev.glimmerPos + 1,
+        stalled: lta != null && (now - lta) > STALLED_THRESHOLD_MS,
+      }))
     }, SPINNER_INTERVAL)
     return () => clearInterval(timer)
   }, [])
@@ -83,7 +92,7 @@ export function Spinner({ toolName, progressText, tokenCount = 0, lastTokenAt }:
     }
   }, [])
 
-  const stalled = lastTokenAt != null && (Date.now() - lastTokenAt) > STALLED_THRESHOLD_MS
+  const { frame, elapsed, glimmerPos, stalled } = tick
   const showTokens = elapsed > SHOW_TOKENS_AFTER_MS && tokenCount > 0
 
   // Build label

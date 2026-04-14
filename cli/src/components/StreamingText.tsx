@@ -17,7 +17,7 @@ interface StreamingTextProps {
   streamBoundary: number
 }
 
-export function StreamingText({ text, thinkingText, streamBoundary }: StreamingTextProps) {
+export const StreamingText = React.memo(function StreamingText({ text, thinkingText, streamBoundary }: StreamingTextProps) {
   if (text.length === 0 && thinkingText.length === 0) {
     return null
   }
@@ -51,4 +51,4 @@ export function StreamingText({ text, thinkingText, streamBoundary }: StreamingT
       )}
     </Box>
   )
-}
+})
