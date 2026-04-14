@@ -1,8 +1,7 @@
-pub mod channel;
-pub mod feishu;
-pub mod http;
+pub mod channels;
+pub mod delivery;
 pub mod registry;
 pub mod service;
+pub mod types;
 
-pub use channel::Channel;
-pub use registry::spawn_all;
+pub use types::Channel;

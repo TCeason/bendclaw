@@ -1,9 +1,14 @@
+use async_trait::async_trait;
+
 use super::config::FEISHU_API;
+use super::config::FEISHU_MAX_MESSAGE_LEN;
 use super::token::get_token;
 use super::token::is_token_error;
 use super::token::TokenCache;
 use crate::error::EvotError;
 use crate::error::Result;
+use crate::gateway::delivery::DeliveryCapabilities;
+use crate::gateway::delivery::MessageSink;
 
 /// Send a text message to a Feishu chat, with automatic token retry.
 pub async fn send_text(
@@ -127,4 +132,117 @@ fn extract_message_id(json: &serde_json::Value) -> String {
         .as_str()
         .unwrap_or_default()
         .to_string()
+}
+
+// ── Edit message ──
+
+async fn edit_text(
+    client: &reqwest::Client,
+    token_cache: &TokenCache,
+    app_id: &str,
+    app_secret: &str,
+    message_id: &str,
+    text: &str,
+) -> Result<()> {
+    let url = format!("{FEISHU_API}/im/v1/messages/{message_id}");
+    let content = serde_json::json!({ "text": text }).to_string();
+    let body = serde_json::json!({
+        "msg_type": "text",
+        "content": content,
+    });
+
+    let token = get_token(client, app_id, app_secret, token_cache).await?;
+    let resp = client
+        .put(&url)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| EvotError::Run(format!("feishu edit: {e}")))?;
+
+    let status = resp.status().as_u16();
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| EvotError::Run(format!("feishu edit response: {e}")))?;
+
+    if is_token_error(status, &json) {
+        token_cache.invalidate().await;
+        let token2 = get_token(client, app_id, app_secret, token_cache).await?;
+        let resp2 = client
+            .put(&url)
+            .bearer_auth(&token2)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| EvotError::Run(format!("feishu edit retry: {e}")))?;
+        let json2: serde_json::Value = resp2
+            .json()
+            .await
+            .map_err(|e| EvotError::Run(format!("feishu edit retry response: {e}")))?;
+        check_api_error(&json2)?;
+        return Ok(());
+    }
+
+    check_api_error(&json)?;
+    Ok(())
+}
+
+// ── MessageSink ──
+
+pub struct FeishuMessageSink {
+    client: reqwest::Client,
+    token_cache: TokenCache,
+    app_id: String,
+    app_secret: String,
+}
+
+impl FeishuMessageSink {
+    pub fn new(
+        client: reqwest::Client,
+        token_cache: TokenCache,
+        app_id: String,
+        app_secret: String,
+    ) -> Self {
+        Self {
+            client,
+            token_cache,
+            app_id,
+            app_secret,
+        }
+    }
+}
+
+#[async_trait]
+impl MessageSink for FeishuMessageSink {
+    fn capabilities(&self) -> DeliveryCapabilities {
+        DeliveryCapabilities {
+            can_edit: true,
+            max_message_len: FEISHU_MAX_MESSAGE_LEN,
+        }
+    }
+
+    async fn send_text(&self, chat_id: &str, text: &str) -> Result<String> {
+        send_text(
+            &self.client,
+            &self.token_cache,
+            &self.app_id,
+            &self.app_secret,
+            chat_id,
+            text,
+        )
+        .await
+    }
+
+    async fn edit_text(&self, _chat_id: &str, message_id: &str, text: &str) -> Result<()> {
+        edit_text(
+            &self.client,
+            &self.token_cache,
+            &self.app_id,
+            &self.app_secret,
+            message_id,
+            text,
+        )
+        .await
+    }
 }

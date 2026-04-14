@@ -11,7 +11,7 @@ use crate::conf::ProviderKind;
 use crate::conf::StorageBackend;
 use crate::error::EvotError;
 use crate::error::Result;
-use crate::gateway::feishu::FeishuChannelConfig;
+use crate::gateway::channels::feishu::FeishuChannelConfig;
 
 const RELEVANT_KEYS: &[&str] = &[
     "EVOT_LLM_PROVIDER",

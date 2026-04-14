@@ -1,7 +1,7 @@
 pub mod adapter;
 pub mod config;
+pub mod delivery;
 pub mod message;
-pub mod outbound;
 pub mod token;
 pub mod ws;
 

@@ -7,7 +7,7 @@ use serde::Serialize;
 use crate::conf::paths;
 use crate::error::EvotError;
 use crate::error::Result;
-use crate::gateway::feishu::FeishuChannelConfig;
+use crate::gateway::channels::feishu::FeishuChannelConfig;
 
 #[derive(Debug, Clone)]
 pub struct Config {

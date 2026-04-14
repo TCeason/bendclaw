@@ -13,12 +13,12 @@ pub async fn start(conf: Config) -> Result<()> {
     let cancel = CancellationToken::new();
 
     // Long-lived channels (feishu, telegram, ...)
-    let channel_handles = super::spawn_all(&conf.channels, agent.clone(), cancel.clone());
+    let channel_handles = super::registry::spawn_all(&conf.channels, agent.clone(), cancel.clone());
 
     print_banner(&conf, &channel_handles);
 
     // HTTP channel (blocking)
-    super::http::Server::new(agent)
+    super::channels::http::Server::new(agent)
         .start(conf.server.host.clone(), conf.server.port)
         .await?;
 

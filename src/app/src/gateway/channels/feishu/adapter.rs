@@ -8,12 +8,13 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::config::FeishuChannelConfig;
-use super::config::FEISHU_MAX_MESSAGE_LEN;
+use super::delivery::FeishuMessageSink;
 use super::token::TokenCache;
 use crate::agent::Agent;
 use crate::agent::QueryRequest;
-use crate::agent::RunEventPayload;
 use crate::error::Result;
+use crate::gateway::delivery::stream as stream_delivery;
+use crate::gateway::delivery::stream::StreamDeliveryConfig;
 use crate::gateway::Channel;
 
 pub struct FeishuChannel {
@@ -62,50 +63,38 @@ impl FeishuChannel {
         let request = QueryRequest::text(&msg.text).session_id(session_id);
         match agent.query(request).await {
             Ok(mut stream) => {
-                // Store the real session_id created by the agent
                 self.session_map
                     .set(&session_key, stream.session_id.clone())
                     .await;
 
-                let reply = collect_reply(&mut stream).await;
-                if !reply.is_empty() {
-                    self.send_reply(&msg.chat_id, &reply).await;
+                let sink = FeishuMessageSink::new(
+                    self.client.clone(),
+                    self.token_cache.clone(),
+                    self.config.app_id.clone(),
+                    self.config.app_secret.clone(),
+                );
+                let config = StreamDeliveryConfig::default();
+                if let Err(e) =
+                    stream_delivery::deliver(&sink, &msg.chat_id, &mut stream, &config).await
+                {
+                    tracing::error!(channel = "feishu", error = %e, "delivery failed");
                 }
             }
             Err(e) => {
                 tracing::error!(channel = "feishu", error = %e, "agent query failed");
-                self.send_reply(&msg.chat_id, &format!("Error: {e}")).await;
+                let sink = FeishuMessageSink::new(
+                    self.client.clone(),
+                    self.token_cache.clone(),
+                    self.config.app_id.clone(),
+                    self.config.app_secret.clone(),
+                );
+                let _ = crate::gateway::delivery::MessageSink::send_text(
+                    &sink,
+                    &msg.chat_id,
+                    &format!("Error: {e}"),
+                )
+                .await;
             }
-        }
-    }
-
-    async fn send_reply(&self, chat_id: &str, reply: &str) {
-        // Truncate if too long (char-boundary safe)
-        let reply = if reply.len() > FEISHU_MAX_MESSAGE_LEN {
-            let boundary = reply
-                .char_indices()
-                .take_while(|(i, _)| *i <= FEISHU_MAX_MESSAGE_LEN)
-                .last()
-                .map(|(i, _)| i)
-                .unwrap_or(0);
-            let mut truncated = reply[..boundary].to_string();
-            truncated.push_str("\n\n... (truncated)");
-            truncated
-        } else {
-            reply.to_string()
-        };
-
-        if let Err(e) = super::outbound::send_text(
-            &self.client,
-            &self.token_cache,
-            &self.config.app_id,
-            &self.config.app_secret,
-            chat_id,
-            &reply,
-        )
-        .await
-        {
-            tracing::error!(channel = "feishu", chat_id, error = %e, "send failed");
         }
     }
 }
@@ -193,23 +182,6 @@ impl Channel for FeishuChannel {
         tracing::info!(channel = "feishu", "channel stopped");
         Ok(())
     }
-}
-
-// ── Collect final reply text from QueryStream ──
-
-async fn collect_reply(stream: &mut crate::agent::QueryStream) -> String {
-    let mut parts = Vec::new();
-    while let Some(event) = stream.next().await {
-        if let RunEventPayload::AssistantDelta {
-            delta: Some(delta), ..
-        } = &event.payload
-        {
-            if !delta.is_empty() {
-                parts.push(delta.clone());
-            }
-        }
-    }
-    parts.join("")
 }
 
 // ── channel-private session state ──

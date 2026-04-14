@@ -14,7 +14,7 @@ pub fn spawn_all(
     let mut handles = vec![];
 
     if let Some(ref fc) = conf.feishu {
-        handles.push(super::feishu::FeishuChannel::spawn(
+        handles.push(super::channels::feishu::FeishuChannel::spawn(
             fc.clone(),
             agent.clone(),
             cancel.clone(),

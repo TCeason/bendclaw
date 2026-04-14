@@ -357,7 +357,7 @@ where
                                         let asec = ctx.app_secret.to_string();
                                         let mid = parsed.message_id.clone();
                                         tokio::spawn(async move {
-                                            super::outbound::add_reaction(&c, &tc, &aid, &asec, &mid, "THUMBSUP").await;
+                                            super::delivery::add_reaction(&c, &tc, &aid, &asec, &mid, "THUMBSUP").await;
                                         });
                                     }
                                     on_message(parsed).await;

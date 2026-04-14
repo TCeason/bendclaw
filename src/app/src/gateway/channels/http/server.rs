@@ -15,7 +15,7 @@ use crate::agent::Agent;
 use crate::agent::QueryRequest;
 use crate::error::EvotError;
 use crate::error::Result;
-use crate::gateway::http::stream;
+use crate::gateway::channels::http::stream;
 
 const INDEX_HTML: &str = include_str!("static/index.html");
 
