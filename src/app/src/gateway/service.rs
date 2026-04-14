@@ -36,6 +36,7 @@ fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
         .map_err(|e| EvotError::Run(format!("failed to get cwd: {e}")))?;
 
     let system_prompt = SystemPrompt::new(&cwd)
+        .with_agent_behavior()
         .with_system()
         .with_git()
         .with_tools()

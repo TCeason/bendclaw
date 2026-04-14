@@ -38,6 +38,7 @@ impl NapiAgent {
             .to_string();
 
         let system_prompt = evot::agent::prompt::SystemPrompt::new(&cwd)
+            .with_agent_behavior()
             .with_system()
             .with_git()
             .with_tools()

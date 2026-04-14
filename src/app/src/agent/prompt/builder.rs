@@ -4,10 +4,48 @@ use std::process::Command;
 const PROJECT_CONTEXT_FILES: &[&str] = &["EVOT.md", "CLAUDE.md", "AGENTS.md"];
 const MAX_GIT_STATUS_CHARS: usize = 2000;
 
+const AGENT_BEHAVIOR_SECTION: &str = "\
+# Output efficiency
+
+IMPORTANT: Go straight to the point. Try the simplest approach first without going in \
+circles. Do not overdo it. Be extra concise.
+
+Do NOT ask clarifying questions unless the request is genuinely ambiguous with multiple \
+conflicting interpretations. When given an unclear or generic instruction, interpret it \
+in the most reasonable way and act on it directly. Lead with the answer or action, not \
+the reasoning. Do not restate what the user said — just do it.
+
+Keep your text output brief and direct. If you can say it in one sentence, don't use \
+three. Focus text output on decisions that need the user's input, high-level status \
+updates at natural milestones, and errors or blockers that change the plan.
+
+# Doing tasks
+
+ - The user will primarily request you to perform software engineering tasks including \
+solving bugs, adding new functionality, refactoring code, explaining code, and more. \
+When given an unclear or generic instruction, consider it in the context of software \
+engineering tasks and the current working directory. For example, if the user asks you \
+to change \"methodName\" to snake case, find the method in the code and modify it \
+directly — do not just reply with \"method_name\".
+ - Do not propose changes to code you haven't read. Read first, then modify.
+ - Do not create files unless absolutely necessary. Prefer editing existing files.
+ - If an approach fails, diagnose why before switching tactics. Escalate to the user \
+only when genuinely stuck after investigation, not as a first response to friction.
+
+# Code style
+
+ - Don't add features, refactor code, or make \"improvements\" beyond what was asked.
+ - Don't add error handling or validation for scenarios that can't happen.
+ - Don't create abstractions for one-time operations. Three similar lines is better \
+than a premature abstraction.
+ - Before reporting a task complete, verify it works. If you can't verify, say so.
+ - Report outcomes faithfully. Never claim success when output shows failures.";
+
 /// Builder for assembling the system prompt.
 ///
 /// ```ignore
 /// let prompt = SystemPrompt::new("/path/to/project")
+///     .with_agent_behavior()
 ///     .with_system()
 ///     .with_git()
 ///     .with_tools()
@@ -25,19 +63,20 @@ impl SystemPrompt {
     pub fn new(cwd: &str) -> Self {
         Self {
             cwd: cwd.to_string(),
-            sections: vec![concat!(
-                "You are a helpful assistant.\n\n",
-                "# Output efficiency\n\n",
-                "Go straight to the point. Try the simplest approach first. ",
-                "Do not ask clarifying questions unless the request is genuinely ambiguous ",
-                "with multiple conflicting interpretations. ",
-                "When given an unclear or generic instruction, interpret it in the most ",
-                "reasonable way and act on it directly. ",
-                "Lead with the answer or action, not the reasoning. ",
-                "Do not restate what the user said — just do it.",
-            )
-            .into()],
+            sections: vec![
+                "You are an interactive agent that helps users with software engineering tasks. \
+                 Use the instructions below and the tools available to you to assist the user."
+                    .into(),
+            ],
         }
+    }
+
+    /// Append agent behavior guidelines: task execution, code style, tool usage,
+    /// output efficiency. This is the core section that drives quality and reduces
+    /// unnecessary back-and-forth.
+    pub fn with_agent_behavior(mut self) -> Self {
+        self.sections.push(AGENT_BEHAVIOR_SECTION.into());
+        self
     }
 
     /// Append system info: working dir, date, platform, shell, OS version.
