@@ -55,15 +55,20 @@ function parseArgs(argv: string[]): CliOptions {
       continue
     }
     if (arg === '--model' && argv[i + 1]) { opts.model = argv[++i]; continue }
-    if (arg === '--port' && argv[i + 1]) { opts.port = parseInt(argv[++i], 10); continue }
+    if (arg === '--port' && argv[i + 1]) { opts.port = parseIntArg(argv[++i], '--port'); continue }
     if (arg === '--resume' && argv[i + 1]) { opts.resume = argv[++i]; continue }
     if (arg === '--output-format' && argv[i + 1]) {
-      opts.outputFormat = argv[++i] as 'text' | 'stream-json'
+      const fmt = argv[++i]
+      if (fmt !== 'text' && fmt !== 'stream-json') {
+        console.error(`Invalid --output-format: ${fmt} (expected text or stream-json)`)
+        process.exit(1)
+      }
+      opts.outputFormat = fmt
       continue
     }
-    if (arg === '--max-turns' && argv[i + 1]) { opts.maxTurns = parseInt(argv[++i], 10); continue }
-    if (arg === '--max-tokens' && argv[i + 1]) { opts.maxTokens = parseInt(argv[++i], 10); continue }
-    if (arg === '--max-duration' && argv[i + 1]) { opts.maxDuration = parseInt(argv[++i], 10); continue }
+    if (arg === '--max-turns' && argv[i + 1]) { opts.maxTurns = parseIntArg(argv[++i], '--max-turns'); continue }
+    if (arg === '--max-tokens' && argv[i + 1]) { opts.maxTokens = parseIntArg(argv[++i], '--max-tokens'); continue }
+    if (arg === '--max-duration' && argv[i + 1]) { opts.maxDuration = parseIntArg(argv[++i], '--max-duration'); continue }
     if (arg === '--append-system-prompt' && argv[i + 1]) { opts.appendSystemPrompt = argv[++i]; continue }
     if (arg === '--skills' && argv[i + 1]) { opts.skillsDirs.push(argv[++i]); continue }
 
@@ -82,6 +87,15 @@ function parseArgs(argv: string[]): CliOptions {
   }
 
   return opts
+}
+
+function parseIntArg(value: string, flag: string): number {
+  const n = parseInt(value, 10)
+  if (isNaN(n) || n <= 0) {
+    console.error(`Invalid ${flag}: ${value} (expected positive integer)`)
+    process.exit(1)
+  }
+  return n
 }
 
 function printHelp() {
@@ -132,10 +146,22 @@ async function main() {
   }
 }
 
+function applyCliOpts(agent: Agent, opts: CliOptions): void {
+  agent.setLimits(opts.maxTurns, opts.maxTokens, opts.maxDuration)
+  if (opts.appendSystemPrompt) agent.appendSystemPrompt(opts.appendSystemPrompt)
+  if (opts.skillsDirs.length > 0) agent.addSkillsDirs(opts.skillsDirs)
+}
+
 async function runPrompt(opts: CliOptions) {
+  if (!opts.prompt) {
+    console.error('No prompt provided. Use -p <text>')
+    process.exit(1)
+  }
+
   let agent: Agent
   try {
     agent = Agent.create(opts.model)
+    applyCliOpts(agent, opts)
   } catch (err: any) {
     console.error(`Failed to initialize: ${err?.message ?? err}`)
     process.exit(1)
@@ -149,6 +175,7 @@ async function runPrompt(opts: CliOptions) {
       printEventText(event)
     }
   }
+  process.exit(0)
 }
 
 function printEventText(event: any) {
@@ -174,6 +201,7 @@ function runRepl(opts: CliOptions) {
   let agent: Agent
   try {
     agent = Agent.create(opts.model)
+    applyCliOpts(agent, opts)
   } catch (err: any) {
     console.error(`Failed to initialize: ${err?.message ?? err}`)
     process.exit(1)
@@ -181,7 +209,11 @@ function runRepl(opts: CliOptions) {
 
   process.on('SIGINT', () => {})
 
-  const { waitUntilExit } = render(React.createElement(REPL, { agent }), {
+  const { waitUntilExit } = render(React.createElement(REPL, {
+    agent,
+    initialVerbose: opts.verbose,
+    initialResume: opts.resume,
+  }), {
     exitOnCtrlC: false,
   })
   waitUntilExit().then(() => {

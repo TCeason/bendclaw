@@ -71,11 +71,12 @@ function formatEvent(event: RunEvent): string[] {
         for (const block of content) {
           if (block.type === 'text' && block.text) {
             lines.push(block.text)
-          } else if (block.type === 'tool_use') {
+          } else if (block.type === 'tool_call' || block.type === 'tool_use') {
             lines.push(`[${block.name} call]`)
-            if (block.input) {
-              const input = typeof block.input === 'string' ? block.input : JSON.stringify(block.input)
-              lines.push(`  ${input.slice(0, 200)}`)
+            const input = block.input ?? block.args
+            if (input) {
+              const str = typeof input === 'string' ? input : JSON.stringify(input)
+              lines.push(`  ${str.slice(0, 200)}`)
             }
           }
         }
@@ -83,12 +84,12 @@ function formatEvent(event: RunEvent): string[] {
       return lines
     }
     case 'tool_started': {
-      const name = p.name ?? 'unknown'
-      const args = p.input ? JSON.stringify(p.input).slice(0, 200) : ''
+      const name = p.tool_name ?? 'unknown'
+      const args = p.args ? JSON.stringify(p.args).slice(0, 200) : ''
       return [`[${name} call] ${args}`]
     }
     case 'tool_finished': {
-      const name = p.name ?? 'unknown'
+      const name = p.tool_name ?? 'unknown'
       const ok = p.is_error ? 'failed' : 'completed'
       const content = typeof p.content === 'string' ? p.content.slice(0, 200) : ''
       return [`[${name} ${ok}] ${content}`]
@@ -98,9 +99,11 @@ function formatEvent(event: RunEvent): string[] {
       return [`[llm] ${model} turn=${event.turn}`]
     }
     case 'llm_call_completed': {
-      const input = p.input_tokens ?? 0
-      const output = p.output_tokens ?? 0
-      const dur = p.duration_ms ? `${p.duration_ms}ms` : ''
+      const usage = p.usage as Record<string, any> | undefined
+      const metrics = p.metrics as Record<string, any> | undefined
+      const input = usage?.input ?? 0
+      const output = usage?.output ?? 0
+      const dur = metrics?.duration_ms ? `${metrics.duration_ms}ms` : ''
       return [`[llm done] in=${input} out=${output} ${dur}`]
     }
     case 'context_compaction_started':

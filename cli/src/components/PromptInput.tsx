@@ -131,7 +131,7 @@ export function PromptInput({
     }
 
     // Ctrl+O — toggle verbose output
-    if (key.ctrl && ch === 'o') {
+    if ((key.ctrl && ch === 'o') || ch === '\x0f') {
       onToggleVerbose()
       return
     }
@@ -446,6 +446,7 @@ export function PromptInput({
       <Footer
         model={model}
         planning={planning}
+        verbose={verbose}
         columns={columns}
       />
     </Box>
@@ -478,23 +479,27 @@ function CursorLine({ text, cursorCol, ghostHint }: { text: string; cursorCol: n
 function Footer({
   model,
   planning,
+  verbose,
   columns,
 }: {
   model: string
   planning: boolean
+  verbose: boolean
   columns: number
 }) {
-  const modeTag = planning ? ' [plan]' : ''
-  const left = `/help${modeTag}`
-  const right = model
-  const gap = Math.max(1, columns - left.length - right.length)
+  // Compute actual rendered width for gap calculation
+  let leftLen = 5 // "/help"
+  if (planning) leftLen += 7 // " [plan]"
+  if (verbose) leftLen += 10 // " [verbose]"
+  const gap = Math.max(1, columns - leftLen - model.length)
 
   return (
     <Box>
       <Text dimColor>/help</Text>
       {planning && <Text color="yellow" bold>{' [plan]'}</Text>}
+      {verbose && <Text color="cyan">{' [verbose]'}</Text>}
       <Text>{' '.repeat(gap)}</Text>
-      <Text dimColor>{right}</Text>
+      <Text dimColor>{model}</Text>
     </Box>
   )
 }

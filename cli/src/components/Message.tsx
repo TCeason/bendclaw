@@ -8,6 +8,7 @@ import { Text, Box } from 'ink'
 import type { UIMessage, UIToolCall } from '../state/AppState.js'
 import { renderMarkdown } from '../utils/markdown.js'
 import { colorizeUnifiedDiff } from '../utils/diff.js'
+import { truncate, truncateResult } from '../utils/format.js'
 
 interface MessageProps {
   message: UIMessage
@@ -109,24 +110,4 @@ function formatToolSummary(tool: UIToolCall): string {
   if ('url' in args) return truncate(String(args.url), 80)
 
   return ''
-}
-
-function truncate(s: string, max: number): string {
-  const oneLine = s.replace(/\n/g, ' ').trim()
-  if (oneLine.length <= max) return oneLine
-  return oneLine.slice(0, max - 1) + '…'
-}
-
-function truncateResult(s: string, maxChars: number): string {
-  const lines = s.split('\n')
-  let result = ''
-  for (const line of lines) {
-    if (result.length + line.length > maxChars) {
-      result += '…'
-      break
-    }
-    if (result.length > 0) result += '\n'
-    result += line
-  }
-  return result
 }

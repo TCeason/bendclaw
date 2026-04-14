@@ -20,16 +20,20 @@ import { HistoryManager } from '../utils/history.js'
 import { TranscriptLog } from '../utils/transcriptLog.js'
 import { transcriptToMessages, type TranscriptItem } from '../utils/transcript.js'
 import { isSlashCommand, resolveCommand } from '../commands/index.js'
+import { skillList, skillInstall, skillRemove } from '../commands/skill.js'
 
 interface REPLProps {
   agent: Agent
+  initialVerbose?: boolean
+  initialResume?: string
 }
 
-export function REPL({ agent }: REPLProps) {
+export function REPL({ agent, initialVerbose = false, initialResume }: REPLProps) {
   const { exit } = useApp()
-  const [state, setState] = useState<AppState>(() =>
-    createInitialState(agent.model, agent.cwd)
-  )
+  const [state, setState] = useState<AppState>(() => ({
+    ...createInitialState(agent.model, agent.cwd),
+    verbose: initialVerbose,
+  }))
   const [systemMessages, setSystemMessages] = useState<SystemMsg[]>([])
   const [showHelp, setShowHelp] = useState(false)
   const [messageQueue, setMessageQueue] = useState<string[]>([])
@@ -38,63 +42,113 @@ export function REPL({ agent }: REPLProps) {
   const [planning, setPlanning] = useState(false)
   const streamRef = useRef<QueryStream | null>(null)
   const sessionIdRef = useRef<string | null>(null)
+  const isLoadingRef = useRef(false)
+  const streamGenRef = useRef(0)  // generation counter to reject stale stream events
   const [historyManager] = useState(() => new HistoryManager())
+  const [configInfoState, setConfigInfoState] = useState(() => {
+    try { return agent.configInfo() } catch { return undefined }
+  })
+  // Refresh configInfo when model changes (provider may have switched)
+  useEffect(() => {
+    try { setConfigInfoState(agent.configInfo()) } catch { /* ignore */ }
+  }, [state.model])
+
+  // Startup: auto-resume or show resume hint
+  useEffect(() => {
+    (async () => {
+      try {
+        if (initialResume) {
+          // Auto-resume from --resume flag
+          const sessions = await agent.listSessions(20)
+          const match = sessions.find((s) => s.session_id === initialResume || s.session_id.startsWith(initialResume))
+          if (match) {
+            await resumeSession(agent, match, setState, setSystemMessages)
+          } else {
+            pushSystem(setSystemMessages, 'error', `Session not found: ${initialResume}`)
+          }
+        } else {
+          const sessions = await agent.listSessions(20)
+          const match = sessions.find((s) => s.cwd === agent.cwd)
+          if (match) {
+            pushSystem(setSystemMessages, 'info', `  previous session found. Use /resume ${match.session_id.slice(0, 8)} to continue.`)
+          }
+        }
+      } catch { /* ignore */ }
+    })()
+  }, [])
 
   useEffect(() => {
     sessionIdRef.current = state.sessionId
   }, [state.sessionId])
 
+  useEffect(() => {
+    isLoadingRef.current = state.isLoading
+  }, [state.isLoading])
+
+  // Abort current stream and reset transient state
+  const abortCurrentStream = useCallback(() => {
+    const stream = streamRef.current
+    if (stream) {
+      streamRef.current = null
+      streamGenRef.current++  // invalidate any in-flight event loop
+      stream.abort()
+    }
+    setState((prev) => ({
+      ...prev,
+      isLoading: false,
+      currentStreamText: '',
+      currentThinkingText: '',
+      activeToolCalls: new Map(),
+      turnToolCalls: [],
+      verboseEvents: [],
+    }))
+  }, [])
+
   // Interrupt handler during loading — Ctrl+C or Escape
   useInput((_ch, key) => {
     const isInterrupt = (key.ctrl && _ch === 'c') || key.escape
     if (isInterrupt && streamRef.current) {
-      streamRef.current.abort()
-      streamRef.current = null
-      setState((prev) => ({
-        ...prev,
-        isLoading: false,
-        currentStreamText: '',
-        currentThinkingText: '',
-        activeToolCalls: new Map(),
-      }))
+      abortCurrentStream()
       pushSystem(setSystemMessages, 'info', 'Interrupted.')
     }
   }, { isActive: state.isLoading })
+
+  const dispatchQuery = useCallback((text: string) => {
+    const userMsg: UIMessage = {
+      id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      role: 'user',
+      text,
+      timestamp: Date.now(),
+    }
+    setState((prev) => ({
+      ...prev,
+      messages: [...prev.messages, userMsg],
+      isLoading: true,
+      error: null,
+      currentStreamText: '',
+      currentThinkingText: '',
+      activeToolCalls: new Map(),
+    }))
+    runQuery(agent, text, sessionIdRef.current, streamRef, streamGenRef, setState, planning ? 'planning' : undefined)
+  }, [agent, planning])
 
   const handleSubmit = useCallback(
     (text: string) => {
       setSystemMessages([])
 
       if (isSlashCommand(text)) {
-        handleSlashCommand(text, agent, state, setState, setSystemMessages, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, exit)
+        handleSlashCommand(text, { agent, state, setState, setSystem: setSystemMessages, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, configInfo: configInfoState, abortCurrentStream, exit })
         return
       }
 
-      // If loading, queue the message instead of running immediately
-      if (state.isLoading) {
+      if (isLoadingRef.current) {
         setMessageQueue((prev) => [...prev, text])
         return
       }
 
-      const userMsg: UIMessage = {
-        id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        role: 'user',
-        text,
-        timestamp: Date.now(),
-      }
-      setState((prev) => ({
-        ...prev,
-        messages: [...prev.messages, userMsg],
-        isLoading: true,
-        error: null,
-        currentStreamText: '',
-        currentThinkingText: '',
-        activeToolCalls: new Map(),
-      }))
-
-      runQuery(agent, text, sessionIdRef.current, streamRef, setState)
+      dispatchQuery(text)
     },
-    [agent, state, exit]
+    [agent, state, exit, planning, dispatchQuery]
   )
 
   // Auto-drain queue when response finishes (skip if last run errored)
@@ -102,41 +156,23 @@ export function REPL({ agent }: REPLProps) {
     if (!state.isLoading && !state.error && messageQueue.length > 0) {
       const [next, ...rest] = messageQueue
       setMessageQueue(rest)
-      const userMsg: UIMessage = {
-        id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        role: 'user',
-        text: next!,
-        timestamp: Date.now(),
-      }
-      setState((prev) => ({
-        ...prev,
-        messages: [...prev.messages, userMsg],
-        isLoading: true,
-        error: null,
-        currentStreamText: '',
-        currentThinkingText: '',
-        activeToolCalls: new Map(),
-      }))
-      runQuery(agent, next!, sessionIdRef.current, streamRef, setState)
+      dispatchQuery(next!)
     }
-  }, [state.isLoading, messageQueue, agent])
+  }, [state.isLoading, messageQueue, dispatchQuery])
 
   const handleInterrupt = useCallback(() => {
     if (streamRef.current) {
-      streamRef.current.abort()
-      streamRef.current = null
-      setState((prev) => ({
-        ...prev,
-        isLoading: false,
-        currentStreamText: '',
-        currentThinkingText: '',
-        activeToolCalls: new Map(),
-      }))
+      abortCurrentStream()
       pushSystem(setSystemMessages, 'info', 'Interrupted.')
     } else {
+      // Show resume hint on exit
+      if (sessionIdRef.current) {
+        console.log(`\n${'─'.repeat(80)}`)
+        console.log(`Resume this session with:\n  evot --resume ${sessionIdRef.current}\n`)
+      }
       exit()
     }
-  }, [exit])
+  }, [exit, abortCurrentStream])
 
   const handleToggleVerbose = useCallback(() => {
     setState((prev) => ({ ...prev, verbose: !prev.verbose }))
@@ -148,12 +184,12 @@ export function REPL({ agent }: REPLProps) {
 
   return (
     <Box flexDirection="column" padding={0}>
-      <Banner model={state.model} cwd={state.cwd} sessionId={state.sessionId} />
+      <Banner model={state.model} cwd={state.cwd} sessionId={state.sessionId} configInfo={configInfoState} />
 
       {/* Message history with interleaved verbose events */}
       {state.messages.map((msg) => (
         <React.Fragment key={msg.id}>
-          {msg.verboseEvents?.map((evt, i) => (
+          {state.verbose && msg.verboseEvents?.map((evt, i) => (
             <VerboseEventLine key={`${msg.id}-evt-${i}`} event={evt} />
           ))}
           <Message key={msg.id} message={msg} />
@@ -164,7 +200,7 @@ export function REPL({ agent }: REPLProps) {
       ))}
 
       {/* Pending verbose events for current turn (not yet attached to a message) */}
-      {state.isLoading && state.verboseEvents.length > 0 && (
+      {state.isLoading && state.verbose && state.verboseEvents.length > 0 && (
         <Box flexDirection="column" marginBottom={0}>
           {state.verboseEvents.map((evt, i) => (
             <VerboseEventLine key={i} event={evt} />
@@ -223,20 +259,10 @@ export function REPL({ agent }: REPLProps) {
       {resumeSessions !== null && (
         <SessionSelector
           sessions={resumeSessions}
+          currentCwd={agent.cwd}
           onSelect={async (session) => {
             setResumeSessions(null)
-            // Load transcript and replay as messages
-            let messages: UIMessage[] = []
-            try {
-              const transcript = await agent.loadTranscript(session.session_id)
-              messages = transcriptToMessages(transcript as TranscriptItem[])
-            } catch { /* ignore — show empty conversation */ }
-            setState((prev) => ({
-              ...prev,
-              sessionId: session.session_id,
-              messages,
-            }))
-            pushSystem(setSystemMessages, 'info', `Resumed session ${session.session_id.slice(0, 8)} — ${session.title || '(untitled)'}`)
+            await resumeSession(agent, session, setState, setSystemMessages)
           }}
           onCancel={() => setResumeSessions(null)}
         />
@@ -245,11 +271,12 @@ export function REPL({ agent }: REPLProps) {
       {/* Model selector for /model */}
       {showModelSelector && (
         <ModelSelector
-          models={AVAILABLE_MODELS}
+          models={configInfoState?.availableModels ?? [state.model]}
           currentModel={state.model}
           onSelect={(model) => {
             setShowModelSelector(false)
             agent.model = model
+            syncProvider(agent, model, configInfoState)
             setState((prev) => ({ ...prev, model }))
             pushSystem(setSystemMessages, 'info', `Model → ${model}`)
           }}
@@ -295,18 +322,22 @@ function pushSystem(
 // Slash command handler
 // ---------------------------------------------------------------------------
 
-async function handleSlashCommand(
-  input: string,
-  agent: Agent,
-  state: AppState,
-  setState: React.Dispatch<React.SetStateAction<AppState>>,
-  setSystem: React.Dispatch<React.SetStateAction<SystemMsg[]>>,
-  setShowHelp: React.Dispatch<React.SetStateAction<boolean>>,
-  setResumeSessions: React.Dispatch<React.SetStateAction<import('../native/index.js').SessionMeta[] | null>>,
-  setPlanning: React.Dispatch<React.SetStateAction<boolean>>,
-  setShowModelSelector: React.Dispatch<React.SetStateAction<boolean>>,
-  exit: () => void,
-) {
+interface CommandContext {
+  agent: Agent
+  state: AppState
+  setState: React.Dispatch<React.SetStateAction<AppState>>
+  setSystem: React.Dispatch<React.SetStateAction<SystemMsg[]>>
+  setShowHelp: React.Dispatch<React.SetStateAction<boolean>>
+  setResumeSessions: React.Dispatch<React.SetStateAction<import('../native/index.js').SessionMeta[] | null>>
+  setPlanning: React.Dispatch<React.SetStateAction<boolean>>
+  setShowModelSelector: React.Dispatch<React.SetStateAction<boolean>>
+  configInfo: import('../native/index.js').ConfigInfo | undefined
+  abortCurrentStream: () => void
+  exit: () => void
+}
+
+async function handleSlashCommand(input: string, ctx: CommandContext) {
+  const { agent, state, setState, setSystem, setShowHelp, setResumeSessions, setPlanning, setShowModelSelector, configInfo, abortCurrentStream, exit } = ctx
   const resolved = resolveCommand(input)
 
   if (resolved.kind === 'unknown') {
@@ -329,29 +360,45 @@ async function handleSlashCommand(
       break
 
     case '/exit':
+      abortCurrentStream()
       exit()
       break
 
     case '/clear':
+      abortCurrentStream()
       setState((prev) => ({ ...prev, messages: [] }))
       pushSystem(setSystem, 'info', 'Messages cleared.')
       break
 
     case '/new':
+      abortCurrentStream()
       setState((prev) => ({
-        ...prev,
-        messages: [],
-        sessionId: null,
-        error: null,
+        ...createInitialState(prev.model, prev.cwd),
+        verbose: prev.verbose,
       }))
       pushSystem(setSystem, 'info', 'New session started.')
       break
 
     case '/model': {
-      if (args.trim()) {
-        agent.model = args.trim()
-        setState((prev) => ({ ...prev, model: args.trim() }))
-        pushSystem(setSystem, 'info', `Model → ${args.trim()}`)
+      const arg = args.trim()
+      if (arg === 'n') {
+        // Cycle to next model
+        const models = configInfo?.availableModels ?? [state.model]
+        if (models.length <= 1) {
+          pushSystem(setSystem, 'info', 'Only one model available.')
+        } else {
+          const idx = models.indexOf(state.model)
+          const next = models[(idx + 1) % models.length]!
+          agent.model = next
+          syncProvider(agent, next, configInfo)
+          setState((prev) => ({ ...prev, model: next }))
+          pushSystem(setSystem, 'info', `Model → ${next}`)
+        }
+      } else if (arg) {
+        agent.model = arg
+        syncProvider(agent, arg, configInfo)
+        setState((prev) => ({ ...prev, model: arg }))
+        pushSystem(setSystem, 'info', `Model → ${arg}`)
       } else {
         setShowModelSelector(true)
       }
@@ -364,16 +411,21 @@ async function handleSlashCommand(
       break
 
     case '/resume': {
+      abortCurrentStream()
       try {
-        const sessions = await agent.listSessions(20)
-        if (sessions.length === 0) {
+        const allSessions = await agent.listSessions(20)
+        if (allSessions.length === 0) {
           pushSystem(setSystem, 'info', 'No sessions found.')
           break
         }
 
+        // Prefer sessions from current CWD
+        const cwdSessions = allSessions.filter((s) => s.cwd === agent.cwd)
+        const sessions = cwdSessions.length > 0 ? cwdSessions : allSessions
+
         if (args.trim()) {
           const prefix = args.trim()
-          const matches = sessions.filter(
+          const matches = allSessions.filter(
             (s) => s.session_id === prefix || s.session_id.startsWith(prefix)
           )
           if (matches.length === 0) {
@@ -382,22 +434,11 @@ async function handleSlashCommand(
             pushSystem(setSystem, 'error', `Ambiguous session id: ${prefix}`)
           } else {
             const session = matches[0]!
-            let messages: UIMessage[] = []
-            try {
-              const transcript = await agent.loadTranscript(session.session_id)
-              messages = transcriptToMessages(transcript as TranscriptItem[])
-            } catch { /* ignore */ }
-            setState((prev) => ({
-              ...prev,
-              sessionId: session.session_id,
-              messages,
-            }))
-            pushSystem(setSystem, 'info', `Resumed session ${session.session_id.slice(0, 8)} — ${session.title || '(untitled)'}`)
+            await resumeSession(agent, session, setState, setSystem)
           }
         } else {
           // Show interactive session selector
-          const displaySessions = sessions.slice(0, 20)
-          setResumeSessions(displaySessions)
+          setResumeSessions(sessions.slice(0, 20))
         }
       } catch (err: any) {
         pushSystem(setSystem, 'error', `Failed to list sessions: ${err?.message ?? err}`)
@@ -418,14 +459,13 @@ async function handleSlashCommand(
     case '/env': {
       const sub = args.trim()
       if (!sub) {
-        // List env vars
-        const entries = Object.entries(process.env)
-          .filter(([k]) => k.startsWith('EVOT_') || k.startsWith('ANTHROPIC_') || k.startsWith('OPENAI_'))
-          .map(([k, v]) => `  ${k}=${v ? v.slice(0, 4) + '****' : '(unset)'}`)
-        if (entries.length === 0) {
-          pushSystem(setSystem, 'info', 'No EVOT_/ANTHROPIC_/OPENAI_ env vars set.')
+        // List agent variables + relevant process env
+        const vars = agent.listVariables()
+        if (vars.length > 0) {
+          const lines = vars.map((v) => `  ${v.key.padEnd(28)} ${v.value.slice(0, 2)}****${v.value.slice(-2)}`)
+          pushSystem(setSystem, 'info', `Agent variables:\n${lines.join('\n')}`)
         } else {
-          pushSystem(setSystem, 'info', `Environment:\n${entries.join('\n')}`)
+          pushSystem(setSystem, 'info', 'No agent variables set.')
         }
       } else if (sub.startsWith('set ')) {
         const kv = sub.slice(4).trim()
@@ -435,16 +475,24 @@ async function handleSlashCommand(
         } else {
           const key = kv.slice(0, eqIdx)
           const val = kv.slice(eqIdx + 1)
-          process.env[key] = val
-          pushSystem(setSystem, 'info', `Set ${key}`)
+          try {
+            await agent.setVariable(key, val)
+            pushSystem(setSystem, 'info', `Set ${key}`)
+          } catch (err: any) {
+            pushSystem(setSystem, 'error', `Failed: ${err?.message ?? err}`)
+          }
         }
       } else if (sub.startsWith('del ')) {
         const key = sub.slice(4).trim()
         if (!key) {
           pushSystem(setSystem, 'error', 'Usage: /env del KEY')
         } else {
-          delete process.env[key]
-          pushSystem(setSystem, 'info', `Deleted ${key}`)
+          try {
+            const removed = await agent.deleteVariable(key)
+            pushSystem(setSystem, 'info', removed ? `Deleted ${key}` : `${key} not found`)
+          } catch (err: any) {
+            pushSystem(setSystem, 'error', `Failed: ${err?.message ?? err}`)
+          }
         }
       } else if (sub.startsWith('load ')) {
         const filePath = sub.slice(5).trim()
@@ -460,11 +508,10 @@ async function handleSlashCommand(
             if (eq > 0) {
               const k = clean.slice(0, eq)
               let v = clean.slice(eq + 1)
-              // Strip surrounding quotes
               if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
                 v = v.slice(1, -1)
               }
-              process.env[k] = v
+              await agent.setVariable(k, v)
               count++
             }
           }
@@ -483,10 +530,75 @@ async function handleSlashCommand(
       const { homedir } = await import('os')
       const logDir = join(homedir(), '.evotai', 'logs')
       const sid = state.sessionId
-      if (sid) {
-        pushSystem(setSystem, 'info', `Log: ${join(logDir, `${sid}.log`)}`)
+      const query = args.trim()
+
+      if (!query) {
+        // Just show log path
+        if (sid) {
+          pushSystem(setSystem, 'info', `Log: ${join(logDir, `${sid}.log`)}`)
+        } else {
+          pushSystem(setSystem, 'info', `Log dir: ${logDir} (no active session)`)
+        }
+      } else if (!sid) {
+        pushSystem(setSystem, 'error', 'No active session to analyze.')
       } else {
-        pushSystem(setSystem, 'info', `Log dir: ${logDir} (no active session)`)
+        // Side conversation: fork agent to analyze the log
+        const logPath = join(logDir, `${sid}.log`)
+        const systemPrompt = [
+          'You are in a temporary log analysis session.',
+          `The session log file is at: ${logPath}`,
+          'Read the log file before answering any questions.',
+          'Do not modify any files. Only read and analyze.',
+          'Keep answers concise and focused on the log content.',
+        ].join('\n')
+
+        try {
+          const forked = agent.fork(systemPrompt)
+          pushSystem(setSystem, 'info', `Analyzing log...`)
+
+          // Run single-turn analysis (no multi-turn mini-REPL)
+          const stream = await forked.query(query)
+          let text = ''
+          for await (const event of stream) {
+            if (event.kind === 'assistant_delta' && event.payload?.delta) {
+              text += event.payload.delta as string
+            }
+          }
+          if (text) pushSystem(setSystem, 'info', text)
+        } catch (err: any) {
+          pushSystem(setSystem, 'error', `Fork failed: ${err?.message ?? err}`)
+        }
+      }
+      break
+    }
+
+    case '/skill': {
+      const sub = args.trim()
+      if (!sub || sub === 'list') {
+        pushSystem(setSystem, 'info', skillList())
+      } else if (sub.startsWith('install ')) {
+        const source = sub.slice(8).trim()
+        if (!source) {
+          pushSystem(setSystem, 'error', 'Usage: /skill install <owner/repo>')
+          break
+        }
+        pushSystem(setSystem, 'info', `Installing skill from ${source}...`)
+        try {
+          const forked = agent.fork('You analyze skills and provide setup guides.')
+          const result = await skillInstall(source, forked)
+          pushSystem(setSystem, 'info', result)
+        } catch (err: any) {
+          pushSystem(setSystem, 'error', `Install failed: ${err?.message ?? err}`)
+        }
+      } else if (sub.startsWith('remove ')) {
+        const name = sub.slice(7).trim()
+        if (!name) {
+          pushSystem(setSystem, 'error', 'Usage: /skill remove <name>')
+        } else {
+          pushSystem(setSystem, 'info', skillRemove(name))
+        }
+      } else {
+        pushSystem(setSystem, 'error', 'Usage: /skill [list | install <source> | remove <name>]')
       }
       break
     }
@@ -530,6 +642,61 @@ function VerboseEventLine({ event }: { event: import('../state/AppState.js').Ver
 }
 
 // ---------------------------------------------------------------------------
+// Resume session helper
+// ---------------------------------------------------------------------------
+
+async function resumeSession(
+  agent: Agent,
+  session: import('../native/index.js').SessionMeta,
+  setState: React.Dispatch<React.SetStateAction<AppState>>,
+  setSystem: React.Dispatch<React.SetStateAction<SystemMsg[]>>,
+) {
+  let messages: UIMessage[] = []
+  try {
+    const transcript = await agent.loadTranscript(session.session_id)
+    messages = transcriptToMessages(transcript as TranscriptItem[])
+  } catch { /* ignore */ }
+
+  // Restore model from session
+  if (session.model) {
+    agent.model = session.model
+    syncProvider(agent, session.model)
+  }
+
+  setState((prev) => ({
+    ...createInitialState(session.model || prev.model, prev.cwd),
+    verbose: prev.verbose,
+    sessionId: session.session_id,
+    messages,
+  }))
+  pushSystem(setSystem, 'info', `Resumed session ${session.session_id.slice(0, 8)} — ${session.title || '(untitled)'}`)
+}
+
+// ---------------------------------------------------------------------------
+// Provider sync — infer provider from model name and switch if needed
+// ---------------------------------------------------------------------------
+
+function syncProvider(
+  agent: Agent,
+  model: string,
+  configInfo?: import('../native/index.js').ConfigInfo,
+): void {
+  try {
+    // First try exact match against configured models
+    if (configInfo) {
+      if (model === configInfo.anthropicModel) { agent.setProvider('anthropic'); return }
+      if (model === configInfo.openaiModel) { agent.setProvider('openai'); return }
+    }
+    // Fall back to prefix heuristic
+    if (model.startsWith('claude-') || model.startsWith('anthropic/')) {
+      agent.setProvider('anthropic')
+    } else if (model.startsWith('gpt-') || model.startsWith('o1-') || model.startsWith('o3-') || model === 'o1' || model === 'o3') {
+      agent.setProvider('openai')
+    }
+  } catch { /* ignore — provider may not support the model */ }
+}
+
+// ---------------------------------------------------------------------------
 // Async query runner
 // ---------------------------------------------------------------------------
 
@@ -538,10 +705,15 @@ async function runQuery(
   text: string,
   sessionId: string | null,
   streamRef: React.MutableRefObject<QueryStream | null>,
+  streamGenRef: React.MutableRefObject<number>,
   setState: React.Dispatch<React.SetStateAction<AppState>>,
+  toolMode?: string,
 ) {
+  const gen = ++streamGenRef.current  // claim a new generation
   try {
-    const stream = await agent.query(text, sessionId ?? undefined)
+    const stream = await agent.query(text, sessionId ?? undefined, toolMode)
+    // If generation changed while awaiting, another command took over — bail
+    if (gen !== streamGenRef.current) { stream.abort(); return }
     streamRef.current = stream
 
     // Start transcript log for this session
@@ -552,10 +724,12 @@ async function runQuery(
     } catch { /* ignore log failures */ }
 
     for await (const event of stream) {
+      if (gen !== streamGenRef.current) break  // stale — stop processing
       setState((prev) => applyEvent(prev, event))
       try { log?.writeEvent(event) } catch { /* ignore */ }
     }
   } catch (err: any) {
+    if (gen !== streamGenRef.current) return  // stale — don't overwrite new session's state
     setState((prev) => ({
       ...prev,
       isLoading: false,
@@ -567,31 +741,19 @@ async function runQuery(
 }
 
 // ---------------------------------------------------------------------------
-// Available models
-// ---------------------------------------------------------------------------
-
-const AVAILABLE_MODELS = [
-  'claude-opus-4-6',
-  'claude-sonnet-4-6',
-  'claude-haiku-4-5-20251001',
-  'claude-sonnet-4-20250514',
-  'claude-3-5-haiku-20241022',
-  'gpt-4o',
-  'gpt-4o-mini',
-  'o3',
-  'o3-mini',
-  'gemini-2.5-pro',
-  'gemini-2.5-flash',
-]
-
-// ---------------------------------------------------------------------------
 // Banner
 // ---------------------------------------------------------------------------
 
-function Banner({ model, cwd, sessionId }: { model: string; cwd: string; sessionId: string | null }) {
+function Banner({ model, cwd, sessionId, configInfo }: {
+  model: string
+  cwd: string
+  sessionId: string | null
+  configInfo?: import('../native/index.js').ConfigInfo
+}) {
   const shortCwd = cwd.replace(process.env.HOME ?? '', '~')
   const gitBranch = getGitBranch(cwd)
   const sessionLabel = sessionId ? sessionId.slice(0, 8) : '(new)'
+  const envPath = configInfo?.envPath?.replace(process.env.HOME ?? '', '~') ?? ''
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -601,14 +763,14 @@ function Banner({ model, cwd, sessionId }: { model: string; cwd: string; session
         </Text>
         <Text dimColor> v0.1.0</Text>
       </Box>
-      <Box>
-        <Text dimColor>
-          {shortCwd} · {model}
-          {gitBranch ? ` · ${gitBranch}` : ''}
-          {' · '}
-        </Text>
-        <Text dimColor italic>{sessionLabel}</Text>
-      </Box>
+      {envPath ? <Text dimColor>  env:      {envPath}</Text> : null}
+      {configInfo && <Text dimColor>  provider: {configInfo.provider}</Text>}
+      <Text dimColor>  model:    {model}</Text>
+      {configInfo?.baseUrl && <Text dimColor>  base_url: {configInfo.baseUrl}</Text>}
+      <Text dimColor>  session:  {sessionLabel}</Text>
+      {gitBranch && <Text dimColor>  git:      {gitBranch}</Text>}
+      <Text dimColor>  cwd:      {shortCwd}</Text>
+      <Text dimColor>  /help commands  ·  Tab complete  ·  ↑↓ history  ·  Ctrl+C×2 exit</Text>
     </Box>
   )
 }

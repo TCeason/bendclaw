@@ -55,11 +55,14 @@ export function transcriptToMessages(items: TranscriptItem[]): UIMessage[] {
       const a = item as TranscriptAssistant
       const toolCalls: UIToolCall[] = a.tool_calls.map(tc => {
         const result = toolResults.get(tc.id)
+        const status: UIToolCall['status'] = result
+          ? (result.is_error ? 'error' : 'done')
+          : 'running'  // no result means tool never completed
         return {
           id: tc.id,
           name: tc.name,
           args: tc.input,
-          status: result?.is_error ? 'error' as const : 'done' as const,
+          status,
           result: result?.content,
         }
       })

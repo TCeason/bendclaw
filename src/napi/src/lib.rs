@@ -3,6 +3,11 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use evot::agent::Agent;
+use evot::agent::ForkRequest;
+use evot::agent::ForkedAgent;
+use evot::agent::QueryRequest;
+use evot::agent::ToolMode;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use tokio::sync::Mutex;
@@ -13,7 +18,8 @@ use tokio::sync::Mutex;
 
 #[napi]
 pub struct NapiAgent {
-    agent: Arc<evot::agent::Agent>,
+    agent: Arc<Agent>,
+    config: evot::conf::Config,
 }
 
 #[napi]
@@ -52,7 +58,7 @@ impl NapiAgent {
         let variables = Arc::new(evot::agent::Variables::new(storage, records));
         agent.with_variables(variables);
 
-        Ok(Self { agent })
+        Ok(Self { agent, config })
     }
 
     /// Current model name.
@@ -74,14 +80,20 @@ impl NapiAgent {
     }
 
     /// Send a prompt and get a stream of events.
-    /// Returns a NapiQueryStream that can be iterated with `next()`.
+    /// Optional tool_mode: "planning", "readonly", or omit for default (headless).
     #[napi]
     pub async fn query(
         &self,
         prompt: String,
         session_id: Option<String>,
+        tool_mode: Option<String>,
     ) -> Result<NapiQueryStream> {
-        let request = evot::agent::QueryRequest::text(prompt).session_id(session_id);
+        let mode = match tool_mode.as_deref() {
+            Some("planning") => ToolMode::Planning { ask_fn: None },
+            Some("readonly") => ToolMode::Readonly,
+            _ => ToolMode::Headless,
+        };
+        let request = QueryRequest::text(prompt).session_id(session_id).mode(mode);
 
         let stream = self
             .agent
@@ -120,6 +132,160 @@ impl NapiAgent {
             .map_err(|e| Error::from_reason(format!("load transcript: {e}")))?;
 
         serde_json::to_string(&items).map_err(|e| Error::from_reason(format!("serialize: {e}")))
+    }
+
+    /// Fork the agent for a side conversation (readonly, ephemeral).
+    #[napi]
+    pub fn fork(&self, system_prompt: String) -> Result<NapiForkedAgent> {
+        let request = ForkRequest { system_prompt };
+        let forked = self
+            .agent
+            .fork(request)
+            .map_err(|e| Error::from_reason(format!("fork: {e}")))?;
+        Ok(NapiForkedAgent {
+            inner: Arc::new(Mutex::new(forked)),
+        })
+    }
+
+    /// List agent variables as JSON array of {key, value}.
+    #[napi]
+    pub fn list_variables(&self) -> Result<String> {
+        match self.agent.variables() {
+            Some(vars) => {
+                let items: Vec<_> = vars
+                    .list_global()
+                    .iter()
+                    .map(|v| serde_json::json!({ "key": v.key, "value": v.value }))
+                    .collect();
+                serde_json::to_string(&items)
+                    .map_err(|e| Error::from_reason(format!("serialize: {e}")))
+            }
+            None => Ok("[]".to_string()),
+        }
+    }
+
+    /// Set an agent variable (persisted).
+    #[napi]
+    pub async fn set_variable(&self, key: String, value: String) -> Result<()> {
+        match self.agent.variables() {
+            Some(vars) => vars
+                .set_global(key, value)
+                .await
+                .map_err(|e| Error::from_reason(format!("set variable: {e}"))),
+            None => Err(Error::from_reason("variables not available")),
+        }
+    }
+
+    /// Delete an agent variable. Returns true if it existed.
+    #[napi]
+    pub async fn delete_variable(&self, key: String) -> Result<bool> {
+        match self.agent.variables() {
+            Some(vars) => vars
+                .delete_global(&key)
+                .await
+                .map_err(|e| Error::from_reason(format!("delete variable: {e}"))),
+            None => Err(Error::from_reason("variables not available")),
+        }
+    }
+
+    /// Get config info: provider, env path, base URL, configured models.
+    #[napi]
+    pub fn config_info(&self) -> Result<String> {
+        let llm = self.agent.llm();
+        let provider = format!("{}", self.config.llm.provider);
+        let env_path = evot::conf::paths::env_file_path()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let available = self.collect_models();
+        let info = serde_json::json!({
+            "provider": provider,
+            "envPath": env_path,
+            "baseUrl": llm.base_url,
+            "anthropicModel": self.config.anthropic.model,
+            "openaiModel": self.config.openai.model,
+            "availableModels": available,
+        });
+        serde_json::to_string(&info).map_err(|e| Error::from_reason(format!("serialize: {e}")))
+    }
+
+    /// Get the list of available models from config (unique, non-empty).
+    #[napi]
+    pub fn available_models(&self) -> Vec<String> {
+        self.collect_models()
+    }
+
+    fn collect_models(&self) -> Vec<String> {
+        let llm = self.agent.llm();
+        let mut models = Vec::new();
+        for m in [
+            &self.config.anthropic.model,
+            &self.config.openai.model,
+            &llm.model,
+        ] {
+            let trimmed = m.trim();
+            if !trimmed.is_empty() && !models.contains(&trimmed.to_string()) {
+                models.push(trimmed.to_string());
+            }
+        }
+        models
+    }
+
+    /// Switch the active provider ("anthropic" or "openai") and update the LLM config.
+    #[napi]
+    pub fn set_provider(&self, provider: String) -> Result<()> {
+        let kind = evot::conf::ProviderKind::from_str_loose(&provider)
+            .map_err(|e| Error::from_reason(format!("invalid provider: {e}")))?;
+        self.agent.set_provider(kind.clone());
+        let llm = match kind {
+            evot::conf::ProviderKind::Anthropic => evot::conf::LlmConfig {
+                provider: kind,
+                api_key: self.config.anthropic.api_key.clone(),
+                base_url: self.config.anthropic.base_url.clone(),
+                model: self.config.anthropic.model.clone(),
+            },
+            evot::conf::ProviderKind::OpenAi => evot::conf::LlmConfig {
+                provider: kind,
+                api_key: self.config.openai.api_key.clone(),
+                base_url: self.config.openai.base_url.clone(),
+                model: self.config.openai.model.clone(),
+            },
+        };
+        self.agent.set_llm(llm);
+        Ok(())
+    }
+
+    /// Set execution limits (max turns, tokens, duration).
+    #[napi]
+    pub fn set_limits(
+        &self,
+        max_turns: Option<u32>,
+        max_tokens: Option<f64>,
+        max_duration_secs: Option<f64>,
+    ) {
+        let mut limits = self.agent.limits();
+        if let Some(t) = max_turns {
+            limits.max_turns = t;
+        }
+        if let Some(t) = max_tokens {
+            limits.max_total_tokens = t as u64;
+        }
+        if let Some(d) = max_duration_secs {
+            limits.max_duration_secs = d as u64;
+        }
+        self.agent.with_limits(limits);
+    }
+
+    /// Append extra text to the system prompt.
+    #[napi]
+    pub fn append_system_prompt(&self, extra: String) {
+        self.agent.append_system_prompt(&extra);
+    }
+
+    /// Add additional skills directories.
+    #[napi]
+    pub fn add_skills_dirs(&self, dirs: Vec<String>) {
+        let paths: Vec<PathBuf> = dirs.into_iter().map(PathBuf::from).collect();
+        self.agent.with_skills_dirs(paths);
     }
 }
 
@@ -168,6 +334,34 @@ impl NapiQueryStream {
         if let Ok(stream) = self.inner.try_lock() {
             stream.abort();
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NapiForkedAgent — ephemeral readonly side conversation
+// ---------------------------------------------------------------------------
+
+#[napi]
+pub struct NapiForkedAgent {
+    inner: Arc<Mutex<ForkedAgent>>,
+}
+
+#[napi]
+impl NapiForkedAgent {
+    /// Send a prompt to the forked agent. Returns a NapiQueryStream.
+    #[napi]
+    pub async fn query(&self, prompt: String) -> Result<NapiQueryStream> {
+        let mut forked = self.inner.lock().await;
+        let stream = forked
+            .query(&prompt)
+            .await
+            .map_err(|e| Error::from_reason(format!("fork query: {e}")))?;
+        let sid = stream.session_id.clone();
+        Ok(NapiQueryStream {
+            inner: Mutex::new(stream),
+            cached_session_id: sid,
+            aborted: Arc::new(AtomicBool::new(false)),
+        })
     }
 }
 
