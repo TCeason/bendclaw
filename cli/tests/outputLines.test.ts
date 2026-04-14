@@ -109,6 +109,8 @@ describe('buildRunSummary', () => {
       toolBreakdown: [],
       llmCallDetails: [],
       compactHistory: [],
+      lastMessageStats: null,
+      systemPromptTokens: 0,
     })
     expect(lines.length).toBeGreaterThan(1)
     expect(lines[0]!.text).toContain('This Run Summary')
@@ -140,12 +142,55 @@ describe('buildRunSummary', () => {
         { model: 'test', durationMs: 1500, inputTokens: 2000, outputTokens: 200, ttfbMs: 80, ttftMs: 150, tokPerSec: 133 },
       ],
       compactHistory: [],
+      lastMessageStats: null,
+      systemPromptTokens: 0,
     })
     expect(lines.some((l) => l.text.includes('llm'))).toBe(true)
     expect(lines.some((l) => l.text.includes('ttft avg'))).toBe(true)
     expect(lines.some((l) => l.text.includes('#1'))).toBe(true)
     expect(lines.some((l) => l.text.includes('cache'))).toBe(true)
     expect(lines.some((l) => l.text.includes('total input'))).toBe(true)
+  })
+
+  test('includes token breakdown by role', () => {
+    const lines = buildRunSummary({
+      durationMs: 10000,
+      turnCount: 2,
+      toolCallCount: 2,
+      toolErrorCount: 0,
+      inputTokens: 100000,
+      outputTokens: 500,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      llmCalls: 2,
+      contextTokens: 0,
+      contextWindow: 0,
+      toolBreakdown: [],
+      llmCallDetails: [
+        { model: 'test', durationMs: 5000, inputTokens: 50000, outputTokens: 250, ttfbMs: 500, ttftMs: 1000, tokPerSec: 62.5 },
+        { model: 'test', durationMs: 5000, inputTokens: 50000, outputTokens: 250, ttfbMs: 500, ttftMs: 1000, tokPerSec: 62.5 },
+      ],
+      compactHistory: [],
+      lastMessageStats: {
+        userCount: 3,
+        assistantCount: 2,
+        toolResultCount: 2,
+        userTokens: 5000,
+        assistantTokens: 15000,
+        toolResultTokens: 78000,
+        toolDetails: [['bash', 30000], ['read', 48000]],
+      },
+      systemPromptTokens: 2000,
+    })
+    const all = lines.map(l => l.text).join('\n')
+    expect(all).toContain('system')
+    expect(all).toContain('user')
+    expect(all).toContain('assistant')
+    expect(all).toContain('tool_result')
+    // Per-tool breakdown
+    expect(all).toContain('bash')
+    expect(all).toContain('read')
+    expect(all).toContain('%')
   })
 })
 

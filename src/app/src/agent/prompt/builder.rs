@@ -25,7 +25,18 @@ impl SystemPrompt {
     pub fn new(cwd: &str) -> Self {
         Self {
             cwd: cwd.to_string(),
-            sections: vec!["You are a helpful assistant.".into()],
+            sections: vec![concat!(
+                "You are a helpful assistant.\n\n",
+                "# Output efficiency\n\n",
+                "Go straight to the point. Try the simplest approach first. ",
+                "Do not ask clarifying questions unless the request is genuinely ambiguous ",
+                "with multiple conflicting interpretations. ",
+                "When given an unclear or generic instruction, interpret it in the most ",
+                "reasonable way and act on it directly. ",
+                "Lead with the answer or action, not the reasoning. ",
+                "Do not restate what the user said — just do it.",
+            )
+            .into()],
         }
     }
 

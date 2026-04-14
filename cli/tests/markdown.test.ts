@@ -56,9 +56,9 @@ describe('renderMarkdown', () => {
 
   test('renders unordered lists', () => {
     const result = render('- one\n- two\n- three')
-    expect(result).toContain('- one')
-    expect(result).toContain('- two')
-    expect(result).toContain('- three')
+    expect(result).toContain('• one')
+    expect(result).toContain('• two')
+    expect(result).toContain('• three')
   })
 
   test('renders ordered lists', () => {
@@ -81,7 +81,7 @@ describe('renderMarkdown', () => {
 
   test('renders horizontal rules', () => {
     const result = render('---')
-    expect(result).toContain('---')
+    expect(result).toContain('─'.repeat(50))
   })
 
   test('renders tables with box-drawing characters', () => {
@@ -94,6 +94,8 @@ describe('renderMarkdown', () => {
     expect(result).toContain('┌')
     expect(result).toContain('┐')
     expect(result).toContain('│')
+    expect(result).toContain('├')
+    expect(result).toContain('┤')
     expect(result).toContain('└')
     expect(result).toContain('┘')
   })
@@ -132,9 +134,9 @@ describe('formatToken', () => {
     expect(result).toBe(')')
   })
 
-  test('renders hr as ---', () => {
-    const result = formatToken({ type: 'hr', raw: '---' } as Token)
-    expect(result).toBe('---')
+  test('renders hr as horizontal line', () => {
+    const result = stripAnsi(formatToken({ type: 'hr', raw: '---' } as Token))
+    expect(result).toContain('─'.repeat(50))
   })
 
   test('renders image as href', () => {

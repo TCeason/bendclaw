@@ -368,6 +368,7 @@ async function handleSlashCommand(input: string, ctx: CommandContext) {
 
     case '/clear':
       abortCurrentStream()
+      process.stdout.write('\x1b[2J\x1b[H')
       setState((prev) => ({ ...prev, messages: [] }))
       setOutputLines([])
       pushSystem(setSystem, 'info', 'Messages cleared.')
@@ -375,6 +376,7 @@ async function handleSlashCommand(input: string, ctx: CommandContext) {
 
     case '/new':
       abortCurrentStream()
+      process.stdout.write('\x1b[2J\x1b[H')
       setOutputLines([])
       setState((prev) => ({
         ...createInitialState(prev.model, prev.cwd),

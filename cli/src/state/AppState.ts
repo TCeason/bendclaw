@@ -3,7 +3,7 @@
  */
 
 import { type RunEvent } from '../native/index.js'
-import { humanTokens as humanTokensInline, renderBar } from '../utils/format.js'
+import { humanTokens as humanTokensInline, renderBar, renderPositionBar } from '../utils/format.js'
 
 // ---------------------------------------------------------------------------
 // Message types for the UI
@@ -54,6 +54,8 @@ export interface RunStats {
   toolBreakdown: ToolBreakdownEntry[]
   llmCallDetails: LlmCallDetail[]
   compactHistory: CompactRecord[]
+  lastMessageStats: MessageStats | null
+  systemPromptTokens: number
 }
 
 export interface LlmCallDetail {
@@ -147,6 +149,8 @@ function emptyRunStats(): RunStats {
     toolBreakdown: [],
     llmCallDetails: [],
     compactHistory: [],
+    lastMessageStats: null,
+    systemPromptTokens: 0,
   }
 }
 
@@ -431,6 +435,11 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const text = `[LLM] call · ${model} · turn ${turn}${retryStr}\n${msgLine}\n${tokLine}${toolBreakdownLines}`
       return {
         ...state,
+        currentRunStats: {
+          ...state.currentRunStats,
+          lastMessageStats: msgStats,
+          systemPromptTokens: sysTok,
+        },
         verboseEvents: [...state.verboseEvents, { kind: 'llm_call', text }],
       }
     }
@@ -517,28 +526,101 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         const afterMsgs = (result?.after_message_count as number) ?? 0
         const before = (result?.before_estimated_tokens as number) ?? 0
         const after = (result?.after_estimated_tokens as number) ?? 0
+        const msgsDropped = (result?.messages_dropped as number) ?? 0
         const saved = before - after
-        const savedPct = before > 0 ? (saved / before * 100).toFixed(0) : '0'
-        action = `L${level}\n  ${beforeMsgs} messages ~${humanTokensInline(before)} tok\n  → ${afterMsgs} messages ~${humanTokensInline(after)} tok\n  saved ${humanTokensInline(saved)} (${savedPct}%)`
-        // Add actions detail if available
-        const actions = result?.actions as any[] | undefined
-        if (actions && actions.length > 0) {
-          const sorted = [...actions].filter((a: any) => a.method !== 'Skipped').sort((a: any, b: any) => {
-            const sa = (a.before_tokens ?? 0) - (a.after_tokens ?? 0)
-            const sb = (b.before_tokens ?? 0) - (b.after_tokens ?? 0)
-            return sb - sa
-          })
-          for (const a of sorted) {
+        const savedPct = before > 0 ? (saved / before * 100).toFixed(1) : '0.0'
+
+        const allActions = result?.actions as any[] | undefined
+        const sorted = allActions
+          ? [...allActions]
+              .filter((a: any) => a.method !== 'Skipped')
+              .sort((a: any, b: any) => {
+                const sa = (a.before_tokens ?? 0) - (a.after_tokens ?? 0)
+                const sb = (b.before_tokens ?? 0) - (b.after_tokens ?? 0)
+                return sb - sa
+              })
+          : []
+
+        // Position bar
+        const posBar = renderPositionBar(beforeMsgs, sorted, level)
+
+        // Action summary line
+        let summary: string
+        if (level === 1) {
+          const outlineCount = sorted.filter((a: any) => a.method === 'Outline').length
+          const headtailCount = sorted.filter((a: any) => a.method === 'HeadTail').length
+          const parts: string[] = []
+          if (outlineCount > 0) parts.push(`outlined ${outlineCount}`)
+          if (headtailCount > 0) parts.push(`head-tail ${headtailCount}`)
+          summary = parts.length > 0 ? `↓ ${parts.join(', ')}` : '↓ no changes'
+        } else if (level === 2) {
+          const turnCount = sorted.length
+          const totalMsgs = sorted.reduce((s: number, a: any) => s + 1 + ((a.related_count as number) ?? 0), 0)
+          summary = `↓ summarized ${turnCount} turns (${totalMsgs} msgs → ${turnCount} summaries)`
+        } else if (level === 3) {
+          const kept = Math.max(afterMsgs - 1, 0)
+          summary = `↓ dropped ${msgsDropped} msgs, kept ${kept} + 1 marker`
+        } else {
+          summary = '↓ no changes'
+        }
+
+        // Build output lines
+        const lines: string[] = []
+        lines.push(`L${level}`)
+        lines.push(`  ${beforeMsgs} messages ~${humanTokensInline(before)} tok`)
+        lines.push(`  ${posBar}`)
+        lines.push(`  ${summary}`)
+        lines.push(`  ${afterMsgs} messages ~${humanTokensInline(after)} tok  (saved ~${humanTokensInline(saved)}, ${savedPct}%)`)
+
+        if (sorted.length > 0) {
+          const totalActions = allActions?.length ?? 0
+          const changed = sorted.length
+          let header: string
+          if (level === 1) {
+            header = `  actions: (${changed} of ${totalActions} changed, sorted by savings)`
+          } else if (level === 2) {
+            const totalMsgs = sorted.reduce((s: number, a: any) => s + 1 + ((a.related_count as number) ?? 0), 0)
+            header = `  actions: (${changed} turns, ${totalMsgs} msgs → ${changed} summaries)`
+          } else if (level === 3) {
+            const kept = Math.max(afterMsgs - 1, 0)
+            header = `  actions: (${msgsDropped} dropped, ${kept} kept, 1 marker)`
+          } else {
+            header = `  actions: (${changed} changed)`
+          }
+          lines.push(header)
+
+          const TOP = 3
+          const TAIL = 2
+          const fmtAction = (a: any) => {
+            const idx = (a.index as number) ?? 0
+            const toolName = (a.tool_name as string) ?? ''
             const method = (a.method as string) ?? 'unknown'
-            const msgs = (a.message_count as number) ?? 0
             const bTok = (a.before_tokens as number) ?? 0
             const aTok = (a.after_tokens as number) ?? 0
             const aSaved = bTok - aTok
-            const aPct = before > 0 ? (aSaved / before * 100).toFixed(0) : '0'
-            const bar = renderBar(aSaved, saved || 1, 12)
-            action += `\n    ${method.toLowerCase()}  ${msgs} msgs  ${humanTokensInline(bTok)}→${humanTokensInline(aTok)}  saved ${humanTokensInline(aSaved)}  ${bar} ${aPct}%`
+            if (method === 'Summarized') {
+              const rc = (a.related_count as number) ?? 0
+              return `    #${String(idx).padEnd(3)} turn(${1 + rc} msgs)  ${method.padEnd(12)} ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (saved ~${humanTokensInline(aSaved)})`
+            } else if (method === 'Dropped') {
+              const endIdx = a.end_index as number | undefined
+              const idxStr = endIdx != null ? `#${idx}..#${String(endIdx).padEnd(3)}` : `#${String(idx).padEnd(3)}`
+              return `    ${idxStr} ${method.padEnd(12)} ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (saved ~${humanTokensInline(aSaved)})`
+            } else {
+              return `    #${String(idx).padEnd(3)} ${toolName.padEnd(12)} ${method.padEnd(12)} ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (saved ~${humanTokensInline(aSaved)})`
+            }
+          }
+
+          if (sorted.length <= TOP + TAIL) {
+            for (const a of sorted) lines.push(fmtAction(a))
+          } else {
+            for (const a of sorted.slice(0, TOP)) lines.push(fmtAction(a))
+            const omitted = sorted.length - TOP - TAIL
+            lines.push(`    ... ${omitted} more ...`)
+            for (const a of sorted.slice(sorted.length - TAIL)) lines.push(fmtAction(a))
           }
         }
+
+        action = lines.join('\n')
       }
       // Track compact history for run summary
       const compactRecord: import('./AppState.js').CompactRecord | null =

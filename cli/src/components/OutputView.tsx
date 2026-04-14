@@ -24,17 +24,19 @@ export function OutputView({ banner, lines }: Props) {
 
   return (
     <Static items={items}>
-      {(item) => {
+      {(item, index) => {
         if (item.kind === 'banner') {
           return <React.Fragment key={item.id}>{item.node}</React.Fragment>
         }
-        return <OutputLineView key={item.id} line={item.line} />
+        const prevItem = index > 0 ? items[index - 1] : undefined
+        const prevKind = prevItem?.kind === 'line' ? prevItem.line.kind : undefined
+        return <OutputLineView key={item.id} line={item.line} prevKind={prevKind} />
       }}
     </Static>
   )
 }
 
-function OutputLineView({ line }: { line: OutputLine }) {
+function OutputLineView({ line, prevKind }: { line: OutputLine; prevKind?: string }) {
   switch (line.kind) {
     case 'user':
       return (
@@ -43,12 +45,15 @@ function OutputLineView({ line }: { line: OutputLine }) {
           <Text bold>{line.text}</Text>
         </Box>
       )
-    case 'assistant':
+    case 'assistant': {
+      // Only add top margin on the first assistant line after a non-assistant line
+      const isBlockStart = prevKind !== 'assistant'
       return (
-        <Box marginTop={1}>
+        <Box marginTop={isBlockStart ? 1 : 0}>
           <Text>{'  '}{line.text}</Text>
         </Box>
       )
+    }
     case 'tool':
       return <ToolLineView text={line.text} />
     case 'tool_result':

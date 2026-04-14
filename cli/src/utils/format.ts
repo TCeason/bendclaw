@@ -41,6 +41,42 @@ export function renderBar(value: number, max: number, width: number): string {
   return '█'.repeat(Math.min(filled, width)) + '░'.repeat(Math.max(0, width - filled))
 }
 
+/**
+ * Render a position bar showing where compaction actions occurred in the message list.
+ * Matches evot_bak's `render_position_bar`.
+ */
+export function renderPositionBar(beforeCount: number, sortedActions: any[], level: number): string {
+  const WIDTH = 40
+  if (beforeCount === 0) return `[${'·'.repeat(WIDTH)}]`
+
+  const defaultChar = level === 3 ? 'K' : '·'
+  const slotCount = Math.min(WIDTH, beforeCount)
+  const slots = new Array(slotCount).fill(defaultChar)
+
+  for (const a of sortedActions) {
+    const start = (a.index as number) ?? 0
+    const end = (a.end_index as number) ?? start
+    const method = (a.method as string) ?? ''
+    let ch: string
+    if (level === 1 && method === 'Outline') ch = 'O'
+    else if (level === 1 && method === 'HeadTail') ch = 'H'
+    else if (level === 2 && method === 'Summarized') ch = 'S'
+    else if (level === 3 && method === 'Dropped') ch = 'D'
+    else ch = '?'
+
+    if (beforeCount <= WIDTH) {
+      for (let i = start; i <= Math.min(end, slotCount - 1); i++) slots[i] = ch
+    } else {
+      const map = (idx: number) => Math.floor(idx * slotCount / beforeCount)
+      const s = map(start)
+      const e = map(end)
+      for (let i = s; i <= Math.min(e, slotCount - 1); i++) slots[i] = ch
+    }
+  }
+
+  return `[${slots.join('')}]`
+}
+
 export function truncate(s: string, max: number): string {
   const oneLine = s.replace(/\n/g, ' ').trim()
   if (oneLine.length <= max) return oneLine

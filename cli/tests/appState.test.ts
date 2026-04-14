@@ -182,10 +182,45 @@ describe('applyEvent context_compaction', () => {
     }))
     const evt = next.verboseEvents[next.verboseEvents.length - 1]!
     expect(evt.text).toContain('[COMPACT] · L1')
-    expect(evt.text).toContain('72 messages')
-    expect(evt.text).toContain('65 messages')
-    expect(evt.text).toContain('saved 9k')
-    expect(evt.text).toContain('12%')
+    expect(evt.text).toContain('72 messages ~74k tok')
+    expect(evt.text).toContain('65 messages ~65k tok  (saved ~9k, 12.2%)')
+  })
+
+  test('compact actions with position bar, summary, and top/tail truncation', () => {
+    const state = createInitialState('test-model', '/tmp')
+    const next = applyEvent(state, makeEvent('context_compaction_completed', 1, {
+      result: {
+        type: 'level_compacted',
+        level: 1,
+        before_message_count: 100,
+        after_message_count: 100,
+        before_estimated_tokens: 50000,
+        after_estimated_tokens: 45000,
+        actions: [
+          { index: 0, tool_name: 'read_file', method: 'Outline', before_tokens: 2000, after_tokens: 500, related_count: 3 },
+          { index: 1, tool_name: 'bash', method: 'HeadTail', before_tokens: 1500, after_tokens: 800 },
+          { index: 2, tool_name: 'search', method: 'Skipped', before_tokens: 100, after_tokens: 100 },
+          { index: 3, tool_name: 'read_file', method: 'Outline', before_tokens: 500, after_tokens: 500 },
+        ],
+      },
+    }))
+    const evt = next.verboseEvents[next.verboseEvents.length - 1]!
+    // Position bar present
+    expect(evt.text).toContain('[')
+    expect(evt.text).toContain(']')
+    // Action summary
+    expect(evt.text).toContain('↓ outlined 2, head-tail 1')
+    // After line with saved
+    expect(evt.text).toContain('(saved ~5k, 10.0%)')
+    // Actions header
+    expect(evt.text).toContain('actions: (3 of 4 changed, sorted by savings)')
+    // Skipped is filtered out
+    expect(evt.text).not.toContain('Skipped')
+    // Action lines show #index, tool_name, Method
+    expect(evt.text).toContain('#0   read_file    Outline')
+    expect(evt.text).toContain('#1   bash         HeadTail')
+    // saved=0 action still shown (evot_bak shows all non-Skipped)
+    expect(evt.text).toContain('#3   read_file    Outline')
   })
 
   test('compact completed tracks history for run summary', () => {

@@ -7,6 +7,7 @@
 import chalk from 'chalk'
 import { marked, type Token, type Tokens } from 'marked'
 import stripAnsi from 'strip-ansi'
+import stringWidth from 'string-width'
 import { linkifyIssueRefs } from './linkify.js'
 
 let highlighter: typeof import('cli-highlight') | null = null
@@ -18,17 +19,11 @@ try {
 
 let markedConfigured = false
 
-function configureMarked(): void {
+export function configureMarked(): void {
   if (markedConfigured) return
   markedConfigured = true
-  // Disable strikethrough — model often uses ~ for "approximate"
-  marked.use({
-    tokenizer: {
-      del() {
-        return undefined as any
-      },
-    },
-  })
+  // Keep default tokenizer — del (~~text~~) is parsed and rendered as dim text.
+  // Single ~ for "approximate" is not affected (GFM requires ~~double~~).
 }
 
 const EOL = '\n'
@@ -47,11 +42,11 @@ export function formatToken(
       const inner = (token.tokens ?? [])
         .map(t => formatToken(t, 0, null, null))
         .join('')
-      const bar = chalk.dim('│')
+      const bar = chalk.yellow('▎')
       return inner
         .split(EOL)
         .map(line =>
-          stripAnsi(line).trim() ? `${bar} ${chalk.italic(line)}` : line,
+          stripAnsi(line).trim() ? `${bar} ${chalk.italic.dim(line)}` : line,
         )
         .join(EOL)
     }
@@ -74,10 +69,31 @@ export function formatToken(
           // fallback
         }
       }
-      return highlighted + EOL
+      // Wrap code block with border and optional language label
+      const codeLines = highlighted.split(EOL)
+      const maxLen = Math.max(...codeLines.map(l => stringWidth(stripAnsi(l))), 0)
+      const width = Math.max(maxLen, 40)
+      const langWidth = lang ? stringWidth(lang) : 0
+      const header = lang
+        ? chalk.dim(`┌─ ${lang} ${'─'.repeat(Math.max(0, width - langWidth - 3))}┐`)
+        : chalk.dim(`┌${'─'.repeat(width + 2)}┐`)
+      const footer = chalk.dim(`└${'─'.repeat(width + 2)}┘`)
+      const body = codeLines
+        .map(l => {
+          const pad = width - stringWidth(stripAnsi(l))
+          return chalk.dim('│') + ' ' + l + ' '.repeat(Math.max(0, pad)) + ' ' + chalk.dim('│')
+        })
+        .join(EOL)
+      return header + EOL + body + EOL + footer + EOL
     }
     case 'codespan':
-      return chalk.cyan(token.text)
+      return chalk.bgGray.white(` ${token.text} `)
+    case 'del':
+      return chalk.dim.strikethrough(
+        (token.tokens ?? [])
+          .map(t => formatToken(t, 0, null, parent))
+          .join(''),
+      )
     case 'em':
       return chalk.italic(
         (token.tokens ?? [])
@@ -95,12 +111,15 @@ export function formatToken(
         .map(t => formatToken(t, 0, null, null))
         .join('')
       if (token.depth === 1) {
-        return chalk.bold.italic.underline(text) + EOL + EOL
+        return chalk.bold.underline(text) + EOL + EOL
       }
-      return chalk.bold(text) + EOL + EOL
+      if (token.depth === 2) {
+        return chalk.bold(text) + EOL + EOL
+      }
+      return chalk.bold.dim('▸ ') + chalk.bold(text) + EOL + EOL
     }
     case 'hr':
-      return '---'
+      return chalk.dim('─'.repeat(50)) + EOL
     case 'link': {
       const linkText = (token.tokens ?? [])
         .map(t => formatToken(t, 0, null, token))
@@ -141,7 +160,9 @@ export function formatToken(
       return EOL
     case 'text': {
       if (parent?.type === 'list_item') {
-        const bullet = orderedListNumber === null ? '-' : `${orderedListNumber}.`
+        const bullet = orderedListNumber === null
+          ? (listDepth <= 1 ? '•' : '◦')
+          : `${getListNumber(listDepth, orderedListNumber)}.`
         const inner = token.tokens
           ? token.tokens.map(t => formatToken(t, listDepth, orderedListNumber, token)).join('')
           : linkifyIssueRefs(token.text)
@@ -153,75 +174,61 @@ export function formatToken(
       return linkifyIssueRefs(token.text)
     }
     case 'table': {
+      // Box-drawing table matching Claude Code style.
       const tableToken = token as Tokens.Table
       function getDisplayText(tokens: Token[] | undefined): string {
         return stripAnsi(
           tokens?.map(t => formatToken(t, 0, null, null)).join('') ?? '',
         )
       }
-      // Determine column widths
+      function getDisplayWidth(tokens: Token[] | undefined): number {
+        return stringWidth(getDisplayText(tokens))
+      }
+      // Determine column widths (using display width for CJK/emoji)
       const columnWidths = tableToken.header.map((header, index) => {
-        let maxWidth = getDisplayText(header.tokens).length
+        let maxWidth = getDisplayWidth(header.tokens)
         for (const row of tableToken.rows) {
-          const cellLen = getDisplayText(row[index]?.tokens).length
-          maxWidth = Math.max(maxWidth, cellLen)
+          maxWidth = Math.max(maxWidth, getDisplayWidth(row[index]?.tokens))
         }
         return Math.max(maxWidth, 3)
       })
-      // Top border: ┌─────┬─────┐
-      let out = '┌'
-      columnWidths.forEach((width, i) => {
-        out += '─'.repeat(width + 2)
-        out += i < columnWidths.length - 1 ? '┬' : '┐'
-      })
-      out += EOL
-      // Header row: │  A  │  B  │
-      out += '│'
-      tableToken.header.forEach((header, index) => {
-        const content = header.tokens
-          ?.map(t => formatToken(t, 0, null, null))
-          .join('') ?? ''
-        const displayLen = getDisplayText(header.tokens).length
-        const width = columnWidths[index] ?? 3
-        out += ' ' + padCell(content, displayLen, width) + ' │'
-      })
-      out += EOL
-      // Header separator: ├─────┼─────┤
-      out += '├'
-      columnWidths.forEach((width, i) => {
-        out += '─'.repeat(width + 2)
-        out += i < columnWidths.length - 1 ? '┼' : '┤'
-      })
-      out += EOL
-      // Data rows: │ 1   │ 2   │
-      tableToken.rows.forEach((row, rowIdx) => {
-        out += '│'
-        row.forEach((cell, index) => {
+      const numCols = columnWidths.length
+      function borderLine(left: string, mid: string, cross: string, right: string): string {
+        let line = left
+        columnWidths.forEach((width, i) => {
+          line += mid.repeat(width + 2)
+          line += i < numCols - 1 ? cross : right
+        })
+        return line
+      }
+      function dataRow(cells: { tokens?: Token[] }[]): string {
+        let line = '│'
+        cells.forEach((cell, index) => {
           const content = cell.tokens
             ?.map(t => formatToken(t, 0, null, null))
             .join('') ?? ''
-          const displayLen = getDisplayText(cell.tokens).length
+          const dw = stringWidth(stripAnsi(content))
           const width = columnWidths[index] ?? 3
-          out += ' ' + padCell(content, displayLen, width) + ' │'
+          const align = tableToken.align?.[index]
+          line += ' ' + padAligned(content, dw, width, align) + ' │'
         })
-        out += EOL
-        // Row separator (between rows, not after last): ├─────┼─────┤
+        return line
+      }
+      // Top border
+      let out = borderLine('┌', '─', '┬', '┐') + EOL
+      // Header row
+      out += dataRow(tableToken.header) + EOL
+      // Header separator
+      out += borderLine('├', '─', '┼', '┤') + EOL
+      // Data rows with separators between each row
+      tableToken.rows.forEach((row, rowIdx) => {
+        out += dataRow(row) + EOL
         if (rowIdx < tableToken.rows.length - 1) {
-          out += '├'
-          columnWidths.forEach((width, i) => {
-            out += '─'.repeat(width + 2)
-            out += i < columnWidths.length - 1 ? '┼' : '┤'
-          })
-          out += EOL
+          out += borderLine('├', '─', '┼', '┤') + EOL
         }
       })
-      // Bottom border: └─────┴─────┘
-      out += '└'
-      columnWidths.forEach((width, i) => {
-        out += '─'.repeat(width + 2)
-        out += i < columnWidths.length - 1 ? '┴' : '┘'
-      })
-      out += EOL
+      // Bottom border
+      out += borderLine('└', '─', '┴', '┘') + EOL
       return out + EOL
     }
     case 'escape':
@@ -233,9 +240,71 @@ export function formatToken(
   }
 }
 
-function padCell(content: string, displayWidth: number, targetWidth: number): string {
+/**
+ * Pad content to targetWidth respecting alignment.
+ * displayWidth is the visible width (caller computes via stringWidth on
+ * stripAnsi'd text, so ANSI codes don't affect padding).
+ */
+function padAligned(
+  content: string,
+  displayWidth: number,
+  targetWidth: number,
+  align: string | null | undefined,
+): string {
   const padding = Math.max(0, targetWidth - displayWidth)
+  if (align === 'center') {
+    const left = Math.floor(padding / 2)
+    return ' '.repeat(left) + content + ' '.repeat(padding - left)
+  }
+  if (align === 'right') {
+    return ' '.repeat(padding) + content
+  }
   return content + ' '.repeat(padding)
+}
+
+// ---------------------------------------------------------------------------
+// Ordered list numbering — depth-aware (number → letter → roman)
+// ---------------------------------------------------------------------------
+
+function getListNumber(listDepth: number, n: number): string {
+  switch (listDepth) {
+    case 0:
+    case 1:
+      return n.toString()
+    case 2:
+      return numberToLetter(n)
+    case 3:
+      return numberToRoman(n)
+    default:
+      return n.toString()
+  }
+}
+
+function numberToLetter(n: number): string {
+  let result = ''
+  while (n > 0) {
+    n--
+    result = String.fromCharCode(97 + (n % 26)) + result
+    n = Math.floor(n / 26)
+  }
+  return result
+}
+
+const ROMAN_VALUES: ReadonlyArray<[number, string]> = [
+  [1000, 'm'], [900, 'cm'], [500, 'd'], [400, 'cd'],
+  [100, 'c'], [90, 'xc'], [50, 'l'], [40, 'xl'],
+  [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i'],
+]
+
+function numberToRoman(n: number): string {
+  let result = ''
+  for (const [value, numeral] of ROMAN_VALUES) {
+    while (n >= value) {
+      result += numeral
+      n -= value
+    }
+  }
+  return result
 }
 
 /**
