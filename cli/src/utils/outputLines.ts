@@ -70,13 +70,12 @@ export function buildToolCall(
     kind: 'tool',
     text: `[${name}] call`,
   })
-  // Detail: preview command or args
+  // Detail: preview command takes priority, otherwise show args
   if (previewCommand) {
     lines.push({ id: genId('tool'), kind: 'tool', text: `  ❯ ${previewCommand}` })
   } else {
-    const detail = formatToolDetail(args)
-    if (detail) {
-      lines.push({ id: genId('tool'), kind: 'tool', text: `  ${detail}` })
+    for (const line of formatToolInputLines(args)) {
+      lines.push({ id: genId('tool'), kind: 'tool', text: `  ${line}` })
     }
   }
   return lines
@@ -354,12 +353,16 @@ export class AssistantStreamBuffer {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatToolDetail(args: Record<string, unknown>): string {
-  if (!args || typeof args !== 'object') return ''
-  if ('command' in args) return truncate(String(args.command), 80)
-  if ('path' in args) return truncate(String(args.path), 80)
-  if ('file_path' in args) return truncate(String(args.file_path), 80)
-  if ('pattern' in args) return truncate(String(args.pattern), 60)
-  if ('url' in args) return truncate(String(args.url), 80)
-  return ''
+/** Format all args as key: value lines (matching Rust REPL's format_tool_input_lines). */
+function formatToolInputLines(args: Record<string, unknown>): string[] {
+  if (!args || typeof args !== 'object') return []
+  const entries = Object.entries(args).filter(([k]) => k !== 'diff')
+  if (entries.length === 0) return []
+  return entries.map(([k, v]) => {
+    let val: string
+    if (typeof v === 'string') val = truncate(v, 120)
+    else if (Array.isArray(v)) val = truncate(v.map(String).join(', '), 120)
+    else val = truncate(String(v), 120)
+    return `${k}: ${val}`
+  })
 }
