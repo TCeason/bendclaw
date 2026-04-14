@@ -1,7 +1,9 @@
 /* auto-generated napi loader — do not edit */
 import { createRequire } from 'module'
-import { join, dirname } from 'path'
+import { join, dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
+import { existsSync } from 'fs'
+import { homedir } from 'os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
@@ -23,8 +25,25 @@ function loadBinding() {
     throw new Error(`Unsupported platform: ${key}`)
   }
 
-  // .node files live in cli/ root
-  return require(join(__dirname, '..', '..', filename))
+  // Search order:
+  // 1. EVOT_HOME/lib/
+  // 2. ~/.evotai/lib/
+  // 3. cli/ root (dev mode, relative to this file)
+  const evotHome = process.env.EVOT_HOME || join(homedir(), '.evotai')
+  const candidates = [
+    join(evotHome, 'lib', filename),
+    join(__dirname, '..', '..', filename),
+  ]
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return require(resolve(candidate))
+    }
+  }
+
+  throw new Error(
+    `Cannot find ${filename} in any of:\n${candidates.map(c => `  - ${c}`).join('\n')}`
+  )
 }
 
 const binding = loadBinding()

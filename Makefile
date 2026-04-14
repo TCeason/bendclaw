@@ -6,7 +6,7 @@ NEXTEST := $(CARGO) nextest run --no-tests=pass
 COVERAGE_TARGETS := --lib --test unit --test it --test contract
 COVERAGE_CMD := $(CARGO) llvm-cov nextest $(COVERAGE_TARGETS)
 
-.PHONY: setup check build run test test-fast test-unit test-it test-contract test-cli coverage coverage-report snapshot-review dev-env ci build-napi
+.PHONY: setup check build run test test-fast test-unit test-it test-contract test-cli coverage coverage-report snapshot-review dev-env ci build-napi build-cli install
 
 setup:
 	@set -e; \
@@ -50,7 +50,7 @@ check:
 	cargo fmt --all -- --check
 	cargo clippy --all-targets -- -D warnings
 
-build: build-napi
+build: build-napi build-cli
 
 test: test-fast
 
@@ -102,6 +102,23 @@ ci: check test
 
 build-napi:
 	cd cli && bun install && npx napi build --manifest-path ../src/napi/Cargo.toml --release --platform --output-dir .
+
+build-cli: build-napi
+	cd cli && bun build src/index.tsx --compile --define 'process.env.DEV="false"' --define 'process.env.NODE_ENV="production"' --outfile dist/evot
+
+install: build-cli
+	@mkdir -p $(HOME)/.evotai/bin $(HOME)/.evotai/lib
+	rm -f $(HOME)/.evotai/bin/evot
+	cp cli/dist/evot $(HOME)/.evotai/bin/evot
+	cp cli/evot-napi.*.node $(HOME)/.evotai/lib/
+	@if [ "$$(uname -s)" = "Darwin" ]; then \
+		xattr -cr $(HOME)/.evotai/bin/evot; \
+		codesign --force --sign - $(HOME)/.evotai/bin/evot; \
+	fi
+	@echo ""
+	@echo "  ✓ Installed evot to $(HOME)/.evotai/bin/evot"
+	@echo "  ✓ Copied .node bindings to $(HOME)/.evotai/lib/"
+	@echo ""
 
 build-napi-dev:
 	cd cli && bun install && npx napi build --manifest-path ../src/napi/Cargo.toml --platform --output-dir .
