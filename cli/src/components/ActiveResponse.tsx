@@ -1,22 +1,19 @@
 /**
  * ActiveResponse — minimal dynamic zone during loading.
- * Shows pending (incomplete) streaming text, tool progress, and Spinner.
- * pendingText holds the full streaming markdown for the current turn;
- * it is rendered with markdown formatting so it looks the same as the
- * final Static output.
+ * Shows pending (incomplete) streaming markdown tail, tool progress, and Spinner.
+ *
+ * pendingText only holds the current incomplete markdown block (not the full
+ * response). Completed blocks are committed to <Static> by runQuery.
  *
  * toolProgress holds the latest bash/tool output text, shown as tail
  * lines above the spinner (matching Rust REPL's dynamic refresh area).
- *
- * To keep the spinner and input box pinned at the bottom, we cap the
- * visible pending text to the last N lines that fit the terminal height.
  */
 
 import React, { useMemo } from 'react'
 import { Box, Text, useStdout } from 'ink'
 import { ToolCallDisplay } from './ToolCallDisplay.js'
 import { Spinner } from './Spinner.js'
-import { renderMarkdown } from '../utils/markdown.js'
+import { StreamingMarkdown } from './StreamingMarkdown.js'
 import type { UIToolCall } from '../state/AppState.js'
 
 /** Lines reserved for spinner + prompt + padding */
@@ -46,15 +43,6 @@ export function ActiveResponse({
 
   const hasTools = activeToolCalls.size > 0
 
-  const rendered = useMemo(() => {
-    if (!pendingText) return ''
-    const full = renderMarkdown(pendingText).replace(/\n+$/, '')
-    // Tail the output to fit the terminal
-    const lines = full.split('\n')
-    if (lines.length <= maxLines) return full
-    return lines.slice(-maxLines).join('\n')
-  }, [pendingText, maxLines])
-
   const progressLines = useMemo(() => {
     if (!toolProgress) return []
     const lines = toolProgress.split('\n')
@@ -72,11 +60,7 @@ export function ActiveResponse({
 
   return (
     <Box flexDirection="column">
-      {rendered.length > 0 && (
-        <Box>
-          <Text>{'   '}{rendered}</Text>
-        </Box>
-      )}
+      <StreamingMarkdown text={pendingText} maxHeight={maxLines} />
 
       {hasTools && (
         <ToolCallDisplay tools={activeToolCalls} />

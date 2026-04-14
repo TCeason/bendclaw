@@ -256,3 +256,94 @@ export function renderMarkdown(text: string): string {
     return text
   }
 }
+
+// ---------------------------------------------------------------------------
+// Streaming markdown block splitter
+// ---------------------------------------------------------------------------
+
+export interface MarkdownSplit {
+  /** Completed markdown blocks that can be committed to Static */
+  completed: string
+  /** Incomplete tail that stays in the dynamic zone */
+  pending: string
+}
+
+/**
+ * Split streaming markdown text into completed blocks and a pending tail.
+ *
+ * A "completed block" is a paragraph, code block, heading, list, table, etc.
+ * that is fully formed and won't change with more tokens.
+ *
+ * Rules:
+ * - A blank line (`\n\n`) is a paragraph boundary — everything before it is complete
+ * - An open code fence (```) without a matching close is NOT complete
+ * - The pending tail is always the text after the last safe split point
+ */
+export function splitMarkdownBlocks(text: string): MarkdownSplit {
+  if (!text) return { completed: '', pending: '' }
+
+  // Find the last safe split point: a blank line boundary that is NOT
+  // inside an unclosed code fence.
+  let splitAt = -1
+  let inCodeFence = false
+  let i = 0
+
+  while (i < text.length) {
+    // Detect code fence lines (``` at start of line)
+    if (isAtLineStart(text, i)) {
+      const fenceLen = countFence(text, i)
+      if (fenceLen >= 3) {
+        inCodeFence = !inCodeFence
+        i += fenceLen
+        // Skip to end of line (but not past the \n — let main loop handle it
+        // so blank-line detection works after closing fences)
+        while (i < text.length && text[i] !== '\n') i++
+        continue
+      }
+    }
+
+    // Detect blank line boundary (two consecutive newlines)
+    if (!inCodeFence && text[i] === '\n') {
+      let j = i + 1
+      // Skip whitespace-only chars between newlines
+      while (j < text.length && text[j] === ' ') j++
+      if (j < text.length && text[j] === '\n') {
+        // Found a blank line boundary — this is a safe split point
+        // Include the blank line in the completed part
+        splitAt = j + 1
+        i = j + 1
+        continue
+      }
+    }
+
+    i++
+  }
+
+  // If we're inside an unclosed code fence, don't split at all
+  if (inCodeFence) {
+    // But if the text is very long, find the last split point BEFORE the code fence started
+    // For simplicity, just return everything as pending
+    return { completed: '', pending: text }
+  }
+
+  if (splitAt <= 0) {
+    return { completed: '', pending: text }
+  }
+
+  return {
+    completed: text.slice(0, splitAt),
+    pending: text.slice(splitAt),
+  }
+}
+
+function isAtLineStart(text: string, pos: number): boolean {
+  return pos === 0 || text[pos - 1] === '\n'
+}
+
+function countFence(text: string, pos: number): number {
+  const ch = text[pos]
+  if (ch !== '`' && ch !== '~') return 0
+  let count = 0
+  while (pos + count < text.length && text[pos + count] === ch) count++
+  return count
+}

@@ -147,3 +147,73 @@ describe('formatToken', () => {
     expect(result).toBe('')
   })
 })
+
+// ---------------------------------------------------------------------------
+// splitMarkdownBlocks
+// ---------------------------------------------------------------------------
+
+import { splitMarkdownBlocks } from '../src/utils/markdown.js'
+
+describe('splitMarkdownBlocks', () => {
+  test('empty text returns empty', () => {
+    expect(splitMarkdownBlocks('')).toEqual({ completed: '', pending: '' })
+  })
+
+  test('single paragraph without blank line stays pending', () => {
+    const result = splitMarkdownBlocks('hello world')
+    expect(result.completed).toBe('')
+    expect(result.pending).toBe('hello world')
+  })
+
+  test('two paragraphs split at blank line', () => {
+    const text = 'paragraph one\n\nparagraph two'
+    const result = splitMarkdownBlocks(text)
+    expect(result.completed).toBe('paragraph one\n\n')
+    expect(result.pending).toBe('paragraph two')
+  })
+
+  test('multiple paragraphs split at last blank line', () => {
+    const text = 'para one\n\npara two\n\npara three'
+    const result = splitMarkdownBlocks(text)
+    expect(result.completed).toBe('para one\n\npara two\n\n')
+    expect(result.pending).toBe('para three')
+  })
+
+  test('code fence keeps content pending until closed', () => {
+    const text = 'intro\n\n```js\nconst x = 1\n```\n\nafter'
+    const result = splitMarkdownBlocks(text)
+    expect(result.completed).toContain('intro')
+    expect(result.completed).toContain('```')
+    expect(result.pending).toBe('after')
+  })
+
+  test('unclosed code fence keeps everything pending', () => {
+    const text = 'intro\n\n```js\nconst x = 1\nmore code'
+    const result = splitMarkdownBlocks(text)
+    expect(result.completed).toBe('')
+    expect(result.pending).toBe(text)
+  })
+
+  test('trailing blank line makes everything completed', () => {
+    const text = 'hello world\n\n'
+    const result = splitMarkdownBlocks(text)
+    expect(result.completed).toBe('hello world\n\n')
+    expect(result.pending).toBe('')
+  })
+
+  test('heading followed by paragraph', () => {
+    const text = '# Title\n\nSome text\n\nMore text'
+    const result = splitMarkdownBlocks(text)
+    expect(result.completed).toContain('# Title')
+    expect(result.completed).toContain('Some text')
+    expect(result.pending).toBe('More text')
+  })
+
+  test('tilde code fence handled', () => {
+    const text = 'before\n\n~~~\ncode\n~~~\n\nafter'
+    const result = splitMarkdownBlocks(text)
+    expect(result.completed).toContain('before')
+    expect(result.completed).toContain('~~~')
+    expect(result.pending).toBe('after')
+  })
+})

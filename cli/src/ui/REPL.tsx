@@ -30,6 +30,7 @@ import {
   messagesToOutputLines,
   findSafeSplitPoint,
 } from '../utils/outputLines.js'
+import { splitMarkdownBlocks } from '../utils/markdown.js'
 
 interface REPLProps {
   agent: Agent
@@ -834,14 +835,20 @@ async function runQuery(
               prefixEmitted = true
             }
           }
-          // Auto-commit when dynamic zone gets too tall
+          // Paragraph-level commit: split completed markdown blocks into Static
+          const { completed, pending } = splitMarkdownBlocks(streamingText)
+          if (completed) {
+            appendLines(buildAssistantLines(completed))
+            streamingText = pending
+          }
+          // Fallback: auto-commit when dynamic zone still gets too tall
           const termRows = process.stdout.rows ?? 24
           if (streamingText.split('\n').length > termRows - 8) {
             const splitAt = findSafeSplitPoint(streamingText)
             if (splitAt > 0 && splitAt < streamingText.length) {
-              const completed = streamingText.slice(0, splitAt)
+              const chunk = streamingText.slice(0, splitAt)
               streamingText = streamingText.slice(splitAt)
-              appendLines(buildAssistantLines(completed))
+              appendLines(buildAssistantLines(chunk))
             }
           }
           setPendingText(streamingText)

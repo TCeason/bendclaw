@@ -319,11 +319,13 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
     case 'llm_call_started': {
       const model = (p.model as string) ?? state.model
       const turn = event.turn
+      const attempt = (p.attempt as number) ?? 0
       const msgCount = (p.message_count as number) ?? 0
       const tools = p.tools as any[] | undefined
       const toolCount = tools?.length ?? 0
       const sysTok = (p.system_prompt_tokens as number) ?? 0
-      const text = `[LLM] call · ${model} · turn ${turn}\n  ${msgCount} messages · ${toolCount} tools\n  ~${humanTokensInline(sysTok)} sys tokens`
+      const retryStr = attempt > 0 ? ` · retry ${attempt}` : ''
+      const text = `[LLM] call · ${model} · turn ${turn}${retryStr}\n  ${msgCount} messages · ${toolCount} tools\n  ~${humanTokensInline(sysTok)} sys tokens`
       return {
         ...state,
         verboseEvents: [...state.verboseEvents, { kind: 'llm_call', text }],
@@ -333,6 +335,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
     case 'llm_call_completed': {
       const usage = p.usage as Record<string, any> | undefined
       const metrics = p.metrics as Record<string, any> | undefined
+      const error = p.error as string | undefined
       const stats = { ...state.currentRunStats }
       stats.llmCalls++
       const inputTok = (usage?.input as number) ?? 0
@@ -360,8 +363,14 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         tokPerSec,
       }]
 
-      const durSec = (durationMs / 1000).toFixed(1)
-      const text = `[LLM] completed\n  tokens   ${humanTokensInline(inputTok)} in · ${outputTok} out · ${tokPerSec.toFixed(0)} tok/s\n  timing   ${durSec}s · ttfb ${(ttfbMs / 1000).toFixed(1)}s · ttft ${(ttftMs / 1000).toFixed(1)}s · stream ${(streamingMs / 1000).toFixed(1)}s`
+      let text: string
+      if (error) {
+        const durSec = (durationMs / 1000).toFixed(1)
+        text = `[LLM] failed · ${durSec}s\n  ${error}`
+      } else {
+        const durSec = (durationMs / 1000).toFixed(1)
+        text = `[LLM] completed\n  tokens   ${humanTokensInline(inputTok)} in · ${outputTok} out · ${tokPerSec.toFixed(0)} tok/s\n  timing   ${durSec}s · ttfb ${(ttfbMs / 1000).toFixed(1)}s · ttft ${(ttftMs / 1000).toFixed(1)}s · stream ${(streamingMs / 1000).toFixed(1)}s`
+      }
 
       return {
         ...state,
