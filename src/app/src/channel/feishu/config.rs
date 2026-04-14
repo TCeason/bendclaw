@@ -1,5 +1,8 @@
 use serde::Deserialize;
 
+pub const FEISHU_API: &str = "https://open.feishu.cn/open-apis";
+pub const FEISHU_MAX_MESSAGE_LEN: usize = 30_000;
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct FeishuChannelConfig {
     pub app_id: String,

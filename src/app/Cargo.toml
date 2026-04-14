@@ -14,8 +14,10 @@ clap.workspace = true
 crossterm = "0.28"
 futures.workspace = true
 parking_lot.workspace = true
+regex = "1"
 ratatui = "0.29"
 reedline = "0.47.0"
+reqwest.workspace = true
 similar = { workspace = true }
 serde.workspace = true
 serde_ignored.workspace = true
