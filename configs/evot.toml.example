@@ -1,6 +1,12 @@
 [llm]
 provider = "anthropic"
 
+# Thinking level controls reasoning depth.
+# Valid values: off, minimal, low, medium, high
+# - Anthropic: maps to thinking budget_tokens (off=disabled, minimal=128, low=512, medium=2048, high=8192)
+# - OpenAI: maps to reasoning_effort (minimal/low→low, medium→medium, high→high, off=omitted)
+# thinking_level = "off"
+
 [anthropic]
 api_key = ""
 base_url = ""

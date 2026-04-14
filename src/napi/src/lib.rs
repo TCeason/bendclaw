@@ -204,6 +204,7 @@ impl NapiAgent {
             "anthropicModel": self.config.anthropic.model,
             "openaiModel": self.config.openai.model,
             "availableModels": available,
+            "thinkingLevel": format!("{:?}", self.config.thinking_level).to_lowercase(),
         });
         serde_json::to_string(&info).map_err(|e| Error::from_reason(format!("serialize: {e}")))
     }
@@ -242,12 +243,14 @@ impl NapiAgent {
                 api_key: self.config.anthropic.api_key.clone(),
                 base_url: self.config.anthropic.base_url.clone(),
                 model: self.config.anthropic.model.clone(),
+                thinking_level: self.config.thinking_level,
             },
             evot::conf::ProviderKind::OpenAi => evot::conf::LlmConfig {
                 provider: kind,
                 api_key: self.config.openai.api_key.clone(),
                 base_url: self.config.openai.base_url.clone(),
                 model: self.config.openai.model.clone(),
+                thinking_level: self.config.thinking_level,
             },
         };
         self.agent.set_llm(llm);

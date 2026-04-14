@@ -44,6 +44,7 @@ pub struct EngineOptions {
     pub limits: super::ExecutionLimits,
     pub skills_dirs: Vec<std::path::PathBuf>,
     pub tools: Vec<Box<dyn evot_engine::AgentTool>>,
+    pub thinking_level: evot_engine::ThinkingLevel,
 }
 
 /// Handle to a running engine instance.
@@ -688,4 +689,5 @@ pub(crate) fn build_agent(
         .with_execution_limits(limits)
         .with_tools(options.tools)
         .with_skills(skills)
+        .with_thinking(options.thinking_level)
 }

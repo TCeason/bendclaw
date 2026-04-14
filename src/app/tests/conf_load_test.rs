@@ -2,9 +2,11 @@ use std::ffi::OsString;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
+use evot::conf::thinking_level_from_str;
 use evot::conf::Config;
 use evot::conf::ProviderKind;
 use evot::conf::StorageBackend;
+use evot_engine::ThinkingLevel;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -236,5 +238,130 @@ workspace = ""
     let config = result?;
     assert_eq!(config.active_llm().base_url, None);
     assert_eq!(config.storage.cloud.workspace, None);
+    Ok(())
+}
+
+#[test]
+fn thinking_level_from_str_parses_all_variants() -> TestResult {
+    assert_eq!(thinking_level_from_str("off")?, ThinkingLevel::Off);
+    assert_eq!(thinking_level_from_str("minimal")?, ThinkingLevel::Minimal);
+    assert_eq!(thinking_level_from_str("low")?, ThinkingLevel::Low);
+    assert_eq!(thinking_level_from_str("medium")?, ThinkingLevel::Medium);
+    assert_eq!(thinking_level_from_str("high")?, ThinkingLevel::High);
+    // case-insensitive
+    assert_eq!(thinking_level_from_str("HIGH")?, ThinkingLevel::High);
+    assert_eq!(thinking_level_from_str("Medium")?, ThinkingLevel::Medium);
+    Ok(())
+}
+
+#[test]
+fn thinking_level_from_str_rejects_invalid() {
+    assert!(thinking_level_from_str("turbo").is_err());
+    assert!(thinking_level_from_str("").is_err());
+}
+
+#[test]
+fn default_thinking_level_is_off() {
+    let config = Config::new(std::path::PathBuf::from("/tmp"));
+    assert_eq!(config.thinking_level, ThinkingLevel::Off);
+    assert_eq!(config.active_llm().thinking_level, ThinkingLevel::Off);
+}
+
+#[test]
+fn load_config_thinking_level_from_toml() -> TestResult {
+    let _guard = env_lock()
+        .lock()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    let temp = tempfile::tempdir()?;
+    let env_home = temp.path().join("home");
+    std::fs::create_dir_all(env_home.join(".evotai"))?;
+    std::fs::write(
+        env_home.join(".evotai").join("evot.toml"),
+        r#"
+thinking_level = "medium"
+
+[llm]
+provider = "anthropic"
+
+[anthropic]
+api_key = "test-key"
+"#,
+    )?;
+
+    let original_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &env_home);
+
+    let result = Config::load();
+
+    restore_env_var("HOME", original_home);
+
+    let config = result?;
+    assert_eq!(config.thinking_level, ThinkingLevel::Medium);
+    assert_eq!(config.active_llm().thinking_level, ThinkingLevel::Medium);
+    Ok(())
+}
+
+#[test]
+fn load_config_thinking_level_from_env_file() -> TestResult {
+    let _guard = env_lock()
+        .lock()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    let temp = tempfile::tempdir()?;
+    let env_home = temp.path().join("home");
+    std::fs::create_dir_all(env_home.join(".evotai"))?;
+    std::fs::write(
+        env_home.join(".evotai").join("evot.env"),
+        "EVOT_ANTHROPIC_API_KEY=test-key\nEVOT_THINKING_LEVEL=high\n",
+    )?;
+
+    let original_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &env_home);
+
+    let result = Config::load();
+
+    restore_env_var("HOME", original_home);
+
+    let config = result?;
+    assert_eq!(config.thinking_level, ThinkingLevel::High);
+    Ok(())
+}
+
+#[test]
+fn load_config_thinking_level_env_overrides_toml() -> TestResult {
+    let _guard = env_lock()
+        .lock()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    let temp = tempfile::tempdir()?;
+    let env_home = temp.path().join("home");
+    std::fs::create_dir_all(env_home.join(".evotai"))?;
+    std::fs::write(
+        env_home.join(".evotai").join("evot.toml"),
+        r#"
+thinking_level = "low"
+
+[llm]
+provider = "anthropic"
+
+[anthropic]
+api_key = "test-key"
+"#,
+    )?;
+    std::fs::write(
+        env_home.join(".evotai").join("evot.env"),
+        "EVOT_THINKING_LEVEL=high\n",
+    )?;
+
+    let original_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &env_home);
+
+    let result = Config::load();
+
+    restore_env_var("HOME", original_home);
+
+    let config = result?;
+    assert_eq!(config.thinking_level, ThinkingLevel::High);
     Ok(())
 }

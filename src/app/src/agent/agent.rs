@@ -462,6 +462,7 @@ impl Agent {
             limits: self.limits.read().clone(),
             skills_dirs: self.skills_dirs.read().clone(),
             tools,
+            thinking_level: llm.thinking_level,
         };
         super::runtime::create_engine(
             options,

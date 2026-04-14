@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use evot_engine::ThinkingLevel;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -14,6 +15,7 @@ pub struct Config {
     pub openai: ProviderConfig,
     pub server: ServerConfig,
     pub storage: StorageConfig,
+    pub thinking_level: ThinkingLevel,
 }
 
 impl Config {
@@ -24,6 +26,7 @@ impl Config {
             openai: ProviderConfig::openai(),
             server: ServerConfig::default(),
             storage: StorageConfig::fs(state_root),
+            thinking_level: ThinkingLevel::Off,
         }
     }
 
@@ -36,6 +39,7 @@ impl Config {
             api_key: config.api_key,
             base_url: config.base_url,
             model: config.model,
+            thinking_level: self.thinking_level,
         }
     }
 
@@ -107,6 +111,7 @@ pub struct LlmConfig {
     pub api_key: String,
     pub base_url: Option<String>,
     pub model: String,
+    pub thinking_level: ThinkingLevel,
 }
 
 #[derive(Debug, Clone)]
@@ -210,6 +215,19 @@ impl std::fmt::Display for ProviderKind {
             Self::Anthropic => write!(f, "anthropic"),
             Self::OpenAi => write!(f, "openai"),
         }
+    }
+}
+
+pub fn thinking_level_from_str(value: &str) -> Result<ThinkingLevel> {
+    match value.to_lowercase().as_str() {
+        "off" => Ok(ThinkingLevel::Off),
+        "minimal" => Ok(ThinkingLevel::Minimal),
+        "low" => Ok(ThinkingLevel::Low),
+        "medium" => Ok(ThinkingLevel::Medium),
+        "high" => Ok(ThinkingLevel::High),
+        other => Err(EvotError::Conf(format!(
+            "unknown thinking level: {other} (valid: off, minimal, low, medium, high)"
+        ))),
     }
 }
 

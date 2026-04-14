@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::conf::default_config;
 use crate::conf::paths;
+use crate::conf::thinking_level_from_str;
 use crate::conf::Config;
 use crate::conf::ProviderKind;
 use crate::conf::StorageBackend;
@@ -12,6 +13,7 @@ use crate::error::Result;
 
 const RELEVANT_KEYS: &[&str] = &[
     "EVOT_LLM_PROVIDER",
+    "EVOT_THINKING_LEVEL",
     "EVOT_ANTHROPIC_API_KEY",
     "EVOT_ANTHROPIC_BASE_URL",
     "EVOT_ANTHROPIC_MODEL",
@@ -43,6 +45,7 @@ struct ConfigSource {
     openai: ProviderSource,
     server: ServerSource,
     storage: StorageSource,
+    thinking_level: Option<String>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -135,6 +138,10 @@ impl ConfigSource {
         }
         if let Some(workspace) = self.storage.cloud.workspace {
             config.storage.cloud.workspace = optional_string(workspace);
+        }
+
+        if let Some(level) = self.thinking_level {
+            config.thinking_level = thinking_level_from_str(&level)?;
         }
 
         Ok(())
@@ -240,6 +247,10 @@ fn apply_provider_env(config: &mut Config, provider: ProviderKind, vars: &HashMa
 fn apply_env(config: &mut Config, vars: &HashMap<String, String>) -> Result<()> {
     if let Some(provider) = vars.get("EVOT_LLM_PROVIDER") {
         config.llm.provider = ProviderKind::from_str_loose(provider)?;
+    }
+
+    if let Some(level) = vars.get("EVOT_THINKING_LEVEL") {
+        config.thinking_level = thinking_level_from_str(level)?;
     }
 
     apply_provider_env(config, ProviderKind::Anthropic, vars);
