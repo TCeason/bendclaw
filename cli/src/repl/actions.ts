@@ -104,6 +104,17 @@ export async function runQuery(
   let prefixEmitted = false
   let localState = stateRef.current
 
+  // Throttle setState for assistant_delta to ~60ms to avoid re-render storms
+  let deltaFlushTimer: ReturnType<typeof setTimeout> | null = null
+  let deltaStateDirty = false
+  const flushDeltaState = () => {
+    if (deltaFlushTimer) { clearTimeout(deltaFlushTimer); deltaFlushTimer = null }
+    if (deltaStateDirty) {
+      setState(() => localState)
+      deltaStateDirty = false
+    }
+  }
+
   let screenLog: ScreenLog | null = null
   const appendLines = (lines: OutputLine[]) => {
     if (lines.length === 0) return
@@ -216,12 +227,22 @@ export async function runQuery(
       }
 
       localState = nextState
-      setState(() => localState)
+      if (event.kind === 'assistant_delta') {
+        deltaStateDirty = true
+        if (!deltaFlushTimer) {
+          deltaFlushTimer = setTimeout(flushDeltaState, 60)
+        }
+      } else {
+        flushDeltaState()
+        setState(() => localState)
+      }
     }
 
     commitStreamingText()
+    flushDeltaState()
   } catch (err: any) {
     commitStreamingText()
+    flushDeltaState()
     if (gen !== streamGenRef.current) return
     const errLines = buildError(err?.message ?? String(err))
     appendLines(errLines)
