@@ -4,8 +4,8 @@
 
 import React from 'react'
 import { Text, Box } from 'ink'
-import type { UIToolCall } from '../state/AppState.js'
-import { truncate } from '../utils/format.js'
+import type { UIToolCall } from '../state/types.js'
+import { truncate } from '../render/format.js'
 
 interface ToolCallDisplayProps {
   tools: Map<string, UIToolCall>

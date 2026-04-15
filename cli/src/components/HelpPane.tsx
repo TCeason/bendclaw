@@ -6,7 +6,7 @@
 import React from 'react'
 import { Text, Box, useInput, useStdout } from 'ink'
 import { COMMANDS } from '../commands/index.js'
-import { padRight } from '../utils/format.js'
+import { padRight } from '../render/format.js'
 
 interface HelpPaneProps {
   onDismiss: () => void

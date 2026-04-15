@@ -1,6 +1,5 @@
 /**
  * Persistent command history backed by ~/.evotai/evot_history.
- * One entry per line. Multi-line entries are escaped (\\n for newlines).
  */
 
 import { readFileSync, appendFileSync, mkdirSync, existsSync } from 'fs'
@@ -36,9 +35,6 @@ export class HistoryManager {
     this.filePath = filePath ?? HISTORY_FILE
   }
 
-  /**
-   * Load the last N history entries from disk, oldest first.
-   */
   load(limit = DEFAULT_LIMIT): string[] {
     try {
       const content = readFileSync(this.filePath, 'utf-8')
@@ -53,9 +49,6 @@ export class HistoryManager {
     }
   }
 
-  /**
-   * Append an entry to the history file. Skips consecutive duplicates.
-   */
   append(entry: string): void {
     const trimmed = entry.trim()
     if (trimmed.length === 0) return

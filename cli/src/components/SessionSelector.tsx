@@ -6,7 +6,7 @@
 import React, { useState } from 'react'
 import { Text, Box, useInput } from 'ink'
 import type { SessionMeta } from '../native/index.js'
-import { relativeTime, padRight } from '../utils/format.js'
+import { relativeTime, padRight } from '../render/format.js'
 
 interface SessionSelectorProps {
   sessions: SessionMeta[]

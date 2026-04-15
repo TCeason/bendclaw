@@ -1,105 +1,20 @@
 /**
- * App state management for the CLI.
+ * Reducer-style state updates from RunEvents.
  */
 
-import { type RunEvent } from '../native/index.js'
-import { humanTokens as humanTokensInline, renderBar, renderPositionBar } from '../utils/format.js'
-
-// ---------------------------------------------------------------------------
-// Message types for the UI
-// ---------------------------------------------------------------------------
-
-export type MessageRole = 'user' | 'assistant'
-
-export interface UIMessage {
-  id: string
-  role: MessageRole
-  text: string
-  timestamp: number
-  toolCalls?: UIToolCall[]
-  /** Run stats attached to the final assistant message of a run */
-  runStats?: RunStats
-  /** Verbose events that occurred before this message */
-  verboseEvents?: VerboseEvent[]
-  /** Text was already streamed to stdout — skip rendering in Message component */
-  streamed?: boolean
-}
-
-export interface UIToolCall {
-  id: string
-  name: string
-  args: Record<string, unknown>
-  status: 'running' | 'done' | 'error'
-  result?: string
-  previewCommand?: string
-  durationMs?: number
-}
-
-// ---------------------------------------------------------------------------
-// Run stats — accumulated during a run, shown in verbose mode
-// ---------------------------------------------------------------------------
-
-export interface RunStats {
-  durationMs: number
-  turnCount: number
-  toolCallCount: number
-  toolErrorCount: number
-  inputTokens: number
-  outputTokens: number
-  cacheReadTokens: number
-  cacheWriteTokens: number
-  llmCalls: number
-  contextTokens: number
-  contextWindow: number
-  toolBreakdown: ToolBreakdownEntry[]
-  llmCallDetails: LlmCallDetail[]
-  compactHistory: CompactRecord[]
-  lastMessageStats: MessageStats | null
-  systemPromptTokens: number
-}
-
-export interface LlmCallDetail {
-  model: string
-  durationMs: number
-  inputTokens: number
-  outputTokens: number
-  ttfbMs: number
-  ttftMs: number
-  tokPerSec: number
-}
-
-export interface ToolBreakdownEntry {
-  name: string
-  count: number
-  totalDurationMs: number
-  errors: number
-}
-
-export interface CompactRecord {
-  level: number
-  beforeTokens: number
-  afterTokens: number
-}
-
-// ---------------------------------------------------------------------------
-// Message stats — token breakdown by role (estimated from JSON size)
-// ---------------------------------------------------------------------------
-
-export interface MessageStats {
-  userCount: number
-  assistantCount: number
-  toolResultCount: number
-  userTokens: number
-  assistantTokens: number
-  toolResultTokens: number
-  /** Per-tool token breakdown: [name, tokens], sorted by tokens desc */
-  toolDetails: [string, number][]
-}
+import type { RunEvent } from '../native/index.js'
+import { humanTokens as humanTokensInline, renderBar, renderPositionBar } from '../render/format.js'
+import { emptyRunStats, type AppState } from './app.js'
+import type { CompactRecord, MessageStats, UIMessage, UIToolCall } from './types.js'
 
 export function countMessagesByRole(messages: any[]): MessageStats {
   const stats: MessageStats = {
-    userCount: 0, assistantCount: 0, toolResultCount: 0,
-    userTokens: 0, assistantTokens: 0, toolResultTokens: 0,
+    userCount: 0,
+    assistantCount: 0,
+    toolResultCount: 0,
+    userTokens: 0,
+    assistantTokens: 0,
+    toolResultTokens: 0,
     toolDetails: [],
   }
   for (const msg of messages) {
@@ -132,83 +47,6 @@ export function countMessagesByRole(messages: any[]): MessageStats {
   stats.toolDetails.sort((a, b) => b[1] - a[1])
   return stats
 }
-
-function emptyRunStats(): RunStats {
-  return {
-    durationMs: 0,
-    turnCount: 0,
-    toolCallCount: 0,
-    toolErrorCount: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheWriteTokens: 0,
-    llmCalls: 0,
-    contextTokens: 0,
-    contextWindow: 0,
-    toolBreakdown: [],
-    llmCallDetails: [],
-    compactHistory: [],
-    lastMessageStats: null,
-    systemPromptTokens: 0,
-  }
-}
-
-// ---------------------------------------------------------------------------
-// App state
-// ---------------------------------------------------------------------------
-
-export interface VerboseEvent {
-  kind: 'llm_call' | 'llm_completed' | 'compact_call' | 'compact_done'
-  text: string
-}
-
-export interface AppState {
-  messages: UIMessage[]
-  isLoading: boolean
-  sessionId: string | null
-  model: string
-  cwd: string
-  error: string | null
-  verbose: boolean
-  currentStreamText: string
-  currentThinkingText: string
-  activeToolCalls: Map<string, UIToolCall>
-  /** Accumulated tool calls for the current turn, merged into assistant_completed */
-  turnToolCalls: UIToolCall[]
-  /** Stats accumulated during the current run */
-  currentRunStats: RunStats
-  /** Start time of the current run */
-  runStartTime: number
-  /** Verbose inline events (LLM calls, compaction) shown during streaming */
-  verboseEvents: VerboseEvent[]
-  /** Timestamp of the last received token (for stall detection) */
-  lastTokenAt: number
-}
-
-export function createInitialState(model: string, cwd: string): AppState {
-  return {
-    messages: [],
-    isLoading: false,
-    sessionId: null,
-    model,
-    cwd,
-    error: null,
-    verbose: true,
-    currentStreamText: '',
-    currentThinkingText: '',
-    activeToolCalls: new Map(),
-    turnToolCalls: [],
-    currentRunStats: emptyRunStats(),
-    runStartTime: 0,
-    verboseEvents: [],
-    lastTokenAt: 0,
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Reducer-style state updates from RunEvents
-// ---------------------------------------------------------------------------
 
 export function applyEvent(state: AppState, event: RunEvent): AppState {
   const kind = event.kind
@@ -260,12 +98,9 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         .map((b: any) => b.text)
       const text = textParts.join('') || state.currentStreamText
 
-      // Extract tool calls from content blocks (these are the LLM's requests)
-      // and merge with any already-finished tool results from turnToolCalls
       const contentToolCalls = (content ?? [])
         .filter((b: any) => b.type === 'tool_call')
         .map((b: any) => {
-          // Check if we already have a finished result for this tool call
           const finished = state.turnToolCalls.find((tc) => tc.id === b.id)
           if (finished) return finished
           return {
@@ -276,7 +111,6 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
           }
         })
 
-      // Merge: content tool calls + any turnToolCalls not in content
       const contentIds = new Set(contentToolCalls.map((tc) => tc.id))
       const extraToolCalls = state.turnToolCalls.filter((tc) => !contentIds.has(tc.id))
       const allToolCalls = [...contentToolCalls, ...extraToolCalls]
@@ -331,7 +165,6 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         durationMs,
       }
 
-      // Extract diff from details if present (file edit tools)
       const details = p.details as Record<string, any> | undefined
       if (details?.diff && typeof details.diff === 'string') {
         finished.args = { ...finished.args, diff: details.diff }
@@ -340,16 +173,14 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const newMap = new Map(state.activeToolCalls)
       newMap.delete(id)
 
-      // Update run stats
       const stats = { ...state.currentRunStats }
       stats.toolCallCount++
       if (isError) stats.toolErrorCount++
 
-      // Update tool breakdown (immutable)
       const breakdown = stats.toolBreakdown.map((e) =>
         e.name === toolName
           ? { ...e, count: e.count + 1, totalDurationMs: e.totalDurationMs + durationMs, errors: e.errors + (isError ? 1 : 0) }
-          : e
+          : e,
       )
       if (!breakdown.some((e) => e.name === toolName)) {
         breakdown.push({
@@ -365,17 +196,13 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         ...state,
         activeToolCalls: newMap,
         turnToolCalls: [...state.turnToolCalls, finished],
-        // Update tool call status in existing messages (tool_finished fires after assistant_completed)
         messages: updateToolCallInMessages(state.messages, id, finished),
         currentRunStats: stats,
       }
     }
 
-    case 'tool_progress': {
-      // Progress text is handled by toolProgress state in REPL.tsx
-      // Don't update previewCommand — keep the initial command preview
+    case 'tool_progress':
       return state
-    }
 
     case 'llm_call_started': {
       const model = (p.model as string) ?? state.model
@@ -388,7 +215,6 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const messages = p.messages as any[] | undefined
       const retryStr = attempt > 0 ? ` · retry ${attempt}` : ''
 
-      // Message stats breakdown
       const msgStats = messages ? countMessagesByRole(messages) : null
       let msgLine = `  ${msgCount} messages`
       if (msgStats) {
@@ -396,25 +222,25 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         if (msgStats.userCount > 0) parts.push(`user ${msgStats.userCount}`)
         if (msgStats.assistantCount > 0) parts.push(`assistant ${msgStats.assistantCount}`)
         if (msgStats.toolResultCount > 0) parts.push(`tool_result ${msgStats.toolResultCount}`)
-        if (parts.length > 0) msgLine = `  ${msgCount} messages (${parts.join(' · ')})`
+        msgLine += ` · ${toolCount} tools`
+        if (parts.length > 0) msgLine += ` (${parts.join(' · ')})`
+      } else {
+        msgLine += ` · ${toolCount} tools`
       }
-      msgLine += ` · ${toolCount} tools`
 
-      // Token estimates by role
-      let tokLine = `  ~${humanTokensInline(sysTok)} sys tokens`
+      let tokLine = '  tokens unknown'
       if (msgStats) {
-        const estTotal = sysTok + msgStats.userTokens + msgStats.assistantTokens + msgStats.toolResultTokens
-        const tokParts = [`sys ~${humanTokensInline(sysTok)}`]
+        const total = sysTok + msgStats.userTokens + msgStats.assistantTokens + msgStats.toolResultTokens
+        const tokParts: string[] = []
+        if (sysTok > 0) tokParts.push(`system ~${humanTokensInline(sysTok)}`)
         if (msgStats.userTokens > 0) tokParts.push(`user ~${humanTokensInline(msgStats.userTokens)}`)
         if (msgStats.assistantTokens > 0) tokParts.push(`assistant ~${humanTokensInline(msgStats.assistantTokens)}`)
         if (msgStats.toolResultTokens > 0) tokParts.push(`tool_result ~${humanTokensInline(msgStats.toolResultTokens)}`)
-        tokLine = `  ~${humanTokensInline(estTotal)} est tokens (${tokParts.join(' · ')})`
+        tokLine = `  ~${humanTokensInline(total)} est tokens (${tokParts.join(' · ')})`
       }
 
-      // Per-tool breakdown (only if >= 2 tool types)
       let toolBreakdownLines = ''
       if (msgStats && msgStats.toolDetails.length >= 2) {
-        // Aggregate by tool name
         const agg = new Map<string, number>()
         for (const [name, tokens] of msgStats.toolDetails) {
           agg.set(name, (agg.get(name) ?? 0) + tokens)
@@ -423,7 +249,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         const total = msgStats.toolResultTokens || 1
         const maxNameLen = Math.max(...sorted.map(([n]) => n.length), 4)
         for (const [name, tokens] of sorted) {
-          const pct = (tokens / total * 100).toFixed(1)
+          const pct = ((tokens / total) * 100).toFixed(1)
           const bar = renderBar(tokens, total, 20)
           toolBreakdownLines += `\n    ${name.padEnd(maxNameLen)}  ~${humanTokensInline(tokens).padEnd(8)} (${pct.padStart(5)}%)  ${bar}`
         }
@@ -456,7 +282,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const ttfbMs = (metrics?.ttfb_ms as number) ?? 0
       const ttftMs = (metrics?.ttft_ms as number) ?? 0
       const streamingMs = (metrics?.streaming_ms as number) ?? 0
-      const tokPerSec = durationMs > 0 ? (outputTok / (durationMs / 1000)) : 0
+      const tokPerSec = durationMs > 0 ? outputTok / (durationMs / 1000) : 0
 
       if (usage) {
         stats.inputTokens += inputTok
@@ -482,9 +308,9 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       } else {
         const durSec = (durationMs / 1000).toFixed(1)
         const dur = durationMs || 1
-        const ttfbPct = (ttfbMs / dur * 100).toFixed(0)
-        const ttftPct = (ttftMs / dur * 100).toFixed(0)
-        const streamPct = (streamingMs / dur * 100).toFixed(0)
+        const ttfbPct = ((ttfbMs / dur) * 100).toFixed(0)
+        const ttftPct = ((ttftMs / dur) * 100).toFixed(0)
+        const streamPct = ((streamingMs / dur) * 100).toFixed(0)
         text = `[LLM] completed\n  tokens   ${humanTokensInline(inputTok)} in · ${outputTok} out · ${tokPerSec.toFixed(0)} tok/s\n  timing   ${durSec}s · ttfb ${(ttfbMs / 1000).toFixed(1)}s (${ttfbPct}%) · ttft ${(ttftMs / 1000).toFixed(1)}s (${ttftPct}%) · stream ${(streamingMs / 1000).toFixed(1)}s (${streamPct}%)`
       }
 
@@ -528,7 +354,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         const after = (result?.after_estimated_tokens as number) ?? 0
         const msgsDropped = (result?.messages_dropped as number) ?? 0
         const saved = before - after
-        const savedPct = before > 0 ? (saved / before * 100).toFixed(1) : '0.0'
+        const savedPct = before > 0 ? ((saved / before) * 100).toFixed(1) : '0.0'
 
         const allActions = result?.actions as any[] | undefined
         const sorted = allActions
@@ -541,10 +367,8 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
               })
           : []
 
-        // Position bar
         const posBar = renderPositionBar(beforeMsgs, sorted, level)
 
-        // Action summary line
         let summary: string
         if (level === 1) {
           const outlineCount = sorted.filter((a: any) => a.method === 'Outline').length
@@ -564,7 +388,6 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
           summary = '↓ no changes'
         }
 
-        // Build output lines
         const lines: string[] = []
         lines.push(`L${level}`)
         lines.push(`  ${beforeMsgs} messages ~${humanTokensInline(before)} tok`)
@@ -601,13 +424,13 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
             if (method === 'Summarized') {
               const rc = (a.related_count as number) ?? 0
               return `    #${String(idx).padEnd(3)} turn(${1 + rc} msgs)  ${method.padEnd(12)} ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (saved ~${humanTokensInline(aSaved)})`
-            } else if (method === 'Dropped') {
+            }
+            if (method === 'Dropped') {
               const endIdx = a.end_index as number | undefined
               const idxStr = endIdx != null ? `#${idx}..#${String(endIdx).padEnd(3)}` : `#${String(idx).padEnd(3)}`
               return `    ${idxStr} ${method.padEnd(12)} ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (saved ~${humanTokensInline(aSaved)})`
-            } else {
-              return `    #${String(idx).padEnd(3)} ${toolName.padEnd(12)} ${method.padEnd(12)} ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (saved ~${humanTokensInline(aSaved)})`
             }
+            return `    #${String(idx).padEnd(3)} ${toolName.padEnd(12)} ${method.padEnd(12)} ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (saved ~${humanTokensInline(aSaved)})`
           }
 
           if (sorted.length <= TOP + TAIL) {
@@ -622,17 +445,21 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
 
         action = lines.join('\n')
       }
-      // Track compact history for run summary
-      const compactRecord: import('./AppState.js').CompactRecord | null =
-        type === 'level_compacted' ? {
-          level: (result?.level as number) ?? 0,
-          beforeTokens: (result?.before_estimated_tokens as number) ?? 0,
-          afterTokens: (result?.after_estimated_tokens as number) ?? 0,
-        } : type === 'run_once_cleared' ? {
-          level: 0,
-          beforeTokens: state.currentRunStats.contextTokens,
-          afterTokens: state.currentRunStats.contextTokens - ((result?.saved_tokens as number) ?? 0),
-        } : null
+
+      const compactRecord: CompactRecord | null =
+        type === 'level_compacted'
+          ? {
+              level: (result?.level as number) ?? 0,
+              beforeTokens: (result?.before_estimated_tokens as number) ?? 0,
+              afterTokens: (result?.after_estimated_tokens as number) ?? 0,
+            }
+          : type === 'run_once_cleared'
+            ? {
+                level: 0,
+                beforeTokens: state.currentRunStats.contextTokens,
+                afterTokens: state.currentRunStats.contextTokens - ((result?.saved_tokens as number) ?? 0),
+              }
+            : null
 
       const updatedStats = compactRecord
         ? { ...state.currentRunStats, compactHistory: [...state.currentRunStats.compactHistory, compactRecord] }
@@ -653,7 +480,6 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         turnCount: (p.turn_count as number) ?? state.currentRunStats.turnCount,
       }
 
-      // Attach stats to the last assistant message
       const messages = [...state.messages]
       for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i]!.role === 'assistant') {
@@ -685,16 +511,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Update a tool call's status in the message history (search from the end). */
-function updateToolCallInMessages(
-  messages: UIMessage[],
-  toolCallId: string,
-  finished: UIToolCall,
-): UIMessage[] {
+function updateToolCallInMessages(messages: UIMessage[], toolCallId: string, finished: UIToolCall): UIMessage[] {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]!
     if (!msg.toolCalls) continue

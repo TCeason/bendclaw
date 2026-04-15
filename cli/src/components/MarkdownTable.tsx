@@ -14,7 +14,7 @@ import { type Token, type Tokens } from 'marked'
 import stripAnsi from 'strip-ansi'
 import stringWidth from 'string-width'
 import chalk from 'chalk'
-import { formatToken } from '../utils/markdown.js'
+import { formatToken } from '../render/markdown.js'
 
 const MIN_COL_WIDTH = 3
 const SAFETY_MARGIN = 4

@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { maskSecrets } from '../src/utils/secrets.js'
+import { maskSecrets } from '../src/render/secrets.js'
 
 describe('maskSecrets', () => {
   test('masks a single secret', () => {

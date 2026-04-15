@@ -5,7 +5,7 @@
 
 import React from 'react'
 import { Static, Text, Box } from 'ink'
-import type { OutputLine } from '../utils/outputLines.js'
+import type { OutputLine } from '../render/output.js'
 
 interface Props {
   banner: React.ReactNode

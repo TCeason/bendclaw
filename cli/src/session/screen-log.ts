@@ -8,7 +8,7 @@
 import { appendFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
-import type { OutputLine } from './outputLines.js'
+import type { OutputLine } from '../render/output.js'
 
 const LOGS_DIR = join(homedir(), '.evotai', 'logs')
 

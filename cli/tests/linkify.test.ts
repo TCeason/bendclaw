@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { linkifyIssueRefs } from '../src/utils/linkify.js'
+import { linkifyIssueRefs } from '../src/render/linkify.js'
 import stripAnsi from 'strip-ansi'
 
 describe('linkifyIssueRefs', () => {

@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { renderMarkdown, formatToken } from '../src/utils/markdown.js'
+import { renderMarkdown, formatToken } from '../src/render/markdown.js'
 import { marked, type Token } from 'marked'
 import stripAnsi from 'strip-ansi'
 
@@ -154,7 +154,7 @@ describe('formatToken', () => {
 // splitMarkdownBlocks
 // ---------------------------------------------------------------------------
 
-import { splitMarkdownBlocks } from '../src/utils/markdown.js'
+import { splitMarkdownBlocks } from '../src/render/markdown.js'
 
 describe('splitMarkdownBlocks', () => {
   test('empty text returns empty', () => {

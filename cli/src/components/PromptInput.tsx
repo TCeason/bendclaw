@@ -11,9 +11,9 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Text, Box, useInput, useStdout } from 'ink'
 import { complete, getGhostHint } from '../commands/completion.js'
-import type { HistoryManager } from '../utils/history.js'
-import { InterruptHandler } from '../utils/interrupt.js'
-import { needsContinuation } from '../utils/continuation.js'
+import type { HistoryManager } from '../session/history.js'
+import { InterruptHandler } from '../input/interrupt.js'
+import { needsContinuation } from '../input/continuation.js'
 
 interface PromptInputProps {
   model: string

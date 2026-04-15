@@ -3,7 +3,8 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { createInitialState, applyEvent, countMessagesByRole } from '../src/state/AppState.js'
+import { createInitialState } from '../src/state/app.js'
+import { applyEvent, countMessagesByRole } from '../src/state/reducer.js'
 import type { RunEvent } from '../src/native/index.js'
 
 function makeEvent(kind: string, turn: number, payload: Record<string, any>): RunEvent {

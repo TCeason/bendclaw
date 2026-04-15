@@ -41,10 +41,6 @@ export function renderBar(value: number, max: number, width: number): string {
   return '█'.repeat(Math.min(filled, width)) + '░'.repeat(Math.max(0, width - filled))
 }
 
-/**
- * Render a position bar showing where compaction actions occurred in the message list.
- * Matches evot_bak's `render_position_bar`.
- */
 export function renderPositionBar(beforeCount: number, sortedActions: any[], level: number): string {
   const WIDTH = 40
   if (beforeCount === 0) return `[${'·'.repeat(WIDTH)}]`
@@ -97,7 +93,6 @@ export function truncateResult(s: string, maxChars: number): string {
   return result
 }
 
-/** Truncate a long line keeping head and tail with " ... " in between. */
 export function truncateHeadTail(s: string, max: number): string {
   const SEP = ' ... '
   if (s.length <= max || max < SEP.length + 6) return truncate(s, max)
@@ -107,18 +102,11 @@ export function truncateHeadTail(s: string, max: number): string {
   return s.slice(0, headLen).trimEnd() + SEP + s.slice(s.length - tailLen).trimStart()
 }
 
-/** Collapse whitespace and truncate to a single line summary. */
 export function summarizeInline(value: string, maxChars: number): string {
   const collapsed = value.split(/\s+/).join(' ')
   return truncate(collapsed, maxChars)
 }
 
-/**
- * Format tool result content for display, matching Rust REPL style:
- * - Multi-line: head 5 lines + "... (N more lines)" + tail 3 lines
- * - Each line truncated at 256 chars
- * - Single-line: "Result: <summary>"
- */
 export function toolResultLines(content: string, isError: boolean): string[] {
   const HEAD_LINES = 5
   const TAIL_LINES = 3

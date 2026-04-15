@@ -9,7 +9,7 @@ import React, { useMemo } from 'react'
 import { Box, Text, useStdout } from 'ink'
 import { marked, type Token, type Tokens } from 'marked'
 import stripAnsi from 'strip-ansi'
-import { configureMarked, formatToken } from '../utils/markdown.js'
+import { configureMarked, formatToken } from '../render/markdown.js'
 import { MarkdownTable } from './MarkdownTable.js'
 
 interface Props {

@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { padRight, relativeTime } from '../src/utils/format.js'
+import { padRight, relativeTime } from '../src/render/format.js'
 
 describe('padRight', () => {
   test('pads short string with spaces', () => {

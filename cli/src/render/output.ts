@@ -11,6 +11,7 @@
 import { renderMarkdown } from './markdown.js'
 import { colorizeUnifiedDiff } from './diff.js'
 import { truncate, truncateResult, humanTokens, formatDuration, renderBar, toolResultLines } from './format.js'
+import type { RunStats, UIMessage } from '../state/types.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -135,7 +136,7 @@ export function buildVerboseEvent(eventText: string): OutputLine[] {
   return lines
 }
 
-export function buildRunSummary(stats: import('../state/AppState.js').RunStats): OutputLine[] {
+export function buildRunSummary(stats: RunStats): OutputLine[] {
   const lines: OutputLine[] = []
   const dur = formatDuration(stats.durationMs)
   const totalTokens = stats.inputTokens + stats.outputTokens
@@ -292,7 +293,7 @@ export function buildSystem(text: string): OutputLine[] {
 // Convert UIMessages to OutputLines (for resume)
 // ---------------------------------------------------------------------------
 
-export function messagesToOutputLines(messages: import('../state/AppState.js').UIMessage[]): OutputLine[] {
+export function messagesToOutputLines(messages: UIMessage[]): OutputLine[] {
   const lines: OutputLine[] = []
   for (const msg of messages) {
     if (msg.role === 'user') {

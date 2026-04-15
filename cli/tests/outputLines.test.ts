@@ -9,7 +9,7 @@ import {
   AssistantStreamBuffer,
   findSafeSplitPoint,
   resetIdCounter,
-} from '../src/utils/outputLines.js'
+} from '../src/render/output.js'
 
 beforeEach(() => {
   resetIdCounter()
@@ -307,7 +307,7 @@ describe('AssistantStreamBuffer', () => {
   test('flushes text before code block at paragraph boundary', () => {
     const buf = new AssistantStreamBuffer()
     // Push text with a paragraph break followed by a closed code block
-    const allLines: import('../src/utils/outputLines.js').OutputLine[] = []
+    const allLines: import('../src/render/output.js').OutputLine[] = []
     allLines.push(...buf.push('hello world\n\n'))
     allLines.push(...buf.push('```js\nconst x = 1\n```\n'))
     allLines.push(...buf.finish())

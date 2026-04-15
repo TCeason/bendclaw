@@ -6,7 +6,7 @@
 
 import React, { useMemo } from 'react'
 import { Box, Text } from 'ink'
-import { renderMarkdown } from '../utils/markdown.js'
+import { renderMarkdown } from '../render/markdown.js'
 
 interface Props {
   text: string

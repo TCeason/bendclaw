@@ -9,7 +9,7 @@ import { render } from 'ink-testing-library'
 import { Text, Box } from 'ink'
 import { OutputView } from '../src/components/OutputView.js'
 import { StreamingMarkdown } from '../src/components/StreamingMarkdown.js'
-import type { OutputLine } from '../src/utils/outputLines.js'
+import type { OutputLine } from '../src/render/output.js'
 
 // ---------------------------------------------------------------------------
 // Helper

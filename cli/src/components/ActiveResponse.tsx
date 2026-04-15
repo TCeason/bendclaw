@@ -14,7 +14,7 @@ import { Box, Text, useStdout } from 'ink'
 import { ToolCallDisplay } from './ToolCallDisplay.js'
 import { Spinner } from './Spinner.js'
 import { StreamingMarkdown } from './StreamingMarkdown.js'
-import type { UIToolCall } from '../state/AppState.js'
+import type { UIToolCall } from '../state/types.js'
 
 /** Lines reserved for spinner + prompt + padding */
 const RESERVED_LINES = 6

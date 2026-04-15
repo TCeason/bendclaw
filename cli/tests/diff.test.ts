@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { formatDiff, colorizeUnifiedDiff } from '../src/utils/diff.js'
+import { formatDiff, colorizeUnifiedDiff } from '../src/render/diff.js'
 import stripAnsi from 'strip-ansi'
 
 describe('formatDiff', () => {
