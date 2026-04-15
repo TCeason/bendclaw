@@ -11,7 +11,6 @@ use tokio::sync::mpsc;
 use super::convert::assistant_blocks_from_content;
 use super::convert::extract_content_text;
 use super::convert::from_agent_messages;
-use super::convert::into_agent_messages;
 use super::convert::total_usage;
 use super::convert::transcript_from_assistant_completed;
 use super::event::RunEvent;
@@ -97,35 +96,53 @@ pub(super) enum RuntimeEvent {
 }
 
 // ---------------------------------------------------------------------------
-// create_engine — build and start the engine
+// TurnInput — prepared by agent, executed by runtime
 // ---------------------------------------------------------------------------
 
-/// Build a `evot_engine::Agent`, start it with the given prompt, and spawn
-/// a forwarder task that converts `AgentEvent` → `RuntimeEvent`.
-///
-/// Returns a `RuntimeEvent` receiver and an `EngineHandle` for abort.
-pub(super) async fn create_engine(
-    options: EngineOptions,
-    prior_transcripts: &[TranscriptItem],
-    prompt: String,
-    run_id: &str,
-    session_id: &str,
-) -> Result<(mpsc::UnboundedReceiver<RuntimeEvent>, EngineHandle)> {
-    let prior_messages = into_agent_messages(prior_transcripts);
-    let prior_messages = evot_engine::sanitize_tool_pairs(prior_messages);
-    let mut agent = build_agent(options, prior_messages);
-    let engine_rx = agent.prompt(prompt).await;
+pub(super) struct TurnInput {
+    pub options: EngineOptions,
+    pub prior_messages: Vec<evot_engine::AgentMessage>,
+    pub prompt: String,
+    pub session: Arc<Session>,
+    pub run_id: String,
+    pub session_id: String,
+}
+
+// ---------------------------------------------------------------------------
+// execute_turn — build engine, submit, forward events, persist transcript
+// ---------------------------------------------------------------------------
+
+pub(super) async fn execute_turn(turn: TurnInput) -> Result<super::agent::QueryStream> {
+    let mut agent = build_agent(turn.options, turn.prior_messages);
+    let engine_rx = agent.submit_text(turn.prompt.clone()).await;
+
+    let (runtime_tx, runtime_rx) = mpsc::unbounded_channel();
+
+    let rid = turn.run_id.clone();
+    let sid = turn.session_id.clone();
+    tokio::spawn(async move {
+        forward_events(engine_rx, runtime_tx, &rid, &sid).await;
+    });
 
     let (tx, rx) = mpsc::unbounded_channel();
 
-    let rid = run_id.to_string();
-    let sid = session_id.to_string();
-    tokio::spawn(async move {
-        forward_events(engine_rx, tx, &rid, &sid).await;
-    });
+    tokio::spawn(run_loop(
+        runtime_rx,
+        tx,
+        turn.session,
+        turn.prompt,
+        turn.run_id.clone(),
+        turn.session_id.clone(),
+    ));
 
     let handle = EngineHandle { agent: Some(agent) };
-    Ok((rx, handle))
+
+    Ok(super::agent::QueryStream {
+        rx,
+        session_id: turn.session_id,
+        run_id: turn.run_id,
+        engine_handle: handle,
+    })
 }
 
 // ---------------------------------------------------------------------------

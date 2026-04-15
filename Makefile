@@ -3,10 +3,10 @@
 DEV_CONFIG ?= $(HOME)/.evotai/evot.env
 CARGO ?= cargo
 NEXTEST := $(CARGO) nextest run --no-tests=pass
-COVERAGE_TARGETS := --lib --test unit --test it --test contract
+COVERAGE_TARGETS := --workspace --exclude evot-napi
 COVERAGE_CMD := $(CARGO) llvm-cov nextest $(COVERAGE_TARGETS)
 
-.PHONY: setup check build run test test-engine test-cli test-unit test-it test-contract coverage coverage-report snapshot-review dev-env ci build-napi build-cli install
+.PHONY: setup check build run test test-engine test-cli test-tui test-rust coverage coverage-report snapshot-review dev-env ci build-napi build-cli install
 
 setup:
 	@set -e; \
@@ -35,8 +35,8 @@ setup:
 	echo "==> initializing submodules..."; \
 	git submodule update --init --recursive; \
 	if [ "$$(uname -s)" = "Darwin" ]; then \
-		echo "==> pre-compiling unit tests..."; \
-		cargo test --test unit --no-run 2>/dev/null || true; \
+		echo "==> pre-compiling rust tests..."; \
+		cargo test --workspace --exclude evot-napi --no-run 2>/dev/null || true; \
 	fi
 	@echo "==> installing git hooks..."
 	@mkdir -p .git/hooks
@@ -54,19 +54,16 @@ build: build-napi build-cli
 
 test: test-engine test-cli
 
-test-engine: test-unit test-it test-contract
+test-engine: test-rust
 
-test-unit:
-	$(NEXTEST) --lib --test unit --no-fail-fast
-
-test-it:
-	$(NEXTEST) --test it --no-fail-fast
-
-test-contract:
-	$(NEXTEST) --test contract --no-fail-fast
+test-rust:
+	$(NEXTEST) --workspace --exclude evot-napi --no-fail-fast
 
 test-cli:
-	cd cli && bun test tests/
+	cd cli && bun test tests/ --path-ignore-patterns 'tests/tui/**'
+
+test-tui: build-cli
+	cd cli && bunx @microsoft/tui-test tests/tui
 
 coverage: coverage-core-check
 

@@ -343,28 +343,21 @@ impl Agent {
         self.cancel = None;
     }
 
-    // -- Prompting --
+    // -- Submitting --
 
-    /// Send a text prompt. Returns a receiver of AgentEvents immediately,
-    /// with the agent loop running concurrently so events stream in real-time.
-    ///
-    /// Call [`finish()`](Self::finish) after draining the receiver to restore
-    /// agent state (messages, tools). `finish()` is also called automatically
-    /// at the start of the next `prompt` / `continue_loop` call.
-    pub async fn prompt(&mut self, text: impl Into<String>) -> mpsc::UnboundedReceiver<AgentEvent> {
+    pub async fn submit_text(
+        &mut self,
+        text: impl Into<String>,
+    ) -> mpsc::UnboundedReceiver<AgentEvent> {
         let msg = AgentMessage::Llm(Message::user(text));
-        self.prompt_messages(vec![msg]).await
+        self.submit(vec![msg]).await
     }
 
-    /// Send messages as a prompt. Returns a receiver immediately with the
-    /// agent loop running concurrently for true streaming.
-    ///
-    /// Call [`finish()`](Self::finish) after draining events to restore state.
-    pub async fn prompt_messages(
+    pub async fn submit(
         &mut self,
         messages: Vec<AgentMessage>,
     ) -> mpsc::UnboundedReceiver<AgentEvent> {
-        self.finish().await; // restore from previous if needed
+        self.finish().await;
 
         assert!(
             !self.is_streaming,
@@ -394,62 +387,8 @@ impl Agent {
         rx
     }
 
-    /// Send a text prompt, streaming events to a caller-provided sender.
-    ///
-    /// The caller provides an external sender and sets up a consumer task
-    /// before calling this method. This method blocks until the loop finishes
-    /// and state is restored — unlike [`prompt()`](Self::prompt) which spawns
-    /// the loop concurrently and returns immediately.
-    pub async fn prompt_with_sender(
-        &mut self,
-        text: impl Into<String>,
-        tx: mpsc::UnboundedSender<AgentEvent>,
-    ) {
-        let msg = AgentMessage::Llm(Message::user(text));
-        self.prompt_messages_with_sender(vec![msg], tx).await;
-    }
-
-    /// Send messages as a prompt, streaming events to a caller-provided sender.
-    /// Blocks until the loop finishes and state is restored.
-    pub async fn prompt_messages_with_sender(
-        &mut self,
-        messages: Vec<AgentMessage>,
-        tx: mpsc::UnboundedSender<AgentEvent>,
-    ) {
-        self.finish().await; // restore from previous if needed
-
-        assert!(
-            !self.is_streaming,
-            "Agent is already streaming. Use steer() or follow_up()."
-        );
-
-        let cancel = CancellationToken::new();
-        self.cancel = Some(cancel.clone());
-        self.is_streaming = true;
-
-        // Move tools temporarily into context for the loop; restored after
-        let mut context = AgentContext {
-            system_prompt: self.system_prompt.clone(),
-            messages: self.messages.clone(),
-            tools: std::mem::take(&mut self.tools),
-        };
-
-        let config = self.build_config();
-
-        let _new_messages = agent_loop(messages, &mut context, &config, tx, cancel).await;
-
-        self.tools = context.tools;
-        self.messages = context.messages;
-        self.is_streaming = false;
-        self.cancel = None;
-    }
-
-    /// Continue from current context (for retries after errors). Returns a
-    /// receiver immediately with the loop running concurrently.
-    ///
-    /// Call [`finish()`](Self::finish) after draining events to restore state.
-    pub async fn continue_loop(&mut self) -> mpsc::UnboundedReceiver<AgentEvent> {
-        self.finish().await; // restore from previous if needed
+    pub async fn resume(&mut self) -> mpsc::UnboundedReceiver<AgentEvent> {
+        self.finish().await;
 
         let (tx, rx) = mpsc::unbounded_channel();
 
@@ -457,7 +396,7 @@ impl Agent {
             tx.send(AgentEvent::Error {
                 error: AgentErrorInfo {
                     kind: AgentErrorKind::Runtime,
-                    message: "Agent is already streaming, skipping continue".into(),
+                    message: "Agent is already streaming, skipping resume".into(),
                 },
             })
             .ok();
@@ -467,7 +406,7 @@ impl Agent {
             tx.send(AgentEvent::Error {
                 error: AgentErrorInfo {
                     kind: AgentErrorKind::Runtime,
-                    message: "No messages to continue from, skipping continue".into(),
+                    message: "No messages to resume from, skipping resume".into(),
                 },
             })
             .ok();
@@ -495,63 +434,6 @@ impl Agent {
         rx
     }
 
-    /// Continue from current context, streaming events to a caller-provided sender.
-    /// Blocks until the loop finishes and state is restored.
-    pub async fn continue_loop_with_sender(&mut self, tx: mpsc::UnboundedSender<AgentEvent>) {
-        self.finish().await; // restore from previous if needed
-
-        if self.is_streaming {
-            tx.send(AgentEvent::Error {
-                error: AgentErrorInfo {
-                    kind: AgentErrorKind::Runtime,
-                    message: "Agent is already streaming, skipping continue".into(),
-                },
-            })
-            .ok();
-            return;
-        }
-        if self.messages.is_empty() {
-            tx.send(AgentEvent::Error {
-                error: AgentErrorInfo {
-                    kind: AgentErrorKind::Runtime,
-                    message: "No messages to continue from, skipping continue".into(),
-                },
-            })
-            .ok();
-            return;
-        }
-
-        let cancel = CancellationToken::new();
-        self.cancel = Some(cancel.clone());
-        self.is_streaming = true;
-
-        // Move tools temporarily into context for the loop; restored after
-        let mut context = AgentContext {
-            system_prompt: self.system_prompt.clone(),
-            messages: self.messages.clone(),
-            tools: std::mem::take(&mut self.tools),
-        };
-
-        let config = self.build_config();
-
-        let _new_messages = agent_loop_continue(&mut context, &config, tx, cancel).await;
-
-        self.tools = context.tools;
-        self.messages = context.messages;
-        self.is_streaming = false;
-        self.cancel = None;
-    }
-
-    /// Wait for the running agent loop to finish and restore state
-    /// (messages, tools, streaming flag).
-    ///
-    /// Called automatically at the start of all prompting methods
-    /// ([`prompt()`](Self::prompt), [`prompt_messages()`](Self::prompt_messages),
-    /// [`prompt_messages_with_sender()`](Self::prompt_messages_with_sender),
-    /// [`continue_loop()`](Self::continue_loop),
-    /// [`continue_loop_with_sender()`](Self::continue_loop_with_sender)).
-    /// Call explicitly when you need to access [`messages()`](Self::messages)
-    /// right after draining events.
     pub async fn finish(&mut self) {
         if let Some(handle) = self.pending_completion.take() {
             match handle.await {
@@ -560,7 +442,6 @@ impl Agent {
                     self.messages = messages;
                 }
                 Err(e) => {
-                    // Task panicked or was cancelled — log and leave state as-is
                     tracing::error!("Agent loop task failed: {}", e);
                 }
             }

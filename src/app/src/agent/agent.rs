@@ -7,7 +7,6 @@ use tokio::sync::mpsc;
 
 use super::event::RunEvent;
 use super::runtime::EngineHandle;
-use super::runtime::EngineOptions;
 use super::variables::Variables;
 use crate::conf::Config;
 use crate::conf::LlmConfig;
@@ -151,10 +150,10 @@ impl QueryRequest {
 // ---------------------------------------------------------------------------
 
 pub struct QueryStream {
-    rx: mpsc::UnboundedReceiver<RunEvent>,
+    pub(super) rx: mpsc::UnboundedReceiver<RunEvent>,
     pub session_id: String,
     pub run_id: String,
-    engine_handle: EngineHandle,
+    pub(super) engine_handle: EngineHandle,
 }
 
 impl QueryStream {
@@ -301,48 +300,22 @@ impl Agent {
 
     pub async fn query(&self, request: QueryRequest) -> Result<QueryStream> {
         let session = self.resolve_session(request.session_id.as_deref()).await?;
-        let session_meta = session.meta().await;
-        let session_id = session_meta.session_id.clone();
+        let session_id = session.meta().await.session_id.clone();
         let run_id = crate::types::new_id();
-        let llm = self.llm.read().clone();
 
         tracing::info!(
             stage = "run",
             status = "started",
             run_id = %run_id,
             session_id = %session_id,
-            provider = ?llm.provider,
-            model = %llm.model,
+            provider = ?self.llm.read().provider,
+            model = %self.llm.read().model,
         );
 
-        let prior_transcripts = session.transcript().await;
-        let (runtime_rx, engine_handle) = self
-            .create_turn(
-                &request.prompt,
-                &prior_transcripts,
-                &run_id,
-                &session_id,
-                request.mode,
-            )
+        let turn = self
+            .build_turn(&request, session, &session_id, &run_id)
             .await?;
-
-        let (tx, rx) = mpsc::unbounded_channel();
-
-        tokio::spawn(super::runtime::run_loop(
-            runtime_rx,
-            tx,
-            session,
-            request.prompt,
-            run_id.clone(),
-            session_id.clone(),
-        ));
-
-        Ok(QueryStream {
-            rx,
-            session_id,
-            run_id,
-            engine_handle,
-        })
+        super::runtime::execute_turn(turn).await
     }
 
     // -- fork ----------------------------------------------------------------
@@ -353,12 +326,22 @@ impl Agent {
     /// storage. The returned `ForkedAgent` maintains multi-turn context
     /// in-memory via `Session`. Drop to discard — nothing is persisted.
     pub fn fork(self: &Arc<Self>, request: ForkRequest) -> Result<ForkedAgent> {
+        let Self {
+            llm,
+            system_prompt: _,
+            limits,
+            skills_dirs: _,
+            cwd,
+            storage: _,
+            variables: _,
+        } = self.as_ref();
+
         let forked = Arc::new(Self {
-            llm: RwLock::new(self.llm.read().clone()),
+            llm: RwLock::new(llm.read().clone()),
             system_prompt: RwLock::new(request.system_prompt),
-            limits: RwLock::new(self.limits.read().clone()),
+            limits: RwLock::new(limits.read().clone()),
             skills_dirs: RwLock::new(vec![]),
-            cwd: self.cwd.clone(),
+            cwd: cwd.clone(),
             storage: RwLock::new(Arc::new(MemoryStorage::new())),
             variables: RwLock::new(None),
         });
@@ -436,29 +419,24 @@ impl Agent {
         }
     }
 
-    async fn create_turn(
+    async fn build_turn(
         &self,
-        prompt: &str,
-        prior_transcripts: &[TranscriptItem],
-        run_id: &str,
+        request: &QueryRequest,
+        session: Arc<Session>,
         session_id: &str,
-        mode: ToolMode,
-    ) -> Result<(
-        mpsc::UnboundedReceiver<super::runtime::RuntimeEvent>,
-        EngineHandle,
-    )> {
+        run_id: &str,
+    ) -> Result<super::runtime::TurnInput> {
         let llm = self.llm.read().clone();
-        let system_prompt = self.build_system_prompt(&mode);
+        let system_prompt = self.build_system_prompt(&request.mode);
         let envs = self
             .variables()
             .map(|v| v.all_env_pairs())
             .unwrap_or_default();
-        let mut tools = build_tools(&mode, envs);
+        let mut tools = build_tools(&request.mode, envs);
 
-        // MemoryTool
-        if !mode.is_readonly() {
+        if !request.mode.is_readonly() {
             if let Some(mt) = super::prompt::memory::load_memory_tool(&self.cwd) {
-                if mode.is_planning() {
+                if request.mode.is_planning() {
                     tools.push(Box::new(mt.disallow_writes(
                         "Not allowed in planning mode. Use /act to switch.",
                     )));
@@ -468,25 +446,28 @@ impl Agent {
             }
         }
 
-        let options = EngineOptions {
-            provider: llm.provider,
-            model: llm.model,
-            api_key: llm.api_key,
-            base_url: llm.base_url,
-            system_prompt,
-            limits: self.limits.read().clone(),
-            skills_dirs: self.skills_dirs.read().clone(),
-            tools,
-            thinking_level: llm.thinking_level,
-        };
-        super::runtime::create_engine(
-            options,
-            prior_transcripts,
-            prompt.to_string(),
-            run_id,
-            session_id,
-        )
-        .await
+        let prior_transcripts = session.transcript().await;
+        let prior_messages = super::convert::into_agent_messages(&prior_transcripts);
+        let prior_messages = evot_engine::sanitize_tool_pairs(prior_messages);
+
+        Ok(super::runtime::TurnInput {
+            options: super::runtime::EngineOptions {
+                provider: llm.provider,
+                model: llm.model,
+                api_key: llm.api_key,
+                base_url: llm.base_url,
+                system_prompt,
+                limits: self.limits.read().clone(),
+                skills_dirs: self.skills_dirs.read().clone(),
+                tools,
+                thinking_level: llm.thinking_level,
+            },
+            prior_messages,
+            prompt: request.prompt.clone(),
+            session,
+            run_id: run_id.to_string(),
+            session_id: session_id.to_string(),
+        })
     }
 }
 

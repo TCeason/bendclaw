@@ -8,7 +8,6 @@ use evotengine::agent::Agent;
 use evotengine::provider::mock::*;
 use evotengine::provider::MockProvider;
 use evotengine::*;
-use tokio::sync::mpsc;
 
 #[tokio::test]
 async fn test_agent_simple_prompt() {
@@ -18,7 +17,7 @@ async fn test_agent_simple_prompt() {
         .with_model("mock")
         .with_api_key("test");
 
-    let mut rx = agent.prompt("Hi there").await;
+    let mut rx = agent.submit_text("Hi there").await;
 
     // Drain events
     let mut events = Vec::new();
@@ -39,7 +38,7 @@ async fn test_agent_reset() {
         .with_model("mock")
         .with_api_key("test");
 
-    let mut rx = agent.prompt("Hi").await;
+    let mut rx = agent.submit_text("Hi").await;
     while rx.recv().await.is_some() {}
     agent.finish().await;
     assert!(!agent.messages().is_empty());
@@ -95,7 +94,7 @@ async fn test_agent_with_tools() {
         .with_api_key("test")
         .with_tools(vec![Box::new(EchoTool)]);
 
-    let mut rx = agent.prompt("Echo hello").await;
+    let mut rx = agent.submit_text("Echo hello").await;
     while rx.recv().await.is_some() {}
     agent.finish().await;
 
@@ -159,7 +158,7 @@ async fn test_save_and_restore_messages() {
         .with_model("mock")
         .with_api_key("test");
 
-    let mut rx = agent.prompt("Hi").await;
+    let mut rx = agent.submit_text("Hi").await;
     while rx.recv().await.is_some() {}
     agent.finish().await;
     let json = agent.save_messages().expect("save should succeed");
@@ -186,7 +185,7 @@ async fn test_agent_continues_after_restore() {
         .with_model("mock")
         .with_api_key("test");
 
-    let mut rx = agent1.prompt("Hello").await;
+    let mut rx = agent1.submit_text("Hello").await;
     while rx.recv().await.is_some() {}
     agent1.finish().await;
     let json = agent1.save_messages().expect("save");
@@ -200,7 +199,7 @@ async fn test_agent_continues_after_restore() {
         .with_api_key("test");
 
     agent2.restore_messages(&json).expect("restore");
-    let mut rx = agent2.prompt("Follow up").await;
+    let mut rx = agent2.submit_text("Follow up").await;
     while rx.recv().await.is_some() {}
     agent2.finish().await;
 
@@ -213,99 +212,86 @@ async fn test_agent_continues_after_restore() {
 }
 
 // ---------------------------------------------------------------------------
-// Real-time streaming tests (prompt_with_sender / prompt_messages_with_sender)
+// Streaming behavior tests
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_prompt_with_sender_streams_events() {
+async fn test_submit_text_streams_events() {
     let provider = MockProvider::text("Hello!");
     let mut agent = Agent::new(provider)
         .with_system_prompt("test")
         .with_model("mock")
         .with_api_key("test");
 
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let event_count = Arc::new(AtomicUsize::new(0));
-    let count_clone = event_count.clone();
+    let mut rx = agent.submit_text("Hi there").await;
 
-    let consumer = tokio::spawn(async move {
-        while let Some(_event) = rx.recv().await {
-            count_clone.fetch_add(1, Ordering::SeqCst);
-        }
-    });
+    let mut event_count = 0;
+    while rx.recv().await.is_some() {
+        event_count += 1;
+    }
 
-    agent.prompt_with_sender("Hi there", tx).await;
+    agent.finish().await;
 
-    // tx is dropped when prompt_with_sender returns, so consumer will finish
-    consumer.await.unwrap();
-
-    assert!(event_count.load(Ordering::SeqCst) > 0);
-    assert_eq!(agent.messages().len(), 2); // user + assistant
+    assert!(event_count > 0);
+    assert_eq!(agent.messages().len(), 2);
     assert!(!agent.is_streaming());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_prompt_with_sender_real_time_streaming() {
+async fn test_submit_text_concurrent_streaming() {
     let provider = MockProvider::text("Hello!");
     let mut agent = Agent::new(provider)
         .with_system_prompt("test")
         .with_model("mock")
         .with_api_key("test");
 
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let received_during = Arc::new(AtomicUsize::new(0));
-    let received_clone = received_during.clone();
+    let mut rx = agent.submit_text("Hello").await;
 
-    // On a multi-threaded runtime, the consumer can run concurrently
+    let received = Arc::new(AtomicUsize::new(0));
+    let received_clone = received.clone();
+
     let consumer = tokio::spawn(async move {
-        while let Some(_event) = rx.recv().await {
+        while rx.recv().await.is_some() {
             received_clone.fetch_add(1, Ordering::SeqCst);
         }
     });
 
-    agent.prompt_with_sender("Hello", tx).await;
     consumer.await.unwrap();
+    agent.finish().await;
 
-    // Events were consumed by the concurrent task
-    assert!(received_during.load(Ordering::SeqCst) > 0);
+    assert!(received.load(Ordering::SeqCst) > 0);
     assert_eq!(agent.messages().len(), 2);
 }
 
 #[tokio::test]
-async fn test_prompt_messages_with_sender() {
+async fn test_submit_messages() {
     let provider = MockProvider::text("Response");
     let mut agent = Agent::new(provider)
         .with_system_prompt("test")
         .with_model("mock")
         .with_api_key("test");
 
-    let (tx, mut rx) = mpsc::unbounded_channel();
-
-    let consumer = tokio::spawn(async move {
-        let mut events = Vec::new();
-        while let Some(event) = rx.recv().await {
-            events.push(event);
-        }
-        events
-    });
-
     let msgs = vec![AgentMessage::Llm(Message::user("Hello"))];
-    agent.prompt_messages_with_sender(msgs, tx).await;
+    let mut rx = agent.submit(msgs).await;
 
-    let events = consumer.await.unwrap();
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+
+    agent.finish().await;
     assert!(!events.is_empty());
     assert_eq!(agent.messages().len(), 2);
 }
 
 #[tokio::test]
-async fn test_continue_loop_with_sender() {
+async fn test_resume() {
     let provider = MockProvider::text("Continued response");
     let mut agent = Agent::new(provider)
         .with_system_prompt("test")
         .with_model("mock")
         .with_api_key("test");
 
-    // First, add some messages to continue from (last must not be assistant)
     agent.append_message(AgentMessage::Llm(Message::user("Hello")));
     agent.append_message(AgentMessage::Llm(Message::Assistant {
         content: vec![Content::Text { text: "Hi!".into() }],
@@ -318,25 +304,20 @@ async fn test_continue_loop_with_sender() {
     }));
     agent.append_message(AgentMessage::Llm(Message::user("Please try again")));
 
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut rx = agent.resume().await;
 
-    let consumer = tokio::spawn(async move {
-        let mut events = Vec::new();
-        while let Some(event) = rx.recv().await {
-            events.push(event);
-        }
-        events
-    });
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
 
-    agent.continue_loop_with_sender(tx).await;
-
-    let events = consumer.await.unwrap();
+    agent.finish().await;
     assert!(!events.is_empty());
     assert!(!agent.is_streaming());
 }
 
 #[tokio::test]
-async fn test_prompt_with_sender_tools_restored() {
+async fn test_submit_text_tools_restored() {
     struct DummyTool;
 
     #[async_trait::async_trait]
@@ -373,17 +354,14 @@ async fn test_prompt_with_sender_tools_restored() {
         .with_api_key("test")
         .with_tools(vec![Box::new(DummyTool)]);
 
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let consumer = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let mut rx = agent.submit_text("Hi").await;
+    while rx.recv().await.is_some() {}
+    agent.finish().await;
 
-    agent.prompt_with_sender("Hi", tx).await;
-    consumer.await.unwrap();
-
-    // Tools should be restored after the call
     assert!(!agent.is_streaming());
-    // Agent should still work for another prompt
-    let mut rx2 = agent.prompt("Follow up").await;
+
+    let mut rx2 = agent.submit_text("Follow up").await;
     while rx2.recv().await.is_some() {}
     agent.finish().await;
-    assert_eq!(agent.messages().len(), 4); // 2 from first + 2 from second
+    assert_eq!(agent.messages().len(), 4);
 }
