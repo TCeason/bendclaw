@@ -210,7 +210,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: macos-13
           - target: aarch64-apple-darwin
             os: macos-latest
     steps:
@@ -221,15 +221,13 @@ jobs:
           submodules: recursive
           ref: refs/tags/${{ needs.create_release.outputs.tag }}
 
-      - name: Install system dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y libssl-dev pkg-config
+      - uses: ./.github/actions/setup-rust
+        with:
+          targets: ${{ matrix.target }}
 
-      - name: Install Rust toolchain
-        shell: bash
-        run: |
-          rustup show
-          rustup target add ${{ matrix.target }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
 
       - name: Set version in Cargo.toml
         shell: bash
@@ -239,19 +237,35 @@ jobs:
           sed -i.bak "s/^version = \".*\"/version = \"${SEMVER}\"/" Cargo.toml
           rm -f Cargo.toml.bak
 
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+      - name: Build NAPI binding
+        shell: bash
+        run: |
+          cd cli
+          bun install
+          npx napi build --manifest-path ../src/napi/Cargo.toml --release --platform --target ${{ matrix.target }} --output-dir .
+
+      - name: Build CLI binary
+        shell: bash
+        run: |
+          cd cli
+          bun build src/index.tsx --compile --define 'process.env.DEV="false"' --define 'process.env.NODE_ENV="production"' --outfile dist/${{ env.BINARY_NAME }}
 
       - name: Package
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${{ needs.create_release.outputs.tag }}"
           VERSION="${{ needs.create_release.outputs.version }}"
-          mkdir -p distro/{bin,configs}
-          cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} distro/bin/
+          mkdir -p distro/{bin,lib,configs}
+          cp cli/dist/${{ env.BINARY_NAME }} distro/bin/
+          cp cli/${{ env.BINARY_NAME }}-napi.*.node distro/lib/
           cp configs/evot.env.example distro/configs/
-          tar -C distro -czf ${{ env.BINARY_NAME }}-v${VERSION}-${{ matrix.target }}.tar.gz bin configs
+          if [ "$(uname -s)" = "Darwin" ]; then
+            codesign --force --sign - distro/bin/${{ env.BINARY_NAME }}
+            for f in distro/lib/*.node; do
+              codesign --force --sign - "$f"
+            done
+          fi
+          tar -C distro -czf ${{ env.BINARY_NAME }}-v${VERSION}-${{ matrix.target }}.tar.gz bin lib configs
 
       - name: Upload artifact to release
         shell: bash
