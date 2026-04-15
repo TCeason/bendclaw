@@ -236,12 +236,14 @@ export const PromptInput = React.memo(function PromptInput({
           setCursorCol(0)
           return
         }
-        // Add to in-memory + persistent history
+        // Add display text (with placeholders) to history so up/down
+        // arrow restores the collapsed single-line view.
+        const displayText = lines.join('\n').trim()
         const hist = historyRef.current
-        if (hist.length === 0 || hist[hist.length - 1] !== text) {
-          hist.push(text)
+        if (hist.length === 0 || hist[hist.length - 1] !== displayText) {
+          hist.push(displayText)
         }
-        history.append(text)
+        history.append(displayText)
         historyIndexRef.current = -1
         onSubmit(text)
         clearInput()
@@ -281,7 +283,7 @@ export const PromptInput = React.memo(function PromptInput({
         const history = historyRef.current
         if (history.length === 0) return
         if (historyIndexRef.current === -1) {
-          savedInputRef.current = currentText()
+          savedInputRef.current = lines.join('\n')
           historyIndexRef.current = history.length - 1
         } else if (historyIndexRef.current > 0) {
           historyIndexRef.current--
