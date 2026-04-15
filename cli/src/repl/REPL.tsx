@@ -5,7 +5,7 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { Box, Text, useApp, useInput } from 'ink'
-import { Agent, type RunEvent, QueryStream } from '../native/index.js'
+import { Agent, type RunEvent, QueryStream, version } from '../native/index.js'
 import { type AppState, createInitialState } from '../state/app.js'
 import { applyEvent } from '../state/reducer.js'
 import type { UIMessage } from '../state/types.js'
@@ -37,6 +37,7 @@ import {
 } from '../render/output.js'
 import { splitMarkdownBlocks } from '../render/markdown.js'
 import { Banner } from './Banner.js'
+import { UpdateManager, type ReleaseInfo } from '../update/index.js'
 
 interface REPLProps {
   agent: Agent
@@ -69,6 +70,8 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
   const [restoreText, setRestoreText] = useState<string | undefined>(undefined)
   const lastSubmittedRef = useRef<string>('')
   const [historyManager] = useState(() => new HistoryManager())
+  const [updateHint, setUpdateHint] = useState<string | undefined>(undefined)
+  const [updateManager] = useState(() => new UpdateManager(version()))
   const [configInfoState, setConfigInfoState] = useState(() => {
     try { return agent.configInfo() } catch { return undefined }
   })
@@ -76,6 +79,21 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
   useEffect(() => {
     try { setConfigInfoState(agent.configInfo()) } catch { /* ignore */ }
   }, [state.model])
+
+  // Auto-check for updates
+  useEffect(() => {
+    const onUpdateAvailable = (info: ReleaseInfo) => {
+      const changelogUrl = `https://github.com/evotai/evot/releases/tag/${info.tag}`
+      const link = `\x1b]8;;${changelogUrl}\x1b\\${info.version}\x1b]8;;\x1b\\`
+      setUpdateHint(`⬆ ${version()} → ${link} · /update`)
+    }
+    updateManager.on('update-available', onUpdateAvailable)
+    updateManager.start()
+    return () => {
+      updateManager.off('update-available', onUpdateAvailable)
+      updateManager.cleanup()
+    }
+  }, [])
 
   // Startup: auto-resume or show resume hint
   useEffect(() => {
@@ -148,9 +166,11 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
   useInput((_ch, key) => {
     const isInterrupt = (key.ctrl && _ch === 'c') || key.escape
     if (isInterrupt && streamRef.current) {
+      // Only restore input if LLM hasn't produced any output yet
+      const hasOutput = stateRef.current.currentStreamText.length > 0
+        || stateRef.current.turnToolCalls.length > 0
       abortCurrentStream()
-      // Restore the last submitted message into the input box
-      if (lastSubmittedRef.current) {
+      if (lastSubmittedRef.current && !hasOutput) {
         setRestoreText(lastSubmittedRef.current)
       }
       pushSystem(setSystemMessages, 'info', 'Interrupted.')
@@ -306,6 +326,7 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
         queuedMessages={messageQueue}
         history={historyManager}
         restoreText={restoreText}
+        updateHint={updateHint}
         onSubmit={handleSubmit}
         onInterrupt={handleInterrupt}
         onToggleVerbose={handleToggleVerbose}

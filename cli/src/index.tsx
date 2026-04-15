@@ -22,6 +22,19 @@ async function main() {
       await runPrompt(opts)
       break
 
+    case 'update': {
+      const { runUpdate } = await import('./update/index.js')
+      const { version } = await import('./native/index.js')
+      console.log('  checking for updates...')
+      const result = await runUpdate(version())
+      switch (result.kind) {
+        case 'up_to_date': console.log('  ✓ evot is up to date.'); break
+        case 'updated': console.log(`  ✓ updated ${result.from} → ${result.to}`); break
+        case 'error': console.error(`  ✗ ${result.message}`); process.exit(1)
+      }
+      break
+    }
+
     case 'repl':
     default: {
       const agent = createAgent(opts)

@@ -1,5 +1,6 @@
 import React from 'react'
 import { Box, Text } from 'ink'
+import { version } from '../native/index.js'
 
 export function Banner({ model, cwd, sessionId, configInfo }: {
   model: string
@@ -18,7 +19,7 @@ export function Banner({ model, cwd, sessionId, configInfo }: {
         <Text backgroundColor="#60a5fa" color="white" bold>
           {' ◆ evot '}
         </Text>
-        <Text dimColor> v0.1.0</Text>
+        <Text dimColor> v{version()}</Text>
       </Box>
       {envPath ? <Text dimColor>  env:      {envPath}</Text> : null}
       {configInfo && <Text dimColor>  provider: {configInfo.provider}</Text>}

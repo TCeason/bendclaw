@@ -260,6 +260,28 @@ export async function handleSlashCommand(input: string, ctx: CommandContext) {
       }
       break
     }
+    case '/update': {
+      pushSystem(setSystem, 'info', '  checking for updates...')
+      try {
+        const { runUpdate } = await import('../update/index.js')
+        const { version } = await import('../native/index.js')
+        const result = await runUpdate(version())
+        switch (result.kind) {
+          case 'up_to_date':
+            pushSystem(setSystem, 'info', '  ✓ evot is up to date.')
+            break
+          case 'updated':
+            pushSystem(setSystem, 'info', `  ✓ updated ${result.from} → ${result.to}. restart evot to apply.`)
+            break
+          case 'error':
+            pushSystem(setSystem, 'error', `  ✗ ${result.message}`)
+            break
+        }
+      } catch (err: any) {
+        pushSystem(setSystem, 'error', `  ✗ update failed: ${err?.message ?? err}`)
+      }
+      break
+    }
     default:
       pushSystem(setSystem, 'error', `Unhandled command: ${name}`)
   }

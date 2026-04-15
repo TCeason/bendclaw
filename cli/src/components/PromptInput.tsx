@@ -25,6 +25,7 @@ interface PromptInputProps {
   queuedMessages: string[]
   history: HistoryManager
   restoreText?: string
+  updateHint?: string
   onSubmit: (text: string) => void
   onInterrupt: () => void
   onToggleVerbose: () => void
@@ -41,6 +42,7 @@ export const PromptInput = React.memo(function PromptInput({
   queuedMessages,
   history,
   restoreText,
+  updateHint,
   onSubmit,
   onInterrupt,
   onToggleVerbose,
@@ -496,7 +498,7 @@ export const PromptInput = React.memo(function PromptInput({
       )}
 
       {/* Footer */}
-      <Footer model={model} planning={planning} logMode={logMode} columns={columns} />
+      <Footer model={model} planning={planning} logMode={logMode} updateHint={updateHint} columns={columns} />
     </Box>
   )
 })
@@ -524,10 +526,11 @@ function CursorLine({ text, cursorCol, ghostHint }: { text: string; cursorCol: n
 // Footer — model name + mode indicators
 // ---------------------------------------------------------------------------
 
-function Footer({ model, planning, logMode, columns }: {
+function Footer({ model, planning, logMode, updateHint, columns }: {
   model: string
   planning: boolean
   logMode: boolean
+  updateHint?: string
   columns: number
 }) {
   const hints: string[] = []
@@ -537,12 +540,19 @@ function Footer({ model, planning, logMode, columns }: {
   const gap = Math.max(1, columns - left.length - model.length)
 
   return (
-    <Box>
-      {logMode && <Text color="magenta" bold>{'[log]'}</Text>}
-      {logMode && <Text dimColor>{' /done to exit'}</Text>}
-      {planning && <Text color="yellow" bold>{logMode ? '  [plan]' : '[plan]'}</Text>}
-      <Text>{' '.repeat(gap)}</Text>
-      <Text dimColor>{model}</Text>
+    <Box flexDirection="column">
+      {updateHint && (
+        <Box>
+          <Text color="yellow">{'  '}{updateHint}</Text>
+        </Box>
+      )}
+      <Box>
+        {logMode && <Text color="magenta" bold>{'[log]'}</Text>}
+        {logMode && <Text dimColor>{' /done to exit'}</Text>}
+        {planning && <Text color="yellow" bold>{logMode ? '  [plan]' : '[plan]'}</Text>}
+        <Text>{' '.repeat(gap)}</Text>
+        <Text dimColor>{model}</Text>
+      </Box>
     </Box>
   )
 }

@@ -401,7 +401,7 @@ fn build_skills_dirs() -> Vec<PathBuf> {
 /// Version string for the native addon.
 #[napi]
 pub fn version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
+    env!("EVOT_VERSION").to_string()
 }
 
 /// Start the HTTP server. Blocks until the server shuts down.

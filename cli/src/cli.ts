@@ -1,7 +1,7 @@
 import { Agent, version } from './native/index.js'
 
 export interface CliOptions {
-  command: 'repl' | 'serve' | 'prompt'
+  command: 'repl' | 'serve' | 'prompt' | 'update'
   model?: string
   prompt?: string
   port?: number
@@ -31,6 +31,11 @@ export function parseArgs(argv: string[]): CliOptions {
 
     if (arg === 'serve' || arg === 'server') {
       opts.command = 'serve'
+      continue
+    }
+
+    if (arg === 'update') {
+      opts.command = 'update'
       continue
     }
 
@@ -89,6 +94,7 @@ export function printHelp() {
   console.log('Commands:')
   console.log('  (default)              Interactive REPL')
   console.log('  serve                  Start HTTP server')
+  console.log('  update                 Update evot to latest version')
   console.log()
   console.log('Options:')
   console.log('  -p, --prompt <text>    Run one-shot prompt')
