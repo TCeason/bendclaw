@@ -12,7 +12,7 @@ ARCH="$(uname -m)"
 case "${OS}-${ARCH}" in
   Linux-x86_64)   TARGET="x86_64-unknown-linux-gnu" ;;
   Linux-aarch64)  TARGET="aarch64-unknown-linux-gnu" ;;
-  Darwin-x86_64)  TARGET="x86_64-apple-darwin" ;;
+  Darwin-x86_64)  TARGET="aarch64-apple-darwin" ;;  # Rosetta 2 compatible
   Darwin-arm64)   TARGET="aarch64-apple-darwin" ;;
   *)
     echo "Unsupported platform: ${OS}-${ARCH}" >&2
@@ -20,8 +20,12 @@ case "${OS}-${ARCH}" in
     ;;
 esac
 
-# Get latest release tag
-TAG="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)"
+# Get release tag: prefer EVOT_INSTALL_VERSION env var, fallback to latest
+if [ -n "${EVOT_INSTALL_VERSION:-}" ]; then
+  TAG="${EVOT_INSTALL_VERSION}"
+else
+  TAG="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)"
+fi
 VERSION="${TAG#v}"
 
 ASSET="${BINARY}-v${VERSION}-${TARGET}.tar.gz"
