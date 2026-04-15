@@ -119,8 +119,9 @@ describe('buildRunSummary', () => {
     expect(statsLine.text).toContain('3 turns')
     expect(statsLine.text).toContain('5 tool calls')
     expect(statsLine.text).toContain('1k tokens')
-    // Footer
-    expect(lines[lines.length - 1]!.text).toContain('────')
+    // Footer removed — no trailing separator line
+    const lastLine = lines[lines.length - 1]!
+    expect(lastLine.text).not.toContain('────')
   })
 
   test('includes llm call details', () => {

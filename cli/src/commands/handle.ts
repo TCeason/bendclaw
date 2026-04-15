@@ -61,8 +61,6 @@ export async function handleSlashCommand(input: string, ctx: CommandContext) {
       break
     case '/new':
       abortCurrentStream()
-      process.stdout.write('\x1b[2J\x1b[H')
-      setOutputLines([])
       setState((prev) => ({ ...createInitialState(prev.model, prev.cwd), verbose: prev.verbose }))
       pushSystem(setSystem, 'info', 'New session started.')
       break
