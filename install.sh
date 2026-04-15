@@ -43,6 +43,21 @@ mkdir -p "${INSTALL_DIR}"
 cp "${TMP}/bin/${BINARY}" "${INSTALL_DIR}/${BINARY}"
 chmod +x "${INSTALL_DIR}/${BINARY}"
 
+# Copy lib files (napi bindings)
+LIB_DIR="${INSTALL_DIR%/bin}/lib"
+if [ -d "${TMP}/lib" ]; then
+  mkdir -p "${LIB_DIR}"
+  cp "${TMP}"/lib/* "${LIB_DIR}/"
+fi
+
+# Remove macOS quarantine attribute to prevent Gatekeeper from killing the binary
+if [ "${OS}" = "Darwin" ]; then
+  xattr -d com.apple.quarantine "${INSTALL_DIR}/${BINARY}" 2>/dev/null || true
+  for f in "${LIB_DIR}"/*.node 2>/dev/null; do
+    xattr -d com.apple.quarantine "$f" 2>/dev/null || true
+  done
+fi
+
 echo ""
 echo "  ✓ Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
 echo ""
