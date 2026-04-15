@@ -2,6 +2,8 @@
 
 DEV_CONFIG ?= $(HOME)/.evotai/evot.env
 CARGO ?= cargo
+BUN_DIR := $(HOME)/.bun/bin
+export PATH := $(BUN_DIR):$(PATH)
 NEXTEST := $(CARGO) nextest run --no-tests=pass
 COVERAGE_TARGETS := --workspace --exclude evot-napi
 COVERAGE_CMD := $(CARGO) llvm-cov nextest $(COVERAGE_TARGETS)
@@ -10,7 +12,7 @@ COVERAGE_CMD := $(CARGO) llvm-cov nextest $(COVERAGE_TARGETS)
 
 setup:
 	@set -e; \
-	export PATH="$$HOME/.cargo/bin:$$PATH"; \
+	export PATH="$$HOME/.bun/bin:$$HOME/.cargo/bin:$$PATH"; \
 	need_cmd() { command -v "$$1" >/dev/null 2>&1; }; \
 	need_fetch() { \
 		if need_cmd curl; then \
@@ -31,7 +33,17 @@ setup:
 		export PATH="$$HOME/.cargo/bin:$$PATH"; \
 		need_cmd cargo || { echo "    error: rustup installation failed" >&2; exit 1; }; \
 	}; \
+	ensure_bun() { \
+		if need_cmd bun; then \
+			return 0; \
+		fi; \
+		echo "==> installing bun..."; \
+		need_fetch https://bun.sh/install | bash; \
+		export PATH="$$HOME/.bun/bin:$$PATH"; \
+		need_cmd bun || { echo "    error: bun installation failed" >&2; exit 1; }; \
+	}; \
 	ensure_rustup; \
+	ensure_bun; \
 	echo "==> initializing submodules..."; \
 	git submodule update --init --recursive; \
 	if [ "$$(uname -s)" = "Darwin" ]; then \
