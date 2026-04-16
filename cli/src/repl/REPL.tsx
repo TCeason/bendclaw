@@ -100,6 +100,11 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
     tryStartServer().then((s) => {
       setServerState(s)
       setTerminalTitle()
+      if (s) {
+        const parts = [`  server: ${s.address}`]
+        if (s.channels.length > 0) parts.push(`channels: ${s.channels.join(', ')}`)
+        pushSystem(setSystemMessages, 'info', parts.join('  ·  '))
+      }
     }).catch(() => {})
   }, [])
 
@@ -266,7 +271,7 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
   return (
     <Box flexDirection="column" padding={0}>
       <OutputView
-        banner={<Banner model={state.model} cwd={state.cwd} sessionId={state.sessionId} configInfo={configInfoState} serverState={serverState} />}
+        banner={<Banner model={state.model} cwd={state.cwd} sessionId={state.sessionId} configInfo={configInfoState} />}
         lines={outputLines}
       />
 

@@ -1,14 +1,12 @@
 import React from 'react'
 import { Box, Text } from 'ink'
 import { version } from '../native/index.js'
-import type { ServerState } from '../repl/server.js'
 
-export function Banner({ model, cwd, sessionId, configInfo, serverState }: {
+export function Banner({ model, cwd, sessionId, configInfo }: {
   model: string
   cwd: string
   sessionId: string | null
   configInfo?: import('../native/index.js').ConfigInfo
-  serverState: ServerState | null
 }) {
   const shortCwd = cwd.replace(process.env.HOME ?? '', '~')
   const gitBranch = getGitBranch(cwd)
@@ -30,10 +28,6 @@ export function Banner({ model, cwd, sessionId, configInfo, serverState }: {
       {configInfo && <Text dimColor>  provider: {configInfo.provider}</Text>}
       <Text dimColor>  model:    {model}</Text>
       {configInfo?.baseUrl && <Text dimColor>  base_url: {configInfo.baseUrl}</Text>}
-      {serverState && <Text dimColor>  server:   {serverState.address}</Text>}
-      {serverState && serverState.channels.length > 0 && (
-        <Text dimColor>  channels: {serverState.channels.join(', ')}</Text>
-      )}
       <Text dimColor>  session:  {sessionLabel}</Text>
       {gitBranch && <Text dimColor>  git:      {gitBranch}</Text>}
       <Text dimColor>  cwd:      {shortCwd}</Text>
