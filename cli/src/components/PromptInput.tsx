@@ -15,7 +15,6 @@ import type { HistoryManager } from '../session/history.js'
 import type { ServerState } from '../repl/server.js'
 import { formatUptime } from '../repl/server.js'
 import { InterruptHandler } from '../input/interrupt.js'
-import stripAnsi from 'strip-ansi'
 import { needsContinuation } from '../input/continuation.js'
 import {
   formatPastedTextRef,
@@ -643,28 +642,22 @@ function Footer({ model, planning, logMode, updateHint, serverState, columns }: 
     return () => clearInterval(timer)
   }, [serverState])
 
-  const hints: string[] = []
-  if (logMode) hints.push('[log] /done to exit')
-  if (planning) hints.push('[plan]')
-  const left = hints.join('  ')
-  const serverLabel = serverState ? `  [server :${serverState.port} · ${formatUptime(serverState.startedAt)}]` : ''
-  const updateLabel = updateHint ? `  ${updateHint}` : ''
-  const right = model + serverLabel + updateLabel
-  const gap = Math.max(1, columns - left.length - stripAnsi(right).length)
-
   return (
-    <Box>
-      {logMode && <Text color="magenta" bold>{'[log]'}</Text>}
-      {logMode && <Text dimColor>{' /done to exit'}</Text>}
-      {planning && <Text color="yellow" bold>{logMode ? '  [plan]' : '[plan]'}</Text>}
-      <Text>{' '.repeat(gap)}</Text>
-      <Text dimColor>{model}</Text>
-      {serverState && (
-        <Text color="green">{`  [server :${serverState.port} · ${formatUptime(serverState.startedAt)}]`}</Text>
-      )}
-      {updateHint && (
-        <Text color="yellow">{'  '}{updateHint}</Text>
-      )}
+    <Box width={columns} justifyContent="space-between">
+      <Box flexShrink={0}>
+        {logMode && <Text color="magenta" bold>{'[log]'}</Text>}
+        {logMode && <Text dimColor>{' /done to exit'}</Text>}
+        {planning && <Text color="yellow" bold>{logMode ? '  [plan]' : '[plan]'}</Text>}
+      </Box>
+      <Box flexShrink={1} justifyContent="flex-end">
+        <Text dimColor>{model}</Text>
+        {serverState && (
+          <Text color="green">{`  [server :${serverState.port} · ${formatUptime(serverState.startedAt)}]`}</Text>
+        )}
+        {updateHint && (
+          <Text color="yellow">{'  '}{updateHint}</Text>
+        )}
+      </Box>
     </Box>
   )
 }
