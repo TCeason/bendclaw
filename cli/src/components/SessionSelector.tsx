@@ -84,7 +84,7 @@ export function SessionSelector({ sessions, currentCwd, onSelect, onCancel }: Se
           const title = s.title || '(untitled)'
           const source = s.source || 'repl'
           const sourceTag = padRight(`[${source}]`, 8)
-          const displayTitle = padRight(title, 44)
+          const displayTitle = padRight(title, 72)
           const time = relativeTime(s.updated_at)
           const cwdMarker = currentCwd && s.cwd === currentCwd ? '*' : ' '
           const sourceColor = source === 'repl' ? 'cyan' : source === 'feishu' ? 'blue' : 'yellow'
