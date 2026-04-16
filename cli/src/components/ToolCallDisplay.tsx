@@ -58,18 +58,15 @@ function statusColor(status: UIToolCall['status']): string {
 }
 
 function formatToolDetail(tool: UIToolCall): string {
-  if (tool.previewCommand) return tool.previewCommand
-
   const args = tool.args
   if (!args || typeof args !== 'object') return ''
 
-  // Show a compact summary of common tool args
-  if ('command' in args) return truncate(String(args.command), 80)
-  if ('path' in args) return truncate(String(args.path), 80)
-  if ('file_path' in args) return truncate(String(args.file_path), 80)
-  if ('pattern' in args) return truncate(String(args.pattern), 60)
-  if ('url' in args) return truncate(String(args.url), 80)
-  if ('question' in args) return truncate(String(args.question), 60)
+  if ('command' in args) return truncate(String(args.command), 60)
+  if ('path' in args) return truncate(String(args.path), 60)
+  if ('file_path' in args) return truncate(String(args.file_path), 60)
+  if ('pattern' in args) return truncate(String(args.pattern), 40)
+  if ('url' in args) return truncate(String(args.url), 60)
+  if ('question' in args) return truncate(String(args.question), 40)
 
   return ''
 }

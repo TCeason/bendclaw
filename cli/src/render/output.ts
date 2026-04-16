@@ -114,7 +114,7 @@ export function buildToolResult(
     })
   }
 
-  // Tool result content (head/tail truncated, matching Rust REPL style)
+  // Tool result content (head/tail truncated)
   if (result) {
     const resultLines = toolResultLines(result, isError)
     for (const rl of resultLines) {
