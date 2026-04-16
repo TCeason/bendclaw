@@ -48,6 +48,8 @@ export function Spinner({ toolName, tokenCount = 0, lastTokenAt }: SpinnerProps)
   const [tick, setTick] = useState<SpinnerTick>({ frame: 0, elapsed: 0, glimmerPos: -2, slow: false })
   const phaseStartRef = useRef(Date.now())
   const phaseRef = useRef<Phase>(toolName ? 'executing' : 'thinking')
+  const lastTokenAtRef = useRef(lastTokenAt)
+  lastTokenAtRef.current = lastTokenAt
 
   // Detect phase changes and reset timer
   const currentPhase: Phase = toolName ? 'executing' : 'thinking'
@@ -59,12 +61,18 @@ export function Spinner({ toolName, tokenCount = 0, lastTokenAt }: SpinnerProps)
   useEffect(() => {
     const timer = setInterval(() => {
       const now = Date.now()
-      const sincePhasStart = now - phaseStartRef.current
+      const sincePhaseStart = now - phaseStartRef.current
+      // Thinking: slow only if no tokens received recently
+      // Executing: slow only if tool running too long
+      const lta = lastTokenAtRef.current
+      const isThinking = phaseRef.current === 'thinking'
+      const hasRecentTokens = isThinking && lta != null && (now - lta) < SLOW_THRESHOLD_MS
+      const slow = sincePhaseStart > SLOW_THRESHOLD_MS && !hasRecentTokens
       setTick((prev) => ({
         frame: (prev.frame + 1) % SPINNER_FRAMES.length,
-        elapsed: sincePhasStart,
+        elapsed: sincePhaseStart,
         glimmerPos: prev.glimmerPos + 1 > 30 ? -2 : prev.glimmerPos + 1,
-        slow: sincePhasStart > SLOW_THRESHOLD_MS,
+        slow,
       }))
     }, SPINNER_INTERVAL)
     return () => clearInterval(timer)
