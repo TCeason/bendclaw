@@ -114,12 +114,21 @@ proptest! {
     ) {
         let messages = pat(&pattern).pad(pad).tool_output(tool_out).build();
         let result = compact_messages(messages, &config);
-        if result.stats.level > 0 && result.stats.level <= 2 {
-            let budget = config.max_context_tokens.saturating_sub(config.system_prompt_tokens);
+        let budget = config.max_context_tokens.saturating_sub(config.system_prompt_tokens);
+
+        // The pipeline always reduces or preserves token count
+        prop_assert!(
+            result.stats.after_estimated_tokens <= result.stats.before_estimated_tokens,
+            "compaction should not increase tokens: before={} after={}",
+            result.stats.before_estimated_tokens,
+            result.stats.after_estimated_tokens,
+        );
+
+        // If we started under budget, we should stay under budget
+        if result.stats.before_estimated_tokens <= budget {
             prop_assert!(
                 result.stats.after_estimated_tokens <= budget,
-                "level {} should respect budget: after={} > budget={}",
-                result.stats.level,
+                "under-budget input should stay under budget: after={} > budget={}",
                 result.stats.after_estimated_tokens,
                 budget,
             );

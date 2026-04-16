@@ -620,6 +620,8 @@ fn map_agent_event(
                     tool_outputs_truncated: stats.tool_outputs_truncated,
                     turns_summarized: stats.turns_summarized,
                     messages_dropped: stats.messages_dropped,
+                    oversize_capped: stats.oversize_capped,
+                    age_cleared: stats.age_cleared,
                     actions: stats
                         .actions
                         .iter()

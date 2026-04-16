@@ -114,6 +114,8 @@ fn stats_context_compaction_completed_round_trip() {
             tool_outputs_truncated: 3,
             turns_summarized: 5,
             messages_dropped: 4,
+            oversize_capped: 0,
+            age_cleared: 0,
             actions: vec![],
         },
     });

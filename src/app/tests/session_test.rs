@@ -600,6 +600,8 @@ async fn stats_after_compact_filtered_on_resume() -> TestResult {
                 tool_outputs_truncated: 2,
                 turns_summarized: 3,
                 messages_dropped: 1,
+                oversize_capped: 0,
+                age_cleared: 0,
                 actions: vec![],
             },
         },

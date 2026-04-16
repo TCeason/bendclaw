@@ -115,6 +115,8 @@ fn aggregator_ingests_compaction_completed() {
                 tool_outputs_truncated: 3,
                 turns_summarized: 5,
                 messages_dropped: 2,
+                oversize_capped: 0,
+                age_cleared: 0,
                 actions: vec![],
             },
         },

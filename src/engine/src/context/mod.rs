@@ -13,7 +13,6 @@ pub mod tokens;
 pub mod tracking;
 
 pub use compaction::compact_messages;
-pub use compaction::level1_truncate_tool_outputs;
 pub use compaction::sanitize_tool_pairs;
 pub use compaction::truncate_text_head_tail;
 pub use compaction::CompactionAction;

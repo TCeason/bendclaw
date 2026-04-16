@@ -90,6 +90,10 @@ pub enum CompactionResult {
         turns_summarized: usize,
         messages_dropped: usize,
         #[serde(default)]
+        oversize_capped: usize,
+        #[serde(default)]
+        age_cleared: usize,
+        #[serde(default)]
         actions: Vec<CompactionAction>,
     },
 }

@@ -31,32 +31,34 @@ pub fn assert_no_orphan_tool_pairs(messages: &[AgentMessage]) {
     );
 }
 
-/// Assert all actions match the expected level's methods.
+/// Assert actions are consistent with the reported level.
+///
+/// The pipeline runs all passes in sequence, so a higher level can contain
+/// actions from earlier passes. The `level` represents the *highest* pass
+/// that produced actions:
+///   0 = only LifecycleCleared (or no-op)
+///   1 = shrink (Outline / HeadTail / AgeCleared / OversizeCapped)
+///   2 = collapse (Summarized), may also have level-1 actions
+///   3 = evict (Dropped), may also have level-1 and level-2 actions
 pub fn assert_actions_match_level(level: u8, actions: &[CompactionAction]) {
+    let allowed_at_level = |method: &CompactionMethod, lvl: u8| -> bool {
+        match method {
+            CompactionMethod::LifecycleCleared => true, // always allowed
+            CompactionMethod::AgeCleared
+            | CompactionMethod::OversizeCapped
+            | CompactionMethod::Outline
+            | CompactionMethod::HeadTail => lvl >= 1,
+            CompactionMethod::Summarized => lvl >= 2,
+            CompactionMethod::Dropped => lvl >= 3,
+        }
+    };
+
     for action in actions {
-        // LifecycleCleared runs at every level (level 0 cleanup)
-        if action.method == CompactionMethod::LifecycleCleared {
-            continue;
-        }
-        match level {
-            0 => panic!("level 0 should only have LifecycleCleared actions"),
-            1 => assert!(
-                action.method == CompactionMethod::Outline
-                    || action.method == CompactionMethod::HeadTail,
-                "level 1 action should be Outline or HeadTail, got {:?}",
-                action.method
-            ),
-            2 => assert_eq!(
-                action.method,
-                CompactionMethod::Summarized,
-                "level 2 action should be Summarized"
-            ),
-            3 => assert_eq!(
-                action.method,
-                CompactionMethod::Dropped,
-                "level 3 action should be Dropped"
-            ),
-            _ => panic!("unexpected level {}", level),
-        }
+        assert!(
+            allowed_at_level(&action.method, level),
+            "action {:?} not expected at level {}",
+            action.method,
+            level
+        );
     }
 }
