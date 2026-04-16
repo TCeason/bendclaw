@@ -61,6 +61,7 @@ pub enum RunEventPayload {
     LlmCallStarted {
         turn: usize,
         attempt: usize,
+        injected_count: usize,
         model: String,
         message_count: usize,
         message_bytes: usize,

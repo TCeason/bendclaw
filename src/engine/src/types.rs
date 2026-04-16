@@ -546,6 +546,7 @@ pub enum AgentEvent {
     LlmCallStart {
         turn: usize,
         attempt: usize,
+        injected_count: usize,
         request: LlmCallRequest,
     },
     LlmCallEnd {

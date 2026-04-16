@@ -1,6 +1,6 @@
+use evot::agent::session::Session;
 use evot::agent::*;
 use evot::conf::StorageConfig;
-use evot::session::Session;
 use evot::storage::open_storage;
 use tempfile::TempDir;
 

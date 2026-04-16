@@ -20,6 +20,8 @@ use super::transcript::TranscriptItem;
 pub struct LlmCallStartedStats {
     pub turn: usize,
     pub attempt: usize,
+    #[serde(default)]
+    pub injected_count: usize,
     pub model: String,
     pub message_count: usize,
     pub message_bytes: usize,

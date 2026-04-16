@@ -3,7 +3,7 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 use super::traits::MessageSink;
-use crate::agent::QueryStream;
+use crate::agent::Run;
 use crate::agent::RunEventPayload;
 use crate::error::Result;
 
@@ -26,7 +26,7 @@ impl Default for StreamDeliveryConfig {
     }
 }
 
-/// Deliver a QueryStream progressively through a MessageSink.
+/// Deliver a Run progressively through a MessageSink.
 ///
 /// If the sink supports editing, sends an initial message then edits it
 /// as new content arrives. Otherwise, waits for the stream to finish
@@ -34,15 +34,15 @@ impl Default for StreamDeliveryConfig {
 pub async fn deliver(
     sink: &dyn MessageSink,
     chat_id: &str,
-    stream: &mut QueryStream,
+    run: &mut Run,
     config: &StreamDeliveryConfig,
 ) -> Result<String> {
     let caps = sink.capabilities();
 
     if caps.can_edit {
-        deliver_progressive(sink, chat_id, stream, config, caps.max_message_len).await
+        deliver_progressive(sink, chat_id, run, config, caps.max_message_len).await
     } else {
-        deliver_final(sink, chat_id, stream, caps.max_message_len).await
+        deliver_final(sink, chat_id, run, caps.max_message_len).await
     }
 }
 
@@ -50,7 +50,7 @@ pub async fn deliver(
 async fn deliver_progressive(
     sink: &dyn MessageSink,
     chat_id: &str,
-    stream: &mut QueryStream,
+    run: &mut Run,
     config: &StreamDeliveryConfig,
     max_len: usize,
 ) -> Result<String> {
@@ -60,7 +60,7 @@ async fn deliver_progressive(
     let mut last_edit = Instant::now();
     let mut edit_broken = false;
 
-    while let Some(event) = stream.next().await {
+    while let Some(event) = run.next().await {
         match &event.payload {
             RunEventPayload::AssistantDelta {
                 delta: Some(delta), ..
@@ -174,11 +174,11 @@ async fn deliver_progressive(
 async fn deliver_final(
     sink: &dyn MessageSink,
     chat_id: &str,
-    stream: &mut QueryStream,
+    run: &mut Run,
     max_len: usize,
 ) -> Result<String> {
     let mut text_buf = String::new();
-    while let Some(event) = stream.next().await {
+    while let Some(event) = run.next().await {
         if let RunEventPayload::AssistantDelta {
             delta: Some(delta), ..
         } = &event.payload

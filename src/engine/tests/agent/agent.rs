@@ -17,7 +17,7 @@ async fn test_agent_simple_prompt() {
         .with_model("mock")
         .with_api_key("test");
 
-    let mut rx = agent.submit_text("Hi there").await;
+    let (_handle, mut rx) = agent.submit_text("Hi there").await;
 
     // Drain events
     let mut events = Vec::new();
@@ -38,7 +38,7 @@ async fn test_agent_reset() {
         .with_model("mock")
         .with_api_key("test");
 
-    let mut rx = agent.submit_text("Hi").await;
+    let (_handle, mut rx) = agent.submit_text("Hi").await;
     while rx.recv().await.is_some() {}
     agent.finish().await;
     assert!(!agent.messages().is_empty());
@@ -94,7 +94,7 @@ async fn test_agent_with_tools() {
         .with_api_key("test")
         .with_tools(vec![Box::new(EchoTool)]);
 
-    let mut rx = agent.submit_text("Echo hello").await;
+    let (_handle, mut rx) = agent.submit_text("Echo hello").await;
     while rx.recv().await.is_some() {}
     agent.finish().await;
 
@@ -158,7 +158,7 @@ async fn test_save_and_restore_messages() {
         .with_model("mock")
         .with_api_key("test");
 
-    let mut rx = agent.submit_text("Hi").await;
+    let (_handle, mut rx) = agent.submit_text("Hi").await;
     while rx.recv().await.is_some() {}
     agent.finish().await;
     let json = agent.save_messages().expect("save should succeed");
@@ -185,7 +185,7 @@ async fn test_agent_continues_after_restore() {
         .with_model("mock")
         .with_api_key("test");
 
-    let mut rx = agent1.submit_text("Hello").await;
+    let (_handle, mut rx) = agent1.submit_text("Hello").await;
     while rx.recv().await.is_some() {}
     agent1.finish().await;
     let json = agent1.save_messages().expect("save");
@@ -199,7 +199,7 @@ async fn test_agent_continues_after_restore() {
         .with_api_key("test");
 
     agent2.restore_messages(&json).expect("restore");
-    let mut rx = agent2.submit_text("Follow up").await;
+    let (_handle, mut rx) = agent2.submit_text("Follow up").await;
     while rx.recv().await.is_some() {}
     agent2.finish().await;
 
@@ -223,7 +223,7 @@ async fn test_submit_text_streams_events() {
         .with_model("mock")
         .with_api_key("test");
 
-    let mut rx = agent.submit_text("Hi there").await;
+    let (_handle, mut rx) = agent.submit_text("Hi there").await;
 
     let mut event_count = 0;
     while rx.recv().await.is_some() {
@@ -245,7 +245,7 @@ async fn test_submit_text_concurrent_streaming() {
         .with_model("mock")
         .with_api_key("test");
 
-    let mut rx = agent.submit_text("Hello").await;
+    let (_handle, mut rx) = agent.submit_text("Hello").await;
 
     let received = Arc::new(AtomicUsize::new(0));
     let received_clone = received.clone();
@@ -272,7 +272,7 @@ async fn test_submit_messages() {
         .with_api_key("test");
 
     let msgs = vec![AgentMessage::Llm(Message::user("Hello"))];
-    let mut rx = agent.submit(msgs).await;
+    let (_handle, mut rx) = agent.submit(msgs).await;
 
     let mut events = Vec::new();
     while let Some(event) = rx.recv().await {
@@ -304,7 +304,7 @@ async fn test_resume() {
     }));
     agent.append_message(AgentMessage::Llm(Message::user("Please try again")));
 
-    let mut rx = agent.resume().await;
+    let (_handle, mut rx) = agent.resume().await;
 
     let mut events = Vec::new();
     while let Some(event) = rx.recv().await {
@@ -354,13 +354,13 @@ async fn test_submit_text_tools_restored() {
         .with_api_key("test")
         .with_tools(vec![Box::new(DummyTool)]);
 
-    let mut rx = agent.submit_text("Hi").await;
+    let (_handle, mut rx) = agent.submit_text("Hi").await;
     while rx.recv().await.is_some() {}
     agent.finish().await;
 
     assert!(!agent.is_streaming());
 
-    let mut rx2 = agent.submit_text("Follow up").await;
+    let (_handle2, mut rx2) = agent.submit_text("Follow up").await;
     while rx2.recv().await.is_some() {}
     agent.finish().await;
     assert_eq!(agent.messages().len(), 4);

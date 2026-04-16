@@ -1,18 +1,22 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use evot_engine::tools::*;
 use parking_lot::RwLock;
-use tokio::sync::mpsc;
 
-use super::event::RunEvent;
-use super::runtime::EngineHandle;
+use super::run::convert;
+use super::run::run::Run;
+use super::run::runtime;
+use super::session::Session;
+use super::tools::build_tools;
+use super::tools::ToolMode;
 use super::variables::Variables;
 use crate::conf::Config;
 use crate::conf::LlmConfig;
 use crate::error::EvotError;
 use crate::error::Result;
-use crate::session::Session;
 use crate::storage::open_storage;
 use crate::storage::MemoryStorage;
 use crate::storage::Storage;
@@ -38,101 +42,6 @@ impl Default for ExecutionLimits {
             max_total_tokens: 100_000_000,
             max_duration_secs: 3600,
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ToolMode — determines which tools are registered for a query
-// ---------------------------------------------------------------------------
-
-pub enum ToolMode {
-    /// REPL interactive: full tools + ask_user
-    Interactive { ask_fn: AskUserFn },
-    /// Oneshot / API / headless: full tools, no ask_user
-    Headless,
-    /// Plan mode: write tools degraded, optional ask_user
-    Planning { ask_fn: Option<AskUserFn> },
-    /// Forked conversation: read-only
-    Readonly,
-}
-
-impl ToolMode {
-    pub fn is_planning(&self) -> bool {
-        matches!(self, Self::Planning { .. })
-    }
-
-    pub fn is_readonly(&self) -> bool {
-        matches!(self, Self::Readonly)
-    }
-}
-
-fn build_bash_tool(
-    envs: Vec<(String, String)>,
-    sandbox_dirs: Option<Vec<PathBuf>>,
-) -> Box<dyn evot_engine::AgentTool> {
-    let mut bash = BashTool::default().with_envs(envs);
-    if let Some(dirs) = sandbox_dirs {
-        bash = bash.with_sandbox_dirs(dirs);
-    }
-    Box::new(bash)
-}
-
-fn build_tools(
-    mode: &ToolMode,
-    envs: Vec<(String, String)>,
-    allow_bash: bool,
-    sandbox_dirs: Option<Vec<PathBuf>>,
-) -> Vec<Box<dyn evot_engine::AgentTool>> {
-    match mode {
-        ToolMode::Interactive { ask_fn } => {
-            let mut t: Vec<Box<dyn evot_engine::AgentTool>> = Vec::new();
-            if allow_bash {
-                t.push(build_bash_tool(envs, sandbox_dirs));
-            }
-            t.push(Box::new(ReadFileTool::default()));
-            t.push(Box::new(WriteFileTool::new()));
-            t.push(Box::new(EditFileTool::new()));
-            t.push(Box::new(ListFilesTool::default()));
-            t.push(Box::new(SearchTool::default()));
-            t.push(Box::new(WebFetchTool::new()));
-            t.push(Box::new(AskUserTool::new(ask_fn.clone())));
-            t
-        }
-        ToolMode::Headless => {
-            let mut t: Vec<Box<dyn evot_engine::AgentTool>> = Vec::new();
-            if allow_bash {
-                t.push(build_bash_tool(envs, sandbox_dirs));
-            }
-            t.push(Box::new(ReadFileTool::default()));
-            t.push(Box::new(WriteFileTool::new()));
-            t.push(Box::new(EditFileTool::new()));
-            t.push(Box::new(ListFilesTool::default()));
-            t.push(Box::new(SearchTool::default()));
-            t.push(Box::new(WebFetchTool::new()));
-            t
-        }
-        ToolMode::Planning { ask_fn } => {
-            let msg = "Not allowed in planning mode. Use /act to switch.";
-            let mut t: Vec<Box<dyn evot_engine::AgentTool>> = Vec::new();
-            if allow_bash {
-                t.push(build_bash_tool(envs, sandbox_dirs));
-            }
-            t.push(Box::new(ReadFileTool::default()));
-            t.push(Box::new(WriteFileTool::new().disallow(msg)));
-            t.push(Box::new(EditFileTool::new().disallow(msg)));
-            t.push(Box::new(ListFilesTool::default()));
-            t.push(Box::new(SearchTool::default()));
-            t.push(Box::new(WebFetchTool::new()));
-            if let Some(f) = ask_fn {
-                t.push(Box::new(AskUserTool::new(f.clone())));
-            }
-            t
-        }
-        ToolMode::Readonly => vec![
-            Box::new(ReadFileTool::default()),
-            Box::new(ListFilesTool::default()),
-            Box::new(SearchTool::default()),
-        ],
     }
 }
 
@@ -168,46 +77,16 @@ impl QueryRequest {
 }
 
 // ---------------------------------------------------------------------------
-// QueryStream
-// ---------------------------------------------------------------------------
-
-pub struct QueryStream {
-    pub(super) rx: mpsc::UnboundedReceiver<RunEvent>,
-    pub session_id: String,
-    pub run_id: String,
-    pub(super) engine_handle: EngineHandle,
-}
-
-impl QueryStream {
-    pub async fn next(&mut self) -> Option<RunEvent> {
-        self.rx.recv().await
-    }
-
-    pub fn abort(&self) {
-        self.engine_handle.abort();
-    }
-
-    /// Test-only constructor: create a QueryStream from a raw receiver.
-    #[doc(hidden)]
-    pub fn from_receiver(
-        rx: mpsc::UnboundedReceiver<RunEvent>,
-        session_id: String,
-        run_id: String,
-    ) -> Self {
-        Self {
-            rx,
-            session_id,
-            run_id,
-            engine_handle: EngineHandle::noop(),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Agent
 // ---------------------------------------------------------------------------
 
 const PLANNING_MODE_PROMPT: &str = include_str!("prompt/plan.md");
+
+struct ActiveRun {
+    run_id: String,
+    handle: evot_engine::RunHandle,
+    done: Arc<AtomicBool>,
+}
 
 pub struct Agent {
     llm: RwLock<LlmConfig>,
@@ -218,6 +97,8 @@ pub struct Agent {
     storage: RwLock<Arc<dyn Storage>>,
     variables: RwLock<Option<Arc<Variables>>>,
     sandbox: super::sandbox::SandboxPolicy,
+    /// session_id → (run_id, handle, done_flag)
+    active_runs: Arc<parking_lot::Mutex<HashMap<String, ActiveRun>>>,
 }
 
 impl Agent {
@@ -234,6 +115,7 @@ impl Agent {
             storage: RwLock::new(storage),
             variables: RwLock::new(None),
             sandbox: super::sandbox::SandboxPolicy::from_config(&config.sandbox),
+            active_runs: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         }))
     }
 
@@ -323,12 +205,68 @@ impl Agent {
         self.storage.read().clone()
     }
 
+    // -- run control ---------------------------------------------------------
+
+    /// Send a steering message to the active run for a session.
+    pub fn steer(&self, session_id: &str, text: impl Into<String>) {
+        if let Some(ar) = self.active_runs.lock().get(session_id) {
+            if !ar.done.load(Ordering::Relaxed) {
+                ar.handle
+                    .steer(evot_engine::AgentMessage::Llm(evot_engine::Message::user(
+                        text,
+                    )));
+            }
+        }
+    }
+
+    /// Send a follow-up message to the active run for a session.
+    pub fn follow_up(&self, session_id: &str, text: impl Into<String>) {
+        if let Some(ar) = self.active_runs.lock().get(session_id) {
+            if !ar.done.load(Ordering::Relaxed) {
+                ar.handle
+                    .follow_up(evot_engine::AgentMessage::Llm(evot_engine::Message::user(
+                        text,
+                    )));
+            }
+        }
+    }
+
+    /// Abort the active run for a session.
+    pub fn abort_run(&self, session_id: &str) {
+        if let Some(ar) = self.active_runs.lock().get(session_id) {
+            ar.handle.abort();
+        }
+    }
+
+    /// Check if a session has an active (non-finished) run.
+    /// Automatically cleans up finished runs.
+    pub fn has_active_run(&self, session_id: &str) -> bool {
+        let mut map = self.active_runs.lock();
+        if let Some(ar) = map.get(session_id) {
+            if ar.done.load(Ordering::Relaxed) {
+                map.remove(session_id);
+                return false;
+            }
+            true
+        } else {
+            false
+        }
+    }
+
     // -- query ---------------------------------------------------------------
 
-    pub async fn query(&self, request: QueryRequest) -> Result<QueryStream> {
+    pub async fn query(&self, request: QueryRequest) -> Result<Run> {
         let session = self.resolve_session(request.session_id.as_deref()).await?;
         let session_id = session.meta().await.session_id.clone();
         let run_id = crate::types::new_id();
+
+        // Session-level safety net: abort any existing active run for this session.
+        // This ensures no two runs overlap on the same session, regardless of caller
+        // (RunManager, HTTP, NAPI). Long-term this could be consolidated into a
+        // single coordination layer if all entry points go through RunManager.
+        if let Some(ar) = self.active_runs.lock().remove(&session_id) {
+            ar.handle.abort();
+        }
 
         tracing::info!(
             stage = "run",
@@ -342,16 +280,42 @@ impl Agent {
         let turn = self
             .build_turn(&request, session, &session_id, &run_id)
             .await?;
-        super::runtime::execute_turn(turn).await
+
+        // Shared done flag — set by on_complete, checked at registration
+        let done = Arc::new(AtomicBool::new(false));
+
+        // Build cleanup callback — mark done, remove only if still this run
+        let active_runs = self.active_runs.clone();
+        let sid = session_id.clone();
+        let rid = run_id.clone();
+        let done_flag = done.clone();
+        let on_complete: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            done_flag.store(true, Ordering::Release);
+            let mut map = active_runs.lock();
+            if let Some(ar) = map.get(&sid) {
+                if ar.run_id == rid {
+                    map.remove(&sid);
+                }
+            }
+        });
+
+        let run = runtime::execute_turn(turn, Some(on_complete)).await?;
+
+        // Register active run — skip if on_complete already fired
+        if !done.load(Ordering::Acquire) {
+            self.active_runs.lock().insert(session_id, ActiveRun {
+                run_id,
+                handle: run.handle(),
+                done,
+            });
+        }
+
+        Ok(run)
     }
 
     // -- fork ----------------------------------------------------------------
 
     /// Fork an independent, non-persisted agent for side conversations.
-    ///
-    /// Uses the current LLM configuration with readonly tools and in-memory
-    /// storage. The returned `ForkedAgent` maintains multi-turn context
-    /// in-memory via `Session`. Drop to discard — nothing is persisted.
     pub fn fork(self: &Arc<Self>, request: ForkRequest) -> Result<ForkedAgent> {
         let Self {
             llm,
@@ -362,6 +326,7 @@ impl Agent {
             storage: _,
             variables: _,
             sandbox,
+            active_runs: _,
         } = self.as_ref();
 
         let forked = Arc::new(Self {
@@ -376,6 +341,7 @@ impl Agent {
                 enabled: sandbox.enabled,
                 extra_dirs: sandbox.extra_dirs.clone(),
             },
+            active_runs: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         });
         Ok(ForkedAgent {
             agent: forked,
@@ -471,7 +437,7 @@ impl Agent {
         session: Arc<Session>,
         session_id: &str,
         run_id: &str,
-    ) -> Result<super::runtime::TurnInput> {
+    ) -> Result<runtime::TurnInput> {
         let llm = self.llm.read().clone();
         let system_prompt = self.build_system_prompt(&request.mode);
         let envs = self
@@ -506,11 +472,11 @@ impl Agent {
         }
 
         let prior_transcripts = session.transcript().await;
-        let prior_messages = super::convert::into_agent_messages(&prior_transcripts);
+        let prior_messages = convert::into_agent_messages(&prior_transcripts);
         let prior_messages = evot_engine::sanitize_tool_pairs(prior_messages);
 
-        Ok(super::runtime::TurnInput {
-            options: super::runtime::EngineOptions {
+        Ok(runtime::TurnInput {
+            options: runtime::EngineOptions {
                 provider: llm.provider,
                 model: llm.model,
                 api_key: llm.api_key,
@@ -550,14 +516,14 @@ pub struct ForkedAgent {
 }
 
 impl ForkedAgent {
-    pub async fn query(&mut self, prompt: &str) -> Result<QueryStream> {
+    pub async fn query(&mut self, prompt: &str) -> Result<Run> {
         let request = QueryRequest::text(prompt)
             .session_id(self.session_id.clone())
             .mode(ToolMode::Readonly);
-        let stream = self.agent.query(request).await?;
+        let run = self.agent.query(request).await?;
         if self.session_id.is_none() {
-            self.session_id = Some(stream.session_id.clone());
+            self.session_id = Some(run.session_id.clone());
         }
-        Ok(stream)
+        Ok(run)
     }
 }

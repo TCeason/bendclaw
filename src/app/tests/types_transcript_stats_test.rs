@@ -10,6 +10,7 @@ fn stats_llm_call_started_round_trip() {
     let stats = TranscriptStats::LlmCallStarted(LlmCallStartedStats {
         turn: 1,
         attempt: 0,
+        injected_count: 0,
         model: "claude-3".into(),
         message_count: 5,
         message_bytes: 1200,

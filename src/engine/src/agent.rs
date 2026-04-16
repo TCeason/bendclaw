@@ -22,6 +22,66 @@ use crate::provider::StreamProvider;
 use crate::tools::guard::PathGuard;
 use crate::types::*;
 
+// ---------------------------------------------------------------------------
+// RunHandle — cloneable control handle for a single run
+// ---------------------------------------------------------------------------
+
+/// Cloneable control handle for a running agent loop.
+///
+/// `Run` (app layer) owns the event stream; `RunHandle` is the control plane.
+/// Clone it freely to steer / follow-up / abort from any thread.
+#[derive(Clone)]
+pub struct RunHandle {
+    steering_queue: Arc<Mutex<Vec<AgentMessage>>>,
+    follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
+    cancel: CancellationToken,
+}
+
+impl RunHandle {
+    /// Queue a steering message (interrupts agent mid-tool-execution).
+    pub fn steer(&self, msg: AgentMessage) {
+        self.steering_queue.lock().push(msg);
+    }
+
+    /// Queue a follow-up message (processed after agent finishes current turn).
+    pub fn follow_up(&self, msg: AgentMessage) {
+        self.follow_up_queue.lock().push(msg);
+    }
+
+    /// Clear all queued steering messages.
+    pub fn clear_steering(&self) {
+        self.steering_queue.lock().clear();
+    }
+
+    /// Clear all queued follow-up messages.
+    pub fn clear_follow_up(&self) {
+        self.follow_up_queue.lock().clear();
+    }
+
+    /// Abort the run.
+    pub fn abort(&self) {
+        self.cancel.cancel();
+    }
+
+    /// Check if the run has been aborted.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel.is_cancelled()
+    }
+
+    /// Create a no-op handle (for tests).
+    pub fn noop() -> Self {
+        Self {
+            steering_queue: Arc::new(Mutex::new(Vec::new())),
+            follow_up_queue: Arc::new(Mutex::new(Vec::new())),
+            cancel: CancellationToken::new(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// QueueMode
+// ---------------------------------------------------------------------------
+
 /// Queue mode for steering and follow-up messages
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueueMode {
@@ -30,6 +90,10 @@ pub enum QueueMode {
     /// Deliver all queued messages at once
     All,
 }
+
+// ---------------------------------------------------------------------------
+// Agent
+// ---------------------------------------------------------------------------
 
 /// The main Agent. Owns state, tools, and provider.
 pub struct Agent {
@@ -77,6 +141,9 @@ pub struct Agent {
     cancel: Option<CancellationToken>,
     is_streaming: bool,
 
+    // Last run handle (for convenience methods on Agent)
+    last_run_handle: Option<RunHandle>,
+
     // Pending completion from a spawned agent loop
     #[allow(clippy::type_complexity)]
     pending_completion: Option<JoinHandle<(Vec<Box<dyn AgentTool>>, Vec<AgentMessage>)>>,
@@ -113,6 +180,7 @@ impl Agent {
             compaction_strategy: None,
             cancel: None,
             is_streaming: false,
+            last_run_handle: None,
             pending_completion: None,
         }
     }
@@ -305,22 +373,36 @@ impl Agent {
 
     // -- Queue management --
 
-    /// Queue a steering message (interrupts agent mid-tool-execution)
+    /// Queue a steering message (delegates to last run handle).
     pub fn steer(&self, msg: AgentMessage) {
-        self.steering_queue.lock().push(msg);
+        if let Some(ref h) = self.last_run_handle {
+            h.steer(msg);
+        } else {
+            self.steering_queue.lock().push(msg);
+        }
     }
 
-    /// Queue a follow-up message (processed after agent finishes)
+    /// Queue a follow-up message (delegates to last run handle).
     pub fn follow_up(&self, msg: AgentMessage) {
-        self.follow_up_queue.lock().push(msg);
+        if let Some(ref h) = self.last_run_handle {
+            h.follow_up(msg);
+        } else {
+            self.follow_up_queue.lock().push(msg);
+        }
     }
 
     pub fn clear_steering_queue(&self) {
         self.steering_queue.lock().clear();
+        if let Some(ref h) = self.last_run_handle {
+            h.clear_steering();
+        }
     }
 
     pub fn clear_follow_up_queue(&self) {
         self.follow_up_queue.lock().clear();
+        if let Some(ref h) = self.last_run_handle {
+            h.clear_follow_up();
+        }
     }
 
     pub fn clear_all_queues(&self) {
@@ -336,17 +418,26 @@ impl Agent {
         self.follow_up_mode = mode;
     }
 
+    /// Get the last run handle (if any).
+    pub fn run_handle(&self) -> Option<&RunHandle> {
+        self.last_run_handle.as_ref()
+    }
+
     // -- Control --
 
     pub fn abort(&self) {
-        if let Some(ref cancel) = self.cancel {
+        if let Some(ref h) = self.last_run_handle {
+            h.abort();
+        } else if let Some(ref cancel) = self.cancel {
             cancel.cancel();
         }
     }
 
     pub async fn reset(&mut self) {
         // Cancel cooperatively first, then await to recover tools
-        if let Some(ref cancel) = self.cancel {
+        if let Some(ref h) = self.last_run_handle {
+            h.abort();
+        } else if let Some(ref cancel) = self.cancel {
             cancel.cancel();
         }
         if let Some(handle) = self.pending_completion.take() {
@@ -359,6 +450,7 @@ impl Agent {
         self.clear_all_queues();
         self.is_streaming = false;
         self.cancel = None;
+        self.last_run_handle = None;
     }
 
     // -- Submitting --
@@ -366,7 +458,7 @@ impl Agent {
     pub async fn submit_text(
         &mut self,
         text: impl Into<String>,
-    ) -> mpsc::UnboundedReceiver<AgentEvent> {
+    ) -> (RunHandle, mpsc::UnboundedReceiver<AgentEvent>) {
         let msg = AgentMessage::Llm(Message::user(text));
         self.submit(vec![msg]).await
     }
@@ -374,7 +466,7 @@ impl Agent {
     pub async fn submit(
         &mut self,
         messages: Vec<AgentMessage>,
-    ) -> mpsc::UnboundedReceiver<AgentEvent> {
+    ) -> (RunHandle, mpsc::UnboundedReceiver<AgentEvent>) {
         self.finish().await;
 
         assert!(
@@ -386,6 +478,16 @@ impl Agent {
         self.cancel = Some(cancel.clone());
         self.is_streaming = true;
 
+        // Create per-run queues, draining any pre-queued messages
+        let run_steering = Arc::new(Mutex::new(self.steering_queue.lock().drain(..).collect()));
+        let run_follow_up = Arc::new(Mutex::new(self.follow_up_queue.lock().drain(..).collect()));
+        let run_handle = RunHandle {
+            steering_queue: run_steering.clone(),
+            follow_up_queue: run_follow_up.clone(),
+            cancel: cancel.clone(),
+        };
+        self.last_run_handle = Some(run_handle.clone());
+
         let (tx, rx) = mpsc::unbounded_channel();
 
         let mut context = AgentContext {
@@ -396,7 +498,7 @@ impl Agent {
             path_guard: self.path_guard.clone(),
         };
 
-        let config = self.build_config();
+        let config = self.build_config_with_queues(run_steering, run_follow_up);
 
         let handle = tokio::spawn(async move {
             let result = std::panic::AssertUnwindSafe(async {
@@ -424,10 +526,10 @@ impl Agent {
         });
 
         self.pending_completion = Some(handle);
-        rx
+        (run_handle, rx)
     }
 
-    pub async fn resume(&mut self) -> mpsc::UnboundedReceiver<AgentEvent> {
+    pub async fn resume(&mut self) -> (RunHandle, mpsc::UnboundedReceiver<AgentEvent>) {
         self.finish().await;
 
         let (tx, rx) = mpsc::unbounded_channel();
@@ -440,7 +542,7 @@ impl Agent {
                 },
             })
             .ok();
-            return rx;
+            return (RunHandle::noop(), rx);
         }
         if self.messages.is_empty() {
             tx.send(AgentEvent::Error {
@@ -450,12 +552,21 @@ impl Agent {
                 },
             })
             .ok();
-            return rx;
+            return (RunHandle::noop(), rx);
         }
 
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
         self.is_streaming = true;
+
+        let run_steering = Arc::new(Mutex::new(self.steering_queue.lock().drain(..).collect()));
+        let run_follow_up = Arc::new(Mutex::new(self.follow_up_queue.lock().drain(..).collect()));
+        let run_handle = RunHandle {
+            steering_queue: run_steering.clone(),
+            follow_up_queue: run_follow_up.clone(),
+            cancel: cancel.clone(),
+        };
+        self.last_run_handle = Some(run_handle.clone());
 
         let mut context = AgentContext {
             system_prompt: self.system_prompt.clone(),
@@ -465,7 +576,7 @@ impl Agent {
             path_guard: self.path_guard.clone(),
         };
 
-        let config = self.build_config();
+        let config = self.build_config_with_queues(run_steering, run_follow_up);
 
         let handle = tokio::spawn(async move {
             let result = std::panic::AssertUnwindSafe(async {
@@ -493,7 +604,7 @@ impl Agent {
         });
 
         self.pending_completion = Some(handle);
-        rx
+        (run_handle, rx)
     }
 
     pub async fn finish(&mut self) {
@@ -509,16 +620,18 @@ impl Agent {
             }
             self.is_streaming = false;
             self.cancel = None;
+            self.last_run_handle = None;
         }
     }
 
     // -- Internal --
 
-    fn build_config(&self) -> AgentLoopConfig {
-        let steering_queue = self.steering_queue.clone();
+    fn build_config_with_queues(
+        &self,
+        steering_queue: Arc<Mutex<Vec<AgentMessage>>>,
+        follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
+    ) -> AgentLoopConfig {
         let steering_mode = self.steering_mode;
-
-        let follow_up_queue = self.follow_up_queue.clone();
         let follow_up_mode = self.follow_up_mode;
 
         AgentLoopConfig {

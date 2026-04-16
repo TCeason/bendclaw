@@ -6,7 +6,7 @@
 
 // @ts-ignore — binding.js is generated
 import { NapiAgent as RawAgent, version as rawVersion, startServer as rawStartServer } from './binding.js'
-import type { NapiAgent as RawAgentType, NapiQueryStream as RawStreamType, NapiForkedAgent as RawForkedType } from './binding.d.ts'
+import type { NapiAgent as RawAgentType, NapiRun as RawRunType, NapiForkedAgent as RawForkedType } from './binding.d.ts'
 
 // ---------------------------------------------------------------------------
 // Event types (mirrors Rust RunEvent / RunEventPayload)
@@ -56,9 +56,9 @@ export interface ConfigInfo {
 // ---------------------------------------------------------------------------
 
 export class QueryStream {
-  private raw: RawStreamType
+  private raw: RawRunType
 
-  constructor(raw: RawStreamType) {
+  constructor(raw: RawRunType) {
     this.raw = raw
   }
 
@@ -74,6 +74,14 @@ export class QueryStream {
 
   abort(): void {
     this.raw.abort()
+  }
+
+  steer(text: string): void {
+    this.raw.steer(text)
+  }
+
+  followUp(text: string): void {
+    this.raw.followUp(text)
   }
 
   /** Async iterator support — `for await (const event of stream)` */
@@ -167,6 +175,18 @@ export class Agent {
 
   addSkillsDirs(dirs: string[]): void {
     this.raw.addSkillsDirs(dirs)
+  }
+
+  steer(sessionId: string, text: string): void {
+    this.raw.steer(sessionId, text)
+  }
+
+  followUp(sessionId: string, text: string): void {
+    this.raw.followUp(sessionId, text)
+  }
+
+  abortRun(sessionId: string): void {
+    this.raw.abortRun(sessionId)
   }
 }
 

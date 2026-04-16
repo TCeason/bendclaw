@@ -1,9 +1,10 @@
 mod agent;
-pub mod convert;
-pub mod event;
 pub mod prompt;
-pub mod runtime;
+pub mod run;
+pub mod run_manager;
 pub mod sandbox;
+pub mod session;
+pub mod tools;
 #[allow(hidden_glob_reexports)]
 pub(crate) mod variables;
 
@@ -12,11 +13,15 @@ pub use agent::ExecutionLimits;
 pub use agent::ForkRequest;
 pub use agent::ForkedAgent;
 pub use agent::QueryRequest;
-pub use agent::QueryStream;
-pub use agent::ToolMode;
-pub use event::RunEvent;
-pub use event::RunEventContext;
-pub use event::RunEventPayload;
+pub use run::Run;
+pub use run::RunEvent;
+pub use run::RunEventContext;
+pub use run::RunEventPayload;
+pub use run::StatsAggregator;
+pub use run_manager::ConversationKey;
+pub use run_manager::RunManager;
+pub use run_manager::SendOutcome;
+pub use tools::ToolMode;
 pub use variables::Variables;
 
 // Re-export shared domain types for backward compatibility.

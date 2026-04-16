@@ -8,6 +8,7 @@ pub mod tools;
 pub mod types;
 
 pub use agent::Agent;
+pub use agent::RunHandle;
 pub use agent_loop::agent_loop;
 pub use agent_loop::agent_loop_continue;
 pub use context::sanitize_tool_pairs;

@@ -209,7 +209,15 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
       }
 
       if (isLoadingRef.current) {
-        setMessageQueue((prev) => [...prev, text])
+        // Steer into the active run instead of queuing
+        const stream = streamRef.current
+        if (stream) {
+          stream.steer(text)
+          // Show the steered message in the UI immediately
+          setOutputLines((prev) => [...prev, ...buildUserMessage(text)])
+        } else {
+          setMessageQueue((prev) => [...prev, text])
+        }
         return
       }
 

@@ -83,6 +83,7 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
         RunEventPayload::LlmCallStarted {
             turn,
             attempt,
+            injected_count,
             model,
             message_count,
             message_bytes,
@@ -95,6 +96,7 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
                 "data": {
                     "turn": turn,
                     "attempt": attempt,
+                    "injected_count": injected_count,
                     "model": model,
                     "message_count": message_count,
                     "message_bytes": message_bytes,

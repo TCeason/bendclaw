@@ -94,8 +94,8 @@ impl Server {
             let request = QueryRequest::text(message).session_id(session_id);
 
             match self.agent.query(request).await {
-                Ok(mut query_stream) => {
-                    while let Some(event) = query_stream.next().await {
+                Ok(mut query_run) => {
+                    while let Some(event) = query_run.next().await {
                         for sse in stream::map_run_event(&event) {
                             if tx.send(sse).await.is_err() {
                                 break;
@@ -103,8 +103,8 @@ impl Server {
                         }
                     }
                 }
-                Err(error) => {
-                    let _ = tx.send(stream::error_event(error.to_string())).await;
+                Err(e) => {
+                    let _ = tx.send(stream::error_event(e.to_string())).await;
                 }
             }
 

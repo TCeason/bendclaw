@@ -89,7 +89,7 @@ impl NapiAgent {
         prompt: String,
         session_id: Option<String>,
         tool_mode: Option<String>,
-    ) -> Result<NapiQueryStream> {
+    ) -> Result<NapiRun> {
         let mode = match tool_mode.as_deref() {
             Some("planning") => ToolMode::Planning { ask_fn: None },
             Some("readonly") => ToolMode::Readonly,
@@ -97,16 +97,18 @@ impl NapiAgent {
         };
         let request = QueryRequest::text(prompt).session_id(session_id).mode(mode);
 
-        let stream = self
+        let run = self
             .agent
             .query(request)
             .await
             .map_err(|e| Error::from_reason(format!("query failed: {e}")))?;
 
-        let sid = stream.session_id.clone();
+        let sid = run.session_id.clone();
+        let handle = run.handle();
 
-        Ok(NapiQueryStream {
-            inner: Mutex::new(stream),
+        Ok(NapiRun {
+            inner: Mutex::new(run),
+            handle,
             cached_session_id: sid,
             aborted: Arc::new(AtomicBool::new(false)),
             abort_notify: Arc::new(Notify::new()),
@@ -294,23 +296,42 @@ impl NapiAgent {
         let paths: Vec<PathBuf> = dirs.into_iter().map(PathBuf::from).collect();
         self.agent.with_skills_dirs(paths);
     }
+
+    /// Send a steering message to the active run for a session.
+    #[napi]
+    pub fn steer(&self, session_id: String, text: String) {
+        self.agent.steer(&session_id, &text);
+    }
+
+    /// Send a follow-up message to the active run for a session.
+    #[napi]
+    pub fn follow_up(&self, session_id: String, text: String) {
+        self.agent.follow_up(&session_id, &text);
+    }
+
+    /// Abort the active run for a session.
+    #[napi]
+    pub fn abort_run(&self, session_id: String) {
+        self.agent.abort_run(&session_id);
+    }
 }
 
 // ---------------------------------------------------------------------------
-// NapiQueryStream — async iterator over RunEvents
+// NapiRun — async iterator over RunEvents
 // ---------------------------------------------------------------------------
 
 #[napi]
-pub struct NapiQueryStream {
-    inner: Mutex<evot::agent::QueryStream>,
+pub struct NapiRun {
+    inner: Mutex<evot::agent::Run>,
+    handle: evot_engine::RunHandle,
     cached_session_id: String,
     aborted: Arc<AtomicBool>,
     abort_notify: Arc<Notify>,
 }
 
 #[napi]
-impl NapiQueryStream {
-    /// Get the session ID for this query.
+impl NapiRun {
+    /// Get the session ID for this run.
     #[napi(getter)]
     pub fn session_id(&self) -> String {
         self.cached_session_id.clone()
@@ -322,11 +343,9 @@ impl NapiQueryStream {
         if self.aborted.load(Ordering::Relaxed) {
             return Ok(None);
         }
-        let mut stream = self.inner.lock().await;
-        // Race between the next stream event and the abort signal so that
-        // abort() can wake us up even while we're blocked on rx.recv().
+        let mut run = self.inner.lock().await;
         tokio::select! {
-            event = stream.next() => {
+            event = run.next() => {
                 if self.aborted.load(Ordering::Relaxed) {
                     return Ok(None);
                 }
@@ -340,7 +359,7 @@ impl NapiQueryStream {
                 }
             }
             _ = self.abort_notify.notified() => {
-                stream.abort();
+                run.abort();
                 Ok(None)
             }
         }
@@ -350,12 +369,26 @@ impl NapiQueryStream {
     #[napi]
     pub fn abort(&self) {
         self.aborted.store(true, Ordering::Relaxed);
-        // Wake up any in-flight next() call so it returns None immediately.
         self.abort_notify.notify_waiters();
-        // If we can grab the lock, abort the engine immediately too.
-        if let Ok(stream) = self.inner.try_lock() {
-            stream.abort();
-        }
+        self.handle.abort();
+    }
+
+    /// Send a steering message into the running agent loop.
+    #[napi]
+    pub fn steer(&self, text: String) {
+        self.handle
+            .steer(evot_engine::AgentMessage::Llm(evot_engine::Message::user(
+                text,
+            )));
+    }
+
+    /// Send a follow-up message (processed after current turn finishes).
+    #[napi]
+    pub fn follow_up(&self, text: String) {
+        self.handle
+            .follow_up(evot_engine::AgentMessage::Llm(evot_engine::Message::user(
+                text,
+            )));
     }
 }
 
@@ -370,17 +403,19 @@ pub struct NapiForkedAgent {
 
 #[napi]
 impl NapiForkedAgent {
-    /// Send a prompt to the forked agent. Returns a NapiQueryStream.
+    /// Send a prompt to the forked agent. Returns a NapiRun.
     #[napi]
-    pub async fn query(&self, prompt: String) -> Result<NapiQueryStream> {
+    pub async fn query(&self, prompt: String) -> Result<NapiRun> {
         let mut forked = self.inner.lock().await;
-        let stream = forked
+        let run = forked
             .query(&prompt)
             .await
             .map_err(|e| Error::from_reason(format!("fork query: {e}")))?;
-        let sid = stream.session_id.clone();
-        Ok(NapiQueryStream {
-            inner: Mutex::new(stream),
+        let sid = run.session_id.clone();
+        let handle = run.handle();
+        Ok(NapiRun {
+            inner: Mutex::new(run),
+            handle,
             cached_session_id: sid,
             aborted: Arc::new(AtomicBool::new(false)),
             abort_notify: Arc::new(Notify::new()),

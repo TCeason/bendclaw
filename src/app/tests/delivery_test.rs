@@ -8,9 +8,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use evot::agent::event::RunEvent;
-use evot::agent::event::RunEventPayload;
-use evot::agent::QueryStream;
+use evot::agent::Run;
+use evot::agent::RunEvent;
+use evot::agent::RunEventPayload;
 use evot::error::Result;
 use evot::gateway::delivery::stream as stream_delivery;
 use evot::gateway::delivery::stream::StreamDeliveryConfig;
@@ -214,8 +214,8 @@ impl DeliveryHarness {
         }
         drop(tx);
 
-        let mut stream = QueryStream::from_receiver(rx, "sess-1".into(), "run-1".into());
-        stream_delivery::deliver(sink, "chat-1", &mut stream, &self.config)
+        let mut run = Run::from_receiver(rx, "sess-1".into(), "run-1".into());
+        stream_delivery::deliver(sink, "chat-1", &mut run, &self.config)
             .await
             .unwrap_or_default()
     }

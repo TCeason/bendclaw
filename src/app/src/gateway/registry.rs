@@ -4,6 +4,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::Agent;
+use crate::agent::RunManager;
 use crate::conf::ChannelsConfig;
 
 pub fn spawn_all(
@@ -14,9 +15,10 @@ pub fn spawn_all(
     let mut handles = vec![];
 
     if let Some(ref fc) = conf.feishu {
+        let run_manager = RunManager::new(agent.clone());
         handles.push(super::channels::feishu::FeishuChannel::spawn(
             fc.clone(),
-            agent.clone(),
+            run_manager,
             cancel.clone(),
         ));
     }

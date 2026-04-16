@@ -1,17 +1,18 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::config::FeishuChannelConfig;
 use super::delivery::FeishuMessageSink;
 use super::token::TokenCache;
+use crate::agent::run_manager::ConversationKey;
+use crate::agent::run_manager::RunManager;
+use crate::agent::run_manager::SendOutcome;
 use crate::agent::Agent;
-use crate::agent::QueryRequest;
+use crate::agent::ToolMode;
 use crate::error::Result;
 use crate::gateway::delivery::stream as stream_delivery;
 use crate::gateway::delivery::stream::StreamDeliveryConfig;
@@ -19,17 +20,17 @@ use crate::gateway::Channel;
 
 pub struct FeishuChannel {
     config: FeishuChannelConfig,
-    session_map: SessionMap,
+    run_manager: Arc<RunManager>,
     client: reqwest::Client,
     token_cache: TokenCache,
     bot_open_id: tokio::sync::OnceCell<String>,
 }
 
 impl FeishuChannel {
-    pub fn new(config: FeishuChannelConfig) -> Self {
+    pub fn new(config: FeishuChannelConfig, run_manager: Arc<RunManager>) -> Self {
         Self {
             config,
-            session_map: SessionMap::new(),
+            run_manager,
             client: reqwest::Client::new(),
             token_cache: TokenCache::new(),
             bot_open_id: tokio::sync::OnceCell::new(),
@@ -38,10 +39,11 @@ impl FeishuChannel {
 
     pub fn spawn(
         conf: FeishuChannelConfig,
-        agent: Arc<Agent>,
+        run_manager: Arc<RunManager>,
         cancel: CancellationToken,
     ) -> JoinHandle<()> {
-        let ch = Arc::new(Self::new(conf));
+        let agent = run_manager.agent().clone();
+        let ch = Arc::new(Self::new(conf, run_manager));
         tokio::spawn(async move {
             if let Err(e) = ch.run(agent, cancel).await {
                 tracing::error!(channel = "feishu", error = %e, "channel exited");
@@ -49,53 +51,57 @@ impl FeishuChannel {
         })
     }
 
-    async fn handle_message(&self, agent: &Agent, msg: super::message::ParsedMessage) {
-        let session_key = format!("{}:{}", msg.chat_id, msg.sender_id);
-        let session_id = self.session_map.get(&session_key).await;
+    async fn handle_message(self: &Arc<Self>, msg: super::message::ParsedMessage) {
+        let key = ConversationKey::new("feishu", &format!("{}:{}", msg.chat_id, msg.sender_id));
         tracing::info!(
             channel = "feishu",
             chat_id = %msg.chat_id,
             sender_id = %msg.sender_id,
-            session_id = ?session_id,
             "received message"
         );
 
-        let request = QueryRequest::text(&msg.text).session_id(session_id);
-        match agent.query(request).await {
-            Ok(mut stream) => {
-                self.session_map
-                    .set(&session_key, stream.session_id.clone())
+        // Spawn so we don't block the websocket receive loop
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            match this
+                .run_manager
+                .send(&key, &msg.text, ToolMode::Headless)
+                .await
+            {
+                Ok(SendOutcome::Started(mut run)) => {
+                    let sink = FeishuMessageSink::new(
+                        this.client.clone(),
+                        this.token_cache.clone(),
+                        this.config.app_id.clone(),
+                        this.config.app_secret.clone(),
+                    );
+                    let config = StreamDeliveryConfig::default();
+                    if let Err(e) =
+                        stream_delivery::deliver(&sink, &msg.chat_id, &mut run, &config).await
+                    {
+                        tracing::error!(channel = "feishu", error = %e, "delivery failed");
+                    }
+                }
+                Ok(SendOutcome::Steered) => {
+                    // Message routed to active run — nothing to deliver
+                }
+                Err(e) => {
+                    tracing::error!(channel = "feishu", error = %e, "agent query failed");
+                    let sink = FeishuMessageSink::new(
+                        this.client.clone(),
+                        this.token_cache.clone(),
+                        this.config.app_id.clone(),
+                        this.config.app_secret.clone(),
+                    );
+                    let _ = crate::gateway::delivery::MessageSink::send_text(
+                        &sink,
+                        &msg.chat_id,
+                        &format!("Error: {e}"),
+                    )
                     .await;
-
-                let sink = FeishuMessageSink::new(
-                    self.client.clone(),
-                    self.token_cache.clone(),
-                    self.config.app_id.clone(),
-                    self.config.app_secret.clone(),
-                );
-                let config = StreamDeliveryConfig::default();
-                if let Err(e) =
-                    stream_delivery::deliver(&sink, &msg.chat_id, &mut stream, &config).await
-                {
-                    tracing::error!(channel = "feishu", error = %e, "delivery failed");
                 }
             }
-            Err(e) => {
-                tracing::error!(channel = "feishu", error = %e, "agent query failed");
-                let sink = FeishuMessageSink::new(
-                    self.client.clone(),
-                    self.token_cache.clone(),
-                    self.config.app_id.clone(),
-                    self.config.app_secret.clone(),
-                );
-                let _ = crate::gateway::delivery::MessageSink::send_text(
-                    &sink,
-                    &msg.chat_id,
-                    &format!("Error: {e}"),
-                )
-                .await;
-            }
-        }
+        });
     }
 }
 
@@ -105,7 +111,10 @@ impl Channel for FeishuChannel {
         "feishu"
     }
 
-    async fn run(self: Arc<Self>, agent: Arc<Agent>, cancel: CancellationToken) -> Result<()> {
+    // NOTE: `_agent` is unused — FeishuChannel holds a RunManager (injected at
+    // construction) which owns the Agent reference. The parameter is kept to
+    // satisfy the generic Channel trait; this is a known trait-reuse trade-off.
+    async fn run(self: Arc<Self>, _agent: Arc<Agent>, cancel: CancellationToken) -> Result<()> {
         tracing::info!(channel = "feishu", "channel started");
 
         let bot_open_id = self
@@ -129,7 +138,6 @@ impl Channel for FeishuChannel {
             }
 
             let self_ref = self.clone();
-            let agent_ref = agent.clone();
             let ctx = super::ws::WsContext {
                 client: &self.client,
                 app_id: &self.config.app_id,
@@ -140,9 +148,8 @@ impl Channel for FeishuChannel {
             };
             let result = super::ws::ws_receive_loop(&ctx, &cancel, |msg| {
                 let self_inner = self_ref.clone();
-                let agent_inner = agent_ref.clone();
                 async move {
-                    self_inner.handle_message(&agent_inner, msg).await;
+                    self_inner.handle_message(msg).await;
                 }
             })
             .await;
@@ -181,27 +188,5 @@ impl Channel for FeishuChannel {
 
         tracing::info!(channel = "feishu", "channel stopped");
         Ok(())
-    }
-}
-
-// ── channel-private session state ──
-
-struct SessionMap {
-    inner: Mutex<HashMap<String, String>>,
-}
-
-impl SessionMap {
-    fn new() -> Self {
-        Self {
-            inner: Mutex::new(HashMap::new()),
-        }
-    }
-
-    async fn get(&self, key: &str) -> Option<String> {
-        self.inner.lock().await.get(key).cloned()
-    }
-
-    async fn set(&self, key: &str, session_id: String) {
-        self.inner.lock().await.insert(key.to_string(), session_id);
     }
 }

@@ -1,4 +1,4 @@
-use evot::session::observability::StatsAggregator;
+use evot::agent::run::observability::StatsAggregator;
 use evot::types::observability::*;
 use evot::types::*;
 
@@ -24,6 +24,7 @@ fn aggregator_ingests_llm_call_started() {
     agg.ingest(&TranscriptStats::LlmCallStarted(LlmCallStartedStats {
         turn: 1,
         attempt: 0,
+        injected_count: 0,
         model: "claude-3".into(),
         message_count: 5,
         message_bytes: 1200,
@@ -155,6 +156,7 @@ fn aggregator_to_run_summary_produces_correct_data() {
     agg.ingest(&TranscriptStats::LlmCallStarted(LlmCallStartedStats {
         turn: 1,
         attempt: 0,
+        injected_count: 0,
         model: "claude-3".into(),
         message_count: 3,
         message_bytes: 500,
@@ -188,6 +190,7 @@ fn aggregator_to_run_summary_produces_correct_data() {
     agg.ingest(&TranscriptStats::LlmCallStarted(LlmCallStartedStats {
         turn: 1,
         attempt: 0,
+        injected_count: 0,
         model: "claude-3".into(),
         message_count: 5,
         message_bytes: 800,
@@ -242,6 +245,7 @@ fn aggregator_to_run_summary_from_stats_returns_none_without_run_finished() {
     agg.ingest(&TranscriptStats::LlmCallStarted(LlmCallStartedStats {
         turn: 1,
         attempt: 0,
+        injected_count: 0,
         model: "claude-3".into(),
         message_count: 3,
         message_bytes: 500,
@@ -256,6 +260,7 @@ fn aggregator_to_run_summary_from_stats_works_with_run_finished() {
     agg.ingest(&TranscriptStats::LlmCallStarted(LlmCallStartedStats {
         turn: 1,
         attempt: 0,
+        injected_count: 0,
         model: "claude-3".into(),
         message_count: 3,
         message_bytes: 500,
@@ -293,6 +298,7 @@ fn aggregator_from_items_batch_ingest() {
         TranscriptStats::LlmCallStarted(LlmCallStartedStats {
             turn: 1,
             attempt: 0,
+            injected_count: 0,
             model: "claude-3".into(),
             message_count: 1,
             message_bytes: 100,
@@ -347,6 +353,7 @@ fn aggregator_reset_clears_state() {
     agg.ingest(&TranscriptStats::LlmCallStarted(LlmCallStartedStats {
         turn: 1,
         attempt: 0,
+        injected_count: 0,
         model: "claude-3".into(),
         message_count: 3,
         message_bytes: 500,

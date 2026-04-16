@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
+use evot::agent::session::Session;
 use evot::agent::*;
-use evot::session::Session;
 use evot::storage::MemoryStorage;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;

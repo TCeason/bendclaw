@@ -125,6 +125,7 @@ pub struct TestHarness {
     tools: Vec<Box<dyn AgentTool>>,
     system_prompt: String,
     prior_messages: Vec<AgentMessage>,
+    steering_messages: Vec<AgentMessage>,
     context_config: Option<ContextConfig>,
     execution_limits: Option<ExecutionLimits>,
     retry_policy: RetryPolicy,
@@ -140,6 +141,7 @@ impl TestHarness {
             tools: vec![],
             system_prompt: "test".into(),
             prior_messages: vec![],
+            steering_messages: vec![],
             context_config: None,
             execution_limits: None,
             retry_policy: RetryPolicy::disabled(),
@@ -209,9 +211,20 @@ impl TestHarness {
         self
     }
 
+    /// Set steering messages to be injected during the run.
+    pub fn steering(mut self, messages: Vec<AgentMessage>) -> Self {
+        self.steering_messages = messages;
+        self
+    }
+
     /// Run agent_loop with a text prompt. Returns TestOutput.
     pub async fn run(self, prompt: &str) -> TestOutput {
         let provider = MockProvider::new(self.responses);
+        let steering = Arc::new(parking_lot::Mutex::new(self.steering_messages));
+        let get_steering: Option<evotengine::agent_loop::GetMessagesFn> = {
+            let q = steering.clone();
+            Some(Box::new(move || q.lock().drain(..).collect()))
+        };
         let config = AgentLoopConfig {
             provider: Arc::new(provider),
             model: "mock".into(),
@@ -222,7 +235,7 @@ impl TestHarness {
             model_config: None,
             convert_to_llm: None,
             transform_context: None,
-            get_steering_messages: None,
+            get_steering_messages: get_steering,
             get_follow_up_messages: None,
             context_config: self.context_config,
             compaction_strategy: None,
@@ -382,6 +395,17 @@ impl TestOutput {
                 AgentEvent::LlmCallEnd {
                     error: Some(err), ..
                 } => Some(err.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Get steered_count values from LlmCallStart events.
+    pub fn injected_counts(&self) -> Vec<usize> {
+        self.events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::LlmCallStart { injected_count, .. } => Some(*injected_count),
                 _ => None,
             })
             .collect()

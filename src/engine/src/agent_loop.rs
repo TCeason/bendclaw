@@ -302,7 +302,8 @@ async fn run_loop(
                 first_turn = false;
             }
 
-            // Inject pending messages
+            // Inject pending messages (steering / follow-up / initial prompt)
+            let injected_count = pending.len();
             if !pending.is_empty() {
                 for msg in pending.drain(..) {
                     tx.send(AgentEvent::MessageStart {
@@ -382,7 +383,9 @@ async fn run_loop(
             }
 
             // Stream assistant response
-            let message = stream_assistant_response(context, config, tx, cancel, turn_number).await;
+            let message =
+                stream_assistant_response(context, config, tx, cancel, turn_number, injected_count)
+                    .await;
 
             let agent_msg: AgentMessage = message.clone().into();
             context.messages.push(agent_msg.clone());
@@ -572,6 +575,7 @@ async fn stream_assistant_response(
     tx: &mpsc::UnboundedSender<AgentEvent>,
     cancel: &tokio_util::sync::CancellationToken,
     turn: usize,
+    injected_count: usize,
 ) -> Message {
     // Apply context transform
     let messages = if let Some(transform) = &config.transform_context {
@@ -620,6 +624,7 @@ async fn stream_assistant_response(
         tx.send(AgentEvent::LlmCallStart {
             turn,
             attempt,
+            injected_count,
             request: LlmCallRequest {
                 model: config.model.clone(),
                 system_prompt: context.system_prompt.clone(),

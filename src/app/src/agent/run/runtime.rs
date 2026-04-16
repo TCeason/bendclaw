@@ -17,9 +17,10 @@ use super::event::LlmMessageStats;
 use super::event::RunEvent;
 use super::event::RunEventContext;
 use super::event::RunEventPayload;
+use super::run::Run;
+use crate::agent::session::Session;
 use crate::conf::ProviderKind;
 use crate::error::Result;
-use crate::session::Session;
 use crate::types::ContextCompactionCompletedStats;
 use crate::types::ContextCompactionStartedStats;
 use crate::types::LlmCallCompletedStats;
@@ -41,7 +42,7 @@ pub struct EngineOptions {
     pub api_key: String,
     pub base_url: Option<String>,
     pub system_prompt: String,
-    pub limits: super::ExecutionLimits,
+    pub limits: crate::agent::ExecutionLimits,
     pub skills_dirs: Vec<std::path::PathBuf>,
     pub tools: Vec<Box<dyn evot_engine::AgentTool>>,
     pub thinking_level: evot_engine::ThinkingLevel,
@@ -49,60 +50,11 @@ pub struct EngineOptions {
     pub path_guard: std::sync::Arc<evot_engine::PathGuard>,
 }
 
-/// Handle to a running engine instance.
-/// Provides abort capability.
-pub struct EngineHandle {
-    agent: Option<evot_engine::Agent>,
-}
-
-impl EngineHandle {
-    /// Abort the engine run.
-    pub fn abort(&self) {
-        if let Some(agent) = self.agent.as_ref() {
-            agent.abort();
-        }
-    }
-
-    /// Create a no-op handle (for tests).
-    pub(crate) fn noop() -> Self {
-        Self { agent: None }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// RuntimeEvent — private orchestration signal
-// ---------------------------------------------------------------------------
-
-/// Internal event produced by the forwarder. Not exported outside the agent module.
-/// Carries both public events (for the consumer) and orchestration signals
-/// (for transcript persistence and run lifecycle).
-pub(super) enum RuntimeEvent {
-    /// Forward to the external consumer as a RunEvent.
-    Public(RunEventPayload),
-    /// A transcript item was produced (for persistence).
-    Transcript(TranscriptItem),
-    /// A turn started.
-    TurnStarted,
-    /// A turn ended (flush transcripts).
-    TurnEnded,
-    /// The agent loop finished.
-    RunCompleted {
-        last_text: String,
-        usage: UsageSummary,
-        transcript_count: usize,
-    },
-    /// Context was compacted at the given level.
-    Compacted {
-        level: u8,
-        transcripts: Vec<TranscriptItem>,
-    },
-}
-
 // ---------------------------------------------------------------------------
 // TurnInput — prepared by agent, executed by runtime
 // ---------------------------------------------------------------------------
 
-pub(super) struct TurnInput {
+pub(in crate::agent) struct TurnInput {
     pub options: EngineOptions,
     pub prior_messages: Vec<evot_engine::AgentMessage>,
     pub prompt: String,
@@ -115,9 +67,12 @@ pub(super) struct TurnInput {
 // execute_turn — build engine, submit, forward events, persist transcript
 // ---------------------------------------------------------------------------
 
-pub(super) async fn execute_turn(turn: TurnInput) -> Result<super::agent::QueryStream> {
-    let mut agent = build_agent(turn.options, turn.prior_messages);
-    let engine_rx = agent.submit_text(turn.prompt.clone()).await;
+pub(in crate::agent) async fn execute_turn(
+    turn: TurnInput,
+    on_complete: Option<Arc<dyn Fn() + Send + Sync>>,
+) -> Result<Run> {
+    let mut engine = build_agent(turn.options, turn.prior_messages);
+    let (run_handle, engine_rx) = engine.submit_text(turn.prompt.clone()).await;
 
     let (runtime_tx, runtime_rx) = mpsc::unbounded_channel();
 
@@ -136,32 +91,44 @@ pub(super) async fn execute_turn(turn: TurnInput) -> Result<super::agent::QueryS
         turn.prompt,
         turn.run_id.clone(),
         turn.session_id.clone(),
+        on_complete,
     ));
 
-    let handle = EngineHandle { agent: Some(agent) };
+    Ok(Run::new(turn.run_id, turn.session_id, rx, run_handle))
+}
 
-    Ok(super::agent::QueryStream {
-        rx,
-        session_id: turn.session_id,
-        run_id: turn.run_id,
-        engine_handle: handle,
-    })
+// ---------------------------------------------------------------------------
+// RuntimeEvent — private orchestration signal
+// ---------------------------------------------------------------------------
+
+enum RuntimeEvent {
+    Public(RunEventPayload),
+    Transcript(TranscriptItem),
+    TurnStarted,
+    TurnEnded,
+    RunCompleted {
+        last_text: String,
+        usage: UsageSummary,
+        transcript_count: usize,
+    },
+    Compacted {
+        level: u8,
+        transcripts: Vec<TranscriptItem>,
+    },
 }
 
 // ---------------------------------------------------------------------------
 // run_loop — orchestrate a single run (transcript persistence + event relay)
 // ---------------------------------------------------------------------------
 
-/// Consume `RuntimeEvent`s, persist transcripts, and relay `RunEvent`s to the
-/// external consumer. This is the run orchestration loop extracted from
-/// `Agent::query()`.
-pub(super) async fn run_loop(
+async fn run_loop(
     mut rx: mpsc::UnboundedReceiver<RuntimeEvent>,
     tx: mpsc::UnboundedSender<RunEvent>,
     session: Arc<Session>,
     prompt: String,
     run_id: String,
     session_id: String,
+    on_complete: Option<Arc<dyn Fn() + Send + Sync>>,
 ) {
     let started_at = Instant::now();
     let ctx = RunEventContext::new(&run_id, &session_id, 0);
@@ -268,6 +235,10 @@ pub(super) async fn run_loop(
         elapsed_ms = started_at.elapsed().as_millis() as u64,
         turn,
     );
+
+    if let Some(f) = on_complete {
+        f();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -473,6 +444,7 @@ fn map_agent_event(
         evot_engine::AgentEvent::LlmCallStart {
             turn,
             attempt,
+            injected_count,
             request,
         } => {
             let message_count = request.messages.len();
@@ -544,6 +516,7 @@ fn map_agent_event(
                     TranscriptStats::LlmCallStarted(LlmCallStartedStats {
                         turn: *turn,
                         attempt: *attempt,
+                        injected_count: *injected_count,
                         model: request.model.clone(),
                         message_count,
                         message_bytes,
@@ -554,6 +527,7 @@ fn map_agent_event(
                 RuntimeEvent::Public(RunEventPayload::LlmCallStarted {
                     turn: *turn,
                     attempt: *attempt,
+                    injected_count: *injected_count,
                     model: request.model.clone(),
                     message_count,
                     message_bytes,
