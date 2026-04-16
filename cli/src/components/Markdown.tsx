@@ -63,7 +63,7 @@ export function Markdown({ children, dimColor }: Props) {
   if (!elements || elements.length === 0) return null
 
   return (
-    <Box flexDirection="column" gap={0}>
+    <Box flexDirection="column" gap={1}>
       {elements}
     </Box>
   )

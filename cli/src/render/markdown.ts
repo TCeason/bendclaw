@@ -70,10 +70,10 @@ export function formatToken(
         }
       }
       // Borderless code block for easy copy-paste.
-      return EOL + highlighted + EOL
+      return highlighted + EOL
     }
     case 'codespan':
-      return chalk.blue(token.text)
+      return chalk.cyan(token.text)
     case 'del':
       return chalk.dim(
         (token.tokens ?? [])
@@ -96,6 +96,9 @@ export function formatToken(
       const text = (token.tokens ?? [])
         .map(t => formatToken(t, 0, null, null))
         .join('')
+      if ((token as Tokens.Heading).depth === 1) {
+        return chalk.bold.italic.underline(text) + EOL + EOL
+      }
       return chalk.bold(text) + EOL + EOL
     }
     case 'hr':
