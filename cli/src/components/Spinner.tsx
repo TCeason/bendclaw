@@ -1,6 +1,7 @@
 /**
- * Spinner component — animated loading indicator with phases, glimmer effect,
- * slow detection, token count, and terminal tab title.
+ * Spinner component — animated loading indicator with two phases:
+ *   Thinking (LLM) / Executing (tool)
+ * Shows "LLM slow…" or "Executing slow…" in red after 8s of no activity.
  */
 
 import React, { useState, useEffect, useRef } from 'react'
@@ -41,32 +42,29 @@ interface SpinnerTick {
   slow: boolean
 }
 
+type Phase = 'thinking' | 'executing'
+
 export function Spinner({ toolName, tokenCount = 0, lastTokenAt }: SpinnerProps) {
   const [tick, setTick] = useState<SpinnerTick>({ frame: 0, elapsed: 0, glimmerPos: -2, slow: false })
-  const startRef = useRef(Date.now())
-  const lastTokenAtRef = useRef(lastTokenAt)
-  lastTokenAtRef.current = lastTokenAt
+  const phaseStartRef = useRef(Date.now())
+  const phaseRef = useRef<Phase>(toolName ? 'executing' : 'thinking')
 
-  // Reset timer when phase changes (thinking → executing or between tools)
-  const prevToolRef = useRef(toolName)
-  useEffect(() => {
-    if (prevToolRef.current !== toolName) {
-      prevToolRef.current = toolName
-      startRef.current = Date.now()
-      lastTokenAtRef.current = undefined
-    }
-  }, [toolName])
+  // Detect phase changes and reset timer
+  const currentPhase: Phase = toolName ? 'executing' : 'thinking'
+  if (currentPhase !== phaseRef.current) {
+    phaseRef.current = currentPhase
+    phaseStartRef.current = Date.now()
+  }
 
   useEffect(() => {
     const timer = setInterval(() => {
       const now = Date.now()
-      const lta = lastTokenAtRef.current
-      const sinceActivity = lta != null ? now - lta : now - startRef.current
+      const sincePhasStart = now - phaseStartRef.current
       setTick((prev) => ({
         frame: (prev.frame + 1) % SPINNER_FRAMES.length,
-        elapsed: now - startRef.current,
+        elapsed: sincePhasStart,
         glimmerPos: prev.glimmerPos + 1 > 30 ? -2 : prev.glimmerPos + 1,
-        slow: sinceActivity > SLOW_THRESHOLD_MS,
+        slow: sincePhasStart > SLOW_THRESHOLD_MS,
       }))
     }, SPINNER_INTERVAL)
     return () => clearInterval(timer)
@@ -87,9 +85,8 @@ export function Spinner({ toolName, tokenCount = 0, lastTokenAt }: SpinnerProps)
 
   const { frame, elapsed, glimmerPos, slow } = tick
   const showTokens = elapsed > SHOW_TOKENS_AFTER_MS && tokenCount > 0
-  const isTool = !!toolName
+  const isTool = currentPhase === 'executing'
 
-  // Label: two states × two phases
   let label: string
   if (slow) {
     label = isTool ? 'Executing slow…' : 'LLM slow…'
@@ -97,7 +94,6 @@ export function Spinner({ toolName, tokenCount = 0, lastTokenAt }: SpinnerProps)
     label = isTool ? 'Executing…' : 'Thinking…'
   }
 
-  // Status
   let status = humanDuration(elapsed)
   if (showTokens) {
     status += ` · ${formatTokens(tokenCount)} tokens`
@@ -119,7 +115,6 @@ export function Spinner({ toolName, tokenCount = 0, lastTokenAt }: SpinnerProps)
   )
 }
 
-/** Renders text with a sweeping bright-white highlight (glimmer effect). */
 function GlimmerText({ text, pos }: { text: string; pos: number }) {
   const start = pos - 1
   const end = pos + 1
