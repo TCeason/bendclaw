@@ -1,7 +1,6 @@
 /**
  * Spinner component — animated loading indicator with phases, glimmer effect,
- * stalled detection, token count, and terminal tab title.
- * Ported from Rust spinner.rs.
+ * slow detection, token count, and terminal tab title.
  */
 
 import React, { useState, useEffect, useRef } from 'react'
@@ -9,21 +8,10 @@ import { Text, Box } from 'ink'
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 const SPINNER_INTERVAL = 100
-const STALLED_THRESHOLD_MS = 3000
+const SLOW_THRESHOLD_MS = 8000
 const SHOW_TOKENS_AFTER_MS = 30000
 
-const VERBS = [
-  'Defragmenting', 'Denormalizing', 'Sharding', 'Vacuuming', 'Reindexing',
-  'Compacting', 'Coalescing', 'Partitioning', 'Materializing', 'Checkpointing',
-  'Tombstoning', 'Backfilling', 'Rehashing', 'Journaling', 'Snapshotting',
-  'Gossipping', 'Quiescing', 'Fencing', 'Spilling', 'Compressing',
-]
-
 const TITLE_GLYPHS = ['·', '•', '·']
-
-function pickVerb(): string {
-  return VERBS[Math.floor(Math.random() * VERBS.length)]!
-}
 
 function humanDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
@@ -50,12 +38,11 @@ interface SpinnerTick {
   frame: number
   elapsed: number
   glimmerPos: number
-  stalled: boolean
+  slow: boolean
 }
 
 export function Spinner({ toolName, tokenCount = 0, lastTokenAt }: SpinnerProps) {
-  const [tick, setTick] = useState<SpinnerTick>({ frame: 0, elapsed: 0, glimmerPos: -2, stalled: false })
-  const verbRef = useRef(pickVerb())
+  const [tick, setTick] = useState<SpinnerTick>({ frame: 0, elapsed: 0, glimmerPos: -2, slow: false })
   const startRef = useRef(Date.now())
   const lastTokenAtRef = useRef(lastTokenAt)
   lastTokenAtRef.current = lastTokenAt
@@ -64,17 +51,18 @@ export function Spinner({ toolName, tokenCount = 0, lastTokenAt }: SpinnerProps)
     const timer = setInterval(() => {
       const now = Date.now()
       const lta = lastTokenAtRef.current
+      const sinceActivity = lta != null ? now - lta : now - startRef.current
       setTick((prev) => ({
         frame: (prev.frame + 1) % SPINNER_FRAMES.length,
         elapsed: now - startRef.current,
         glimmerPos: prev.glimmerPos + 1 > 30 ? -2 : prev.glimmerPos + 1,
-        stalled: lta != null && (now - lta) > STALLED_THRESHOLD_MS,
+        slow: sinceActivity > SLOW_THRESHOLD_MS,
       }))
     }, SPINNER_INTERVAL)
     return () => clearInterval(timer)
   }, [])
 
-  // Terminal tab title animation — shows pulsing dot while working
+  // Terminal tab title animation
   const titleIdx = useRef(0)
   useEffect(() => {
     const timer = setInterval(() => {
@@ -87,34 +75,34 @@ export function Spinner({ toolName, tokenCount = 0, lastTokenAt }: SpinnerProps)
     }
   }, [])
 
-  const { frame, elapsed, glimmerPos, stalled } = tick
+  const { frame, elapsed, glimmerPos, slow } = tick
   const showTokens = elapsed > SHOW_TOKENS_AFTER_MS && tokenCount > 0
+  const isTool = !!toolName
 
-  // Build label
+  // Label: two states × two phases
   let label: string
-  if (toolName) {
-    label = `Running ${toolName}…`
+  if (slow) {
+    label = isTool ? 'Executing slow…' : 'LLM slow…'
   } else {
-    label = `${verbRef.current}…`
+    label = isTool ? 'Executing…' : 'Thinking…'
   }
 
-  // Build status
+  // Status
   let status = humanDuration(elapsed)
   if (showTokens) {
     status += ` · ${formatTokens(tokenCount)} tokens`
   }
 
-  // Glimmer effect: sweep bright chars across the label
-  const glimmerCurrent = glimmerPos
-
-  // Progress lines (tool output preview) — removed, handled by ActiveResponse
+  const color = slow ? 'red' : 'cyan'
 
   return (
     <Box flexDirection="column">
-      {/* Spinner line */}
       <Box>
-        <Text color={stalled ? 'red' : 'cyan'}>{SPINNER_FRAMES[frame]} </Text>
-        <GlimmerText text={label} pos={glimmerCurrent} stalled={stalled} />
+        <Text color={color}>{SPINNER_FRAMES[frame]} </Text>
+        {slow
+          ? <Text color="red">{label}</Text>
+          : <GlimmerText text={label} pos={glimmerPos} />
+        }
         <Text dimColor> ({status}) · esc to interrupt</Text>
       </Box>
     </Box>
@@ -122,11 +110,7 @@ export function Spinner({ toolName, tokenCount = 0, lastTokenAt }: SpinnerProps)
 }
 
 /** Renders text with a sweeping bright-white highlight (glimmer effect). */
-function GlimmerText({ text, pos, stalled }: { text: string; pos: number; stalled: boolean }) {
-  if (stalled) {
-    return <Text color="red">{text}</Text>
-  }
-
+function GlimmerText({ text, pos }: { text: string; pos: number }) {
   const start = pos - 1
   const end = pos + 1
 
