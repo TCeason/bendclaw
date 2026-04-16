@@ -60,7 +60,7 @@ Built on a Rust engine with a TypeScript CLI powered by Ink.
 ### One-liner (recommended)
 
 ```bash
-npx @evotai/evot
+curl -fsSL https://evot.ai/install | sh
 ```
 
 ### From source
