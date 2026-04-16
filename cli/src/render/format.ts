@@ -2,9 +2,22 @@
  * Shared formatting utilities.
  */
 
+import stringWidth from 'string-width'
+
 export function padRight(s: string, n: number): string {
-  if (s.length > n) return s.slice(0, n - 1) + '…'
-  return s + ' '.repeat(Math.max(0, n - s.length))
+  const w = stringWidth(s)
+  if (w > n) {
+    let truncated = ''
+    let tw = 0
+    for (const ch of s) {
+      const cw = stringWidth(ch)
+      if (tw + cw > n - 1) break
+      truncated += ch
+      tw += cw
+    }
+    return truncated + '…'
+  }
+  return s + ' '.repeat(Math.max(0, n - w))
 }
 
 export function relativeTime(iso: string): string {

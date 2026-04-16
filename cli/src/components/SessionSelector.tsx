@@ -83,9 +83,8 @@ export function SessionSelector({ sessions, currentCwd, onSelect, onCancel }: Se
           const id = s.session_id.slice(0, 8)
           const title = s.title || '(untitled)'
           const source = s.source || 'repl'
-          const sourceTag = `[${source}]`
-          const maxTitle = 46 - sourceTag.length
-          const displayTitle = title.length > maxTitle ? title.slice(0, maxTitle - 1) + '…' : title
+          const sourceTag = padRight(`[${source}]`, 8)
+          const displayTitle = padRight(title, 44)
           const time = relativeTime(s.updated_at)
           const cwdMarker = currentCwd && s.cwd === currentCwd ? '*' : ' '
           const sourceColor = source === 'repl' ? 'cyan' : source === 'feishu' ? 'blue' : 'yellow'
@@ -101,7 +100,7 @@ export function SessionSelector({ sessions, currentCwd, onSelect, onCancel }: Se
               </Text>
               <Text color={sourceColor}>{' '}{sourceTag}</Text>
               <Text color={isSelected ? 'white' : undefined}>
-                {' '}{padRight(displayTitle, maxTitle)}
+                {' '}{displayTitle}
               </Text>
               <Text dimColor>{'  '}{time}</Text>
             </Box>
