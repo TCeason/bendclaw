@@ -91,7 +91,9 @@ impl Server {
         let (tx, rx) = tokio::sync::mpsc::channel(64);
 
         tokio::spawn(async move {
-            let request = QueryRequest::text(message).session_id(session_id);
+            let request = QueryRequest::text(message)
+                .session_id(session_id)
+                .source("http");
 
             match self.agent.query(request).await {
                 Ok(mut query_run) => {

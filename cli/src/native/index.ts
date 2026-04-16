@@ -27,6 +27,7 @@ export interface SessionMeta {
   title: string
   model: string
   cwd: string
+  source: string
   created_at: string
   updated_at: string
   turn_count: number

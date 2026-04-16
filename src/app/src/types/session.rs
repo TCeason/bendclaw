@@ -14,6 +14,8 @@ pub struct SessionMeta {
     pub cwd: String,
     pub model: String,
     pub title: Option<String>,
+    #[serde(default)]
+    pub source: String,
     pub turns: u32,
     /// Number of context messages at last save.
     #[serde(default)]
@@ -36,6 +38,7 @@ impl SessionMeta {
             cwd,
             model,
             title: None,
+            source: String::new(),
             turns: 0,
             message_count: 0,
             context_tokens: 0,
@@ -43,6 +46,11 @@ impl SessionMeta {
             created_at: now.clone(),
             updated_at: now,
         }
+    }
+
+    pub fn with_source(mut self, source: impl Into<String>) -> Self {
+        self.source = source.into();
+        self
     }
 }
 

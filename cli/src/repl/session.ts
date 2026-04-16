@@ -53,5 +53,6 @@ export async function resumeSession(
     sessionId: session.session_id,
     messages,
   }))
-  pushSystem(setSystem, 'info', `Resumed session ${session.session_id.slice(0, 8)} — ${session.title || '(untitled)'}`)
+  const tag = session.source ? `[${session.source}] ` : ''
+  pushSystem(setSystem, 'info', `Resumed ${tag}${session.session_id.slice(0, 8)} — ${session.title || '(untitled)'}`)
 }

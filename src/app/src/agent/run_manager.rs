@@ -16,11 +16,21 @@ use super::QueryRequest;
 use crate::error::Result;
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub struct ConversationKey(String);
+pub struct ConversationKey {
+    channel: String,
+    key: String,
+}
 
 impl ConversationKey {
     pub fn new(channel: &str, scope: &str) -> Self {
-        Self(format!("{channel}:{scope}"))
+        Self {
+            channel: channel.to_string(),
+            key: format!("{channel}:{scope}"),
+        }
+    }
+
+    pub fn channel(&self) -> &str {
+        &self.channel
     }
 }
 
@@ -81,7 +91,10 @@ impl RunManager {
             }
         }
 
-        let request = QueryRequest::text(prompt).session_id(session_id).mode(mode);
+        let request = QueryRequest::text(prompt)
+            .session_id(session_id)
+            .mode(mode)
+            .source(key.channel());
         let run = self.agent.query(request).await?;
 
         self.conversations

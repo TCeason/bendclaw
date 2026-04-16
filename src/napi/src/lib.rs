@@ -95,7 +95,10 @@ impl NapiAgent {
             Some("readonly") => ToolMode::Readonly,
             _ => ToolMode::Headless,
         };
-        let request = QueryRequest::text(prompt).session_id(session_id).mode(mode);
+        let request = QueryRequest::text(prompt)
+            .session_id(session_id)
+            .mode(mode)
+            .source("repl");
 
         let run = self
             .agent

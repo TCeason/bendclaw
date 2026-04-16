@@ -24,6 +24,7 @@ export function SessionSelector({ sessions, currentCwd, onSelect, onCancel }: Se
         const q = filter.toLowerCase()
         return s.session_id.toLowerCase().includes(q)
           || (s.title ?? '').toLowerCase().includes(q)
+          || (s.source ?? '').toLowerCase().includes(q)
       })
     : sessions
 
@@ -81,10 +82,13 @@ export function SessionSelector({ sessions, currentCwd, onSelect, onCancel }: Se
           const isSelected = i === selectedIndex
           const id = s.session_id.slice(0, 8)
           const title = s.title || '(untitled)'
-          const displayTitle = title.length > 50 ? title.slice(0, 49) + '…' : title
+          const source = s.source || 'repl'
+          const sourceTag = `[${source}]`
+          const maxTitle = 46 - sourceTag.length
+          const displayTitle = title.length > maxTitle ? title.slice(0, maxTitle - 1) + '…' : title
           const time = relativeTime(s.updated_at)
-
           const cwdMarker = currentCwd && s.cwd === currentCwd ? '*' : ' '
+          const sourceColor = source === 'repl' ? 'cyan' : source === 'feishu' ? 'blue' : 'yellow'
 
           return (
             <Box key={s.session_id}>
@@ -95,8 +99,9 @@ export function SessionSelector({ sessions, currentCwd, onSelect, onCancel }: Se
               <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
                 {id}
               </Text>
+              <Text color={sourceColor}>{' '}{sourceTag}</Text>
               <Text color={isSelected ? 'white' : undefined}>
-                {'  '}{padRight(displayTitle, 50)}
+                {' '}{padRight(displayTitle, maxTitle)}
               </Text>
               <Text dimColor>{'  '}{time}</Text>
             </Box>

@@ -122,7 +122,10 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
           const sessions = await agent.listSessions(20)
           const match = sessions.find((s) => s.cwd === agent.cwd)
           if (match) {
-            pushSystem(setSystemMessages, 'info', `  previous session found. Use /resume ${match.session_id.slice(0, 8)} to continue.`)
+            const tag = match.source ? `[${match.source}] ` : ''
+            const title = match.title || '(untitled)'
+            const short = title.length > 40 ? title.slice(0, 39) + '…' : title
+            pushSystem(setSystemMessages, 'info', `  previous session: ${tag}${short} · /resume ${match.session_id.slice(0, 8)}`)
           }
         }
       } catch { /* ignore */ }

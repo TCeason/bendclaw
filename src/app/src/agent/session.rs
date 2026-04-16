@@ -38,7 +38,17 @@ impl Session {
         model: String,
         storage: Arc<dyn Storage>,
     ) -> Result<Arc<Self>> {
-        let meta = SessionMeta::new(session_id, cwd, model);
+        Self::new_with_source(session_id, cwd, model, "", storage).await
+    }
+
+    pub async fn new_with_source(
+        session_id: String,
+        cwd: String,
+        model: String,
+        source: &str,
+        storage: Arc<dyn Storage>,
+    ) -> Result<Arc<Self>> {
+        let meta = SessionMeta::new(session_id, cwd, model).with_source(source);
         storage.save_session(meta.clone()).await?;
         Ok(Self::init(storage, meta, Vec::new(), 0))
     }

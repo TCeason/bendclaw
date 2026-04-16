@@ -53,15 +53,16 @@ pub struct QueryRequest {
     pub prompt: String,
     pub session_id: Option<String>,
     pub mode: ToolMode,
+    pub source: String,
 }
 
 impl QueryRequest {
-    /// Headless query — no user interaction (default for oneshot / API).
     pub fn text(prompt: impl Into<String>) -> Self {
         Self {
             prompt: prompt.into(),
             session_id: None,
             mode: ToolMode::Headless,
+            source: String::new(),
         }
     }
 
@@ -72,6 +73,11 @@ impl QueryRequest {
 
     pub fn mode(mut self, mode: ToolMode) -> Self {
         self.mode = mode;
+        self
+    }
+
+    pub fn source(mut self, source: impl Into<String>) -> Self {
+        self.source = source.into();
         self
     }
 }
@@ -256,7 +262,9 @@ impl Agent {
     // -- query ---------------------------------------------------------------
 
     pub async fn query(&self, request: QueryRequest) -> Result<Run> {
-        let session = self.resolve_session(request.session_id.as_deref()).await?;
+        let session = self
+            .resolve_session(request.session_id.as_deref(), &request.source)
+            .await?;
         let session_id = session.meta().await.session_id.clone();
         let run_id = crate::types::new_id();
 
@@ -413,7 +421,11 @@ impl Agent {
         prompt
     }
 
-    async fn resolve_session(&self, session_id: Option<&str>) -> Result<Arc<Session>> {
+    async fn resolve_session(
+        &self,
+        session_id: Option<&str>,
+        source: &str,
+    ) -> Result<Arc<Session>> {
         let model = self.llm.read().model.clone();
         let storage = self.storage.read().clone();
         match session_id {
@@ -426,7 +438,7 @@ impl Agent {
             },
             None => {
                 let id = crate::types::new_id();
-                Session::new(id, self.cwd.clone(), model, storage).await
+                Session::new_with_source(id, self.cwd.clone(), model, source, storage).await
             }
         }
     }
