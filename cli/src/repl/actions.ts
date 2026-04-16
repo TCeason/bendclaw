@@ -3,6 +3,7 @@ import { Agent, QueryStream } from '../native/index.js'
 import type { AppState } from '../state/app.js'
 import { applyEvent } from '../state/reducer.js'
 import type { OutputLine } from '../render/output.js'
+import type { AskUserRequest } from '../state/types.js'
 import {
   buildUserMessage,
   buildAssistantLines,
@@ -148,7 +149,8 @@ export async function runQuery(
       if (gen !== streamGenRef.current) break
 
       const p = event.payload as Record<string, any>
-      const nextState = applyEvent(localState, event)
+      // ask_user is a synthetic event from NAPI — skip reducer
+      let nextState = event.kind === 'ask_user' ? localState : applyEvent(localState, event)
 
       if (localState.verbose
         && (event.kind === 'llm_call_started' || event.kind === 'context_compaction_started')) {
@@ -203,7 +205,23 @@ export async function runQuery(
         const toolName = p.tool_name ?? 'unknown'
         const args = p.args ?? {}
         const previewCommand = p.preview_command as string | undefined
-        appendLines(buildToolCall(toolName, args, previewCommand))
+        // Don't show tool_started line for ask_user — the UI component handles it
+        if (toolName !== 'ask_user') {
+          appendLines(buildToolCall(toolName, args, previewCommand))
+        }
+      }
+
+      // ask_user: synthetic event from NAPI bridge — set state so REPL renders the UI
+      if (event.kind === 'ask_user') {
+        commitStreamingText()
+        const questions = (event.payload as any)?.questions
+        if (questions) {
+          const req = { questions } as AskUserRequest
+          localState = { ...localState, askUserRequest: req }
+          setState(() => localState)
+          // Skip the localState = nextState assignment below
+          continue
+        }
       }
 
       if (event.kind === 'tool_progress') {
@@ -214,11 +232,17 @@ export async function runQuery(
       if (event.kind === 'tool_finished') {
         setToolProgress('')
         const toolName = p.tool_name ?? 'unknown'
-        const args = p.args ?? {}
-        const details = p.details as Record<string, any> | undefined
-        const mergedArgs = details?.diff ? { ...args, diff: details.diff } : args
-        const status = p.is_error ? 'error' as const : 'done' as const
-        appendLines(buildToolResult(toolName, mergedArgs, status, p.content, p.duration_ms))
+        if (toolName !== 'ask_user') {
+          const args = p.args ?? {}
+          const details = p.details as Record<string, any> | undefined
+          const mergedArgs = details?.diff ? { ...args, diff: details.diff } : args
+          const status = p.is_error ? 'error' as const : 'done' as const
+          appendLines(buildToolResult(toolName, mergedArgs, status, p.content, p.duration_ms))
+        }
+        // Clear ask_user state when ask_user tool finishes
+        if (toolName === 'ask_user') {
+          nextState = { ...nextState, askUserRequest: null }
+        }
       }
 
       if (event.kind === 'run_finished' && localState.verbose) {

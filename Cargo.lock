@@ -839,6 +839,7 @@ dependencies = [
  "axum",
  "evot",
  "evotengine",
+ "futures",
  "napi",
  "napi-build",
  "napi-derive",

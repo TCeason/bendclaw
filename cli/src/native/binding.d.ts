@@ -31,6 +31,7 @@ export interface NapiRun {
   abort(): void
   steer(text: string): void
   followUp(text: string): void
+  respondAskUser(responseJson: string): Promise<void>
 }
 
 export declare const NapiAgent: {

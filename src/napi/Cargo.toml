@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 axum.workspace = true
 evot = { path = "../app" }
 evot-engine = { workspace = true }
+futures.workspace = true
 napi = { version = "2", features = ["async", "serde-json", "napi9"] }
 napi-derive = "2"
 serde.workspace = true

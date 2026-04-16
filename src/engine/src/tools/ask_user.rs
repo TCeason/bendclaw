@@ -40,7 +40,7 @@ pub struct AskUserRequest {
 }
 
 /// A single answer for one question.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AskUserAnswer {
     pub header: String,
     pub question: String,
@@ -48,7 +48,7 @@ pub struct AskUserAnswer {
 }
 
 /// Response returned by the host callback.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AskUserResponse {
     /// User answered all questions.
     Answered(Vec<AskUserAnswer>),

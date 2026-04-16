@@ -8,10 +8,20 @@ use evot::agent::ForkRequest;
 use evot::agent::ForkedAgent;
 use evot::agent::QueryRequest;
 use evot::agent::ToolMode;
+use evot_engine::tools::AskUserFn;
+use evot_engine::tools::AskUserRequest;
+use evot_engine::tools::AskUserResponse;
+use futures::FutureExt;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use tokio::sync::mpsc as tokio_mpsc;
+use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
+
+/// Shared slot for the oneshot sender that unblocks the `AskUserFn` callback.
+type AskResponder =
+    Arc<Mutex<Option<oneshot::Sender<std::result::Result<AskUserResponse, String>>>>>;
 
 // ---------------------------------------------------------------------------
 // NapiAgent — wraps the app-level Agent for JS consumption
@@ -82,7 +92,8 @@ impl NapiAgent {
     }
 
     /// Send a prompt and get a stream of events.
-    /// Optional tool_mode: "planning", "readonly", or omit for default (headless).
+    /// Optional tool_mode: "interactive", "planning", "planning_interactive", "readonly",
+    /// or omit for default (headless).
     #[napi]
     pub async fn query(
         &self,
@@ -90,7 +101,22 @@ impl NapiAgent {
         session_id: Option<String>,
         tool_mode: Option<String>,
     ) -> Result<NapiRun> {
+        // Channel for ask_user events injected into the event stream
+        let (ask_event_tx, ask_event_rx) = tokio_mpsc::unbounded_channel::<String>();
+        // Shared slot for the oneshot sender that unblocks the ask_user callback
+        let ask_responder: AskResponder = Arc::new(Mutex::new(None));
+
         let mode = match tool_mode.as_deref() {
+            Some("interactive") | Some("planning_interactive") => {
+                let ask_fn = build_ask_fn(ask_event_tx, ask_responder.clone());
+                if tool_mode.as_deref() == Some("planning_interactive") {
+                    ToolMode::Planning {
+                        ask_fn: Some(ask_fn),
+                    }
+                } else {
+                    ToolMode::Interactive { ask_fn }
+                }
+            }
             Some("planning") => ToolMode::Planning { ask_fn: None },
             Some("readonly") => ToolMode::Readonly,
             _ => ToolMode::Headless,
@@ -115,6 +141,8 @@ impl NapiAgent {
             cached_session_id: sid,
             aborted: Arc::new(AtomicBool::new(false)),
             abort_notify: Arc::new(Notify::new()),
+            ask_event_rx: Mutex::new(ask_event_rx),
+            ask_responder,
         })
     }
 
@@ -330,6 +358,11 @@ pub struct NapiRun {
     cached_session_id: String,
     aborted: Arc<AtomicBool>,
     abort_notify: Arc<Notify>,
+    /// Receives ask_user event JSON strings injected by the AskUserFn callback.
+    ask_event_rx: Mutex<tokio_mpsc::UnboundedReceiver<String>>,
+    /// Shared slot: the AskUserFn callback stores a oneshot::Sender here;
+    /// `respond_ask_user()` takes it out and sends the answer.
+    ask_responder: AskResponder,
 }
 
 #[napi]
@@ -341,13 +374,21 @@ impl NapiRun {
     }
 
     /// Get the next event as JSON. Returns null when the stream is done.
+    ///
+    /// When the agent calls `ask_user`, this will return an event with
+    /// `kind: "ask_user"` containing the questions. The caller must then
+    /// call `respondAskUser()` before calling `next()` again.
     #[napi]
     pub async fn next(&self) -> Result<Option<String>> {
         if self.aborted.load(Ordering::Relaxed) {
             return Ok(None);
         }
         let mut run = self.inner.lock().await;
+        let mut ask_rx = self.ask_event_rx.lock().await;
         tokio::select! {
+            ask_json = ask_rx.recv() => {
+                Ok(ask_json)
+            }
             event = run.next() => {
                 if self.aborted.load(Ordering::Relaxed) {
                     return Ok(None);
@@ -366,6 +407,21 @@ impl NapiRun {
                 Ok(None)
             }
         }
+    }
+
+    /// Respond to an `ask_user` event. Call this after receiving an event
+    /// with `kind: "ask_user"`. Pass a JSON string representing the response:
+    /// - `{"Answered":[{"header":"...","question":"...","answer":"..."},...]}`
+    /// - `"Skipped"`
+    #[napi]
+    pub async fn respond_ask_user(&self, response_json: String) -> Result<()> {
+        let response: AskUserResponse = serde_json::from_str(&response_json)
+            .map_err(|e| Error::from_reason(format!("parse ask_user response: {e}")))?;
+        let mut guard = self.ask_responder.lock().await;
+        if let Some(tx) = guard.take() {
+            let _ = tx.send(Ok(response));
+        }
+        Ok(())
     }
 
     /// Abort the running query. Safe to call while next() is awaiting.
@@ -416,12 +472,16 @@ impl NapiForkedAgent {
             .map_err(|e| Error::from_reason(format!("fork query: {e}")))?;
         let sid = run.session_id.clone();
         let handle = run.handle();
+        // Forked agents are readonly — no ask_user support, use dummy channels
+        let (_ask_tx, ask_rx) = tokio_mpsc::unbounded_channel::<String>();
         Ok(NapiRun {
             inner: Mutex::new(run),
             handle,
             cached_session_id: sid,
             aborted: Arc::new(AtomicBool::new(false)),
             abort_notify: Arc::new(Notify::new()),
+            ask_event_rx: Mutex::new(ask_rx),
+            ask_responder: Arc::new(Mutex::new(None)),
         })
     }
 }
@@ -436,6 +496,57 @@ fn build_skills_dirs() -> Vec<PathBuf> {
         dirs.push(global);
     }
     dirs
+}
+
+/// Build an `AskUserFn` that bridges Rust ↔ JS:
+/// 1. Serializes the `AskUserRequest` as a JSON event and sends it via `ask_event_tx`
+/// 2. Stores a oneshot sender in `ask_responder`
+/// 3. Blocks until JS calls `respond_ask_user()` which sends the answer back
+fn build_ask_fn(
+    ask_event_tx: tokio_mpsc::UnboundedSender<String>,
+    ask_responder: AskResponder,
+) -> AskUserFn {
+    Arc::new(move |request: AskUserRequest| {
+        let tx = ask_event_tx.clone();
+        let responder = ask_responder.clone();
+        (async move {
+            // Serialize the request as a synthetic event JSON
+            let questions_value = match serde_json::to_value(&request.questions) {
+                Ok(v) => v,
+                Err(e) => return Err(format!("serialize ask_user questions: {e}")),
+            };
+            let event_json = serde_json::json!({
+                "kind": "ask_user",
+                "payload": { "questions": questions_value }
+            });
+            let json_str = match serde_json::to_string(&event_json) {
+                Ok(s) => s,
+                Err(e) => return Err(format!("serialize ask_user event: {e}")),
+            };
+
+            // Create a oneshot channel for the response
+            let (resp_tx, resp_rx) =
+                oneshot::channel::<std::result::Result<AskUserResponse, String>>();
+
+            // Store the sender so respond_ask_user() can find it
+            {
+                let mut guard = responder.lock().await;
+                *guard = Some(resp_tx);
+            }
+
+            // Send the event to the JS side (will be picked up by next())
+            if let Err(e) = tx.send(json_str) {
+                return Err(format!("send ask_user event: {e}"));
+            }
+
+            // Block until JS responds
+            match resp_rx.await {
+                Ok(result) => result,
+                Err(_) => Err("ask_user response channel closed".into()),
+            }
+        })
+        .boxed()
+    })
 }
 
 /// Version string for the native addon.

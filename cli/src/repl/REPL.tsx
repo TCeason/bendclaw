@@ -15,6 +15,7 @@ import { ActiveResponse } from '../components/ActiveResponse.js'
 import { HelpPane } from '../components/HelpPane.js'
 import { ModelSelector } from '../components/ModelSelector.js'
 import { SessionSelector } from '../components/SessionSelector.js'
+import { AskUser } from '../components/AskUser.js'
 import { HistoryManager } from '../session/history.js'
 import { ScreenLog } from '../session/screen-log.js'
 import { transcriptToMessages, type TranscriptItem } from '../session/transcript.js'
@@ -199,7 +200,7 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
       currentThinkingText: '',
       activeToolCalls: new Map(),
     }))
-    runQuery(agent, text, sessionIdRef.current, streamRef, streamGenRef, setState, setOutputLines, setPendingText, setToolProgress, stateRef, planning ? 'planning' : undefined)
+    runQuery(agent, text, sessionIdRef.current, streamRef, streamGenRef, setState, setOutputLines, setPendingText, setToolProgress, stateRef, planning ? 'planning_interactive' : 'interactive')
   }, [agent, planning])
 
   const handleSubmit = useCallback(
@@ -275,14 +276,16 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
         lines={outputLines}
       />
 
-      <ActiveResponse
-        isLoading={state.isLoading}
-        pendingText={pendingText}
-        toolProgress={toolProgress}
-        activeToolCalls={state.activeToolCalls}
-        outputTokens={state.currentRunStats.outputTokens}
-        lastTokenAt={state.lastTokenAt}
-      />
+      {!state.askUserRequest && (
+        <ActiveResponse
+          isLoading={state.isLoading}
+          pendingText={pendingText}
+          toolProgress={toolProgress}
+          activeToolCalls={state.activeToolCalls}
+          outputTokens={state.currentRunStats.outputTokens}
+          lastTokenAt={state.lastTokenAt}
+        />
+      )}
 
       {/* System messages */}
       {systemMessages.map((msg, i) => (
@@ -328,11 +331,54 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
         />
       )}
 
+      {state.askUserRequest && (
+        <AskUser
+          request={state.askUserRequest}
+          onSubmit={(answers) => {
+            const stream = streamRef.current
+            const questions = state.askUserRequest!.questions
+            // Map component answers to the Rust AskUserResponse format
+            const rustAnswers = answers.map((a) => ({
+              header: questions[a.questionIndex]?.header ?? '',
+              question: questions[a.questionIndex]?.question ?? '',
+              answer: a.customText ?? questions[a.questionIndex]?.options[a.selectedOption ?? 0]?.label ?? '',
+            }))
+            // Show answer summary in output
+            const summaryLines: import('../render/output.js').OutputLine[] = [
+              { id: `ask-${Date.now()}`, kind: 'tool_result', text: '● User answered:' },
+              ...rustAnswers.map((a, i) => ({
+                id: `ask-a-${Date.now()}-${i}`,
+                kind: 'tool_result' as const,
+                text: `  · ${a.question} → ${a.answer}`,
+              })),
+            ]
+            setOutputLines((prev) => [...prev, ...summaryLines])
+            if (stream) {
+              const json = JSON.stringify({ Answered: rustAnswers })
+              stream.respondAskUser(json)
+            }
+            setState((prev) => ({ ...prev, askUserRequest: null }))
+          }}
+          onCancel={() => {
+            const stream = streamRef.current
+            setOutputLines((prev) => [...prev, {
+              id: `ask-skip-${Date.now()}`,
+              kind: 'tool_result',
+              text: '● User skipped questions',
+            }])
+            if (stream) {
+              stream.respondAskUser(JSON.stringify('Skipped'))
+            }
+            setState((prev) => ({ ...prev, askUserRequest: null }))
+          }}
+        />
+      )}
+
       {/* Prompt input (Claude Code-style bordered box) */}
       <PromptInput
         model={state.model}
         isLoading={state.isLoading}
-        isActive={!showHelp && resumeSessions === null && !showModelSelector}
+        isActive={!showHelp && resumeSessions === null && !showModelSelector && !state.askUserRequest}
         verbose={state.verbose}
         planning={planning}
         logMode={logMode !== null}

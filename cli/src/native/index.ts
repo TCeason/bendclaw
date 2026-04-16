@@ -85,6 +85,11 @@ export class QueryStream {
     this.raw.followUp(text)
   }
 
+  /** Respond to an ask_user event with a JSON-encoded AskUserResponse. */
+  async respondAskUser(responseJson: string): Promise<void> {
+    await this.raw.respondAskUser(responseJson)
+  }
+
   /** Async iterator support — `for await (const event of stream)` */
   async *[Symbol.asyncIterator](): AsyncIterableIterator<RunEvent> {
     let event: RunEvent | null

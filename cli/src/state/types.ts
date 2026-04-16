@@ -101,3 +101,28 @@ export interface VerboseEvent {
   kind: 'llm_call' | 'llm_completed' | 'compact_call' | 'compact_done'
   text: string
 }
+
+// ---------------------------------------------------------------------------
+// AskUser types — structured questions from the agent
+// ---------------------------------------------------------------------------
+
+export interface AskUserOption {
+  label: string
+  description: string
+}
+
+export interface AskUserQuestion {
+  header: string
+  question: string
+  options: AskUserOption[]
+}
+
+export interface AskUserRequest {
+  questions: AskUserQuestion[]
+}
+
+export interface AskUserAnswer {
+  header: string
+  question: string
+  answer: string
+}

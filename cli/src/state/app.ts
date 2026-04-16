@@ -2,7 +2,7 @@
  * AppState — top-level UI state and factory.
  */
 
-import type { UIMessage, UIToolCall, RunStats, VerboseEvent } from './types.js'
+import type { UIMessage, UIToolCall, RunStats, VerboseEvent, AskUserRequest } from './types.js'
 
 // ---------------------------------------------------------------------------
 // App state
@@ -29,6 +29,8 @@ export interface AppState {
   verboseEvents: VerboseEvent[]
   /** Timestamp of the last received token (for stall detection) */
   lastTokenAt: number
+  /** Pending ask_user request from the agent (null = none) */
+  askUserRequest: AskUserRequest | null
 }
 
 export function emptyRunStats(): RunStats {
@@ -69,5 +71,6 @@ export function createInitialState(model: string, cwd: string): AppState {
     runStartTime: 0,
     verboseEvents: [],
     lastTokenAt: 0,
+    askUserRequest: null,
   }
 }
