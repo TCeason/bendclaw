@@ -219,6 +219,15 @@ export async function startServer(port?: number, model?: string): Promise<void> 
   return rawStartServer(port ?? null, model ?? null)
 }
 
-export async function startServerBackground(port?: number, model?: string): Promise<number | null> {
-  return rawStartServerBackground(port ?? null, model ?? null)
+export interface ServerInfo {
+  port: number
+  address: string
+  channels: string[]
+  channelCount: number
+}
+
+export async function startServerBackground(port?: number, model?: string): Promise<ServerInfo | null> {
+  const json = await rawStartServerBackground(port ?? null, model ?? null)
+  if (json === null) return null
+  return JSON.parse(json) as ServerInfo
 }

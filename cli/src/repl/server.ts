@@ -1,17 +1,24 @@
-import { startServerBackground } from '../native/index.js'
+import { startServerBackground, type ServerInfo } from '../native/index.js'
 
 export interface ServerState {
   port: number
+  address: string
+  channels: string[]
   startedAt: number
 }
 
 let activePort: number | null = null
 
 export async function tryStartServer(port?: number): Promise<ServerState | null> {
-  const result = await startServerBackground(port)
-  if (result === null) return null
-  activePort = result
-  return { port: result, startedAt: Date.now() }
+  const info = await startServerBackground(port)
+  if (info === null) return null
+  activePort = info.port
+  return {
+    port: info.port,
+    address: info.address,
+    channels: info.channels,
+    startedAt: Date.now(),
+  }
 }
 
 export function formatUptime(startedAt: number): string {

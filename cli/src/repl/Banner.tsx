@@ -30,7 +30,10 @@ export function Banner({ model, cwd, sessionId, configInfo, serverState }: {
       {configInfo && <Text dimColor>  provider: {configInfo.provider}</Text>}
       <Text dimColor>  model:    {model}</Text>
       {configInfo?.baseUrl && <Text dimColor>  base_url: {configInfo.baseUrl}</Text>}
-      {serverState && <Text dimColor>  server:   http://127.0.0.1:{serverState.port}</Text>}
+      {serverState && <Text dimColor>  server:   {serverState.address}</Text>}
+      {serverState && serverState.channels.length > 0 && (
+        <Text dimColor>  channels: {serverState.channels.join(', ')}</Text>
+      )}
       <Text dimColor>  session:  {sessionLabel}</Text>
       {gitBranch && <Text dimColor>  git:      {gitBranch}</Text>}
       <Text dimColor>  cwd:      {shortCwd}</Text>

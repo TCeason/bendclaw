@@ -458,7 +458,7 @@ pub async fn start_server(port: Option<u16>, model: Option<String>) -> Result<()
 pub async fn start_server_background(
     port: Option<u16>,
     model: Option<String>,
-) -> Result<Option<u16>> {
+) -> Result<Option<String>> {
     let mut config = evot::conf::Config::load()
         .map_err(|e| Error::from_reason(format!("config load failed: {e}")))?
         .with_model(model);
@@ -478,13 +478,26 @@ pub async fn start_server_background(
         .map_err(|e| Error::from_reason(format!("agent init: {e}")))?;
 
     let cancel = tokio_util::sync::CancellationToken::new();
-    let _channel_handles =
+    let channel_handles =
         evot::gateway::registry::spawn_all(&config.channels, agent.clone(), cancel);
+
+    let mut channels = Vec::new();
+    if config.channels.feishu.is_some() {
+        channels.push("feishu");
+    }
 
     let server = evot::gateway::channels::http::Server::new(agent);
     tokio::spawn(async move {
         let _ = axum::serve(listener, server.router()).await;
     });
 
-    Ok(Some(actual_port))
+    let info = serde_json::json!({
+        "port": actual_port,
+        "address": format!("http://{addr}"),
+        "channels": channels,
+        "channelCount": channel_handles.len(),
+    });
+    serde_json::to_string(&info)
+        .map(Some)
+        .map_err(|e| Error::from_reason(format!("serialize: {e}")))
 }
