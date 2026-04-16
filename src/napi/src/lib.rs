@@ -477,6 +477,10 @@ pub async fn start_server_background(
     let agent = evot::gateway::service::build_agent(&config)
         .map_err(|e| Error::from_reason(format!("agent init: {e}")))?;
 
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let _channel_handles =
+        evot::gateway::registry::spawn_all(&config.channels, agent.clone(), cancel);
+
     let server = evot::gateway::channels::http::Server::new(agent);
     tokio::spawn(async move {
         let _ = axum::serve(listener, server.router()).await;
