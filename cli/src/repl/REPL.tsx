@@ -242,8 +242,8 @@ export function REPL({ agent, initialVerbose = true, initialResume }: REPLProps)
     } else {
       // Show resume hint on exit
       if (sessionIdRef.current) {
-        console.log(`\n${'─'.repeat(80)}`)
-        console.log(`Resume this session with:\n  evot --resume ${sessionIdRef.current}\n`)
+        console.log(`\n\x1b[90m${'─'.repeat(80)}\x1b[0m`)
+        console.log(`\x1b[90mResume this session with:\n  evot --resume ${sessionIdRef.current}\x1b[0m\n`)
       }
       exit()
     }

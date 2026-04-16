@@ -1,0 +1,130 @@
+/**
+ * Paste reference protocol — format, parse, expand, cursor snap, and whole-ref deletion.
+ *
+ * When a large paste is collapsed into a placeholder like [Pasted text #1 +10 lines],
+ * these utilities manage the lifecycle of that reference.
+ */
+
+// Threshold: collapse paste when exceeding either limit
+export const PASTE_CHAR_THRESHOLD = 800
+export const PASTE_LINE_THRESHOLD = 2
+
+/** Format a paste reference string. */
+export function formatPastedTextRef(id: number, numLines: number): string {
+  if (numLines <= 0) return `[Pasted text #${id}]`
+  return `[Pasted text #${id} +${numLines} lines]`
+}
+
+export interface PasteRef {
+  id: number
+  start: number
+  end: number
+  match: string
+}
+
+const PASTE_REF_RE = /\[Pasted text #(\d+)(?:\s\+\d+ lines)?\]/g
+
+/** Parse all paste references in a string, returning their positions. */
+export function parsePasteRefs(text: string): PasteRef[] {
+  const refs: PasteRef[] = []
+  let m: RegExpExecArray | null
+  const re = new RegExp(PASTE_REF_RE.source, 'g')
+  while ((m = re.exec(text)) !== null) {
+    refs.push({
+      id: parseInt(m[1]!, 10),
+      start: m.index,
+      end: m.index + m[0]!.length,
+      match: m[0]!,
+    })
+  }
+  return refs
+}
+
+/** Expand paste references with their stored content. */
+export function expandPasteRefs(
+  text: string,
+  store: Map<number, string>,
+): string {
+  // Replace in reverse order to preserve positions
+  const refs = parsePasteRefs(text)
+  let result = text
+  for (let i = refs.length - 1; i >= 0; i--) {
+    const ref = refs[i]!
+    const content = store.get(ref.id)
+    if (content !== undefined) {
+      result = result.slice(0, ref.start) + content + result.slice(ref.end)
+    }
+  }
+  return result
+}
+
+/**
+ * Snap cursor position to the nearest ref boundary if it lands inside a ref.
+ * Returns the original position if not inside any ref.
+ */
+export function snapCursor(cursorCol: number, refs: PasteRef[]): number {
+  for (const ref of refs) {
+    if (cursorCol > ref.start && cursorCol < ref.end) {
+      const mid = (ref.start + ref.end) / 2
+      return cursorCol < mid ? ref.start : ref.end
+    }
+  }
+  return cursorCol
+}
+
+/**
+ * Handle backspace at a ref boundary — if cursor is right after a ref end
+ * or at a ref start, delete the entire ref.
+ * Returns null if no ref was deleted (caller should do normal backspace).
+ */
+export function deleteRefBackspace(
+  line: string,
+  cursorCol: number,
+  refs: PasteRef[],
+): { newLine: string; newCursorCol: number } | null {
+  for (const ref of refs) {
+    // Cursor is right after the ref end → delete entire ref
+    if (cursorCol === ref.end) {
+      return {
+        newLine: line.slice(0, ref.start) + line.slice(ref.end),
+        newCursorCol: ref.start,
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Check if cursor movement (left/right arrow) should skip over a ref.
+ * Returns the new cursor position, or null if no skip needed.
+ */
+export function skipRefOnMove(
+  cursorCol: number,
+  direction: 'left' | 'right',
+  refs: PasteRef[],
+): number | null {
+  for (const ref of refs) {
+    if (direction === 'right' && cursorCol === ref.start) {
+      return ref.end
+    }
+    if (direction === 'left' && cursorCol === ref.end) {
+      return ref.start
+    }
+  }
+  return null
+}
+
+/** Should this paste be collapsed into a ref? */
+export function shouldCollapse(text: string): boolean {
+  const numLines = (text.match(/\n/g) || []).length
+  return text.length > PASTE_CHAR_THRESHOLD || numLines > PASTE_LINE_THRESHOLD
+}
+
+/** Clean pasted text: strip ANSI, normalize line endings, convert tabs. */
+export function cleanPastedText(text: string): string {
+  return text
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '') // strip ANSI escape codes
+    .replace(/\r\n/g, '\n')                 // CRLF → LF
+    .replace(/\r/g, '\n')                   // CR → LF
+    .replace(/\t/g, '    ')                 // tab → 4 spaces
+}

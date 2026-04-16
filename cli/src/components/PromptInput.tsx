@@ -14,6 +14,16 @@ import { complete, getGhostHint } from '../commands/completion.js'
 import type { HistoryManager } from '../session/history.js'
 import { InterruptHandler } from '../input/interrupt.js'
 import { needsContinuation } from '../input/continuation.js'
+import {
+  formatPastedTextRef,
+  parsePasteRefs,
+  expandPasteRefs,
+  snapCursor,
+  deleteRefBackspace,
+  skipRefOnMove,
+  shouldCollapse,
+  cleanPastedText,
+} from '../input/paste_refs.js'
 
 interface PromptInputProps {
   model: string
@@ -64,15 +74,20 @@ export const PromptInput = React.memo(function PromptInput({
     historyRef.current = history.load()
   }, [history])
 
+  // Snap cursor out of paste refs (e.g. after up/down arrow lands inside one)
+  useEffect(() => {
+    const line = lines[cursorLine]
+    if (!line) return
+    const refs = parsePasteRefs(line)
+    const snapped = snapCursor(cursorCol, refs)
+    if (snapped !== cursorCol) {
+      setCursorCol(snapped)
+    }
+  }, [cursorCol, cursorLine, lines])
+
   const currentText = () => {
-    let text = lines.join('\n')
-    // Expand paste placeholders: [Pasted text #N] or [Pasted text #N +M lines]
-    const refPattern = /\[Pasted text #(\d+)(?:\s\+\d+ lines)?\]/g
-    text = text.replace(refPattern, (match, idStr) => {
-      const id = parseInt(idStr, 10)
-      return pastedChunksRef.current.get(id) ?? match
-    })
-    return text
+    const text = lines.join('\n')
+    return expandPasteRefs(text, pastedChunksRef.current)
   }
   const setInputText = (text: string) => {
     const newLines = text.split('\n')
@@ -261,13 +276,30 @@ export const PromptInput = React.memo(function PromptInput({
     // Backspace
     if (key.backspace || key.delete) {
       if (cursorCol > 0) {
-        setLines((prev) => {
-          const newLines = [...prev]
-          const line = newLines[cursorLine]!
-          newLines[cursorLine] = line.slice(0, cursorCol - 1) + line.slice(cursorCol)
-          return newLines
-        })
-        setCursorCol((prev) => prev - 1)
+        // Check if we should delete an entire paste ref
+        const currentLine = lines[cursorLine]!
+        const refs = parsePasteRefs(currentLine)
+        const refDel = deleteRefBackspace(currentLine, cursorCol, refs)
+        if (refDel) {
+          const deletedRef = refs.find(r => r.end === cursorCol)
+          if (deletedRef) {
+            pastedChunksRef.current.delete(deletedRef.id)
+          }
+          setLines((prev) => {
+            const newLines = [...prev]
+            newLines[cursorLine] = refDel.newLine
+            return newLines
+          })
+          setCursorCol(refDel.newCursorCol)
+        } else {
+          setLines((prev) => {
+            const newLines = [...prev]
+            const line = newLines[cursorLine]!
+            newLines[cursorLine] = line.slice(0, cursorCol - 1) + line.slice(cursorCol)
+            return newLines
+          })
+          setCursorCol((prev) => prev - 1)
+        }
       } else if (cursorLine > 0) {
         // Join with previous line
         const prevLineLen = lines[cursorLine - 1]!.length
@@ -322,10 +354,12 @@ export const PromptInput = React.memo(function PromptInput({
       return
     }
 
-    // Arrow left/right
+    // Arrow left/right — skip over paste refs
     if (key.leftArrow) {
       if (cursorCol > 0) {
-        setCursorCol((prev) => prev - 1)
+        const refs = parsePasteRefs(lines[cursorLine]!)
+        const skip = skipRefOnMove(cursorCol, 'left', refs)
+        setCursorCol(skip ?? cursorCol - 1)
       } else if (cursorLine > 0) {
         setCursorLine((prev) => prev - 1)
         setCursorCol(lines[cursorLine - 1]!.length)
@@ -335,7 +369,9 @@ export const PromptInput = React.memo(function PromptInput({
     if (key.rightArrow) {
       const lineLen = lines[cursorLine]!.length
       if (cursorCol < lineLen) {
-        setCursorCol((prev) => prev + 1)
+        const refs = parsePasteRefs(lines[cursorLine]!)
+        const skip = skipRefOnMove(cursorCol, 'right', refs)
+        setCursorCol(skip ?? cursorCol + 1)
       } else if (cursorLine < lines.length - 1) {
         setCursorLine((prev) => prev + 1)
         setCursorCol(0)
@@ -379,21 +415,17 @@ export const PromptInput = React.memo(function PromptInput({
     // Regular character input (including multi-line paste)
     if (ch) {
       setCompletionCandidates([])
-      const normalized = ch.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-      const pastedLines = normalized.split('\n')
+      const cleaned = cleanPastedText(ch)
+      const pastedLines = cleaned.split('\n')
 
-      // Collapse multi-line pastes into a placeholder to avoid terminal
+      // Collapse large pastes into a placeholder to avoid terminal
       // rendering jitter and keep history navigation working (up/down arrows
       // only navigate history when lines.length === 1).
-      const PASTE_LINE_THRESHOLD = 2
-
-      if (pastedLines.length > PASTE_LINE_THRESHOLD) {
+      if (shouldCollapse(cleaned)) {
         const id = nextPasteIdRef.current++
-        const numLines = (normalized.match(/\n/g) || []).length
-        pastedChunksRef.current.set(id, normalized)
-        const ref = numLines === 0
-          ? `[Pasted text #${id}]`
-          : `[Pasted text #${id} +${numLines} lines]`
+        const numLines = (cleaned.match(/\n/g) || []).length
+        pastedChunksRef.current.set(id, cleaned)
+        const ref = formatPastedTextRef(id, numLines)
         setLines((prev) => {
           const newLines = [...prev]
           const line = newLines[cursorLine]!
@@ -425,10 +457,10 @@ export const PromptInput = React.memo(function PromptInput({
         setLines((prev) => {
           const newLines = [...prev]
           const line = newLines[cursorLine]!
-          newLines[cursorLine] = line.slice(0, cursorCol) + ch + line.slice(cursorCol)
+          newLines[cursorLine] = line.slice(0, cursorCol) + cleaned + line.slice(cursorCol)
           return newLines
         })
-        setCursorCol((prev) => prev + ch.length)
+        setCursorCol((prev) => prev + cleaned.length)
       }
     }
   }, { isActive })
@@ -455,7 +487,7 @@ export const PromptInput = React.memo(function PromptInput({
               <CursorLine text={line} cursorCol={cursorCol} ghostHint={getGhostHint(line, cursorCol)} />
             )
           ) : (
-            <Text>{line || ' '}</Text>
+            <DimRefsLine text={line || ' '} />
           )}
         </Box>
       ))}
@@ -497,22 +529,93 @@ export const PromptInput = React.memo(function PromptInput({
 })
 
 // ---------------------------------------------------------------------------
-// CursorLine — renders a line with an inverse cursor at the right position
+// CursorLine — renders a line with an inverse cursor at the right position.
+// Paste refs like [Pasted text #1 +5 lines] are rendered with dim color.
 // ---------------------------------------------------------------------------
 
 function CursorLine({ text, cursorCol, ghostHint }: { text: string; cursorCol: number; ghostHint?: string }) {
-  const before = text.slice(0, cursorCol)
+  const refs = parsePasteRefs(text)
   const cursorChar = text[cursorCol] ?? ' '
-  const after = text.slice(cursorCol + 1)
+
+  // Build segments: split text into normal parts and paste ref parts
+  const segments: { text: string; dim: boolean }[] = []
+  let pos = 0
+  for (const ref of refs) {
+    if (ref.start > pos) {
+      segments.push({ text: text.slice(pos, ref.start), dim: false })
+    }
+    segments.push({ text: ref.match, dim: true })
+    pos = ref.end
+  }
+  if (pos < text.length) {
+    segments.push({ text: text.slice(pos), dim: false })
+  }
+
+  // Render segments with cursor overlay
+  const parts: React.ReactNode[] = []
+  let charIdx = 0
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]!
+    const segStart = charIdx
+    const segEnd = charIdx + seg.text.length
+
+    if (cursorCol >= segStart && cursorCol < segEnd) {
+      // Cursor is inside this segment
+      const localCol = cursorCol - segStart
+      const before = seg.text.slice(0, localCol)
+      const after = seg.text.slice(localCol + 1)
+      if (seg.dim) {
+        parts.push(
+          <Text key={i} dimColor>{before}<Text inverse>{cursorChar}</Text>{after}</Text>
+        )
+      } else {
+        parts.push(
+          <Text key={i}>{before}<Text inverse>{cursorChar}</Text>{after}</Text>
+        )
+      }
+    } else {
+      parts.push(
+        <Text key={i} dimColor={seg.dim}>{seg.text}</Text>
+      )
+    }
+    charIdx = segEnd
+  }
+
+  // Cursor is at end of line (past all segments)
+  if (cursorCol >= charIdx) {
+    parts.push(<Text key="cursor" inverse>{cursorChar}</Text>)
+  }
 
   return (
     <Text>
-      {before}
-      <Text inverse>{cursorChar}</Text>
-      {after}
+      {parts}
       {ghostHint ? <Text dimColor>{ghostHint}</Text> : null}
     </Text>
   )
+}
+
+// ---------------------------------------------------------------------------
+// DimRefsLine — renders a non-cursor line with paste refs dimmed
+// ---------------------------------------------------------------------------
+
+function DimRefsLine({ text }: { text: string }) {
+  const refs = parsePasteRefs(text)
+  if (refs.length === 0) return <Text>{text}</Text>
+
+  const parts: React.ReactNode[] = []
+  let pos = 0
+  for (let i = 0; i < refs.length; i++) {
+    const ref = refs[i]!
+    if (ref.start > pos) {
+      parts.push(<Text key={`t${i}`}>{text.slice(pos, ref.start)}</Text>)
+    }
+    parts.push(<Text key={`r${i}`} dimColor>{ref.match}</Text>)
+    pos = ref.end
+  }
+  if (pos < text.length) {
+    parts.push(<Text key="tail">{text.slice(pos)}</Text>)
+  }
+  return <Text>{parts}</Text>
 }
 
 // ---------------------------------------------------------------------------
