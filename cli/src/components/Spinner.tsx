@@ -8,7 +8,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { Text, Box } from 'ink'
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-const SPINNER_INTERVAL = 80
+const SPINNER_INTERVAL = 100
 const STALLED_THRESHOLD_MS = 3000
 const SHOW_TOKENS_AFTER_MS = 30000
 
@@ -27,10 +27,11 @@ function pickVerb(): string {
 
 function humanDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
-  const secs = ms / 1000
+  const secs = Math.floor(ms / 100) / 10
   if (secs < 60) return `${secs.toFixed(1)}s`
-  const mins = Math.floor(secs / 60)
-  const rem = Math.floor(secs) % 60
+  const totalSecs = Math.floor(ms / 1000)
+  const mins = Math.floor(totalSecs / 60)
+  const rem = totalSecs % 60
   return rem > 0 ? `${mins}m${rem}s` : `${mins}m`
 }
 
