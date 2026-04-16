@@ -136,7 +136,7 @@ fi
 # Remove macOS quarantine/provenance attributes
 if [ "$os" = "darwin" ]; then
   xattr -cr "$INSTALL_DIR/$BINARY" 2>/dev/null || true
-  for f in "$LIB_DIR"/*.node 2>/dev/null; do
+  for f in "$LIB_DIR"/*.node; do
     [ -f "$f" ] && xattr -cr "$f" 2>/dev/null || true
   done
 fi

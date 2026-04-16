@@ -238,11 +238,15 @@ export async function runQuery(
       }
     }
 
-    commitStreamingText()
-    flushDeltaState()
+    if (gen === streamGenRef.current) {
+      commitStreamingText()
+      flushDeltaState()
+    }
   } catch (err: any) {
-    commitStreamingText()
-    flushDeltaState()
+    if (gen === streamGenRef.current) {
+      commitStreamingText()
+      flushDeltaState()
+    }
     if (gen !== streamGenRef.current) return
     const errLines = buildError(err?.message ?? String(err))
     appendLines(errLines)
@@ -253,5 +257,8 @@ export async function runQuery(
     }))
   } finally {
     streamRef.current = null
+    if (gen === streamGenRef.current) {
+      setState((prev) => prev.isLoading ? { ...prev, isLoading: false } : prev)
+    }
   }
 }
