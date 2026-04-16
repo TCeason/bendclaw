@@ -213,7 +213,7 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -251,7 +251,14 @@ jobs:
         shell: bash
         run: |
           cd cli
-          bun build src/index.tsx --compile --define 'process.env.DEV="false"' --define 'process.env.NODE_ENV="production"' --outfile dist/${{ env.BINARY_NAME }}
+          BUN_TARGET=""
+          case "${{ matrix.target }}" in
+            x86_64-unknown-linux-gnu)   BUN_TARGET="--target=bun-linux-x64" ;;
+            aarch64-unknown-linux-gnu)  BUN_TARGET="--target=bun-linux-arm64" ;;
+            aarch64-apple-darwin)       BUN_TARGET="--target=bun-darwin-arm64" ;;
+            x86_64-apple-darwin)        BUN_TARGET="--target=bun-darwin-x64" ;;
+          esac
+          bun build src/index.tsx --compile ${BUN_TARGET} --define 'process.env.DEV="false"' --define 'process.env.NODE_ENV="production"' --outfile dist/${{ env.BINARY_NAME }}
 
       - name: Package
         shell: bash
