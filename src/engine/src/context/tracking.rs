@@ -72,6 +72,32 @@ impl Default for ContextTracker {
 }
 
 // ---------------------------------------------------------------------------
+// Compaction budget state (runtime, passed into compact)
+// ---------------------------------------------------------------------------
+
+/// Runtime token state passed into compaction.
+///
+/// Separates dynamic state from static `ContextConfig`. The `estimated_tokens`
+/// value comes from the most accurate source available — typically
+/// `ContextTracker::estimate_context_tokens()` which uses real provider usage
+/// data when available, falling back to chars/4 estimation.
+#[derive(Debug, Clone)]
+pub struct CompactionBudgetState {
+    /// Current estimated context tokens.
+    pub estimated_tokens: usize,
+}
+
+impl CompactionBudgetState {
+    /// Build from a message list using pure chars/4 estimation.
+    /// Useful in tests or when no provider usage data is available.
+    pub fn from_messages(messages: &[AgentMessage]) -> Self {
+        Self {
+            estimated_tokens: total_tokens(messages),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Context configuration
 // ---------------------------------------------------------------------------
 

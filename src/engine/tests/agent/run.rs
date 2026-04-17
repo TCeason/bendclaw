@@ -1538,8 +1538,9 @@ async fn test_default_compaction_matches_compact_messages() {
         tool_output_max_lines: 20,
     };
 
-    let result_direct = compact_messages(messages.clone(), &config);
-    let result_trait = DefaultCompaction.compact(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result_direct = compact_messages(messages.clone(), &config, &budget_state);
+    let result_trait = DefaultCompaction.compact(messages, &config, &budget_state);
 
     assert_eq!(result_direct.messages.len(), result_trait.messages.len());
     assert!(
@@ -1555,6 +1556,7 @@ async fn test_default_compaction_matches_compact_messages() {
 #[tokio::test]
 async fn test_custom_compaction_strategy_is_called() {
     use evotengine::context::ContextConfig;
+    use evotengine::CompactionBudgetState;
     use evotengine::CompactionResult;
     use evotengine::CompactionStats;
     use evotengine::CompactionStrategy;
@@ -1566,6 +1568,7 @@ async fn test_custom_compaction_strategy_is_called() {
             &self,
             messages: Vec<AgentMessage>,
             _config: &ContextConfig,
+            _budget_state: &CompactionBudgetState,
         ) -> CompactionResult {
             let mut result = vec![AgentMessage::Llm(Message::user("[compacted]"))];
             if let Some(last) = messages.last() {

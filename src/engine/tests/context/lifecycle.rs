@@ -43,7 +43,8 @@ fn lifecycle_clears_current_run_after_user_message() {
         tool_output_max_lines: 50,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert_eq!(result.stats.level, 0);
     assert_eq!(result.stats.current_run_cleared, 1);
 
@@ -95,7 +96,8 @@ fn lifecycle_preserves_current_run_without_user_after() {
         tool_output_max_lines: 50,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert_eq!(result.stats.current_run_cleared, 0);
 
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &result.messages[2] {
@@ -147,7 +149,8 @@ fn lifecycle_does_not_affect_normal_retention() {
         tool_output_max_lines: 50,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert_eq!(result.stats.current_run_cleared, 0);
 
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &result.messages[2] {
@@ -223,6 +226,7 @@ fn lifecycle_clears_multiple_current_run_results() {
         tool_output_max_lines: 50,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert_eq!(result.stats.current_run_cleared, 2);
 }

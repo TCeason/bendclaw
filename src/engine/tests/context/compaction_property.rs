@@ -44,7 +44,8 @@ proptest! {
         config in arb_config(),
     ) {
         let messages = pat(&pattern).pad(pad).tool_output(tool_out).build();
-        let result = compact_messages(messages, &config);
+        let budget_state = CompactionBudgetState::from_messages(&messages);
+        let result = compact_messages(messages, &config, &budget_state);
         assert_no_orphan_tool_pairs(&result.messages);
     }
 }
@@ -68,7 +69,8 @@ proptest! {
             tool_output_max_lines: 1000,
         };
         let original_len = messages.len();
-        let result = compact_messages(messages, &config);
+        let budget_state = CompactionBudgetState::from_messages(&messages);
+        let result = compact_messages(messages, &config, &budget_state);
         prop_assert_eq!(result.stats.level, 0);
         prop_assert!(result.stats.actions.is_empty());
         prop_assert_eq!(result.messages.len(), original_len);
@@ -88,7 +90,8 @@ proptest! {
         config in arb_config(),
     ) {
         let messages = pat(&pattern).pad(pad).tool_output(tool_out).build();
-        let result = compact_messages(messages, &config);
+        let budget_state = CompactionBudgetState::from_messages(&messages);
+        let result = compact_messages(messages, &config, &budget_state);
         let level = result.stats.level;
         if level == 0 {
             for action in &result.stats.actions {
@@ -113,7 +116,8 @@ proptest! {
         config in arb_config(),
     ) {
         let messages = pat(&pattern).pad(pad).tool_output(tool_out).build();
-        let result = compact_messages(messages, &config);
+        let budget_state = CompactionBudgetState::from_messages(&messages);
+        let result = compact_messages(messages, &config, &budget_state);
         let budget = config.max_context_tokens.saturating_sub(config.system_prompt_tokens);
 
         // The pipeline always reduces or preserves token count
@@ -150,7 +154,8 @@ proptest! {
     ) {
         let messages = pat(&pattern).pad(pad).tool_output(tool_out).build();
         let before_count = messages.len();
-        let result = compact_messages(messages, &config);
+        let budget_state = CompactionBudgetState::from_messages(&messages);
+        let result = compact_messages(messages, &config, &budget_state);
         for action in &result.stats.actions {
             prop_assert!(
                 action.index < before_count,
@@ -186,7 +191,8 @@ proptest! {
         config in arb_config(),
     ) {
         let messages = pat(&pattern).pad(pad).tool_output(tool_out).build();
-        let result = compact_messages(messages, &config);
+        let budget_state = CompactionBudgetState::from_messages(&messages);
+        let result = compact_messages(messages, &config, &budget_state);
         for action in &result.stats.actions {
             prop_assert!(
                 action.after_tokens <= action.before_tokens,
@@ -210,7 +216,8 @@ proptest! {
         config in arb_config(),
     ) {
         let messages = pat(&pattern).pad(pad).tool_output(tool_out).build();
-        let result = compact_messages(messages, &config);
+        let budget_state = CompactionBudgetState::from_messages(&messages);
+        let result = compact_messages(messages, &config, &budget_state);
         let overall_saved = result.stats.before_estimated_tokens
             .saturating_sub(result.stats.after_estimated_tokens);
         let action_saved: usize = result.stats.actions.iter()
@@ -240,7 +247,8 @@ fn keep_within_budget_preserves_first_user_message() {
         keep_first: 2,
         tool_output_max_lines: 50,
     };
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
 
     // First message in result should be a user message containing "msg-0"
     let first = result
@@ -276,7 +284,8 @@ fn keep_within_budget_prefers_user_over_tool_result() {
         keep_first: 2,
         tool_output_max_lines: 50,
     };
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
 
     // Count surviving user messages vs tool results
     let user_count = result
@@ -312,7 +321,8 @@ fn huge_tool_result_does_not_erase_task_goal() {
         keep_first: 2,
         tool_output_max_lines: 50,
     };
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
 
     // The first user message (task goal) must survive.
     let has_first_user = result.messages.iter().any(|m| {
@@ -361,7 +371,8 @@ fn keep_first_preserves_multiple_leading_messages() {
         keep_first: 3,
         tool_output_max_lines: 50,
     };
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
 
     // msg-0 (first user) must survive
     let has_msg0 = result.messages.iter().any(|m| {
@@ -419,7 +430,8 @@ fn keep_first_one_only_protects_first_message() {
         keep_first: 1,
         tool_output_max_lines: 50,
     };
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
 
     // msg-0 must survive (protected by keep_first=1)
     let has_msg0 = result.messages.iter().any(|m| {

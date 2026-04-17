@@ -20,10 +20,9 @@ use crate::context::compaction::compact::CompactionMethod;
 use crate::context::compaction::pass::CompactContext;
 use crate::context::compaction::pass::PassResult;
 use crate::context::tokens::message_tokens;
-use crate::context::tokens::total_tokens;
 use crate::types::*;
 
-pub fn run(messages: Vec<AgentMessage>, ctx: &CompactContext) -> PassResult {
+pub fn run(messages: Vec<AgentMessage>, ctx: &CompactContext, current_tokens: usize) -> PassResult {
     let len = messages.len();
     if len <= ctx.keep_recent {
         return PassResult {
@@ -35,7 +34,7 @@ pub fn run(messages: Vec<AgentMessage>, ctx: &CompactContext) -> PassResult {
     let boundary = len - ctx.keep_recent;
     let mut result = Vec::new();
     let mut actions = Vec::new();
-    let mut running_tokens = total_tokens(&messages);
+    let mut running_tokens = current_tokens;
 
     let mut i = 0;
     while i < boundary {

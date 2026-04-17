@@ -4,6 +4,7 @@ pub mod run;
 pub mod run_manager;
 pub mod sandbox;
 pub mod session;
+pub mod session_locator;
 pub mod tools;
 #[allow(hidden_glob_reexports)]
 pub(crate) mod variables;
@@ -18,9 +19,9 @@ pub use run::RunEvent;
 pub use run::RunEventContext;
 pub use run::RunEventPayload;
 pub use run::StatsAggregator;
-pub use run_manager::ConversationKey;
 pub use run_manager::RunManager;
 pub use run_manager::SendOutcome;
+pub use session_locator::SessionLocator;
 pub use tools::ToolMode;
 pub use variables::Variables;
 

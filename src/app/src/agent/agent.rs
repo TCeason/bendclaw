@@ -282,6 +282,16 @@ impl Agent {
         let session = self
             .resolve_session(request.session_id.as_deref(), &request.source)
             .await?;
+        self.query_with_session(request, session).await
+    }
+
+    /// Channel path: session is already resolved by the caller (RunManager).
+    /// Agent only executes the run.
+    pub async fn query_with_session(
+        &self,
+        request: QueryRequest,
+        session: Arc<Session>,
+    ) -> Result<Run> {
         let session_id = session.meta().await.session_id.clone();
         let run_id = crate::types::new_id();
 

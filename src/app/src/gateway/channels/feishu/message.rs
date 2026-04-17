@@ -31,7 +31,10 @@ pub struct ParsedMessage {
     pub sender_id: String,
     pub text: String,
     pub parent_id: Option<String>,
+    pub root_id: Option<String>,
+    pub thread_id: Option<String>,
     pub parts: Vec<MessagePart>,
+    pub create_time: i64,
 }
 
 // ── Post (rich text) parsing ──
@@ -200,6 +203,21 @@ pub fn parse_event(
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
+    let root_id = message
+        .get("root_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let create_time = message
+        .get("create_time")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+    let thread_id = message
+        .get("thread_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
     let chat_type = message
         .get("chat_type")
         .and_then(|v| v.as_str())
@@ -290,6 +308,9 @@ pub fn parse_event(
         sender_id: sender_id.to_string(),
         text,
         parent_id,
+        root_id,
+        thread_id,
         parts,
+        create_time,
     })
 }

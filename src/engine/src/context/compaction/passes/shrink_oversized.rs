@@ -17,10 +17,9 @@ use crate::context::compaction::pass::CompactContext;
 use crate::context::compaction::pass::PassResult;
 use crate::context::compaction::policy::tool_policy;
 use crate::context::tokens::content_tokens;
-use crate::context::tokens::total_tokens;
 use crate::types::*;
 
-pub fn run(messages: Vec<AgentMessage>, ctx: &CompactContext) -> PassResult {
+pub fn run(messages: Vec<AgentMessage>, ctx: &CompactContext, current_tokens: usize) -> PassResult {
     let tool_call_index = build_tool_call_index(&messages);
     let len = messages.len();
     let recent_boundary = len.saturating_sub(ctx.keep_recent);
@@ -30,7 +29,7 @@ pub fn run(messages: Vec<AgentMessage>, ctx: &CompactContext) -> PassResult {
         .oversize_abs_tokens
         .max((ctx.budget as f64 * ctx.policy.oversize_budget_ratio) as usize);
 
-    let mut running_tokens = total_tokens(&messages);
+    let mut running_tokens = current_tokens;
     let mut actions = Vec::new();
     let mut result = Vec::with_capacity(len);
 

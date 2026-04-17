@@ -3,6 +3,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use tokio::sync::RwLock;
 
+use super::session_locator::SessionLocator;
 use crate::error::Result;
 use crate::storage::Storage;
 use crate::types::ListTranscriptEntries;
@@ -72,6 +73,33 @@ impl Session {
         let transcript = resolve_transcript(entries);
 
         Ok(Some(Self::init(storage, meta, transcript, next_seq)))
+    }
+
+    /// Open an existing session by locator, or create a new one.
+    /// This is the single entry point for all channel-based session resolution.
+    pub async fn open_or_create(
+        locator: &SessionLocator,
+        cwd: &str,
+        model: &str,
+        storage: Arc<dyn Storage>,
+    ) -> Result<Arc<Self>> {
+        let id = locator.session_id();
+        match Self::open(&id, storage.clone()).await? {
+            Some(session) => {
+                session.set_model(model.to_string()).await;
+                Ok(session)
+            }
+            None => {
+                Self::new_with_source(
+                    id,
+                    cwd.to_string(),
+                    model.to_string(),
+                    &locator.stable_key(),
+                    storage,
+                )
+                .await
+            }
+        }
     }
 
     pub async fn set_model(&self, model: String) {

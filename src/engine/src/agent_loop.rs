@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use crate::context::CompactionBudgetState;
 use crate::context::CompactionStrategy;
 use crate::context::ContextConfig;
 use crate::context::ContextTracker;
@@ -365,7 +366,14 @@ async fn run_loop(
                     .max_context_tokens
                     .saturating_sub(ctx_config.system_prompt_tokens);
 
-                let result = strategy.compact(std::mem::take(&mut context.messages), ctx_config);
+                let budget_state = CompactionBudgetState {
+                    estimated_tokens: original_tokens,
+                };
+                let result = strategy.compact(
+                    std::mem::take(&mut context.messages),
+                    ctx_config,
+                    &budget_state,
+                );
                 let did_work = result.stats.level > 0 || result.stats.current_run_cleared > 0;
                 context.messages = result.messages;
 

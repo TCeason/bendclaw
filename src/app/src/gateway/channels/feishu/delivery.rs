@@ -194,6 +194,235 @@ fn extract_message_id(json: &serde_json::Value) -> String {
 
 // ── Fetch message text (for reply context) ──
 
+// ── Thread / chat history context ──
+
+/// A single message extracted from a thread or chat history.
+pub struct ThreadMessage {
+    pub message_id: String,
+    pub sender_id: Option<String>,
+    pub root_id: Option<String>,
+    pub create_time: i64,
+    pub text: Option<String>,
+    pub parts: Vec<super::message::MessagePart>,
+}
+
+/// Extract a `ThreadMessage` from a single message JSON object
+/// (as returned by the Feishu messages API).
+pub fn extract_thread_message(item: &serde_json::Value) -> Option<ThreadMessage> {
+    let message_id = item.get("message_id").and_then(|v| v.as_str())?;
+    let msg_type = item.get("msg_type").and_then(|v| v.as_str())?;
+    let sender_id = item
+        .pointer("/sender/id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let root_id = item
+        .get("root_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let create_time = item
+        .get("create_time")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+
+    let raw_content = item.pointer("/body/content").and_then(|v| v.as_str())?;
+    let content: serde_json::Value = serde_json::from_str(raw_content).ok()?;
+
+    let (text, parts) = match msg_type {
+        "text" => {
+            let t = content
+                .get("text")
+                .and_then(|v| v.as_str())
+                .map(super::message::strip_at_placeholders)
+                .filter(|s| !s.is_empty());
+            let parts = t
+                .as_ref()
+                .map(|s| vec![super::message::MessagePart::Text(s.clone())])
+                .unwrap_or_default();
+            (t, parts)
+        }
+        "post" => {
+            let parsed = super::message::parse_post(&content)?;
+            let text = if parsed.text.is_empty() {
+                None
+            } else {
+                Some(parsed.text)
+            };
+            (text, parsed.parts)
+        }
+        "image" => {
+            let key = content
+                .get("image_key")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())?;
+            (None, vec![super::message::MessagePart::ImageKey(
+                key.to_string(),
+            )])
+        }
+        _ => return None,
+    };
+
+    // Skip empty messages
+    if text.is_none() && parts.is_empty() {
+        return None;
+    }
+
+    Some(ThreadMessage {
+        message_id: message_id.to_string(),
+        sender_id,
+        root_id,
+        create_time,
+        text,
+        parts,
+    })
+}
+
+/// Fetch reply messages under a topic (thread).
+/// Uses `container_id_type=thread` with the thread_id to get all messages.
+/// Returns all messages in chronological order (oldest first).
+pub async fn fetch_thread_messages(
+    client: &reqwest::Client,
+    token_cache: &TokenCache,
+    app_id: &str,
+    app_secret: &str,
+    thread_id: &str,
+) -> Result<Vec<ThreadMessage>> {
+    let mut result = Vec::new();
+    let mut page_token: Option<String> = None;
+
+    loop {
+        let mut url = format!(
+            "{FEISHU_API}/im/v1/messages?container_id_type=thread&container_id={thread_id}&page_size=50"
+        );
+        if let Some(ref pt) = page_token {
+            url.push_str(&format!("&page_token={pt}"));
+        }
+
+        let token = get_token(client, app_id, app_secret, token_cache).await?;
+        let resp = client
+            .get(&url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| EvotError::Run(format!("feishu fetch thread: {e}")))?;
+
+        let status = resp.status().as_u16();
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| EvotError::Run(format!("feishu fetch thread response: {e}")))?;
+
+        let json = if is_token_error(status, &json) {
+            token_cache.invalidate().await;
+            let token2 = get_token(client, app_id, app_secret, token_cache).await?;
+            let resp2 = client
+                .get(&url)
+                .bearer_auth(&token2)
+                .send()
+                .await
+                .map_err(|e| EvotError::Run(format!("feishu fetch thread retry: {e}")))?;
+            let json2: serde_json::Value = resp2
+                .json()
+                .await
+                .map_err(|e| EvotError::Run(format!("feishu fetch thread retry response: {e}")))?;
+            check_api_error(&json2)?;
+            json2
+        } else {
+            check_api_error(&json)?;
+            json
+        };
+
+        if let Some(items) = json.pointer("/data/items").and_then(|v| v.as_array()) {
+            for item in items {
+                if let Some(msg) = extract_thread_message(item) {
+                    result.push(msg);
+                }
+            }
+        }
+
+        let has_more = json
+            .pointer("/data/has_more")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !has_more {
+            break;
+        }
+        page_token = json
+            .pointer("/data/page_token")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        if page_token.is_none() {
+            break;
+        }
+    }
+
+    result.sort_by_key(|m| m.create_time);
+    Ok(result)
+}
+
+/// Fetch recent chat history messages before `end_time`.
+/// Returns up to `count` messages in chronological order (oldest first).
+pub async fn fetch_chat_history(
+    client: &reqwest::Client,
+    token_cache: &TokenCache,
+    app_id: &str,
+    app_secret: &str,
+    chat_id: &str,
+    end_time: i64,
+    count: usize,
+) -> Result<Vec<ThreadMessage>> {
+    let url = format!(
+        "{FEISHU_API}/im/v1/messages?container_id_type=chat&container_id={chat_id}&end_time={end_time}&page_size={count}&sort_type=ByCreateTimeDesc"
+    );
+
+    let token = get_token(client, app_id, app_secret, token_cache).await?;
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| EvotError::Run(format!("feishu fetch chat history: {e}")))?;
+
+    let status = resp.status().as_u16();
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| EvotError::Run(format!("feishu fetch chat history response: {e}")))?;
+
+    let json = if is_token_error(status, &json) {
+        token_cache.invalidate().await;
+        let token2 = get_token(client, app_id, app_secret, token_cache).await?;
+        let resp2 = client
+            .get(&url)
+            .bearer_auth(&token2)
+            .send()
+            .await
+            .map_err(|e| EvotError::Run(format!("feishu fetch chat history retry: {e}")))?;
+        let json2: serde_json::Value = resp2.json().await.map_err(|e| {
+            EvotError::Run(format!("feishu fetch chat history retry response: {e}"))
+        })?;
+        check_api_error(&json2)?;
+        json2
+    } else {
+        check_api_error(&json)?;
+        json
+    };
+
+    let mut messages = Vec::new();
+    if let Some(items) = json.pointer("/data/items").and_then(|v| v.as_array()) {
+        for item in items {
+            if let Some(msg) = extract_thread_message(item) {
+                messages.push(msg);
+            }
+        }
+    }
+
+    // API returns newest first; sort by create_time for chronological order
+    messages.sort_by_key(|m| m.create_time);
+    Ok(messages)
+}
+
 // ── Fetch parent message content (for reply context) ──
 
 /// Content extracted from a parent message.

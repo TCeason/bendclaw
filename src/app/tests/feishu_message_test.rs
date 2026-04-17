@@ -246,3 +246,233 @@ fn test_parse_event_chat_type_group() {
     let msg = parse_event(&event, &config, "bot_id", &mut dedup).expect("should parse");
     assert_eq!(msg.chat_type, "group");
 }
+
+// ── create_time extraction ──
+
+#[test]
+fn test_parse_event_extracts_create_time() {
+    let event = make_event(serde_json::json!({ "create_time": "1700000000000" }));
+    let config = default_config();
+    let mut dedup = MessageDedup::new(Duration::from_secs(60));
+
+    let msg = parse_event(&event, &config, "bot_id", &mut dedup).expect("should parse");
+    assert_eq!(msg.create_time, 1700000000000);
+}
+
+#[test]
+fn test_parse_event_missing_create_time_defaults_to_zero() {
+    let event = make_event(serde_json::json!({}));
+    let config = default_config();
+    let mut dedup = MessageDedup::new(Duration::from_secs(60));
+
+    let msg = parse_event(&event, &config, "bot_id", &mut dedup).expect("should parse");
+    assert_eq!(msg.create_time, 0);
+}
+
+// ── thread_id extraction ──
+
+#[test]
+fn test_parse_event_extracts_thread_id() {
+    let event = make_event(serde_json::json!({ "thread_id": "omt_16f3c7e1268f1749" }));
+    let config = default_config();
+    let mut dedup = MessageDedup::new(Duration::from_secs(60));
+
+    let msg = parse_event(&event, &config, "bot_id", &mut dedup).expect("should parse");
+    assert_eq!(msg.thread_id, Some("omt_16f3c7e1268f1749".to_string()));
+}
+
+#[test]
+fn test_parse_event_no_thread_id() {
+    let event = make_event(serde_json::json!({}));
+    let config = default_config();
+    let mut dedup = MessageDedup::new(Duration::from_secs(60));
+
+    let msg = parse_event(&event, &config, "bot_id", &mut dedup).expect("should parse");
+    assert_eq!(msg.thread_id, None);
+}
+
+#[test]
+fn test_parse_event_empty_thread_id() {
+    let event = make_event(serde_json::json!({ "thread_id": "" }));
+    let config = default_config();
+    let mut dedup = MessageDedup::new(Duration::from_secs(60));
+
+    let msg = parse_event(&event, &config, "bot_id", &mut dedup).expect("should parse");
+    assert_eq!(msg.thread_id, None);
+}
+
+// ── extract_thread_message ──
+
+use evot::gateway::channels::feishu::delivery::extract_thread_message;
+
+fn make_thread_item(
+    msg_id: &str,
+    msg_type: &str,
+    content: &str,
+    create_time: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "message_id": msg_id,
+        "msg_type": msg_type,
+        "create_time": create_time,
+        "sender": { "id": "ou_sender_001" },
+        "body": { "content": content },
+    })
+}
+
+#[test]
+fn test_extract_thread_message_text() {
+    let item = make_thread_item("om_1", "text", r#"{"text":"hello world"}"#, "1700000000000");
+    let msg = extract_thread_message(&item).expect("should parse");
+    assert_eq!(msg.message_id, "om_1");
+    assert_eq!(msg.text, Some("hello world".to_string()));
+    assert_eq!(msg.create_time, 1700000000000);
+    assert_eq!(msg.sender_id, Some("ou_sender_001".to_string()));
+}
+
+#[test]
+fn test_extract_thread_message_post() {
+    let post = serde_json::json!({
+        "title": "My Title",
+        "content": [[{ "tag": "text", "text": "body text" }]]
+    });
+    let item = make_thread_item("om_2", "post", &post.to_string(), "1700000001000");
+    let msg = extract_thread_message(&item).expect("should parse");
+    assert!(msg
+        .text
+        .as_ref()
+        .is_some_and(|t| t.contains("My Title") && t.contains("body text")));
+}
+
+#[test]
+fn test_extract_thread_message_image() {
+    let item = make_thread_item(
+        "om_3",
+        "image",
+        r#"{"image_key":"img_v2_abc"}"#,
+        "1700000002000",
+    );
+    let msg = extract_thread_message(&item).expect("should parse");
+    assert!(msg.text.is_none());
+    assert!(matches!(
+        msg.parts.as_slice(),
+        [MessagePart::ImageKey(key)] if key == "img_v2_abc"
+    ));
+}
+
+#[test]
+fn test_extract_thread_message_empty_text_returns_none() {
+    let item = make_thread_item("om_4", "text", r#"{"text":""}"#, "1700000003000");
+    assert!(extract_thread_message(&item).is_none());
+}
+
+#[test]
+fn test_extract_thread_message_unsupported_type_returns_none() {
+    let item = make_thread_item("om_5", "sticker", r#"{}"#, "1700000004000");
+    assert!(extract_thread_message(&item).is_none());
+}
+
+#[test]
+fn test_extract_thread_message_missing_create_time_defaults_to_zero() {
+    let item = serde_json::json!({
+        "message_id": "om_6",
+        "msg_type": "text",
+        "sender": { "id": "ou_sender_001" },
+        "body": { "content": r#"{"text":"no time"}"# },
+    });
+    let msg = extract_thread_message(&item).expect("should parse");
+    assert_eq!(msg.create_time, 0);
+}
+
+// ── root_id extraction ──
+
+#[test]
+fn test_parse_event_extracts_root_id() {
+    let event = make_event(serde_json::json!({ "root_id": "om_root_123" }));
+    let config = default_config();
+    let mut dedup = MessageDedup::new(Duration::from_secs(60));
+
+    let msg = parse_event(&event, &config, "bot_id", &mut dedup).expect("should parse");
+    assert_eq!(msg.root_id, Some("om_root_123".to_string()));
+}
+
+#[test]
+fn test_parse_event_no_root_id() {
+    let event = make_event(serde_json::json!({}));
+    let config = default_config();
+    let mut dedup = MessageDedup::new(Duration::from_secs(60));
+
+    let msg = parse_event(&event, &config, "bot_id", &mut dedup).expect("should parse");
+    assert_eq!(msg.root_id, None);
+}
+
+#[test]
+fn test_parse_event_empty_root_id() {
+    let event = make_event(serde_json::json!({ "root_id": "" }));
+    let config = default_config();
+    let mut dedup = MessageDedup::new(Duration::from_secs(60));
+
+    let msg = parse_event(&event, &config, "bot_id", &mut dedup).expect("should parse");
+    assert_eq!(msg.root_id, None);
+}
+
+// ── extract_thread_message root_id ──
+
+#[test]
+fn test_extract_thread_message_extracts_root_id() {
+    let item = serde_json::json!({
+        "message_id": "om_7",
+        "msg_type": "text",
+        "create_time": "1700000005000",
+        "root_id": "om_root_456",
+        "sender": { "id": "ou_sender_001" },
+        "body": { "content": r#"{"text":"reply in topic"}"# },
+    });
+    let msg = extract_thread_message(&item).expect("should parse");
+    assert_eq!(msg.root_id, Some("om_root_456".to_string()));
+}
+
+#[test]
+fn test_extract_thread_message_no_root_id() {
+    let item = make_thread_item("om_8", "text", r#"{"text":"no root"}"#, "1700000006000");
+    let msg = extract_thread_message(&item).expect("should parse");
+    assert_eq!(msg.root_id, None);
+}
+
+// ── topic message detection: thread_id, parent_id, root_id combinations ──
+
+#[test]
+fn test_parse_event_topic_reply_with_all_ids() {
+    let event = make_event(serde_json::json!({
+        "parent_id": "om_parent_1",
+        "root_id": "om_root_1",
+        "thread_id": "omt_thread_1",
+        "create_time": "1700000007000"
+    }));
+    let config = default_config();
+    let mut dedup = MessageDedup::new(Duration::from_secs(60));
+
+    let msg = parse_event(&event, &config, "bot_id", &mut dedup).expect("should parse");
+    assert_eq!(msg.parent_id, Some("om_parent_1".to_string()));
+    assert_eq!(msg.root_id, Some("om_root_1".to_string()));
+    assert_eq!(msg.thread_id, Some("omt_thread_1".to_string()));
+}
+
+#[test]
+fn test_parse_event_topic_reply_without_thread_id() {
+    // This is the fallback scenario: topic reply has parent_id and root_id but no thread_id
+    let event = make_event(serde_json::json!({
+        "parent_id": "om_parent_2",
+        "root_id": "om_root_2",
+        "create_time": "1700000008000"
+    }));
+    let config = default_config();
+    let mut dedup = MessageDedup::new(Duration::from_secs(60));
+
+    let msg = parse_event(&event, &config, "bot_id", &mut dedup).expect("should parse");
+    assert_eq!(msg.parent_id, Some("om_parent_2".to_string()));
+    assert_eq!(msg.root_id, Some("om_root_2".to_string()));
+    assert_eq!(msg.thread_id, None);
+    // This message should still enter the topic branch (parent_id is Some)
+    assert!(msg.parent_id.is_some() || msg.thread_id.is_some());
+}

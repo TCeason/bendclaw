@@ -210,7 +210,8 @@ fn test_compact_level2_no_orphans() {
         tool_output_max_lines: 50,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert!(
         result.stats.level >= 2,
         "expected level >= 2, got {}",
@@ -233,6 +234,7 @@ fn test_compact_level3_no_orphans() {
         tool_output_max_lines: 20,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert_no_orphan_tool_pairs(&result.messages);
 }

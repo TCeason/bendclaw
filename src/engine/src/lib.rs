@@ -12,6 +12,7 @@ pub use agent::RunHandle;
 pub use agent_loop::agent_loop;
 pub use agent_loop::agent_loop_continue;
 pub use context::sanitize_tool_pairs;
+pub use context::CompactionBudgetState;
 pub use context::CompactionResult;
 pub use context::CompactionStats;
 pub use context::CompactionStrategy;

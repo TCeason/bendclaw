@@ -20,6 +20,7 @@ use super::policy::CompactionPolicy;
 use super::sanitize::sanitize_tool_pairs;
 use crate::context::tokens::content_tokens;
 use crate::context::tokens::total_tokens;
+use crate::context::tracking::CompactionBudgetState;
 use crate::context::tracking::ContextConfig;
 use crate::types::*;
 
@@ -112,14 +113,24 @@ pub struct CompactionResult {
 }
 
 pub trait CompactionStrategy: Send + Sync {
-    fn compact(&self, messages: Vec<AgentMessage>, config: &ContextConfig) -> CompactionResult;
+    fn compact(
+        &self,
+        messages: Vec<AgentMessage>,
+        config: &ContextConfig,
+        budget_state: &CompactionBudgetState,
+    ) -> CompactionResult;
 }
 
 pub struct DefaultCompaction;
 
 impl CompactionStrategy for DefaultCompaction {
-    fn compact(&self, messages: Vec<AgentMessage>, config: &ContextConfig) -> CompactionResult {
-        compact_messages(messages, config)
+    fn compact(
+        &self,
+        messages: Vec<AgentMessage>,
+        config: &ContextConfig,
+        budget_state: &CompactionBudgetState,
+    ) -> CompactionResult {
+        compact_messages(messages, config, budget_state)
     }
 }
 
@@ -170,7 +181,16 @@ fn collect_tool_details(messages: &[AgentMessage]) -> Vec<ToolTokenDetail> {
 ///
 /// L0 runs unconditionally. L1–L2 only run when over budget, stopping
 /// as soon as the context fits.
-pub fn compact_messages(messages: Vec<AgentMessage>, config: &ContextConfig) -> CompactionResult {
+///
+/// `budget_state.estimated_tokens` provides the initial token estimate from
+/// the most accurate source available (e.g. provider usage data). This value
+/// drives all budget gate and stop decisions. After each pass, it is updated
+/// via action deltas and calibrated against `total_tokens()` as a floor.
+pub fn compact_messages(
+    messages: Vec<AgentMessage>,
+    config: &ContextConfig,
+    budget_state: &CompactionBudgetState,
+) -> CompactionResult {
     let budget = config
         .max_context_tokens
         .saturating_sub(config.system_prompt_tokens);
@@ -184,22 +204,33 @@ pub fn compact_messages(messages: Vec<AgentMessage>, config: &ContextConfig) -> 
     };
 
     let before_message_count = messages.len();
-    let before_estimated_tokens = total_tokens(&messages);
+    let before_estimated_tokens = budget_state.estimated_tokens;
     let before_tool_details = collect_tool_details(&messages);
 
+    let mut current_tokens = budget_state.estimated_tokens;
     let mut messages = messages;
     let mut all_actions = Vec::new();
 
     for level in LEVELS {
         // L0 always runs; L1+ only when over budget, stop when fits
-        if !matches!(level, Level::L0Cleanup) && total_tokens(&messages) <= ctx.budget {
+        if !matches!(level, Level::L0Cleanup) && current_tokens <= ctx.budget {
             break;
         }
 
         let result = match level {
             Level::L0Cleanup => {
                 let r1 = clear_expired::run(messages, &ctx);
-                let r2 = shrink_oversized::run(r1.messages, &ctx);
+                // Update current_tokens between L0 sub-passes so shrink_oversized
+                // sees the effect of clear_expired (avoids over-compaction).
+                let r1_saved: usize = r1
+                    .actions
+                    .iter()
+                    .map(|a| a.before_tokens.saturating_sub(a.after_tokens))
+                    .sum();
+                let tokens_after_r1 = current_tokens.saturating_sub(r1_saved);
+                let tokens_after_r1 = tokens_after_r1.max(total_tokens(&r1.messages));
+
+                let r2 = shrink_oversized::run(r1.messages, &ctx, tokens_after_r1);
                 let mut actions = r1.actions;
                 actions.extend(r2.actions);
                 super::pass::PassResult {
@@ -207,18 +238,37 @@ pub fn compact_messages(messages: Vec<AgentMessage>, config: &ContextConfig) -> 
                     actions,
                 }
             }
-            Level::L1Collapse => collapse_old_turns::run(messages, &ctx),
+            Level::L1Collapse => collapse_old_turns::run(messages, &ctx, current_tokens),
             Level::L2Evict => evict_stale::run(messages, &ctx),
         };
+
+        // Update current_tokens: delta from actions + floor calibration
+        let saved: usize = result
+            .actions
+            .iter()
+            .map(|a| a.before_tokens.saturating_sub(a.after_tokens))
+            .sum();
+        current_tokens = current_tokens.saturating_sub(saved);
+        current_tokens = current_tokens.max(total_tokens(&result.messages));
 
         all_actions.extend(result.actions);
         messages = result.messages;
     }
 
+    let pre_sanitize_tokens = total_tokens(&messages);
     let messages = sanitize_tool_pairs(messages);
+    let post_sanitize_tokens = total_tokens(&messages);
+    // Sanitize may remove orphan messages without producing actions.
+    // Reflect the removal by subtracting the delta, then floor-calibrate.
+    let sanitize_removed = pre_sanitize_tokens.saturating_sub(post_sanitize_tokens);
+    current_tokens = current_tokens.saturating_sub(sanitize_removed);
+    current_tokens = current_tokens.max(post_sanitize_tokens);
 
     let after_message_count = messages.len();
-    let after_estimated_tokens = total_tokens(&messages);
+    // after_estimated_tokens is the unified budget estimate after compaction,
+    // not a provider-measured value. It reflects action deltas calibrated
+    // against chars/4 as a floor.
+    let after_estimated_tokens = current_tokens;
     let after_tool_details = collect_tool_details(&messages);
 
     // Derive counters from actions

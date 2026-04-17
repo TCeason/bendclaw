@@ -814,6 +814,7 @@ dependencies = [
  "serde",
  "serde_ignored",
  "serde_json",
+ "sha2",
  "similar",
  "streamdown-core",
  "streamdown-parser",

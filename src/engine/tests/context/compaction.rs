@@ -73,7 +73,8 @@ fn test_level1_truncation() {
         tool_output_max_lines: 20,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert!(result.stats.tool_outputs_truncated > 0 || result.stats.oversize_capped > 0);
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &result.messages[2] {
         if let Content::Text { text } = &content[0] {
@@ -91,7 +92,8 @@ fn test_level1_truncation() {
 fn test_compact_within_budget() {
     let messages = pat("u a u").pad(10).build();
     let config = ContextConfig::default();
-    let result = compact_messages(messages.clone(), &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages.clone(), &config, &budget_state);
     assert_eq!(result.stats.level, 0);
     assert_eq!(result.messages.len(), messages.len());
     assert!(result.stats.actions.is_empty());
@@ -111,7 +113,8 @@ fn test_compact_drops_middle_when_needed() {
         tool_output_max_lines: 20,
     };
 
-    let result = compact_messages(messages.clone(), &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages.clone(), &config, &budget_state);
     assert!(result.messages.len() < messages.len());
     assert!(result.messages.len() >= 2);
 }
@@ -211,7 +214,8 @@ fn test_level1_read_file_rust_uses_outline() {
         tool_output_max_lines: 20,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert!(result.stats.tool_outputs_truncated > 0 || result.stats.oversize_capped > 0);
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &result.messages[2] {
         if let Content::Text { text } = &content[0] {
@@ -280,7 +284,8 @@ fn test_level1_read_file_unsupported_ext_falls_back_to_head_tail() {
         tool_output_max_lines: 20,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert!(result.stats.tool_outputs_truncated > 0 || result.stats.oversize_capped > 0);
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &result.messages[2] {
         if let Content::Text { text } = &content[0] {
@@ -321,7 +326,8 @@ fn test_level1_bash_still_uses_head_tail() {
         tool_output_max_lines: 20,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert!(result.stats.tool_outputs_truncated > 0 || result.stats.oversize_capped > 0);
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &result.messages[2] {
         if let Content::Text { text } = &content[0] {
@@ -356,7 +362,8 @@ fn test_level1_read_file_no_matching_tool_call_falls_back() {
         tool_output_max_lines: 20,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert!(result.stats.tool_outputs_truncated > 0 || result.stats.oversize_capped > 0);
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &result.messages[2] {
         if let Content::Text { text } = &content[0] {
@@ -395,7 +402,8 @@ fn test_level1_read_file_short_content_not_truncated() {
         tool_output_max_lines: 20,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert_eq!(
         result.stats.tool_outputs_truncated, 0,
         "short content should not be truncated"
@@ -461,7 +469,8 @@ fn test_level1_read_file_python_uses_outline() {
         tool_output_max_lines: 20,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert!(result.stats.tool_outputs_truncated > 0 || result.stats.oversize_capped > 0);
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &result.messages[2] {
         if let Content::Text { text } = &content[0] {
@@ -516,7 +525,8 @@ fn test_level1_actions_only_non_skipped() {
         tool_output_max_lines: 20,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     let truncation_actions: Vec<_> = result
         .stats
         .actions
@@ -564,7 +574,8 @@ fn test_level1_actions_have_correct_index() {
         tool_output_max_lines: 20,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     let truncation_actions: Vec<_> = result
         .stats
         .actions
@@ -604,7 +615,8 @@ fn test_level1_outline_action_method() {
         tool_output_max_lines: 20,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     let outline_actions: Vec<_> = result
         .stats
         .actions
@@ -647,7 +659,8 @@ fn test_level1_outline_requires_10_percent_savings() {
         tool_output_max_lines: 50,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     for a in &result.stats.actions {
         if a.method == CompactionMethod::Outline {
             let savings_pct =
@@ -711,7 +724,8 @@ fn test_level1_outline_works_on_short_code_files() {
         tool_output_max_lines: 50,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
 
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &result.messages[2] {
         if let Content::Text { text } = &content[0] {
@@ -745,7 +759,8 @@ fn test_level2_actions_structure() {
         tool_output_max_lines: 50,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert!(
         result.stats.level >= 2,
         "expected level >= 2, got {}",
@@ -784,7 +799,8 @@ fn test_level2_action_related_count() {
         tool_output_max_lines: 50,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     if result.stats.level == 2 {
         let summarized: Vec<_> = result
             .stats
@@ -823,7 +839,8 @@ fn test_level3_actions_structure() {
         tool_output_max_lines: 20,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert_eq!(result.stats.level, 3, "should trigger level 3");
     assert!(!result.stats.actions.is_empty());
 
@@ -853,7 +870,8 @@ fn test_level3_action_has_range() {
         tool_output_max_lines: 20,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     if result.stats.level == 3 {
         let dropped: Vec<_> = result
             .stats
@@ -899,7 +917,8 @@ fn test_compact_level1_actions_are_level1_only() {
         tool_output_max_lines: 20,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert_eq!(result.stats.level, 1, "should trigger level 1");
     assert!(!result.stats.actions.is_empty());
     assert_actions_match_level(1, &result.stats.actions);
@@ -917,7 +936,8 @@ fn test_compact_level2_actions_are_level2_only() {
         tool_output_max_lines: 50,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     if result.stats.level == 2 {
         assert_actions_match_level(2, &result.stats.actions);
     }
@@ -927,7 +947,8 @@ fn test_compact_level2_actions_are_level2_only() {
 fn test_compact_level0_no_actions() {
     let messages = pat("u a u").pad(10).build();
     let config = ContextConfig::default();
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert_eq!(result.stats.level, 0);
     assert!(result.stats.actions.is_empty());
 }
@@ -940,7 +961,8 @@ fn test_compact_level0_no_actions() {
 fn test_compact_empty_messages() {
     let messages: Vec<AgentMessage> = vec![];
     let config = ContextConfig::default();
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert_eq!(result.stats.level, 0);
     assert!(result.messages.is_empty());
     assert!(result.stats.actions.is_empty());
@@ -956,7 +978,8 @@ fn test_compact_single_user() {
         keep_first: 0,
         tool_output_max_lines: 50,
     };
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert!(!result.messages.is_empty());
 }
 
@@ -970,7 +993,8 @@ fn test_compact_all_users_no_tool() {
         keep_first: 0,
         tool_output_max_lines: 50,
     };
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert!(!result.messages.is_empty());
     assert_no_orphan_tool_pairs(&result.messages);
 }
@@ -985,7 +1009,8 @@ fn test_compact_budget_zero() {
         keep_first: 0,
         tool_output_max_lines: 50,
     };
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert!(!result.messages.is_empty());
     assert_no_orphan_tool_pairs(&result.messages);
 }
@@ -1039,7 +1064,8 @@ fn test_under_budget_no_age_cleared() {
         tool_output_max_lines: 50,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert_eq!(
         result.stats.age_cleared, 0,
         "under-budget should not trigger age clearing"
@@ -1089,7 +1115,8 @@ fn test_tool_output_max_lines_caps_policy() {
         tool_output_max_lines: 10, // stricter than policy's 50
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     // Find the tool result and count lines
     for msg in &result.messages {
         if let AgentMessage::Llm(Message::ToolResult {
@@ -1148,7 +1175,8 @@ fn test_byte_cap_on_long_single_line() {
         tool_output_max_lines: 50,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     for msg in &result.messages {
         if let AgentMessage::Llm(Message::ToolResult {
             tool_name, content, ..
@@ -1234,7 +1262,8 @@ fn test_level2_summary_preserves_multiple_texts() {
         tool_output_max_lines: 50,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     // Find the summary message
     let mut found_both = false;
     for msg in &result.messages {
@@ -1297,11 +1326,68 @@ fn test_tier2_oversize_read_file_records_oversize_capped() {
         tool_output_max_lines: 50,
     };
 
-    let result = compact_messages(messages, &config);
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
     assert!(
         result.stats.oversize_capped > 0,
         "Tier 2 on read_file should count as oversize_capped, got oversize_capped={} tool_outputs_truncated={}",
         result.stats.oversize_capped,
         result.stats.tool_outputs_truncated,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Regression: provider-reported tokens exceed chars/4 estimate
+// ---------------------------------------------------------------------------
+
+/// When the provider reports higher token usage than chars/4 estimates,
+/// compact must still trigger L1+ passes. This reproduces the bug where
+/// compact saw ~85k (chars/4) while the provider reported ~167k, causing
+/// a no-op even though the context exceeded the budget.
+#[test]
+fn test_compact_triggers_when_provider_estimate_exceeds_char_estimate() {
+    // Build messages whose chars/4 estimate fits within budget,
+    // but simulate a provider reporting much higher token usage.
+    let messages =
+        pat("u a t r u a t r u a t r u a t r u a t r u a t r u a t r u a t r u a t r u a t r")
+            .pad(50)
+            .tool_output(200)
+            .build();
+
+    let char_estimate = total_tokens(&messages);
+
+    let config = ContextConfig {
+        // Set budget so chars/4 fits but provider estimate doesn't
+        max_context_tokens: char_estimate + 1000,
+        system_prompt_tokens: 0,
+        keep_recent: 4,
+        keep_first: 2,
+        tool_output_max_lines: 20,
+    };
+
+    // With chars/4 estimate: should be a no-op (within budget)
+    let budget_within = CompactionBudgetState::from_messages(&messages);
+    let result_noop = compact_messages(messages.clone(), &config, &budget_within);
+    assert_eq!(
+        result_noop.stats.level, 0,
+        "chars/4 estimate should be within budget"
+    );
+
+    // Simulate provider reporting 2x the chars/4 estimate (e.g. non-English, structured tokens)
+    let provider_estimate = char_estimate * 2;
+    let budget_over = CompactionBudgetState {
+        estimated_tokens: provider_estimate,
+    };
+    let result_compact = compact_messages(messages, &config, &budget_over);
+    assert!(
+        result_compact.stats.level >= 1,
+        "provider estimate exceeds budget, compact should trigger L1+, got level={}",
+        result_compact.stats.level,
+    );
+    assert!(
+        result_compact.stats.after_estimated_tokens < provider_estimate,
+        "compaction should reduce estimated tokens: before={} after={}",
+        provider_estimate,
+        result_compact.stats.after_estimated_tokens,
     );
 }
