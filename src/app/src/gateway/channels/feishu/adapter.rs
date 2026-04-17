@@ -131,6 +131,11 @@ impl FeishuChannel {
                         this.config.app_id.clone(),
                         this.config.app_secret.clone(),
                     );
+                    let sink = if msg.chat_type == "group" {
+                        sink.with_reply_to(msg.message_id.clone())
+                    } else {
+                        sink
+                    };
                     let config = StreamDeliveryConfig::default();
                     if let Err(e) =
                         stream_delivery::deliver(&sink, &msg.chat_id, &mut run, &config).await
@@ -149,6 +154,11 @@ impl FeishuChannel {
                         this.config.app_id.clone(),
                         this.config.app_secret.clone(),
                     );
+                    let sink = if msg.chat_type == "group" {
+                        sink.with_reply_to(msg.message_id.clone())
+                    } else {
+                        sink
+                    };
                     let _ = crate::gateway::delivery::MessageSink::send_text(
                         &sink,
                         &msg.chat_id,

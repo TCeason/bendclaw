@@ -71,7 +71,65 @@ pub async fn send_text(
     Ok(extract_message_id(&json))
 }
 
-/// Add a reaction (emoji) to a message. Fire-and-forget, logs errors.
+/// Reply to a message as a thread (topic), with automatic token retry.
+pub async fn reply_text(
+    client: &reqwest::Client,
+    token_cache: &TokenCache,
+    app_id: &str,
+    app_secret: &str,
+    message_id: &str,
+    text: &str,
+) -> Result<String> {
+    let url = format!("{FEISHU_API}/im/v1/messages/{message_id}/reply");
+    let content = serde_json::json!({ "text": text }).to_string();
+    let body = serde_json::json!({
+        "msg_type": "text",
+        "content": content,
+        "reply_in_thread": "true",
+    });
+
+    let token = get_token(client, app_id, app_secret, token_cache).await?;
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| EvotError::Run(format!("feishu reply: {e}")))?;
+
+    let status = resp.status().as_u16();
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| EvotError::Run(format!("feishu reply response: {e}")))?;
+
+    if is_token_error(status, &json) {
+        token_cache.invalidate().await;
+        let token2 = get_token(client, app_id, app_secret, token_cache).await?;
+        let resp2 = client
+            .post(&url)
+            .bearer_auth(&token2)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| EvotError::Run(format!("feishu reply retry: {e}")))?;
+        let status2 = resp2.status().as_u16();
+        let json2: serde_json::Value = resp2
+            .json()
+            .await
+            .map_err(|e| EvotError::Run(format!("feishu reply retry response: {e}")))?;
+        if is_token_error(status2, &json2) {
+            return Err(EvotError::Run(format!(
+                "feishu reply token retry failed: HTTP {status2}"
+            )));
+        }
+        check_api_error(&json2)?;
+        return Ok(extract_message_id(&json2));
+    }
+
+    check_api_error(&json)?;
+    Ok(extract_message_id(&json))
+}
 pub async fn add_reaction(
     client: &reqwest::Client,
     token_cache: &TokenCache,
@@ -439,6 +497,9 @@ pub struct FeishuMessageSink {
     token_cache: TokenCache,
     app_id: String,
     app_secret: String,
+    /// If set, the first `send_text` call will use the reply API (thread/topic)
+    /// instead of sending a new message. Consumed after first use.
+    reply_to: std::sync::Mutex<Option<String>>,
 }
 
 impl FeishuMessageSink {
@@ -453,7 +514,23 @@ impl FeishuMessageSink {
             token_cache,
             app_id,
             app_secret,
+            reply_to: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Set the message ID to reply to as a thread (topic).
+    /// Only affects the first `send_text` call.
+    pub fn with_reply_to(self, message_id: String) -> Self {
+        *self.reply_to.lock().unwrap_or_else(|e| e.into_inner()) = Some(message_id);
+        self
+    }
+
+    /// Returns whether a reply target is still pending (not yet consumed).
+    pub fn has_reply_to(&self) -> bool {
+        self.reply_to
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
     }
 }
 
@@ -467,6 +544,34 @@ impl MessageSink for FeishuMessageSink {
     }
 
     async fn send_text(&self, chat_id: &str, text: &str) -> Result<String> {
+        let target = self
+            .reply_to
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+
+        if let Some(ref message_id) = target {
+            let result = reply_text(
+                &self.client,
+                &self.token_cache,
+                &self.app_id,
+                &self.app_secret,
+                message_id,
+                text,
+            )
+            .await;
+
+            // Only consume reply_to after a successful reply
+            if result.is_ok() {
+                self.reply_to
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take();
+            }
+
+            return result;
+        }
+
         send_text(
             &self.client,
             &self.token_cache,

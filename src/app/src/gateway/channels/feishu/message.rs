@@ -27,6 +27,7 @@ pub enum MessagePart {
 pub struct ParsedMessage {
     pub message_id: String,
     pub chat_id: String,
+    pub chat_type: String,
     pub sender_id: String,
     pub text: String,
     pub parent_id: Option<String>,
@@ -285,6 +286,7 @@ pub fn parse_event(
     Some(ParsedMessage {
         message_id: msg_id.to_string(),
         chat_id: chat_id.to_string(),
+        chat_type: chat_type.to_string(),
         sender_id: sender_id.to_string(),
         text,
         parent_id,

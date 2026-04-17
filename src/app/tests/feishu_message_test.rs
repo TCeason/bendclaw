@@ -224,3 +224,25 @@ fn test_parse_post_empty_content() {
     let result = evot::gateway::channels::feishu::message::parse_post(&content);
     assert!(result.is_none());
 }
+
+// ── chat_type extraction ──
+
+#[test]
+fn test_parse_event_chat_type_p2p() {
+    let event = make_event(serde_json::json!({}));
+    let config = default_config();
+    let mut dedup = MessageDedup::new(Duration::from_secs(60));
+
+    let msg = parse_event(&event, &config, "bot_id", &mut dedup).expect("should parse");
+    assert_eq!(msg.chat_type, "p2p");
+}
+
+#[test]
+fn test_parse_event_chat_type_group() {
+    let event = make_event(serde_json::json!({ "chat_type": "group" }));
+    let config = default_config();
+    let mut dedup = MessageDedup::new(Duration::from_secs(60));
+
+    let msg = parse_event(&event, &config, "bot_id", &mut dedup).expect("should parse");
+    assert_eq!(msg.chat_type, "group");
+}
