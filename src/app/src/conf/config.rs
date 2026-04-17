@@ -80,7 +80,25 @@ impl Config {
     pub fn validate(&self) -> Result<()> {
         let llm = self.active_llm();
         if llm.api_key.is_empty() {
-            return Err(EvotError::Conf("active llm api_key not set".into()));
+            let provider = &self.llm.provider;
+            let (key_name, _, _) = match provider {
+                ProviderKind::Anthropic => (
+                    "EVOT_ANTHROPIC_API_KEY",
+                    "EVOT_ANTHROPIC_BASE_URL",
+                    "EVOT_ANTHROPIC_MODEL",
+                ),
+                ProviderKind::OpenAi => (
+                    "EVOT_OPENAI_API_KEY",
+                    "EVOT_OPENAI_BASE_URL",
+                    "EVOT_OPENAI_MODEL",
+                ),
+            };
+            let env_path = crate::conf::paths::env_file_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| "unknown".into());
+            return Err(EvotError::Conf(format!(
+                "{key_name} not set (provider: {provider:?}, env file: {env_path})"
+            )));
         }
 
         match self.storage.backend {
