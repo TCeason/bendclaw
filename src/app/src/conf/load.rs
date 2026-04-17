@@ -402,6 +402,14 @@ fn apply_env(config: &mut Config, vars: &HashMap<String, String>) -> Result<()> 
         }
     }
 
+    // Instance ID — isolates storage under ~/.evotai/<id>/
+    if let Some(val) = vars.get("EVOT_ID") {
+        let val = val.trim();
+        if !val.is_empty() {
+            config.id = Some(val.to_string());
+        }
+    }
+
     Ok(())
 }
 
@@ -432,6 +440,12 @@ pub(super) fn load_config_inner(env_file: Option<&str>) -> Result<Config> {
 
     let process_vars = load_process_env();
     apply_env(&mut config, &process_vars)?;
+
+    // Apply instance isolation: if EVOT_ID is set, redirect fs storage
+    if let Some(ref id) = config.id {
+        let isolated_root = paths::state_root_dir()?.join(id);
+        config.storage.fs.root_dir = isolated_root;
+    }
 
     config.validate()?;
 

@@ -415,8 +415,6 @@ impl Channel for FeishuChannel {
     // construction) which owns the Agent reference. The parameter is kept to
     // satisfy the generic Channel trait; this is a known trait-reuse trade-off.
     async fn run(self: Arc<Self>, _agent: Arc<Agent>, cancel: CancellationToken) -> Result<()> {
-        tracing::info!(channel = "feishu", "channel started");
-
         let bot_open_id = self
             .bot_open_id
             .get_or_try_init(|| async {
@@ -429,7 +427,6 @@ impl Channel for FeishuChannel {
                 .await
             })
             .await?;
-        tracing::info!(channel = "feishu", bot_open_id, "resolved bot identity");
 
         let mut attempt: u32 = 0;
         loop {
@@ -475,11 +472,6 @@ impl Channel for FeishuChannel {
                 1u64.saturating_mul(2u64.saturating_pow(attempt.min(6)))
                     .min(60),
             );
-            tracing::info!(
-                channel = "feishu",
-                backoff_secs = backoff.as_secs(),
-                "reconnecting"
-            );
 
             tokio::select! {
                 _ = cancel.cancelled() => break,
@@ -487,7 +479,6 @@ impl Channel for FeishuChannel {
             }
         }
 
-        tracing::info!(channel = "feishu", "channel stopped");
         Ok(())
     }
 }

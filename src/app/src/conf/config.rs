@@ -11,6 +11,7 @@ use crate::gateway::channels::feishu::FeishuChannelConfig;
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub id: Option<String>,
     pub llm: LlmSelection,
     pub anthropic: ProviderConfig,
     pub openai: ProviderConfig,
@@ -26,6 +27,7 @@ pub struct Config {
 impl Config {
     pub fn new(state_root: PathBuf) -> Self {
         Self {
+            id: None,
             llm: LlmSelection::default(),
             anthropic: ProviderConfig::anthropic(),
             openai: ProviderConfig::openai(),

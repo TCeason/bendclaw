@@ -9,6 +9,18 @@ use crate::error::EvotError;
 use crate::error::Result;
 
 pub async fn start(conf: Config) -> Result<()> {
+    tracing::info!(
+        id = ?conf.id,
+        env_file = %conf.env_file_path.display(),
+        provider = %conf.active_llm().provider,
+        model = %conf.active_llm().model,
+        storage = ?conf.storage.backend,
+        storage_root = %conf.storage.fs.root_dir.display(),
+        skills_dirs = ?conf.skills_dirs,
+        sandbox = conf.sandbox.enabled,
+        "server starting"
+    );
+
     let agent = build_agent(&conf)?;
     let cancel = CancellationToken::new();
 
@@ -50,6 +62,8 @@ pub fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
         skills_dirs.push(global);
     }
     skills_dirs.extend(conf.skills_dirs.clone());
+
+    tracing::info!(skills_dirs = ?skills_dirs, "agent skills directories");
 
     Ok(Agent::new(conf, &cwd)?
         .with_system_prompt(system_prompt)

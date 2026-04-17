@@ -264,12 +264,6 @@ where
     let (ws_url, ping_interval_secs) =
         get_ws_endpoint(ctx.client, ctx.app_id, ctx.app_secret).await?;
 
-    tracing::info!(
-        channel = "feishu",
-        ping_interval_secs,
-        "connecting websocket"
-    );
-
     let tls =
         native_tls::TlsConnector::new().map_err(|e| EvotError::Run(format!("native tls: {e}")))?;
     let connector = tokio_tungstenite::Connector::NativeTls(tls);
@@ -293,8 +287,6 @@ where
     let mut ping_interval_dur = Duration::from_secs(ping_interval_secs);
     let mut ping_timer = tokio::time::interval(ping_interval_dur);
     ping_timer.tick().await;
-
-    tracing::info!(channel = "feishu", service_id, "connected");
 
     // Send initial ping
     let initial_ping = build_ping_frame(service_id);
