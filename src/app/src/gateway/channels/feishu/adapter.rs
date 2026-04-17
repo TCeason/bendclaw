@@ -57,17 +57,11 @@ impl FeishuChannel {
         msg: super::message::ParsedMessage,
         bot_open_id: &str,
     ) {
-        // Build locator: topic messages get their own session scope,
-        // non-topic messages share a session per chat+user.
-        let scope = if let Some(ref tid) = msg.thread_id {
-            format!("chat:{}:topic:{}", msg.chat_id, tid)
-        } else if let Some(ref rid) = msg.root_id {
-            format!("chat:{}:topic:{}", msg.chat_id, rid)
-        } else if let Some(ref pid) = msg.parent_id {
-            format!("chat:{}:topic:{}", msg.chat_id, pid)
-        } else {
-            format!("chat:{}:user:{}", msg.chat_id, msg.sender_id)
-        };
+        // Build locator: all messages from the same chat+user share one session.
+        // Topic context is injected via input (root message + thread replies),
+        // not via separate sessions — because topic IDs (thread_id, root_id,
+        // parent_id) are unstable across nested replies.
+        let scope = format!("chat:{}:user:{}", msg.chat_id, msg.sender_id);
         let locator = SessionLocator::new("feishu", &scope);
         tracing::info!(
             channel = "feishu",
