@@ -402,7 +402,17 @@ pub(super) fn load_config_inner() -> Result<Config> {
     file_source.apply(&mut config)?;
 
     let env_path = paths::env_file_path()?;
-    ensure_env_file(&env_path)?;
+    let is_custom_env = std::env::var("EVOT_ENV_FILE").is_ok();
+    if is_custom_env {
+        if !env_path.exists() {
+            return Err(crate::error::EvotError::Conf(format!(
+                "EVOT_ENV_FILE not found: {}",
+                env_path.display()
+            )));
+        }
+    } else {
+        ensure_env_file(&env_path)?;
+    }
     let env_file_vars = load_env_file(&env_path)?;
     apply_env(&mut config, &env_file_vars)?;
 

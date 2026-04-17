@@ -51,7 +51,10 @@ export interface RunStats {
   toolBreakdown: ToolBreakdownEntry[]
   llmCallDetails: LlmCallDetail[]
   compactHistory: CompactRecord[]
+  /** Last LLM call snapshot (used for per-call verbose display) */
   lastMessageStats: MessageStats | null
+  /** Cumulative token breakdown across all LLM calls (used for run summary) */
+  cumulativeStats: MessageStats
   systemPromptTokens: number
 }
 
@@ -79,7 +82,7 @@ export interface CompactRecord {
 }
 
 // ---------------------------------------------------------------------------
-// Message stats — token breakdown by role (estimated from JSON size)
+// Message stats — token breakdown by role
 // ---------------------------------------------------------------------------
 
 export interface MessageStats {

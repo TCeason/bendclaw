@@ -50,6 +50,7 @@ export function emptyRunStats(): RunStats {
     llmCallDetails: [],
     compactHistory: [],
     lastMessageStats: null,
+    cumulativeStats: { userCount: 0, assistantCount: 0, toolResultCount: 0, imageCount: 0, userTokens: 0, assistantTokens: 0, toolResultTokens: 0, imageTokens: 0, toolDetails: [] },
     systemPromptTokens: 0,
   }
 }

@@ -6,6 +6,7 @@ export interface CliOptions {
   prompt?: string
   port?: number
   resume?: string
+  envFile?: string
   outputFormat: 'text' | 'stream-json'
   verbose: boolean
   maxTurns: number
@@ -45,6 +46,7 @@ export function parseArgs(argv: string[]): CliOptions {
       continue
     }
     if (arg === '--model' && argv[i + 1]) { opts.model = argv[++i]; continue }
+    if (arg === '--env-file' && argv[i + 1]) { opts.envFile = argv[++i]; continue }
     if (arg === '--port' && argv[i + 1]) { opts.port = parseIntArg(argv[++i], '--port'); continue }
     if (arg === '--resume' && argv[i + 1]) { opts.resume = argv[++i]; continue }
     if (arg === '--output-format' && argv[i + 1]) {
@@ -99,6 +101,7 @@ export function printHelp() {
   console.log('Options:')
   console.log('  -p, --prompt <text>    Run one-shot prompt')
   console.log('  --model <name>         Override the model')
+  console.log('  --env-file <path>      Path to evot.env file')
   console.log('  --port <number>        Server port (default: 8082)')
   console.log('  --resume <session_id>  Resume a session')
   console.log('  --output-format <fmt>  text | stream-json (default: text)')

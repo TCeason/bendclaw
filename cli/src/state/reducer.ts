@@ -247,11 +247,29 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       }
 
       const text = `[LLM] call · ${model} · turn ${turn}${retryStr}${injectedStr}\n${msgLine}${budgetLine}${distLine}${toolBreakdownLines}`
+
+      // Accumulate cumulative stats across all LLM calls
+      const prev = state.currentRunStats.cumulativeStats
+      const cumulative: MessageStats = msgStats
+        ? {
+            userCount: prev.userCount + msgStats.userCount,
+            assistantCount: prev.assistantCount + msgStats.assistantCount,
+            toolResultCount: prev.toolResultCount + msgStats.toolResultCount,
+            imageCount: prev.imageCount + msgStats.imageCount,
+            userTokens: prev.userTokens + msgStats.userTokens,
+            assistantTokens: prev.assistantTokens + msgStats.assistantTokens,
+            toolResultTokens: prev.toolResultTokens + msgStats.toolResultTokens,
+            imageTokens: prev.imageTokens + msgStats.imageTokens,
+            toolDetails: [...prev.toolDetails, ...msgStats.toolDetails],
+          }
+        : prev
+
       return {
         ...state,
         currentRunStats: {
           ...state.currentRunStats,
           lastMessageStats: msgStats,
+          cumulativeStats: cumulative,
           systemPromptTokens: sysTok,
         },
         verboseEvents: [...state.verboseEvents, { kind: 'llm_call', text }],

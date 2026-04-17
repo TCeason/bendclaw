@@ -22,6 +22,24 @@ fn restore_env_var(key: &str, value: Option<OsString>) {
     }
 }
 
+/// Guard that saves and restores EVOT_ENV_FILE around each test.
+struct EnvFileGuard(Option<OsString>);
+
+impl EnvFileGuard {
+    fn new() -> Self {
+        let orig = std::env::var_os("EVOT_ENV_FILE");
+        // Clear so existing tests use the default HOME-based path.
+        std::env::remove_var("EVOT_ENV_FILE");
+        Self(orig)
+    }
+}
+
+impl Drop for EnvFileGuard {
+    fn drop(&mut self) {
+        restore_env_var("EVOT_ENV_FILE", self.0.take());
+    }
+}
+
 #[test]
 fn default_provider_is_anthropic() {
     assert_eq!(ProviderKind::default(), ProviderKind::Anthropic);
@@ -75,6 +93,7 @@ fn load_config_prefers_process_env_over_env_file() -> TestResult {
     let _guard = env_lock()
         .lock()
         .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let _env_guard = EnvFileGuard::new();
 
     let temp = tempfile::tempdir()?;
     let env_home = temp.path().join("home");
@@ -111,6 +130,7 @@ fn load_config_uses_toml_then_env_then_cli() -> TestResult {
     let _guard = env_lock()
         .lock()
         .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let _env_guard = EnvFileGuard::new();
 
     let temp = tempfile::tempdir()?;
     let env_home = temp.path().join("home");
@@ -162,6 +182,7 @@ fn load_config_keeps_both_provider_configs() -> TestResult {
     let _guard = env_lock()
         .lock()
         .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let _env_guard = EnvFileGuard::new();
 
     let temp = tempfile::tempdir()?;
     let env_home = temp.path().join("home");
@@ -204,6 +225,7 @@ fn load_config_normalizes_empty_optional_values() -> TestResult {
     let _guard = env_lock()
         .lock()
         .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let _env_guard = EnvFileGuard::new();
 
     let temp = tempfile::tempdir()?;
     let env_home = temp.path().join("home");
@@ -272,6 +294,7 @@ fn load_config_thinking_level_from_toml() -> TestResult {
     let _guard = env_lock()
         .lock()
         .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let _env_guard = EnvFileGuard::new();
 
     let temp = tempfile::tempdir()?;
     let env_home = temp.path().join("home");
@@ -307,6 +330,7 @@ fn load_config_thinking_level_from_env_file() -> TestResult {
     let _guard = env_lock()
         .lock()
         .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let _env_guard = EnvFileGuard::new();
 
     let temp = tempfile::tempdir()?;
     let env_home = temp.path().join("home");
@@ -333,6 +357,7 @@ fn load_config_thinking_level_env_overrides_toml() -> TestResult {
     let _guard = env_lock()
         .lock()
         .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let _env_guard = EnvFileGuard::new();
 
     let temp = tempfile::tempdir()?;
     let env_home = temp.path().join("home");
@@ -363,5 +388,62 @@ api_key = "test-key"
 
     let config = result?;
     assert_eq!(config.llm.thinking_level, ThinkingLevel::High);
+    Ok(())
+}
+
+#[test]
+fn load_config_custom_env_file_via_evot_env_file() -> TestResult {
+    let _guard = env_lock()
+        .lock()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let _env_guard = EnvFileGuard::new();
+
+    let temp = tempfile::tempdir()?;
+    let env_home = temp.path().join("home");
+    std::fs::create_dir_all(env_home.join(".evotai"))?;
+
+    // Write a custom env file outside the default location
+    let custom_env = temp.path().join("custom.env");
+    std::fs::write(
+        &custom_env,
+        "EVOT_ANTHROPIC_API_KEY=custom-key\nEVOT_SERVER_PORT=7777\n",
+    )?;
+
+    let original_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &env_home);
+    std::env::set_var("EVOT_ENV_FILE", &custom_env);
+
+    let result = Config::load();
+
+    restore_env_var("HOME", original_home);
+
+    let config = result?;
+    assert_eq!(config.active_llm().api_key, "custom-key");
+    assert_eq!(config.server.port, 7777);
+    Ok(())
+}
+
+#[test]
+fn load_config_custom_env_file_missing_returns_error() -> TestResult {
+    let _guard = env_lock()
+        .lock()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let _env_guard = EnvFileGuard::new();
+
+    let temp = tempfile::tempdir()?;
+    let env_home = temp.path().join("home");
+    std::fs::create_dir_all(env_home.join(".evotai"))?;
+
+    let original_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &env_home);
+    std::env::set_var("EVOT_ENV_FILE", "/tmp/nonexistent-evot.env");
+
+    let result = Config::load();
+
+    restore_env_var("HOME", original_home);
+
+    assert!(result.is_err());
+    let err = format!("{}", result.unwrap_err());
+    assert!(err.contains("EVOT_ENV_FILE not found"));
     Ok(())
 }

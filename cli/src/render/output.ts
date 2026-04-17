@@ -177,10 +177,10 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
   }
   line(tokLine)
 
-  // Token breakdown by role (last LLM call snapshot)
-  const ms = stats.lastMessageStats
-  if (ms && totalInput > 0) {
-    line('  last call breakdown:')
+  // Token breakdown by role (cumulative across all LLM calls)
+  const ms = stats.cumulativeStats
+  const hasBreakdown = ms.userTokens > 0 || ms.assistantTokens > 0 || ms.toolResultTokens > 0 || ms.imageTokens > 0
+  if (hasBreakdown && totalInput > 0) {
     const sysTok = stats.systemPromptTokens
     const maxLabelWidth = 12
     const maxValWidth = 6

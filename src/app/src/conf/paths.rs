@@ -31,6 +31,9 @@ pub fn config_file_path() -> Result<PathBuf> {
 }
 
 pub fn env_file_path() -> Result<PathBuf> {
+    if let Ok(custom) = std::env::var("EVOT_ENV_FILE") {
+        return expand_home_path(&custom);
+    }
     Ok(state_root_dir()?.join("evot.env"))
 }
 

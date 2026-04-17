@@ -128,6 +128,7 @@ describe('buildRunSummary', () => {
       llmCallDetails: [],
       compactHistory: [],
       lastMessageStats: null,
+      cumulativeStats: { userCount: 0, assistantCount: 0, toolResultCount: 0, imageCount: 0, userTokens: 0, assistantTokens: 0, toolResultTokens: 0, imageTokens: 0, toolDetails: [] },
       systemPromptTokens: 0,
     })
     expect(lines.length).toBeGreaterThan(1)
@@ -162,13 +163,14 @@ describe('buildRunSummary', () => {
       ],
       compactHistory: [],
       lastMessageStats: null,
+      cumulativeStats: { userCount: 0, assistantCount: 0, toolResultCount: 0, imageCount: 0, userTokens: 0, assistantTokens: 0, toolResultTokens: 0, imageTokens: 0, toolDetails: [] },
       systemPromptTokens: 0,
     })
     expect(lines.some((l) => l.text.includes('llm'))).toBe(true)
     expect(lines.some((l) => l.text.includes('ttft avg'))).toBe(true)
     expect(lines.some((l) => l.text.includes('#1'))).toBe(true)
     expect(lines.some((l) => l.text.includes('cache'))).toBe(true)
-    expect(lines.some((l) => l.text.includes('total input'))).toBe(true)
+    expect(lines.some((l) => l.text.includes(' in '))).toBe(true)
   })
 
   test('includes token breakdown by role', () => {
@@ -190,13 +192,16 @@ describe('buildRunSummary', () => {
         { model: 'test', durationMs: 5000, inputTokens: 50000, outputTokens: 250, ttfbMs: 500, ttftMs: 1000, tokPerSec: 62.5 },
       ],
       compactHistory: [],
-      lastMessageStats: {
+      lastMessageStats: null,
+      cumulativeStats: {
         userCount: 3,
         assistantCount: 2,
         toolResultCount: 2,
+        imageCount: 0,
         userTokens: 5000,
         assistantTokens: 15000,
         toolResultTokens: 78000,
+        imageTokens: 0,
         toolDetails: [['bash', 30000], ['read', 48000]],
       },
       systemPromptTokens: 2000,
