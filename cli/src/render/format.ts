@@ -54,9 +54,42 @@ export function renderBar(value: number, max: number, width: number): string {
   return '█'.repeat(Math.min(filled, width)) + '░'.repeat(Math.max(0, width - filled))
 }
 
-export function renderPositionBar(beforeCount: number, sortedActions: any[], level: number): string {
+/**
+ * Position bar character mapping for compaction methods.
+ *
+ *   O — Outline (tree-sitter structural extraction)
+ *   H — HeadTail (head + tail truncation)
+ *   S — Summarized (turn summarized)
+ *   D — Dropped (messages evicted)
+ *   C — LifecycleCleared (current-run result cleared after use)
+ *   A — AgeCleared (old result cleared by age policy)
+ *   X — OversizeCapped (oversized result capped)
+ *   K — Kept (retained message, used as default in L3)
+ */
+const COMPACTION_METHOD_CHARS: Record<string, string> = {
+  Outline: 'O',
+  HeadTail: 'H',
+  Summarized: 'S',
+  Dropped: 'D',
+  LifecycleCleared: 'C',
+  AgeCleared: 'A',
+  OversizeCapped: 'X',
+}
+
+/** Reverse lookup: char → method name */
+const CHAR_TO_METHOD: Record<string, string> = Object.fromEntries(
+  Object.entries(COMPACTION_METHOD_CHARS).map(([k, v]) => [v, k])
+)
+
+/**
+ * Render a position bar showing which messages were affected by compaction,
+ * plus a legend line listing only the characters that actually appear.
+ *
+ * Returns `{ bar, legend }` so the caller can place them independently.
+ */
+export function renderPositionBar(beforeCount: number, sortedActions: any[], level: number): { bar: string; legend: string } {
   const WIDTH = 40
-  if (beforeCount === 0) return `[${'·'.repeat(WIDTH)}]`
+  if (beforeCount === 0) return { bar: `[${'·'.repeat(WIDTH)}]`, legend: '' }
 
   const defaultChar = level === 3 ? 'K' : '·'
   const slotCount = Math.min(WIDTH, beforeCount)
@@ -66,12 +99,7 @@ export function renderPositionBar(beforeCount: number, sortedActions: any[], lev
     const start = (a.index as number) ?? 0
     const end = (a.end_index as number) ?? start
     const method = (a.method as string) ?? ''
-    let ch: string
-    if (level === 1 && method === 'Outline') ch = 'O'
-    else if (level === 1 && method === 'HeadTail') ch = 'H'
-    else if (level === 2 && method === 'Summarized') ch = 'S'
-    else if (level === 3 && method === 'Dropped') ch = 'D'
-    else ch = '?'
+    const ch = COMPACTION_METHOD_CHARS[method] ?? '?'
 
     if (beforeCount <= WIDTH) {
       for (let i = start; i <= Math.min(end, slotCount - 1); i++) slots[i] = ch
@@ -83,7 +111,18 @@ export function renderPositionBar(beforeCount: number, sortedActions: any[], lev
     }
   }
 
-  return `[${slots.join('')}]`
+  const bar = `[${slots.join('')}]`
+
+  // Build legend from chars that actually appear in the bar
+  const seen = new Set(slots)
+  const legendParts: string[] = []
+  if (seen.has('K')) legendParts.push('K=Kept')
+  for (const [method, ch] of Object.entries(COMPACTION_METHOD_CHARS)) {
+    if (seen.has(ch)) legendParts.push(`${ch}=${method}`)
+  }
+  const legend = legendParts.join('  ')
+
+  return { bar, legend }
 }
 
 export function truncate(s: string, max: number): string {

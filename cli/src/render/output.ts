@@ -155,8 +155,8 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
 
   // Context budget bar
   if (stats.contextWindow > 0 && stats.contextTokens > 0) {
-    const budget = stats.contextWindow
-    const pct = (stats.contextTokens / budget) * 100
+    const budget = Math.max(0, stats.contextWindow - stats.systemPromptTokens)
+    const pct = budget > 0 ? (stats.contextTokens / budget) * 100 : 0
     if (pct > 0) {
       const bar = renderBar(stats.contextTokens, budget, barWidth)
       line(`  context  ${bar}  ~${humanTokens(stats.contextTokens)} / ~${humanTokens(budget)} (${pct.toFixed(0)}%)`)
@@ -177,9 +177,10 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
   }
   line(tokLine)
 
-  // Token breakdown by role
+  // Token breakdown by role (last LLM call snapshot)
   const ms = stats.lastMessageStats
   if (ms && totalInput > 0) {
+    line('  last call breakdown:')
     const sysTok = stats.systemPromptTokens
     const maxLabelWidth = 12
     const maxValWidth = 6
@@ -188,6 +189,7 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
       ['user', ms.userTokens],
       ['assistant', ms.assistantTokens],
       ['tool_result', ms.toolResultTokens],
+      ['image', ms.imageTokens],
     ]
     for (const [label, tokens] of roles) {
       if (tokens === 0) continue

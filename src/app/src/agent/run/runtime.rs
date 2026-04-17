@@ -450,6 +450,7 @@ fn map_agent_event(
             attempt,
             injected_count,
             request,
+            stats,
             system_prompt_tokens,
             budget_tokens,
             context_window,
@@ -457,63 +458,24 @@ fn map_agent_event(
             let message_count = request.messages.len();
             let tool_count = request.tools.len();
 
-            // Compute message stats and bytes on the Rust side to avoid
-            // serializing the full messages/tools across the NAPI boundary.
-            let mut user_count = 0usize;
-            let mut assistant_count = 0usize;
-            let mut tool_result_count = 0usize;
-            let mut user_tokens = 0usize;
-            let mut assistant_tokens = 0usize;
-            let mut tool_result_tokens = 0usize;
-            let mut tool_details: Vec<(String, usize)> = Vec::new();
-            let mut message_bytes = 0usize;
+            // Compute message_bytes for transcript (still needs serialization)
+            let message_bytes: usize = request
+                .messages
+                .iter()
+                .map(|msg| serialize_or_placeholder(msg, "message").to_string().len())
+                .sum();
 
-            for msg in &request.messages {
-                let json = serialize_or_placeholder(msg, "message");
-                let json_str = json.to_string();
-                let est = json_str.len() / 4;
-                message_bytes += json_str.len();
-
-                let role = json
-                    .get("role")
-                    .and_then(|r| r.as_str())
-                    .unwrap_or("unknown");
-                match role {
-                    "user" => {
-                        user_count += 1;
-                        user_tokens += est;
-                    }
-                    "assistant" => {
-                        assistant_count += 1;
-                        assistant_tokens += est;
-                    }
-                    "toolResult" | "tool_result" | "tool" => {
-                        tool_result_count += 1;
-                        tool_result_tokens += est;
-                        let name = json
-                            .get("toolName")
-                            .or_else(|| json.get("tool_name"))
-                            .or_else(|| json.get("name"))
-                            .and_then(|n| n.as_str())
-                            .unwrap_or("unknown");
-                        tool_details.push((name.to_string(), est));
-                    }
-                    _ => {
-                        user_count += 1;
-                        user_tokens += est;
-                    }
-                }
-            }
-            tool_details.sort_by(|a, b| b.1.cmp(&a.1));
-
+            // Convert engine LlmCallStats → app LlmMessageStats (transparent passthrough)
             let message_stats = Some(LlmMessageStats {
-                user_count,
-                assistant_count,
-                tool_result_count,
-                user_tokens,
-                assistant_tokens,
-                tool_result_tokens,
-                tool_details,
+                user_count: stats.user_count,
+                assistant_count: stats.assistant_count,
+                tool_result_count: stats.tool_result_count,
+                image_count: stats.image_count,
+                user_tokens: stats.user_tokens,
+                assistant_tokens: stats.assistant_tokens,
+                tool_result_tokens: stats.tool_result_tokens,
+                image_tokens: stats.image_tokens,
+                tool_details: stats.tool_details.clone(),
             });
 
             vec![
@@ -594,25 +556,40 @@ fn map_agent_event(
             budget_tokens,
             system_prompt_tokens,
             context_window,
-        } => vec![
-            RuntimeEvent::Transcript(
-                TranscriptStats::ContextCompactionStarted(ContextCompactionStartedStats {
+            message_stats,
+        } => {
+            let stats = Some(LlmMessageStats {
+                user_count: message_stats.user_count,
+                assistant_count: message_stats.assistant_count,
+                tool_result_count: message_stats.tool_result_count,
+                image_count: message_stats.image_count,
+                user_tokens: message_stats.user_tokens,
+                assistant_tokens: message_stats.assistant_tokens,
+                tool_result_tokens: message_stats.tool_result_tokens,
+                image_tokens: message_stats.image_tokens,
+                tool_details: message_stats.tool_details.clone(),
+            });
+            vec![
+                RuntimeEvent::Transcript(
+                    TranscriptStats::ContextCompactionStarted(ContextCompactionStartedStats {
+                        message_count: *message_count,
+                        estimated_tokens: *estimated_tokens,
+                        budget_tokens: *budget_tokens,
+                        system_prompt_tokens: *system_prompt_tokens,
+                        context_window: *context_window,
+                    })
+                    .to_item(),
+                ),
+                RuntimeEvent::Public(RunEventPayload::ContextCompactionStarted {
                     message_count: *message_count,
                     estimated_tokens: *estimated_tokens,
                     budget_tokens: *budget_tokens,
                     system_prompt_tokens: *system_prompt_tokens,
                     context_window: *context_window,
-                })
-                .to_item(),
-            ),
-            RuntimeEvent::Public(RunEventPayload::ContextCompactionStarted {
-                message_count: *message_count,
-                estimated_tokens: *estimated_tokens,
-                budget_tokens: *budget_tokens,
-                system_prompt_tokens: *system_prompt_tokens,
-                context_window: *context_window,
-            }),
-        ],
+                    message_stats: stats,
+                }),
+            ]
+        }
 
         evot_engine::AgentEvent::ContextCompactionEnd { stats, messages } => {
             let compacted_transcripts = from_agent_messages(messages);

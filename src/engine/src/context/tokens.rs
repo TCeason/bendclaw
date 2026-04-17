@@ -46,3 +46,84 @@ pub fn content_tokens(content: &[Content]) -> usize {
 pub fn total_tokens(messages: &[AgentMessage]) -> usize {
     messages.iter().map(message_tokens).sum()
 }
+
+/// Estimate tokens for a single `Content` block.
+fn single_content_tokens(c: &Content) -> usize {
+    match c {
+        Content::Text { text } => estimate_tokens(text),
+        Content::Image { data, .. } => {
+            let raw_bytes = data.len() * 3 / 4;
+            (raw_bytes / 750).clamp(85, 16_000)
+        }
+        Content::Thinking { thinking, .. } => estimate_tokens(thinking),
+        Content::ToolCall {
+            name, arguments, ..
+        } => estimate_tokens(name) + estimate_tokens(&arguments.to_string()) + 8,
+    }
+}
+
+/// Compute pre-aggregated stats from LLM messages.
+///
+/// Image tokens are counted as a separate dimension (not included in
+/// user/assistant/tool_result tokens), so:
+///   total = user_tokens + assistant_tokens + tool_result_tokens + image_tokens
+pub fn compute_call_stats(messages: &[Message]) -> LlmCallStats {
+    let mut stats = LlmCallStats::default();
+
+    for msg in messages {
+        match msg {
+            Message::User { content, .. } => {
+                stats.user_count += 1;
+                for c in content {
+                    let tok = single_content_tokens(c);
+                    if matches!(c, Content::Image { .. }) {
+                        stats.image_count += 1;
+                        stats.image_tokens += tok;
+                    } else {
+                        stats.user_tokens += tok;
+                    }
+                }
+            }
+            Message::Assistant { content, .. } => {
+                stats.assistant_count += 1;
+                for c in content {
+                    let tok = single_content_tokens(c);
+                    if matches!(c, Content::Image { .. }) {
+                        stats.image_count += 1;
+                        stats.image_tokens += tok;
+                    } else {
+                        stats.assistant_tokens += tok;
+                    }
+                }
+            }
+            Message::ToolResult {
+                content, tool_name, ..
+            } => {
+                stats.tool_result_count += 1;
+                let mut msg_tokens = 0usize;
+                for c in content {
+                    let tok = single_content_tokens(c);
+                    if matches!(c, Content::Image { .. }) {
+                        stats.image_count += 1;
+                        stats.image_tokens += tok;
+                    } else {
+                        stats.tool_result_tokens += tok;
+                        msg_tokens += tok;
+                    }
+                }
+                stats.tool_details.push((tool_name.clone(), msg_tokens));
+            }
+        }
+    }
+
+    stats.tool_details.sort_by(|a, b| b.1.cmp(&a.1));
+    stats
+}
+
+/// Compute stats from `AgentMessage` slice (filters to LLM messages only).
+pub fn compute_call_stats_from_agent_messages(messages: &[AgentMessage]) -> LlmCallStats {
+    let llm_messages: Vec<&Message> = messages.iter().filter_map(|m| m.as_llm()).collect();
+    // Reuse the same logic by collecting refs
+    let owned: Vec<Message> = llm_messages.into_iter().cloned().collect();
+    compute_call_stats(&owned)
+}

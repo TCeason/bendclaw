@@ -183,9 +183,11 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
             userCount: (ms.user_count as number) ?? 0,
             assistantCount: (ms.assistant_count as number) ?? 0,
             toolResultCount: (ms.tool_result_count as number) ?? 0,
+            imageCount: (ms.image_count as number) ?? 0,
             userTokens: (ms.user_tokens as number) ?? 0,
             assistantTokens: (ms.assistant_tokens as number) ?? 0,
             toolResultTokens: (ms.tool_result_tokens as number) ?? 0,
+            imageTokens: (ms.image_tokens as number) ?? 0,
             toolDetails: (ms.tool_details as [string, number][]) ?? [],
           }
         : null
@@ -206,7 +208,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       let budgetLine = ''
       const budgetTokens = (p.budget_tokens as number) ?? 0
       if (budgetTokens > 0 && msgStats) {
-        const total = sysTok + msgStats.userTokens + msgStats.assistantTokens + msgStats.toolResultTokens
+        const total = sysTok + msgStats.userTokens + msgStats.assistantTokens + msgStats.toolResultTokens + msgStats.imageTokens
         const pct = ((total / budgetTokens) * 100).toFixed(0)
         const bar = renderBar(total, budgetTokens, 40)
         budgetLine = `\n  ${bar}  ~${humanTokensInline(total)} / ~${humanTokensInline(budgetTokens)} tokens (${pct}%)`
@@ -220,6 +222,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         if (msgStats.userTokens > 0) parts.push(`user ~${humanTokensInline(msgStats.userTokens)}`)
         if (msgStats.assistantTokens > 0) parts.push(`assistant ~${humanTokensInline(msgStats.assistantTokens)}`)
         if (msgStats.toolResultTokens > 0) parts.push(`tool_result ~${humanTokensInline(msgStats.toolResultTokens)}`)
+        if (msgStats.imageTokens > 0) parts.push(`image ~${humanTokensInline(msgStats.imageTokens)}`)
         distLine = `\n    ${parts.join(' · ')}`
       }
 
@@ -313,7 +316,25 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const sysTok = (p.system_prompt_tokens as number) ?? 0
       const pct = budget > 0 ? ((estTokens / budget) * 100).toFixed(0) : '0'
       const bar = renderBar(estTokens, budget, 40)
-      const text = `[COMPACT] call · ${msgCount} messages\n  ${bar}  ~${humanTokensInline(estTokens)} / ~${humanTokensInline(budget)} tokens (${pct}%)`
+
+      // Token distribution from message_stats (same source as LLM call)
+      const cms = p.message_stats as Record<string, any> | undefined
+      let distLine = ''
+      if (cms) {
+        const parts: string[] = []
+        const uTok = (cms.user_tokens as number) ?? 0
+        const aTok = (cms.assistant_tokens as number) ?? 0
+        const trTok = (cms.tool_result_tokens as number) ?? 0
+        const imgTok = (cms.image_tokens as number) ?? 0
+        if (sysTok > 0) parts.push(`system ~${humanTokensInline(sysTok)}`)
+        if (uTok > 0) parts.push(`user ~${humanTokensInline(uTok)}`)
+        if (aTok > 0) parts.push(`assistant ~${humanTokensInline(aTok)}`)
+        if (trTok > 0) parts.push(`tool_result ~${humanTokensInline(trTok)}`)
+        if (imgTok > 0) parts.push(`image ~${humanTokensInline(imgTok)}`)
+        if (parts.length > 0) distLine = `\n    ${parts.join(' · ')}`
+      }
+
+      const text = `[COMPACT] call · ${msgCount} messages\n  ${bar}  ~${humanTokensInline(estTokens)} / ~${humanTokensInline(budget)} tokens (${pct}%)${distLine}`
       return {
         ...state,
         currentRunStats: { ...state.currentRunStats, contextTokens: estTokens, contextWindow: window },
@@ -351,7 +372,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
               })
           : []
 
-        const posBar = renderPositionBar(beforeMsgs, sorted, level)
+        const { bar: posBar, legend } = renderPositionBar(beforeMsgs, sorted, level)
 
         let summary: string
         if (level === 1) {
@@ -376,6 +397,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         lines.push(`L${level}`)
         lines.push(`  ${beforeMsgs} msgs ~${humanTokensInline(before)} → ${afterMsgs} msgs ~${humanTokensInline(after)}  (saved ~${humanTokensInline(saved)}, ${savedPct}%)`)
         lines.push(`  ${posBar}`)
+        if (legend) lines.push(`  ${legend}`)
         lines.push(`  ${summary}`)
 
         if (sorted.length > 0) {
@@ -529,7 +551,7 @@ export function countMessagesByRole(messages: { role: string; content?: string; 
 
   toolDetails.sort((a, b) => b[1] - a[1])
 
-  return { userCount, assistantCount, toolResultCount, userTokens, assistantTokens, toolResultTokens, toolDetails }
+  return { userCount, assistantCount, toolResultCount, imageCount: 0, userTokens, assistantTokens, toolResultTokens, imageTokens: 0, toolDetails }
 }
 
 function updateToolCallInMessages(messages: UIMessage[], toolCallId: string, finished: UIToolCall): UIMessage[] {

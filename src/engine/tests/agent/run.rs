@@ -1887,6 +1887,71 @@ async fn test_llm_call_start_zero_budget_without_context_config() {
     assert_eq!(starts[0], (0, 0));
 }
 
+#[tokio::test]
+async fn test_llm_call_stats_image_tokens_separate_from_user() {
+    use evotengine::context::compute_call_stats;
+    use evotengine::types::Content;
+    use evotengine::types::Message;
+
+    let messages = vec![
+        Message::User {
+            content: vec![
+                Content::Text {
+                    text: "describe this image".into(),
+                },
+                Content::Image {
+                    data: "A".repeat(3000),
+                    mime_type: "image/png".into(),
+                },
+            ],
+            timestamp: 0,
+        },
+        Message::Assistant {
+            content: vec![Content::Text {
+                text: "It shows a cat.".into(),
+            }],
+            stop_reason: evotengine::types::StopReason::Stop,
+            model: "test".into(),
+            provider: "test".into(),
+            usage: evotengine::types::Usage::default(),
+            timestamp: 0,
+            error_message: None,
+        },
+    ];
+
+    let stats = compute_call_stats(&messages);
+
+    // user_tokens should NOT include image tokens
+    assert!(stats.user_tokens > 0);
+    assert!(stats.image_tokens > 0);
+    assert_eq!(stats.image_count, 1);
+    assert_eq!(stats.user_count, 1);
+    assert_eq!(stats.assistant_count, 1);
+    // image tokens are separate — total = user + assistant + image
+    let total = stats.user_tokens + stats.assistant_tokens + stats.image_tokens;
+    assert!(total > stats.user_tokens + stats.assistant_tokens);
+}
+
+#[tokio::test]
+async fn test_llm_call_stats_no_images() {
+    use evotengine::context::compute_call_stats;
+    use evotengine::types::Content;
+    use evotengine::types::Message;
+
+    let messages = vec![Message::User {
+        content: vec![Content::Text {
+            text: "hello".into(),
+        }],
+        timestamp: 0,
+    }];
+
+    let stats = compute_call_stats(&messages);
+    assert_eq!(stats.image_count, 0);
+    assert_eq!(stats.image_tokens, 0);
+    assert_eq!(stats.user_count, 1);
+    assert!(stats.user_tokens > 0);
+}
+
 // ---------------------------------------------------------------------------
 // Empty response retry tests
 // ---------------------------------------------------------------------------

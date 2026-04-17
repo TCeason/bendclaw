@@ -96,6 +96,8 @@ pub enum RunEventPayload {
         budget_tokens: usize,
         system_prompt_tokens: usize,
         context_window: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message_stats: Option<LlmMessageStats>,
     },
     ContextCompactionCompleted {
         result: CompactionResult,
@@ -121,9 +123,11 @@ pub struct LlmMessageStats {
     pub user_count: usize,
     pub assistant_count: usize,
     pub tool_result_count: usize,
+    pub image_count: usize,
     pub user_tokens: usize,
     pub assistant_tokens: usize,
     pub tool_result_tokens: usize,
+    pub image_tokens: usize,
     /// Per-tool token breakdown: (name, estimated_tokens), sorted desc.
     pub tool_details: Vec<(String, usize)>,
 }

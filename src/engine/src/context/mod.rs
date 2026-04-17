@@ -22,6 +22,8 @@ pub use compaction::CompactionStats;
 pub use compaction::CompactionStrategy;
 pub use compaction::DefaultCompaction;
 pub use compaction::ToolTokenDetail;
+pub use tokens::compute_call_stats;
+pub use tokens::compute_call_stats_from_agent_messages;
 pub use tokens::content_tokens;
 pub use tokens::estimate_tokens;
 pub use tokens::message_tokens;

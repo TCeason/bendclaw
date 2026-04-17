@@ -548,6 +548,8 @@ pub enum AgentEvent {
         attempt: usize,
         injected_count: usize,
         request: LlmCallRequest,
+        /// Pre-computed message stats from structured Content types.
+        stats: LlmCallStats,
         /// System prompt token count from context config (budget accounting baseline).
         system_prompt_tokens: usize,
         /// Context budget in tokens (context_window − system_prompt_tokens).
@@ -568,6 +570,8 @@ pub enum AgentEvent {
         budget_tokens: usize,
         system_prompt_tokens: usize,
         context_window: usize,
+        /// Pre-computed message stats for the context being compacted.
+        message_stats: LlmCallStats,
     },
     ContextCompactionEnd {
         stats: crate::context::CompactionStats,
@@ -586,6 +590,25 @@ pub struct LlmCallRequest {
     pub system_prompt: String,
     pub messages: Vec<Message>,
     pub tools: Vec<ToolDefinition>,
+}
+
+/// Pre-computed message stats for an LLM call, computed at the engine layer
+/// from structured `Message`/`Content` types for accurate token accounting.
+///
+/// Does NOT include `message_count` or `tool_count` — those come from
+/// `request.messages.len()` / `request.tools.len()` to avoid dual sources.
+#[derive(Debug, Clone, Default)]
+pub struct LlmCallStats {
+    pub user_count: usize,
+    pub assistant_count: usize,
+    pub tool_result_count: usize,
+    pub image_count: usize,
+    pub user_tokens: usize,
+    pub assistant_tokens: usize,
+    pub tool_result_tokens: usize,
+    pub image_tokens: usize,
+    /// Per-tool token breakdown: (name, estimated_tokens), sorted desc.
+    pub tool_details: Vec<(String, usize)>,
 }
 
 #[derive(Debug, Clone)]

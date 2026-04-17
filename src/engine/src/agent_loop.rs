@@ -371,12 +371,15 @@ async fn run_loop(
 
                 // Always emit Start/End pair so verbose mode can track
                 // every compaction pass, including no-ops.
+                let compact_stats =
+                    crate::context::compute_call_stats_from_agent_messages(&context.messages);
                 tx.send(AgentEvent::ContextCompactionStart {
                     message_count: original_count,
                     estimated_tokens: original_tokens,
                     budget_tokens: budget,
                     system_prompt_tokens: ctx_config.system_prompt_tokens,
                     context_window: ctx_config.max_context_tokens,
+                    message_stats: compact_stats,
                 })
                 .ok();
 
@@ -648,6 +651,7 @@ async fn stream_assistant_response(
                 )
             })
             .unwrap_or((0, 0, 0));
+        let llm_stats = crate::context::compute_call_stats(&llm_messages);
         tx.send(AgentEvent::LlmCallStart {
             turn,
             attempt,
@@ -658,6 +662,7 @@ async fn stream_assistant_response(
                 messages: llm_messages.clone(),
                 tools: tool_defs.clone(),
             },
+            stats: llm_stats,
             system_prompt_tokens: llm_sys_tokens,
             budget_tokens: llm_budget,
             context_window: llm_window,

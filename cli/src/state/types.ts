@@ -86,9 +86,11 @@ export interface MessageStats {
   userCount: number
   assistantCount: number
   toolResultCount: number
+  imageCount: number
   userTokens: number
   assistantTokens: number
   toolResultTokens: number
+  imageTokens: number
   /** Per-tool token breakdown: [name, tokens], sorted by tokens desc */
   toolDetails: [string, number][]
 }
