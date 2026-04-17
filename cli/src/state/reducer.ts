@@ -173,6 +173,8 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const toolCount = (p.tool_count as number) ?? tools?.length ?? 0
       const sysTok = (p.system_prompt_tokens as number) ?? 0
       const retryStr = attempt > 0 ? ` · retry ${attempt}` : ''
+      const injectedCount = (p.injected_count as number) ?? 0
+      const injectedStr = injectedCount > 0 ? ` · ${injectedCount} injected` : ''
 
       // Pre-computed message stats from Rust side (always present)
       const ms = p.message_stats as Record<string, any> | undefined
@@ -200,17 +202,28 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         msgLine += ` · ${toolCount} tools`
       }
 
-      let tokLine = '  tokens unknown'
-      if (msgStats) {
+      // Budget bar — self-contained from this event's payload
+      let budgetLine = ''
+      const budgetTokens = (p.budget_tokens as number) ?? 0
+      if (budgetTokens > 0 && msgStats) {
         const total = sysTok + msgStats.userTokens + msgStats.assistantTokens + msgStats.toolResultTokens
-        const tokParts: string[] = []
-        if (sysTok > 0) tokParts.push(`system ~${humanTokensInline(sysTok)}`)
-        if (msgStats.userTokens > 0) tokParts.push(`user ~${humanTokensInline(msgStats.userTokens)}`)
-        if (msgStats.assistantTokens > 0) tokParts.push(`assistant ~${humanTokensInline(msgStats.assistantTokens)}`)
-        if (msgStats.toolResultTokens > 0) tokParts.push(`tool_result ~${humanTokensInline(msgStats.toolResultTokens)}`)
-        tokLine = `  ~${humanTokensInline(total)} est tokens (${tokParts.join(' · ')})`
+        const pct = ((total / budgetTokens) * 100).toFixed(0)
+        const bar = renderBar(total, budgetTokens, 40)
+        budgetLine = `\n  ${bar}  ~${humanTokensInline(total)} / ~${humanTokensInline(budgetTokens)} tokens (${pct}%)`
       }
 
+      // Token distribution by role
+      let distLine = ''
+      if (msgStats) {
+        const parts: string[] = []
+        if (sysTok > 0) parts.push(`system ~${humanTokensInline(sysTok)}`)
+        if (msgStats.userTokens > 0) parts.push(`user ~${humanTokensInline(msgStats.userTokens)}`)
+        if (msgStats.assistantTokens > 0) parts.push(`assistant ~${humanTokensInline(msgStats.assistantTokens)}`)
+        if (msgStats.toolResultTokens > 0) parts.push(`tool_result ~${humanTokensInline(msgStats.toolResultTokens)}`)
+        distLine = `\n    ${parts.join(' · ')}`
+      }
+
+      // Tool result breakdown
       let toolBreakdownLines = ''
       if (msgStats && msgStats.toolDetails.length >= 2) {
         const agg = new Map<string, number>()
@@ -221,30 +234,16 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         const total = msgStats.toolResultTokens || 1
         const maxNameLen = Math.max(...sorted.map(([n]) => n.length), 4)
         for (const [name, tokens] of sorted) {
-          const pct = ((tokens / total) * 100).toFixed(1)
+          const pct = ((tokens / total) * 100).toFixed(0)
           const bar = renderBar(tokens, total, 20)
-          toolBreakdownLines += `\n    ${name.padEnd(maxNameLen)}  ~${humanTokensInline(tokens).padEnd(8)} (${pct.padStart(5)}%)  ${bar}`
+          toolBreakdownLines += `\n      ${name.padEnd(maxNameLen)}  ~${humanTokensInline(tokens).padEnd(6)} (${pct.padStart(3)}%)  ${bar}`
         }
         if (toolBreakdownLines) {
-          toolBreakdownLines = '\n  tool results:' + toolBreakdownLines
+          toolBreakdownLines = '\n    tool_result breakdown:' + toolBreakdownLines
         }
       }
 
-      const injectedCount = (p.injected_count as number) ?? 0
-      const injectedStr = injectedCount > 0 ? ` · ${injectedCount} injected` : ''
-
-      // Budget bar — self-contained from this event's payload
-      let budgetLine = ''
-      const budgetTokens = (p.budget_tokens as number) ?? 0
-      const ctxWindow = (p.context_window as number) ?? 0
-      if (budgetTokens > 0 && msgStats) {
-        const total = sysTok + msgStats.userTokens + msgStats.assistantTokens + msgStats.toolResultTokens
-        const pct = ((total / budgetTokens) * 100).toFixed(0)
-        const bar = renderBar(total, budgetTokens, 40)
-        budgetLine = `\n  ${bar}  ${pct}%(~${humanTokensInline(total)}) of budget(~${humanTokensInline(budgetTokens)})\n  budget ~${humanTokensInline(budgetTokens)} (window ${humanTokensInline(ctxWindow)} − sys ${humanTokensInline(sysTok)})`
-      }
-
-      const text = `[LLM] call · ${model} · turn ${turn}${retryStr}${injectedStr}\n${msgLine}\n${tokLine}${budgetLine}${toolBreakdownLines}`
+      const text = `[LLM] call · ${model} · turn ${turn}${retryStr}${injectedStr}\n${msgLine}${budgetLine}${distLine}${toolBreakdownLines}`
       return {
         ...state,
         currentRunStats: {
@@ -295,9 +294,8 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         const durSec = (durationMs / 1000).toFixed(1)
         const dur = durationMs || 1
         const ttfbPct = ((ttfbMs / dur) * 100).toFixed(0)
-        const ttftPct = ((ttftMs / dur) * 100).toFixed(0)
         const streamPct = ((streamingMs / dur) * 100).toFixed(0)
-        text = `[LLM] completed\n  tokens   ${humanTokensInline(inputTok)} in · ${outputTok} out · ${tokPerSec.toFixed(0)} tok/s\n  timing   ${durSec}s · ttfb ${(ttfbMs / 1000).toFixed(1)}s (${ttfbPct}%) · ttft ${(ttftMs / 1000).toFixed(1)}s (${ttftPct}%) · stream ${(streamingMs / 1000).toFixed(1)}s (${streamPct}%)`
+        text = `[LLM] completed · ${durSec}s · ${tokPerSec.toFixed(0)} tok/s\n  tokens  ${humanTokensInline(inputTok)} in · ${outputTok} out\n  timing  ttfb ${(ttfbMs / 1000).toFixed(1)}s (${ttfbPct}%) · stream ${(streamingMs / 1000).toFixed(1)}s (${streamPct}%)`
       }
 
       return {
@@ -315,7 +313,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const sysTok = (p.system_prompt_tokens as number) ?? 0
       const pct = budget > 0 ? ((estTokens / budget) * 100).toFixed(0) : '0'
       const bar = renderBar(estTokens, budget, 40)
-      const text = `[COMPACT] call\n  ${msgCount} messages · ~${humanTokensInline(estTokens)} tokens\n  ${bar}  ${pct}%(${humanTokensInline(estTokens)}) of budget(${humanTokensInline(budget)})\n  budget ${humanTokensInline(budget)} (window ${humanTokensInline(window)} − sys ${humanTokensInline(sysTok)})`
+      const text = `[COMPACT] call · ${msgCount} messages\n  ${bar}  ~${humanTokensInline(estTokens)} / ~${humanTokensInline(budget)} tokens (${pct}%)`
       return {
         ...state,
         currentRunStats: { ...state.currentRunStats, contextTokens: estTokens, contextWindow: window },
@@ -331,7 +329,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         action = 'no-op'
       } else if (type === 'run_once_cleared') {
         const saved = (result?.saved_tokens as number) ?? 0
-        action = `cleared · saved ${humanTokensInline(saved)} tokens`
+        action = `cleared (−${humanTokensInline(saved)})`
       } else if (type === 'level_compacted') {
         const level = (result?.level as number) ?? 0
         const beforeMsgs = (result?.before_message_count as number) ?? 0
@@ -340,7 +338,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         const after = (result?.after_estimated_tokens as number) ?? 0
         const msgsDropped = (result?.messages_dropped as number) ?? 0
         const saved = before - after
-        const savedPct = before > 0 ? ((saved / before) * 100).toFixed(1) : '0.0'
+        const savedPct = before > 0 ? ((saved / before) * 100).toFixed(0) : '0'
 
         const allActions = result?.actions as any[] | undefined
         const sorted = allActions
@@ -376,17 +374,16 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
 
         const lines: string[] = []
         lines.push(`L${level}`)
-        lines.push(`  ${beforeMsgs} messages ~${humanTokensInline(before)} tok`)
+        lines.push(`  ${beforeMsgs} msgs ~${humanTokensInline(before)} → ${afterMsgs} msgs ~${humanTokensInline(after)}  (saved ~${humanTokensInline(saved)}, ${savedPct}%)`)
         lines.push(`  ${posBar}`)
         lines.push(`  ${summary}`)
-        lines.push(`  ${afterMsgs} messages ~${humanTokensInline(after)} tok  (saved ~${humanTokensInline(saved)}, ${savedPct}%)`)
 
         if (sorted.length > 0) {
           const totalActions = allActions?.length ?? 0
           const changed = sorted.length
           let header: string
           if (level === 1) {
-            header = `  actions: (${changed} of ${totalActions} changed, sorted by savings)`
+            header = `  actions: (${changed} of ${totalActions} changed)`
           } else if (level === 2) {
             const totalMsgs = sorted.reduce((s: number, a: any) => s + 1 + ((a.related_count as number) ?? 0), 0)
             header = `  actions: (${changed} turns, ${totalMsgs} msgs → ${changed} summaries)`
@@ -409,14 +406,14 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
             const aSaved = bTok - aTok
             if (method === 'Summarized') {
               const rc = (a.related_count as number) ?? 0
-              return `    #${String(idx).padEnd(3)} turn(${1 + rc} msgs)  ${method.padEnd(12)} ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (saved ~${humanTokensInline(aSaved)})`
+              return `    #${String(idx).padEnd(3)} turn(${1 + rc} msgs)  ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (−${humanTokensInline(aSaved)})`
             }
             if (method === 'Dropped') {
               const endIdx = a.end_index as number | undefined
               const idxStr = endIdx != null ? `#${idx}..#${String(endIdx).padEnd(3)}` : `#${String(idx).padEnd(3)}`
-              return `    ${idxStr} ${method.padEnd(12)} ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (saved ~${humanTokensInline(aSaved)})`
+              return `    ${idxStr}  ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (−${humanTokensInline(aSaved)})`
             }
-            return `    #${String(idx).padEnd(3)} ${toolName.padEnd(12)} ${method.padEnd(12)} ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (saved ~${humanTokensInline(aSaved)})`
+            return `    #${String(idx).padEnd(3)} ${toolName.padEnd(12)} ${method.padEnd(12)} ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (−${humanTokensInline(aSaved)})`
           }
 
           if (sorted.length <= TOP + TAIL) {

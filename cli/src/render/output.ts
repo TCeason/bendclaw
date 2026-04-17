@@ -150,7 +150,7 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
   const barWidth = 20
 
   // Header
-  line('─── This Run Summary ──────────────────────────────────')
+  line('─── run summary ──────────────────────────────────')
   line(`${dur} · ${stats.turnCount} ${pl(stats.turnCount, 'turn')} · ${stats.llmCalls} llm ${pl(stats.llmCalls, 'call')} · ${stats.toolCallCount} tool ${pl(stats.toolCallCount, 'call')} · ${humanTokens(totalTokens)} tokens`)
 
   // Context budget bar
@@ -159,7 +159,7 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
     const pct = (stats.contextTokens / budget) * 100
     if (pct > 0) {
       const bar = renderBar(stats.contextTokens, budget, barWidth)
-      line(`  context   ${bar}  ${pct.toFixed(0)}%(${humanTokens(stats.contextTokens)}) of budget(${humanTokens(budget)})`)
+      line(`  context  ${bar}  ~${humanTokens(stats.contextTokens)} / ~${humanTokens(budget)} (${pct.toFixed(0)}%)`)
     }
   }
   line('')
@@ -167,8 +167,8 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
   // --- tokens block ---
   const totalInput = stats.inputTokens
   const totalStreamMs = stats.llmCallDetails.reduce((s, c) => s + (c.durationMs - c.ttftMs), 0)
-  const overallTps = totalStreamMs > 0 ? (stats.outputTokens / (totalStreamMs / 1000)).toFixed(1) : '0'
-  let tokLine = `  tokens    ${humanTokens(totalInput)} total input · ${stats.outputTokens} output · ${overallTps} tok/s`
+  const overallTps = totalStreamMs > 0 ? (stats.outputTokens / (totalStreamMs / 1000)).toFixed(0) : '0'
+  let tokLine = `  tokens   ${humanTokens(totalInput)} in · ${stats.outputTokens} out · ${overallTps} tok/s`
   if (stats.cacheReadTokens > 0 || stats.cacheWriteTokens > 0) {
     const hitRate = totalInput > 0
       ? (stats.cacheReadTokens / totalInput * 100).toFixed(0)
@@ -182,7 +182,7 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
   if (ms && totalInput > 0) {
     const sysTok = stats.systemPromptTokens
     const maxLabelWidth = 12
-    const maxValWidth = 8
+    const maxValWidth = 6
     const roles: [string, number][] = [
       ['system', sysTok],
       ['user', ms.userTokens],
@@ -191,14 +191,13 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
     ]
     for (const [label, tokens] of roles) {
       if (tokens === 0) continue
-      const pct = tokens / totalInput * 100
+      const pct = (tokens / totalInput * 100).toFixed(0)
       const bar = renderBar(tokens, totalInput, barWidth)
-      line(`            ${label.padEnd(maxLabelWidth)} ${('~' + humanTokens(tokens)).padStart(maxValWidth)}  ${bar} ${pct.toFixed(1).padStart(5)}%`)
+      line(`    ${label.padEnd(maxLabelWidth)} ${('~' + humanTokens(tokens)).padStart(maxValWidth)}  ${bar} ${pct.padStart(3)}%`)
     }
 
     // Per-tool breakdown under tool_result
     if (ms.toolDetails.length >= 2) {
-      // Aggregate by tool name
       const agg = new Map<string, { calls: number; tokens: number }>()
       for (const [name, tokens] of ms.toolDetails) {
         const existing = agg.get(name)
@@ -210,16 +209,12 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
         }
       }
       const sorted = [...agg.entries()].sort((a, b) => b[1].tokens - a[1].tokens)
-      const subIndent = 18
       const callWord = (n: number) => n === 1 ? 'call' : 'calls'
-      const maxLeft = Math.max(...sorted.map(([name, a]) =>
-        `${name}  ${a.calls} ${callWord(a.calls)}  ~${humanTokens(a.tokens)}`.length
-      ))
+      const maxNameLen = Math.max(...sorted.map(([n]) => n.length), 4)
       for (const [name, a] of sorted) {
-        const pct = totalInput > 0 ? (a.tokens / totalInput * 100).toFixed(1) : '0'
+        const pct = totalInput > 0 ? (a.tokens / totalInput * 100).toFixed(0) : '0'
         const bar = renderBar(a.tokens, totalInput, barWidth)
-        const left = `${name}  ${a.calls} ${callWord(a.calls)}  ~${humanTokens(a.tokens)}`
-        line(`${' '.repeat(subIndent)}${left.padEnd(maxLeft + 2)}${bar} ${pct.padStart(5)}%`)
+        line(`      ${name.padEnd(maxNameLen)}  ${a.calls} ${callWord(a.calls).padEnd(5)}  ~${humanTokens(a.tokens).padEnd(5)}  ${bar} ${pct.padStart(3)}%`)
       }
     }
   }
@@ -228,21 +223,21 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
   // --- compact block ---
   if (stats.compactHistory.length > 0) {
     const totalSaved = stats.compactHistory.reduce((s, c) => s + (c.beforeTokens - c.afterTokens), 0)
-    line(`  compact   ${stats.compactHistory.length} ${pl(stats.compactHistory.length, 'compaction')} · saved ${humanTokens(totalSaved)} tokens`)
+    line(`  compact  ${stats.compactHistory.length} ${pl(stats.compactHistory.length, 'compaction')} · saved ${humanTokens(totalSaved)}`)
 
     const runOnce = stats.compactHistory.filter(c => c.level === 0)
     const real = stats.compactHistory.filter(c => c.level > 0)
 
     for (const c of runOnce) {
       const saved = c.beforeTokens - c.afterTokens
-      line(`            run-once  ${humanTokens(c.beforeTokens)}→${humanTokens(c.afterTokens)}  saved ${humanTokens(saved)}`)
+      line(`    run-once  ${humanTokens(c.beforeTokens)} → ${humanTokens(c.afterTokens)}  (−${humanTokens(saved)})`)
     }
     for (let i = 0; i < real.length; i++) {
       const c = real[i]!
       const saved = c.beforeTokens - c.afterTokens
       const pct = c.beforeTokens > 0 ? (saved / c.beforeTokens * 100).toFixed(0) : '0'
       const bar = renderBar(saved, c.beforeTokens || 1, 12)
-      line(`            #${i + 1}  lv${c.level}  ${humanTokens(c.beforeTokens)}→${humanTokens(c.afterTokens)}  saved ${humanTokens(saved)}  ${bar} ${pct}%`)
+      line(`    #${i + 1}  lv${c.level}  ${humanTokens(c.beforeTokens)} → ${humanTokens(c.afterTokens)}  (−${humanTokens(saved)}, ${pct}%)  ${bar}`)
     }
     line('')
   }
@@ -250,37 +245,34 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
   // --- llm block ---
   if (stats.llmCallDetails.length > 0) {
     const totalLlmMs = stats.llmCallDetails.reduce((s, c) => s + c.durationMs, 0)
-    const llmPct = stats.durationMs > 0 ? (totalLlmMs / stats.durationMs * 100).toFixed(1) : '0'
+    const llmPct = stats.durationMs > 0 ? (totalLlmMs / stats.durationMs * 100).toFixed(0) : '0'
     const totalOutputTok = stats.llmCallDetails.reduce((s, c) => s + c.outputTokens, 0)
     const totalLlmStreamMs = stats.llmCallDetails.reduce((s, c) => s + (c.durationMs - c.ttftMs), 0)
-    const avgTps = totalLlmStreamMs > 0 ? (totalOutputTok / (totalLlmStreamMs / 1000)).toFixed(1) : '0'
-    line(`  llm       ${stats.llmCallDetails.length} ${pl(stats.llmCallDetails.length, 'call')} · ${formatDuration(totalLlmMs)} (${llmPct}% of run) · ${avgTps} tok/s avg`)
+    const avgTps = totalLlmStreamMs > 0 ? (totalOutputTok / (totalLlmStreamMs / 1000)).toFixed(0) : '0'
+    line(`  llm      ${stats.llmCallDetails.length} ${pl(stats.llmCallDetails.length, 'call')} · ${formatDuration(totalLlmMs)} (${llmPct}% of run) · ${avgTps} tok/s avg`)
 
     const avgTtft = stats.llmCallDetails.reduce((s, c) => s + c.ttftMs, 0) / stats.llmCallDetails.length
     const avgStream = stats.llmCallDetails.reduce((s, c) => s + (c.durationMs - c.ttftMs), 0) / stats.llmCallDetails.length
-    line(`            ttft avg ${formatDuration(Math.round(avgTtft))} · stream avg ${formatDuration(Math.round(avgStream))}`)
+    line(`    ttft avg ${formatDuration(Math.round(avgTtft))} · stream avg ${formatDuration(Math.round(avgStream))}`)
 
-    // Top 3 LLM calls by duration (right-aligned)
+    // Top 3 LLM calls by duration
     const sorted = [...stats.llmCallDetails].sort((a, b) => b.durationMs - a.durationMs)
     const show = Math.min(sorted.length, 3)
     const maxDur = sorted[0]?.durationMs ?? 1
-    const maxIdxWidth = Math.max(...sorted.slice(0, show).map((_, i) => `#${i + 1}`.length))
     const maxDurWidth = Math.max(...sorted.slice(0, show).map(c => formatDuration(c.durationMs).length))
     for (let i = 0; i < show; i++) {
       const c = sorted[i]!
       const bar = renderBar(c.durationMs, maxDur, barWidth)
-      const pct = totalLlmMs > 0 ? (c.durationMs / totalLlmMs * 100).toFixed(1) : '0'
-      const idx = `#${i + 1}`.padEnd(maxIdxWidth)
+      const pct = totalLlmMs > 0 ? (c.durationMs / totalLlmMs * 100).toFixed(0) : '0'
       const durStr = formatDuration(c.durationMs).padStart(maxDurWidth)
-      line(`            ${idx}  ${durStr} ${bar} ${pct.padStart(5)}%`)
+      line(`    #${i + 1}  ${durStr}  ${bar} ${pct.padStart(3)}%`)
     }
     if (sorted.length > 3) {
       const restMs = sorted.slice(3).reduce((s, c) => s + c.durationMs, 0)
-      line(`            ... ${sorted.length - 3} more · ${formatDuration(restMs)} total`)
+      line(`    ... ${sorted.length - 3} more · ${formatDuration(restMs)} total`)
     }
   }
 
-  // Footer
   return lines
 }
 

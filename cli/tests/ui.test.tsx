@@ -57,9 +57,9 @@ describe('OutputView', () => {
 
   test('renders run_summary', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('run_summary', '─── This Run Summary')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('run_summary', '─── run summary')]} />
     )
-    expect(lastFrame()).toContain('This Run Summary')
+    expect(lastFrame()).toContain('run summary')
   })
 
   test('renders tool_result in green', () => {
@@ -128,7 +128,7 @@ describe('VerboseLineView', () => {
 
   test('renders LLM completed badge in green', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '[LLM] completed')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '[LLM] completed · 4.3s · 42 tok/s')]} />
     )
     expect(lastFrame()).toContain('[LLM]')
     expect(lastFrame()).toContain('completed')
@@ -162,7 +162,7 @@ describe('VerboseLineView', () => {
 
   test('renders verbose detail line (indented)', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '  tokens   4k in · 12 out · 3 tok/s')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '  tokens  4k in · 12 out')]} />
     )
     expect(lastFrame()).toContain('tokens')
     expect(lastFrame()).toContain('4k in')
@@ -170,7 +170,7 @@ describe('VerboseLineView', () => {
 
   test('renders timing with percentages', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '  timing   4.3s · ttfb 3.9s (91%) · ttft 3.9s (91%) · stream 0.3s (8%)')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '  timing  ttfb 3.9s (91%) · stream 0.3s (8%)')]} />
     )
     const frame = lastFrame()
     expect(frame).toContain('ttfb 3.9s (91%)')
@@ -188,12 +188,11 @@ describe('OutputView mixed content', () => {
       line('user', 'hello'),
       line('verbose', '[LLM] call · test · turn 1'),
       line('verbose', '  1 messages · 9 tools'),
-      line('verbose', '[LLM] completed'),
-      line('verbose', '  tokens   1k in · 50 out · 100 tok/s'),
+      line('verbose', '[LLM] completed · 0.5s · 100 tok/s'),
+      line('verbose', '  tokens  1k in · 50 out'),
       line('assistant', 'Hi there!'),
-      line('run_summary', '─── This Run Summary ──────────────────────────────────'),
+      line('run_summary', '─── run summary ──────────────────────────────────'),
       line('run_summary', '2.5s · 1 turn · 1 llm call · 0 tool calls · 1k tokens'),
-      line('run_summary', '────────────────────────────────────────────────────────'),
     ]
     const { lastFrame } = render(
       <OutputView banner={<Text>b</Text>} lines={lines} />
@@ -202,8 +201,7 @@ describe('OutputView mixed content', () => {
     expect(frame).toContain('hello')
     expect(frame).toContain('[LLM]')
     expect(frame).toContain('Hi there!')
-    expect(frame).toContain('This Run Summary')
-    expect(frame).toContain('────────')
+    expect(frame).toContain('run summary')
   })
 })
 

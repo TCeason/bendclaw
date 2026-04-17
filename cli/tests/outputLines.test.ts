@@ -131,7 +131,7 @@ describe('buildRunSummary', () => {
       systemPromptTokens: 0,
     })
     expect(lines.length).toBeGreaterThan(1)
-    expect(lines[0]!.text).toContain('This Run Summary')
+    expect(lines[0]!.text).toContain('run summary')
     const statsLine = lines.find((l) => l.text.includes('turn'))!
     expect(statsLine.text).toContain('2.5s')
     expect(statsLine.text).toContain('3 turns')

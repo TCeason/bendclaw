@@ -42,7 +42,7 @@ describe('applyEvent llm_call_started', () => {
     expect(evt.text).toContain('user 2')
     expect(evt.text).toContain('assistant 2')
     expect(evt.text).toContain('tool_result 1')
-    expect(evt.text).toContain('est tokens')
+    expect(evt.text).toContain('tokens')
     expect(evt.text).not.toContain('retry')
   })
 
@@ -77,7 +77,7 @@ describe('applyEvent llm_call_started', () => {
       attempt: 0,
     }))
     const evt = next.verboseEvents[next.verboseEvents.length - 1]!
-    expect(evt.text).toContain('tool results:')
+    expect(evt.text).toContain('tool_result breakdown:')
     expect(evt.text).toContain('bash')
     expect(evt.text).toContain('read')
     expect(evt.text).toContain('%')
@@ -98,11 +98,12 @@ describe('applyEvent llm_call_completed', () => {
     const evt = next.verboseEvents[next.verboseEvents.length - 1]!
     expect(evt.kind).toBe('llm_completed')
     expect(evt.text).toContain('[LLM] completed')
+    expect(evt.text).toContain('5.0s')
+    expect(evt.text).toContain('tok/s')
     expect(evt.text).toContain('4k in')
     expect(evt.text).toContain('120 out')
     // Timing with percentages
     expect(evt.text).toContain('ttfb 2.0s (40%)')
-    expect(evt.text).toContain('ttft 2.5s (50%)')
     expect(evt.text).toContain('stream 2.5s (50%)')
   })
 
