@@ -1,8 +1,7 @@
 pub(crate) mod compact;
 pub(crate) mod outline;
-mod pass;
+pub(crate) mod pass;
 mod passes;
-mod pipeline;
 pub mod policy;
 mod sanitize;
 

@@ -1,6 +1,6 @@
 //! Evict stale messages by dropping the middle of the conversation.
 //!
-//! **Internally budget-gated** — returns immediately if under budget.
+//! **L2 — budget-gated**: only runs when over budget.
 //!
 //! Strategy: EvictionStrategy
 //!   Keeps `keep_first` messages + `keep_recent` messages.
@@ -12,114 +12,98 @@
 
 use crate::context::compaction::compact::CompactionAction;
 use crate::context::compaction::compact::CompactionMethod;
-use crate::context::compaction::pass::CompactionContext;
-use crate::context::compaction::pass::CompactionPass;
+use crate::context::compaction::pass::CompactContext;
 use crate::context::compaction::pass::PassResult;
 use crate::context::tokens::message_tokens;
 use crate::context::tokens::total_tokens;
 use crate::types::*;
 
-pub struct EvictStaleMessages;
+pub fn run(messages: Vec<AgentMessage>, ctx: &CompactContext) -> PassResult {
+    let len = messages.len();
+    let first_end = ctx.keep_first.min(len);
+    let recent_start = len.saturating_sub(ctx.keep_recent);
 
-impl CompactionPass for EvictStaleMessages {
-    fn name(&self) -> &str {
-        "EvictStaleMessages"
-    }
-
-    fn run(&self, messages: Vec<AgentMessage>, ctx: &CompactionContext) -> PassResult {
-        if total_tokens(&messages) <= ctx.budget {
-            return PassResult {
-                messages,
-                actions: vec![],
-            };
-        }
-
-        let len = messages.len();
-        let first_end = ctx.keep_first.min(len);
-        let recent_start = len.saturating_sub(ctx.keep_recent);
-
-        if first_end >= recent_start {
-            let result = keep_within_budget(&messages, first_end, ctx.budget);
-            let dropped = len.saturating_sub(result.len());
-            let actions = if dropped > 0 {
-                vec![CompactionAction {
-                    index: 0,
-                    tool_name: "messages".into(),
-                    method: CompactionMethod::Dropped,
-                    before_tokens: total_tokens(&messages),
-                    after_tokens: total_tokens(&result),
-                    end_index: None,
-                    related_count: Some(dropped),
-                }]
-            } else {
-                vec![]
-            };
-            return PassResult {
-                messages: result,
-                actions,
-            };
-        }
-
-        let first_msgs = &messages[..first_end];
-        let recent_msgs = &messages[recent_start..];
-        let removed = recent_start - first_end;
-
-        let dropped_tokens: usize = messages[first_end..recent_start]
-            .iter()
-            .map(message_tokens)
-            .sum();
-
-        let marker = AgentMessage::Llm(Message::User {
-            content: vec![Content::Text {
-                text: format!(
-                    "[Context compacted: {} messages removed to fit context window]",
-                    removed
-                ),
-            }],
-            timestamp: now_ms(),
-        });
-        let marker_tokens = message_tokens(&marker);
-
-        let mut result = first_msgs.to_vec();
-        result.push(marker);
-        result.extend_from_slice(recent_msgs);
-
-        if total_tokens(&result) > ctx.budget {
-            let result = keep_within_budget(&result, first_end, ctx.budget);
-            let dropped = len.saturating_sub(result.len());
-            let actions = if dropped > 0 {
-                vec![CompactionAction {
-                    index: 0,
-                    tool_name: "messages".into(),
-                    method: CompactionMethod::Dropped,
-                    before_tokens: total_tokens(&messages),
-                    after_tokens: total_tokens(&result),
-                    end_index: None,
-                    related_count: Some(dropped),
-                }]
-            } else {
-                vec![]
-            };
-            return PassResult {
-                messages: result,
-                actions,
-            };
-        }
-
-        let actions = vec![CompactionAction {
-            index: first_end,
-            tool_name: "messages".into(),
-            method: CompactionMethod::Dropped,
-            before_tokens: dropped_tokens,
-            after_tokens: marker_tokens,
-            end_index: Some(recent_start.saturating_sub(1)),
-            related_count: Some(removed),
-        }];
-
-        PassResult {
+    if first_end >= recent_start {
+        let result = keep_within_budget(&messages, first_end, ctx.budget);
+        let dropped = len.saturating_sub(result.len());
+        let actions = if dropped > 0 {
+            vec![CompactionAction {
+                index: 0,
+                tool_name: "messages".into(),
+                method: CompactionMethod::Dropped,
+                before_tokens: total_tokens(&messages),
+                after_tokens: total_tokens(&result),
+                end_index: None,
+                related_count: Some(dropped),
+            }]
+        } else {
+            vec![]
+        };
+        return PassResult {
             messages: result,
             actions,
-        }
+        };
+    }
+
+    let first_msgs = &messages[..first_end];
+    let recent_msgs = &messages[recent_start..];
+    let removed = recent_start - first_end;
+
+    let dropped_tokens: usize = messages[first_end..recent_start]
+        .iter()
+        .map(message_tokens)
+        .sum();
+
+    let marker = AgentMessage::Llm(Message::User {
+        content: vec![Content::Text {
+            text: format!(
+                "[Context compacted: {} messages removed to fit context window]",
+                removed
+            ),
+        }],
+        timestamp: now_ms(),
+    });
+    let marker_tokens = message_tokens(&marker);
+
+    let mut result = first_msgs.to_vec();
+    result.push(marker);
+    result.extend_from_slice(recent_msgs);
+
+    if total_tokens(&result) > ctx.budget {
+        let result = keep_within_budget(&result, first_end, ctx.budget);
+        let dropped = len.saturating_sub(result.len());
+        let actions = if dropped > 0 {
+            vec![CompactionAction {
+                index: 0,
+                tool_name: "messages".into(),
+                method: CompactionMethod::Dropped,
+                before_tokens: total_tokens(&messages),
+                after_tokens: total_tokens(&result),
+                end_index: None,
+                related_count: Some(dropped),
+            }]
+        } else {
+            vec![]
+        };
+        return PassResult {
+            messages: result,
+            actions,
+        };
+    }
+
+    let actions = vec![CompactionAction {
+        index: first_end,
+        tool_name: "messages".into(),
+        method: CompactionMethod::Dropped,
+        before_tokens: dropped_tokens,
+        after_tokens: marker_tokens,
+        end_index: Some(recent_start.saturating_sub(1)),
+        related_count: Some(removed),
+    }];
+
+    PassResult {
+        messages: result,
+        actions,
     }
 }
 

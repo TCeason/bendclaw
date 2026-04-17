@@ -1,14 +1,21 @@
-//! Compaction orchestration — types, stats, and pipeline assembly.
+//! Compaction orchestration — types, stats, and level-driven execution.
 //!
-//! `compact_messages` builds a pipeline of passes and executes them.
-//! All implementation logic lives in the `passes/` modules.
+//! `compact_messages` runs compaction in levels:
+//!   L0: always-on cleanup (clear expired, shrink oversized, image stripping)
+//!   L1: summarize old turns, strip old images
+//!   L2: drop middle messages
+//!
+//! L0 runs unconditionally. L1–L2 only run when over budget, and stop
+//! as soon as the context fits within budget.
 
 use serde::Deserialize;
 use serde::Serialize;
 
-use super::pass::CompactionContext;
-use super::passes::*;
-use super::pipeline::CompactionPipeline;
+use super::pass::CompactContext;
+use super::passes::clear_expired;
+use super::passes::collapse_old_turns;
+use super::passes::evict_stale;
+use super::passes::shrink_oversized;
 use super::policy::CompactionPolicy;
 use super::sanitize::sanitize_tool_pairs;
 use crate::context::tokens::content_tokens;
@@ -71,7 +78,7 @@ pub enum CompactionMethod {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompactionStats {
-    /// Highest pass that produced actions: 3=evict, 2=collapse, 1=shrink, 0=clear/no-op
+    /// Highest level that produced actions: 3=evict, 2=collapse, 1=shrink, 0=clear/no-op
     pub level: u8,
     pub before_message_count: usize,
     pub after_message_count: usize,
@@ -117,6 +124,23 @@ impl CompactionStrategy for DefaultCompaction {
 }
 
 // ---------------------------------------------------------------------------
+// Compaction levels
+// ---------------------------------------------------------------------------
+
+/// Compaction levels, executed in order.
+#[derive(Clone, Copy)]
+enum Level {
+    /// Always-on: clear expired results, shrink oversized, strip old images
+    L0Cleanup,
+    /// Budget-gated: summarize old assistant turns
+    L1Collapse,
+    /// Budget-gated: drop middle messages
+    L2Evict,
+}
+
+const LEVELS: [Level; 3] = [Level::L0Cleanup, Level::L1Collapse, Level::L2Evict];
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -139,22 +163,19 @@ fn collect_tool_details(messages: &[AgentMessage]) -> Vec<ToolTokenDetail> {
 }
 
 // ---------------------------------------------------------------------------
-// Pipeline assembly
+// Core
 // ---------------------------------------------------------------------------
 
-/// Compact messages using a pipeline of passes.
+/// Compact messages using level-driven execution.
 ///
-/// Pass order:
-///   1. `ClearExpiredToolResults`    — always-on: clear `CurrentRun` results
-///   2. `ShrinkOversizedToolResults` — always-on: age-evict / oversize-cap / normal-truncate
-///   3. `CollapseOldAssistantTurns`  — internally budget-gated: summarize old turns
-///   4. `EvictStaleMessages`         — internally budget-gated: drop middle messages
+/// L0 runs unconditionally. L1–L2 only run when over budget, stopping
+/// as soon as the context fits.
 pub fn compact_messages(messages: Vec<AgentMessage>, config: &ContextConfig) -> CompactionResult {
     let budget = config
         .max_context_tokens
         .saturating_sub(config.system_prompt_tokens);
 
-    let ctx = CompactionContext {
+    let ctx = CompactContext {
         budget,
         keep_recent: config.keep_recent,
         keep_first: config.keep_first,
@@ -166,16 +187,35 @@ pub fn compact_messages(messages: Vec<AgentMessage>, config: &ContextConfig) -> 
     let before_estimated_tokens = total_tokens(&messages);
     let before_tool_details = collect_tool_details(&messages);
 
-    // always-on passes execute first, budget-gated passes check internally
-    let pipeline = CompactionPipeline::builder()
-        .add(ClearExpiredToolResults) // always-on
-        .add(ShrinkOversizedToolResults) // always-on
-        .add(CollapseOldAssistantTurns) // internally budget-gated
-        .add(EvictStaleMessages) // internally budget-gated
-        .build();
+    let mut messages = messages;
+    let mut all_actions = Vec::new();
 
-    let result = pipeline.execute(messages, &ctx);
-    let messages = sanitize_tool_pairs(result.messages);
+    for level in LEVELS {
+        // L0 always runs; L1+ only when over budget, stop when fits
+        if !matches!(level, Level::L0Cleanup) && total_tokens(&messages) <= ctx.budget {
+            break;
+        }
+
+        let result = match level {
+            Level::L0Cleanup => {
+                let r1 = clear_expired::run(messages, &ctx);
+                let r2 = shrink_oversized::run(r1.messages, &ctx);
+                let mut actions = r1.actions;
+                actions.extend(r2.actions);
+                super::pass::PassResult {
+                    messages: r2.messages,
+                    actions,
+                }
+            }
+            Level::L1Collapse => collapse_old_turns::run(messages, &ctx),
+            Level::L2Evict => evict_stale::run(messages, &ctx),
+        };
+
+        all_actions.extend(result.actions);
+        messages = result.messages;
+    }
+
+    let messages = sanitize_tool_pairs(messages);
 
     let after_message_count = messages.len();
     let after_estimated_tokens = total_tokens(&messages);
@@ -189,7 +229,7 @@ pub fn compact_messages(messages: Vec<AgentMessage>, config: &ContextConfig) -> 
     let mut turns_summarized: usize = 0;
     let mut messages_dropped: usize = 0;
 
-    for action in &result.actions {
+    for action in &all_actions {
         match action.method {
             CompactionMethod::LifecycleCleared => current_run_cleared += 1,
             CompactionMethod::AgeCleared => age_cleared += 1,
@@ -202,7 +242,8 @@ pub fn compact_messages(messages: Vec<AgentMessage>, config: &ContextConfig) -> 
         }
     }
 
-    // level = highest pass that produced actions
+    // level = highest action severity (matches CLI expectations)
+    // 0=no-op, 1=shrink/cleanup, 2=collapse/summarize, 3=evict/drop
     let level = if messages_dropped > 0 {
         3
     } else if turns_summarized > 0 {
@@ -229,7 +270,7 @@ pub fn compact_messages(messages: Vec<AgentMessage>, config: &ContextConfig) -> 
             age_cleared,
             before_tool_details,
             after_tool_details,
-            actions: result.actions,
+            actions: all_actions,
         },
     }
 }

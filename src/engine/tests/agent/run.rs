@@ -1783,7 +1783,7 @@ async fn test_compaction_events_emitted_when_context_exceeds_budget() {
 }
 
 #[tokio::test]
-async fn test_compaction_events_level_zero_when_within_budget() {
+async fn test_compaction_noop_when_within_budget() {
     use evotengine::context::ContextConfig;
 
     let output = TestHarness::new()
@@ -1800,17 +1800,9 @@ async fn test_compaction_events_level_zero_when_within_budget() {
         .run("hi")
         .await;
 
-    let ends: Vec<_> = output
-        .events
-        .iter()
-        .filter_map(|e| match e {
-            AgentEvent::ContextCompactionEnd { stats, .. } => Some(stats.clone()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(ends.len(), 1);
-    assert_eq!(ends[0].level, 0);
-    assert_eq!(ends[0].before_message_count, ends[0].after_message_count);
+    // Within budget → no-op, no compact events emitted, tracker not reset
+    assert_eq!(output.event_count("CompactionStart"), 0);
+    assert_eq!(output.event_count("CompactionEnd"), 0);
 }
 
 #[tokio::test]

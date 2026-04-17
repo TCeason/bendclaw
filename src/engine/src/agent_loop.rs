@@ -370,9 +370,10 @@ async fn run_loop(
                 context.messages = result.messages;
 
                 if did_work {
-                    // Only emit events, clone messages, and reset tracker when
-                    // compaction actually changed something. This avoids noisy
-                    // no-op events and preserves the tracker's real-usage baseline.
+                    // Post-hoc notification: Start/End are emitted as a pair
+                    // after compaction completes, only when work was done.
+                    // This avoids noisy no-op events and preserves the
+                    // tracker's real-usage baseline.
                     tx.send(AgentEvent::ContextCompactionStart {
                         message_count: original_count,
                         estimated_tokens: original_tokens,

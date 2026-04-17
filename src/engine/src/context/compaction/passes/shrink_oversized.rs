@@ -1,197 +1,226 @@
 //! Shrink oversized tool results using policy-driven truncation.
 //!
-//! **Always-on** — runs unconditionally regardless of budget.
+//! **L0 — always-on cleanup**. Runs unconditionally; budget-gated tiers
+//! (AgeEvict, NormalTrunc) only fire when over budget and stop as soon as
+//! the running token count fits.
 //!
 //! Strategy: `ToolPolicy` from `policy::tool_policy()`.
 //! Global thresholds control *when* a result is oversized; per-tool policy
 //! controls *how* it is handled.
-//!
-//! Three tiers, evaluated in priority order per `ToolResult`:
-//!
-//!   Tier 1 — AgeEvict: old + large → clear to marker
-//!   Tier 2 — OversizeCap: individually too large → aggressive truncation
-//!   Tier 3 — NormalTrunc: over budget → try truncating all tool results
-//!
-//! `over_budget` is computed once at pass entry and held fixed for the
-//! entire pass to avoid unstable behaviour during iteration.
 
 use std::collections::HashMap;
 
 use crate::context::compaction::compact::CompactionAction;
 use crate::context::compaction::compact::CompactionMethod;
 use crate::context::compaction::outline;
-use crate::context::compaction::pass::CompactionContext;
-use crate::context::compaction::pass::CompactionPass;
+use crate::context::compaction::pass::CompactContext;
 use crate::context::compaction::pass::PassResult;
 use crate::context::compaction::policy::tool_policy;
 use crate::context::tokens::content_tokens;
 use crate::context::tokens::total_tokens;
 use crate::types::*;
 
-pub struct ShrinkOversizedToolResults;
+pub fn run(messages: Vec<AgentMessage>, ctx: &CompactContext) -> PassResult {
+    let tool_call_index = build_tool_call_index(&messages);
+    let len = messages.len();
+    let recent_boundary = len.saturating_sub(ctx.keep_recent);
 
-impl CompactionPass for ShrinkOversizedToolResults {
-    fn name(&self) -> &str {
-        "ShrinkOversizedToolResults"
-    }
+    let oversize_token_threshold = ctx
+        .policy
+        .oversize_abs_tokens
+        .max((ctx.budget as f64 * ctx.policy.oversize_budget_ratio) as usize);
 
-    fn run(&self, messages: Vec<AgentMessage>, ctx: &CompactionContext) -> PassResult {
-        let over_budget = total_tokens(&messages) > ctx.budget;
-        let tool_call_index = build_tool_call_index(&messages);
-        let len = messages.len();
-        let recent_boundary = len.saturating_sub(ctx.keep_recent);
+    let mut running_tokens = total_tokens(&messages);
+    let mut actions = Vec::new();
+    let mut result = Vec::with_capacity(len);
 
-        let oversize_token_threshold = ctx
-            .policy
-            .oversize_abs_tokens
-            .max((ctx.budget as f64 * ctx.policy.oversize_budget_ratio) as usize);
+    for (idx, msg) in messages.into_iter().enumerate() {
+        let is_recent = idx >= recent_boundary;
+        let is_pinned = idx < ctx.keep_first;
 
-        let mut actions = Vec::new();
-
-        let result = messages
-            .into_iter()
-            .enumerate()
-            .map(|(idx, msg)| {
-                let is_tool_result = matches!(&msg, AgentMessage::Llm(Message::ToolResult { .. }));
-                if !is_tool_result {
-                    return msg;
+        // Strip images from old user messages (but preserve keep_first)
+        if !is_recent && !is_pinned {
+            if let AgentMessage::Llm(Message::User { content, timestamp }) = msg {
+                let has_image = content.iter().any(|c| matches!(c, Content::Image { .. }));
+                if has_image {
+                    let before_tokens = content_tokens(&content);
+                    let stripped: Vec<Content> = content
+                        .into_iter()
+                        .map(|c| match c {
+                            Content::Image { .. } => Content::Text {
+                                text: "[image omitted during compaction]".into(),
+                            },
+                            other => other,
+                        })
+                        .collect();
+                    let after_tokens = content_tokens(&stripped);
+                    if after_tokens < before_tokens {
+                        running_tokens -= before_tokens - after_tokens;
+                        actions.push(CompactionAction {
+                            index: idx,
+                            tool_name: "user".into(),
+                            method: CompactionMethod::OversizeCapped,
+                            before_tokens,
+                            after_tokens,
+                            end_index: None,
+                            related_count: None,
+                        });
+                    }
+                    result.push(AgentMessage::Llm(Message::User {
+                        content: stripped,
+                        timestamp,
+                    }));
+                } else {
+                    result.push(AgentMessage::Llm(Message::User { content, timestamp }));
                 }
+                continue;
+            }
+        }
 
-                if let AgentMessage::Llm(Message::ToolResult {
-                    tool_call_id,
-                    tool_name,
-                    content,
-                    is_error,
-                    timestamp,
-                    retention,
-                }) = msg
-                {
-                    let tokens = content_tokens(&content);
-                    let is_recent = idx >= recent_boundary;
-                    let tp = tool_policy(&tool_name);
+        let is_tool_result = matches!(&msg, AgentMessage::Llm(Message::ToolResult { .. }));
+        if !is_tool_result {
+            result.push(msg);
+            continue;
+        }
 
-                    // Tier 1: AgeEvict — old result exceeding age threshold (budget-gated)
-                    if over_budget && !is_recent {
-                        if let Some(threshold) = tp.age_clear_threshold {
-                            if tokens > threshold {
-                                let marker =
-                                    format!("[{tool_name} result cleared — {tokens} tokens]");
-                                let replacement = vec![Content::Text { text: marker }];
-                                let after_tokens = content_tokens(&replacement);
+        if let AgentMessage::Llm(Message::ToolResult {
+            tool_call_id,
+            tool_name,
+            content,
+            is_error,
+            timestamp,
+            retention,
+        }) = msg
+        {
+            let tokens = content_tokens(&content);
+            let over_budget = running_tokens > ctx.budget;
+            let tp = tool_policy(&tool_name);
 
-                                actions.push(CompactionAction {
-                                    index: idx,
-                                    tool_name: tool_name.clone(),
-                                    method: CompactionMethod::AgeCleared,
-                                    before_tokens: tokens,
-                                    after_tokens,
-                                    end_index: None,
-                                    related_count: None,
-                                });
+            // Tier 1: OversizeCap — individually too large (always-on)
+            if tokens > oversize_token_threshold {
+                let max_lines = tp.oversize_max_lines.min(ctx.tool_output_max_lines);
+                let truncated = truncate_content(
+                    &content,
+                    &tool_name,
+                    &tool_call_id,
+                    &tool_call_index,
+                    max_lines,
+                    tp.prefer_outline,
+                );
+                let after_tokens = content_tokens(&truncated);
 
-                                return AgentMessage::Llm(Message::ToolResult {
-                                    tool_call_id,
-                                    tool_name,
-                                    content: replacement,
-                                    is_error,
-                                    timestamp,
-                                    retention,
-                                });
-                            }
-                        }
-                    }
+                if after_tokens < tokens {
+                    running_tokens -= tokens - after_tokens;
+                    actions.push(CompactionAction {
+                        index: idx,
+                        tool_name: tool_name.clone(),
+                        method: CompactionMethod::OversizeCapped,
+                        before_tokens: tokens,
+                        after_tokens,
+                        end_index: None,
+                        related_count: None,
+                    });
 
-                    // Tier 2: OversizeCap — individually too large
-                    if tokens > oversize_token_threshold {
-                        let max_lines = tp.oversize_max_lines.min(ctx.tool_output_max_lines);
-                        let truncated = truncate_content(
-                            &content,
-                            &tool_name,
-                            &tool_call_id,
-                            &tool_call_index,
-                            max_lines,
-                            tp.prefer_outline,
-                        );
-                        let after_tokens = content_tokens(&truncated);
-
-                        if after_tokens < tokens {
-                            actions.push(CompactionAction {
-                                index: idx,
-                                tool_name: tool_name.clone(),
-                                method: CompactionMethod::OversizeCapped,
-                                before_tokens: tokens,
-                                after_tokens,
-                                end_index: None,
-                                related_count: None,
-                            });
-
-                            return AgentMessage::Llm(Message::ToolResult {
-                                tool_call_id,
-                                tool_name,
-                                content: truncated,
-                                is_error,
-                                timestamp,
-                                retention,
-                            });
-                        }
-                    }
-
-                    // Tier 3: NormalTrunc — over budget → try truncating all tool results
-                    if over_budget {
-                        let max_lines = tp.normal_max_lines.min(ctx.tool_output_max_lines);
-                        let truncated = truncate_content(
-                            &content,
-                            &tool_name,
-                            &tool_call_id,
-                            &tool_call_index,
-                            max_lines,
-                            tp.prefer_outline,
-                        );
-                        let after_tokens = content_tokens(&truncated);
-
-                        if after_tokens < tokens {
-                            let method = detect_method(&content, &truncated);
-
-                            actions.push(CompactionAction {
-                                index: idx,
-                                tool_name: tool_name.clone(),
-                                method,
-                                before_tokens: tokens,
-                                after_tokens,
-                                end_index: None,
-                                related_count: None,
-                            });
-
-                            return AgentMessage::Llm(Message::ToolResult {
-                                tool_call_id,
-                                tool_name,
-                                content: truncated,
-                                is_error,
-                                timestamp,
-                                retention,
-                            });
-                        }
-                    }
-
-                    // No truncation needed
-                    AgentMessage::Llm(Message::ToolResult {
+                    result.push(AgentMessage::Llm(Message::ToolResult {
                         tool_call_id,
                         tool_name,
-                        content,
+                        content: truncated,
                         is_error,
                         timestamp,
                         retention,
-                    })
-                } else {
-                    msg
+                    }));
+                    continue;
                 }
-            })
-            .collect();
+            }
 
-        PassResult {
-            messages: result,
-            actions,
+            // Tier 2: AgeEvict — old result exceeding age threshold (budget-gated)
+            if over_budget && !is_recent {
+                if let Some(threshold) = tp.age_clear_threshold {
+                    if tokens > threshold {
+                        let marker = format!("[{tool_name} result cleared — {tokens} tokens]");
+                        let replacement = vec![Content::Text { text: marker }];
+                        let after_tokens = content_tokens(&replacement);
+
+                        running_tokens -= tokens - after_tokens;
+                        actions.push(CompactionAction {
+                            index: idx,
+                            tool_name: tool_name.clone(),
+                            method: CompactionMethod::AgeCleared,
+                            before_tokens: tokens,
+                            after_tokens,
+                            end_index: None,
+                            related_count: None,
+                        });
+
+                        result.push(AgentMessage::Llm(Message::ToolResult {
+                            tool_call_id,
+                            tool_name,
+                            content: replacement,
+                            is_error,
+                            timestamp,
+                            retention,
+                        }));
+                        continue;
+                    }
+                }
+            }
+
+            // Tier 3: NormalTrunc — over budget, truncate tool results (budget-gated)
+            if over_budget {
+                let max_lines = tp.normal_max_lines.min(ctx.tool_output_max_lines);
+                let truncated = truncate_content(
+                    &content,
+                    &tool_name,
+                    &tool_call_id,
+                    &tool_call_index,
+                    max_lines,
+                    tp.prefer_outline,
+                );
+                let after_tokens = content_tokens(&truncated);
+
+                if after_tokens < tokens {
+                    let method = detect_method(&content, &truncated);
+
+                    running_tokens -= tokens - after_tokens;
+                    actions.push(CompactionAction {
+                        index: idx,
+                        tool_name: tool_name.clone(),
+                        method,
+                        before_tokens: tokens,
+                        after_tokens,
+                        end_index: None,
+                        related_count: None,
+                    });
+
+                    result.push(AgentMessage::Llm(Message::ToolResult {
+                        tool_call_id,
+                        tool_name,
+                        content: truncated,
+                        is_error,
+                        timestamp,
+                        retention,
+                    }));
+                    continue;
+                }
+            }
+
+            // No truncation needed
+            result.push(AgentMessage::Llm(Message::ToolResult {
+                tool_call_id,
+                tool_name,
+                content,
+                is_error,
+                timestamp,
+                retention,
+            }));
+        } else {
+            result.push(msg);
         }
+    }
+
+    PassResult {
+        messages: result,
+        actions,
     }
 }
 
@@ -242,6 +271,12 @@ fn truncate_content(
                 let truncated =
                     crate::tools::validation::truncate_tool_text(&truncated, COMPACTION_MAX_BYTES);
                 Content::Text { text: truncated }
+            }
+            Content::Image { .. } => {
+                // Replace image with a text marker to reclaim tokens.
+                Content::Text {
+                    text: "[image omitted during compaction]".into(),
+                }
             }
             other => other.clone(),
         })
