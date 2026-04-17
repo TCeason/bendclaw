@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use crate::context::CompactionStrategy;
 use crate::context::ContextConfig;
+use crate::context::ContextTracker;
 use crate::context::DefaultCompaction;
 use crate::context::ExecutionLimits;
 use crate::context::ExecutionTracker;
@@ -274,6 +275,7 @@ async fn run_loop(
         .as_ref()
         .map(|limits| ExecutionTracker::new(limits.clone()));
     let mut doom_detector = DoomLoopDetector::new(3);
+    let mut context_tracker = ContextTracker::new();
 
     // Check for steering messages at start
     let mut pending: Vec<AgentMessage> = config
@@ -357,7 +359,7 @@ async fn run_loop(
                 .unwrap_or(&DefaultCompaction);
             if let Some(ref ctx_config) = config.context_config {
                 let original_count = context.messages.len();
-                let original_tokens = context::total_tokens(&context.messages);
+                let original_tokens = context_tracker.estimate_context_tokens(&context.messages);
 
                 let budget = ctx_config
                     .max_context_tokens
@@ -375,6 +377,9 @@ async fn run_loop(
                 let result = strategy.compact(std::mem::take(&mut context.messages), ctx_config);
                 context.messages = result.messages;
 
+                // Reset tracker after compaction — baseline is no longer valid
+                context_tracker.reset();
+
                 tx.send(AgentEvent::ContextCompactionEnd {
                     stats: result.stats,
                     messages: context.messages.clone(),
@@ -390,6 +395,12 @@ async fn run_loop(
             let agent_msg: AgentMessage = message.clone().into();
             context.messages.push(agent_msg.clone());
             new_messages.push(agent_msg.clone());
+
+            // Record real usage from provider for accurate context tracking
+            if let Message::Assistant { ref usage, .. } = message {
+                let msg_index = context.messages.len() - 1;
+                context_tracker.record_usage(usage, msg_index);
+            }
 
             // Check for error/abort
             if let Message::Assistant {

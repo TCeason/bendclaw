@@ -16,6 +16,7 @@ import type { ServerState } from '../repl/server.js'
 import { formatUptime } from '../repl/server.js'
 import { InterruptHandler } from '../input/interrupt.js'
 import { needsContinuation } from '../input/continuation.js'
+import { PasteAccumulator } from '../input/paste_accumulator.js'
 import {
   formatPastedTextRef,
   parsePasteRefs,
@@ -73,6 +74,67 @@ export const PromptInput = React.memo(function PromptInput({
   const { stdout } = useStdout()
   const columns = stdout?.columns ?? 120
 
+  // Insert cleaned text at the current cursor position.
+  // Shared by single-char input and paste accumulator flush.
+  const insertTextRef = useRef<(cleaned: string) => void>(() => {})
+  insertTextRef.current = (cleaned: string) => {
+    setCompletionCandidates([])
+    const pastedLines = cleaned.split('\n')
+
+    // Collapse large pastes into a placeholder to avoid terminal
+    // rendering jitter and keep history navigation working (up/down arrows
+    // only navigate history when lines.length === 1).
+    if (shouldCollapse(cleaned)) {
+      const id = nextPasteIdRef.current++
+      const numLines = (cleaned.match(/\n/g) || []).length
+      pastedChunksRef.current.set(id, cleaned)
+      const ref = formatPastedTextRef(id, numLines)
+      setLines((prev) => {
+        const newLines = [...prev]
+        const line = newLines[cursorLine]!
+        const before = line.slice(0, cursorCol)
+        const after = line.slice(cursorCol)
+        newLines[cursorLine] = before + ref + after
+        return newLines
+      })
+      setCursorCol((prev) => prev + ref.length)
+    } else if (pastedLines.length > 1) {
+      // Multi-line paste (small enough to display inline)
+      setLines((prev) => {
+        const newLines = [...prev]
+        const line = newLines[cursorLine]!
+        const before = line.slice(0, cursorCol)
+        const after = line.slice(cursorCol)
+        const spliced: string[] = [
+          before + pastedLines[0]!,
+          ...pastedLines.slice(1, -1),
+          pastedLines[pastedLines.length - 1]! + after,
+        ]
+        newLines.splice(cursorLine, 1, ...spliced)
+        return newLines
+      })
+      const lastPasted = pastedLines[pastedLines.length - 1]!
+      setCursorLine((prev) => prev + pastedLines.length - 1)
+      setCursorCol(lastPasted.length)
+    } else {
+      setLines((prev) => {
+        const newLines = [...prev]
+        const line = newLines[cursorLine]!
+        newLines[cursorLine] = line.slice(0, cursorCol) + cleaned + line.slice(cursorCol)
+        return newLines
+      })
+      setCursorCol((prev) => prev + cleaned.length)
+    }
+  }
+
+  // Accumulate multi-char stdin chunks (paste) before evaluating shouldCollapse.
+  const pasteAccRef = useRef<PasteAccumulator | null>(null)
+  if (!pasteAccRef.current) {
+    pasteAccRef.current = new PasteAccumulator((text) => {
+      insertTextRef.current(text)
+    })
+  }
+
   // Load persistent history on mount
   useEffect(() => {
     historyRef.current = history.load()
@@ -107,6 +169,7 @@ export const PromptInput = React.memo(function PromptInput({
     setCursorCol(0)
     historyIndexRef.current = -1
     pastedChunksRef.current.clear()
+    pasteAccRef.current!.cancel()
   }
 
   useInput((ch, key) => {
@@ -418,54 +481,10 @@ export const PromptInput = React.memo(function PromptInput({
 
     // Regular character input (including multi-line paste)
     if (ch) {
-      setCompletionCandidates([])
       const cleaned = cleanPastedText(ch)
-      const pastedLines = cleaned.split('\n')
-
-      // Collapse large pastes into a placeholder to avoid terminal
-      // rendering jitter and keep history navigation working (up/down arrows
-      // only navigate history when lines.length === 1).
-      if (shouldCollapse(cleaned)) {
-        const id = nextPasteIdRef.current++
-        const numLines = (cleaned.match(/\n/g) || []).length
-        pastedChunksRef.current.set(id, cleaned)
-        const ref = formatPastedTextRef(id, numLines)
-        setLines((prev) => {
-          const newLines = [...prev]
-          const line = newLines[cursorLine]!
-          const before = line.slice(0, cursorCol)
-          const after = line.slice(cursorCol)
-          newLines[cursorLine] = before + ref + after
-          return newLines
-        })
-        setCursorCol((prev) => prev + ref.length)
-      } else if (pastedLines.length > 1) {
-        // Multi-line paste (small enough to display inline)
-        setLines((prev) => {
-          const newLines = [...prev]
-          const line = newLines[cursorLine]!
-          const before = line.slice(0, cursorCol)
-          const after = line.slice(cursorCol)
-          const spliced: string[] = [
-            before + pastedLines[0]!,
-            ...pastedLines.slice(1, -1),
-            pastedLines[pastedLines.length - 1]! + after,
-          ]
-          newLines.splice(cursorLine, 1, ...spliced)
-          return newLines
-        })
-        const lastPasted = pastedLines[pastedLines.length - 1]!
-        setCursorLine((prev) => prev + pastedLines.length - 1)
-        setCursorCol(lastPasted.length)
-      } else {
-        setLines((prev) => {
-          const newLines = [...prev]
-          const line = newLines[cursorLine]!
-          newLines[cursorLine] = line.slice(0, cursorCol) + cleaned + line.slice(cursorCol)
-          return newLines
-        })
-        setCursorCol((prev) => prev + cleaned.length)
-      }
+      // Route through paste accumulator: single chars flush immediately,
+      // multi-char chunks (paste) are buffered until the paste completes.
+      pasteAccRef.current!.push(cleaned)
     }
   }, { isActive })
 
