@@ -479,7 +479,59 @@ pub async fn fetch_message_content(
     Ok(extract_content_from_message_response(&json, message_id))
 }
 
-/// Extract content from a GET /im/v1/messages/{id} response.
+/// Fetch the `thread_id` for a message via GET /im/v1/messages/{id}.
+/// The websocket event may omit `thread_id` on the first topic reply,
+/// but the REST API always includes it once the thread is created.
+pub async fn fetch_message_thread_id(
+    client: &reqwest::Client,
+    token_cache: &TokenCache,
+    app_id: &str,
+    app_secret: &str,
+    message_id: &str,
+) -> Result<Option<String>> {
+    let url = format!("{FEISHU_API}/im/v1/messages/{message_id}");
+
+    let token = get_token(client, app_id, app_secret, token_cache).await?;
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| EvotError::Run(format!("feishu fetch thread_id: {e}")))?;
+
+    let status = resp.status().as_u16();
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| EvotError::Run(format!("feishu fetch thread_id response: {e}")))?;
+
+    if is_token_error(status, &json) {
+        token_cache.invalidate().await;
+        let token2 = get_token(client, app_id, app_secret, token_cache).await?;
+        let resp2 = client
+            .get(&url)
+            .bearer_auth(&token2)
+            .send()
+            .await
+            .map_err(|e| EvotError::Run(format!("feishu fetch thread_id retry: {e}")))?;
+        let json2: serde_json::Value = resp2
+            .json()
+            .await
+            .map_err(|e| EvotError::Run(format!("feishu fetch thread_id retry response: {e}")))?;
+        check_api_error(&json2)?;
+        return Ok(extract_thread_id(&json2));
+    }
+
+    check_api_error(&json)?;
+    Ok(extract_thread_id(&json))
+}
+
+fn extract_thread_id(json: &serde_json::Value) -> Option<String> {
+    json.pointer("/data/items/0/thread_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
 fn extract_content_from_message_response(
     json: &serde_json::Value,
     message_id: &str,

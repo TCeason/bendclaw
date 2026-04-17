@@ -57,20 +57,53 @@ impl FeishuChannel {
         msg: super::message::ParsedMessage,
         bot_open_id: &str,
     ) {
-        // Build locator: all messages from the same chat+user share one session.
-        // Topic context is injected via input (root message + thread replies),
-        // not via separate sessions — because topic IDs (thread_id, root_id,
-        // parent_id) are unstable across nested replies.
-        let scope = format!("chat:{}:user:{}", msg.chat_id, msg.sender_id);
+        // Resolve thread_id for topic messages.
+        // The websocket event may not include thread_id on the first reply,
+        // but the GET message API always has it. Fetch it if missing.
+        let thread_id = if msg.thread_id.is_some() {
+            msg.thread_id.clone()
+        } else if msg.parent_id.is_some() {
+            // This is a topic reply but ws didn't include thread_id yet.
+            // Query the API to get the stable thread_id.
+            match super::delivery::fetch_message_thread_id(
+                &self.client,
+                &self.token_cache,
+                &self.config.app_id,
+                &self.config.app_secret,
+                &msg.message_id,
+            )
+            .await
+            {
+                Ok(Some(tid)) => Some(tid),
+                Ok(None) => None,
+                Err(e) => {
+                    tracing::warn!(
+                        channel = "feishu",
+                        message_id = %msg.message_id,
+                        error = %e,
+                        "failed to fetch thread_id for message"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Build locator: topic messages get their own session,
+        // non-topic messages share a session per chat+user.
+        let scope = if let Some(ref tid) = thread_id {
+            format!("chat:{}:topic:{}", msg.chat_id, tid)
+        } else {
+            format!("chat:{}:user:{}", msg.chat_id, msg.sender_id)
+        };
         let locator = SessionLocator::new("feishu", &scope);
         tracing::info!(
             channel = "feishu",
             chat_id = %msg.chat_id,
             sender_id = %msg.sender_id,
             message_id = %msg.message_id,
-            thread_id = ?msg.thread_id,
-            root_id = ?msg.root_id,
-            parent_id = ?msg.parent_id,
+            thread_id = ?thread_id,
             scope = %scope,
             session_id = %locator.session_id(),
             "received message"
@@ -83,7 +116,6 @@ impl FeishuChannel {
             let mut input: Vec<evot_engine::Content> = Vec::new();
 
             // Determine if this message is in a topic (thread)
-            let thread_id = msg.thread_id.as_deref();
             let parent_id = msg.parent_id.as_deref();
 
             if thread_id.is_some() || msg.root_id.is_some() || parent_id.is_some() {
@@ -152,7 +184,7 @@ impl FeishuChannel {
                 // Fetch thread replies.
                 // Primary: use thread_id (omt_xxx) with container_id_type=thread.
                 // Fallback: if no thread_id, use chat history filtered by root_id.
-                let topic_replies = if let Some(tid) = thread_id {
+                let topic_replies = if let Some(ref tid) = thread_id {
                     super::delivery::fetch_thread_messages(
                         &this.client,
                         &this.token_cache,
