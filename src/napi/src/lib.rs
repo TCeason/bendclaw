@@ -673,6 +673,7 @@ pub async fn start_server(
     model: Option<String>,
     env_file: Option<String>,
 ) -> Result<()> {
+    init_tracing();
     let mut config = evot::conf::Config::load_with_env_file(env_file.as_deref())
         .map_err(|e| Error::from_reason(format!("config load failed: {e}")))?
         .with_model(model);
@@ -690,6 +691,7 @@ pub async fn start_server_background(
     model: Option<String>,
     env_file: Option<String>,
 ) -> Result<Option<String>> {
+    init_tracing();
     let mut config = evot::conf::Config::load_with_env_file(env_file.as_deref())
         .map_err(|e| Error::from_reason(format!("config load failed: {e}")))?
         .with_model(model);
