@@ -174,9 +174,8 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const sysTok = (p.system_prompt_tokens as number) ?? 0
       const retryStr = attempt > 0 ? ` · retry ${attempt}` : ''
 
-      // Use pre-computed message stats from Rust side, or compute from messages array
+      // Pre-computed message stats from Rust side (always present)
       const ms = p.message_stats as Record<string, any> | undefined
-      const rawMessages = p.messages as { role: string; content?: string; toolName?: string }[] | undefined
       const msgStats: MessageStats | null = ms
         ? {
             userCount: (ms.user_count as number) ?? 0,
@@ -187,9 +186,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
             toolResultTokens: (ms.tool_result_tokens as number) ?? 0,
             toolDetails: (ms.tool_details as [string, number][]) ?? [],
           }
-        : rawMessages
-          ? countMessagesByRole(rawMessages)
-          : null
+        : null
 
       let msgLine = `  ${msgCount} messages`
       if (msgStats) {
@@ -235,7 +232,19 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
 
       const injectedCount = (p.injected_count as number) ?? 0
       const injectedStr = injectedCount > 0 ? ` · ${injectedCount} injected` : ''
-      const text = `[LLM] call · ${model} · turn ${turn}${retryStr}${injectedStr}\n${msgLine}\n${tokLine}${toolBreakdownLines}`
+
+      // Budget bar — self-contained from this event's payload
+      let budgetLine = ''
+      const budgetTokens = (p.budget_tokens as number) ?? 0
+      const ctxWindow = (p.context_window as number) ?? 0
+      if (budgetTokens > 0 && msgStats) {
+        const total = sysTok + msgStats.userTokens + msgStats.assistantTokens + msgStats.toolResultTokens
+        const pct = ((total / budgetTokens) * 100).toFixed(0)
+        const bar = renderBar(total, budgetTokens, 40)
+        budgetLine = `\n  ${bar}  ${pct}%(~${humanTokensInline(total)}) of budget(~${humanTokensInline(budgetTokens)})\n  budget ~${humanTokensInline(budgetTokens)} (window ${humanTokensInline(ctxWindow)} − sys ${humanTokensInline(sysTok)})`
+      }
+
+      const text = `[LLM] call · ${model} · turn ${turn}${retryStr}${injectedStr}\n${msgLine}\n${tokLine}${budgetLine}${toolBreakdownLines}`
       return {
         ...state,
         currentRunStats: {

@@ -548,6 +548,12 @@ pub enum AgentEvent {
         attempt: usize,
         injected_count: usize,
         request: LlmCallRequest,
+        /// System prompt token count from context config (budget accounting baseline).
+        system_prompt_tokens: usize,
+        /// Context budget in tokens (context_window − system_prompt_tokens).
+        budget_tokens: usize,
+        /// Full context window size in tokens.
+        context_window: usize,
     },
     LlmCallEnd {
         turn: usize,

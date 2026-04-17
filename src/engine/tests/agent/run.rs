@@ -1800,9 +1800,20 @@ async fn test_compaction_noop_when_within_budget() {
         .run("hi")
         .await;
 
-    // Within budget → no-op, no compact events emitted, tracker not reset
-    assert_eq!(output.event_count("CompactionStart"), 0);
-    assert_eq!(output.event_count("CompactionEnd"), 0);
+    // Within budget → no-op, but compact events still emitted for verbose tracking
+    assert_eq!(output.event_count("CompactionStart"), 1);
+    assert_eq!(output.event_count("CompactionEnd"), 1);
+
+    let ends: Vec<_> = output
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::ContextCompactionEnd { stats, .. } => Some(stats.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ends[0].level, 0);
+    assert_eq!(ends[0].before_message_count, ends[0].after_message_count);
 }
 
 #[tokio::test]
@@ -1815,6 +1826,65 @@ async fn test_compaction_not_emitted_without_context_config() {
 
     assert_eq!(output.event_count("CompactionStart"), 0);
     assert_eq!(output.event_count("CompactionEnd"), 0);
+}
+
+#[tokio::test]
+async fn test_llm_call_start_carries_budget_and_window() {
+    use evotengine::context::ContextConfig;
+
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("ok".into())])
+        .system_prompt("sys")
+        .context_config(ContextConfig {
+            max_context_tokens: 100_000,
+            system_prompt_tokens: 10_000,
+            keep_recent: 10,
+            keep_first: 2,
+            tool_output_max_lines: 50,
+        })
+        .retry_policy(evotengine::RetryPolicy::disabled())
+        .run("hi")
+        .await;
+
+    let starts: Vec<_> = output
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::LlmCallStart {
+                budget_tokens,
+                context_window,
+                system_prompt_tokens,
+                ..
+            } => Some((*system_prompt_tokens, *budget_tokens, *context_window)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(starts.len(), 1);
+    assert_eq!(starts[0], (10_000, 90_000, 100_000));
+}
+
+#[tokio::test]
+async fn test_llm_call_start_zero_budget_without_context_config() {
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("ok".into())])
+        .system_prompt("")
+        .run("hi")
+        .await;
+
+    let starts: Vec<_> = output
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::LlmCallStart {
+                budget_tokens,
+                context_window,
+                ..
+            } => Some((*budget_tokens, *context_window)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(starts.len(), 1);
+    assert_eq!(starts[0], (0, 0));
 }
 
 // ---------------------------------------------------------------------------

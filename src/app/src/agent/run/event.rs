@@ -70,6 +70,12 @@ pub enum RunEventPayload {
         /// Pre-computed message stats by role.
         #[serde(skip_serializing_if = "Option::is_none")]
         message_stats: Option<LlmMessageStats>,
+        /// Context budget in tokens (context_window − system_prompt_tokens).
+        #[serde(default)]
+        budget_tokens: usize,
+        /// Full context window size in tokens.
+        #[serde(default)]
+        context_window: usize,
     },
     LlmCallCompleted {
         turn: usize,

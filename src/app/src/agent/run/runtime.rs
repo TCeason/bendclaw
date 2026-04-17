@@ -450,10 +450,11 @@ fn map_agent_event(
             attempt,
             injected_count,
             request,
+            system_prompt_tokens,
+            budget_tokens,
+            context_window,
         } => {
             let message_count = request.messages.len();
-            let system_prompt_tokens =
-                evot_engine::context::estimate_tokens(&request.system_prompt);
             let tool_count = request.tools.len();
 
             // Compute message stats and bytes on the Rust side to avoid
@@ -524,7 +525,7 @@ fn map_agent_event(
                         model: request.model.clone(),
                         message_count,
                         message_bytes,
-                        system_prompt_tokens,
+                        system_prompt_tokens: *system_prompt_tokens,
                     })
                     .to_item(),
                 ),
@@ -535,9 +536,11 @@ fn map_agent_event(
                     model: request.model.clone(),
                     message_count,
                     message_bytes,
-                    system_prompt_tokens,
+                    system_prompt_tokens: *system_prompt_tokens,
                     tool_count,
                     message_stats,
+                    budget_tokens: *budget_tokens,
+                    context_window: *context_window,
                 }),
             ]
         }

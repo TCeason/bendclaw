@@ -369,29 +369,27 @@ async fn run_loop(
                 let did_work = result.stats.level > 0 || result.stats.current_run_cleared > 0;
                 context.messages = result.messages;
 
-                if did_work {
-                    // Post-hoc notification: Start/End are emitted as a pair
-                    // after compaction completes, only when work was done.
-                    // This avoids noisy no-op events and preserves the
-                    // tracker's real-usage baseline.
-                    tx.send(AgentEvent::ContextCompactionStart {
-                        message_count: original_count,
-                        estimated_tokens: original_tokens,
-                        budget_tokens: budget,
-                        system_prompt_tokens: ctx_config.system_prompt_tokens,
-                        context_window: ctx_config.max_context_tokens,
-                    })
-                    .ok();
+                // Always emit Start/End pair so verbose mode can track
+                // every compaction pass, including no-ops.
+                tx.send(AgentEvent::ContextCompactionStart {
+                    message_count: original_count,
+                    estimated_tokens: original_tokens,
+                    budget_tokens: budget,
+                    system_prompt_tokens: ctx_config.system_prompt_tokens,
+                    context_window: ctx_config.max_context_tokens,
+                })
+                .ok();
 
+                if did_work {
                     // Reset tracker after compaction — baseline is no longer valid
                     context_tracker.reset();
-
-                    tx.send(AgentEvent::ContextCompactionEnd {
-                        stats: result.stats,
-                        messages: context.messages.clone(),
-                    })
-                    .ok();
                 }
+
+                tx.send(AgentEvent::ContextCompactionEnd {
+                    stats: result.stats,
+                    messages: context.messages.clone(),
+                })
+                .ok();
             }
 
             // Stream assistant response
@@ -639,6 +637,17 @@ async fn stream_assistant_response(
         };
 
         // Emit LlmCallStart before each provider attempt
+        let (llm_sys_tokens, llm_budget, llm_window) = config
+            .context_config
+            .as_ref()
+            .map(|c| {
+                (
+                    c.system_prompt_tokens,
+                    c.max_context_tokens.saturating_sub(c.system_prompt_tokens),
+                    c.max_context_tokens,
+                )
+            })
+            .unwrap_or((0, 0, 0));
         tx.send(AgentEvent::LlmCallStart {
             turn,
             attempt,
@@ -649,6 +658,9 @@ async fn stream_assistant_response(
                 messages: llm_messages.clone(),
                 tools: tool_defs.clone(),
             },
+            system_prompt_tokens: llm_sys_tokens,
+            budget_tokens: llm_budget,
+            context_window: llm_window,
         })
         .ok();
 
