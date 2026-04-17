@@ -238,8 +238,8 @@ export function version(): string {
   return rawVersion()
 }
 
-export async function startServer(port?: number, model?: string): Promise<void> {
-  return rawStartServer(port ?? null, model ?? null)
+export async function startServer(port?: number, model?: string, envFile?: string): Promise<void> {
+  return rawStartServer(port ?? null, model ?? null, envFile ?? null)
 }
 
 export interface ServerInfo {
@@ -249,8 +249,8 @@ export interface ServerInfo {
   channelCount: number
 }
 
-export async function startServerBackground(port?: number, model?: string): Promise<ServerInfo | null> {
-  const json = await rawStartServerBackground(port ?? null, model ?? null)
+export async function startServerBackground(port?: number, model?: string, envFile?: string): Promise<ServerInfo | null> {
+  const json = await rawStartServerBackground(port ?? null, model ?? null, envFile ?? null)
   if (json === null) return null
   return JSON.parse(json) as ServerInfo
 }

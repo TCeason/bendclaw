@@ -645,8 +645,12 @@ pub fn version() -> String {
 }
 
 #[napi]
-pub async fn start_server(port: Option<u16>, model: Option<String>) -> Result<()> {
-    let mut config = evot::conf::Config::load()
+pub async fn start_server(
+    port: Option<u16>,
+    model: Option<String>,
+    env_file: Option<String>,
+) -> Result<()> {
+    let mut config = evot::conf::Config::load_with_env_file(env_file.as_deref())
         .map_err(|e| Error::from_reason(format!("config load failed: {e}")))?
         .with_model(model);
     if let Some(p) = port {
@@ -661,8 +665,9 @@ pub async fn start_server(port: Option<u16>, model: Option<String>) -> Result<()
 pub async fn start_server_background(
     port: Option<u16>,
     model: Option<String>,
+    env_file: Option<String>,
 ) -> Result<Option<String>> {
-    let mut config = evot::conf::Config::load()
+    let mut config = evot::conf::Config::load_with_env_file(env_file.as_deref())
         .map_err(|e| Error::from_reason(format!("config load failed: {e}")))?
         .with_model(model);
     if let Some(p) = port {

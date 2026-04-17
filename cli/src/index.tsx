@@ -16,7 +16,7 @@ async function main() {
 
   switch (opts.command) {
     case 'serve':
-      await startServer(opts.port, opts.model)
+      await startServer(opts.port, opts.model, opts.envFile)
       break
 
     case 'prompt':
@@ -78,4 +78,7 @@ async function main() {
   }
 }
 
-main()
+main().catch((err: any) => {
+  console.error(`Failed to initialize: ${err?.message ?? err}`)
+  process.exit(1)
+})
