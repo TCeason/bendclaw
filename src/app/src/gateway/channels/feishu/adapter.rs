@@ -100,10 +100,6 @@ impl FeishuChannel {
         let locator = SessionLocator::new("feishu", &scope);
         tracing::info!(
             channel = "feishu",
-            chat_id = %msg.chat_id,
-            sender_id = %msg.sender_id,
-            message_id = %msg.message_id,
-            thread_id = ?thread_id,
             scope = %scope,
             session_id = %locator.session_id(),
             "received message"
