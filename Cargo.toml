@@ -1,5 +1,5 @@
 [workspace]
-members = ["src/engine", "src/app", "src/napi"]
+members = ["src/engine", "src/app", "cli/addon"]
 resolver = "2"
 
 [workspace.package]

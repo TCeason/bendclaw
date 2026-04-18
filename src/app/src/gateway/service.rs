@@ -22,7 +22,7 @@ pub async fn start(conf: Config) -> Result<()> {
         "server starting"
     );
 
-    let agent = build_agent(&conf)?;
+    let agent = build_agent(&conf).await?;
     let cancel = CancellationToken::new();
 
     // Long-lived channels (feishu, telegram, ...)
@@ -43,7 +43,7 @@ pub async fn start(conf: Config) -> Result<()> {
     Ok(())
 }
 
-pub fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
+pub async fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .map_err(|e| EvotError::Run(format!("failed to get cwd: {e}")))?;
@@ -66,9 +66,17 @@ pub fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
 
     tracing::info!(skills_dirs = ?skills_dirs, "agent skills directories");
 
-    Ok(Agent::new(conf, &cwd)?
+    let agent = Agent::new(conf, &cwd)?
         .with_system_prompt(system_prompt)
-        .with_skills_dirs(skills_dirs))
+        .with_skills_dirs(skills_dirs);
+
+    // Load persisted variables
+    let storage = agent.storage();
+    let records = storage.load_variables().await.unwrap_or_default();
+    let variables = std::sync::Arc::new(crate::agent::Variables::new(storage, records));
+    agent.with_variables(variables);
+
+    Ok(agent)
 }
 
 fn print_banner(conf: &Config, channel_handles: &[tokio::task::JoinHandle<()>]) -> Result<()> {

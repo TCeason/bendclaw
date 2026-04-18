@@ -14,22 +14,22 @@ export const COMMANDS: SlashCommand[] = [
   { name: '/help', description: 'Show help information', usage: '/help [command]', handler: 'builtin' },
   { name: '/resume', description: 'Resume a session', usage: '/resume [id]', handler: 'builtin' },
   { name: '/new', description: 'Start a new session', handler: 'builtin' },
-  { name: '/clear', description: 'Clear session context', handler: 'builtin' },
   { name: '/goto', description: 'Go to a message', usage: '/goto <message_number>', handler: 'builtin' },
   { name: '/history', description: 'Show recent messages with seq numbers', usage: '/history [count]', handler: 'builtin' },
   { name: '/model', description: 'Show or change model', usage: '/model [name]', handler: 'builtin' },
   { name: '/plan', description: 'Enter planning mode', handler: 'builtin' },
-  { name: '/act', description: 'Return to normal action mode', handler: 'builtin' },
-  { name: '/env', description: 'Manage variables', usage: '/env [set K=V | del K | load FILE]', handler: 'builtin' },
-  { name: '/log', description: 'Analyze session log / share sessions', usage: '/log [up [id] | dl <url> | query]', handler: 'builtin' },
   { name: '/skill', description: 'Manage skills', usage: '/skill [list | install <source> | remove <name>]', handler: 'builtin' },
-  { name: '/update', description: 'Update evot to latest version', handler: 'builtin' },
 ]
 
 /** Hidden commands — recognised but not shown in /help or ghost hints */
 export const HIDDEN_COMMANDS: SlashCommand[] = [
   { name: '/verbose', aliases: ['/v'], description: 'Toggle verbose mode', handler: 'builtin' },
   { name: '/exit', aliases: ['/quit', '/q'], description: 'Exit the REPL', handler: 'builtin' },
+  { name: '/act', description: 'Return to normal action mode', handler: 'builtin' },
+  { name: '/env', description: 'Manage variables', usage: '/env [set K=V | del K | load FILE]', handler: 'builtin' },
+  { name: '/log', description: 'Analyze session log / share sessions', usage: '/log [up [id] | dl <url> | query]', handler: 'builtin' },
+  { name: '/clear', description: 'Clear session context', handler: 'builtin' },
+  { name: '/update', description: 'Update evot to latest version', handler: 'builtin' },
 ]
 
 /** All commands (visible + hidden) for resolution */

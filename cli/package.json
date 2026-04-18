@@ -16,7 +16,7 @@
     ]
   },
   "scripts": {
-    "build:napi": "napi build --manifest-path ../src/napi/Cargo.toml --output-dir . --release --platform --js src/native/binding.js --dts src/native/binding.d.ts",
+    "build:napi": "napi build --manifest-path addon/Cargo.toml --output-dir . --release --platform --js src/native/binding.js --dts src/native/binding.d.ts",
     "build:cli": "bun build src/index.tsx --compile --define process.env.DEV='\"false\"' --define process.env.NODE_ENV='\"production\"' --outfile dist/evot",
     "dev": "bun run src/index.tsx",
     "test": "bun test tests/"

@@ -122,9 +122,9 @@ export function applyCliOpts(agent: Agent, opts: CliOptions): void {
   if (opts.skillsDirs.length > 0) agent.addSkillsDirs(opts.skillsDirs)
 }
 
-export function createAgent(opts: CliOptions): Agent {
+export async function createAgent(opts: CliOptions): Promise<Agent> {
   try {
-    const agent = Agent.create(opts.model, opts.envFile)
+    const agent = await Agent.create(opts.model, opts.envFile)
     applyCliOpts(agent, opts)
     return agent
   } catch (err: any) {

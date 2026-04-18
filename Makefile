@@ -110,7 +110,7 @@ ci: check test
 # -- TS CLI -------------------------------------------------------------------
 
 build-napi:
-	cd cli && bun install && bunx napi build --manifest-path ../src/napi/Cargo.toml --release --platform --output-dir .
+	cd cli && bun install && bunx napi build --manifest-path addon/Cargo.toml --release --platform --output-dir .
 
 build-cli: build-napi
 	cd cli && bun build src/index.tsx --compile --define 'process.env.DEV="false"' --define 'process.env.NODE_ENV="production"' --outfile dist/evot
@@ -161,7 +161,7 @@ install: build-cli
 	fi
 
 build-napi-dev:
-	cd cli && bun install && bunx napi build --manifest-path ../src/napi/Cargo.toml --platform --output-dir .
+	cd cli && bun install && bunx napi build --manifest-path addon/Cargo.toml --platform --output-dir .
 
 dev: build-napi-dev
 	cd cli && bun install && bun run src/index.tsx

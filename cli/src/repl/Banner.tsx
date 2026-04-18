@@ -39,7 +39,7 @@ export interface BannerProps {
   sessionId: string | null
   configInfo?: import('../native/index.js').ConfigInfo
   recentSessions?: SessionMeta[]
-  releaseNotes?: string[]
+  serverState?: import('../repl/server.js').ServerState | null
 }
 
 // ── Logo ────────────────────────────────────────────────────────────────────
@@ -126,12 +126,23 @@ function createRecentSessionsFeed(sessions: SessionMeta[]): FeedConfig {
   }
 }
 
-function createWhatsNewFeed(notes: string[]): FeedConfig {
-  const lines: FeedLine[] = notes.slice(0, 4).map((note) => ({ text: note }))
+function createServerFeed(serverState?: import('../repl/server.js').ServerState | null): FeedConfig {
+  if (!serverState) {
+    return {
+      title: 'Server',
+      lines: [],
+      emptyMessage: 'Not running',
+    }
+  }
+  const lines: FeedLine[] = [
+    { text: serverState.address },
+  ]
+  if (serverState.channels.length > 0) {
+    lines.push({ text: `channels: ${serverState.channels.join(', ')}` })
+  }
   return {
-    title: "What's new",
+    title: 'Server',
     lines,
-    emptyMessage: 'No release notes',
   }
 }
 
@@ -238,14 +249,14 @@ function CompactBanner({ model, configInfo, gitBranch, shortCwd, columns }: {
 
 // ── Horizontal Banner ───────────────────────────────────────────────────────
 
-function HorizontalBanner({ model, configInfo, gitBranch, shortCwd, columns, recentSessions, releaseNotes }: {
+function HorizontalBanner({ model, configInfo, gitBranch, shortCwd, columns, recentSessions, serverState }: {
   model: string
   configInfo?: import('../native/index.js').ConfigInfo
   gitBranch: string | null
   shortCwd: string
   columns: number
   recentSessions: SessionMeta[]
-  releaseNotes: string[]
+  serverState?: import('../repl/server.js').ServerState | null
 }) {
   const provider = configInfo?.provider ?? ''
   const modelLine = provider ? `${model} · ${provider}` : model
@@ -256,7 +267,7 @@ function HorizontalBanner({ model, configInfo, gitBranch, shortCwd, columns, rec
 
   const feeds: FeedConfig[] = [
     createRecentSessionsFeed(recentSessions),
-    createWhatsNewFeed(releaseNotes),
+    createServerFeed(serverState),
   ]
 
   return (
@@ -306,7 +317,7 @@ function HorizontalBanner({ model, configInfo, gitBranch, shortCwd, columns, rec
 
 // ── Banner (public) ─────────────────────────────────────────────────────────
 
-export function Banner({ model, cwd, sessionId, configInfo, recentSessions, releaseNotes }: BannerProps) {
+export function Banner({ model, cwd, sessionId, configInfo, recentSessions, serverState }: BannerProps) {
   const { stdout } = useStdout()
   const columns = stdout?.columns ?? 80
   const shortCwd = cwd.replace(process.env.HOME ?? '', '~')
@@ -345,7 +356,7 @@ export function Banner({ model, cwd, sessionId, configInfo, recentSessions, rele
       shortCwd={shortCwd}
       columns={columns}
       recentSessions={recentSessions ?? []}
-      releaseNotes={releaseNotes ?? []}
+      serverState={serverState}
     />
   )
 }

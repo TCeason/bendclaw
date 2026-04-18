@@ -226,6 +226,46 @@ impl Agent {
         *self.llm.write() = llm;
     }
 
+    /// Set the active model by spec (e.g. "deepseek-chat" or "openrouter:google/gemini-2.5-pro").
+    /// Resolves provider+model from config. Falls back to just updating the model name.
+    pub fn set_model_by_spec(&self, config: &Config, spec: &str) {
+        if let Ok((provider_name, model_override)) = config.resolve_model_spec(spec) {
+            if let Some(profile) = config.providers.get(&provider_name) {
+                let llm = LlmConfig {
+                    provider: provider_name,
+                    protocol: profile.protocol.clone(),
+                    api_key: profile.api_key.clone(),
+                    base_url: profile.base_url.clone(),
+                    model: model_override.unwrap_or_else(|| profile.model.clone()),
+                    thinking_level: config.llm.thinking_level,
+                };
+                self.set_llm(llm);
+                return;
+            }
+        }
+        self.set_model(spec.to_string());
+    }
+
+    /// Switch provider by spec. Unlike `set_model_by_spec`, this fails if the spec
+    /// cannot be resolved to a known provider.
+    pub fn set_provider_by_spec(&self, config: &Config, spec: &str) -> Result<()> {
+        let (provider_name, model_override) = config.resolve_model_spec(spec)?;
+        let profile = config
+            .providers
+            .get(&provider_name)
+            .ok_or_else(|| EvotError::Conf(format!("provider '{}' not found", provider_name)))?;
+        let llm = LlmConfig {
+            provider: provider_name,
+            protocol: profile.protocol.clone(),
+            api_key: profile.api_key.clone(),
+            base_url: profile.base_url.clone(),
+            model: model_override.unwrap_or_else(|| profile.model.clone()),
+            thinking_level: config.llm.thinking_level,
+        };
+        self.set_llm(llm);
+        Ok(())
+    }
+
     pub fn variables(&self) -> Option<Arc<Variables>> {
         self.variables.read().clone()
     }

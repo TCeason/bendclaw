@@ -131,8 +131,8 @@ export class Agent {
     this.raw = raw
   }
 
-  static create(model?: string, envFile?: string): Agent {
-    const raw = RawAgent.create(model ?? null, envFile ?? null)
+  static async create(model?: string, envFile?: string): Promise<Agent> {
+    const raw = await RawAgent.create(model ?? null, envFile ?? null)
     return new Agent(raw)
   }
 

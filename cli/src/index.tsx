@@ -38,18 +38,17 @@ async function main() {
 
     case 'repl':
     default: {
-      const agent = createAgent(opts)
+      const agent = await createAgent(opts)
       process.on('SIGINT', () => {})
 
       // Preload data for the startup banner (Static renders only once)
       let preloadedSessions: Awaited<ReturnType<typeof agent.listSessions>> = []
       try { preloadedSessions = await agent.listSessions(20) } catch { /* ignore */ }
 
-      let preloadedReleaseNotes: string[] = []
-      try {
-        const { fetchRecentReleaseNotes } = await import('./update/check.js')
-        preloadedReleaseNotes = await fetchRecentReleaseNotes(4)
-      } catch { /* ignore */ }
+      // Start background server before render so Banner can show it
+      const { tryStartServer, setTerminalTitle } = await import('./repl/server.js')
+      let preloadedServer: Awaited<ReturnType<typeof tryStartServer>> = null
+      try { preloadedServer = await tryStartServer(undefined, opts.envFile) } catch { /* ignore */ }
 
       // Install bracketed paste mode to detect Cmd+V image paste on macOS.
       // The onEmptyPaste callback is wired up after render via the REPL ref.
@@ -64,7 +63,7 @@ async function main() {
         initialResume: opts.resume,
         envFile: opts.envFile,
         preloadedSessions,
-        preloadedReleaseNotes,
+        preloadedServer,
         onEmptyPaste: (handler: () => void) => { emptyPasteHandler = handler },
       }), {
         exitOnCtrlC: false,

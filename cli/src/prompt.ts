@@ -8,7 +8,7 @@ export async function runPrompt(opts: CliOptions) {
     process.exit(1)
   }
 
-  const agent: Agent = createAgent(opts)
+  const agent: Agent = await createAgent(opts)
   const stream = await agent.query(opts.prompt, opts.resume)
   for await (const event of stream) {
     if (opts.outputFormat === 'stream-json') {

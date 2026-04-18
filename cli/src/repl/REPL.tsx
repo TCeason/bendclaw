@@ -40,7 +40,7 @@ import {
 import { splitMarkdownBlocks } from '../render/markdown.js'
 import { Banner, type BannerProps } from './Banner.js'
 import { UpdateManager, type ReleaseInfo } from '../update/index.js'
-import { tryStartServer, setTerminalTitle, type ServerState } from './server.js'
+import { setTerminalTitle, type ServerState } from './server.js'
 
 interface REPLProps {
   agent: Agent
@@ -48,11 +48,11 @@ interface REPLProps {
   initialResume?: string
   envFile?: string
   preloadedSessions?: import('../native/index.js').SessionMeta[]
-  preloadedReleaseNotes?: string[]
+  preloadedServer?: ServerState | null
   onEmptyPaste?: (handler: () => void) => void
 }
 
-export function REPL({ agent, initialVerbose = true, initialResume, envFile, preloadedSessions, preloadedReleaseNotes, onEmptyPaste }: REPLProps) {
+export function REPL({ agent, initialVerbose = true, initialResume, envFile, preloadedSessions, preloadedServer, onEmptyPaste }: REPLProps) {
   const { exit } = useApp()
   const [state, setState] = useState<AppState>(() => ({
     ...createInitialState(agent.model, agent.cwd),
@@ -61,7 +61,24 @@ export function REPL({ agent, initialVerbose = true, initialResume, envFile, pre
   const [systemMessages, setSystemMessages] = useState<SystemMsg[]>([])
   const [showHelp, setShowHelp] = useState(false)
   const [messageQueue, setMessageQueue] = useState<{ text: string; images?: PastedImage[]; displayText?: string }[]>([])
-  const [outputLines, setOutputLines] = useState<OutputLine[]>([])
+  const [outputLines, setOutputLines] = useState<OutputLine[]>(() => {
+    // Compute initial output lines synchronously to avoid Ink redraw artifacts
+    const initial: OutputLine[] = []
+    if (!initialResume && preloadedSessions) {
+      const match = preloadedSessions.find((s) => s.cwd === agent.cwd)
+      if (match) {
+        const tag = match.source ? `[${match.source}] ` : ''
+        const title = match.title || '(untitled)'
+        const short = title.length > 40 ? title.slice(0, 39) + '…' : title
+        initial.push({
+          id: `prev-session-${match.session_id}`,
+          kind: 'system',
+          text: `  previous session: ${tag}${short} · /resume ${match.session_id.slice(0, 8)}`,
+        })
+      }
+    }
+    return initial
+  })
   const [pendingText, setPendingText] = useState('')
   const [toolProgress, setToolProgress] = useState('')
   const [logMode, setLogMode] = useState<import('../native/index.js').ForkedAgent | null>(null)
@@ -77,9 +94,8 @@ export function REPL({ agent, initialVerbose = true, initialResume, envFile, pre
   const [historyManager] = useState(() => new HistoryManager())
   const [updateHint, setUpdateHint] = useState<string | undefined>(undefined)
   const [updateManager] = useState(() => new UpdateManager(version()))
-  const [serverState, setServerState] = useState<ServerState | null>(null)
+  const [serverState, setServerState] = useState<ServerState | null>(preloadedServer ?? null)
   const [recentSessions] = useState<import('../native/index.js').SessionMeta[]>(preloadedSessions ?? [])
-  const [releaseNotes] = useState<string[]>(preloadedReleaseNotes ?? [])
   const [configInfoState, setConfigInfoState] = useState(() => {
     try { return agent.configInfo() } catch { return undefined }
   })
@@ -106,16 +122,6 @@ export function REPL({ agent, initialVerbose = true, initialResume, envFile, pre
   useEffect(() => {
     (async () => {
       setTerminalTitle()
-      try {
-        const s = await tryStartServer(undefined, envFile)
-        setServerState(s)
-        setTerminalTitle()
-        if (s) {
-          const parts = [`  server: ${s.address}`]
-          if (s.channels.length > 0) parts.push(`channels: ${s.channels.join(', ')}`)
-          pushSystem(setSystemMessages, 'info', parts.join('  ·  '))
-        }
-      } catch { /* ignore */ }
 
       try {
         if (initialResume) {
@@ -125,15 +131,6 @@ export function REPL({ agent, initialVerbose = true, initialResume, envFile, pre
             await resumeSession(agent, match, setState, setSystemMessages, setOutputLines)
           } else {
             pushSystem(setSystemMessages, 'error', `Session not found: ${initialResume}`)
-          }
-        } else {
-          const sessions = preloadedSessions ?? await agent.listSessions(20)
-          const match = sessions.find((s) => s.cwd === agent.cwd)
-          if (match) {
-            const tag = match.source ? `[${match.source}] ` : ''
-            const title = match.title || '(untitled)'
-            const short = title.length > 40 ? title.slice(0, 39) + '…' : title
-            pushSystem(setSystemMessages, 'info', `  previous session: ${tag}${short} · /resume ${match.session_id.slice(0, 8)}`)
           }
         }
       } catch { /* ignore */ }
@@ -291,7 +288,7 @@ export function REPL({ agent, initialVerbose = true, initialResume, envFile, pre
   return (
     <Box flexDirection="column" padding={0}>
       <OutputView
-        banner={<Banner model={state.model} cwd={state.cwd} sessionId={state.sessionId} configInfo={configInfoState} recentSessions={recentSessions} releaseNotes={releaseNotes} />}
+        banner={<Banner model={state.model} cwd={state.cwd} sessionId={state.sessionId} configInfo={configInfoState} recentSessions={recentSessions} serverState={serverState} />}
         lines={outputLines}
       />
 
