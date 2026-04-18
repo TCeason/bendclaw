@@ -163,7 +163,7 @@ impl NapiAgent {
         session_id: Option<String>,
         tool_mode: Option<String>,
         content_json: Option<String>,
-    ) -> Result<NapiRun> {
+    ) -> Result<NapiSubmitOutcome> {
         // Channel for ask_user events injected into the event stream
         let (ask_event_tx, ask_event_rx) = tokio_mpsc::unbounded_channel::<String>();
         // Shared slot for the oneshot sender that unblocks the ask_user callback
@@ -217,24 +217,37 @@ impl NapiAgent {
                 .source("repl")
         };
 
-        let run = self
+        let outcome = self
             .agent
-            .query(request)
+            .submit(request)
             .await
             .map_err(|e| Error::from_reason(format!("query failed: {e}")))?;
 
-        let sid = run.session_id.clone();
-        let handle = run.handle();
+        match outcome {
+            evot::agent::SubmitOutcome::Command(msg) => Ok(NapiSubmitOutcome {
+                kind: "command".into(),
+                run: std::sync::Mutex::new(None),
+                message: Some(msg),
+            }),
+            evot::agent::SubmitOutcome::Run(run) => {
+                let sid = run.session_id.clone();
+                let handle = run.handle();
 
-        Ok(NapiRun {
-            inner: Mutex::new(run),
-            handle,
-            cached_session_id: sid,
-            aborted: Arc::new(AtomicBool::new(false)),
-            abort_notify: Arc::new(Notify::new()),
-            ask_event_rx: Mutex::new(Some(ask_event_rx)),
-            ask_responder,
-        })
+                Ok(NapiSubmitOutcome {
+                    kind: "run".into(),
+                    run: std::sync::Mutex::new(Some(NapiRun {
+                        inner: Mutex::new(run),
+                        handle,
+                        cached_session_id: sid,
+                        aborted: Arc::new(AtomicBool::new(false)),
+                        abort_notify: Arc::new(Notify::new()),
+                        ask_event_rx: Mutex::new(Some(ask_event_rx)),
+                        ask_responder,
+                    })),
+                    message: None,
+                })
+            }
+        }
     }
 
     #[napi]
@@ -470,6 +483,36 @@ impl NapiAgent {
     #[napi]
     pub fn abort_run(&self, session_id: String) {
         self.agent.abort_run(&session_id);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NapiSubmitOutcome — result of a submit: either a Run or a command message
+// ---------------------------------------------------------------------------
+
+#[napi]
+pub struct NapiSubmitOutcome {
+    kind: String,
+    run: std::sync::Mutex<Option<NapiRun>>,
+    message: Option<String>,
+}
+
+#[napi]
+impl NapiSubmitOutcome {
+    #[napi(getter)]
+    pub fn kind(&self) -> String {
+        self.kind.clone()
+    }
+
+    #[napi(getter)]
+    pub fn message(&self) -> Option<String> {
+        self.message.clone()
+    }
+
+    /// Take the run out of this outcome. Only valid when kind === "run".
+    #[napi]
+    pub fn take_run(&self) -> Option<NapiRun> {
+        self.run.lock().ok().and_then(|mut guard| guard.take())
     }
 }
 

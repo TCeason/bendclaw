@@ -99,6 +99,17 @@ impl QueryRequest {
 }
 
 // ---------------------------------------------------------------------------
+// SubmitOutcome — result of a submit: either a Run or a handled command
+// ---------------------------------------------------------------------------
+
+pub enum SubmitOutcome {
+    /// Normal agent run.
+    Run(Run),
+    /// A gateway command was handled; carry this text back to the caller.
+    Command(String),
+}
+
+// ---------------------------------------------------------------------------
 // Agent
 // ---------------------------------------------------------------------------
 
@@ -274,20 +285,98 @@ impl Agent {
 
     // -- query ---------------------------------------------------------------
 
-    pub async fn query(&self, request: QueryRequest) -> Result<Run> {
+    pub async fn submit(&self, request: QueryRequest) -> Result<SubmitOutcome> {
         let session = self
             .resolve_session(request.session_id.as_deref(), &request.source)
             .await?;
-        self.query_with_session(request, session).await
+        self.submit_to_session(request, session).await
     }
 
     /// Channel path: session is already resolved by the caller (RunManager).
-    /// Agent only executes the run.
-    pub async fn query_with_session(
+    /// Intercepts gateway commands before starting a run.
+    pub async fn submit_to_session(
         &self,
         request: QueryRequest,
         session: Arc<Session>,
-    ) -> Result<Run> {
+    ) -> Result<SubmitOutcome> {
+        // Intercept gateway commands (/clear, /goto, ...)
+        if let Some(msg) = self.maybe_handle_command(&request, &session).await? {
+            return Ok(SubmitOutcome::Command(msg));
+        }
+
+        let run = self.start_run(request, session).await?;
+        Ok(SubmitOutcome::Run(run))
+    }
+
+    // -- command handling (private) -------------------------------------------
+
+    async fn maybe_handle_command(
+        &self,
+        request: &QueryRequest,
+        session: &Arc<Session>,
+    ) -> Result<Option<String>> {
+        use crate::gateway::command::parse_command;
+        use crate::gateway::command::Command;
+
+        let cmd = match parse_command(&request.input_text()) {
+            Some(cmd) => cmd,
+            None => return Ok(None),
+        };
+
+        match cmd {
+            Command::UsageError(msg) => Ok(Some(msg)),
+            Command::Clear => {
+                let session_id = session.session_id().await;
+                self.abort_run(&session_id);
+                session.write_clear_marker().await?;
+                session.save().await?;
+                Ok(Some("Session cleared.".into()))
+            }
+            Command::Goto(seq) => {
+                if !session.is_valid_context_seq(seq).await? {
+                    let max = session.max_seq().await;
+                    return Ok(Some(format!(
+                        "Invalid message number. Valid range: 1-{max}."
+                    )));
+                }
+                let session_id = session.session_id().await;
+                self.abort_run(&session_id);
+                session.write_goto_marker(seq).await?;
+                session.save().await?;
+                // Show context window around the goto point
+                let entries = session.recent_context_entries(5).await?;
+                let mut lines = vec![format!("Moved to message #{seq}.")];
+                for (s, item) in &entries {
+                    let is_target = *s == seq;
+                    let marker = if is_target { " ←" } else { "" };
+                    lines.push(format!("  {}{}", format_history_entry(*s, item), marker));
+                }
+                // If target wasn't in the window (it's now in snapshot with seq=0),
+                // show it explicitly
+                if !entries.iter().any(|(s, _)| *s == seq) {
+                    if let Some(item) = session.get_item_at(seq).await? {
+                        lines.push(format!("  target: {} ←", format_history_entry(seq, &item)));
+                    }
+                }
+                Ok(Some(lines.join("\n")))
+            }
+            Command::History(limit) => {
+                let entries = session.recent_context_entries(limit).await?;
+                if entries.is_empty() {
+                    return Ok(Some("No messages in session.".into()));
+                }
+                let mut lines = Vec::new();
+                for (seq, item) in &entries {
+                    lines.push(format!("  {}", format_history_entry(*seq, item)));
+                }
+                Ok(Some(lines.join("\n")))
+            }
+        }
+    }
+
+    // -- run execution (private) ----------------------------------------------
+
+    async fn start_run(&self, request: QueryRequest, session: Arc<Session>) -> Result<Run> {
         let session_id = session.meta().await.session_id.clone();
         let run_id = crate::types::new_id();
 
@@ -534,6 +623,27 @@ impl Agent {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn format_history_entry(seq: u64, item: &crate::types::TranscriptItem) -> String {
+    let role = match item {
+        crate::types::TranscriptItem::User { .. } => "user",
+        crate::types::TranscriptItem::Assistant { .. } => "assistant",
+        _ => {
+            debug_assert!(false, "history entry must be user or assistant");
+            "unknown"
+        }
+    };
+    let preview = crate::types::entry_preview(item);
+    if seq == 0 {
+        format!("  …   {:<10} {}", role, preview)
+    } else {
+        format!("#{:<4} {:<10} {}", seq, role, preview)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ForkRequest / ForkedAgent
 // ---------------------------------------------------------------------------
 
@@ -555,10 +665,17 @@ impl ForkedAgent {
         let request = QueryRequest::text(prompt)
             .session_id(self.session_id.clone())
             .mode(ToolMode::Readonly);
-        let run = self.agent.query(request).await?;
-        if self.session_id.is_none() {
-            self.session_id = Some(run.session_id.clone());
+        let outcome = self.agent.submit(request).await?;
+        match outcome {
+            SubmitOutcome::Run(run) => {
+                if self.session_id.is_none() {
+                    self.session_id = Some(run.session_id.clone());
+                }
+                Ok(run)
+            }
+            SubmitOutcome::Command(_) => Err(crate::error::EvotError::Run(
+                "commands not supported in forked agent".into(),
+            )),
         }
-        Ok(run)
     }
 }

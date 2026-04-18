@@ -14,6 +14,7 @@ pub use agent::ExecutionLimits;
 pub use agent::ForkRequest;
 pub use agent::ForkedAgent;
 pub use agent::QueryRequest;
+pub use agent::SubmitOutcome;
 pub use run::Run;
 pub use run::RunEvent;
 pub use run::RunEventContext;

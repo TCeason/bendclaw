@@ -14,11 +14,14 @@ use super::session::Session;
 use super::session_locator::SessionLocator;
 use super::Agent;
 use super::QueryRequest;
+use crate::agent::SubmitOutcome;
 use crate::error::Result;
 
 pub enum SendOutcome {
     Started(Run),
     Steered,
+    /// A gateway command was handled; carry this text back to the user.
+    Command(String),
 }
 
 pub struct RunManager {
@@ -73,8 +76,10 @@ impl RunManager {
             return Ok(SendOutcome::Steered);
         }
 
-        // Start new run
-        let run = self.agent.query_with_session(request, session).await?;
-        Ok(SendOutcome::Started(run))
+        // Start new run (commands are intercepted inside Agent)
+        match self.agent.submit_to_session(request, session).await? {
+            SubmitOutcome::Run(run) => Ok(SendOutcome::Started(run)),
+            SubmitOutcome::Command(msg) => Ok(SendOutcome::Command(msg)),
+        }
     }
 }

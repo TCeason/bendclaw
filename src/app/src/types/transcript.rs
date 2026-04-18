@@ -6,6 +6,21 @@ use serde::Serialize;
 use super::metrics::UsageSummary;
 
 // ---------------------------------------------------------------------------
+// MarkerKind — types of transcript markers that reset the context baseline
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum MarkerKind {
+    /// Clear the context — start fresh.
+    Clear,
+    /// Go to a specific message — restore that point's context snapshot.
+    Goto,
+    /// Compaction — compressed context snapshot.
+    Compact,
+}
+
+// ---------------------------------------------------------------------------
 // AssistantBlock — content blocks in assistant messages
 // ---------------------------------------------------------------------------
 
@@ -80,6 +95,8 @@ pub enum TranscriptItem {
         kind: String,
         data: serde_json::Value,
     },
+    /// Deprecated: old compact format kept for deserialization compatibility.
+    /// New compactions use `Marker { kind: MarkerKind::Compact, .. }`.
     Compact {
         messages: Vec<TranscriptItem>,
     },
@@ -89,6 +106,18 @@ pub enum TranscriptItem {
         kind: String,
         data: serde_json::Value,
     },
+    /// Unified marker that resets the current context baseline.
+    /// All three kinds (Clear, Goto, Compact) carry a snapshot of messages
+    /// that become the new baseline. Subsequent context items after the
+    /// marker are appended to this baseline.
+    Marker {
+        kind: MarkerKind,
+        /// For Goto: the target seq the user requested (audit only).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_seq: Option<u64>,
+        /// Context snapshot at the time of the marker.
+        messages: Vec<TranscriptItem>,
+    },
 }
 
 impl TranscriptItem {
@@ -97,7 +126,10 @@ impl TranscriptItem {
     /// Items that return `false` are observability/control facts that live in
     /// the raw transcript but must be filtered out before sending to the engine.
     pub fn is_context_item(&self) -> bool {
-        !matches!(self, Self::Stats { .. } | Self::Compact { .. })
+        !matches!(
+            self,
+            Self::Stats { .. } | Self::Compact { .. } | Self::Marker { .. }
+        )
     }
 
     /// Build a User transcript item from engine content blocks.
@@ -183,6 +215,23 @@ pub struct ListTranscriptEntries {
 /// Build a run-finished usage summary by summing assistant-message usage.
 /// This is a convenience re-export so callers don't need to depend on metrics
 /// directly when they already have a `UsageSummary`.
+/// Short preview of a transcript item for `/history` output.
+pub fn entry_preview(item: &TranscriptItem) -> String {
+    let text = match item {
+        TranscriptItem::User { text, .. } => text.as_str(),
+        TranscriptItem::Assistant { text, .. } => text.as_str(),
+        _ => "",
+    };
+    let normalized: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = normalized.chars();
+    let preview: String = chars.by_ref().take(60).collect();
+    if chars.next().is_some() {
+        format!("{preview}…")
+    } else {
+        preview
+    }
+}
+
 pub fn empty_usage() -> UsageSummary {
     UsageSummary::default()
 }

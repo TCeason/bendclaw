@@ -171,7 +171,9 @@ async fn run_loop(
             }
             RuntimeEvent::Compacted { level, transcripts } => {
                 if level > 0 {
-                    run_transcripts.push(TranscriptItem::Compact {
+                    run_transcripts.push(TranscriptItem::Marker {
+                        kind: crate::types::MarkerKind::Compact,
+                        target_seq: None,
                         messages: transcripts,
                     });
                 }

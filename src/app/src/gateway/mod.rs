@@ -1,4 +1,5 @@
 pub mod channels;
+pub mod command;
 pub mod delivery;
 pub mod registry;
 pub mod service;

@@ -42,6 +42,10 @@ export interface VariableInfo {
   value: string
 }
 
+export type SubmitOutcome =
+  | { kind: 'run'; stream: QueryStream }
+  | { kind: 'command'; message: string }
+
 export interface ConfigInfo {
   provider: string
   envPath: string
@@ -145,8 +149,36 @@ export class Agent {
   }
 
   async query(prompt: string, sessionId?: string, toolMode?: string, contentJson?: string): Promise<QueryStream> {
-    const raw = await this.raw.query(prompt, sessionId ?? null, toolMode ?? null, contentJson ?? null)
-    return new QueryStream(raw)
+    const outcome = await this.raw.query(prompt, sessionId ?? null, toolMode ?? null, contentJson ?? null)
+    if (outcome.kind !== 'run') {
+      throw new Error(`Expected run, got command: ${outcome.message}`)
+    }
+    const run = outcome.takeRun()
+    if (!run) {
+      throw new Error('No run in submit outcome')
+    }
+    return new QueryStream(run)
+  }
+
+  /**
+   * Unified submit — handles both commands and normal queries.
+   * Commands return { kind: 'command', message }, queries return { kind: 'run', stream }.
+   */
+  async submit(
+    prompt: string,
+    sessionId?: string,
+    toolMode?: string,
+    contentJson?: string,
+  ): Promise<SubmitOutcome> {
+    const outcome = await this.raw.query(prompt, sessionId ?? null, toolMode ?? null, contentJson ?? null)
+    if (outcome.kind === 'command') {
+      return { kind: 'command', message: outcome.message ?? '' }
+    }
+    const run = outcome.takeRun()
+    if (!run) {
+      throw new Error('No run in submit outcome')
+    }
+    return { kind: 'run', stream: new QueryStream(run) }
   }
 
   async listSessions(limit?: number): Promise<SessionMeta[]> {

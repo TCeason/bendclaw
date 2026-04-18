@@ -13,6 +13,7 @@ use tower_http::cors::CorsLayer;
 
 use crate::agent::Agent;
 use crate::agent::QueryRequest;
+use crate::agent::SubmitOutcome;
 use crate::error::EvotError;
 use crate::error::Result;
 use crate::gateway::channels::http::stream;
@@ -91,12 +92,12 @@ impl Server {
         let (tx, rx) = tokio::sync::mpsc::channel(64);
 
         tokio::spawn(async move {
-            let request = QueryRequest::text(message)
+            let request = QueryRequest::text(&message)
                 .session_id(session_id)
                 .source("http");
 
-            match self.agent.query(request).await {
-                Ok(mut query_run) => {
+            match self.agent.submit(request).await {
+                Ok(SubmitOutcome::Run(mut query_run)) => {
                     while let Some(event) = query_run.next().await {
                         for sse in stream::map_run_event(&event) {
                             if tx.send(sse).await.is_err() {
@@ -104,6 +105,9 @@ impl Server {
                             }
                         }
                     }
+                }
+                Ok(SubmitOutcome::Command(text)) => {
+                    let _ = tx.send(stream::text_event(&text)).await;
                 }
                 Err(e) => {
                     let _ = tx.send(stream::error_event(e.to_string())).await;

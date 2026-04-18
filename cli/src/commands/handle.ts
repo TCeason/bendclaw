@@ -52,13 +52,48 @@ export async function handleSlashCommand(input: string, ctx: CommandContext) {
       abortCurrentStream()
       exit()
       break
-    case '/clear':
+    case '/clear': {
       abortCurrentStream()
-      process.stdout.write('\x1b[2J\x1b[H')
-      setState((prev) => ({ ...prev, messages: [] }))
-      setOutputLines([])
-      pushSystem(setSystem, 'info', 'Messages cleared.')
+      try {
+        const result = await agent.submit('/clear', state.sessionId ?? undefined)
+        if (result.kind === 'command') {
+          pushSystem(setSystem, 'info', result.message)
+        }
+      } catch (err: any) {
+        pushSystem(setSystem, 'error', `Clear failed: ${err?.message ?? err}`)
+      }
       break
+    }
+    case '/goto': {
+      const arg = args.trim()
+      if (!arg) {
+        pushSystem(setSystem, 'error', 'Usage: /goto <message_number>')
+        break
+      }
+      abortCurrentStream()
+      try {
+        const result = await agent.submit(`/goto ${arg}`, state.sessionId ?? undefined)
+        if (result.kind === 'command') {
+          pushSystem(setSystem, 'info', result.message)
+        }
+      } catch (err: any) {
+        pushSystem(setSystem, 'error', `Goto failed: ${err?.message ?? err}`)
+      }
+      break
+    }
+    case '/history': {
+      const arg = args.trim()
+      const cmd = arg ? `/history ${arg}` : '/history'
+      try {
+        const result = await agent.submit(cmd, state.sessionId ?? undefined)
+        if (result.kind === 'command') {
+          pushSystem(setSystem, 'info', result.message)
+        }
+      } catch (err: any) {
+        pushSystem(setSystem, 'error', `History failed: ${err?.message ?? err}`)
+      }
+      break
+    }
     case '/new':
       abortCurrentStream()
       setState((prev) => ({ ...createInitialState(prev.model, prev.cwd), verbose: prev.verbose }))

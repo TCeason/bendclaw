@@ -16,6 +16,10 @@ pub fn error_event(message: impl Into<String>) -> SseEvent {
     event("error", &json!({ "message": message.into() }))
 }
 
+pub fn text_event(text: &str) -> SseEvent {
+    event("text", &json!({ "text": text }))
+}
+
 /// Map a RunEvent to a list of SSE JSON payloads (stable, testable).
 /// Each returned Value has shape: { "type": "...", "data": {...} }
 pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {

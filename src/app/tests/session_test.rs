@@ -749,3 +749,603 @@ async fn title_is_correct_when_user_message_is_clean() -> TestResult {
     assert_eq!(title, "refactor the auth module to use JWT");
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Marker tests — /clear, /goto, new Compact marker
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn clear_marker_resets_context() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+
+    let session = Session::new(
+        "sess-clear".into(),
+        "/tmp".into(),
+        "model".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    session
+        .write_items(vec![
+            TranscriptItem::User {
+                text: "msg1".into(),
+                content: vec![],
+            },
+            TranscriptItem::Assistant {
+                text: "reply1".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "stop".into(),
+            },
+        ])
+        .await?;
+
+    session.write_clear_marker().await?;
+
+    // In-memory transcript should be empty after clear
+    assert!(session.transcript().await.is_empty());
+
+    // New messages after clear
+    session
+        .write_items(vec![TranscriptItem::User {
+            text: "fresh start".into(),
+            content: vec![],
+        }])
+        .await?;
+
+    // Reload from storage — should only see post-clear messages
+    let loaded = Session::open("sess-clear", storage.clone())
+        .await?
+        .ok_or_else(|| missing_error("missing session"))?;
+    let transcript = loaded.transcript().await;
+    assert_eq!(transcript.len(), 1);
+    assert!(matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "fresh start"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn goto_marker_restores_snapshot() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+
+    let session = Session::new(
+        "sess-goto".into(),
+        "/tmp".into(),
+        "model".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    // seq 1-4: two turns
+    session
+        .write_items(vec![
+            TranscriptItem::User {
+                text: "msg1".into(),
+                content: vec![],
+            },
+            TranscriptItem::Assistant {
+                text: "reply1".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "stop".into(),
+            },
+            TranscriptItem::User {
+                text: "msg2".into(),
+                content: vec![],
+            },
+            TranscriptItem::Assistant {
+                text: "reply2".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "stop".into(),
+            },
+        ])
+        .await?;
+
+    // goto seq 2 — should restore context to [msg1, reply1]
+    session.write_goto_marker(2).await?;
+
+    let transcript = session.transcript().await;
+    assert_eq!(transcript.len(), 2);
+    assert!(matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "msg1"));
+    assert!(matches!(&transcript[1], TranscriptItem::Assistant { text, .. } if text == "reply1"));
+
+    // Continue from goto point
+    session
+        .write_items(vec![TranscriptItem::User {
+            text: "new direction".into(),
+            content: vec![],
+        }])
+        .await?;
+
+    // Reload — should see snapshot(msg1, reply1) + new message
+    let loaded = Session::open("sess-goto", storage.clone())
+        .await?
+        .ok_or_else(|| missing_error("missing session"))?;
+    let transcript = loaded.transcript().await;
+    assert_eq!(transcript.len(), 3);
+    assert!(matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "msg1"));
+    assert!(matches!(&transcript[1], TranscriptItem::Assistant { text, .. } if text == "reply1"));
+    assert!(matches!(&transcript[2], TranscriptItem::User { text, .. } if text == "new direction"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn goto_after_clear_restores_old_context() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+
+    let session = Session::new(
+        "sess-goto-after-clear".into(),
+        "/tmp".into(),
+        "model".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    session
+        .write_items(vec![
+            TranscriptItem::User {
+                text: "original".into(),
+                content: vec![],
+            },
+            TranscriptItem::Assistant {
+                text: "response".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "stop".into(),
+            },
+        ])
+        .await?;
+
+    session.write_clear_marker().await?;
+    assert!(session.transcript().await.is_empty());
+
+    // goto back to seq 2 — should recover the original context
+    session.write_goto_marker(2).await?;
+    let transcript = session.transcript().await;
+    assert_eq!(transcript.len(), 2);
+    assert!(matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "original"));
+    assert!(matches!(&transcript[1], TranscriptItem::Assistant { text, .. } if text == "response"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn new_compact_marker_works_like_old_compact() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+
+    let session = Session::new(
+        "sess-new-compact".into(),
+        "/tmp".into(),
+        "model".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    session
+        .write_items(vec![
+            TranscriptItem::User {
+                text: "old".into(),
+                content: vec![],
+            },
+            TranscriptItem::Assistant {
+                text: "old reply".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "stop".into(),
+            },
+        ])
+        .await?;
+
+    // Write new-style compact marker
+    session
+        .write_compact_marker(vec![TranscriptItem::User {
+            text: "compacted summary".into(),
+            content: vec![],
+        }])
+        .await?;
+
+    session
+        .write_items(vec![TranscriptItem::User {
+            text: "after compact".into(),
+            content: vec![],
+        }])
+        .await?;
+
+    // Reload — should see compact snapshot + new message
+    let loaded = Session::open("sess-new-compact", storage.clone())
+        .await?
+        .ok_or_else(|| missing_error("missing session"))?;
+    let transcript = loaded.transcript().await;
+    assert_eq!(transcript.len(), 2);
+    assert!(
+        matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "compacted summary")
+    );
+    assert!(matches!(&transcript[1], TranscriptItem::User { text, .. } if text == "after compact"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn is_valid_context_seq_checks_correctly() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+
+    let session = Session::new(
+        "sess-valid-seq".into(),
+        "/tmp".into(),
+        "model".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    session
+        .write_items(vec![
+            TranscriptItem::User {
+                text: "msg".into(),
+                content: vec![],
+            },
+            TranscriptItem::Stats {
+                kind: "test".into(),
+                data: serde_json::json!({}),
+            },
+        ])
+        .await?;
+
+    // seq 1 is a User message — valid
+    assert!(session.is_valid_context_seq(1).await?);
+    // seq 2 is a Stats item — not valid
+    assert!(!session.is_valid_context_seq(2).await?);
+    // seq 99 doesn't exist — not valid
+    assert!(!session.is_valid_context_seq(99).await?);
+    Ok(())
+}
+
+#[tokio::test]
+async fn marker_item_is_not_context() {
+    let item = TranscriptItem::Marker {
+        kind: evot::types::MarkerKind::Clear,
+        target_seq: None,
+        messages: vec![],
+    };
+    assert!(!item.is_context_item());
+
+    let item = TranscriptItem::Marker {
+        kind: evot::types::MarkerKind::Goto,
+        target_seq: Some(5),
+        messages: vec![],
+    };
+    assert!(!item.is_context_item());
+}
+
+#[tokio::test]
+async fn history_on_resumed_session() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+
+    // Create session with some messages
+    let session = Session::new(
+        "sess-history".into(),
+        "/tmp".into(),
+        "model".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    session
+        .write_items(vec![
+            TranscriptItem::User {
+                text: "hello".into(),
+                content: vec![],
+            },
+            TranscriptItem::Assistant {
+                text: "hi there".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "stop".into(),
+            },
+            TranscriptItem::User {
+                text: "how are you".into(),
+                content: vec![],
+            },
+            TranscriptItem::Assistant {
+                text: "doing well".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "stop".into(),
+            },
+        ])
+        .await?;
+
+    // Reopen (resume) the session
+    let loaded = Session::open("sess-history", storage.clone())
+        .await?
+        .ok_or_else(|| missing_error("missing session"))?;
+
+    // Call recent_context_entries
+    let entries = loaded.recent_context_entries(20).await?;
+    assert_eq!(entries.len(), 4);
+    assert_eq!(entries[0].0, 1); // seq
+    assert!(matches!(&entries[0].1, TranscriptItem::User { text, .. } if text == "hello"));
+    assert_eq!(entries[1].0, 2);
+    assert!(matches!(&entries[1].1, TranscriptItem::Assistant { text, .. } if text == "hi there"));
+    assert_eq!(entries[2].0, 3);
+    assert_eq!(entries[3].0, 4);
+
+    // Limit works
+    let last2 = loaded.recent_context_entries(2).await?;
+    assert_eq!(last2.len(), 2);
+    assert_eq!(last2[0].0, 3);
+    assert_eq!(last2[1].0, 4);
+    Ok(())
+}
+
+#[tokio::test]
+async fn history_after_clear_shows_only_post_clear() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+
+    let session = Session::new(
+        "sess-history-clear".into(),
+        "/tmp".into(),
+        "model".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    session
+        .write_items(vec![
+            TranscriptItem::User {
+                text: "old msg".into(),
+                content: vec![],
+            },
+            TranscriptItem::Assistant {
+                text: "old reply".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "stop".into(),
+            },
+        ])
+        .await?;
+
+    session.write_clear_marker().await?;
+
+    session
+        .write_items(vec![TranscriptItem::User {
+            text: "new msg".into(),
+            content: vec![],
+        }])
+        .await?;
+
+    // Reopen
+    let loaded = Session::open("sess-history-clear", storage.clone())
+        .await?
+        .ok_or_else(|| missing_error("missing session"))?;
+
+    // History should only show post-clear messages
+    let entries = loaded.recent_context_entries(20).await?;
+    assert_eq!(entries.len(), 1);
+    assert!(matches!(&entries[0].1, TranscriptItem::User { text, .. } if text == "new msg"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn history_after_goto_shows_snapshot_and_new_entries() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+
+    let session = Session::new(
+        "sess-goto-history".into(),
+        "/tmp".into(),
+        "model".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    // Write 4 messages: 2 turns
+    session
+        .write_items(vec![
+            TranscriptItem::User {
+                text: "first question".into(),
+                content: vec![],
+            },
+            TranscriptItem::Assistant {
+                text: "first answer".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "stop".into(),
+            },
+            TranscriptItem::User {
+                text: "second question".into(),
+                content: vec![],
+            },
+            TranscriptItem::Assistant {
+                text: "second answer".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "stop".into(),
+            },
+        ])
+        .await?;
+
+    // Goto seq 2 (first assistant answer)
+    session.write_goto_marker(2).await?;
+
+    // Write new messages after goto
+    session
+        .write_items(vec![
+            TranscriptItem::User {
+                text: "new question".into(),
+                content: vec![],
+            },
+            TranscriptItem::Assistant {
+                text: "new answer".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "stop".into(),
+            },
+        ])
+        .await?;
+
+    // Reopen session
+    let loaded = Session::open("sess-goto-history", storage.clone())
+        .await?
+        .ok_or_else(|| missing_error("missing session"))?;
+
+    let entries = loaded.recent_context_entries(20).await?;
+
+    // Should see: snapshot baseline (seq=0) + new entries (real seq)
+    // Snapshot has 2 items: user "first question", assistant "first answer"
+    // New has 2 items: user "new question", assistant "new answer"
+    assert_eq!(entries.len(), 4);
+
+    // Snapshot items have seq=0
+    assert_eq!(entries[0].0, 0);
+    assert!(matches!(&entries[0].1, TranscriptItem::User { text, .. } if text == "first question"));
+    assert_eq!(entries[1].0, 0);
+    assert!(
+        matches!(&entries[1].1, TranscriptItem::Assistant { text, .. } if text == "first answer")
+    );
+
+    // New items have real seq
+    assert!(entries[2].0 > 0);
+    assert!(matches!(&entries[2].1, TranscriptItem::User { text, .. } if text == "new question"));
+    assert!(entries[3].0 > 0);
+    assert!(
+        matches!(&entries[3].1, TranscriptItem::Assistant { text, .. } if text == "new answer")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn history_excludes_empty_messages() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+
+    let session = Session::new(
+        "sess-empty-msg".into(),
+        "/tmp".into(),
+        "model".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    session
+        .write_items(vec![
+            TranscriptItem::User {
+                text: "hello".into(),
+                content: vec![],
+            },
+            TranscriptItem::Assistant {
+                text: "".into(), // empty assistant (tool call start)
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "tool_use".into(),
+            },
+            TranscriptItem::Assistant {
+                text: "real answer".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "stop".into(),
+            },
+        ])
+        .await?;
+
+    let entries = session.recent_context_entries(20).await?;
+
+    // Empty assistant should be filtered out
+    assert_eq!(entries.len(), 2);
+    assert!(matches!(&entries[0].1, TranscriptItem::User { text, .. } if text == "hello"));
+    assert!(
+        matches!(&entries[1].1, TranscriptItem::Assistant { text, .. } if text == "real answer")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn is_valid_context_seq_rejects_empty_assistant() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+
+    let session = Session::new(
+        "sess-valid-seq".into(),
+        "/tmp".into(),
+        "model".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    session
+        .write_items(vec![
+            TranscriptItem::User {
+                text: "hello".into(),
+                content: vec![],
+            },
+            TranscriptItem::Assistant {
+                text: "".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "tool_use".into(),
+            },
+            TranscriptItem::Assistant {
+                text: "real answer".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "stop".into(),
+            },
+        ])
+        .await?;
+
+    // seq 1 = user "hello" → valid
+    assert!(session.is_valid_context_seq(1).await?);
+    // seq 2 = empty assistant → invalid
+    assert!(!session.is_valid_context_seq(2).await?);
+    // seq 3 = assistant "real answer" → valid
+    assert!(session.is_valid_context_seq(3).await?);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_item_at_returns_correct_item() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+
+    let session = Session::new(
+        "sess-get-item".into(),
+        "/tmp".into(),
+        "model".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    session
+        .write_items(vec![
+            TranscriptItem::User {
+                text: "hello".into(),
+                content: vec![],
+            },
+            TranscriptItem::Assistant {
+                text: "world".into(),
+                thinking: None,
+                tool_calls: vec![],
+                stop_reason: "stop".into(),
+            },
+        ])
+        .await?;
+
+    let item = session.get_item_at(1).await?;
+    assert!(matches!(&item, Some(TranscriptItem::User { text, .. }) if text == "hello"));
+
+    let item = session.get_item_at(2).await?;
+    assert!(matches!(&item, Some(TranscriptItem::Assistant { text, .. }) if text == "world"));
+
+    let item = session.get_item_at(999).await?;
+    assert!(item.is_none());
+
+    Ok(())
+}

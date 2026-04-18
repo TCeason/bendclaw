@@ -313,3 +313,65 @@ fn user_item_without_content_deserializes_for_backward_compatibility() {
         _ => panic!("expected user item"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// entry_preview
+// ---------------------------------------------------------------------------
+
+#[test]
+fn entry_preview_short_text() {
+    let item = TranscriptItem::User {
+        text: "hello world".into(),
+        content: vec![],
+    };
+    assert_eq!(entry_preview(&item), "hello world");
+}
+
+#[test]
+fn entry_preview_truncates_long_text() {
+    let long = "a".repeat(100);
+    let item = TranscriptItem::User {
+        text: long,
+        content: vec![],
+    };
+    let preview = entry_preview(&item);
+    assert!(preview.ends_with('…'));
+    // 60 chars + ellipsis
+    assert_eq!(preview.chars().count(), 61);
+}
+
+#[test]
+fn entry_preview_chinese_does_not_panic() {
+    // 80 Chinese characters — would panic on byte slicing
+    let chinese = "你好世界".repeat(20);
+    let item = TranscriptItem::User {
+        text: chinese,
+        content: vec![],
+    };
+    let preview = entry_preview(&item);
+    assert!(preview.ends_with('…'));
+    assert_eq!(preview.chars().count(), 61);
+}
+
+#[test]
+fn entry_preview_exact_60_chars_no_ellipsis() {
+    let exact = "x".repeat(60);
+    let item = TranscriptItem::Assistant {
+        text: exact,
+        thinking: None,
+        tool_calls: vec![],
+        stop_reason: "stop".into(),
+    };
+    let preview = entry_preview(&item);
+    assert!(!preview.ends_with('…'));
+    assert_eq!(preview.chars().count(), 60);
+}
+
+#[test]
+fn entry_preview_non_context_item_returns_empty() {
+    let item = TranscriptItem::Stats {
+        kind: "test".into(),
+        data: serde_json::json!({}),
+    };
+    assert_eq!(entry_preview(&item), "");
+}

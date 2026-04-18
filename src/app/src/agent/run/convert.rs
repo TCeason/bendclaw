@@ -189,6 +189,11 @@ pub fn agent_message_from_transcript(item: &TranscriptItem) -> evot_engine::Agen
         TranscriptItem::Compact { .. } => evot_engine::AgentMessage::Extension(
             evot_engine::ExtensionMessage::new("compact", serde_json::json!({})),
         ),
+        // Marker items should never reach conversion — filtered by resolve_transcript.
+        // Defensive fallback: convert to a no-op extension that the engine will ignore.
+        TranscriptItem::Marker { .. } => evot_engine::AgentMessage::Extension(
+            evot_engine::ExtensionMessage::new("marker", serde_json::json!({})),
+        ),
         // Stats items should never reach conversion — filtered by resolve_transcript.
         // Defensive fallback: convert to a no-op extension that the engine will ignore.
         TranscriptItem::Stats { .. } => evot_engine::AgentMessage::Extension(

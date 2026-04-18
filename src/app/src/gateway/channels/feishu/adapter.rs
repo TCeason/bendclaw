@@ -358,6 +358,25 @@ impl FeishuChannel {
 
             let request = QueryRequest::with_input(input).mode(ToolMode::Headless);
             match this.run_manager.send(&locator, request).await {
+                Ok(SendOutcome::Command(text)) => {
+                    let sink = FeishuMessageSink::new(
+                        this.client.clone(),
+                        this.token_cache.clone(),
+                        this.config.app_id.clone(),
+                        this.config.app_secret.clone(),
+                    );
+                    let sink = if msg.chat_type == "group" {
+                        sink.with_reply_to(msg.message_id.clone())
+                    } else {
+                        sink
+                    };
+                    let _ = crate::gateway::delivery::MessageSink::send_text(
+                        &sink,
+                        &msg.chat_id,
+                        &text,
+                    )
+                    .await;
+                }
                 Ok(SendOutcome::Started(mut run)) => {
                     let sink = FeishuMessageSink::new(
                         this.client.clone(),

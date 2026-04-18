@@ -3,7 +3,7 @@
 export interface NapiAgent {
   model: string
   readonly cwd: string
-  query(prompt: string, sessionId?: string | null, toolMode?: string | null, contentJson?: string | null): Promise<NapiRun>
+  query(prompt: string, sessionId?: string | null, toolMode?: string | null, contentJson?: string | null): Promise<NapiSubmitOutcome>
   listSessions(limit?: number | null): Promise<string>
   loadTranscript(sessionId: string): Promise<string>
   fork(systemPrompt: string): NapiForkedAgent
@@ -32,6 +32,12 @@ export interface NapiRun {
   steer(text: string, contentJson?: string | null): void
   followUp(text: string): void
   respondAskUser(responseJson: string): Promise<void>
+}
+
+export interface NapiSubmitOutcome {
+  readonly kind: string
+  readonly message: string | null
+  takeRun(): NapiRun | null
 }
 
 export declare const NapiAgent: {

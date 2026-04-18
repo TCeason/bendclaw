@@ -14,6 +14,9 @@ export const COMMANDS: SlashCommand[] = [
   { name: '/help', description: 'Show help information', usage: '/help [command]', handler: 'builtin' },
   { name: '/resume', description: 'Resume a session', usage: '/resume [id]', handler: 'builtin' },
   { name: '/new', description: 'Start a new session', handler: 'builtin' },
+  { name: '/clear', description: 'Clear session context', handler: 'builtin' },
+  { name: '/goto', description: 'Go to a message', usage: '/goto <message_number>', handler: 'builtin' },
+  { name: '/history', description: 'Show recent messages with seq numbers', usage: '/history [count]', handler: 'builtin' },
   { name: '/model', description: 'Show or change model', usage: '/model [name]', handler: 'builtin' },
   { name: '/plan', description: 'Enter planning mode', handler: 'builtin' },
   { name: '/act', description: 'Return to normal action mode', handler: 'builtin' },
@@ -25,7 +28,6 @@ export const COMMANDS: SlashCommand[] = [
 
 /** Hidden commands — recognised but not shown in /help or ghost hints */
 export const HIDDEN_COMMANDS: SlashCommand[] = [
-  { name: '/clear', description: 'Clear message display', handler: 'builtin' },
   { name: '/verbose', aliases: ['/v'], description: 'Toggle verbose mode', handler: 'builtin' },
   { name: '/exit', aliases: ['/quit', '/q'], description: 'Exit the REPL', handler: 'builtin' },
 ]
