@@ -1,9 +1,9 @@
 //! Tests for the core agent loop using MockProvider.
 
-use evotengine::agent_loop::agent_loop;
-use evotengine::agent_loop::AgentLoopConfig;
+use evotengine::agent_loop;
 use evotengine::provider::mock::*;
 use evotengine::provider::MockProvider;
+use evotengine::AgentLoopConfig;
 use evotengine::*;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;

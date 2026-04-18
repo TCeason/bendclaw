@@ -14,13 +14,13 @@
 
 use std::sync::Arc;
 
-use evotengine::agent_loop::agent_loop;
-use evotengine::agent_loop::agent_loop_continue;
-use evotengine::agent_loop::AgentLoopConfig;
+use evotengine::agent_loop;
+use evotengine::agent_loop_continue;
 use evotengine::context::ContextConfig;
 use evotengine::context::ExecutionLimits;
 use evotengine::provider::mock::*;
 use evotengine::provider::MockProvider;
+use evotengine::AgentLoopConfig;
 use evotengine::*;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -221,7 +221,7 @@ impl TestHarness {
     pub async fn run(self, prompt: &str) -> TestOutput {
         let provider = MockProvider::new(self.responses);
         let steering = Arc::new(parking_lot::Mutex::new(self.steering_messages));
-        let get_steering: Option<evotengine::agent_loop::GetMessagesFn> = {
+        let get_steering: Option<evotengine::GetMessagesFn> = {
             let q = steering.clone();
             Some(Box::new(move || q.lock().drain(..).collect()))
         };

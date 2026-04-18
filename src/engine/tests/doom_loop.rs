@@ -1,4 +1,4 @@
-use evotengine::doom_loop::DoomLoopDetector;
+use evotengine::DoomLoopDetector;
 use serde_json::json;
 
 fn call(name: &str, args: serde_json::Value) -> (String, String, serde_json::Value) {
