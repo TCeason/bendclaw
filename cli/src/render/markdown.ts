@@ -22,8 +22,41 @@ let markedConfigured = false
 export function configureMarked(): void {
   if (markedConfigured) return
   markedConfigured = true
-  // Keep default tokenizer — del (~~text~~) is parsed and rendered as dim text.
-  // Single ~ for "approximate" is not affected (GFM requires ~~double~~).
+
+  // Disable strikethrough parsing — the model often uses ~ for "approximate"
+  // (e.g., ~100) and rarely intends actual strikethrough formatting.
+  marked.use({
+    tokenizer: {
+      del() {
+        return undefined as unknown as Tokens.Del
+      },
+    },
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Markdown syntax fast-path detection
+// ---------------------------------------------------------------------------
+
+// Characters/patterns that indicate markdown syntax. If none are present,
+// skip the marked.lexer call entirely — render as a single paragraph.
+// Covers the majority of short assistant responses that are plain sentences.
+// Ordered-list pattern requires `N. ` (digit + dot + space) to avoid
+// misinterpreting bare "2." as a list item.
+const MD_SYNTAX_RE = /[#*`|[>\-_~]|\n\n|^\d+\. |\n\d+\. /
+
+function hasMarkdownSyntax(s: string): boolean {
+  return MD_SYNTAX_RE.test(s.length > 500 ? s.slice(0, 500) : s)
+}
+
+/** Build a plain-text paragraph token (no marked.lexer overhead). */
+function plainTextTokens(content: string): Token[] {
+  return [{
+    type: 'paragraph',
+    raw: content,
+    text: content,
+    tokens: [{ type: 'text', raw: content, text: content }],
+  } as Token]
 }
 
 const EOL = '\n'
@@ -75,11 +108,8 @@ export function formatToken(
     case 'codespan':
       return chalk.cyan(token.text)
     case 'del':
-      return chalk.dim(
-        (token.tokens ?? [])
-          .map(t => formatToken(t, 0, null, parent))
-          .join(''),
-      )
+      // del is disabled via configureMarked; if somehow reached, render as-is
+      return ''
     case 'em':
       return chalk.italic(
         (token.tokens ?? [])
@@ -163,60 +193,178 @@ export function formatToken(
       return linkifyIssueRefs(token.text)
     }
     case 'table': {
-      // Box-drawing table.
       const tableToken = token as Tokens.Table
-      function getDisplayText(tokens: Token[] | undefined): string {
-        return stripAnsi(
-          tokens?.map(t => formatToken(t, 0, null, null)).join('') ?? '',
-        )
+      const numCols = tableToken.header.length
+      const termWidth = process.stdout.columns ?? 80
+      const MIN_COL = 3
+
+      // --- helpers ---
+      function renderCell(tokens: Token[] | undefined): string {
+        return tokens?.map(t => formatToken(t, 0, null, null)).join('').trimEnd() ?? ''
       }
-      function getDisplayWidth(tokens: Token[] | undefined): number {
-        return stringWidth(getDisplayText(tokens))
+      function plainText(tokens: Token[] | undefined): string {
+        return stripAnsi(renderCell(tokens))
       }
-      // Determine column widths (using display width for CJK/emoji)
-      const columnWidths = tableToken.header.map((header, index) => {
-        let maxWidth = getDisplayWidth(header.tokens)
-        for (const row of tableToken.rows) {
-          maxWidth = Math.max(maxWidth, getDisplayWidth(row[index]?.tokens))
-        }
-        return Math.max(maxWidth, 3)
+      function longestWord(tokens: Token[] | undefined): number {
+        const words = plainText(tokens).split(/\s+/).filter(w => w.length > 0)
+        if (words.length === 0) return MIN_COL
+        return Math.max(...words.map(w => stringWidth(w)), MIN_COL)
+      }
+      function idealWidth(tokens: Token[] | undefined): number {
+        return Math.max(stringWidth(plainText(tokens)), MIN_COL)
+      }
+
+      // --- column width calculation ---
+      const minWidths = tableToken.header.map((h, ci) => {
+        let w = longestWord(h.tokens)
+        for (const row of tableToken.rows) w = Math.max(w, longestWord(row[ci]?.tokens))
+        return w
       })
-      const numCols = columnWidths.length
+      const idealWidths = tableToken.header.map((h, ci) => {
+        let w = idealWidth(h.tokens)
+        for (const row of tableToken.rows) w = Math.max(w, idealWidth(row[ci]?.tokens))
+        return w
+      })
+
+      // border overhead: │ cell │ cell │ = 1 + numCols * 3
+      const borderOverhead = 1 + numCols * 3
+      const available = Math.max(termWidth - borderOverhead - 2, numCols * MIN_COL)
+      const totalIdeal = idealWidths.reduce((s, w) => s + w, 0)
+      const totalMin = minWidths.reduce((s, w) => s + w, 0)
+
+      let colWidths: number[]
+      if (totalIdeal <= available) {
+        colWidths = idealWidths
+      } else if (totalMin > available) {
+        const each = Math.floor(available / numCols)
+        colWidths = minWidths.map(() => Math.max(each, MIN_COL))
+      } else {
+        // give each column its min, distribute remaining proportionally
+        colWidths = [...minWidths]
+        let remaining = available - totalMin
+        const extras = idealWidths.map((ideal, i) => ideal - minWidths[i]!)
+        const totalExtra = extras.reduce((s, e) => s + e, 0)
+        if (totalExtra > 0) {
+          for (let i = 0; i < numCols; i++) {
+            const share = Math.floor((extras[i]! / totalExtra) * remaining)
+            colWidths[i] = colWidths[i]! + share
+          }
+        }
+      }
+
+      // --- ANSI-aware word wrap (CJK-safe) ---
+      function wrapCell(text: string, width: number): string[] {
+        if (width <= 0) return [text]
+        const lines: string[] = []
+        for (const srcLine of text.split('\n')) {
+          const plain = stripAnsi(srcLine)
+          if (stringWidth(plain) <= width) {
+            lines.push(srcLine)
+            continue
+          }
+          const segments = srcLine.split(/(\s+)/)
+          let cur = ''
+          let curW = 0
+          for (const seg of segments) {
+            const segW = stringWidth(stripAnsi(seg))
+            // Segment fits on current line
+            if (curW + segW <= width) {
+              cur += seg
+              curW += segW
+              continue
+            }
+            // Segment doesn't fit — flush current line if non-empty
+            if (curW > 0) {
+              lines.push(cur)
+              cur = ''
+              curW = 0
+            }
+            // If segment itself fits in one line, start new line with it
+            if (segW <= width) {
+              cur = seg.trimStart()
+              curW = stringWidth(stripAnsi(cur))
+              continue
+            }
+            // Segment exceeds width — break character by character
+            for (const ch of stripAnsi(seg)) {
+              const chW = stringWidth(ch)
+              if (curW + chW > width && curW > 0) {
+                lines.push(cur)
+                cur = ch
+                curW = chW
+              } else {
+                cur += ch
+                curW += chW
+              }
+            }
+          }
+          if (cur) lines.push(cur)
+        }
+        return lines.length > 0 ? lines : ['']
+      }
+
+      // --- check if vertical format is needed ---
+      const MAX_ROW_LINES = 4
+      let needVertical = false
+      for (const row of tableToken.rows) {
+        for (let ci = 0; ci < numCols; ci++) {
+          const wrapped = wrapCell(renderCell(row[ci]?.tokens), colWidths[ci]!)
+          if (wrapped.length > MAX_ROW_LINES) { needVertical = true; break }
+        }
+        if (needVertical) break
+      }
+
+      if (needVertical) {
+        // vertical key-value format
+        let out = ''
+        tableToken.rows.forEach((row, ri) => {
+          if (ri > 0) out += EOL
+          for (let ci = 0; ci < numCols; ci++) {
+            const header = chalk.bold(plainText(tableToken.header[ci]?.tokens))
+            const value = renderCell(row[ci]?.tokens)
+            out += `${header}: ${value}${EOL}`
+          }
+        })
+        return out + EOL
+      }
+
+      // --- horizontal table with wrapping ---
       function borderLine(left: string, mid: string, cross: string, right: string): string {
         let line = left
-        columnWidths.forEach((width, i) => {
-          line += mid.repeat(width + 2)
+        colWidths.forEach((w, i) => {
+          line += mid.repeat(w + 2)
           line += i < numCols - 1 ? cross : right
         })
         return line
       }
-      function dataRow(cells: { tokens?: Token[] }[]): string {
-        let line = '│'
-        cells.forEach((cell, index) => {
-          const content = cell.tokens
-            ?.map(t => formatToken(t, 0, null, null))
-            .join('') ?? ''
-          const dw = stringWidth(stripAnsi(content))
-          const width = columnWidths[index] ?? 3
-          const align = tableToken.align?.[index]
-          line += ' ' + padAligned(content, dw, width, align) + ' │'
-        })
-        return line
+      function renderRow(cells: { tokens?: Token[] }[]): string {
+        const wrapped = cells.map((cell, ci) =>
+          wrapCell(renderCell(cell.tokens), colWidths[ci]!),
+        )
+        const height = Math.max(...wrapped.map(w => w.length))
+        const lines: string[] = []
+        for (let li = 0; li < height; li++) {
+          let line = '│'
+          for (let ci = 0; ci < numCols; ci++) {
+            const content = wrapped[ci]![li] ?? ''
+            const dw = stringWidth(stripAnsi(content))
+            const align = tableToken.align?.[ci]
+            line += ' ' + padAligned(content, dw, colWidths[ci]!, align) + ' │'
+          }
+          lines.push(line)
+        }
+        return lines.join(EOL)
       }
-      // Top border
+
       let out = borderLine('┌', '─', '┬', '┐') + EOL
-      // Header row
-      out += dataRow(tableToken.header) + EOL
-      // Header separator
+      out += renderRow(tableToken.header) + EOL
       out += borderLine('├', '─', '┼', '┤') + EOL
-      // Data rows with separators between each row
-      tableToken.rows.forEach((row, rowIdx) => {
-        out += dataRow(row) + EOL
-        if (rowIdx < tableToken.rows.length - 1) {
+      tableToken.rows.forEach((row, ri) => {
+        out += renderRow(row) + EOL
+        if (ri < tableToken.rows.length - 1) {
           out += borderLine('├', '─', '┼', '┤') + EOL
         }
       })
-      // Bottom border
       out += borderLine('└', '─', '┴', '┘') + EOL
       return out + EOL
     }
@@ -307,7 +455,9 @@ export function renderMarkdown(text: string): string {
 
   configureMarked()
   try {
-    const tokens = marked.lexer(text)
+    const tokens = hasMarkdownSyntax(text)
+      ? marked.lexer(text)
+      : plainTextTokens(text)
     return tokens
       .map(t => formatToken(t))
       .join('')
