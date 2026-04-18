@@ -120,9 +120,27 @@ impl NapiAgent {
         self.agent.llm().model
     }
 
-    /// Set the active model.
+    /// Set the active model by model spec (e.g. "deepseek-chat" or "openrouter:google/gemini-2.5-pro").
     #[napi(setter)]
     pub fn set_model(&mut self, model: String) {
+        // Try to resolve as model spec and switch provider+model.
+        // If resolution fails (model not in any provider), fall back to just updating the model name
+        // on the current provider — this preserves backward compat for models not pre-configured.
+        if let Ok((provider_name, model_override)) = self.config.resolve_model_spec(&model) {
+            if let Some(profile) = self.config.providers.get(&provider_name) {
+                let llm = evot::conf::LlmConfig {
+                    provider: provider_name,
+                    protocol: profile.protocol.clone(),
+                    api_key: profile.api_key.clone(),
+                    base_url: profile.base_url.clone(),
+                    model: model_override.unwrap_or_else(|| profile.model.clone()),
+                    thinking_level: self.config.llm.thinking_level,
+                };
+                self.agent.set_llm(llm);
+                return;
+            }
+        }
+        // Fallback: just update model name on current LLM config
         self.agent.set_model(model);
     }
 
