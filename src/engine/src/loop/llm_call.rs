@@ -18,6 +18,7 @@ pub(super) async fn stream_assistant_response(
     cancel: &tokio_util::sync::CancellationToken,
     turn: usize,
     injected_count: usize,
+    budget: crate::context::ContextBudgetSnapshot,
 ) -> Message {
     // Apply context transform
     let messages = if let Some(transform) = &config.transform_context {
@@ -63,17 +64,6 @@ pub(super) async fn stream_assistant_response(
         };
 
         // Emit LlmCallStart before each provider attempt
-        let (llm_sys_tokens, llm_budget, llm_window) = config
-            .context_config
-            .as_ref()
-            .map(|c| {
-                (
-                    c.system_prompt_tokens,
-                    c.max_context_tokens.saturating_sub(c.system_prompt_tokens),
-                    c.max_context_tokens,
-                )
-            })
-            .unwrap_or((0, 0, 0));
         let llm_stats = crate::context::compute_call_stats(&llm_messages);
         tx.send(AgentEvent::LlmCallStart {
             turn,
@@ -86,9 +76,7 @@ pub(super) async fn stream_assistant_response(
                 tools: tool_defs.clone(),
             },
             stats: llm_stats,
-            system_prompt_tokens: llm_sys_tokens,
-            budget_tokens: llm_budget,
-            context_window: llm_window,
+            budget: budget.clone(),
         })
         .ok();
 

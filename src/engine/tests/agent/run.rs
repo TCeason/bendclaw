@@ -1760,9 +1760,9 @@ async fn test_compaction_events_emitted_when_context_exceeds_budget() {
         .filter_map(|e| match e {
             AgentEvent::ContextCompactionStart {
                 message_count,
-                estimated_tokens,
+                budget,
                 ..
-            } => Some((*message_count, *estimated_tokens)),
+            } => Some((*message_count, budget.estimated_tokens)),
             _ => None,
         })
         .collect();
@@ -1853,12 +1853,11 @@ async fn test_llm_call_start_carries_budget_and_window() {
         .events
         .iter()
         .filter_map(|e| match e {
-            AgentEvent::LlmCallStart {
-                budget_tokens,
-                context_window,
-                system_prompt_tokens,
-                ..
-            } => Some((*system_prompt_tokens, *budget_tokens, *context_window)),
+            AgentEvent::LlmCallStart { budget, .. } => Some((
+                budget.system_prompt_tokens,
+                budget.budget_tokens,
+                budget.context_window,
+            )),
             _ => None,
         })
         .collect();
@@ -1878,11 +1877,9 @@ async fn test_llm_call_start_zero_budget_without_context_config() {
         .events
         .iter()
         .filter_map(|e| match e {
-            AgentEvent::LlmCallStart {
-                budget_tokens,
-                context_window,
-                ..
-            } => Some((*budget_tokens, *context_window)),
+            AgentEvent::LlmCallStart { budget, .. } => {
+                Some((budget.budget_tokens, budget.context_window))
+            }
             _ => None,
         })
         .collect();

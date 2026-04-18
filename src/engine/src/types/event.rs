@@ -95,12 +95,8 @@ pub enum AgentEvent {
         request: LlmCallRequest,
         /// Pre-computed message stats from structured Content types.
         stats: LlmCallStats,
-        /// System prompt token count from context config (budget accounting baseline).
-        system_prompt_tokens: usize,
-        /// Context budget in tokens (context_window − system_prompt_tokens).
-        budget_tokens: usize,
-        /// Full context window size in tokens.
-        context_window: usize,
+        /// Context budget snapshot (same source as compaction events).
+        budget: crate::context::ContextBudgetSnapshot,
     },
     LlmCallEnd {
         turn: usize,
@@ -111,10 +107,8 @@ pub enum AgentEvent {
     },
     ContextCompactionStart {
         message_count: usize,
-        estimated_tokens: usize,
-        budget_tokens: usize,
-        system_prompt_tokens: usize,
-        context_window: usize,
+        /// Context budget snapshot at the time of compaction.
+        budget: crate::context::ContextBudgetSnapshot,
         /// Pre-computed message stats for the context being compacted.
         message_stats: LlmCallStats,
     },

@@ -21,6 +21,7 @@ use super::run::Run;
 use crate::agent::session::Session;
 use crate::conf::Protocol;
 use crate::error::Result;
+use crate::types::CompactRecord;
 use crate::types::ContextCompactionCompletedStats;
 use crate::types::ContextCompactionStartedStats;
 use crate::types::LlmCallCompletedStats;
@@ -202,12 +203,16 @@ async fn run_loop(
                 });
                 run_transcripts.push(stats.to_item());
 
+                // Extract compact history from transcripts
+                let compact_history = extract_compact_history(&run_transcripts);
+
                 let finished_event = RunEventContext::new(&run_id, &session_id, turn).finished(
                     last_text,
                     usage,
                     turn,
                     duration_ms,
                     transcript_count,
+                    compact_history,
                 );
                 let _ = tx.send(finished_event);
                 // Drop tx immediately so the consumer stream closes without
@@ -451,9 +456,7 @@ fn map_agent_event(
             injected_count,
             request,
             stats,
-            system_prompt_tokens,
-            budget_tokens,
-            context_window,
+            budget,
         } => {
             let message_count = request.messages.len();
             let tool_count = request.tools.len();
@@ -487,7 +490,7 @@ fn map_agent_event(
                         model: request.model.clone(),
                         message_count,
                         message_bytes,
-                        system_prompt_tokens: *system_prompt_tokens,
+                        system_prompt_tokens: budget.system_prompt_tokens,
                     })
                     .to_item(),
                 ),
@@ -498,11 +501,12 @@ fn map_agent_event(
                     model: request.model.clone(),
                     message_count,
                     message_bytes,
-                    system_prompt_tokens: *system_prompt_tokens,
+                    estimated_context_tokens: budget.estimated_tokens,
+                    system_prompt_tokens: budget.system_prompt_tokens,
                     tool_count,
                     message_stats,
-                    budget_tokens: *budget_tokens,
-                    context_window: *context_window,
+                    budget_tokens: budget.budget_tokens,
+                    context_window: budget.context_window,
                 }),
             ]
         }
@@ -552,10 +556,7 @@ fn map_agent_event(
 
         evot_engine::AgentEvent::ContextCompactionStart {
             message_count,
-            estimated_tokens,
-            budget_tokens,
-            system_prompt_tokens,
-            context_window,
+            budget,
             message_stats,
         } => {
             let stats = Some(LlmMessageStats {
@@ -573,19 +574,19 @@ fn map_agent_event(
                 RuntimeEvent::Transcript(
                     TranscriptStats::ContextCompactionStarted(ContextCompactionStartedStats {
                         message_count: *message_count,
-                        estimated_tokens: *estimated_tokens,
-                        budget_tokens: *budget_tokens,
-                        system_prompt_tokens: *system_prompt_tokens,
-                        context_window: *context_window,
+                        estimated_tokens: budget.estimated_tokens,
+                        budget_tokens: budget.budget_tokens,
+                        system_prompt_tokens: budget.system_prompt_tokens,
+                        context_window: budget.context_window,
                     })
                     .to_item(),
                 ),
                 RuntimeEvent::Public(RunEventPayload::ContextCompactionStarted {
                     message_count: *message_count,
-                    estimated_tokens: *estimated_tokens,
-                    budget_tokens: *budget_tokens,
-                    system_prompt_tokens: *system_prompt_tokens,
-                    context_window: *context_window,
+                    estimated_tokens: budget.estimated_tokens,
+                    budget_tokens: budget.budget_tokens,
+                    system_prompt_tokens: budget.system_prompt_tokens,
+                    context_window: budget.context_window,
                     message_stats: stats,
                 }),
             ]
@@ -623,11 +624,25 @@ fn map_agent_event(
             } else if stats.current_run_cleared > 0 {
                 crate::types::CompactionResult::RunOnceCleared {
                     cleared_count: stats.current_run_cleared,
+                    before_message_count: stats.before_message_count,
                     before_estimated_tokens: stats.before_estimated_tokens,
                     after_estimated_tokens: stats.after_estimated_tokens,
                     saved_tokens: stats
                         .before_estimated_tokens
                         .saturating_sub(stats.after_estimated_tokens),
+                    actions: stats
+                        .actions
+                        .iter()
+                        .map(|a| crate::types::CompactionAction {
+                            index: a.index,
+                            tool_name: a.tool_name.clone(),
+                            method: format!("{:?}", a.method),
+                            before_tokens: a.before_tokens,
+                            after_tokens: a.after_tokens,
+                            end_index: a.end_index,
+                            related_count: a.related_count,
+                        })
+                        .collect(),
                 }
             } else {
                 crate::types::CompactionResult::NoOp
@@ -666,6 +681,23 @@ fn serialize_or_placeholder<T: serde::Serialize>(value: &T, kind: &str) -> serde
             })
         }
     }
+}
+
+fn extract_compact_history(transcripts: &[TranscriptItem]) -> Vec<CompactRecord> {
+    use crate::agent::run::observability::compact_record_from_result;
+
+    transcripts
+        .iter()
+        .filter_map(|item| {
+            let stats = TranscriptStats::try_from_item(item)?;
+            match stats {
+                TranscriptStats::ContextCompactionCompleted(s) => {
+                    compact_record_from_result(&s.result)
+                }
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 pub(crate) fn build_agent(

@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::types::AssistantBlock;
+use crate::types::CompactRecord;
 use crate::types::CompactionResult;
 use crate::types::LlmCallMetrics;
 use crate::types::UsageSummary;
@@ -65,6 +66,9 @@ pub enum RunEventPayload {
         model: String,
         message_count: usize,
         message_bytes: usize,
+        /// Estimated total context tokens (same source as compaction events).
+        #[serde(default)]
+        estimated_context_tokens: usize,
         system_prompt_tokens: usize,
         tool_count: usize,
         /// Pre-computed message stats by role.
@@ -108,6 +112,8 @@ pub enum RunEventPayload {
         turn_count: u32,
         duration_ms: u64,
         transcript_count: usize,
+        #[serde(default)]
+        compact_history: Vec<CompactRecord>,
     },
     Error {
         message: String,
@@ -316,6 +322,7 @@ impl<'a> RunEventContext<'a> {
         turn_count: u32,
         duration_ms: u64,
         transcript_count: usize,
+        compact_history: Vec<CompactRecord>,
     ) -> RunEvent {
         self.event(RunEventPayload::RunFinished {
             text,
@@ -323,6 +330,7 @@ impl<'a> RunEventContext<'a> {
             turn_count,
             duration_ms,
             transcript_count,
+            compact_history,
         })
     }
 

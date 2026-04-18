@@ -74,8 +74,12 @@ pub struct ToolAggStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactRecord {
     pub level: u8,
-    pub before_tokens: usize,
-    pub after_tokens: usize,
+    pub from_tokens: usize,
+    pub to_tokens: usize,
+    /// Per-message action map: each char represents one original message.
+    /// `.` = kept, `O` = Outline, `H` = HeadTail, `S` = Summarized,
+    /// `D` = Dropped, `C` = Cleared, `X` = OversizeCapped
+    pub action_map: String,
 }
 
 // ---------------------------------------------------------------------------

@@ -214,10 +214,21 @@ async fn run_loop(
             // Compact context if configured
             compact_context(context, config, &mut context_tracker, tx);
 
+            // Build budget snapshot for the LLM call (same source as compaction)
+            let budget_snapshot =
+                context_tracker.budget_snapshot(&context.messages, config.context_config.as_ref());
+
             // Stream assistant response
-            let message =
-                stream_assistant_response(context, config, tx, cancel, turn_number, injected_count)
-                    .await;
+            let message = stream_assistant_response(
+                context,
+                config,
+                tx,
+                cancel,
+                turn_number,
+                injected_count,
+                budget_snapshot,
+            )
+            .await;
 
             let agent_msg: AgentMessage = message.clone().into();
             context.messages.push(agent_msg.clone());

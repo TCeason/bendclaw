@@ -11,57 +11,81 @@ use crate::types::*;
 // Context tracking (real usage + estimates)
 // ---------------------------------------------------------------------------
 
-/// Tracks context size using real token counts from provider responses
-/// combined with estimates for messages added after the last response.
-///
-/// This gives more accurate context size tracking than pure estimation,
-/// since providers report actual token counts in their usage data.
+/// Tracks context size using provider usage as baseline, with chars/4
+/// fallback. Single authority for context budget estimation — both
+/// compaction and LLM call events source from this tracker.
 pub struct ContextTracker {
-    /// Last known total token count from provider usage
-    last_usage_tokens: Option<usize>,
-    /// Index of the message that had the last usage
-    last_usage_index: Option<usize>,
+    last_baseline_tokens: Option<usize>,
+    last_baseline_index: Option<usize>,
 }
 
 impl ContextTracker {
     pub fn new() -> Self {
         Self {
-            last_usage_tokens: None,
-            last_usage_index: None,
+            last_baseline_tokens: None,
+            last_baseline_index: None,
         }
     }
 
-    /// Record usage from an assistant response.
-    ///
-    /// Call this after each assistant message to update the tracker
-    /// with real token counts from the provider.
+    /// Update baseline from provider usage (call after each assistant message).
     pub fn record_usage(&mut self, usage: &Usage, message_index: usize) {
         let total = usage.input + usage.output + usage.cache_read + usage.cache_write;
         if total > 0 {
-            self.last_usage_tokens = Some(total as usize);
-            self.last_usage_index = Some(message_index);
+            self.last_baseline_tokens = Some(total as usize);
+            self.last_baseline_index = Some(message_index);
         }
     }
 
-    /// Estimate current context size.
-    ///
-    /// Uses real usage from the last assistant response as a baseline,
-    /// then adds estimates (chars/4) for any messages added since.
-    /// Falls back to pure estimation if no usage data is available.
+    /// Update baseline from compaction result, anchored at the last compacted message.
+    pub fn record_compaction(&mut self, estimated_tokens: usize, message_count: usize) {
+        if message_count > 0 {
+            self.last_baseline_tokens = Some(estimated_tokens);
+            self.last_baseline_index = Some(message_count - 1);
+        } else {
+            self.last_baseline_tokens = None;
+            self.last_baseline_index = None;
+        }
+    }
+
+    /// Estimate current context size: baseline + chars/4 for trailing messages.
     pub fn estimate_context_tokens(&self, messages: &[AgentMessage]) -> usize {
-        match (self.last_usage_tokens, self.last_usage_index) {
-            (Some(usage_tokens), Some(idx)) if idx < messages.len() => {
+        match (self.last_baseline_tokens, self.last_baseline_index) {
+            (Some(baseline_tokens), Some(idx)) if idx < messages.len() => {
                 let trailing: usize = messages[idx + 1..].iter().map(message_tokens).sum();
-                usage_tokens + trailing
+                baseline_tokens + trailing
             }
             _ => total_tokens(messages),
         }
     }
 
-    /// Reset tracking (e.g. after compaction replaces messages).
+    /// Build a budget snapshot from the current tracker state and config.
+    pub fn budget_snapshot(
+        &self,
+        messages: &[AgentMessage],
+        ctx_config: Option<&ContextConfig>,
+    ) -> ContextBudgetSnapshot {
+        let estimated_tokens = self.estimate_context_tokens(messages);
+        let (system_prompt_tokens, budget_tokens, context_window) = ctx_config
+            .map(|c| {
+                (
+                    c.system_prompt_tokens,
+                    c.max_context_tokens.saturating_sub(c.system_prompt_tokens),
+                    c.max_context_tokens,
+                )
+            })
+            .unwrap_or((0, 0, 0));
+        ContextBudgetSnapshot {
+            estimated_tokens,
+            budget_tokens,
+            system_prompt_tokens,
+            context_window,
+        }
+    }
+
+    /// Discard the baseline entirely.
     pub fn reset(&mut self) {
-        self.last_usage_tokens = None;
-        self.last_usage_index = None;
+        self.last_baseline_tokens = None;
+        self.last_baseline_index = None;
     }
 }
 
@@ -69,6 +93,20 @@ impl Default for ContextTracker {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Context budget snapshot
+// ---------------------------------------------------------------------------
+
+/// Point-in-time context budget snapshot, sourced from `ContextTracker`.
+/// Shared by `LlmCallStart` and `ContextCompactionStart` events.
+#[derive(Debug, Clone)]
+pub struct ContextBudgetSnapshot {
+    pub estimated_tokens: usize,
+    pub budget_tokens: usize,
+    pub system_prompt_tokens: usize,
+    pub context_window: usize,
 }
 
 // ---------------------------------------------------------------------------

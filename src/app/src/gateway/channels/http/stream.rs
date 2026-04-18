@@ -58,6 +58,7 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
             turn_count,
             usage,
             duration_ms,
+            compact_history,
             ..
         } => {
             events.push(json!({
@@ -67,6 +68,12 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
                     "input_tokens": usage.input,
                     "output_tokens": usage.output,
                     "duration_ms": duration_ms,
+                    "compactions": compact_history.iter().map(|c| json!({
+                        "level": c.level,
+                        "from_tokens": c.from_tokens,
+                        "to_tokens": c.to_tokens,
+                        "action_map": c.action_map,
+                    })).collect::<Vec<_>>(),
                 }
             }));
         }
@@ -87,6 +94,7 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
             model,
             message_count,
             message_bytes,
+            estimated_context_tokens,
             system_prompt_tokens,
             tool_count,
             message_stats,
@@ -102,6 +110,7 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
                     "model": model,
                     "message_count": message_count,
                     "message_bytes": message_bytes,
+                    "estimated_context_tokens": estimated_context_tokens,
                     "system_prompt_tokens": system_prompt_tokens,
                     "tool_count": tool_count,
                     "message_stats": message_stats,

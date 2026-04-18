@@ -182,6 +182,7 @@ fn run_event_round_trip_run_finished() {
             turn_count: 2,
             duration_ms: 1500,
             transcript_count: 4,
+            compact_history: vec![],
         },
     );
     let json = serde_json::to_string(&event).unwrap();
@@ -331,6 +332,7 @@ fn sse_map_run_finished() {
             turn_count: 2,
             duration_ms: 1500,
             transcript_count: 4,
+            compact_history: vec![],
         },
     );
     let payloads = map_run_event_json(&event);

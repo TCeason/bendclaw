@@ -106,3 +106,75 @@ fn test_execution_limits() {
     tracker.record_turn(100);
     assert!(tracker.check_limits().is_some());
 }
+
+#[test]
+fn test_context_tracker_record_compaction() {
+    let mut tracker = ContextTracker::new();
+    // Simulate: 3 messages, compact result says 5000 tokens
+    let messages = vec![
+        AgentMessage::Llm(Message::user("Hello")),
+        AgentMessage::Llm(Message::user("World")),
+        AgentMessage::Llm(Message::user("Test")),
+    ];
+    tracker.record_compaction(5000, messages.len());
+
+    // No trailing messages → should return the compaction baseline
+    let tokens = tracker.estimate_context_tokens(&messages);
+    assert_eq!(tokens, 5000);
+}
+
+#[test]
+fn test_context_tracker_record_compaction_with_trailing() {
+    let mut tracker = ContextTracker::new();
+    // Compact with 2 messages, baseline 5000
+    tracker.record_compaction(5000, 2);
+
+    // Now add a trailing message
+    let messages = vec![
+        AgentMessage::Llm(Message::user("Hello")),
+        AgentMessage::Llm(Message::user("World")),
+        AgentMessage::Llm(Message::user("Trailing message after compaction")),
+    ];
+    let tokens = tracker.estimate_context_tokens(&messages);
+    let trailing_estimate = message_tokens(&messages[2]);
+    assert_eq!(tokens, 5000 + trailing_estimate);
+}
+
+#[test]
+fn test_context_tracker_record_compaction_empty() {
+    let mut tracker = ContextTracker::new();
+    tracker.record_compaction(0, 0);
+    // Falls back to pure estimation
+    let messages = vec![AgentMessage::Llm(Message::user("test"))];
+    assert_eq!(
+        tracker.estimate_context_tokens(&messages),
+        total_tokens(&messages)
+    );
+}
+
+#[test]
+fn test_budget_snapshot() {
+    let tracker = ContextTracker::new();
+    let messages = vec![AgentMessage::Llm(Message::user("Hello"))];
+    let config = ContextConfig {
+        max_context_tokens: 100_000,
+        system_prompt_tokens: 4_000,
+        ..Default::default()
+    };
+    let snapshot = tracker.budget_snapshot(&messages, Some(&config));
+    assert_eq!(snapshot.system_prompt_tokens, 4_000);
+    assert_eq!(snapshot.budget_tokens, 96_000);
+    assert_eq!(snapshot.context_window, 100_000);
+    assert_eq!(snapshot.estimated_tokens, total_tokens(&messages));
+}
+
+#[test]
+fn test_budget_snapshot_no_config() {
+    let tracker = ContextTracker::new();
+    let messages = vec![AgentMessage::Llm(Message::user("Hello"))];
+    let snapshot = tracker.budget_snapshot(&messages, None);
+    assert_eq!(snapshot.system_prompt_tokens, 0);
+    assert_eq!(snapshot.budget_tokens, 0);
+    assert_eq!(snapshot.context_window, 0);
+    assert_eq!(snapshot.estimated_tokens, total_tokens(&messages));
+}

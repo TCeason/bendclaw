@@ -76,9 +76,12 @@ pub enum CompactionResult {
     NoOp,
     RunOnceCleared {
         cleared_count: usize,
+        before_message_count: usize,
         before_estimated_tokens: usize,
         after_estimated_tokens: usize,
         saved_tokens: usize,
+        #[serde(default)]
+        actions: Vec<CompactionAction>,
     },
     LevelCompacted {
         level: u8,

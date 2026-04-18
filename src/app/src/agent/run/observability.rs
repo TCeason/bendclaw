@@ -3,12 +3,49 @@
 use std::collections::HashMap;
 
 use crate::types::CompactRecord;
+use crate::types::CompactionResult;
 use crate::types::LlmCallMetrics;
 use crate::types::RunSummaryData;
 use crate::types::ToolAggStats;
 use crate::types::TranscriptItem;
 use crate::types::TranscriptStats;
 use crate::types::UsageSummary;
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+/// Build a `CompactRecord` from a `CompactionResult`, or `None` for `NoOp`.
+pub fn compact_record_from_result(result: &CompactionResult) -> Option<CompactRecord> {
+    match result {
+        CompactionResult::LevelCompacted {
+            level,
+            before_message_count,
+            before_estimated_tokens,
+            after_estimated_tokens,
+            actions,
+            ..
+        } => Some(CompactRecord {
+            level: *level,
+            from_tokens: *before_estimated_tokens,
+            to_tokens: *after_estimated_tokens,
+            action_map: build_action_map(*before_message_count, actions),
+        }),
+        CompactionResult::RunOnceCleared {
+            before_message_count,
+            before_estimated_tokens,
+            after_estimated_tokens,
+            actions,
+            ..
+        } => Some(CompactRecord {
+            level: 0,
+            from_tokens: *before_estimated_tokens,
+            to_tokens: *after_estimated_tokens,
+            action_map: build_action_map(*before_message_count, actions),
+        }),
+        CompactionResult::NoOp => None,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // StatsAggregator
@@ -73,32 +110,11 @@ impl StatsAggregator {
             TranscriptStats::ContextCompactionStarted(s) => {
                 self.last_context_budget = Some((s.estimated_tokens, s.budget_tokens));
             }
-            TranscriptStats::ContextCompactionCompleted(s) => match &s.result {
-                crate::types::CompactionResult::LevelCompacted {
-                    level,
-                    before_estimated_tokens,
-                    after_estimated_tokens,
-                    ..
-                } => {
-                    self.compact_history.push(CompactRecord {
-                        level: *level,
-                        before_tokens: *before_estimated_tokens,
-                        after_tokens: *after_estimated_tokens,
-                    });
+            TranscriptStats::ContextCompactionCompleted(s) => {
+                if let Some(record) = compact_record_from_result(&s.result) {
+                    self.compact_history.push(record);
                 }
-                crate::types::CompactionResult::RunOnceCleared {
-                    before_estimated_tokens,
-                    after_estimated_tokens,
-                    ..
-                } => {
-                    self.compact_history.push(CompactRecord {
-                        level: 0,
-                        before_tokens: *before_estimated_tokens,
-                        after_tokens: *after_estimated_tokens,
-                    });
-                }
-                crate::types::CompactionResult::NoOp => {}
-            },
+            }
             TranscriptStats::RunFinished(s) => {
                 self.run_duration_ms = Some(s.duration_ms);
                 self.run_usage = Some(s.usage.clone());
@@ -155,5 +171,51 @@ impl StatsAggregator {
             }
         }
         agg
+    }
+}
+
+/// Build a per-message action map string from compaction actions.
+///
+/// Each character represents one message in the original list:
+/// `.` = kept, `O` = Outline, `H` = HeadTail, `S` = Summarized,
+/// `D` = Dropped, `C` = Cleared, `X` = OversizeCapped
+///
+/// When multiple actions target the same index, the higher-priority
+/// action wins (Dropped > Summarized > Outline > HeadTail > OversizeCapped > Cleared).
+pub fn build_action_map(
+    message_count: usize,
+    actions: &[crate::types::CompactionAction],
+) -> String {
+    let mut map = vec!['.'; message_count];
+    for action in actions {
+        let ch = match action.method.as_str() {
+            "Outline" => 'O',
+            "HeadTail" => 'H',
+            "Summarized" => 'S',
+            "Dropped" => 'D',
+            "LifecycleCleared" | "AgeCleared" => 'C',
+            "OversizeCapped" => 'X',
+            _ => '?',
+        };
+        let end = action.end_index.unwrap_or(action.index);
+        for i in action.index..=end.min(message_count.saturating_sub(1)) {
+            if i < map.len() && priority(ch) >= priority(map[i]) {
+                map[i] = ch;
+            }
+        }
+    }
+    map.into_iter().collect()
+}
+
+fn priority(ch: char) -> u8 {
+    match ch {
+        'D' => 6,
+        'S' => 5,
+        'O' => 4,
+        'H' => 3,
+        'X' => 2,
+        'C' => 1,
+        '?' => 1,
+        _ => 0,
     }
 }

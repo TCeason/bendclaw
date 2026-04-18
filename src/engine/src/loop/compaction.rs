@@ -27,14 +27,11 @@ pub(super) fn compact_context(
     };
 
     let original_count = context.messages.len();
-    let original_tokens = context_tracker.estimate_context_tokens(&context.messages);
-
-    let budget = ctx_config
-        .max_context_tokens
-        .saturating_sub(ctx_config.system_prompt_tokens);
+    let budget = context_tracker.budget_snapshot(&context.messages, Some(ctx_config));
+    let pre_stats = crate::context::compute_call_stats_from_agent_messages(&context.messages);
 
     let budget_state = CompactionBudgetState {
-        estimated_tokens: original_tokens,
+        estimated_tokens: budget.estimated_tokens,
     };
     let result = strategy.compact(
         std::mem::take(&mut context.messages),
@@ -44,19 +41,16 @@ pub(super) fn compact_context(
     let did_work = result.stats.level > 0 || result.stats.current_run_cleared > 0;
     context.messages = result.messages;
 
-    let compact_stats = crate::context::compute_call_stats_from_agent_messages(&context.messages);
     tx.send(AgentEvent::ContextCompactionStart {
         message_count: original_count,
-        estimated_tokens: original_tokens,
-        budget_tokens: budget,
-        system_prompt_tokens: ctx_config.system_prompt_tokens,
-        context_window: ctx_config.max_context_tokens,
-        message_stats: compact_stats,
+        budget: budget.clone(),
+        message_stats: pre_stats,
     })
     .ok();
 
     if did_work {
-        context_tracker.reset();
+        context_tracker
+            .record_compaction(result.stats.after_estimated_tokens, context.messages.len());
     }
 
     tx.send(AgentEvent::ContextCompactionEnd {
@@ -88,12 +82,9 @@ pub(super) fn compact_for_recovery(
         None => return false,
     };
 
-    let budget = ctx_config
-        .max_context_tokens
-        .saturating_sub(ctx_config.system_prompt_tokens);
-    let current_tokens = context_tracker.estimate_context_tokens(&context.messages);
+    let budget = context_tracker.budget_snapshot(&context.messages, Some(ctx_config));
 
-    if current_tokens <= budget / 2 {
+    if budget.estimated_tokens <= budget.budget_tokens / 2 {
         return false;
     }
 
@@ -101,8 +92,10 @@ pub(super) fn compact_for_recovery(
     context.messages.pop();
     new_messages.pop();
 
+    let pre_stats = crate::context::compute_call_stats_from_agent_messages(&context.messages);
+
     let budget_state = CompactionBudgetState {
-        estimated_tokens: current_tokens,
+        estimated_tokens: budget.estimated_tokens,
     };
     let compact_result = strategy.compact(
         std::mem::take(&mut context.messages),
@@ -110,15 +103,20 @@ pub(super) fn compact_for_recovery(
         &budget_state,
     );
     context.messages = compact_result.messages;
-    context_tracker.reset();
+    context_tracker.record_compaction(
+        compact_result.stats.after_estimated_tokens,
+        context.messages.len(),
+    );
 
     tx.send(AgentEvent::ContextCompactionStart {
         message_count: compact_result.stats.before_message_count,
-        estimated_tokens: compact_result.stats.before_estimated_tokens,
-        budget_tokens: budget,
-        system_prompt_tokens: ctx_config.system_prompt_tokens,
-        context_window: ctx_config.max_context_tokens,
-        message_stats: crate::context::compute_call_stats_from_agent_messages(&context.messages),
+        budget: crate::context::ContextBudgetSnapshot {
+            estimated_tokens: compact_result.stats.before_estimated_tokens,
+            budget_tokens: budget.budget_tokens,
+            system_prompt_tokens: budget.system_prompt_tokens,
+            context_window: budget.context_window,
+        },
+        message_stats: pre_stats,
     })
     .ok();
     tx.send(AgentEvent::ContextCompactionEnd {

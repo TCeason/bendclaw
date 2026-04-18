@@ -123,8 +123,119 @@ fn aggregator_ingests_compaction_completed() {
     ));
     assert_eq!(agg.compact_history.len(), 1);
     assert_eq!(agg.compact_history[0].level, 1);
-    assert_eq!(agg.compact_history[0].before_tokens, 50000);
-    assert_eq!(agg.compact_history[0].after_tokens, 25000);
+    assert_eq!(agg.compact_history[0].from_tokens, 50000);
+    assert_eq!(agg.compact_history[0].to_tokens, 25000);
+    assert_eq!(agg.compact_history[0].action_map, ".".repeat(20));
+}
+
+#[test]
+fn aggregator_ignores_noop_compaction() {
+    let mut agg = StatsAggregator::new();
+    agg.ingest(&TranscriptStats::ContextCompactionCompleted(
+        ContextCompactionCompletedStats {
+            result: evot::types::CompactionResult::NoOp,
+        },
+    ));
+    assert!(agg.compact_history.is_empty());
+}
+
+#[test]
+fn aggregator_ingests_run_once_cleared_compaction() {
+    use evot::types::observability::CompactionAction;
+
+    let mut agg = StatsAggregator::new();
+    agg.ingest(&TranscriptStats::ContextCompactionCompleted(
+        ContextCompactionCompletedStats {
+            result: evot::types::CompactionResult::RunOnceCleared {
+                cleared_count: 2,
+                before_message_count: 8,
+                before_estimated_tokens: 80000,
+                after_estimated_tokens: 60000,
+                saved_tokens: 20000,
+                actions: vec![
+                    CompactionAction {
+                        index: 1,
+                        tool_name: "bash".into(),
+                        method: "LifecycleCleared".into(),
+                        before_tokens: 5000,
+                        after_tokens: 100,
+                        end_index: None,
+                        related_count: None,
+                    },
+                    CompactionAction {
+                        index: 5,
+                        tool_name: "read_file".into(),
+                        method: "LifecycleCleared".into(),
+                        before_tokens: 3000,
+                        after_tokens: 100,
+                        end_index: None,
+                        related_count: None,
+                    },
+                ],
+            },
+        },
+    ));
+    assert_eq!(agg.compact_history.len(), 1);
+    assert_eq!(agg.compact_history[0].level, 0);
+    assert_eq!(agg.compact_history[0].from_tokens, 80000);
+    assert_eq!(agg.compact_history[0].to_tokens, 60000);
+    //                                              01234567
+    assert_eq!(agg.compact_history[0].action_map, ".C...C..");
+}
+
+#[test]
+fn aggregator_compaction_action_map_positions() {
+    use evot::types::observability::CompactionAction;
+
+    let mut agg = StatsAggregator::new();
+    agg.ingest(&TranscriptStats::ContextCompactionCompleted(
+        ContextCompactionCompletedStats {
+            result: evot::types::CompactionResult::LevelCompacted {
+                level: 2,
+                before_message_count: 10,
+                after_message_count: 8,
+                before_estimated_tokens: 40000,
+                after_estimated_tokens: 30000,
+                tool_outputs_truncated: 2,
+                turns_summarized: 1,
+                messages_dropped: 0,
+                oversize_capped: 0,
+                age_cleared: 0,
+                actions: vec![
+                    CompactionAction {
+                        index: 2,
+                        tool_name: "read_file".into(),
+                        method: "Outline".into(),
+                        before_tokens: 1000,
+                        after_tokens: 200,
+                        end_index: None,
+                        related_count: None,
+                    },
+                    CompactionAction {
+                        index: 5,
+                        tool_name: "search".into(),
+                        method: "HeadTail".into(),
+                        before_tokens: 800,
+                        after_tokens: 300,
+                        end_index: None,
+                        related_count: None,
+                    },
+                    CompactionAction {
+                        index: 7,
+                        tool_name: "assistant".into(),
+                        method: "Summarized".into(),
+                        before_tokens: 2000,
+                        after_tokens: 500,
+                        end_index: Some(8),
+                        related_count: Some(2),
+                    },
+                ],
+            },
+        },
+    ));
+    assert_eq!(agg.compact_history.len(), 1);
+    //                                     0123456789
+    assert_eq!(agg.compact_history[0].action_map, "..O..H.SS.");
 }
 
 #[test]

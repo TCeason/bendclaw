@@ -33,6 +33,7 @@ fn make_run_finished() -> RunEvent {
             turn_count: 1,
             duration_ms: 100,
             transcript_count: 2,
+            compact_history: vec![],
         },
     )
 }

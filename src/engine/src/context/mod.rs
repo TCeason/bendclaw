@@ -29,6 +29,7 @@ pub use tokens::estimate_tokens;
 pub use tokens::message_tokens;
 pub use tokens::total_tokens;
 pub use tracking::CompactionBudgetState;
+pub use tracking::ContextBudgetSnapshot;
 pub use tracking::ContextConfig;
 pub use tracking::ContextTracker;
 pub use tracking::ExecutionLimits;
