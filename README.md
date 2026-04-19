@@ -137,7 +137,7 @@ make install      # compile standalone binary to ~/.evotai/bin/evot
 
 ## Community
 
-<table>
+<table width="100%">
   <tr>
     <td align="center" width="33%">
       <a href="https://github.com/evotai/evot/issues"><b>GitHub Issues</b></a><br>
