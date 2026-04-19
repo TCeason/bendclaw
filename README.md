@@ -102,8 +102,10 @@ Configure as many providers as you need. Set `EVOT_LLM_PROVIDER` to switch the a
 Use `--model <name>` to switch by model name, or `--model provider:model` for precise control.
 
 ```bash
-evot                              # interactive REPL
-evot -p "summarize today's PRs"   # one-shot task
+evot                                          # interactive REPL
+evot -p "summarize today's PRs"               # one-shot task
+evot -p "review this" -f ./src/main.rs        # attach file context
+evot -p "continue work" -r my-session         # resume or create session
 ```
 
 <details>
@@ -112,13 +114,15 @@ evot -p "summarize today's PRs"   # one-shot task
 | Flag | Description |
 |------|-------------|
 | `-p, --prompt` | Run a single prompt and exit |
-| `--resume <id>` | Resume an existing session |
+| `-f, --file <path>` | Attach file/directory context (repeatable) |
+| `-r, --resume <id>` | Resume or create a session by ID |
 | `--model <model>` | Override the configured model |
 | `--output-format text\|stream-json` | Output format (default: text) |
 | `--max-turns <n>` | Limit agent turns (default: 512) |
 | `--max-tokens <n>` | Limit total tokens |
 | `--max-duration <secs>` | Session timeout in seconds (default: 3600) |
 | `--append-system-prompt "..."` | Inject extra system instructions |
+| `--skills <dir>` | Skills directory (repeatable) |
 | `--verbose` | Enable info-level logging |
 
 </details>
@@ -141,7 +145,7 @@ make install      # compile standalone binary to ~/.evotai/bin/evot
     </td>
     <td align="center" width="33%">
       <a href="https://twitter.com/Evot_AI"><b>Twitter @Evot_AI</b></a><br>
-      <sub>Updates & announcements</sub>
+      <sub>Announcements</sub>
     </td>
     <td align="center" width="33%">
       <a href="mailto:team@evot.ai"><b>team@evot.ai</b></a><br>
