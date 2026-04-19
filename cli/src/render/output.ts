@@ -2,8 +2,7 @@
  * OutputLine — a single line of REPL output.
  *
  * All REPL output (user messages, assistant text, tool results, verbose events)
- * is modeled as an append-only list of OutputLines. These are rendered by
- * Ink's <Static> component, which writes them once and never re-renders.
+ * is modeled as a list of OutputLines rendered by the OutputView component.
  *
  * This module is pure logic — no React, no stdout. Easy to test.
  */
@@ -439,4 +438,17 @@ function formatToolInputLines(args: Record<string, unknown>): string[] {
     else val = truncate(String(v), 120)
     return `${k}: ${val}`
   })
+}
+
+// ---------------------------------------------------------------------------
+// Filtering
+// ---------------------------------------------------------------------------
+
+export function isVerboseLine(line: OutputLine): boolean {
+  return line.kind === 'verbose' || line.kind === 'run_summary'
+}
+
+export function filterLines(lines: OutputLine[], verbose: boolean): OutputLine[] {
+  if (verbose) return lines
+  return lines.filter((l) => !isVerboseLine(l))
 }

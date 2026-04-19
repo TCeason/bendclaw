@@ -41,7 +41,7 @@ export function HelpPane({ onDismiss }: HelpPaneProps) {
         <Shortcut keys="Alt+Enter" desc="New line" />
         <Shortcut keys="Ctrl+C" desc="Clear input / exit" />
         <Shortcut keys="Ctrl+L" desc="Clear all input" />
-        <Shortcut keys="Ctrl+O" desc="Toggle verbose output" />
+        <Shortcut keys="Ctrl+O" desc="Toggle verbose display" />
         <Shortcut keys="Ctrl+U" desc="Clear line before cursor" />
         <Shortcut keys="Ctrl+K" desc="Clear line after cursor" />
         <Shortcut keys="Ctrl+W" desc="Delete word before cursor" />

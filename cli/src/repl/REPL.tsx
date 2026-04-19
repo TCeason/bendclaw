@@ -290,6 +290,7 @@ export function REPL({ agent, initialVerbose = true, initialResume, envFile, pre
       <OutputView
         banner={<Banner model={state.model} cwd={state.cwd} sessionId={state.sessionId} configInfo={configInfoState} recentSessions={recentSessions} serverState={serverState} />}
         lines={outputLines}
+        verbose={state.verbose}
       />
 
       {!state.askUserRequest && (

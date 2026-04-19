@@ -1,42 +1,39 @@
 /**
- * OutputView — renders OutputLines using Ink's <Static>.
- * Items are appended once and never re-rendered.
+ * OutputView — renders OutputLines as plain React components.
+ * Only the most recent lines are kept in the Ink dynamic area (render cap).
+ * Older lines scroll into the terminal's native scrollback.
  */
 
-import React from 'react'
-import { Static, Text, Box } from 'ink'
+import React, { useMemo } from 'react'
+import { Text, Box } from 'ink'
 import type { OutputLine } from '../render/output.js'
+import { filterLines } from '../render/output.js'
+
+const RENDER_CAP = 100
 
 interface Props {
   banner: React.ReactNode
   lines: OutputLine[]
+  verbose?: boolean
 }
 
-type StaticItem =
-  | { kind: 'banner'; id: string; node: React.ReactNode }
-  | { kind: 'line'; id: string; line: OutputLine }
-
-export function OutputView({ banner, lines }: Props) {
-  const items: StaticItem[] = [
-    { kind: 'banner', id: '__banner__', node: banner },
-    ...lines.map((line) => ({ kind: 'line' as const, id: line.id, line })),
-  ]
+export function OutputView({ banner, lines, verbose = true }: Props) {
+  const visible = useMemo(() => filterLines(lines, verbose), [lines, verbose])
+  const capped = visible.length > RENDER_CAP ? visible.slice(-RENDER_CAP) : visible
 
   return (
-    <Static items={items}>
-      {(item, index) => {
-        if (item.kind === 'banner') {
-          return <React.Fragment key={item.id}>{item.node}</React.Fragment>
-        }
-        const prevItem = index > 0 ? items[index - 1] : undefined
-        const prevKind = prevItem?.kind === 'line' ? prevItem.line.kind : undefined
-        return <OutputLineView key={item.id} line={item.line} prevKind={prevKind} />
-      }}
-    </Static>
+    <Box flexDirection="column">
+      {banner}
+      {capped.map((line, index) => {
+        const globalIndex = visible.length - capped.length + index
+        const prevKind = globalIndex > 0 ? visible[globalIndex - 1]?.kind : undefined
+        return <OutputLineView key={line.id} line={line} prevKind={prevKind} />
+      })}
+    </Box>
   )
 }
 
-function OutputLineView({ line, prevKind }: { line: OutputLine; prevKind?: string }) {
+const OutputLineView = React.memo(function OutputLineView({ line, prevKind }: { line: OutputLine; prevKind?: string }) {
   switch (line.kind) {
     case 'user':
       return (
@@ -46,7 +43,6 @@ function OutputLineView({ line, prevKind }: { line: OutputLine; prevKind?: strin
         </Box>
       )
     case 'assistant': {
-      // Only add top margin on the first assistant line after a non-assistant line
       const isBlockStart = prevKind !== 'assistant'
       return (
         <Box marginTop={isBlockStart ? 1 : 0}>
@@ -85,10 +81,9 @@ function OutputLineView({ line, prevKind }: { line: OutputLine; prevKind?: strin
     default:
       return null
   }
-}
+})
 
 function ToolLineView({ text }: { text: string }) {
-  // Badge line: [tool_name] call / [tool_name] completed / [tool_name] failed
   const badgeMatch = text.match(/^\[([^\]]+)\]\s*(.*)$/)
   if (badgeMatch) {
     const badge = badgeMatch[1]!
@@ -107,7 +102,7 @@ function ToolLineView({ text }: { text: string }) {
       </Box>
     )
   }
-  // Detail line (preview command, args, diff)
+  // Detail line (indented with spaces)
   if (text.startsWith('  ')) {
     return (
       <Box>
@@ -123,7 +118,6 @@ function ToolLineView({ text }: { text: string }) {
 }
 
 function VerboseLineView({ text }: { text: string }) {
-  // Badge line: [LLM] ... or [COMPACT] ...
   const badgeMatch = text.match(/^\[(\w+)\]\s*(.*)$/)
   if (badgeMatch) {
     const badge = badgeMatch[1]!

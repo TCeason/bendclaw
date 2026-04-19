@@ -9,7 +9,10 @@ import {
   AssistantStreamBuffer,
   findSafeSplitPoint,
   resetIdCounter,
+  filterLines,
+  isVerboseLine,
 } from '../src/render/output.js'
+import type { OutputLine } from '../src/render/output.js'
 
 beforeEach(() => {
   resetIdCounter()
@@ -338,5 +341,69 @@ describe('AssistantStreamBuffer', () => {
     // Should have emitted assistant lines for both parts
     const assistantLines = allLines.filter((l) => l.kind === 'assistant')
     expect(assistantLines.length).toBeGreaterThan(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isVerboseLine
+// ---------------------------------------------------------------------------
+
+describe('isVerboseLine', () => {
+  function ln(kind: OutputLine['kind'], text: string): OutputLine {
+    return { id: `v-${kind}`, kind, text }
+  }
+
+  test('verbose returns true', () => {
+    expect(isVerboseLine(ln('verbose', 'test'))).toBe(true)
+  })
+
+  test('run_summary returns true', () => {
+    expect(isVerboseLine(ln('run_summary', 'test'))).toBe(true)
+  })
+
+  test('other kinds return false', () => {
+    expect(isVerboseLine(ln('user', 'test'))).toBe(false)
+    expect(isVerboseLine(ln('assistant', 'test'))).toBe(false)
+    expect(isVerboseLine(ln('tool', 'test'))).toBe(false)
+    expect(isVerboseLine(ln('tool_result', 'test'))).toBe(false)
+    expect(isVerboseLine(ln('error', 'test'))).toBe(false)
+    expect(isVerboseLine(ln('system', 'test'))).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// filterLines
+// ---------------------------------------------------------------------------
+
+describe('filterLines', () => {
+  function ln(kind: OutputLine['kind'], text: string): OutputLine {
+    return { id: `f-${kind}-${text}`, kind, text }
+  }
+
+  const lines: OutputLine[] = [
+    ln('user', 'hello'),
+    ln('verbose', '[LLM] call'),
+    ln('assistant', 'response'),
+    ln('run_summary', 'summary'),
+    ln('tool', '[BASH] call'),
+    ln('error', 'oops'),
+  ]
+
+  test('verbose=true returns all lines', () => {
+    expect(filterLines(lines, true)).toHaveLength(6)
+  })
+
+  test('verbose=false filters verbose and run_summary', () => {
+    const filtered = filterLines(lines, false)
+    expect(filtered).toHaveLength(4)
+    expect(filtered.every((l) => l.kind !== 'verbose' && l.kind !== 'run_summary')).toBe(true)
+  })
+
+  test('verbose=false preserves order', () => {
+    const filtered = filterLines(lines, false)
+    expect(filtered[0]!.kind).toBe('user')
+    expect(filtered[1]!.kind).toBe('assistant')
+    expect(filtered[2]!.kind).toBe('tool')
+    expect(filtered[3]!.kind).toBe('error')
   })
 })

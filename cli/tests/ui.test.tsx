@@ -27,7 +27,7 @@ function line(kind: OutputLine['kind'], text: string): OutputLine {
 describe('OutputView', () => {
   test('renders user message with ❯ prefix', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>banner</Text>} lines={[line('user', 'hello world')]} />
+      <OutputView banner={<Text>banner</Text>} lines={[line('user', 'hello world')]} verbose={true} />
     )
     const frame = lastFrame()
     expect(frame).toContain('❯')
@@ -36,35 +36,35 @@ describe('OutputView', () => {
 
   test('renders assistant message with indentation', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('assistant', 'some response')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('assistant', 'some response')]} verbose={true} />
     )
     expect(lastFrame()).toContain('some response')
   })
 
   test('renders error in red', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('error', 'something broke')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('error', 'something broke')]} verbose={true} />
     )
     expect(lastFrame()).toContain('something broke')
   })
 
   test('renders system message', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('system', 'info message')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('system', 'info message')]} verbose={true} />
     )
     expect(lastFrame()).toContain('info message')
   })
 
   test('renders run_summary', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('run_summary', '─── run summary')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('run_summary', '─── run summary')]} verbose={true} />
     )
     expect(lastFrame()).toContain('run summary')
   })
 
   test('renders tool_result in green', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('tool_result', '  Result: completed')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('tool_result', '  Result: completed')]} verbose={true} />
     )
     expect(lastFrame()).toContain('Result: completed')
   })
@@ -77,7 +77,7 @@ describe('OutputView', () => {
 describe('ToolLineView', () => {
   test('renders tool call badge', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('tool', '[BASH] call')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('tool', '[BASH] call')]} verbose={true} />
     )
     const frame = lastFrame()
     expect(frame).toContain('[BASH]')
@@ -86,7 +86,7 @@ describe('ToolLineView', () => {
 
   test('renders tool completed badge', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('tool', '[BASH] completed · 120ms')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('tool', '[BASH] completed · 120ms')]} verbose={true} />
     )
     const frame = lastFrame()
     expect(frame).toContain('[BASH]')
@@ -96,7 +96,7 @@ describe('ToolLineView', () => {
 
   test('renders tool failed badge', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('tool', '[READ] failed · 50ms')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('tool', '[READ] failed · 50ms')]} verbose={true} />
     )
     const frame = lastFrame()
     expect(frame).toContain('[READ]')
@@ -105,7 +105,7 @@ describe('ToolLineView', () => {
 
   test('renders tool detail line (indented)', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('tool', '  ❯ ls -la')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('tool', '  ❯ ls -la')]} verbose={true} />
     )
     expect(lastFrame()).toContain('❯ ls -la')
   })
@@ -118,7 +118,7 @@ describe('ToolLineView', () => {
 describe('VerboseLineView', () => {
   test('renders LLM call badge in yellow', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '[LLM] call · claude-opus-4-6 · turn 1')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '[LLM] call · claude-opus-4-6 · turn 1')]} verbose={true} />
     )
     const frame = lastFrame()
     expect(frame).toContain('[LLM]')
@@ -128,7 +128,7 @@ describe('VerboseLineView', () => {
 
   test('renders LLM completed badge in green', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '[LLM] completed · 4.3s · 42 tok/s')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '[LLM] completed · 4.3s · 42 tok/s')]} verbose={true} />
     )
     expect(lastFrame()).toContain('[LLM]')
     expect(lastFrame()).toContain('completed')
@@ -136,7 +136,7 @@ describe('VerboseLineView', () => {
 
   test('renders LLM failed badge in red', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '[LLM] failed · 2.1s')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '[LLM] failed · 2.1s')]} verbose={true} />
     )
     const frame = lastFrame()
     expect(frame).toContain('[LLM]')
@@ -146,14 +146,14 @@ describe('VerboseLineView', () => {
 
   test('renders LLM retry badge', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '[LLM] call · claude-opus-4-6 · turn 2 · retry 1')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '[LLM] call · claude-opus-4-6 · turn 2 · retry 1')]} verbose={true} />
     )
     expect(lastFrame()).toContain('retry 1')
   })
 
   test('renders COMPACT badge', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '[COMPACT] · no-op')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '[COMPACT] · no-op')]} verbose={true} />
     )
     const frame = lastFrame()
     expect(frame).toContain('[COMPACT]')
@@ -162,7 +162,7 @@ describe('VerboseLineView', () => {
 
   test('renders verbose detail line (indented)', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '  tokens  4k in · 12 out')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '  tokens  4k in · 12 out')]} verbose={true} />
     )
     expect(lastFrame()).toContain('tokens')
     expect(lastFrame()).toContain('4k in')
@@ -170,7 +170,7 @@ describe('VerboseLineView', () => {
 
   test('renders timing with percentages', () => {
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '  timing  ttfb 3.9s (91%) · stream 0.3s (8%)')]} />
+      <OutputView banner={<Text>b</Text>} lines={[line('verbose', '  timing  ttfb 3.9s (91%) · stream 0.3s (8%)')]} verbose={true} />
     )
     const frame = lastFrame()
     expect(frame).toContain('ttfb 3.9s (91%)')
@@ -195,7 +195,7 @@ describe('OutputView mixed content', () => {
       line('run_summary', '2.5s · 1 turn · 1 llm call · 0 tool calls · 1k tokens'),
     ]
     const { lastFrame } = render(
-      <OutputView banner={<Text>b</Text>} lines={lines} />
+      <OutputView banner={<Text>b</Text>} lines={lines} verbose={true} />
     )
     const frame = lastFrame()
     expect(frame).toContain('hello')
@@ -228,5 +228,64 @@ describe('StreamingMarkdown', () => {
     // Should contain the last lines, not the first
     expect(frame).toContain('line 20')
     expect(frame).not.toContain('line 2\n')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// OutputView — verbose filtering
+// ---------------------------------------------------------------------------
+
+describe('OutputView verbose filtering', () => {
+  test('verbose=true shows verbose and run_summary lines', () => {
+    const lines: OutputLine[] = [
+      line('user', 'hello'),
+      line('verbose', '[LLM] call · test'),
+      line('assistant', 'response'),
+      line('run_summary', '─── run summary'),
+    ]
+    const { lastFrame } = render(
+      <OutputView banner={<Text>b</Text>} lines={lines} verbose={true} />
+    )
+    const frame = lastFrame()
+    expect(frame).toContain('hello')
+    expect(frame).toContain('[LLM]')
+    expect(frame).toContain('response')
+    expect(frame).toContain('run summary')
+  })
+
+  test('verbose=false hides verbose and run_summary lines', () => {
+    const lines: OutputLine[] = [
+      line('user', 'hello'),
+      line('verbose', '[LLM] call · test'),
+      line('assistant', 'response'),
+      line('run_summary', '─── run summary'),
+    ]
+    const { lastFrame } = render(
+      <OutputView banner={<Text>b</Text>} lines={lines} verbose={false} />
+    )
+    const frame = lastFrame()
+    expect(frame).toContain('hello')
+    expect(frame).not.toContain('[LLM]')
+    expect(frame).toContain('response')
+    expect(frame).not.toContain('run summary')
+  })
+
+  test('verbose=false preserves non-verbose lines', () => {
+    const lines: OutputLine[] = [
+      line('user', 'question'),
+      line('tool', '[BASH] completed · 50ms'),
+      line('tool_result', '  output here'),
+      line('error', 'oops'),
+      line('system', 'info'),
+    ]
+    const { lastFrame } = render(
+      <OutputView banner={<Text>b</Text>} lines={lines} verbose={false} />
+    )
+    const frame = lastFrame()
+    expect(frame).toContain('question')
+    expect(frame).toContain('[BASH]')
+    expect(frame).toContain('output here')
+    expect(frame).toContain('oops')
+    expect(frame).toContain('info')
   })
 })

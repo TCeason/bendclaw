@@ -174,8 +174,7 @@ export async function runQuery(
       // ask_user is a synthetic event from NAPI — skip reducer
       let nextState = event.kind === 'ask_user' ? localState : applyEvent(localState, event)
 
-      if (localState.verbose
-        && (event.kind === 'llm_call_started' || event.kind === 'context_compaction_started')) {
+      if (event.kind === 'llm_call_started' || event.kind === 'context_compaction_started') {
         commitStreamingText()
         const newEvents = nextState.verboseEvents.slice(localState.verboseEvents.length)
         for (const evt of newEvents) appendLines(buildVerboseEvent(evt.text))
@@ -214,8 +213,7 @@ export async function runQuery(
         commitStreamingText()
       }
 
-      if (localState.verbose
-        && (event.kind === 'llm_call_completed' || event.kind === 'context_compaction_completed')) {
+      if (event.kind === 'llm_call_completed' || event.kind === 'context_compaction_completed') {
         commitStreamingText()
         const newEvents = nextState.verboseEvents.slice(localState.verboseEvents.length)
         for (const evt of newEvents) appendLines(buildVerboseEvent(evt.text))
@@ -272,7 +270,7 @@ export async function runQuery(
         appendLines(buildError(p.message as string ?? 'Unknown error'))
       }
 
-      if (event.kind === 'run_finished' && localState.verbose) {
+      if (event.kind === 'run_finished') {
         commitStreamingText()
         appendLines(buildRunSummary(nextState.currentRunStats))
       }
