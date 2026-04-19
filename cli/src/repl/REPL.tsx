@@ -59,6 +59,23 @@ export function REPL({ agent, initialVerbose = true, initialResume, envFile, pre
     verbose: initialVerbose,
   }))
   const [systemMessages, setSystemMessages] = useState<SystemMsg[]>([])
+  // Drain system messages into outputLines (Static) so they render once and
+  // are not duplicated on terminal resize.
+  useEffect(() => {
+    if (systemMessages.length === 0) return
+    setOutputLines((prev) => [
+      ...prev,
+      ...systemMessages.map((msg) => ({
+        id: `sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        kind: 'system' as const,
+        text: msg.level === 'error' ? `error: ${msg.text}`
+            : msg.level === 'warn' ? `warn: ${msg.text}`
+            : msg.text,
+      })),
+    ])
+    setSystemMessages([])
+  }, [systemMessages])
+
   const [showHelp, setShowHelp] = useState(false)
   const [messageQueue, setMessageQueue] = useState<{ text: string; images?: PastedImage[]; displayText?: string }[]>([])
   const [outputLines, setOutputLines] = useState<OutputLine[]>(() => {
@@ -302,19 +319,6 @@ export function REPL({ agent, initialVerbose = true, initialResume, envFile, pre
           lastTokenAt={state.lastTokenAt}
         />
       )}
-
-      {/* System messages */}
-      {systemMessages.map((msg, i) => (
-        <Box key={i}>
-          <Text
-            color={msg.level === 'error' ? 'red' : msg.level === 'warn' ? 'yellow' : undefined}
-            dimColor={msg.level === 'info'}
-          >
-            {msg.text}
-          </Text>
-        </Box>
-      ))}
-      {systemMessages.length > 0 && <Text>{''}</Text>}
 
       {showHelp && (
         <HelpPane onDismiss={() => setShowHelp(false)} />
