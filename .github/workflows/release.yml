@@ -243,7 +243,7 @@ jobs:
         run: |
           cd cli
           bun install
-          npx napi build --manifest-path ../src/napi/Cargo.toml --release --platform --target ${{ matrix.target }} --output-dir .
+          npx napi build --manifest-path addon/Cargo.toml --release --platform --target ${{ matrix.target }} --output-dir .
         env:
           EVOT_VERSION: ${{ needs.create_release.outputs.version }}
 
