@@ -14,6 +14,7 @@ export interface CliOptions {
   maxDuration: number
   appendSystemPrompt?: string
   skillsDirs: string[]
+  files: string[]
 }
 
 export function parseArgs(argv: string[]): CliOptions {
@@ -25,6 +26,7 @@ export function parseArgs(argv: string[]): CliOptions {
     maxTokens: 100_000_000,
     maxDuration: 3600,
     skillsDirs: [],
+    files: [],
   }
 
   for (let i = 0; i < argv.length; i++) {
@@ -45,10 +47,11 @@ export function parseArgs(argv: string[]): CliOptions {
       opts.prompt = argv[++i]
       continue
     }
+    if ((arg === '-f' || arg === '--file') && argv[i + 1]) { opts.files.push(argv[++i]); continue }
     if (arg === '--model' && argv[i + 1]) { opts.model = argv[++i]; continue }
     if (arg === '--env-file' && argv[i + 1]) { opts.envFile = argv[++i]; continue }
     if (arg === '--port' && argv[i + 1]) { opts.port = parseIntArg(argv[++i], '--port'); continue }
-    if (arg === '--resume' && argv[i + 1]) { opts.resume = argv[++i]; continue }
+    if ((arg === '-r' || arg === '--resume') && argv[i + 1]) { opts.resume = argv[++i]; continue }
     if (arg === '--output-format' && argv[i + 1]) {
       const fmt = argv[++i]
       if (fmt !== 'text' && fmt !== 'stream-json') {
@@ -100,10 +103,11 @@ export function printHelp() {
   console.log()
   console.log('Options:')
   console.log('  -p, --prompt <text>    Run one-shot prompt')
+  console.log('  -f, --file <path>      Attach file/directory context (repeatable)')
   console.log('  --model <name>         Override the model')
   console.log('  --env-file <path>      Path to evot.env file')
   console.log('  --port <number>        Server port (default: 8082)')
-  console.log('  --resume <session_id>  Resume a session')
+  console.log('  -r, --resume <id>      Resume or create a session by ID')
   console.log('  --output-format <fmt>  text | stream-json (default: text)')
   console.log('  --max-turns <n>        Max turns (default: 512)')
   console.log('  --max-tokens <n>       Max tokens (default: 100000000)')

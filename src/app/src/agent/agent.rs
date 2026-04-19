@@ -581,12 +581,21 @@ impl Agent {
         let model = self.llm.read().model.clone();
         let storage = self.storage.read().clone();
         match session_id {
-            Some(id) => match Session::open(id, storage).await? {
+            Some(id) => match Session::open(id, storage.clone()).await? {
                 Some(session) => {
                     session.set_model(model).await;
                     Ok(session)
                 }
-                None => Err(EvotError::Session(format!("session not found: {id}"))),
+                None => {
+                    Session::new_with_source(
+                        id.to_string(),
+                        self.cwd.clone(),
+                        model,
+                        source,
+                        storage,
+                    )
+                    .await
+                }
             },
             None => {
                 let id = crate::types::new_id();

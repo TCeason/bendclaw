@@ -1,6 +1,7 @@
 import { Agent } from './native/index.js'
 import type { CliOptions } from './cli.js'
 import { createAgent } from './cli.js'
+import { loadFileBlocks } from './file-loader.js'
 
 export async function runPrompt(opts: CliOptions) {
   if (!opts.prompt) {
@@ -9,7 +10,27 @@ export async function runPrompt(opts: CliOptions) {
   }
 
   const agent: Agent = await createAgent(opts)
-  const stream = await agent.query(opts.prompt, opts.resume)
+
+  let contentJson: string | undefined
+  try {
+    const fileBlocks = loadFileBlocks(opts.files)
+    if (fileBlocks.length > 0) {
+      const blocks = [{ type: 'text', text: opts.prompt }, ...fileBlocks]
+      contentJson = JSON.stringify(blocks)
+    }
+  } catch (err: any) {
+    console.error(err.message)
+    process.exit(1)
+  }
+
+  const stream = await agent.query(
+    // When contentJson is present, the native layer uses it as the full input
+    // and ignores the prompt parameter. We pass empty string to make this explicit.
+    contentJson ? '' : opts.prompt,
+    opts.resume,
+    undefined,
+    contentJson,
+  )
   for await (const event of stream) {
     if (opts.outputFormat === 'stream-json') {
       console.log(JSON.stringify(event))
