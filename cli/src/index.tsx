@@ -12,7 +12,7 @@ import { runPrompt } from './prompt.js'
 import { installBracketedPaste } from './input/bracketed_paste.js'
 
 async function main() {
-  const opts = parseArgs(process.argv.slice(2))
+  const opts = await parseArgs(process.argv.slice(2))
 
   switch (opts.command) {
     case 'serve':

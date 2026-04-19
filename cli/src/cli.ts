@@ -1,4 +1,4 @@
-import { Agent, version } from './native/index.js'
+import type { Agent } from './native/index.js'
 
 export interface CliOptions {
   command: 'repl' | 'serve' | 'prompt' | 'update'
@@ -17,7 +17,7 @@ export interface CliOptions {
   files: string[]
 }
 
-export function parseArgs(argv: string[]): CliOptions {
+export async function parseArgs(argv: string[]): Promise<CliOptions> {
   const opts: CliOptions = {
     command: 'repl',
     outputFormat: 'text',
@@ -70,11 +70,12 @@ export function parseArgs(argv: string[]): CliOptions {
     if (arg === '--verbose') { opts.verbose = true; continue }
 
     if (arg === '--version' || arg === '-v') {
+      const { version } = await import('./native/index.js')
       console.log(`evot v${version()}`)
       process.exit(0)
     }
     if (arg === '--help' || arg === '-h') {
-      printHelp()
+      await printHelp()
       process.exit(0)
     }
   }
@@ -91,7 +92,8 @@ export function parseIntArg(value: string, flag: string): number {
   return n
 }
 
-export function printHelp() {
+export async function printHelp() {
+  const { version } = await import('./native/index.js')
   console.log(`evot v${version()} — AI coding assistant`)
   console.log()
   console.log('Usage: evot [command] [options]')
@@ -128,7 +130,8 @@ export function applyCliOpts(agent: Agent, opts: CliOptions): void {
 
 export async function createAgent(opts: CliOptions): Promise<Agent> {
   try {
-    const agent = await Agent.create(opts.model, opts.envFile)
+    const { Agent: AgentClass } = await import('./native/index.js')
+    const agent = await AgentClass.create(opts.model, opts.envFile)
     applyCliOpts(agent, opts)
     return agent
   } catch (err: any) {
