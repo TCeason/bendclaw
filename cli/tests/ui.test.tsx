@@ -289,3 +289,111 @@ describe('OutputView verbose filtering', () => {
     expect(frame).toContain('info')
   })
 })
+
+// ---------------------------------------------------------------------------
+// OutputView — render cap
+// ---------------------------------------------------------------------------
+
+describe('OutputView render cap', () => {
+  test('caps rendered lines to prevent unbounded growth', () => {
+    const lines: OutputLine[] = Array.from({ length: 200 }, (_, i) =>
+      line('assistant', `line-${i}`)
+    )
+    const { lastFrame } = render(
+      <OutputView banner={<Text>b</Text>} lines={lines} verbose={true} />
+    )
+    const frame = lastFrame()
+    expect(frame).toContain('line-199')
+    expect(frame).not.toContain('line-0')
+  })
+
+  test('shows all lines when under cap', () => {
+    const lines: OutputLine[] = [
+      line('user', 'first'),
+      line('assistant', 'second'),
+      line('tool', '[BASH] call'),
+    ]
+    const { lastFrame } = render(
+      <OutputView banner={<Text>b</Text>} lines={lines} verbose={true} />
+    )
+    const frame = lastFrame()
+    expect(frame).toContain('first')
+    expect(frame).toContain('second')
+    expect(frame).toContain('[BASH]')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// OutputView — verbose toggle affects history (Ctrl+O behavior)
+// ---------------------------------------------------------------------------
+
+describe('OutputView verbose toggle on history', () => {
+  test('toggling verbose filters existing lines retroactively', () => {
+    const lines: OutputLine[] = [
+      line('user', 'hello'),
+      line('verbose', '[LLM] call · model · turn 1'),
+      line('verbose', '  tokens  1k in · 50 out'),
+      line('assistant', 'response text'),
+      line('run_summary', '─── run summary ───'),
+    ]
+
+    const { lastFrame: frame1 } = render(
+      <OutputView banner={<Text>b</Text>} lines={lines} verbose={true} />
+    )
+    expect(frame1()).toContain('[LLM]')
+    expect(frame1()).toContain('tokens')
+    expect(frame1()).toContain('run summary')
+
+    const { lastFrame: frame2 } = render(
+      <OutputView banner={<Text>b</Text>} lines={lines} verbose={false} />
+    )
+    expect(frame2()).toContain('hello')
+    expect(frame2()).toContain('response text')
+    expect(frame2()).not.toContain('[LLM]')
+    expect(frame2()).not.toContain('tokens')
+    expect(frame2()).not.toContain('run summary')
+  })
+
+  test('toggling verbose back restores all lines', () => {
+    const lines: OutputLine[] = [
+      line('user', 'q1'),
+      line('verbose', '[LLM] call · test'),
+      line('assistant', 'a1'),
+      line('run_summary', 'summary data'),
+    ]
+
+    const { lastFrame: off } = render(
+      <OutputView banner={<Text>b</Text>} lines={lines} verbose={false} />
+    )
+    expect(off()).not.toContain('[LLM]')
+    expect(off()).not.toContain('summary data')
+
+    const { lastFrame: on } = render(
+      <OutputView banner={<Text>b</Text>} lines={lines} verbose={true} />
+    )
+    expect(on()).toContain('[LLM]')
+    expect(on()).toContain('summary data')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// OutputView — verbose lines always stored (screen.log completeness)
+// ---------------------------------------------------------------------------
+
+describe('OutputView verbose lines always in data', () => {
+  test('verbose=false filters display but lines array is unchanged', () => {
+    const lines: OutputLine[] = [
+      line('user', 'hello'),
+      line('verbose', '[LLM] call'),
+      line('assistant', 'world'),
+    ]
+
+    const { lastFrame } = render(
+      <OutputView banner={<Text>b</Text>} lines={lines} verbose={false} />
+    )
+    expect(lastFrame()).not.toContain('[LLM]')
+    expect(lines).toHaveLength(3)
+    expect(lines[1]!.kind).toBe('verbose')
+    expect(lines[1]!.text).toBe('[LLM] call')
+  })
+})
