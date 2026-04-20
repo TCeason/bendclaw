@@ -17,7 +17,7 @@ import {
   showCursor,
   cursorToColumn,
 } from './ansi.js'
-import stripAnsi from 'strip-ansi'
+import stringWidth from 'string-width'
 
 export interface TermRendererOptions {
   /** Stream to write to (default: process.stdout) */
@@ -129,8 +129,8 @@ export class TermRenderer {
   private screenRows(lines: string[]): number {
     let total = 0
     for (const line of lines) {
-      const visible = stripAnsi(line).length
-      total += visible === 0 ? 1 : Math.ceil(visible / this.cols)
+      const width = stringWidth(line)
+      total += width === 0 ? 1 : Math.ceil(width / this.cols)
     }
     return total
   }
@@ -165,8 +165,7 @@ export class TermRenderer {
   /** Truncate a line to terminal width to prevent wrapping artifacts. */
   private truncateLine(line: string): string {
     // Fast path: if visible width fits, return as-is
-    const visible = stripAnsi(line)
-    if (visible.length <= this.cols) return line
+    if (stringWidth(line) <= this.cols) return line
     // Slow path: truncate visible content
     // For simplicity, just return the line — terminal will wrap
     // A proper implementation would do ANSI-aware truncation

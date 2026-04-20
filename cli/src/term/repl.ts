@@ -12,6 +12,7 @@ import { HistoryManager } from '../session/history.js'
 import { ScreenLog } from '../session/screen-log.js'
 import { isSlashCommand, resolveCommand } from '../commands/index.js'
 import { renderBanner } from './banner.js'
+import { relativeTime } from '../render/format.js'
 import {
   buildOutputBlocks,
   buildActiveResponseBlocks,
@@ -333,7 +334,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     let screenLog: ScreenLog | null = null
 
     try {
-      const stream = await agent.query(text, sessionId ?? undefined, planning ? 'planning_interactive' : undefined, contentJson)
+      const stream = await agent.query(text, sessionId ?? undefined, planning ? 'planning_interactive' : 'interactive', contentJson)
       streamRef = stream
       sessionId = stream.sessionId ?? sessionId
       appState = { ...appState, sessionId: sessionId }
@@ -806,7 +807,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             const title = s.title || '(untitled)'
             const short = title.length > 50 ? title.slice(0, 49) + '…' : title
             const tag = s.source ? `[${s.source}] ` : ''
-            return { label: s.session_id.slice(0, 8), detail: `${tag}${short}` }
+            const time = relativeTime(s.updated_at)
+            return { label: s.session_id.slice(0, 8), detail: `${tag}${short}  ${time}` }
           })),
         }
       }

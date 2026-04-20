@@ -77,7 +77,7 @@ async function getImageLinux(): Promise<ClipboardImage | null> {
     ['wl-paste', ['--type', 'image/png']],
   ] as const) {
     try {
-      const result = await execFileAsync(cmd, args as string[], {
+      const result = await execFileAsync(cmd, [...args], {
         encoding: 'buffer',
         timeout: 3000,
         maxBuffer: MAX_IMAGE_SIZE_BYTES,
