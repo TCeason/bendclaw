@@ -1,0 +1,155 @@
+import { describe, test, expect } from 'bun:test'
+import { parseInput, type KeyEvent } from '../src/term/input.js'
+
+function parse(str: string): KeyEvent[] {
+  return parseInput(Buffer.from(str, 'utf-8'))
+}
+
+describe('parseInput', () => {
+  describe('regular characters', () => {
+    test('single character', () => {
+      expect(parse('a')).toEqual([{ type: 'char', char: 'a' }])
+    })
+
+    test('multiple characters', () => {
+      expect(parse('abc')).toEqual([
+        { type: 'char', char: 'a' },
+        { type: 'char', char: 'b' },
+        { type: 'char', char: 'c' },
+      ])
+    })
+
+    test('space', () => {
+      expect(parse(' ')).toEqual([{ type: 'char', char: ' ' }])
+    })
+
+    test('unicode character', () => {
+      expect(parse('你')).toEqual([{ type: 'char', char: '你' }])
+    })
+  })
+
+  describe('control characters', () => {
+    test('Ctrl+C', () => {
+      expect(parse('\x03')).toEqual([{ type: 'ctrl', key: 'c' }])
+    })
+
+    test('Ctrl+D', () => {
+      expect(parse('\x04')).toEqual([{ type: 'ctrl', key: 'd' }])
+    })
+
+    test('Tab', () => {
+      expect(parse('\x09')).toEqual([{ type: 'tab' }])
+    })
+
+    test('Enter', () => {
+      expect(parse('\x0d')).toEqual([{ type: 'enter' }])
+    })
+
+    test('Ctrl+L', () => {
+      expect(parse('\x0c')).toEqual([{ type: 'ctrl', key: 'l' }])
+    })
+
+    test('Ctrl+V', () => {
+      expect(parse('\x16')).toEqual([{ type: 'ctrl', key: 'v' }])
+    })
+
+    test('Ctrl+W', () => {
+      expect(parse('\x17')).toEqual([{ type: 'ctrl', key: 'w' }])
+    })
+
+    test('Ctrl+A', () => {
+      expect(parse('\x01')).toEqual([{ type: 'ctrl', key: 'a' }])
+    })
+  })
+
+  describe('arrow keys', () => {
+    test('up', () => {
+      expect(parse('\x1b[A')).toEqual([{ type: 'up' }])
+    })
+
+    test('down', () => {
+      expect(parse('\x1b[B')).toEqual([{ type: 'down' }])
+    })
+
+    test('right', () => {
+      expect(parse('\x1b[C')).toEqual([{ type: 'right' }])
+    })
+
+    test('left', () => {
+      expect(parse('\x1b[D')).toEqual([{ type: 'left' }])
+    })
+  })
+
+  describe('special keys', () => {
+    test('home (CSI H)', () => {
+      expect(parse('\x1b[H')).toEqual([{ type: 'home' }])
+    })
+
+    test('end (CSI F)', () => {
+      expect(parse('\x1b[F')).toEqual([{ type: 'end' }])
+    })
+
+    test('home (CSI 1~)', () => {
+      expect(parse('\x1b[1~')).toEqual([{ type: 'home' }])
+    })
+
+    test('end (CSI 4~)', () => {
+      expect(parse('\x1b[4~')).toEqual([{ type: 'end' }])
+    })
+
+    test('delete (CSI 3~)', () => {
+      expect(parse('\x1b[3~')).toEqual([{ type: 'delete' }])
+    })
+
+    test('backspace (0x7f)', () => {
+      expect(parse('\x7f')).toEqual([{ type: 'backspace' }])
+    })
+
+    test('escape (bare)', () => {
+      expect(parse('\x1b')).toEqual([{ type: 'escape' }])
+    })
+  })
+
+  describe('bracketed paste', () => {
+    test('parses pasted text', () => {
+      const input = '\x1b[200~hello world\x1b[201~'
+      expect(parse(input)).toEqual([{ type: 'paste', text: 'hello world' }])
+    })
+
+    test('parses multi-line paste', () => {
+      const input = '\x1b[200~line1\nline2\nline3\x1b[201~'
+      expect(parse(input)).toEqual([{ type: 'paste', text: 'line1\nline2\nline3' }])
+    })
+
+    test('paste with special characters', () => {
+      const input = '\x1b[200~fn main() { println!("hi"); }\x1b[201~'
+      expect(parse(input)).toEqual([{ type: 'paste', text: 'fn main() { println!("hi"); }' }])
+    })
+  })
+
+  describe('mixed input', () => {
+    test('text followed by enter', () => {
+      expect(parse('hi\x0d')).toEqual([
+        { type: 'char', char: 'h' },
+        { type: 'char', char: 'i' },
+        { type: 'enter' },
+      ])
+    })
+
+    test('arrow key followed by character', () => {
+      expect(parse('\x1b[Ax')).toEqual([
+        { type: 'up' },
+        { type: 'char', char: 'x' },
+      ])
+    })
+
+    test('Ctrl+C followed by text', () => {
+      expect(parse('\x03abc')).toEqual([
+        { type: 'ctrl', key: 'c' },
+        { type: 'char', char: 'a' },
+        { type: 'char', char: 'b' },
+        { type: 'char', char: 'c' },
+      ])
+    })
+  })
+})

@@ -2,6 +2,12 @@
 
 use crate::types::*;
 
+/// Conservative fixed token estimate for images.
+/// Claude's actual cost is `width * height / 750` (up to ~5333 for 2000×2000).
+/// Using a fixed 2000 avoids underestimation that causes compaction to fire
+/// too late. Matches Claude Code's `IMAGE_MAX_TOKEN_SIZE`.
+const IMAGE_FIXED_TOKEN_ESTIMATE: usize = 2_000;
+
 /// Rough token estimate: ~4 chars per token for English text.
 /// Good enough for context budgeting. Use tiktoken-rs for precision.
 pub fn estimate_tokens(text: &str) -> usize {
@@ -27,13 +33,7 @@ pub fn content_tokens(content: &[Content]) -> usize {
         .iter()
         .map(|c| match c {
             Content::Text { text } => estimate_tokens(text),
-            Content::Image { data, .. } => {
-                // Estimate tokens from base64 data length:
-                // base64 len * 3/4 = raw bytes; ~750 bytes per token for images.
-                // Floor at 85 (Anthropic minimum), cap at 16000.
-                let raw_bytes = data.len() * 3 / 4;
-                (raw_bytes / 750).clamp(85, 16_000)
-            }
+            Content::Image { .. } => IMAGE_FIXED_TOKEN_ESTIMATE,
             Content::Thinking { thinking, .. } => estimate_tokens(thinking),
             Content::ToolCall {
                 name, arguments, ..
@@ -51,10 +51,7 @@ pub fn total_tokens(messages: &[AgentMessage]) -> usize {
 fn single_content_tokens(c: &Content) -> usize {
     match c {
         Content::Text { text } => estimate_tokens(text),
-        Content::Image { data, .. } => {
-            let raw_bytes = data.len() * 3 / 4;
-            (raw_bytes / 750).clamp(85, 16_000)
-        }
+        Content::Image { .. } => IMAGE_FIXED_TOKEN_ESTIMATE,
         Content::Thinking { thinking, .. } => estimate_tokens(thinking),
         Content::ToolCall {
             name, arguments, ..

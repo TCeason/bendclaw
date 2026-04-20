@@ -12,3 +12,4 @@ coverage/
 .idea/
 .vscode/
 *.node
+FEATURE_COMPARISON.md

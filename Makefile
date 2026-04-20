@@ -113,7 +113,7 @@ build-napi:
 	cd cli && bun install && bunx napi build --manifest-path addon/Cargo.toml --release --platform --output-dir .
 
 build-cli: build-napi
-	cd cli && bun build src/index.tsx --compile --define 'process.env.DEV="false"' --define 'process.env.NODE_ENV="production"' --outfile dist/evot
+	cd cli && bun build src/index.ts --compile --define 'process.env.DEV="false"' --define 'process.env.NODE_ENV="production"' --outfile dist/evot
 
 install: build-cli
 	@mkdir -p $(HOME)/.evotai/bin $(HOME)/.evotai/lib
@@ -164,7 +164,7 @@ build-napi-dev:
 	cd cli && bun install && bunx napi build --manifest-path addon/Cargo.toml --platform --output-dir .
 
 dev: build-napi-dev
-	cd cli && bun install && bun run src/index.tsx
+	cd cli && bun install && bun run src/index.ts
 
 check-cli:
-	cd cli && bun run src/index.tsx --version >/dev/null
+	cd cli && bun run src/index.ts --version >/dev/null

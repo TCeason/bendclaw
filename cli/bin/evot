@@ -7,4 +7,4 @@ export PATH="$HOME/.bun/bin:$PATH"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLI_DIR="$(dirname "$SCRIPT_DIR")"
 
-exec bun run "$CLI_DIR/src/index.tsx" "$@"
+exec bun run "$CLI_DIR/src/index.ts" "$@"

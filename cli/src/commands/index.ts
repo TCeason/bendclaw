@@ -26,6 +26,8 @@ export const HIDDEN_COMMANDS: SlashCommand[] = [
   { name: '/verbose', aliases: ['/v'], description: 'Toggle verbose mode', handler: 'builtin' },
   { name: '/exit', aliases: ['/quit', '/q'], description: 'Exit the REPL', handler: 'builtin' },
   { name: '/act', description: 'Return to normal action mode', handler: 'builtin' },
+  { name: '/done', description: 'Exit log/plan mode', handler: 'builtin' },
+  { name: '/compact', description: 'Compact session context', handler: 'builtin' },
   { name: '/env', description: 'Manage variables', usage: '/env [set K=V | del K | load FILE]', handler: 'builtin' },
   { name: '/log', description: 'Analyze session log / share sessions', usage: '/log [up [id] | dl <url> | query]', handler: 'builtin' },
   { name: '/clear', description: 'Clear session context', handler: 'builtin' },
