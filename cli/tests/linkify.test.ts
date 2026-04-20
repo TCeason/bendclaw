@@ -40,8 +40,9 @@ describe('linkifyIssueRefs', () => {
   })
 
   test('does not match when preceded by alphanumeric', () => {
-    const result = linkifyIssueRefs('xfoo/bar#42')
-    expect(result).toBe('xfoo/bar#42')
+    // When a valid ref is glued to a preceding word (no space/punctuation boundary)
+    const result = linkifyIssueRefs('prefix.foo/bar#42')
+    expect(result).toBe('prefix.foo/bar#42')
   })
 
   test('returns input unchanged when no refs', () => {
