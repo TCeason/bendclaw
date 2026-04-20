@@ -257,7 +257,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const { transcriptToMessages } = await import('../session/transcript.js')
       const messages = transcriptToMessages(transcript as any)
       commitLines(messagesToOutputLines(messages))
-      commitLines([{ id: 'sys-resumed', kind: 'system', text: chalk.dim(`  resumed session ${session.session_id.slice(0, 8)}`) }])
+      commitLines([
+        { id: 'sys-resumed', kind: 'system', text: chalk.dim(`  resumed session ${session.session_id.slice(0, 8)}`) },
+        { id: 'sys-resumed-gap', kind: 'system', text: '' },
+      ])
     } catch (err: any) {
       commitLines([{ id: 'sys-err', kind: 'error', text: `Failed to resume: ${err?.message ?? err}` }])
     }
@@ -796,8 +799,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     } else if (name === '/log') {
       await handleLogCommand(args)
     } else if (name === '/resume' && !args) {
-      // Show session selector overlay
-      const recent = preloadedSessions.slice(0, 10)
+      // Show session selector overlay — prefer sessions from current project
+      const cwdSessions = preloadedSessions.filter(s => s.cwd === agent.cwd)
+      const recent = (cwdSessions.length > 0 ? cwdSessions : preloadedSessions).slice(0, 10)
       if (recent.length === 0) {
         commitLines([{ id: 'sys-r', kind: 'system', text: '  No sessions found' }])
       } else {

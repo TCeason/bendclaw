@@ -117,13 +117,24 @@ export function buildToolResult(
 
   // Tool result content (head/tail truncated)
   if (result) {
-    const resultLines = toolResultLines(result, isError)
-    for (const rl of resultLines) {
+    if (name === 'read_file' || name === 'read_code') {
+      // Just show size, no content
+      const size = Buffer.byteLength(result, 'utf-8')
+      const humanSize = size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KB` : `${(size / (1024 * 1024)).toFixed(1)} MB`
       lines.push({
         id: genId('tool-res'),
-        kind: isError ? 'error' : 'tool_result',
-        text: `  ${rl}`,
+        kind: 'tool_result',
+        text: `  ${humanSize} read`,
       })
+    } else {
+      const resultLines = toolResultLines(result, isError, name)
+      for (const rl of resultLines) {
+        lines.push({
+          id: genId('tool-res'),
+          kind: isError ? 'error' : 'tool_result',
+          text: `  ${rl}`,
+        })
+      }
     }
   }
 

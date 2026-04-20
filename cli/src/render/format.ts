@@ -159,9 +159,9 @@ export function summarizeInline(value: string, maxChars: number): string {
   return truncate(collapsed, maxChars)
 }
 
-export function toolResultLines(content: string, isError: boolean): string[] {
-  const HEAD_LINES = 5
-  const TAIL_LINES = 3
+export function toolResultLines(content: string, isError: boolean, _toolName?: string): string[] {
+  const HEAD_LINES = 2
+  const TAIL_LINES = 2
   const COMPACT_THRESHOLD = HEAD_LINES + TAIL_LINES + 2
   const MAX_LINE_WIDTH = 256
 
