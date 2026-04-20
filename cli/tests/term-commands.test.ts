@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { handleSlashCommand } from '../src/term/app/commands.js'
-import { createInitialState } from '../src/state/app.js'
+import { createInitialState } from '../src/term/app/state.js'
 
 describe('term commands', () => {
   const mkCtx = () => ({

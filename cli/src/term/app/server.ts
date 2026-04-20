@@ -1,4 +1,4 @@
-import { startServerBackground, type ServerInfo } from '../native/index.js'
+import { startServerBackground, type ServerInfo } from '../../native/index.js'
 
 export interface ServerState {
   port: number

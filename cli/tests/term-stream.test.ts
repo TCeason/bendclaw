@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { createSpinnerState } from '../src/term/spinner.js'
-import { createInitialState } from '../src/state/app.js'
+import { createInitialState } from '../src/term/app/state.js'
 import { createStreamMachineState, reduceRunEvent, flushStreaming, buildToolStartedLines, buildToolFinishedLines } from '../src/term/app/stream.js'
 
 describe('term stream machine', () => {

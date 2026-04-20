@@ -2,9 +2,9 @@
  * Reducer-style state updates from RunEvents.
  */
 
-import type { RunEvent } from '../native/index.js'
-import { humanTokens as humanTokensInline, renderBar, renderPositionBar } from '../render/format.js'
-import { emptyRunStats, type AppState } from './app.js'
+import type { RunEvent } from '../../native/index.js'
+import { humanTokens as humanTokensInline, renderBar, renderPositionBar } from '../../render/format.js'
+import { emptyRunStats, type AppState } from './state.js'
 import type { CompactRecord, MessageStats, UIMessage, UIToolCall } from './types.js'
 
 

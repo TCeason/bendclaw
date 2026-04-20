@@ -6,8 +6,8 @@ import { createSelectorState, selectorUp, selectorDown, selectorSelect, type Sel
 import { createAskState, askUp, askDown, askNextTab, askPrevTab, askTypeChar, askBackspace, askSelect, type AskState, type AskQuestion } from './ask.js'
 import { buildUserMessage, buildAssistantLines, type OutputLine } from '../render/output.js'
 import { Agent, QueryStream, type SessionMeta, type ConfigInfo } from '../native/index.js'
-import { createInitialState, type AppState } from '../state/app.js'
-import type { AskUserRequest } from '../state/types.js'
+import { createInitialState, type AppState } from './app/state.js'
+import type { AskUserRequest } from './app/types.js'
 import { HistoryManager } from '../session/history.js'
 import { ScreenLog } from '../session/screen-log.js'
 import { isSlashCommand, resolveCommand } from '../commands/index.js'
@@ -76,7 +76,7 @@ import {
 } from '../input/paste_refs.js'
 import { getImageFromClipboard, type ClipboardImage } from '../input/clipboard_image.js'
 import type { ContentBlock } from '../native/index.js'
-import { tryStartServer, formatUptime, type ServerState } from '../repl/server.js'
+import { tryStartServer, formatUptime, type ServerState } from './app/server.js'
 
 const SPINNER_INTERVAL_MS = 100
 

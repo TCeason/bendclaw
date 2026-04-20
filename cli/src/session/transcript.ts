@@ -2,7 +2,7 @@
  * Parse transcript items (from NAPI loadTranscript) into UIMessages.
  */
 
-import type { UIMessage, UIToolCall } from '../state/types.js'
+import type { UIMessage, UIToolCall } from '../term/app/types.js'
 
 interface TranscriptUser {
   type: 'user'

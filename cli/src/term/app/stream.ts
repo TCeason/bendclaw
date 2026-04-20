@@ -1,8 +1,8 @@
 import { buildError, buildRunSummary, buildToolCall, buildToolResult, buildVerboseEvent, buildAssistantLines, findSafeSplitPoint, type OutputLine } from '../../render/output.js'
 import { splitMarkdownBlocks } from '../../render/markdown.js'
 import { setSpinnerPhase, type SpinnerState } from '../spinner.js'
-import { applyEvent } from '../../state/reducer.js'
-import type { AppState } from '../../state/app.js'
+import { applyEvent } from './reducer.js'
+import type { AppState } from './state.js'
 import type { RunEvent } from '../../native/index.js'
 
 const PACE_INTERVAL_MS = 30

@@ -1,5 +1,5 @@
 import type { AskState } from '../ask.js'
-import type { AskUserAnswer } from '../../state/types.js'
+import type { AskUserAnswer } from './types.js'
 
 export function askStateToResponse(state: AskState): AskUserAnswer[] {
   return state.questions.map((question, index) => {

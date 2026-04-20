@@ -11,7 +11,7 @@
 import { renderMarkdown } from './markdown.js'
 import { colorizeUnifiedDiff } from './diff.js'
 import { truncate, truncateResult, humanTokens, formatDuration, renderBar, toolResultLines } from './format.js'
-import type { RunStats, UIMessage } from '../state/types.js'
+import type { RunStats, UIMessage } from '../term/app/types.js'
 
 // ---------------------------------------------------------------------------
 // Types

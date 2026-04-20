@@ -1,6 +1,6 @@
 import chalk from 'chalk'
 import type { Agent, SessionMeta, ConfigInfo } from '../../native/index.js'
-import type { AppState } from '../../state/app.js'
+import type { AppState } from './state.js'
 import type { OutputLine } from '../../render/output.js'
 import type { OverlayState } from '../viewmodel/index.js'
 import { resolveCommand } from '../../commands/index.js'
