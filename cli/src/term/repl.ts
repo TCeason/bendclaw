@@ -801,9 +801,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     } else if (name === '/log') {
       await handleLogCommand(args)
     } else if (name === '/resume') {
-      // Load all sessions for search
+      // Load sessions (default 20; fetch all only when searching by id)
       try {
-        const allSessions: SessionMeta[] = await agent.listSessions(0)
+        const allSessions: SessionMeta[] = await agent.listSessions(args ? 0 : 20)
         if (args) {
           // Resume specific session by id prefix
           const match = allSessions.find(
