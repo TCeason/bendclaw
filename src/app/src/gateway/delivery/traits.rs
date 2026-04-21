@@ -6,6 +6,10 @@ use crate::error::Result;
 pub struct DeliveryCapabilities {
     pub can_edit: bool,
     pub max_message_len: usize,
+    /// Maximum number of edits allowed per message (0 = unlimited).
+    /// When reached, the delivery layer proactively sends a new message
+    /// instead of waiting for the API to reject the edit.
+    pub max_edits_per_message: usize,
 }
 
 #[async_trait]

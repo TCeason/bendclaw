@@ -48,6 +48,7 @@ impl MockSink {
             caps: DeliveryCapabilities {
                 can_edit: true,
                 max_message_len: 4096,
+                max_edits_per_message: 0,
             },
             calls: Arc::new(Mutex::new(Vec::new())),
             msg_counter: Arc::new(Mutex::new(0)),
@@ -59,6 +60,7 @@ impl MockSink {
             caps: DeliveryCapabilities {
                 can_edit: false,
                 max_message_len: 4096,
+                max_edits_per_message: 0,
             },
             calls: Arc::new(Mutex::new(Vec::new())),
             msg_counter: Arc::new(Mutex::new(0)),
@@ -67,6 +69,11 @@ impl MockSink {
 
     fn with_max_len(mut self, max_len: usize) -> Self {
         self.caps.max_message_len = max_len;
+        self
+    }
+
+    fn with_max_edits(mut self, n: u32) -> Self {
+        self.caps.max_edits_per_message = n as usize;
         self
     }
 
@@ -434,4 +441,83 @@ async fn unicode_text_not_corrupted() {
     assert!(last.len() <= 30);
     // Ensure it's valid UTF-8 by iterating chars
     let _ = last.chars().count();
+}
+
+#[tokio::test]
+async fn edit_limit_new_message_does_not_repeat_old_content() {
+    // Allow only 1 edit per message, so the 2nd edit triggers edit_broken.
+    let sink = MockSink::editable().with_max_edits(1);
+    let text = DeliveryHarness::new()
+        .min_initial_chars(1)
+        .events(vec![
+            delta("AAAA "),      // triggers initial send
+            delta("BBBB "),      // 1st edit succeeds
+            delta("CCCC "),      // 2nd edit fails → edit_broken, offset advances
+            delta("DDDD "), // not enough for new send yet (< min_initial_chars=1… but we set 1)
+            delta("EEEE done."), // accumulates, triggers new send
+        ])
+        .deliver(&sink)
+        .await;
+
+    // Full text is always returned
+    assert_eq!(text, "AAAA BBBB CCCC DDDD EEEE done.");
+
+    let calls = sink.calls().await;
+
+    // There should be at least 2 Send calls (initial + after edit limit)
+    let sends: Vec<_> = calls
+        .iter()
+        .filter_map(|c| match c {
+            SinkCall::Send { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        sends.len() >= 2,
+        "Expected at least 2 sends, got {}",
+        sends.len()
+    );
+
+    // The second send (after edit limit) must NOT contain "AAAA" from the first message
+    let second_send = &sends[1];
+    assert!(
+        !second_send.contains("AAAA"),
+        "New message after edit limit should not repeat old content, got: {second_send}"
+    );
+}
+
+#[tokio::test]
+async fn edit_limit_does_not_send_empty_message() {
+    // Edit limit hit during tool events — should NOT immediately send a near-empty message.
+    let sink = MockSink::editable().with_max_edits(1);
+    DeliveryHarness::new()
+        .min_initial_chars(1)
+        .events(vec![
+            delta("Hello "),
+            delta("World "),          // 1st edit ok
+            tool_started("bash"),     // 2nd edit fails → edit_broken
+            tool_progress("running"), // no send (edit_broken, no msg_id)
+            tool_finished("bash", true),
+            delta("Result here."), // enough text → new send
+        ])
+        .deliver(&sink)
+        .await;
+
+    let calls = sink.calls().await;
+    let sends: Vec<_> = calls
+        .iter()
+        .filter_map(|c| match c {
+            SinkCall::Send { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+
+    // Every send should have meaningful content (not just a tool status line)
+    for (i, s) in sends.iter().enumerate() {
+        // Strip the trailing ellipsis and tool status to check real content
+        let stripped = s.split("\n\n_").next().unwrap_or(s).trim();
+        // At least some alphabetic content beyond just "…"
+        let has_content = stripped.chars().any(|c| c.is_alphabetic());
+        assert!(has_content, "Send #{i} has no meaningful content: {s:?}");
+    }
 }

@@ -821,6 +821,7 @@ impl MessageSink for FeishuMessageSink {
         DeliveryCapabilities {
             can_edit: true,
             max_message_len: FEISHU_MAX_MESSAGE_LEN,
+            max_edits_per_message: 20,
         }
     }
 
