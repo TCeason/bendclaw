@@ -1170,7 +1170,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           const response = askStateToResponse(askState)
           streamRef.respondAskUser(JSON.stringify({ Answered: response }))
           overlay = { kind: 'none' }
-          commitLines([{ id: 'sys-ask', kind: 'system', text: '  ● Questions answered' }])
+          const answerLines: OutputLine[] = response.map((r, i) => ({
+            id: `sys-ask-${i}`,
+            kind: 'system' as const,
+            text: `  ● ${r.header}: ${r.answer}`,
+          }))
+          commitLines(answerLines)
           renderStatus()
           return
         }
