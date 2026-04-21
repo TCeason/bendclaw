@@ -25,7 +25,7 @@ export function buildPromptBlocks(input: PromptVMInput): ViewBlock[] {
   const blocks: ViewBlock[] = []
   const border = '─'.repeat(input.columns)
 
-  blocks.push(block([line(dim(border))]))
+  blocks.push(block([line(dim(border))], 1))
 
   const inputLines: StyledLine[] = []
   for (let i = 0; i < input.lines.length; i++) {

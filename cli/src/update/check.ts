@@ -34,6 +34,7 @@ export async function fetchLatestStable(): Promise<ReleaseInfo | null> {
     prerelease: boolean
     name: string
     tag_name: string
+    body: string | null
   }>
 
   const stable = releases.find(
@@ -43,7 +44,7 @@ export async function fetchLatestStable(): Promise<ReleaseInfo | null> {
 
   const tag = stable.tag_name
   const version = tag.startsWith('v') ? tag.slice(1) : tag
-  return { tag, version }
+  return { tag, version, body: stable.body ?? undefined }
 }
 
 /**

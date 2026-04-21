@@ -1,4 +1,4 @@
-import { line, block, plain, dim, bold, colored, inverse, type ViewBlock, type StyledSpan } from './types.js'
+import { line, block, plain, dim, bold, colored, inverse, type ViewBlock, type StyledSpan, type StyledLine } from './types.js'
 import type { SelectorState } from '../selector.js'
 import type { AskState } from '../ask.js'
 
@@ -17,7 +17,7 @@ export function buildOverlayBlocks(overlay: OverlayState, columns: number): View
     case 'selector':
       return buildSelectorBlocks(overlay.state)
     case 'ask-user':
-      return buildAskBlocks(overlay.state)
+      return buildAskBlocks(overlay.state, columns)
   }
 }
 
@@ -95,40 +95,116 @@ function buildSelectorBlocks(state: SelectorState): ViewBlock[] {
   return [block(lines, 1)]
 }
 
-function buildAskBlocks(state: AskState): ViewBlock[] {
-  const q = state.questions[state.currentTab]!
-  const result = []
+const CHECKBOX_ON = '☒'
+const CHECKBOX_OFF = '☐'
+const TICK = '✔'
 
-  if (state.questions.length > 1) {
-    const tabs = state.questions.map((qq, i) => {
-      const active = i === state.currentTab
-      return active ? bold(qq.header) : dim(qq.header)
-    })
-    const tabSpans: StyledSpan[] = []
-    for (let i = 0; i < tabs.length; i++) {
-      if (i > 0) tabSpans.push(plain('  '))
-      tabSpans.push(tabs[i]!)
+function isAnswered(state: AskState, index: number): boolean {
+  const a = state.answers[index]
+  return a !== undefined && (a.selectedOption !== null || a.customText !== null)
+}
+
+export function buildAskBlocks(state: AskState, columns: number): ViewBlock[] {
+  const result: StyledLine[] = []
+  const isMulti = state.questions.length > 1
+
+  // ── Tab bar (multi-question only) ──────────────────────────────
+  if (isMulti) {
+    const tabLine: StyledSpan[] = []
+
+    // Left arrow
+    const canGoLeft = state.currentTab > 0 || state.onSubmitTab
+    tabLine.push(canGoLeft ? plain('← ') : dim('← '))
+
+    // Tabs with checkboxes
+    for (let i = 0; i < state.questions.length; i++) {
+      if (i > 0) tabLine.push(plain('  '))
+      const qq = state.questions[i]!
+      const active = !state.onSubmitTab && i === state.currentTab
+      const answered = isAnswered(state, i)
+      const checkbox = answered ? CHECKBOX_ON : CHECKBOX_OFF
+      if (active) {
+        tabLine.push(inverse(` ${checkbox} ${qq.header} `))
+      } else {
+        tabLine.push(plain(` ${checkbox} ${qq.header} `))
+      }
     }
-    result.push(line(...tabSpans))
+
+    // Submit tab
+    const allAnswered = state.questions.every((_, i) => isAnswered(state, i))
+    if (allAnswered) {
+      tabLine.push(plain('  '))
+      if (state.onSubmitTab) {
+        tabLine.push(inverse(` ${TICK} Submit `))
+      } else {
+        tabLine.push(plain(` ${TICK} Submit `))
+      }
+    }
+
+    // Right arrow
+    const canGoRight = !state.onSubmitTab && state.currentTab < state.questions.length - 1
+    tabLine.push(canGoRight ? plain(' →') : dim(' →'))
+
+    result.push(line(...tabLine))
     result.push(line(plain('')))
   }
 
+  // ── Submit review page ─────────────────────────────────────────
+  if (state.onSubmitTab) {
+    result.push(line(bold('Review your answers')))
+    result.push(line(plain('')))
+
+    for (let i = 0; i < state.questions.length; i++) {
+      const qq = state.questions[i]!
+      const a = state.answers[i]
+      const answerText = a?.customText ?? (a?.selectedOption !== null ? qq.options[a!.selectedOption!]?.label : '—')
+      result.push(line(plain(`  ${qq.question}`)))
+      result.push(line(colored(`    → ${answerText}`, 'green')))
+    }
+
+    result.push(line(plain('')))
+
+    // Submit / Cancel options
+    const submitFocused = state.submitFocus === 0
+    const cancelFocused = state.submitFocus === 1
+    result.push(line(
+      submitFocused ? colored('❯ ', 'cyan') : plain('  '),
+      submitFocused ? bold('Submit answers') : plain('Submit answers')
+    ))
+    result.push(line(
+      cancelFocused ? colored('❯ ', 'cyan') : plain('  '),
+      cancelFocused ? bold('Cancel') : plain('Cancel')
+    ))
+
+    result.push(line(plain('')))
+    result.push(line(dim('↑↓ navigate · enter select · ← back · esc cancel')))
+
+    return [block(result, 1)]
+  }
+
+  // ── Question view ──────────────────────────────────────────────
+  const q = state.questions[state.currentTab]!
+
+  // ── Question text ──────────────────────────────────────────────
   result.push(line(bold(q.question)))
   result.push(line(plain('')))
 
+  const ui = state.uiStates.get(state.currentTab) ?? { focusIndex: 0, inOtherMode: false, otherText: '' }
+
+  // ── Options ────────────────────────────────────────────────────
   for (let i = 0; i < q.options.length; i++) {
     const opt = q.options[i]!
-    const focused = !state.inOtherMode && i === state.focusIndex
+    const focused = !ui.inOtherMode && i === state.focusIndex
     const prefix: StyledSpan = focused ? colored('❯ ', 'cyan') : plain('  ')
     const label: StyledSpan = focused ? bold(opt.label) : plain(opt.label)
     const desc: StyledSpan = opt.description ? dim(` — ${opt.description}`) : plain('')
     result.push(line(prefix, label, desc))
   }
 
-  const otherFocused = state.inOtherMode
-  if (otherFocused && state.otherText) {
-    result.push(line(colored('❯ ', 'cyan'), plain(state.otherText), inverse(' ')))
-  } else if (otherFocused) {
+  // ── Other ──────────────────────────────────────────────────────
+  if (ui.inOtherMode && ui.otherText) {
+    result.push(line(colored('❯ ', 'cyan'), plain(ui.otherText), inverse(' ')))
+  } else if (ui.inOtherMode) {
     result.push(line(colored('❯ ', 'cyan'), inverse(' '), dim(' Type something.')))
   } else {
     const isOtherSelected = state.focusIndex === q.options.length
@@ -137,7 +213,13 @@ function buildAskBlocks(state: AskState): ViewBlock[] {
   }
 
   result.push(line(plain('')))
-  result.push(line(dim('↑↓ navigate · enter select · esc cancel')))
+
+  // ── Footer hint ────────────────────────────────────────────────
+  if (isMulti) {
+    result.push(line(dim('↑↓ navigate · ←→ switch tab · enter select · esc cancel')))
+  } else {
+    result.push(line(dim('↑↓ navigate · enter select · esc cancel')))
+  }
 
   return [block(result, 1)]
 }

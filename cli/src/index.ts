@@ -26,7 +26,17 @@ async function main() {
       const result = await runUpdate(version())
       switch (result.kind) {
         case 'up_to_date': console.log('  ✓ evot is up to date.'); break
-        case 'updated': console.log(`  ✓ updated ${result.from} → ${result.to}`); break
+        case 'updated': {
+          console.log(`  ✓ updated ${result.from} → ${result.to}`)
+          if (result.notes && result.notes.length > 0) {
+            console.log('')
+            console.log(`  What's new in ${result.to}:`)
+            for (const note of result.notes) {
+              console.log(`    • ${note}`)
+            }
+          }
+          break
+        }
         case 'error': console.error(`  ✗ ${result.message}`); process.exit(1)
       }
       break

@@ -9,6 +9,7 @@ import {
   askBackspace,
   askClearOther,
   askSelect,
+  handleAskKeyEvent,
 } from '../src/term/ask.js'
 import { buildOverlayBlocks } from '../src/term/viewmodel/overlays.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
@@ -58,8 +59,9 @@ describe('createAskState', () => {
     const state = createAskState(singleQuestion)
     expect(state.currentTab).toBe(0)
     expect(state.focusIndex).toBe(0)
-    expect(state.inOtherMode).toBe(false)
-    expect(state.otherText).toBe('')
+    const ui0 = state.uiStates.get(0) ?? { inOtherMode: false, otherText: '', focusIndex: 0 }
+    expect(ui0.inOtherMode).toBe(false)
+    expect(ui0.otherText).toBe('')
     expect(state.submitted).toBe(false)
     expect(state.answers).toHaveLength(1)
   })
@@ -81,7 +83,8 @@ describe('askUp / askDown', () => {
     let state = createAskState(singleQuestion)
     state = askDown(state)
     state = askDown(state)
-    expect(state.inOtherMode).toBe(true)
+    const ui0 = state.uiStates.get(0) ?? { inOtherMode: false, otherText: '', focusIndex: 0 }
+    expect(ui0.inOtherMode).toBe(true)
     expect(state.focusIndex).toBe(2)
   })
 
@@ -90,7 +93,8 @@ describe('askUp / askDown', () => {
     state = askDown(state)
     state = askDown(state)
     state = askUp(state)
-    expect(state.inOtherMode).toBe(false)
+    const ui0 = state.uiStates.get(0) ?? { inOtherMode: false, otherText: '', focusIndex: 0 }
+    expect(ui0.inOtherMode).toBe(false)
     expect(state.focusIndex).toBe(1)
   })
 
@@ -140,13 +144,15 @@ describe('askTypeChar / askBackspace / askClearOther', () => {
     state = askDown(state)
     state = askTypeChar(state, 'h')
     state = askTypeChar(state, 'i')
-    expect(state.otherText).toBe('hi')
+    const ui0 = state.uiStates.get(0) ?? { inOtherMode: false, otherText: '', focusIndex: 0 }
+    expect(ui0.otherText).toBe('hi')
   })
 
   test('typing outside other mode does nothing', () => {
     let state = createAskState(singleQuestion)
     state = askTypeChar(state, 'x')
-    expect(state.otherText).toBe('')
+    const ui0a = state.uiStates.get(0) ?? { inOtherMode: false, otherText: '', focusIndex: 0 }
+    expect(ui0a.otherText).toBe('')
   })
 
   test('backspace removes last char', () => {
@@ -156,7 +162,8 @@ describe('askTypeChar / askBackspace / askClearOther', () => {
     state = askTypeChar(state, 'a')
     state = askTypeChar(state, 'b')
     state = askBackspace(state)
-    expect(state.otherText).toBe('a')
+    const ui0 = state.uiStates.get(0) ?? { inOtherMode: false, otherText: '', focusIndex: 0 }
+    expect(ui0.otherText).toBe('a')
   })
 
   test('clearOther empties text', () => {
@@ -166,7 +173,8 @@ describe('askTypeChar / askBackspace / askClearOther', () => {
     state = askTypeChar(state, 'x')
     state = askTypeChar(state, 'y')
     state = askClearOther(state)
-    expect(state.otherText).toBe('')
+    const ui0 = state.uiStates.get(0) ?? { inOtherMode: false, otherText: '', focusIndex: 0 }
+    expect(ui0.otherText).toBe('')
   })
 })
 
@@ -219,15 +227,40 @@ describe('askSelect', () => {
     expect(next.answers[0]!.selectedOption).toBe(0)
   })
 
-  test('multi question: answering all submits', () => {
+  test('multi question: answering all enters submit review', () => {
     let state = createAskState(multiQuestion)
     let result = askSelect(state)
     state = result.state
     result = askSelect(state)
-    expect(result.done).toBe(true)
-    expect(result.state.submitted).toBe(true)
+    // Should enter submit review page, not auto-submit
+    expect(result.done).toBe(false)
+    expect(result.state.onSubmitTab).toBe(true)
     expect(result.state.answers[0]!.selectedOption).toBe(0)
     expect(result.state.answers[1]!.selectedOption).toBe(0)
+  })
+
+  test('submit review: enter on submit confirms', () => {
+    let state = createAskState(multiQuestion)
+    let result = askSelect(state)
+    state = result.state
+    result = askSelect(state)
+    state = result.state
+    // On submit tab, press enter with submitFocus=0
+    const keyResult = handleAskKeyEvent(state, 'enter')
+    expect(keyResult.action).toBe('submit')
+    expect(keyResult.state.submitted).toBe(true)
+  })
+
+  test('submit review: enter on cancel cancels', () => {
+    let state = createAskState(multiQuestion)
+    let result = askSelect(state)
+    state = result.state
+    result = askSelect(state)
+    state = result.state
+    // Switch to cancel option
+    state = { ...state, submitFocus: 1 }
+    const keyResult = handleAskKeyEvent(state, 'enter')
+    expect(keyResult.action).toBe('cancel')
   })
 })
 

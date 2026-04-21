@@ -1,9 +1,9 @@
 import type { OutputLine } from '../../render/output.js'
 import { line, block, plain, dim, bold, colored, type ViewBlock, type StyledLine } from './types.js'
 
-export function buildOutputBlocks(lines: OutputLine[]): ViewBlock[] {
+export function buildOutputBlocks(lines: OutputLine[], initialPrevKind?: string): ViewBlock[] {
   const blocks: ViewBlock[] = []
-  let prevKind: string | undefined
+  let prevKind: string | undefined = initialPrevKind
 
   for (const ol of lines) {
     switch (ol.kind) {

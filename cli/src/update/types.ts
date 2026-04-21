@@ -1,6 +1,7 @@
 export interface ReleaseInfo {
   tag: string       // "v2026.4.13"
   version: string   // "2026.4.13"
+  body?: string     // release body markdown
 }
 
 export type CheckResult =
@@ -10,5 +11,5 @@ export type CheckResult =
 
 export type RunResult =
   | { kind: 'up_to_date' }
-  | { kind: 'updated'; from: string; to: string }
+  | { kind: 'updated'; from: string; to: string; notes?: string[] }
   | { kind: 'error'; message: string }

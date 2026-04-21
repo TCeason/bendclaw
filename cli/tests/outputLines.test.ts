@@ -95,14 +95,12 @@ describe('buildToolResult', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildVerboseEvent', () => {
-  test('splits multi-line text with trailing separator', () => {
+  test('splits multi-line text without trailing separator', () => {
     const lines = buildVerboseEvent('line1\nline2\nline3')
-    // 3 content lines + 1 empty separator
-    expect(lines).toHaveLength(4)
-    expect(lines.filter((l) => l.kind === 'verbose')).toHaveLength(4)
+    expect(lines).toHaveLength(3)
+    expect(lines.filter((l) => l.kind === 'verbose')).toHaveLength(3)
     expect(lines[0]!.text).toBe('line1')
     expect(lines[2]!.text).toBe('line3')
-    expect(lines[3]!.text).toBe('')
   })
 })
 

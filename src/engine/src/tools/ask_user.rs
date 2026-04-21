@@ -188,7 +188,9 @@ impl AgentTool for AskUserTool {
                 }
                 lines.join("\n")
             }
-            AskUserResponse::Skipped => "User skipped. Proceed with your best judgment.".into(),
+            AskUserResponse::Skipped => {
+                return Err(ToolError::Failed("User cancelled the question.".into()));
+            }
         };
 
         Ok(ToolResult {

@@ -131,17 +131,25 @@ cp "$TMP/bin/$BINARY" "$INSTALL_DIR/$BINARY"
 chmod +x "$INSTALL_DIR/$BINARY"
 
 # Copy lib files (napi bindings)
+# rm before cp to ensure a fresh inode — avoids macOS kernel code-signing cache mismatch
 LIB_DIR="${INSTALL_DIR%/bin}/lib"
 if [ -d "$TMP/lib" ]; then
   mkdir -p "$LIB_DIR"
-  cp "$TMP"/lib/* "$LIB_DIR/"
+  for f in "$TMP"/lib/*; do
+    rm -f "$LIB_DIR/$(basename "$f")"
+    cp "$f" "$LIB_DIR/"
+  done
 fi
 
-# Remove macOS quarantine/provenance attributes
+# macOS: remove quarantine attributes and ad-hoc codesign
 if [ "$os" = "darwin" ]; then
   xattr -cr "$INSTALL_DIR/$BINARY" 2>/dev/null || true
+  codesign -s - --force "$INSTALL_DIR/$BINARY" 2>/dev/null || true
   for f in "$LIB_DIR"/*.node; do
-    [ -f "$f" ] && xattr -cr "$f" 2>/dev/null || true
+    if [ -f "$f" ]; then
+      xattr -cr "$f" 2>/dev/null || true
+      codesign -s - --force "$f" 2>/dev/null || true
+    fi
   done
 fi
 

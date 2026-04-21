@@ -52,11 +52,11 @@ describe('buildActiveResponseBlocks', () => {
     expect(result).toContain('output line 2')
   })
 
-  test('tool progress pads to MAX_PROGRESS_LINES', () => {
+  test('tool progress does not pad empty lines', () => {
     const result = renderPlain(defaultInput({ toolProgress: 'single line' }))
     const lines = result.split('\n')
-    const emptyBeforeSingle = lines.filter(l => l.trim() === '').length
-    expect(emptyBeforeSingle).toBeGreaterThanOrEqual(4) // padded empty lines
+    const emptyLines = lines.filter(l => l.trim() === '').length
+    expect(emptyLines).toBeLessThanOrEqual(2) // block margins only, no padding
   })
 
   test('shows Executing when tool phase', () => {

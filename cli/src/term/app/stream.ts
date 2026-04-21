@@ -14,6 +14,7 @@ export interface StreamMachineState {
   toolProgress: string
   streamingText: string
   prefixEmitted: boolean
+  assistantCommitted: boolean
   lastPendingRender: number
 }
 
@@ -38,6 +39,7 @@ export function createStreamMachineState(appState: AppState, spinnerState: Spinn
     toolProgress: '',
     streamingText: '',
     prefixEmitted: false,
+    assistantCommitted: false,
     lastPendingRender: 0,
   }
 }
@@ -91,7 +93,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
         const builtLines = buildAssistantLines(completed)
         commitLines.push(...builtLines)
         writeLines.push(...builtLines)
-        state = { ...state, streamingText: pending }
+        state = { ...state, streamingText: pending, assistantCommitted: true }
       }
 
       // If streaming text is very long (exceeds visible area), force-split
@@ -103,7 +105,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
           const builtLines = buildAssistantLines(chunk)
           commitLines.push(...builtLines)
           writeLines.push(...builtLines)
-          state = { ...state, streamingText: rest }
+          state = { ...state, streamingText: rest, assistantCommitted: true }
         }
       }
 
@@ -143,10 +145,12 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     commitLines.push(...flushed.lines)
     writeLines.push(...flushed.lines)
     const toolName = (p.tool_name as string) ?? 'unknown'
+    // ask_user is waiting for user input, not "executing" — keep thinking phase
+    const spinnerPhase = toolName === 'ask_user' ? 'thinking' : 'executing'
     state = {
       ...state,
       toolProgress: '',
-      spinnerState: setSpinnerPhase(state.spinnerState, 'executing', toolName),
+      spinnerState: setSpinnerPhase(state.spinnerState, spinnerPhase, toolName),
     }
     suppressToolStarted = toolName === 'ask_user'
     rerenderStatus = true
@@ -217,14 +221,14 @@ export function buildToolStartedLines(event: RunEvent): OutputLine[] {
 export function flushStreaming(state: StreamMachineState): { state: StreamMachineState; lines: OutputLine[] } {
   if (!state.streamingText.trim()) {
     return {
-      state: { ...state, streamingText: '', pendingText: '' },
+      state: { ...state, streamingText: '', pendingText: '', assistantCommitted: false },
       lines: [],
     }
   }
 
   const lines = buildAssistantLines(state.streamingText)
   return {
-    state: { ...state, streamingText: '', pendingText: '' },
+    state: { ...state, streamingText: '', pendingText: '', assistantCommitted: false },
     lines,
   }
 }

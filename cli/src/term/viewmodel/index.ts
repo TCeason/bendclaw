@@ -2,4 +2,4 @@ export { type ViewBlock, type StyledLine, type StyledSpan, blocksToLines, styled
 export { buildOutputBlocks } from './output.js'
 export { buildActiveResponseBlocks, type ActiveResponseInput } from './active-response.js'
 export { buildPromptBlocks, type PromptVMInput } from './prompt.js'
-export { buildOverlayBlocks, type OverlayState } from './overlays.js'
+export { buildOverlayBlocks, buildAskBlocks, type OverlayState } from './overlays.js'

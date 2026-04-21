@@ -154,14 +154,11 @@ export function buildToolResult(
 }
 
 export function buildVerboseEvent(eventText: string): OutputLine[] {
-  const lines = eventText.split('\n').map((line) => ({
+  return eventText.split('\n').map((line) => ({
     id: genId('verb'),
     kind: 'verbose' as const,
     text: line,
   }))
-  // Add empty separator line after each verbose block (matches Rust REPL style)
-  lines.push({ id: genId('verb'), kind: 'verbose' as const, text: '' })
-  return lines
 }
 
 export function buildRunSummary(stats: RunStats): OutputLine[] {
@@ -186,7 +183,6 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
       line(`  context  ${bar}  ~${humanTokens(stats.contextTokens)} / ~${humanTokens(budget)} (${pct.toFixed(0)}%)`)
     }
   }
-  line('')
 
   // --- tokens block ---
   const totalInput = stats.inputTokens
@@ -249,7 +245,6 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
       }
     }
   }
-  line('')
 
   // --- compact block ---
   if (stats.compactHistory.length > 0) {
@@ -270,7 +265,6 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
       const bar = renderBar(saved, c.beforeTokens || 1, 12)
       line(`    #${i + 1}  lv${c.level}  ${humanTokens(c.beforeTokens)} → ${humanTokens(c.afterTokens)}  (−${humanTokens(saved)}, ${pct}%)  ${bar}`)
     }
-    line('')
   }
 
   // --- llm block ---
@@ -304,7 +298,6 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
     }
   }
 
-  line('')
   return lines
 }
 

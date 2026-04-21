@@ -124,15 +124,9 @@ async fn answered_multiple_questions() {
 #[tokio::test]
 async fn skipped_response() {
     let tool = make_tool(AskUserResponse::Skipped);
-    let result = tool
-        .execute(single_question_params(), ctx())
-        .await
-        .unwrap_or_else(|e| panic!("unexpected error: {e}"));
-    let text = match &result.content[0] {
-        Content::Text { text } => text,
-        _ => panic!("expected text content"),
-    };
-    assert!(text.contains("Proceed with your best judgment"));
+    let result = tool.execute(single_question_params(), ctx()).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("User cancelled"));
 }
 
 #[tokio::test]
@@ -188,7 +182,28 @@ async fn five_questions_rejected() {
 
 #[tokio::test]
 async fn four_questions_accepted() {
-    let tool = make_tool(AskUserResponse::Skipped);
+    let tool = make_tool(AskUserResponse::Answered(vec![
+        AskUserAnswer {
+            question: "Q1?".into(),
+            header: "H1".into(),
+            answer: "A".into(),
+        },
+        AskUserAnswer {
+            question: "Q2?".into(),
+            header: "H2".into(),
+            answer: "A".into(),
+        },
+        AskUserAnswer {
+            question: "Q3?".into(),
+            header: "H3".into(),
+            answer: "A".into(),
+        },
+        AskUserAnswer {
+            question: "Q4?".into(),
+            header: "H4".into(),
+            answer: "A".into(),
+        },
+    ]));
     let params = serde_json::json!({
         "questions": [
             { "question": "Q1?", "header": "H1", "options": [

@@ -3,7 +3,7 @@ import { parseInput, enableRawMode, type KeyEvent } from './input.js'
 import { installBracketedPaste } from './bracketed-paste.js'
 import { createSpinnerState, advanceSpinner, type SpinnerState } from './spinner.js'
 import { createSelectorState, selectorUp, selectorDown, selectorSelect, selectorType, selectorBackspace, type SelectorState } from './selector.js'
-import { createAskState, askUp, askDown, askNextTab, askPrevTab, askTypeChar, askBackspace, askSelect, type AskState, type AskQuestion } from './ask.js'
+import { createAskState, handleAskKeyEvent, type AskState, type AskQuestion } from './ask.js'
 import { buildUserMessage, buildAssistantLines, type OutputLine } from '../render/output.js'
 import { Agent, QueryStream, type SessionMeta, type ConfigInfo } from '../native/index.js'
 import { createInitialState, type AppState } from './app/state.js'
@@ -18,6 +18,7 @@ import {
   buildActiveResponseBlocks,
   buildPromptBlocks,
   buildOverlayBlocks,
+  buildAskBlocks,
   blocksToLines,
   type OverlayState,
   type PromptVMInput,
@@ -205,13 +206,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const pendingText = streamMachine?.pendingText ?? ''
     const toolProgress = streamMachine?.toolProgress ?? ''
 
+    // When ask-user is active, suppress the spinner — the agent is waiting
+    // for user input, not "thinking" or "executing".
+    const isAskUserActive = overlay.kind === 'ask-user'
     const activeBlocks = buildActiveResponseBlocks({
-      isLoading,
-      pendingText,
-      toolProgress,
+      isLoading: isAskUserActive ? false : isLoading,
+      pendingText: isAskUserActive ? '' : pendingText,
+      toolProgress: isAskUserActive ? '' : toolProgress,
       spinner: spinnerState,
       termRows: renderer.termRows,
       expanded,
+      assistantCommitted: streamMachine?.assistantCommitted,
     })
     const overlayBlocks = buildOverlayBlocks(overlay, renderer.termCols)
     const promptBlocks = buildPromptBlocks(getPromptVM())
@@ -221,10 +226,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function commitLines(outputLines: OutputLine[]) {
     if (outputLines.length === 0) return
+    const prevKind = compactLines.length > 0 ? compactLines[compactLines.length - 1]!.kind : undefined
     compactLines.push(...outputLines)
     expandedLines.push(...outputLines)
     const visible = expanded ? expandedLines.slice(-outputLines.length) : outputLines
-    const blocks = buildOutputBlocks(visible)
+    const blocks = buildOutputBlocks(visible, prevKind)
     renderer.beginBatch()
     renderer.appendScroll(blocksToLines(blocks).join('\n'))
     renderStatus()
@@ -235,10 +241,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   function commitToolFinished(event: import('../native/index.js').RunEvent): void {
     const compact = buildToolFinishedLines(event)
     const exp = buildToolFinishedLines(event, true)
+    const prevKind = compactLines.length > 0 ? compactLines[compactLines.length - 1]!.kind : undefined
     compactLines.push(...compact)
     expandedLines.push(...exp)
     const visible = expanded ? exp : compact
-    const blocks = buildOutputBlocks(visible)
+    const blocks = buildOutputBlocks(visible, prevKind)
     renderer.beginBatch()
     renderer.appendScroll(blocksToLines(blocks).join('\n'))
     renderStatus()
@@ -394,6 +401,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
               options: q.options.map(o => ({ label: o.label, description: o.description })),
             }))
             overlay = { kind: 'ask-user', state: createAskState(questions) }
+            // Append a single prompt line to scroll zone so the question
+            // appears inline with message history; the actual interactive UI
+            // renders in the status area and updates in-place.
+            renderer.appendScroll(chalk.dim('  Agent is asking…'))
             renderStatus()
           }
           continue
@@ -512,7 +523,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (event.type === 'escape') {
       if (overlay.kind !== 'none') {
         if (overlay.kind === 'ask-user' && streamRef) {
-          streamRef.respondAskUser(JSON.stringify('Skipped'))
+          streamRef.abort()
+          streamRef = null
+          overlay = { kind: 'none' }
+          isLoading = false
+          streamMachine = null
+          stopSpinner()
+          commitLines([{ id: 'sys-ask-cancel', kind: 'system', text: '  ⏺ Cancelled.' }])
+          renderStatus()
+          return
         }
         overlay = { kind: 'none' }
         renderStatus()
@@ -1004,9 +1023,18 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         case 'up_to_date':
           commitLines([{ id: 'sys-upd-ok', kind: 'system', text: '  ✓ evot is up to date.' }])
           break
-        case 'updated':
-          commitLines([{ id: 'sys-upd-ok', kind: 'system', text: `  ✓ updated ${result.from} → ${result.to}. restart evot to apply.` }])
+        case 'updated': {
+          const lines: string[] = [`  ✓ updated ${result.from} → ${result.to}. restart evot to apply.`]
+          if (result.notes && result.notes.length > 0) {
+            lines.push('')
+            lines.push(`  What's new in ${result.to}:`)
+            for (const note of result.notes) {
+              lines.push(`    • ${note}`)
+            }
+          }
+          commitLines([{ id: 'sys-upd-ok', kind: 'system', text: lines.join('\n') }])
           break
+        }
         case 'error':
           commitLines([{ id: 'sys-upd-err', kind: 'system', text: chalk.red(`  ✗ ${result.message}`) }])
           break
@@ -1202,33 +1230,25 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function handleAskKey(event: KeyEvent) {
     if (overlay.kind !== 'ask-user') return
-    let askState = overlay.state
 
-    switch (event.type) {
-      case 'up':
-        askState = askUp(askState)
-        break
-      case 'down':
-        askState = askDown(askState)
-        break
-      case 'tab':
-        askState = askNextTab(askState)
-        break
-      case 'char':
-        if (askState.inOtherMode) {
-          askState = askTypeChar(askState, event.char)
+    const result = handleAskKeyEvent(overlay.state, event.type, event.type === 'char' ? event.char : undefined)
+
+    switch (result.action) {
+      case 'cancel':
+        if (streamRef) {
+          streamRef.abort()
+          streamRef = null
         }
-        break
-      case 'backspace':
-        if (askState.inOtherMode) {
-          askState = askBackspace(askState)
-        }
-        break
-      case 'enter': {
-        const result = askSelect(askState)
-        askState = result.state
-        if (result.done && streamRef) {
-          const response = askStateToResponse(askState)
+        overlay = { kind: 'none' }
+        isLoading = false
+        streamMachine = null
+        stopSpinner()
+        commitLines([{ id: 'sys-ask-cancel', kind: 'system', text: '  ⏺ Cancelled.' }])
+        renderStatus()
+        return
+      case 'submit':
+        if (streamRef) {
+          const response = askStateToResponse(result.state)
           streamRef.respondAskUser(JSON.stringify({ Answered: response }))
           overlay = { kind: 'none' }
           const answerLines: OutputLine[] = response.map((r, i) => ({
@@ -1237,17 +1257,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             text: `  ● ${r.header}: ${r.answer}`,
           }))
           commitLines(answerLines)
-          renderStatus()
-          return
         }
-        break
-      }
-      default:
-        break
+        renderStatus()
+        return
+      case 'update':
+        overlay = { kind: 'ask-user', state: result.state }
+        renderStatus()
+        return
     }
-
-    overlay = { kind: 'ask-user', state: askState }
-    renderStatus()
   }
 
   const disableRaw = enableRawMode(process.stdin)

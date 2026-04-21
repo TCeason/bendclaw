@@ -10,7 +10,7 @@ pub enum ProviderError {
     Network(String),
     #[error("Auth error: {0}")]
     Auth(String),
-    #[error("Rate limited, retry after {retry_after_ms:?}ms")]
+    #[error("{}", display_rate_limited(*.retry_after_ms))]
     RateLimited { retry_after_ms: Option<u64> },
     #[error("Context overflow: {message}")]
     ContextOverflow { message: String },
@@ -18,6 +18,13 @@ pub enum ProviderError {
     Cancelled,
     #[error("{0}")]
     Other(String),
+}
+
+fn display_rate_limited(retry_after_ms: Option<u64>) -> String {
+    match retry_after_ms {
+        Some(ms) => format!("Rate limited, retry after {ms}ms"),
+        None => "Rate limited".to_string(),
+    }
 }
 
 impl ProviderError {
