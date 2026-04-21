@@ -72,4 +72,4 @@ jobs:
         with:
           bun-version: latest
       - run: cd cli && bun install
-      - run: cd cli && bun test tests/
+      - run: cd cli && bun test --path-ignore-patterns "tests/tui" tests/

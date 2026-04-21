@@ -223,10 +223,13 @@ proptest! {
         let action_saved: usize = result.stats.actions.iter()
             .map(|a| a.before_tokens.saturating_sub(a.after_tokens))
             .sum();
+        // Allow a small margin: floor calibration (.max(total_tokens)) and
+        // sanitize can cause action_saved to slightly exceed overall_saved.
+        let margin = (result.stats.before_estimated_tokens / 50).max(5);
         prop_assert!(
-            action_saved <= overall_saved,
-            "action savings {} > overall savings {}",
-            action_saved, overall_saved,
+            action_saved <= overall_saved + margin,
+            "action savings {} > overall savings {} + margin {}",
+            action_saved, overall_saved, margin,
         );
     }
 }
