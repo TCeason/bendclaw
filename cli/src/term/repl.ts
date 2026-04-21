@@ -2,7 +2,7 @@ import { TermRenderer } from './renderer.js'
 import { parseInput, enableRawMode, type KeyEvent } from './input.js'
 import { installBracketedPaste } from './bracketed-paste.js'
 import { createSpinnerState, advanceSpinner, type SpinnerState } from './spinner.js'
-import { createSelectorState, selectorUp, selectorDown, selectorSelect, type SelectorState } from './selector.js'
+import { createSelectorState, selectorUp, selectorDown, selectorSelect, selectorType, selectorBackspace, type SelectorState } from './selector.js'
 import { createAskState, askUp, askDown, askNextTab, askPrevTab, askTypeChar, askBackspace, askSelect, type AskState, type AskQuestion } from './ask.js'
 import { buildUserMessage, buildAssistantLines, type OutputLine } from '../render/output.js'
 import { Agent, QueryStream, type SessionMeta, type ConfigInfo } from '../native/index.js'
@@ -800,23 +800,41 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
     } else if (name === '/log') {
       await handleLogCommand(args)
-    } else if (name === '/resume' && !args) {
-      // Show session selector overlay — prefer sessions from current project
-      const cwdSessions = preloadedSessions.filter(s => s.cwd === agent.cwd)
-      const recent = (cwdSessions.length > 0 ? cwdSessions : preloadedSessions).slice(0, 10)
-      if (recent.length === 0) {
-        commitLines([{ id: 'sys-r', kind: 'system', text: '  No sessions found' }])
-      } else {
-        overlay = {
-          kind: 'selector',
-          state: createSelectorState('Resume session', recent.map(s => {
-            const title = s.title || '(untitled)'
-            const short = title.length > 50 ? title.slice(0, 49) + '…' : title
-            const tag = s.source ? `[${s.source}] ` : ''
-            const time = relativeTime(s.updated_at)
-            return { label: s.session_id.slice(0, 8), detail: `${tag}${short}  ${time}` }
-          })),
+    } else if (name === '/resume') {
+      // Load all sessions for search
+      try {
+        const allSessions: SessionMeta[] = await agent.listSessions(0)
+        if (args) {
+          // Resume specific session by id prefix
+          const match = allSessions.find(
+            (s) => s.session_id === args || s.session_id.startsWith(args)
+          )
+          if (match) {
+            await resumeSession(match)
+          } else {
+            commitLines([{ id: 'sys-r', kind: 'system', text: chalk.red(`  Session not found: ${args}`) }])
+          }
+        } else {
+          // Prefer sessions from current project, fall back to all
+          const cwdSessions = allSessions.filter(s => s.cwd === agent.cwd)
+          const sessions = cwdSessions.length > 0 ? cwdSessions : allSessions
+          if (sessions.length === 0) {
+            commitLines([{ id: 'sys-r', kind: 'system', text: '  No sessions found' }])
+          } else {
+            overlay = {
+              kind: 'selector',
+              state: createSelectorState('Resume session', sessions.map(s => {
+                const title = s.title || '(untitled)'
+                const short = title.length > 50 ? title.slice(0, 49) + '…' : title
+                const tag = s.source ? `[${s.source}] ` : ''
+                const time = relativeTime(s.updated_at)
+                return { label: s.session_id.slice(0, 8), detail: `${tag}${short}  ${time}` }
+              })),
+            }
+          }
         }
+      } catch (err: any) {
+        commitLines([{ id: 'sys-r-err', kind: 'system', text: chalk.red(`  Failed to list sessions: ${err?.message ?? err}`) }])
       }
     } else if (name === '/model' && !args) {
       // Show model selector overlay
@@ -1083,6 +1101,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         break
       case 'down':
         state = selectorDown(state)
+        break
+      case 'char':
+        state = selectorType(state, event.char)
+        break
+      case 'backspace':
+        state = selectorBackspace(state)
         break
       case 'enter': {
         const selected = selectorSelect(state)

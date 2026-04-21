@@ -69,17 +69,29 @@ function buildHelpBlocks(columns: number): ViewBlock[] {
 function buildSelectorBlocks(state: SelectorState): ViewBlock[] {
   const lines = [
     line(bold(state.title)),
-    line(plain('')),
-    ...state.items.map((item, i) => {
+  ]
+
+  if (state.query) {
+    lines.push(line(dim('  search: '), plain(state.query)))
+  }
+
+  lines.push(line(plain('')))
+
+  if (state.items.length === 0) {
+    lines.push(line(dim('  No matches')))
+  } else {
+    for (let i = 0; i < state.items.length; i++) {
+      const item = state.items[i]!
       const focused = i === state.focusIndex
       const prefix: StyledSpan = focused ? colored('❯ ', 'cyan') : plain('  ')
       const label: StyledSpan = focused ? bold(item.label) : plain(item.label)
       const detail: StyledSpan = item.detail ? dim(` ${item.detail}`) : plain('')
-      return line(prefix, label, detail)
-    }),
-    line(plain('')),
-    line(dim('↑↓ navigate · enter select · esc cancel')),
-  ]
+      lines.push(line(prefix, label, detail))
+    }
+  }
+
+  lines.push(line(plain('')))
+  lines.push(line(dim('↑↓ navigate · type to filter · enter select · esc cancel')))
   return [block(lines, 1)]
 }
 

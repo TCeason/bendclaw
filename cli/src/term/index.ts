@@ -14,6 +14,8 @@ export {
   selectorUp,
   selectorDown,
   selectorSelect,
+  selectorType,
+  selectorBackspace,
   type SelectorItem,
   type SelectorState,
 } from './selector.js'

@@ -103,28 +103,7 @@ export function handleSlashCommand(text: string, ctx: CommandContext): CommandRe
     }
 
     case '/resume': {
-      if (args) {
-        const match = ctx.preloadedSessions.find(
-          (s) => s.session_id === args || s.session_id.startsWith(args)
-        )
-        if (match) {
-          return { ...baseResult(ctx), resumeSession: match }
-        }
-        return {
-          ...baseResult(ctx),
-          systemLines: [{ id: 'sys-r', kind: 'system', text: chalk.red(`  Session not found: ${args}`) }],
-        }
-      }
-
-      const recent = ctx.preloadedSessions.slice(0, 10)
-      if (recent.length === 0) {
-        return {
-          ...baseResult(ctx),
-          systemLines: [{ id: 'sys-r', kind: 'system', text: '  No sessions found' }],
-        }
-      }
-
-      // Return empty result; handleSlashInput will show selector overlay
+      // Handled asynchronously in handleSlashInput (needs full session list)
       return baseResult(ctx)
     }
 

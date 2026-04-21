@@ -4,6 +4,8 @@ import {
   selectorUp,
   selectorDown,
   selectorSelect,
+  selectorType,
+  selectorBackspace,
 } from '../src/term/selector.js'
 import { buildOverlayBlocks } from '../src/term/viewmodel/overlays.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
@@ -119,5 +121,83 @@ describe('renderSelector via viewmodel', () => {
     expect(text).toContain('navigate')
     expect(text).toContain('enter select')
     expect(text).toContain('esc cancel')
+  })
+
+  test('shows search query when filtering', () => {
+    let state = createSelectorState('T', items)
+    state = selectorType(state, 'g')
+    const lines = blocksToLines(buildOverlayBlocks({ kind: 'selector', state }, 80))
+    const text = lines.map(l => stripAnsi(l)).join('\n')
+    expect(text).toContain('search:')
+    expect(text).toContain('g')
+  })
+
+  test('shows "No matches" when filter yields nothing', () => {
+    let state = createSelectorState('T', items)
+    state = selectorType(state, 'z')
+    state = selectorType(state, 'z')
+    state = selectorType(state, 'z')
+    const lines = blocksToLines(buildOverlayBlocks({ kind: 'selector', state }, 80))
+    const text = lines.map(l => stripAnsi(l)).join('\n')
+    expect(text).toContain('No matches')
+  })
+})
+
+describe('selectorType', () => {
+  test('filters items by label', () => {
+    let state = createSelectorState('T', items)
+    state = selectorType(state, 'g')
+    expect(state.query).toBe('g')
+    expect(state.items.map(i => i.label)).toEqual(['gpt-4o', 'gemini-pro'])
+    expect(state.focusIndex).toBe(0)
+  })
+
+  test('filters items by detail', () => {
+    let state = createSelectorState('T', items)
+    state = selectorType(state, 'o')
+    state = selectorType(state, 'p')
+    state = selectorType(state, 'e')
+    state = selectorType(state, 'n')
+    expect(state.items.map(i => i.label)).toEqual(['gpt-4o'])
+  })
+
+  test('is case insensitive', () => {
+    let state = createSelectorState('T', items)
+    state = selectorType(state, 'G')
+    expect(state.items.map(i => i.label)).toEqual(['gpt-4o', 'gemini-pro'])
+  })
+
+  test('resets focus on filter change', () => {
+    let state = createSelectorState('T', items)
+    state = selectorDown(state)
+    expect(state.focusIndex).toBe(1)
+    state = selectorType(state, 'g')
+    expect(state.focusIndex).toBe(0)
+  })
+})
+
+describe('selectorBackspace', () => {
+  test('removes last char and widens filter', () => {
+    let state = createSelectorState('T', items)
+    state = selectorType(state, 'g')
+    state = selectorType(state, 'p')
+    expect(state.items.map(i => i.label)).toEqual(['gpt-4o'])
+    state = selectorBackspace(state)
+    expect(state.query).toBe('g')
+    expect(state.items.map(i => i.label)).toEqual(['gpt-4o', 'gemini-pro'])
+  })
+
+  test('clears filter restores all items', () => {
+    let state = createSelectorState('T', items)
+    state = selectorType(state, 'g')
+    state = selectorBackspace(state)
+    expect(state.query).toBe('')
+    expect(state.items).toEqual(items)
+  })
+
+  test('noop when query is empty', () => {
+    const state = createSelectorState('T', items)
+    const next = selectorBackspace(state)
+    expect(next).toBe(state)
   })
 })

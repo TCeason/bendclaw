@@ -41,9 +41,11 @@ describe('term commands', () => {
     expect(result.systemLines.length).toBe(0)
   })
 
-  test('/resume resolves session by prefix', () => {
+  test('/resume defers to async handler', () => {
     const result = handleSlashCommand('/resume abc', mkCtx())
-    expect(result.resumeSession?.session_id).toBe('abc12345')
+    // /resume is now handled asynchronously in handleSlashInput
+    expect(result.systemLines.length).toBe(0)
+    expect(result.resumeSession).toBeUndefined()
   })
 
   test('/resume with no arg returns empty result for selector', () => {
