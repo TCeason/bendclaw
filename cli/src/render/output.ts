@@ -331,9 +331,16 @@ export function messagesToOutputLines(messages: UIMessage[]): OutputLine[] {
     if (msg.role === 'user') {
       lines.push(...buildUserMessage(msg.text))
     } else if (msg.role === 'assistant') {
-      // Tool calls first
+      // Verbose events (LLM calls, compaction) before tool calls
+      if (msg.verboseEvents) {
+        for (const evt of msg.verboseEvents) {
+          lines.push(...buildVerboseEvent(evt.text))
+        }
+      }
+      // Tool calls: show call + result
       if (msg.toolCalls) {
         for (const tc of msg.toolCalls) {
+          lines.push(...buildToolCall(tc.name, tc.args, tc.previewCommand))
           lines.push(...buildToolResult(
             tc.name,
             tc.args,
@@ -346,6 +353,10 @@ export function messagesToOutputLines(messages: UIMessage[]): OutputLine[] {
       // Assistant text
       if (msg.text.trim()) {
         lines.push(...buildAssistantLines(msg.text))
+      }
+      // Run summary
+      if (msg.runStats) {
+        lines.push(...buildRunSummary(msg.runStats))
       }
     }
   }

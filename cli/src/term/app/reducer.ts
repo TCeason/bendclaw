@@ -192,27 +192,29 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
           }
         : null
 
-      // Build compact single-line summary
+      // Build detail lines
+      const detailLines: string[] = []
+
+      // Messages line
       const parts: string[] = []
       if (msgStats) {
         if (msgStats.userCount > 0) parts.push(`user ${msgStats.userCount}`)
-        if (msgStats.assistantCount > 0) parts.push(`assistant ${msgStats.assistantCount}`)
+        if (msgStats.assistantCount > 0) parts.push(`asst ${msgStats.assistantCount}`)
         if (msgStats.toolResultCount > 0) parts.push(`tool ${msgStats.toolResultCount}`)
       }
-      const msgPart = parts.length > 0 ? `  ${msgCount} msgs (${parts.join(' · ')})` : `  ${msgCount} msgs`
+      const msgPart = parts.length > 0 ? `${msgCount} msgs (${parts.join(' · ')})` : `${msgCount} msgs`
+      detailLines.push(`  ${msgPart}`)
 
       // Budget bar
-      let budgetPart = ''
       const budgetTokens = (p.budget_tokens as number) ?? 0
       if (budgetTokens > 0 && msgStats) {
         const total = sysTok + msgStats.userTokens + msgStats.assistantTokens + msgStats.toolResultTokens + msgStats.imageTokens
         const pct = ((total / budgetTokens) * 100).toFixed(0)
         const bar = renderBar(total, budgetTokens, 20)
-        budgetPart = `  ${bar} ~${humanTokensInline(total)}/${humanTokensInline(budgetTokens)} (${pct}%)`
+        detailLines.push(`  ${bar} ~${humanTokensInline(total)}/${humanTokensInline(budgetTokens)} (${pct}%)`)
       }
 
-      // Token distribution by role (compact)
-      let distPart = ''
+      // Token distribution by role
       if (msgStats) {
         const dist: string[] = []
         if (sysTok > 0) dist.push(`sys ${humanTokensInline(sysTok)}`)
@@ -220,10 +222,10 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         if (msgStats.assistantTokens > 0) dist.push(`asst ${humanTokensInline(msgStats.assistantTokens)}`)
         if (msgStats.toolResultTokens > 0) dist.push(`tool ${humanTokensInline(msgStats.toolResultTokens)}`)
         if (msgStats.imageTokens > 0) dist.push(`img ${humanTokensInline(msgStats.imageTokens)}`)
-        if (dist.length > 0) distPart = `  ${dist.join(' · ')}`
+        if (dist.length > 0) detailLines.push(`  ${dist.join(' · ')}`)
       }
 
-      const text = `[LLM] call  ${model}  turn ${turn}${retryStr}${injectedStr}\n${msgPart}${budgetPart}  ${distPart}`
+      const text = `[LLM] call  ${model}  turn ${turn}${retryStr}${injectedStr}\n${detailLines.join('\n')}`
 
       // Accumulate cumulative stats across all LLM calls
       const prev = state.currentRunStats.cumulativeStats
@@ -290,7 +292,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         text = `[LLM] failed  ${durSec}s  ${error}`
       } else {
         const durSec = (durationMs / 1000).toFixed(1)
-        text = `[LLM] completed  ${durSec}s  ${tokPerSec.toFixed(0)} tok/s  ${humanTokensInline(inputTok)} in · ${outputTok} out  ttfb ${(ttfbMs / 1000).toFixed(1)}s · stream ${(streamingMs / 1000).toFixed(1)}s`
+        text = `[LLM] completed  ${durSec}s  ${tokPerSec.toFixed(0)} tok/s  ${humanTokensInline(inputTok)} in · ${outputTok} out\n  ttfb ${(ttfbMs / 1000).toFixed(1)}s · stream ${(streamingMs / 1000).toFixed(1)}s`
       }
 
       return {
@@ -311,7 +313,8 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
 
       // Token distribution (compact)
       const cms = p.message_stats as Record<string, any> | undefined
-      let distPart = ''
+      const compactDetails: string[] = []
+      compactDetails.push(`  ${bar}  ~${humanTokensInline(estTokens)}/${humanTokensInline(budget)} (${pct}%)`)
       if (cms) {
         const parts: string[] = []
         const uTok = (cms.user_tokens as number) ?? 0
@@ -323,9 +326,9 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         if (aTok > 0) parts.push(`asst ${humanTokensInline(aTok)}`)
         if (trTok > 0) parts.push(`tool ${humanTokensInline(trTok)}`)
         if (imgTok > 0) parts.push(`img ${humanTokensInline(imgTok)}`)
-        if (parts.length > 0) distPart = `  ${parts.join(' · ')}`
+        if (parts.length > 0) compactDetails.push(`  ${parts.join(' · ')}`)
       }
-      const text = `[COMPACT] call  ${msgCount} msgs\n  ${bar} ~${humanTokensInline(estTokens)}/${humanTokensInline(budget)} (${pct}%)${distPart}`
+      const text = `[COMPACT] call  ${msgCount} msgs\n${compactDetails.join('\n')}`
       return {
         ...state,
         currentRunStats: { ...state.currentRunStats, contextTokens: estTokens, contextWindow: window },

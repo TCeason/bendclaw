@@ -85,7 +85,7 @@ function buildVerboseBlock(text: string): ViewBlock {
     if (badge === 'LLM') {
       color = isCall ? 'cyan' : isCompleted ? 'green' : isFailed ? 'red' : 'yellow'
     } else if (badge === 'COMPACT') {
-      color = 'magenta'
+      color = isCall ? 'cyan' : isCompleted ? 'green' : isFailed ? 'red' : 'yellow'
     } else if (isCompleted) {
       color = 'green'
     } else if (isFailed) {
