@@ -80,13 +80,30 @@ function buildSelectorBlocks(state: SelectorState): ViewBlock[] {
   if (state.items.length === 0) {
     lines.push(line(dim('  No matches')))
   } else {
-    for (let i = 0; i < state.items.length; i++) {
+    const maxVisible = 10
+    // Keep focused item visible within the window
+    let start = 0
+    if (state.items.length > maxVisible) {
+      start = Math.min(
+        Math.max(0, state.focusIndex - Math.floor(maxVisible / 2)),
+        state.items.length - maxVisible
+      )
+    }
+    const end = Math.min(start + maxVisible, state.items.length)
+
+    if (start > 0) {
+      lines.push(line(dim(`  ↑ ${start} more`)))
+    }
+    for (let i = start; i < end; i++) {
       const item = state.items[i]!
       const focused = i === state.focusIndex
       const prefix: StyledSpan = focused ? colored('❯ ', 'cyan') : plain('  ')
       const label: StyledSpan = focused ? bold(item.label) : plain(item.label)
       const detail: StyledSpan = item.detail ? dim(` ${item.detail}`) : plain('')
       lines.push(line(prefix, label, detail))
+    }
+    if (end < state.items.length) {
+      lines.push(line(dim(`  ↓ ${state.items.length - end} more`)))
     }
   }
 
