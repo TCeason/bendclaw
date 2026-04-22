@@ -78,12 +78,19 @@ function buildVerboseBlock(text: string): ViewBlock {
   if (badgeMatch) {
     const badge = badgeMatch[1]!
     const rest = badgeMatch[2] ?? ''
+    const isCall = rest.startsWith('call')
     const isCompleted = rest.startsWith('completed') || rest.startsWith('·')
     const isFailed = rest.startsWith('failed')
-    let color: 'red' | 'green' | 'yellow' = 'yellow'
-    if (badge === 'COMPACT') color = 'green'
-    if (isCompleted) color = 'green'
-    if (isFailed) color = 'red'
+    let color: 'red' | 'green' | 'yellow' | 'cyan' | 'magenta' = 'yellow'
+    if (badge === 'LLM') {
+      color = isCall ? 'cyan' : isCompleted ? 'green' : isFailed ? 'red' : 'yellow'
+    } else if (badge === 'COMPACT') {
+      color = 'magenta'
+    } else if (isCompleted) {
+      color = 'green'
+    } else if (isFailed) {
+      color = 'red'
+    }
     const spans = [colored(`[${badge}]`, color, { bold: true })]
     if (rest) {
       if (isFailed) {
