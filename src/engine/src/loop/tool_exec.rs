@@ -380,6 +380,7 @@ pub(super) fn skip_tool_call(
 pub(super) fn skip_tool_call_doom_loop(
     tool_call_id: &str,
     tool_name: &str,
+    args: &serde_json::Value,
     tx: &mpsc::UnboundedSender<AgentEvent>,
 ) -> Message {
     let result = ToolResult {
@@ -390,11 +391,13 @@ pub(super) fn skip_tool_call_doom_loop(
         retention: Retention::Normal,
     };
 
+    let preview = build_doom_loop_preview(tool_name, args);
+
     tx.send(AgentEvent::ToolExecutionStart {
         tool_call_id: tool_call_id.into(),
         tool_name: tool_name.into(),
-        args: serde_json::Value::Null,
-        preview_command: None,
+        args: args.clone(),
+        preview_command: Some(preview),
     })
     .ok();
 
@@ -429,4 +432,32 @@ pub(super) fn skip_tool_call_doom_loop(
     .ok();
 
     msg
+}
+
+/// Build a compact preview string for doom-loop skipped tool calls.
+fn build_doom_loop_preview(tool_name: &str, args: &serde_json::Value) -> String {
+    let mut parts = vec![tool_name.to_string()];
+    if let serde_json::Value::Object(map) = args {
+        for (k, v) in map {
+            let val = match v {
+                serde_json::Value::String(s) => {
+                    if s.len() > 80 {
+                        format!("{}…", &s[..80])
+                    } else {
+                        s.clone()
+                    }
+                }
+                other => {
+                    let s = other.to_string();
+                    if s.len() > 80 {
+                        format!("{}…", &s[..80])
+                    } else {
+                        s
+                    }
+                }
+            };
+            parts.push(format!("{k}={val}"));
+        }
+    }
+    parts.join(" ")
 }

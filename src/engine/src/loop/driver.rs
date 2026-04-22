@@ -324,8 +324,8 @@ async fn run_loop(
             // times, skip execution and inject a steering message instead.
             if has_tool_calls {
                 if let Some(intervention) = doom_detector.check(&tool_calls) {
-                    for (id, name, _) in &tool_calls {
-                        let result = skip_tool_call_doom_loop(id, name, tx);
+                    for (id, name, args) in &tool_calls {
+                        let result = skip_tool_call_doom_loop(id, name, args, tx);
                         let am: AgentMessage = result.clone().into();
                         context.messages.push(am.clone());
                         new_messages.push(am);
