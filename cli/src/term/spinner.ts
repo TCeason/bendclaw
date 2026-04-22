@@ -3,7 +3,16 @@
  * Pure logic: returns the string to display, no React.
  */
 
-const SPINNER_CHARS = ['·', '✢', '✳', '✶', '✻', '✽']
+function getSpinnerChars(): string[] {
+  if (process.env.TERM === 'xterm-ghostty') {
+    return ['·', '✢', '✳', '✶', '✻', '*']
+  }
+  return process.platform === 'darwin'
+    ? ['·', '✢', '✳', '✶', '✻', '✽']
+    : ['·', '✢', '*', '✶', '✻', '✽']
+}
+
+const SPINNER_CHARS = getSpinnerChars()
 const SPINNER_FRAMES = [...SPINNER_CHARS, ...[...SPINNER_CHARS].reverse()]
 const SLOW_THRESHOLD_MS = 8000
 
@@ -75,8 +84,7 @@ export function formatSpinnerLine(state: SpinnerState, now: number): string {
   }
 
   const status = humanDuration(elapsed)
-  const showTokens = elapsed > 30000 && state.tokenCount > 0
-  const tokenSuffix = showTokens ? ` · ${formatTokens(state.tokenCount)} tokens` : ''
+  const tokenSuffix = state.tokenCount > 0 ? ` · ↓ ${formatTokens(state.tokenCount)} tokens` : ''
 
   if (slow) {
     return `\x1b[31m${char}\x1b[0m \x1b[31m${label}\x1b[0m\x1b[2m (${status}${tokenSuffix}) · esc to interrupt\x1b[0m`

@@ -181,7 +181,7 @@ describe('formatSpinnerLine', () => {
     expect(line).toContain('1.5k tokens')
   })
 
-  test('does not show token count before 30s', () => {
+  test('shows token count with arrow even before 30s', () => {
     const now = Date.now()
     const state = {
       ...createSpinnerState(),
@@ -189,6 +189,6 @@ describe('formatSpinnerLine', () => {
       tokenCount: 100,
     }
     const line = stripAnsi(formatSpinnerLine(state, now))
-    expect(line).not.toContain('tokens')
+    expect(line).toContain('↓ 100 tokens')
   })
 })

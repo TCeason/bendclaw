@@ -209,51 +209,54 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
   }
   line(tokLine)
 
-  // Token breakdown by role (cumulative across all LLM calls)
-  const ms = stats.cumulativeStats
+  // Token breakdown by role (last LLM call's context snapshot)
+  const ms = stats.lastMessageStats ?? stats.cumulativeStats
   const hasBreakdown = ms.userTokens > 0 || ms.assistantTokens > 0 || ms.toolResultTokens > 0 || ms.imageTokens > 0
-  if (hasBreakdown && totalInput > 0) {
+  if (hasBreakdown) {
     const sysTok = stats.systemPromptTokens
-    const maxLabelWidth = 12
-    const maxValWidth = 6
-    const roles: [string, number][] = [
-      ['system', sysTok],
-      ['user', ms.userTokens],
-      ['assistant', ms.assistantTokens],
-      ['tool_result', ms.toolResultTokens],
-      ['image', ms.imageTokens],
-    ]
-    for (const [label, tokens] of roles) {
-      if (tokens === 0) continue
-      const pct = (tokens / totalInput * 100).toFixed(0)
-      const bar = renderBar(tokens, totalInput, barWidth)
-      line(`    ${label.padEnd(maxLabelWidth)} ${('~' + humanTokens(tokens)).padStart(maxValWidth)}  ${bar} ${pct.padStart(3)}%`)
-    }
-
-    // Per-tool breakdown under tool_result (only when >= 3 distinct tools)
-    if (ms.toolDetails.length >= 3) {
-      const agg = new Map<string, { calls: number; tokens: number }>()
-      for (const [name, tokens] of ms.toolDetails) {
-        const existing = agg.get(name)
-        if (existing) {
-          existing.calls++
-          existing.tokens += tokens
-        } else {
-          agg.set(name, { calls: 1, tokens })
-        }
+    const breakdownTotal = sysTok + ms.userTokens + ms.assistantTokens + ms.toolResultTokens + ms.imageTokens
+    if (breakdownTotal > 0) {
+      const maxLabelWidth = 12
+      const maxValWidth = 6
+      const roles: [string, number][] = [
+        ['system', sysTok],
+        ['user', ms.userTokens],
+        ['assistant', ms.assistantTokens],
+        ['tool_result', ms.toolResultTokens],
+        ['image', ms.imageTokens],
+      ]
+      for (const [label, tokens] of roles) {
+        if (tokens === 0) continue
+        const pct = (tokens / breakdownTotal * 100).toFixed(0)
+        const bar = renderBar(tokens, breakdownTotal, barWidth)
+        line(`    ${label.padEnd(maxLabelWidth)} ${('~' + humanTokens(tokens)).padStart(maxValWidth)}  ${bar} ${pct.padStart(3)}%`)
       }
-      const sorted = [...agg.entries()].sort((a, b) => b[1].tokens - a[1].tokens)
-      const callWord = (n: number) => n === 1 ? 'call' : 'calls'
-      // Compute column width to align bars with role rows
-      const toolPrefixes = sorted.map(([name, a]) =>
-        `      ${name} ${a.calls} ${callWord(a.calls)} ~${humanTokens(a.tokens)}`
-      )
-      const barCol = Math.max(25, ...toolPrefixes.map(p => p.length + 1))
-      for (let i = 0; i < sorted.length; i++) {
-        const [, a] = sorted[i]!
-        const pct = totalInput > 0 ? (a.tokens / totalInput * 100).toFixed(0) : '0'
-        const bar = renderBar(a.tokens, totalInput, barWidth)
-        line(`${toolPrefixes[i]!.padEnd(barCol)}${bar} ${pct.padStart(3)}%`)
+
+      // Per-tool breakdown under tool_result (only when >= 3 distinct tools)
+      if (ms.toolDetails.length >= 3) {
+        const agg = new Map<string, { calls: number; tokens: number }>()
+        for (const [name, tokens] of ms.toolDetails) {
+          const existing = agg.get(name)
+          if (existing) {
+            existing.calls++
+            existing.tokens += tokens
+          } else {
+            agg.set(name, { calls: 1, tokens })
+          }
+        }
+        const sorted = [...agg.entries()].sort((a, b) => b[1].tokens - a[1].tokens)
+        const callWord = (n: number) => n === 1 ? 'call' : 'calls'
+        // Compute column width to align bars with role rows
+        const toolPrefixes = sorted.map(([name, a]) =>
+          `      ${name} ${a.calls} ${callWord(a.calls)} ~${humanTokens(a.tokens)}`
+        )
+        const barCol = Math.max(25, ...toolPrefixes.map(p => p.length + 1))
+        for (let i = 0; i < sorted.length; i++) {
+          const [, a] = sorted[i]!
+          const pct = breakdownTotal > 0 ? (a.tokens / breakdownTotal * 100).toFixed(0) : '0'
+          const bar = renderBar(a.tokens, breakdownTotal, barWidth)
+          line(`${toolPrefixes[i]!.padEnd(barCol)}${bar} ${pct.padStart(3)}%`)
+        }
       }
     }
   }

@@ -53,7 +53,7 @@ export interface RunStats {
   compactHistory: CompactRecord[]
   /** Last LLM call snapshot (used for per-call verbose display) */
   lastMessageStats: MessageStats | null
-  /** Cumulative token breakdown across all LLM calls (used for run summary) */
+  /** Cumulative token breakdown across all LLM calls (kept for compatibility) */
   cumulativeStats: MessageStats
   systemPromptTokens: number
 }

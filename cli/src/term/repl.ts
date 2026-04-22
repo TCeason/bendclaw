@@ -152,7 +152,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   const bannerText = renderBanner(agent.model, agent.cwd, configInfo, preloadedSessions, renderer.termCols, serverState)
   renderer.appendScroll(bannerText)
-  setTerminalTitle()
+  setTerminalTitle('✳')
 
   if (opts.resumeSessionId) {
     const match = preloadedSessions.find(
@@ -276,14 +276,21 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     process.stdout.write(`\x1b]0;${title}\x07`)
   }
 
+  let titleFrame = 0
+  const TITLE_INTERVAL_FRAMES = Math.round(960 / SPINNER_INTERVAL_MS) // ~960ms like Claude Code
+
   function startSpinner() {
     if (spinnerTimer) return
+    titleFrame = 0
     spinnerTimer = setInterval(() => {
       spinnerState = advanceSpinner(spinnerState)
-      // Terminal title animation
-      const glyphs = ['·', '•', '·']
-      const idx = spinnerState.frame % glyphs.length
-      setTerminalTitle(glyphs[idx])
+      // Terminal title animation — update at ~960ms, not every spinner frame
+      if (spinnerState.frame % TITLE_INTERVAL_FRAMES === 0) {
+        const glyphs = ['⠂', '⠐']
+        const idx = titleFrame % glyphs.length
+        titleFrame++
+        setTerminalTitle(glyphs[idx])
+      }
       renderStatus()
     }, SPINNER_INTERVAL_MS)
   }
@@ -293,7 +300,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       clearInterval(spinnerTimer)
       spinnerTimer = null
     }
-    setTerminalTitle()
+    setTerminalTitle('✳')
   }
 
   async function resumeSession(session: SessionMeta) {
