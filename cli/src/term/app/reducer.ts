@@ -192,61 +192,38 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
           }
         : null
 
-      let msgLine = `  ${msgCount} messages`
+      // Build compact single-line summary
+      const parts: string[] = []
       if (msgStats) {
-        const parts: string[] = []
         if (msgStats.userCount > 0) parts.push(`user ${msgStats.userCount}`)
         if (msgStats.assistantCount > 0) parts.push(`assistant ${msgStats.assistantCount}`)
-        if (msgStats.toolResultCount > 0) parts.push(`tool_result ${msgStats.toolResultCount}`)
-        msgLine += ` · ${toolCount} tools`
-        if (parts.length > 0) msgLine += ` (${parts.join(' · ')})`
-      } else {
-        msgLine += ` · ${toolCount} tools`
+        if (msgStats.toolResultCount > 0) parts.push(`tool ${msgStats.toolResultCount}`)
       }
+      const msgPart = parts.length > 0 ? `  ${msgCount} msgs (${parts.join(' · ')})` : `  ${msgCount} msgs`
 
-      // Budget bar — self-contained from this event's payload
-      let budgetLine = ''
+      // Budget bar
+      let budgetPart = ''
       const budgetTokens = (p.budget_tokens as number) ?? 0
       if (budgetTokens > 0 && msgStats) {
         const total = sysTok + msgStats.userTokens + msgStats.assistantTokens + msgStats.toolResultTokens + msgStats.imageTokens
         const pct = ((total / budgetTokens) * 100).toFixed(0)
-        const bar = renderBar(total, budgetTokens, 40)
-        budgetLine = `\n  ${bar}  ~${humanTokensInline(total)} / ~${humanTokensInline(budgetTokens)} tokens (${pct}%)`
+        const bar = renderBar(total, budgetTokens, 20)
+        budgetPart = `  ${bar} ~${humanTokensInline(total)}/${humanTokensInline(budgetTokens)} (${pct}%)`
       }
 
-      // Token distribution by role
-      let distLine = ''
+      // Token distribution by role (compact)
+      let distPart = ''
       if (msgStats) {
-        const parts: string[] = []
-        if (sysTok > 0) parts.push(`system ~${humanTokensInline(sysTok)}`)
-        if (msgStats.userTokens > 0) parts.push(`user ~${humanTokensInline(msgStats.userTokens)}`)
-        if (msgStats.assistantTokens > 0) parts.push(`assistant ~${humanTokensInline(msgStats.assistantTokens)}`)
-        if (msgStats.toolResultTokens > 0) parts.push(`tool_result ~${humanTokensInline(msgStats.toolResultTokens)}`)
-        if (msgStats.imageTokens > 0) parts.push(`image ~${humanTokensInline(msgStats.imageTokens)}`)
-        distLine = `\n    ${parts.join(' · ')}`
+        const dist: string[] = []
+        if (sysTok > 0) dist.push(`sys ${humanTokensInline(sysTok)}`)
+        if (msgStats.userTokens > 0) dist.push(`user ${humanTokensInline(msgStats.userTokens)}`)
+        if (msgStats.assistantTokens > 0) dist.push(`asst ${humanTokensInline(msgStats.assistantTokens)}`)
+        if (msgStats.toolResultTokens > 0) dist.push(`tool ${humanTokensInline(msgStats.toolResultTokens)}`)
+        if (msgStats.imageTokens > 0) dist.push(`img ${humanTokensInline(msgStats.imageTokens)}`)
+        if (dist.length > 0) distPart = `  ${dist.join(' · ')}`
       }
 
-      // Tool result breakdown
-      let toolBreakdownLines = ''
-      if (msgStats && msgStats.toolDetails.length >= 2) {
-        const agg = new Map<string, number>()
-        for (const [name, tokens] of msgStats.toolDetails) {
-          agg.set(name, (agg.get(name) ?? 0) + tokens)
-        }
-        const sorted = [...agg.entries()].sort((a, b) => b[1] - a[1])
-        const total = msgStats.toolResultTokens || 1
-        const maxNameLen = Math.max(...sorted.map(([n]) => n.length), 4)
-        for (const [name, tokens] of sorted) {
-          const pct = ((tokens / total) * 100).toFixed(0)
-          const bar = renderBar(tokens, total, 20)
-          toolBreakdownLines += `\n      ${name.padEnd(maxNameLen)}  ~${humanTokensInline(tokens).padEnd(6)} (${pct.padStart(3)}%)  ${bar}`
-        }
-        if (toolBreakdownLines) {
-          toolBreakdownLines = '\n    tool_result breakdown:' + toolBreakdownLines
-        }
-      }
-
-      const text = `[LLM] call · ${model} · turn ${turn}${retryStr}${injectedStr}\n${msgLine}${budgetLine}${distLine}${toolBreakdownLines}`
+      const text = `[LLM] call  ${model}  turn ${turn}${retryStr}${injectedStr}${msgPart}\n${budgetPart}  ${distPart}`
 
       // Accumulate cumulative stats across all LLM calls
       const prev = state.currentRunStats.cumulativeStats
@@ -310,13 +287,10 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       let text: string
       if (error) {
         const durSec = (durationMs / 1000).toFixed(1)
-        text = `[LLM] failed · ${durSec}s\n  ${error}`
+        text = `[LLM] failed  ${durSec}s  ${error}`
       } else {
         const durSec = (durationMs / 1000).toFixed(1)
-        const dur = durationMs || 1
-        const ttfbPct = ((ttfbMs / dur) * 100).toFixed(0)
-        const streamPct = ((streamingMs / dur) * 100).toFixed(0)
-        text = `[LLM] completed · ${durSec}s · ${tokPerSec.toFixed(0)} tok/s\n  tokens  ${humanTokensInline(inputTok)} in · ${outputTok} out\n  timing  ttfb ${(ttfbMs / 1000).toFixed(1)}s (${ttfbPct}%) · stream ${(streamingMs / 1000).toFixed(1)}s (${streamPct}%)`
+        text = `[LLM] completed  ${durSec}s  ${tokPerSec.toFixed(0)} tok/s  ${humanTokensInline(inputTok)} in · ${outputTok} out\n  ttfb ${(ttfbMs / 1000).toFixed(1)}s · stream ${(streamingMs / 1000).toFixed(1)}s`
       }
 
       return {
@@ -352,7 +326,22 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         if (parts.length > 0) distLine = `\n    ${parts.join(' · ')}`
       }
 
-      const text = `[COMPACT] call · ${msgCount} messages\n  ${bar}  ~${humanTokensInline(estTokens)} / ~${humanTokensInline(budget)} tokens (${pct}%)${distLine}`
+      // Compact single-line with bar
+      let distPart = ''
+      if (cms) {
+        const parts: string[] = []
+        const uTok = (cms.user_tokens as number) ?? 0
+        const aTok = (cms.assistant_tokens as number) ?? 0
+        const trTok = (cms.tool_result_tokens as number) ?? 0
+        const imgTok = (cms.image_tokens as number) ?? 0
+        if (sysTok > 0) parts.push(`sys ${humanTokensInline(sysTok)}`)
+        if (uTok > 0) parts.push(`user ${humanTokensInline(uTok)}`)
+        if (aTok > 0) parts.push(`asst ${humanTokensInline(aTok)}`)
+        if (trTok > 0) parts.push(`tool ${humanTokensInline(trTok)}`)
+        if (imgTok > 0) parts.push(`img ${humanTokensInline(imgTok)}`)
+        if (parts.length > 0) distPart = `  ${parts.join(' · ')}`
+      }
+      const text = `[COMPACT] call  ${msgCount} msgs\n  ${bar}  ~${humanTokensInline(estTokens)}/${humanTokensInline(budget)} (${pct}%)${distPart}`
       return {
         ...state,
         currentRunStats: { ...state.currentRunStats, contextTokens: estTokens, contextWindow: window },
@@ -411,62 +400,9 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
           summary = '↓ no changes'
         }
 
-        const lines: string[] = []
-        lines.push(`L${level}`)
-        lines.push(`  ${beforeMsgs} msgs ~${humanTokensInline(before)} → ${afterMsgs} msgs ~${humanTokensInline(after)}  (saved ~${humanTokensInline(saved)}, ${savedPct}%)`)
-        lines.push(`  ${posBar}`)
-        if (legend) lines.push(`  ${legend}`)
-        lines.push(`  ${summary}`)
-
-        if (sorted.length > 0) {
-          const totalActions = allActions?.length ?? 0
-          const changed = sorted.length
-          let header: string
-          if (level === 1) {
-            header = `  actions: (${changed} of ${totalActions} changed)`
-          } else if (level === 2) {
-            const totalMsgs = sorted.reduce((s: number, a: any) => s + 1 + ((a.related_count as number) ?? 0), 0)
-            header = `  actions: (${changed} turns, ${totalMsgs} msgs → ${changed} summaries)`
-          } else if (level === 3) {
-            const kept = Math.max(afterMsgs - 1, 0)
-            header = `  actions: (${msgsDropped} dropped, ${kept} kept, 1 marker)`
-          } else {
-            header = `  actions: (${changed} changed)`
-          }
-          lines.push(header)
-
-          const TOP = 3
-          const TAIL = 2
-          const fmtAction = (a: any) => {
-            const idx = (a.index as number) ?? 0
-            const toolName = (a.tool_name as string) ?? ''
-            const method = (a.method as string) ?? 'unknown'
-            const bTok = (a.before_tokens as number) ?? 0
-            const aTok = (a.after_tokens as number) ?? 0
-            const aSaved = bTok - aTok
-            if (method === 'Summarized') {
-              const rc = (a.related_count as number) ?? 0
-              return `    #${String(idx).padEnd(3)} turn(${1 + rc} msgs)  ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (−${humanTokensInline(aSaved)})`
-            }
-            if (method === 'Dropped') {
-              const endIdx = a.end_index as number | undefined
-              const idxStr = endIdx != null ? `#${idx}..#${String(endIdx).padEnd(3)}` : `#${String(idx).padEnd(3)}`
-              return `    ${idxStr}  ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (−${humanTokensInline(aSaved)})`
-            }
-            return `    #${String(idx).padEnd(3)} ${toolName.padEnd(12)} ${method.padEnd(12)} ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (−${humanTokensInline(aSaved)})`
-          }
-
-          if (sorted.length <= TOP + TAIL) {
-            for (const a of sorted) lines.push(fmtAction(a))
-          } else {
-            for (const a of sorted.slice(0, TOP)) lines.push(fmtAction(a))
-            const omitted = sorted.length - TOP - TAIL
-            lines.push(`    ... ${omitted} more ...`)
-            for (const a of sorted.slice(sorted.length - TAIL)) lines.push(fmtAction(a))
-          }
-        }
-
-        action = lines.join('\n')
+        // Compact single-line summary
+        const compactBar = renderBar(saved, before || 1, 12)
+        action = `L${level}  ${beforeMsgs} msgs ~${humanTokensInline(before)} → ${afterMsgs} msgs ~${humanTokensInline(after)}  (−${humanTokensInline(saved)}, ${savedPct}%)  ${compactBar}  ${summary}`
       }
 
       const compactRecord: CompactRecord | null =

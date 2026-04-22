@@ -201,7 +201,7 @@ describe('buildRunSummary', () => {
         assistantTokens: 15000,
         toolResultTokens: 78000,
         imageTokens: 0,
-        toolDetails: [['bash', 30000], ['read', 48000]],
+        toolDetails: [['bash', 30000], ['read', 28000], ['search', 20000]],
       },
       systemPromptTokens: 2000,
     })

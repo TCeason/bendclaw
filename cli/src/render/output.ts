@@ -230,8 +230,8 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
       line(`    ${label.padEnd(maxLabelWidth)} ${('~' + humanTokens(tokens)).padStart(maxValWidth)}  ${bar} ${pct.padStart(3)}%`)
     }
 
-    // Per-tool breakdown under tool_result
-    if (ms.toolDetails.length >= 2) {
+    // Per-tool breakdown under tool_result (only when >= 3 distinct tools)
+    if (ms.toolDetails.length >= 3) {
       const agg = new Map<string, { calls: number; tokens: number }>()
       for (const [name, tokens] of ms.toolDetails) {
         const existing = agg.get(name)
