@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
-import { HistoryManager } from '../src/session/history.js'
+import { HistoryManager, parseHistoryItems } from '../src/session/history.js'
 import { mkdtempSync, rmSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -112,5 +112,59 @@ describe('HistoryManager', () => {
 
     const hm2 = new HistoryManager(historyPath)
     expect(hm2.load()).toEqual(['first\\nline\nsecond line'])
+  })
+})
+
+describe('parseHistoryItems', () => {
+  test('parses typical history output', () => {
+    const msg = [
+      '    #1    user       hello world',
+      '    #2    assistant  I can help with that',
+      '    #3    user       thanks',
+    ].join('\n')
+    expect(parseHistoryItems(msg)).toEqual([
+      { label: '#1', detail: 'user  hello world' },
+      { label: '#2', detail: 'assistant  I can help with that' },
+      { label: '#3', detail: 'user  thanks' },
+    ])
+  })
+
+  test('returns empty array for no-messages text', () => {
+    expect(parseHistoryItems('No messages in session.')).toEqual([])
+  })
+
+  test('skips snapshot lines with ellipsis', () => {
+    const msg = [
+      '    …   user       old message',
+      '    #5    user       new message',
+    ].join('\n')
+    const items = parseHistoryItems(msg)
+    expect(items).toEqual([
+      { label: '…', detail: 'user  old message' },
+      { label: '#5', detail: 'user  new message' },
+    ])
+  })
+
+  test('handles single entry', () => {
+    expect(parseHistoryItems('  #42   assistant  done')).toEqual([
+      { label: '#42', detail: 'assistant  done' },
+    ])
+  })
+
+  test('returns empty for empty string', () => {
+    expect(parseHistoryItems('')).toEqual([])
+  })
+
+  test('parses all-snapshot entries after resume', () => {
+    const msg = [
+      '    …   user       hello world',
+      '    …   assistant  I can help with that',
+      '    …   user       thanks',
+    ].join('\n')
+    expect(parseHistoryItems(msg)).toEqual([
+      { label: '…', detail: 'user  hello world' },
+      { label: '…', detail: 'assistant  I can help with that' },
+      { label: '…', detail: 'user  thanks' },
+    ])
   })
 })

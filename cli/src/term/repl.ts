@@ -8,7 +8,7 @@ import { buildUserMessage, buildAssistantLines, type OutputLine } from '../rende
 import { Agent, QueryStream, type SessionMeta, type ConfigInfo } from '../native/index.js'
 import { createInitialState, type AppState } from './app/state.js'
 import type { AskUserRequest } from './app/types.js'
-import { HistoryManager } from '../session/history.js'
+import { HistoryManager, parseHistoryItems } from '../session/history.js'
 import { ScreenLog } from '../session/screen-log.js'
 import { isSlashCommand, resolveCommand } from '../commands/index.js'
 import { renderBanner } from './banner.js'
@@ -891,7 +891,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         const histCmd = args ? `/history ${args}` : '/history'
         const outcome = await agent.submit(histCmd, sessionId ?? undefined)
         if (outcome.kind === 'command') {
-          commitLines([{ id: 'sys-hist', kind: 'system', text: `  ${outcome.message}` }])
+          const items = parseHistoryItems(outcome.message)
+          if (items.length === 0) {
+            commitLines([{ id: 'sys-hist', kind: 'system', text: `  ${outcome.message}` }])
+          } else {
+            overlay = {
+              kind: 'selector',
+              state: createSelectorState('History', items),
+            }
+          }
         }
       } catch (err: any) {
         commitLines([{ id: 'sys-hist-err', kind: 'system', text: chalk.red(`  History failed: ${err?.message ?? err}`) }])
@@ -1261,6 +1269,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             // Resume selector result — find session by id prefix
             const match = preloadedSessions.find(s => s.session_id.startsWith(selected.label))
             if (match) resumeSession(match)
+          } else if (state.title === 'History') {
+            // History selector result — goto selected seq (skip snapshot entries)
+            if (selected.label !== '…') {
+              const seq = selected.label.replace('#', '')
+              handleSlashInput(`/goto ${seq}`)
+            }
           } else {
             // Model selector result
             agent.model = selected.label

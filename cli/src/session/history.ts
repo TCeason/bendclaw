@@ -27,6 +27,29 @@ function unescape(s: string): string {
   return result
 }
 
+export interface HistoryItem {
+  label: string
+  detail: string
+}
+
+/** Parse `/history` command output into selector items.
+ *  Lines with `#<seq>` get label `#<seq>`, snapshot lines (…) get label `…`. */
+export function parseHistoryItems(message: string): HistoryItem[] {
+  const items: HistoryItem[] = []
+  for (const line of message.split('\n')) {
+    const numbered = line.match(/#(\d+)\s+(user|assistant)\s+(.*)/)
+    if (numbered) {
+      items.push({ label: `#${numbered[1]}`, detail: `${numbered[2]}  ${numbered[3]!.trim()}` })
+      continue
+    }
+    const snapshot = line.match(/…\s+(user|assistant)\s+(.*)/)
+    if (snapshot) {
+      items.push({ label: '…', detail: `${snapshot[1]}  ${snapshot[2]!.trim()}` })
+    }
+  }
+  return items
+}
+
 export class HistoryManager {
   private filePath: string
   private lastEntry: string | null = null
