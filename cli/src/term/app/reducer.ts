@@ -3,7 +3,7 @@
  */
 
 import type { RunEvent } from '../../native/index.js'
-import { humanTokens as humanTokensInline, renderBar, renderPositionBar } from '../../render/format.js'
+import { humanTokens as humanTokensInline, renderBar } from '../../render/format.js'
 import { emptyRunStats, type AppState } from './state.js'
 import type { CompactRecord, MessageStats, UIMessage, UIToolCall } from './types.js'
 
@@ -290,7 +290,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         text = `[LLM] failed  ${durSec}s  ${error}`
       } else {
         const durSec = (durationMs / 1000).toFixed(1)
-        text = `[LLM] completed  ${durSec}s  ${tokPerSec.toFixed(0)} tok/s  ${humanTokensInline(inputTok)} in · ${outputTok} out\n  ttfb ${(ttfbMs / 1000).toFixed(1)}s · stream ${(streamingMs / 1000).toFixed(1)}s`
+        text = `[LLM] completed  ${durSec}s  ${tokPerSec.toFixed(0)} tok/s  ${humanTokensInline(inputTok)} in · ${outputTok} out  ttfb ${(ttfbMs / 1000).toFixed(1)}s · stream ${(streamingMs / 1000).toFixed(1)}s`
       }
 
       return {
@@ -307,26 +307,10 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const window = (p.context_window as number) ?? 0
       const sysTok = (p.system_prompt_tokens as number) ?? 0
       const pct = budget > 0 ? ((estTokens / budget) * 100).toFixed(0) : '0'
-      const bar = renderBar(estTokens, budget, 40)
+      const bar = renderBar(estTokens, budget, 20)
 
-      // Token distribution from message_stats (same source as LLM call)
+      // Token distribution (compact)
       const cms = p.message_stats as Record<string, any> | undefined
-      let distLine = ''
-      if (cms) {
-        const parts: string[] = []
-        const uTok = (cms.user_tokens as number) ?? 0
-        const aTok = (cms.assistant_tokens as number) ?? 0
-        const trTok = (cms.tool_result_tokens as number) ?? 0
-        const imgTok = (cms.image_tokens as number) ?? 0
-        if (sysTok > 0) parts.push(`system ~${humanTokensInline(sysTok)}`)
-        if (uTok > 0) parts.push(`user ~${humanTokensInline(uTok)}`)
-        if (aTok > 0) parts.push(`assistant ~${humanTokensInline(aTok)}`)
-        if (trTok > 0) parts.push(`tool_result ~${humanTokensInline(trTok)}`)
-        if (imgTok > 0) parts.push(`image ~${humanTokensInline(imgTok)}`)
-        if (parts.length > 0) distLine = `\n    ${parts.join(' · ')}`
-      }
-
-      // Compact single-line with bar
       let distPart = ''
       if (cms) {
         const parts: string[] = []
@@ -341,7 +325,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         if (imgTok > 0) parts.push(`img ${humanTokensInline(imgTok)}`)
         if (parts.length > 0) distPart = `  ${parts.join(' · ')}`
       }
-      const text = `[COMPACT] call  ${msgCount} msgs\n  ${bar}  ~${humanTokensInline(estTokens)}/${humanTokensInline(budget)} (${pct}%)${distPart}`
+      const text = `[COMPACT] call  ${msgCount} msgs\n  ${bar} ~${humanTokensInline(estTokens)}/${humanTokensInline(budget)} (${pct}%)${distPart}`
       return {
         ...state,
         currentRunStats: { ...state.currentRunStats, contextTokens: estTokens, contextWindow: window },
@@ -378,8 +362,6 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
                 return sb - sa
               })
           : []
-
-        const { bar: posBar, legend } = renderPositionBar(beforeMsgs, sorted, level)
 
         let summary: string
         if (level === 1) {
