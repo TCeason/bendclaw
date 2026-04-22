@@ -62,7 +62,7 @@ function buildToolBlock(text: string): ViewBlock {
     const rest = badgeMatch[2] ?? ''
     const isCompleted = rest.startsWith('completed')
     const isFailed = rest.startsWith('failed')
-    const color: 'red' | 'green' | 'yellow' = isFailed ? 'red' : isCompleted ? 'green' : 'yellow'
+    const color: 'red' | 'green' = isFailed ? 'red' : 'green'
     const spans = [colored(`[${badge}]`, color, { bold: true })]
     if (rest) spans.push(dim(` ${rest}`))
     return block([line(...spans)], 1)

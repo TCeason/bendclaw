@@ -223,7 +223,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         if (dist.length > 0) distPart = `  ${dist.join(' · ')}`
       }
 
-      const text = `[LLM] call  ${model}  turn ${turn}${retryStr}${injectedStr}${msgPart}\n${budgetPart}  ${distPart}`
+      const text = `[LLM] call  ${model}  turn ${turn}${retryStr}${injectedStr}\n${msgPart}${budgetPart}  ${distPart}`
 
       // Accumulate cumulative stats across all LLM calls
       const prev = state.currentRunStats.cumulativeStats
