@@ -495,6 +495,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         streamRef.abort()
         streamRef = null
         isLoading = false
+        if (streamMachine) {
+          const flushed = flushStreaming(streamMachine)
+          if (flushed.lines.length > 0) commitLines(flushed.lines)
+        }
         streamMachine = null
         stopSpinner()
         commitLines([{ id: 'sys-int', kind: 'system', text: '  Interrupted.' }])
@@ -532,6 +536,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           streamRef = null
           overlay = { kind: 'none' }
           isLoading = false
+          if (streamMachine) {
+            const flushed = flushStreaming(streamMachine)
+            if (flushed.lines.length > 0) commitLines(flushed.lines)
+          }
           streamMachine = null
           stopSpinner()
           commitLines([{ id: 'sys-ask-cancel', kind: 'system', text: '  ⏺ Cancelled.' }])
@@ -546,6 +554,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         streamRef.abort()
         streamRef = null
         isLoading = false
+        if (streamMachine) {
+          const flushed = flushStreaming(streamMachine)
+          if (flushed.lines.length > 0) commitLines(flushed.lines)
+        }
         streamMachine = null
         stopSpinner()
         commitLines([{ id: 'sys-int', kind: 'system', text: '  Interrupted.' }])
@@ -844,7 +856,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const { name, args } = resolved
 
     if (name === '/new') {
-      if (isLoading && streamRef) { streamRef.abort(); streamRef = null; isLoading = false; streamMachine = null; stopSpinner() }
+      if (isLoading && streamRef) {
+        streamRef.abort(); streamRef = null; isLoading = false
+        if (streamMachine) { const f = flushStreaming(streamMachine); if (f.lines.length > 0) commitLines(f.lines) }
+        streamMachine = null; stopSpinner()
+      }
       sessionId = null
       appState = { ...createInitialState(appState.model, agent.cwd), verbose: appState.verbose }
       commitLines([{ id: 'sys-new', kind: 'system', text: '  New session started.' }])
@@ -1281,6 +1297,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         }
         overlay = { kind: 'none' }
         isLoading = false
+        if (streamMachine) {
+          const flushed = flushStreaming(streamMachine)
+          if (flushed.lines.length > 0) commitLines(flushed.lines)
+        }
         streamMachine = null
         stopSpinner()
         commitLines([{ id: 'sys-ask-cancel', kind: 'system', text: '  ⏺ Cancelled.' }])
