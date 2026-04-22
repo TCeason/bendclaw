@@ -1,13 +1,16 @@
 /**
  * GitHub issue reference auto-linking.
+ * When the terminal supports OSC 8, refs become clickable hyperlinks.
  */
 
 import chalk from 'chalk'
+import { createHyperlink, supportsHyperlinks } from './hyperlink.js'
 
 export function linkifyIssueRefs(input: string): string {
   let out = ''
   let cursor = 0
   const hashRe = /#(\d+)/g
+  const hyperlinks = supportsHyperlinks()
   let m
 
   while ((m = hashRe.exec(input)) !== null) {
@@ -30,8 +33,13 @@ export function linkifyIssueRefs(input: string): string {
     // Boundary check: char before owner must not be alphanumeric/repo-like
     if (ownerStart > 0 && /[a-zA-Z0-9_.\/-]/.test(input[ownerStart - 1]!)) continue
 
+    const refText = `${owner}/${name}#${num}`
     out += input.slice(cursor, ownerStart)
-    out += chalk.cyan(`${owner}/${name}#${num}`)
+    if (hyperlinks) {
+      out += createHyperlink(`https://github.com/${owner}/${name}/issues/${num}`, refText)
+    } else {
+      out += chalk.cyan(refText)
+    }
     cursor = hashPos + m[0].length
   }
 
