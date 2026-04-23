@@ -9,9 +9,7 @@
  */
 
 import {
-  cursorTo,
   cursorUp,
-  eraseLine,
   eraseDown,
   hideCursor,
   showCursor,
@@ -202,9 +200,13 @@ export class TermRenderer {
   clearScreen(): void {
     const outerBatch = this.buffering
     if (!outerBatch) this.beginBatch()
+    this.clearStatusArea()
     this.statusHeight = 0
     this.prevStatusLines = []
-    this.write('\x1b[2J\x1b[H')
+    // Push old content into scrollback with blank lines instead of erasing
+    // the viewport. This feels more natural — the user can still scroll up
+    // to see previous output, and the prompt lands at the bottom.
+    this.write('\n'.repeat(this.rows))
     if (!outerBatch) this.flushBatch()
   }
 

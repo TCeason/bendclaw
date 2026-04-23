@@ -42,13 +42,12 @@ function buildHelpBlocks(columns: number): ViewBlock[] {
     ['/new', 'Start new session'],
     ['/goto <n>', 'Go to message'],
     ['/history [n]', 'Show recent messages'],
-    ['/compact', 'Compact context'],
     ['/plan', 'Toggle planning mode'],
     ['/env', 'Manage variables'],
     ['/skill', 'Manage skills'],
     ['/update', 'Update evot'],
     ['/verbose', 'Toggle verbose mode'],
-    ['/clear', 'Clear screen'],
+    ['/clear', 'Clear session context'],
     ['/exit', 'Exit'],
   ]
 

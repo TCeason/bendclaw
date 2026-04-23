@@ -851,7 +851,40 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     appState = result.appState
     planning = result.planning
     if (result.overlay) overlay = result.overlay
-    if (result.clearScreen) process.stdout.write('\x1b[2J\x1b[H')
+    if (result.clearScreen) {
+      renderer.clearScreen()
+      compactLines.length = 0
+      expandedLines.length = 0
+    }
+    if (result.clearContext) {
+      // Abort any in-flight streaming
+      if (isLoading && streamRef) {
+        streamRef.abort(); streamRef = null; isLoading = false
+        if (streamMachine) { const f = flushStreaming(streamMachine); if (f.lines.length > 0) commitLines(f.lines) }
+        streamMachine = null; stopSpinner()
+      }
+      // Start a fresh session — clear screen, re-render banner, reset state
+      sessionId = null
+      appState = { ...createInitialState(appState.model, agent.cwd), verbose: appState.verbose }
+      renderer.clearScreen()
+      compactLines.length = 0
+      expandedLines.length = 0
+      try { preloadedSessions = await agent.listSessions(20) } catch {}
+      const banner = renderBanner(agent.model, agent.cwd, configInfo, preloadedSessions, renderer.termCols, serverState)
+      renderer.appendScroll(banner)
+      // Show previous session hint (same as startup)
+      const match = preloadedSessions.find((s) => s.cwd === agent.cwd)
+      if (match) {
+        const tag = match.source ? `[${match.source}] ` : ''
+        const title = match.title || '(untitled)'
+        const short = title.length > 40 ? title.slice(0, 39) + '…' : title
+        commitLines([{
+          id: `prev-session-${match.session_id}`,
+          kind: 'system',
+          text: `  previous session: ${tag}${short} · /resume ${match.session_id.slice(0, 8)}`,
+        }])
+      }
+    }
     if (result.exit) { cleanup(); process.exit(0) }
     if (result.resumeSession) await resumeSession(result.resumeSession)
     if (result.systemLines.length > 0) commitLines(result.systemLines)
@@ -873,15 +906,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       sessionId = null
       appState = { ...createInitialState(appState.model, agent.cwd), verbose: appState.verbose }
       commitLines([{ id: 'sys-new', kind: 'system', text: '  New session started.' }])
-    } else if (name === '/compact') {
-      try {
-        const outcome = await agent.submit('/clear', sessionId ?? undefined)
-        if (outcome.kind === 'command') {
-          commitLines([{ id: 'sys-compact', kind: 'system', text: `  ${outcome.message}` }])
-        }
-      } catch (err: any) {
-        commitLines([{ id: 'sys-compact-err', kind: 'system', text: chalk.red(`  Compact failed: ${err?.message ?? err}`) }])
-      }
     } else if (name === '/goto') {
       if (!args) {
         commitLines([{ id: 'sys-goto', kind: 'system', text: '  Usage: /goto <message_number>' }])

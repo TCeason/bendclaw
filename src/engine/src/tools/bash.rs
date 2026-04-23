@@ -252,6 +252,7 @@ impl AgentTool for BashTool {
             cmd.envs(self.envs.iter().map(|(k, v)| (k, v)));
         }
 
+        cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
