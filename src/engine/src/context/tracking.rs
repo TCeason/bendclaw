@@ -152,6 +152,11 @@ pub struct ContextConfig {
     pub keep_first: usize,
     /// Max lines to keep per tool output in Level 1 compaction
     pub tool_output_max_lines: usize,
+    /// L1 collapse target as percentage of budget (0–100).
+    /// When context exceeds this fraction of the budget, L1 starts
+    /// summarizing old turns. Set to 100 to disable early collapse
+    /// (original behavior). Default: 92.
+    pub l1_target_pct: u8,
 }
 
 impl Default for ContextConfig {
@@ -162,6 +167,7 @@ impl Default for ContextConfig {
             keep_recent: 10,
             keep_first: 2,
             tool_output_max_lines: 50,
+            l1_target_pct: 92,
         }
     }
 }

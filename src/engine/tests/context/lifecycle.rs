@@ -41,6 +41,7 @@ fn lifecycle_clears_current_run_after_user_message() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -94,6 +95,7 @@ fn lifecycle_preserves_current_run_without_user_after() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -147,6 +149,7 @@ fn lifecycle_does_not_affect_normal_retention() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -224,6 +227,7 @@ fn lifecycle_clears_multiple_current_run_results() {
         keep_recent: 20,
         keep_first: 2,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);

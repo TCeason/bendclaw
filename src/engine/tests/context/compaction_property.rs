@@ -28,6 +28,7 @@ fn arb_config() -> impl Strategy<Value = ContextConfig> {
             keep_recent: recent,
             keep_first: first,
             tool_output_max_lines: max_lines,
+            ..Default::default()
         })
 }
 
@@ -66,7 +67,7 @@ proptest! {
             system_prompt_tokens: 0,
             keep_recent: 100,
             keep_first: 100,
-            tool_output_max_lines: 1000,
+            tool_output_max_lines: 1000, ..Default::default()
         };
         let original_len = messages.len();
         let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -249,6 +250,7 @@ fn keep_within_budget_preserves_first_user_message() {
         keep_recent: 100,
         keep_first: 2,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
     let budget_state = CompactionBudgetState::from_messages(&messages);
     let result = compact_messages(messages, &config, &budget_state);
@@ -286,6 +288,7 @@ fn keep_within_budget_prefers_user_over_tool_result() {
         keep_recent: 100,
         keep_first: 2,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
     let budget_state = CompactionBudgetState::from_messages(&messages);
     let result = compact_messages(messages, &config, &budget_state);
@@ -323,6 +326,7 @@ fn huge_tool_result_does_not_erase_task_goal() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
     let budget_state = CompactionBudgetState::from_messages(&messages);
     let result = compact_messages(messages, &config, &budget_state);
@@ -373,6 +377,7 @@ fn keep_first_preserves_multiple_leading_messages() {
         keep_recent: 1,
         keep_first: 3,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
     let budget_state = CompactionBudgetState::from_messages(&messages);
     let result = compact_messages(messages, &config, &budget_state);
@@ -432,6 +437,7 @@ fn keep_first_one_only_protects_first_message() {
         keep_recent: 1,
         keep_first: 1,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
     let budget_state = CompactionBudgetState::from_messages(&messages);
     let result = compact_messages(messages, &config, &budget_state);

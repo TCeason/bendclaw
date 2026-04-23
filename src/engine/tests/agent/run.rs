@@ -1533,6 +1533,7 @@ async fn test_default_compaction_matches_compact_messages() {
         keep_recent: 5,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -1599,6 +1600,7 @@ async fn test_custom_compaction_strategy_is_called() {
             keep_recent: 1,
             keep_first: 1,
             tool_output_max_lines: 10,
+            ..Default::default()
         }),
         compaction_strategy: Some(std::sync::Arc::new(MarkerCompaction)),
         execution_limits: None,
@@ -1675,6 +1677,7 @@ async fn test_none_compaction_strategy_uses_default() {
             keep_recent: 1,
             keep_first: 1,
             tool_output_max_lines: 10,
+            ..Default::default()
         }),
         compaction_strategy: None, // Should fall back to DefaultCompaction
         execution_limits: None,
@@ -1746,6 +1749,7 @@ async fn test_compaction_events_emitted_when_context_exceeds_budget() {
             keep_recent: 4,
             keep_first: 2,
             tool_output_max_lines: 20,
+            ..Default::default()
         })
         .retry_policy(evotengine::RetryPolicy::disabled())
         .run("hello")
@@ -1795,6 +1799,7 @@ async fn test_compaction_noop_when_within_budget() {
             keep_recent: 10,
             keep_first: 2,
             tool_output_max_lines: 50,
+            ..Default::default()
         })
         .retry_policy(evotengine::RetryPolicy::disabled())
         .run("hi")
@@ -1841,6 +1846,7 @@ async fn test_llm_call_start_carries_budget_and_window() {
             keep_recent: 10,
             keep_first: 2,
             tool_output_max_lines: 50,
+            ..Default::default()
         })
         .retry_policy(evotengine::RetryPolicy::disabled())
         .run("hi")

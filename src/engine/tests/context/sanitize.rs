@@ -208,6 +208,7 @@ fn test_compact_level2_no_orphans() {
         keep_recent: 2,
         keep_first: 1,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -232,6 +233,7 @@ fn test_compact_level3_no_orphans() {
         keep_recent: 3,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);

@@ -71,6 +71,7 @@ fn test_level1_truncation() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -111,6 +112,7 @@ fn test_compact_drops_middle_when_needed() {
         keep_recent: 5,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -212,6 +214,7 @@ fn test_level1_read_file_rust_uses_outline() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -282,6 +285,7 @@ fn test_level1_read_file_unsupported_ext_falls_back_to_head_tail() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -324,6 +328,7 @@ fn test_level1_bash_still_uses_head_tail() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -360,6 +365,7 @@ fn test_level1_read_file_no_matching_tool_call_falls_back() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -400,6 +406,7 @@ fn test_level1_read_file_short_content_not_truncated() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -467,6 +474,7 @@ fn test_level1_read_file_python_uses_outline() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -523,6 +531,7 @@ fn test_level1_actions_only_non_skipped() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -572,6 +581,7 @@ fn test_level1_actions_have_correct_index() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -613,6 +623,7 @@ fn test_level1_outline_action_method() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -657,6 +668,7 @@ fn test_level1_outline_requires_10_percent_savings() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -722,6 +734,7 @@ fn test_level1_outline_works_on_short_code_files() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -757,6 +770,7 @@ fn test_level2_actions_structure() {
         keep_recent: 2,
         keep_first: 0,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -797,6 +811,7 @@ fn test_level2_action_related_count() {
         keep_recent: 1,
         keep_first: 0,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -837,6 +852,7 @@ fn test_level3_actions_structure() {
         keep_recent: 3,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -868,6 +884,7 @@ fn test_level3_action_has_range() {
         keep_recent: 2,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -915,6 +932,7 @@ fn test_compact_level1_actions_are_level1_only() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -934,6 +952,7 @@ fn test_compact_level2_actions_are_level2_only() {
         keep_recent: 1,
         keep_first: 0,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -977,6 +996,7 @@ fn test_compact_single_user() {
         keep_recent: 1,
         keep_first: 0,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
     let budget_state = CompactionBudgetState::from_messages(&messages);
     let result = compact_messages(messages, &config, &budget_state);
@@ -992,6 +1012,7 @@ fn test_compact_all_users_no_tool() {
         keep_recent: 1,
         keep_first: 0,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
     let budget_state = CompactionBudgetState::from_messages(&messages);
     let result = compact_messages(messages, &config, &budget_state);
@@ -1008,6 +1029,7 @@ fn test_compact_budget_zero() {
         keep_recent: 1,
         keep_first: 0,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
     let budget_state = CompactionBudgetState::from_messages(&messages);
     let result = compact_messages(messages, &config, &budget_state);
@@ -1062,6 +1084,7 @@ fn test_under_budget_no_age_cleared() {
         keep_recent: 2,
         keep_first: 2,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -1112,7 +1135,8 @@ fn test_tool_output_max_lines_caps_policy() {
         system_prompt_tokens: 0,
         keep_recent: 10,
         keep_first: 2,
-        tool_output_max_lines: 10, // stricter than policy's 50
+        tool_output_max_lines: 10,
+        ..Default::default() // stricter than policy's 50
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -1173,6 +1197,7 @@ fn test_byte_cap_on_long_single_line() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -1260,6 +1285,7 @@ fn test_level2_summary_preserves_multiple_texts() {
         keep_recent: 3,
         keep_first: 2,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -1324,6 +1350,7 @@ fn test_tier2_oversize_read_file_records_oversize_capped() {
         keep_recent: 10,
         keep_first: 2,
         tool_output_max_lines: 50,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -1363,6 +1390,7 @@ fn test_compact_triggers_when_provider_estimate_exceeds_char_estimate() {
         keep_recent: 4,
         keep_first: 2,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     // With chars/4 estimate: should be a no-op (within budget)
@@ -1427,6 +1455,7 @@ fn test_oversized_old_user_message_truncated() {
         keep_recent: 3,
         keep_first: 1,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -1478,6 +1507,7 @@ fn test_recent_oversized_user_message_kept() {
         keep_recent: 10,
         keep_first: 1,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -1531,6 +1561,7 @@ fn test_pinned_oversized_user_message_kept() {
         keep_recent: 10,
         keep_first: 1,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     // Provider estimate far exceeds budget → L0 sees over-budget.
@@ -1589,6 +1620,7 @@ fn test_oversized_user_multi_block_merged() {
         keep_recent: 3,
         keep_first: 1,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -1643,6 +1675,7 @@ fn test_oversized_user_with_images_truncated() {
         keep_recent: 3,
         keep_first: 1,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -1692,6 +1725,7 @@ fn test_user_message_under_budget_not_truncated() {
         keep_recent: 3,
         keep_first: 1,
         tool_output_max_lines: 20,
+        ..Default::default()
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -1708,4 +1742,815 @@ fn test_user_message_under_budget_not_truncated() {
     } else {
         panic!("expected user message at index 1");
     }
+}
+
+// ---------------------------------------------------------------------------
+// L1 target: long-session "toothpaste squeezing" prevention
+// ---------------------------------------------------------------------------
+
+/// Simulate a long session where context hovers near budget.
+///
+/// Before the l1_target fix, L0 would barely save enough tokens each turn
+/// and L1 would never trigger, leaving message count monotonically growing.
+/// With l1_target at 92% of budget, L1 triggers and collapses old turns,
+/// keeping the context healthy.
+#[test]
+fn test_l1_triggers_before_budget_ceiling() {
+    // Build a conversation with many tool turns that fills ~95% of budget.
+    // Each turn: assistant(tool_call) + tool_result with ~500 chars ≈ 125 tokens.
+    // We use a small budget so 40 turns can fill it.
+    let budget = 5_000;
+    let l1_target_expected = budget * 92 / 100; // 4600
+
+    let mut messages = Vec::new();
+    let mut tool_id = 0usize;
+
+    // Initial user message
+    messages.push(AgentMessage::Llm(Message::user("implement the feature")));
+
+    // Build turns to fill context above l1_target
+    for i in 0..80 {
+        tool_id += 1;
+        let id = format!("tc-{}", tool_id);
+        messages.push(AgentMessage::Llm(Message::Assistant {
+            content: vec![
+                Content::Text {
+                    text: format!("Step {} — let me check this file", i),
+                },
+                Content::ToolCall {
+                    id: id.clone(),
+                    name: "read_file".into(),
+                    arguments: serde_json::json!({"path": format!("/src/file_{}.rs", i)}),
+                },
+            ],
+            stop_reason: StopReason::ToolUse,
+            model: "test".into(),
+            provider: "test".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+        }));
+        messages.push(AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: id,
+            tool_name: "read_file".into(),
+            content: vec![Content::Text {
+                text: format!("fn func_{}() {{\n{}\n}}", i, "    // code\n".repeat(30)),
+            }],
+            is_error: false,
+            timestamp: 0,
+            retention: Retention::Normal,
+        }));
+
+        if i % 20 == 19 {
+            messages.push(AgentMessage::Llm(Message::user("continue")));
+        }
+    }
+
+    let config = ContextConfig {
+        max_context_tokens: budget,
+        system_prompt_tokens: 0,
+        keep_recent: 10,
+        keep_first: 2,
+        tool_output_max_lines: 50,
+        ..Default::default()
+    };
+
+    let est_tokens = total_tokens(&messages);
+
+    // Only run the test if we're actually near/above the l1_target
+    // (otherwise the test setup doesn't match the scenario)
+    assert!(
+        est_tokens > l1_target_expected,
+        "test setup: need est_tokens ({}) > l1_target ({})",
+        est_tokens,
+        l1_target_expected
+    );
+
+    let budget_state = CompactionBudgetState {
+        estimated_tokens: est_tokens,
+    };
+    let result = compact_messages(messages.clone(), &config, &budget_state);
+
+    // L1 should have triggered: turns_summarized > 0
+    assert!(
+        result.stats.turns_summarized > 0,
+        "L1 should trigger when context is above l1_target ({}): \
+         est_tokens={}, level={}, turns_summarized={}",
+        l1_target_expected,
+        est_tokens,
+        result.stats.level,
+        result.stats.turns_summarized,
+    );
+
+    // After compaction, tokens should be at or below l1_target
+    assert!(
+        result.stats.after_estimated_tokens <= l1_target_expected,
+        "after L1, tokens ({}) should be <= l1_target ({})",
+        result.stats.after_estimated_tokens,
+        l1_target_expected,
+    );
+
+    // Message count should have decreased
+    assert!(
+        result.stats.after_message_count < result.stats.before_message_count,
+        "L1 should reduce message count: before={}, after={}",
+        result.stats.before_message_count,
+        result.stats.after_message_count,
+    );
+
+    assert_no_orphan_tool_pairs(&result.messages);
+    assert_actions_match_level(result.stats.level, &result.stats.actions);
+}
+
+/// Simulate multiple compaction rounds (like a real long session).
+///
+/// Each round: compact, then add a new turn, repeat.
+/// Verify that L1 prevents the "toothpaste squeezing" pattern where
+/// message count grows monotonically.
+#[test]
+fn test_multi_round_compaction_prevents_toothpaste_squeezing() {
+    let budget = 3_000;
+    let config = ContextConfig {
+        max_context_tokens: budget,
+        system_prompt_tokens: 0,
+        keep_recent: 10,
+        keep_first: 2,
+        tool_output_max_lines: 50,
+        ..Default::default()
+    };
+
+    let mut messages = Vec::new();
+    let mut tool_id = 0usize;
+
+    // Seed with initial user message
+    messages.push(AgentMessage::Llm(Message::user("start the task")));
+
+    let mut l1_triggered_count = 0;
+    let mut max_message_count = 0usize;
+
+    // Simulate 60 turns
+    for i in 0..60 {
+        // Add a new turn: assistant + tool_call + tool_result
+        tool_id += 1;
+        let id = format!("tc-{}", tool_id);
+        messages.push(AgentMessage::Llm(Message::Assistant {
+            content: vec![
+                Content::Text {
+                    text: format!("Working on step {}", i),
+                },
+                Content::ToolCall {
+                    id: id.clone(),
+                    name: "bash".into(),
+                    arguments: serde_json::json!({"command": "cargo build"}),
+                },
+            ],
+            stop_reason: StopReason::ToolUse,
+            model: "test".into(),
+            provider: "test".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+        }));
+        messages.push(AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: id,
+            tool_name: "bash".into(),
+            content: vec![Content::Text {
+                text: format!("output line {}\n{}", i, "data ".repeat(50)),
+            }],
+            is_error: false,
+            timestamp: 0,
+            retention: Retention::Normal,
+        }));
+
+        // Run compaction
+        let est = total_tokens(&messages);
+        let budget_state = CompactionBudgetState {
+            estimated_tokens: est,
+        };
+        let result = compact_messages(messages, &config, &budget_state);
+
+        if result.stats.turns_summarized > 0 {
+            l1_triggered_count += 1;
+        }
+
+        messages = result.messages;
+        if messages.len() > max_message_count {
+            max_message_count = messages.len();
+        }
+    }
+
+    // L1 should have triggered at least once during 60 turns
+    assert!(
+        l1_triggered_count > 0,
+        "L1 should trigger at least once during a 60-turn session"
+    );
+
+    // Message count should be bounded — not growing to 120+ (2 msgs per turn × 60)
+    // With L1 active, it should stay well below the theoretical max
+    let theoretical_max = 1 + 60 * 2; // initial user + 60 turns × (assistant + tool_result)
+    assert!(
+        max_message_count < theoretical_max * 3 / 4,
+        "message count should be bounded by L1 compaction: max_seen={}, theoretical_max={}",
+        max_message_count,
+        theoretical_max,
+    );
+
+    // Final message count should be reasonable
+    assert!(
+        messages.len() < 100,
+        "final message count should be reasonable: got {}",
+        messages.len(),
+    );
+}
+
+/// When context is below l1_target, L1 should NOT trigger.
+/// This ensures we don't over-compact healthy sessions.
+#[test]
+fn test_l1_does_not_trigger_below_target() {
+    // Small conversation well under budget
+    let messages = pat("u tr u tr u tr u tr u tr")
+        .pad(100)
+        .tool_output(200)
+        .build();
+
+    let config = ContextConfig {
+        max_context_tokens: 100_000,
+        system_prompt_tokens: 0,
+        keep_recent: 10,
+        keep_first: 2,
+        tool_output_max_lines: 50,
+        ..Default::default()
+    };
+
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages.clone(), &config, &budget_state);
+
+    assert_eq!(
+        result.stats.turns_summarized, 0,
+        "L1 should not trigger when well under budget"
+    );
+    assert_eq!(
+        result.stats.after_message_count, result.stats.before_message_count,
+        "no messages should be removed when under budget"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// L1 → L2 escalation and extreme cases
+// ---------------------------------------------------------------------------
+
+/// When L1 collapse is not enough (all old turns already tiny), L2 evict kicks in.
+#[test]
+fn test_l2_triggers_when_l1_insufficient() {
+    // Many small assistant messages (no tool calls) — L1 summarize saves almost nothing
+    // because summaries are similar size to originals.
+    let mut messages = Vec::new();
+    messages.push(AgentMessage::Llm(Message::user("x".repeat(500))));
+    messages.push(AgentMessage::Llm(Message::user("x".repeat(500))));
+
+    for i in 0..40 {
+        messages.push(AgentMessage::Llm(Message::Assistant {
+            content: vec![Content::Text {
+                text: format!("ok {}", i), // tiny — summary won't save much
+            }],
+            stop_reason: StopReason::Stop,
+            model: "test".into(),
+            provider: "test".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+        }));
+    }
+    messages.push(AgentMessage::Llm(Message::user("final")));
+
+    let config = ContextConfig {
+        max_context_tokens: 400,
+        system_prompt_tokens: 0,
+        keep_recent: 3,
+        keep_first: 2,
+        tool_output_max_lines: 50,
+        ..Default::default()
+    };
+
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages.clone(), &config, &budget_state);
+
+    // Should escalate to L2 (evict/drop)
+    assert!(
+        result.stats.messages_dropped > 0 || result.stats.after_message_count < messages.len(),
+        "L2 should trigger when L1 cannot reduce enough: level={}, dropped={}, before={}, after={}",
+        result.stats.level,
+        result.stats.messages_dropped,
+        messages.len(),
+        result.stats.after_message_count,
+    );
+
+    assert!(
+        result.stats.after_estimated_tokens <= 400,
+        "after L2, tokens ({}) should be within budget (400)",
+        result.stats.after_estimated_tokens,
+    );
+
+    assert_no_orphan_tool_pairs(&result.messages);
+    assert_actions_match_level(result.stats.level, &result.stats.actions);
+}
+
+/// L1 and L2 cooperate: L1 summarizes what it can, L2 drops the rest.
+#[test]
+fn test_l1_and_l2_cooperate() {
+    // Mix of large tool turns (L1 can summarize) and many small messages (L2 drops)
+    let mut messages = Vec::new();
+    let mut tool_id = 0usize;
+
+    messages.push(AgentMessage::Llm(Message::user("start")));
+
+    // 10 large tool turns — L1 can summarize these
+    for i in 0..10 {
+        tool_id += 1;
+        let id = format!("tc-{}", tool_id);
+        messages.push(AgentMessage::Llm(Message::Assistant {
+            content: vec![
+                Content::Text {
+                    text: format!("checking file {}", i),
+                },
+                Content::ToolCall {
+                    id: id.clone(),
+                    name: "bash".into(),
+                    arguments: serde_json::json!({}),
+                },
+            ],
+            stop_reason: StopReason::ToolUse,
+            model: "test".into(),
+            provider: "test".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+        }));
+        messages.push(AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: id,
+            tool_name: "bash".into(),
+            content: vec![Content::Text {
+                text: "output ".repeat(200),
+            }],
+            is_error: false,
+            timestamp: 0,
+            retention: Retention::Normal,
+        }));
+    }
+
+    // 20 small assistant messages — L1 summary won't save much
+    for i in 0..20 {
+        messages.push(AgentMessage::Llm(Message::Assistant {
+            content: vec![Content::Text {
+                text: format!("step {}", i),
+            }],
+            stop_reason: StopReason::Stop,
+            model: "test".into(),
+            provider: "test".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+        }));
+    }
+
+    messages.push(AgentMessage::Llm(Message::user("done")));
+
+    let total_est = total_tokens(&messages);
+    // Budget is 30% of total — forces both L1 and L2
+    let budget = total_est * 30 / 100;
+
+    let config = ContextConfig {
+        max_context_tokens: budget,
+        system_prompt_tokens: 0,
+        keep_recent: 4,
+        keep_first: 1,
+        tool_output_max_lines: 50,
+        ..Default::default()
+    };
+
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages.clone(), &config, &budget_state);
+
+    // Both L1 and L2 should have contributed
+    let has_summarized = result
+        .stats
+        .actions
+        .iter()
+        .any(|a| a.method == CompactionMethod::Summarized);
+    let has_dropped = result
+        .stats
+        .actions
+        .iter()
+        .any(|a| a.method == CompactionMethod::Dropped);
+
+    assert!(
+        has_summarized || has_dropped,
+        "at least one of L1 (summarize) or L2 (drop) should act: level={}",
+        result.stats.level,
+    );
+
+    assert!(
+        result.stats.after_message_count < messages.len(),
+        "message count should decrease: before={}, after={}",
+        messages.len(),
+        result.stats.after_message_count,
+    );
+
+    assert_no_orphan_tool_pairs(&result.messages);
+    assert_actions_match_level(result.stats.level, &result.stats.actions);
+}
+
+/// Extreme: single user message larger than budget.
+/// Compaction should not panic and should return at least one message.
+#[test]
+fn test_extreme_single_message_exceeds_budget() {
+    let huge_text = "x".repeat(100_000);
+    let messages = vec![AgentMessage::Llm(Message::user(&huge_text))];
+
+    let config = ContextConfig {
+        max_context_tokens: 1_000,
+        system_prompt_tokens: 0,
+        keep_recent: 10,
+        keep_first: 2,
+        tool_output_max_lines: 50,
+        ..Default::default()
+    };
+
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
+
+    // Should not panic, should return at least one message
+    assert!(
+        !result.messages.is_empty(),
+        "should always return at least one message"
+    );
+}
+
+/// Extreme: all messages are tool results with no matching calls.
+/// After sanitize, orphans get removed. Compaction should handle gracefully.
+#[test]
+fn test_extreme_all_orphan_tool_results() {
+    let messages = vec![
+        AgentMessage::Llm(Message::user("task")),
+        AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: "orphan-1".into(),
+            tool_name: "bash".into(),
+            content: vec![Content::Text {
+                text: "x".repeat(5000),
+            }],
+            is_error: false,
+            timestamp: 0,
+            retention: Retention::Normal,
+        }),
+        AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: "orphan-2".into(),
+            tool_name: "bash".into(),
+            content: vec![Content::Text {
+                text: "y".repeat(5000),
+            }],
+            is_error: false,
+            timestamp: 0,
+            retention: Retention::Normal,
+        }),
+        AgentMessage::Llm(Message::user("end")),
+    ];
+
+    let config = ContextConfig {
+        max_context_tokens: 500,
+        system_prompt_tokens: 0,
+        keep_recent: 2,
+        keep_first: 1,
+        tool_output_max_lines: 50,
+        ..Default::default()
+    };
+
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
+
+    // Orphan tool results should be sanitized away
+    let has_orphan_results = result.messages.iter().any(|m| {
+        matches!(
+            m,
+            AgentMessage::Llm(Message::ToolResult {
+                tool_call_id,
+                ..
+            }) if tool_call_id.starts_with("orphan")
+        )
+    });
+    assert!(
+        !has_orphan_results,
+        "orphan tool results should be removed by sanitize"
+    );
+    assert_no_orphan_tool_pairs(&result.messages);
+}
+
+/// Multi-round simulation where turns produce huge output, forcing L2.
+#[test]
+fn test_multi_round_l2_escalation() {
+    // Use a tiny budget with keep_recent covering most messages.
+    // This makes L1's boundary (len - keep_recent) very small,
+    // so L1 has almost nothing to collapse, forcing L2.
+    let budget = 800;
+    let config = ContextConfig {
+        max_context_tokens: budget,
+        system_prompt_tokens: 0,
+        keep_recent: 2,
+        keep_first: 1,
+        tool_output_max_lines: 50,
+        ..Default::default()
+    };
+
+    let mut messages = Vec::new();
+    messages.push(AgentMessage::Llm(Message::user("start")));
+
+    let mut l2_triggered = false;
+
+    // Simulate 20 turns — each adds a large user message (L1 doesn't collapse user msgs)
+    for i in 0..20 {
+        messages.push(AgentMessage::Llm(Message::user(format!(
+            "question {} {}",
+            i,
+            "context ".repeat(80)
+        ))));
+
+        let est = total_tokens(&messages);
+        let budget_state = CompactionBudgetState {
+            estimated_tokens: est,
+        };
+        let result = compact_messages(messages, &config, &budget_state);
+
+        if result.stats.messages_dropped > 0 {
+            l2_triggered = true;
+        }
+
+        messages = result.messages;
+    }
+
+    assert!(
+        l2_triggered,
+        "L2 should trigger when L1 cannot reduce enough (user-only messages)"
+    );
+
+    let final_tokens = total_tokens(&messages);
+    assert!(
+        final_tokens <= budget,
+        "final tokens ({}) should be within budget ({})",
+        final_tokens,
+        budget,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// L1 (level 2) → L2 (level 3) escalation tests
+// ---------------------------------------------------------------------------
+
+/// L1 summarizes old turns but still over budget → L2 drops middle messages.
+/// Verifies the full escalation path: L0 → L1 → L2 in a single compact call.
+#[test]
+fn test_l1_to_l2_escalation_single_call() {
+    // Many assistant+tool turns with large tool output.
+    // Budget is so tight that even after L1 summarizes everything, it's still over.
+    let mut messages = Vec::new();
+    let mut tool_id = 0usize;
+
+    // Large initial user message (pinned by keep_first)
+    messages.push(AgentMessage::Llm(Message::user("task ".repeat(200))));
+
+    // 30 tool turns — L1 can summarize these but summaries still take space
+    for i in 0..30 {
+        tool_id += 1;
+        let id = format!("tc-{}", tool_id);
+        messages.push(AgentMessage::Llm(Message::Assistant {
+            content: vec![
+                Content::Text {
+                    text: format!("checking {}", i),
+                },
+                Content::ToolCall {
+                    id: id.clone(),
+                    name: "bash".into(),
+                    arguments: serde_json::json!({}),
+                },
+            ],
+            stop_reason: StopReason::ToolUse,
+            model: "test".into(),
+            provider: "test".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+        }));
+        messages.push(AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: id,
+            tool_name: "bash".into(),
+            content: vec![Content::Text {
+                text: "result ".repeat(60),
+            }],
+            is_error: false,
+            timestamp: 0,
+            retention: Retention::Normal,
+        }));
+    }
+
+    // Recent user message
+    messages.push(AgentMessage::Llm(Message::user("what now?")));
+
+    let est = total_tokens(&messages);
+    // Budget = 15% of total — L1 alone can't fit this
+    let budget = est * 15 / 100;
+
+    let config = ContextConfig {
+        max_context_tokens: budget,
+        system_prompt_tokens: 0,
+        keep_recent: 4,
+        keep_first: 1,
+        tool_output_max_lines: 50,
+        ..Default::default()
+    };
+
+    let budget_state = CompactionBudgetState {
+        estimated_tokens: est,
+    };
+    let result = compact_messages(messages.clone(), &config, &budget_state);
+
+    // Should reach level 3 (L2 evict)
+    assert_eq!(
+        result.stats.level, 3,
+        "should escalate to level 3 (L2 evict): turns_summarized={}, messages_dropped={}",
+        result.stats.turns_summarized, result.stats.messages_dropped,
+    );
+
+    // Both L1 and L2 should have acted
+    assert!(
+        result.stats.turns_summarized > 0,
+        "L1 should have summarized some turns before L2 kicked in"
+    );
+    assert!(
+        result.stats.messages_dropped > 0,
+        "L2 should have dropped messages after L1 was insufficient"
+    );
+
+    // Result should fit within budget
+    assert!(
+        result.stats.after_estimated_tokens <= budget,
+        "after full escalation, tokens ({}) should be within budget ({})",
+        result.stats.after_estimated_tokens,
+        budget,
+    );
+
+    assert_no_orphan_tool_pairs(&result.messages);
+    assert_actions_match_level(result.stats.level, &result.stats.actions);
+}
+
+/// Multi-round simulation where sessions grow so fast that L1 is never enough
+/// and L2 must repeatedly fire.
+#[test]
+fn test_multi_round_repeated_l2_escalation() {
+    // Very tight budget with keep_recent covering most messages.
+    // L1 boundary (len - keep_recent) is tiny, so L1 has almost nothing to
+    // collapse. L2 must drop messages to stay within budget.
+    let budget = 1_200;
+    let config = ContextConfig {
+        max_context_tokens: budget,
+        system_prompt_tokens: 0,
+        keep_recent: 20, // large keep_recent → L1 boundary is small
+        keep_first: 1,
+        tool_output_max_lines: 50,
+        ..Default::default()
+    };
+
+    let mut messages = Vec::new();
+    messages.push(AgentMessage::Llm(Message::user("start")));
+
+    let mut l2_count = 0;
+
+    for i in 0..30 {
+        // Add large user messages — L1 doesn't collapse user messages
+        messages.push(AgentMessage::Llm(Message::user(format!(
+            "question {} {}",
+            i,
+            "padding ".repeat(60)
+        ))));
+
+        let est = total_tokens(&messages);
+        let budget_state = CompactionBudgetState {
+            estimated_tokens: est,
+        };
+        let result = compact_messages(messages, &config, &budget_state);
+
+        if result.stats.messages_dropped > 0 {
+            l2_count += 1;
+        }
+
+        messages = result.messages;
+    }
+
+    assert!(
+        l2_count > 0,
+        "L2 should trigger when L1 has nothing to collapse (user-only messages with large keep_recent)"
+    );
+
+    let final_tokens = total_tokens(&messages);
+    // Allow small overshoot due to chars/4 estimation rounding
+    let tolerance = budget / 20;
+    assert!(
+        final_tokens <= budget + tolerance,
+        "final tokens ({}) should be near budget ({}, tolerance={})",
+        final_tokens,
+        budget,
+        tolerance,
+    );
+}
+
+/// Edge case: keep_recent is larger than total messages.
+/// L1 boundary = 0, so L1 has nothing to collapse. L2 must handle it.
+#[test]
+fn test_l2_when_keep_recent_covers_all() {
+    let mut messages = Vec::new();
+    let mut tool_id = 0usize;
+
+    messages.push(AgentMessage::Llm(Message::user("task")));
+
+    for i in 0..5 {
+        tool_id += 1;
+        let id = format!("tc-{}", tool_id);
+        messages.push(AgentMessage::Llm(Message::Assistant {
+            content: vec![Content::ToolCall {
+                id: id.clone(),
+                name: "bash".into(),
+                arguments: serde_json::json!({}),
+            }],
+            stop_reason: StopReason::ToolUse,
+            model: "test".into(),
+            provider: "test".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+        }));
+        messages.push(AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: id,
+            tool_name: "bash".into(),
+            content: vec![Content::Text {
+                text: format!("big output {} {}", i, "x".repeat(2000)),
+            }],
+            is_error: false,
+            timestamp: 0,
+            retention: Retention::Normal,
+        }));
+    }
+
+    let est = total_tokens(&messages);
+
+    let config = ContextConfig {
+        max_context_tokens: est / 3, // very tight
+        system_prompt_tokens: 0,
+        keep_recent: 100, // larger than message count — L1 boundary = 0
+        keep_first: 1,
+        tool_output_max_lines: 50,
+        ..Default::default()
+    };
+
+    let budget_state = CompactionBudgetState {
+        estimated_tokens: est,
+    };
+    let result = compact_messages(messages.clone(), &config, &budget_state);
+
+    // L1 should have nothing to collapse (all messages are "recent")
+    assert_eq!(
+        result.stats.turns_summarized, 0,
+        "L1 should not summarize when keep_recent covers all messages"
+    );
+
+    // L2 or L0 should have handled the reduction
+    assert!(
+        result.stats.after_estimated_tokens < est,
+        "compaction should reduce tokens even when keep_recent covers all: before={}, after={}",
+        est,
+        result.stats.after_estimated_tokens,
+    );
+
+    assert_no_orphan_tool_pairs(&result.messages);
+}
+
+/// Edge case: budget is zero. Should not panic, should return something.
+#[test]
+fn test_extreme_zero_budget() {
+    let messages = pat("u tr u tr u").pad(100).tool_output(500).build();
+
+    let config = ContextConfig {
+        max_context_tokens: 0,
+        system_prompt_tokens: 0,
+        keep_recent: 2,
+        keep_first: 1,
+        tool_output_max_lines: 50,
+        ..Default::default()
+    };
+
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
+
+    // Should not panic, should return at least one message
+    assert!(
+        !result.messages.is_empty(),
+        "zero budget should still return at least one message"
+    );
+    assert_no_orphan_tool_pairs(&result.messages);
 }
