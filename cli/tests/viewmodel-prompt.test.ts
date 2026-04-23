@@ -82,7 +82,7 @@ describe('buildPromptBlocks', () => {
   test('shows [log] when logMode', () => {
     const result = renderPlain(defaultInput({ logMode: true }))
     expect(result).toContain('[log]')
-    expect(result).toContain('/done to exit')
+    expect(result).toContain('Esc to exit')
   })
 
   test('shows exit hint', () => {

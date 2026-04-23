@@ -78,7 +78,7 @@ function buildFooter(input: PromptVMInput): ViewBlock {
   const leftSpans: StyledSpan[] = []
   if (input.logMode) {
     leftSpans.push(colored('[log]', 'magenta', { bold: true }))
-    leftSpans.push(dim(' /done to exit'))
+    leftSpans.push(dim(' Esc to exit'))
   }
   if (input.planning) {
     if (leftSpans.length > 0) leftSpans.push(plain('  '))

@@ -570,6 +570,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       } else if (!isEditorEmpty(editor)) {
         editor = clearEditor(editor)
         renderStatus()
+      } else if (logMode) {
+        logMode = null
+        commitLines([{ id: 'sys-log-exit', kind: 'system', text: '  [log mode] exited' }])
+        renderStatus()
       }
       return
     }
@@ -1219,7 +1223,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       try {
         const forked = agent.fork(systemPrompt)
         logMode = forked
-        commitLines([{ id: 'sys-log-mode', kind: 'system', text: `  [log mode] analyzing: ${logPath}\n  not persisted. type /done to return.` }])
+        commitLines([{ id: 'sys-log-mode', kind: 'system', text: `  [log mode] analyzing: ${logPath}\n  not persisted. press Esc to exit.` }])
         renderStatus()
         await runLogQuery(forked, query)
       } catch (err: any) {
