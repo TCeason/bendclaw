@@ -959,10 +959,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       if (models.length > 1) {
         overlay = {
           kind: 'selector',
-          state: createSelectorState('Select model', models.map(m => ({
-            label: m,
-            detail: m === agent.model ? '(current)' : undefined,
-          }))),
+          state: {
+            ...createSelectorState('Select model', models.map(m => ({
+              label: m,
+              detail: m === agent.model ? '(current)' : undefined,
+            }))),
+            focusIndex: Math.max(0, models.indexOf(agent.model)),
+          },
         }
       } else {
         commitLines([{ id: 'sys-m', kind: 'system', text: '  Only one model available.' }])
