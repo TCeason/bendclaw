@@ -3,6 +3,9 @@ extern crate napi_build;
 fn main() {
     napi_build::setup();
 
+    // Re-run build script when EVOT_VERSION changes (otherwise Cargo caches the old value).
+    println!("cargo:rerun-if-env-changed=EVOT_VERSION");
+
     // Version injection: prefer EVOT_VERSION env var (set by CI), fallback to CARGO_PKG_VERSION.
     if let Ok(version) = std::env::var("EVOT_VERSION") {
         println!("cargo:rustc-env=EVOT_VERSION={version}");
