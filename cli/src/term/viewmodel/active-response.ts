@@ -53,11 +53,14 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
       .slice(-MAX_PROGRESS_LINES)
       .map(l => l.length > MAX_PROGRESS_LINE_WIDTH ? l.slice(0, MAX_PROGRESS_LINE_WIDTH - 1) + '…' : l)
     const styledLines: StyledLine[] = tail.map(l => line(dim(`  ${l}`)))
+    while (styledLines.length < MAX_PROGRESS_LINES) {
+      styledLines.push(line(plain('')))
+    }
     // Show extra line count + expand hint
     const extraLines = Math.max(0, progLines.length - MAX_PROGRESS_LINES)
     if (extraLines > 0) {
       styledLines.push(line(dim(`  +${extraLines} lines  (ctrl+o to expand)`)))
-    } else if (progLines.length > 1) {
+    } else {
       styledLines.push(line(dim(`  (ctrl+o to expand)`)))
     }
     blocks.push(block(styledLines, 1))

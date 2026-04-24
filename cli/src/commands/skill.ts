@@ -23,17 +23,13 @@ export function skillList(): string {
   const entries = readdirSync(SKILLS_DIR).filter((name) => {
     const skillMd = join(SKILLS_DIR, name, 'SKILL.md')
     return existsSync(skillMd)
-  })
+  }).sort()
 
   if (entries.length === 0) return '  no skills installed'
 
-  const lines = entries.map((name) => {
-    const desc = extractDescription(join(SKILLS_DIR, name, 'SKILL.md'))
-    return desc && desc !== '(no description)'
-      ? `  ${name}  — ${desc}`
-      : `  ${name}`
-  })
-  return lines.join('\n')
+  return `\n  Skills:\n${entries
+    .map((name) => `  • [${name}] ${join(SKILLS_DIR, name)}`)
+    .join('\n')}`
 }
 
 // ---------------------------------------------------------------------------

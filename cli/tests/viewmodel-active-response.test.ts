@@ -52,11 +52,12 @@ describe('buildActiveResponseBlocks', () => {
     expect(result).toContain('output line 2')
   })
 
-  test('tool progress does not pad empty lines', () => {
+  test('tool progress pads to fixed height', () => {
     const result = renderPlain(defaultInput({ toolProgress: 'single line' }))
     const lines = result.split('\n')
-    const emptyLines = lines.filter(l => l.trim() === '').length
-    expect(emptyLines).toBeLessThanOrEqual(2) // block margins only, no padding
+    expect(lines).toContain('  single line')
+    expect(lines).toContain('  (ctrl+o to expand)')
+    expect(lines.length).toBeGreaterThanOrEqual(7) // margin + 5 progress rows + hint + spinner
   })
 
   test('shows Executing when tool phase', () => {
