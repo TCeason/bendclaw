@@ -466,14 +466,43 @@ export function renderMarkdown(text: string): string {
     const tokens = hasMarkdownSyntax(text)
       ? marked.lexer(text)
       : plainTextTokens(text)
-    return tokens
-      .map(t => formatToken(t))
-      .join('')
-      .replace(/\n{3,}/g, '\n\n')
-      .trimEnd()
+    return insertWordBoundaries(
+      tokens
+        .map(t => formatToken(t))
+        .join('')
+        .replace(/\n{3,}/g, '\n\n')
+        .trimEnd(),
+    )
   } catch {
     return text
   }
+}
+
+// ---------------------------------------------------------------------------
+// Word boundary insertion for CJK text
+// ---------------------------------------------------------------------------
+
+// CJK Unified Ideographs, CJK Extension A, CJK Compat Ideographs
+const CJK_IDEO = '[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]'
+const ASCII_RE = '[\x21-\x7e]'
+// CJK punctuation: CJK Symbols, Fullwidth punctuation, quotation marks, etc.
+const CJK_PUNCT = '[\u3001-\u3003\u3008-\u3011\u3014-\u301f\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65\u2018-\u201f\u2026\u2014\u3000\uff0c\uff0e]'
+const ZWSP = '\u200B'
+const CJK_TO_ASCII = new RegExp(`(${CJK_IDEO})(${ASCII_RE})`, 'g')
+const ASCII_TO_CJK = new RegExp(`(${ASCII_RE})(${CJK_IDEO})`, 'g')
+const CJK_PUNCT_RE = new RegExp(`(${CJK_PUNCT})`, 'g')
+const DOUBLE_ZWSP = /\u200B\u200B+/g
+
+/**
+ * Insert zero-width spaces at CJK / ASCII boundaries and around CJK
+ * punctuation so terminal double-click word selection stops correctly.
+ */
+export function insertWordBoundaries(s: string): string {
+  return s
+    .replace(ASCII_TO_CJK, `$1${ZWSP}$2`)
+    .replace(CJK_TO_ASCII, `$1${ZWSP}$2`)
+    .replace(CJK_PUNCT_RE, `${ZWSP}$1${ZWSP}`)
+    .replace(DOUBLE_ZWSP, ZWSP)
 }
 
 // ---------------------------------------------------------------------------

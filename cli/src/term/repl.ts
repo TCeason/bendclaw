@@ -1,24 +1,22 @@
 import { TermRenderer } from './renderer.js'
 import { parseInput, enableRawMode, type KeyEvent } from './input.js'
 import { installBracketedPaste } from './bracketed-paste.js'
-import { createSpinnerState, advanceSpinner, type SpinnerState } from './spinner.js'
-import { createSelectorState, selectorUp, selectorDown, selectorSelect, selectorType, selectorBackspace, selectorExpandItems, selectorClearQuery, selectorRemoveItem, type SelectorState } from './selector.js'
-import { createAskState, handleAskKeyEvent, type AskState, type AskQuestion } from './ask.js'
+import { createSpinnerState, advanceSpinner } from './spinner.js'
+import { createSelectorState, selectorExpandItems, selectorClearQuery } from './selector.js'
+import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
 import { buildUserMessage, buildAssistantLines, type OutputLine } from '../render/output.js'
-import { Agent, QueryStream, type SessionMeta, type SessionWithText, type ConfigInfo } from '../native/index.js'
+import { Agent, QueryStream, type SessionMeta, type ConfigInfo } from '../native/index.js'
 import { createInitialState, type AppState } from './app/state.js'
 import type { AskUserRequest } from './app/types.js'
 import { HistoryManager, parseHistoryItems } from '../session/history.js'
 import { ScreenLog } from '../session/screen-log.js'
 import { isSlashCommand, resolveCommand } from '../commands/index.js'
 import { renderBanner } from './banner.js'
-import { relativeTime, padRight } from '../render/format.js'
 import {
   buildOutputBlocks,
   buildActiveResponseBlocks,
   buildPromptBlocks,
   buildOverlayBlocks,
-  buildAskBlocks,
   blocksToLines,
   type OverlayState,
   type PromptVMInput,
@@ -73,11 +71,22 @@ import {
   stripImageRefs,
   deleteRefBackspace,
   skipRefOnMove,
-  snapCursor,
 } from './input/paste_refs.js'
-import { getImageFromClipboard, type ClipboardImage } from './input/clipboard_image.js'
+import { getImageFromClipboard } from './input/clipboard_image.js'
 import type { ContentBlock } from '../native/index.js'
 import { tryStartServer, formatUptime, type ServerState } from './app/server.js'
+import {
+  RESUME_SELECTOR_TITLE,
+  formatSessionItems,
+  formatSessionWithTextItems,
+  isResumeSelectorTitle,
+  isSessionIdPrefix,
+  resolveSessionByPrefix,
+  selectSessionPool,
+} from './app/resume.js'
+import { chooseBannerSessions, findPreviousSession, previousSessionLine } from './app/session-view.js'
+import { handleSelectorControl } from './app/selector-control.js'
+import { decideReplControl, type ReplControlAction } from './app/repl-control.js'
 
 const SPINNER_INTERVAL_MS = 100
 
@@ -150,8 +159,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let preloadedSessions: SessionMeta[] = []
   try { preloadedSessions = await agent.listSessions(20) } catch {}
 
-  const cwdSessions = preloadedSessions.filter(s => s.cwd === agent.cwd)
-  const bannerSessions = cwdSessions.length > 0 ? cwdSessions : preloadedSessions
+  const bannerSessions = chooseBannerSessions(preloadedSessions, agent.cwd)
 
   const bannerText = renderBanner(agent.model, agent.cwd, configInfo, bannerSessions, renderer.termCols, serverState)
   renderer.appendScroll(bannerText)
@@ -167,17 +175,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       commitLines([{ id: 'sys-resume-err', kind: 'system', text: chalk.red(`Session not found: ${opts.resumeSessionId}`) }])
     }
   } else {
-    const match = preloadedSessions.find((s) => s.cwd === agent.cwd)
-    if (match) {
-      const tag = match.source ? `[${match.source}] ` : ''
-      const title = match.title || '(untitled)'
-      const short = title.length > 40 ? title.slice(0, 39) + '…' : title
-      commitLines([{
-        id: `prev-session-${match.session_id}`,
-        kind: 'system',
-        text: `  previous session: ${tag}${short} · /resume ${match.session_id.slice(0, 8)}`,
-      }])
-    }
+    const match = findPreviousSession(preloadedSessions, agent.cwd)
+    if (match) commitLines([previousSessionLine(match)])
   }
 
   renderStatus()
@@ -493,155 +492,135 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   function handleKey(event: KeyEvent) {
-    if (event.type === 'ctrl' && event.key === 'c') {
-      if (isLoading && streamRef) {
-        streamRef.abort()
-        streamRef = null
-        isLoading = false
-        if (streamMachine) {
-          const flushed = flushStreaming(streamMachine)
-          if (flushed.lines.length > 0) commitLines(flushed.lines)
+    const actions = decideReplControl({
+      event,
+      overlay,
+      isLoading,
+      hasStream: streamRef !== null,
+      editor,
+      exitHint,
+      logMode: logMode !== null,
+    })
+
+    for (const action of actions) {
+      if (applyReplControlAction(action, event)) return
+    }
+  }
+
+  function applyReplControlAction(action: ReplControlAction, event: KeyEvent): boolean {
+    switch (action.kind) {
+      case 'interrupt':
+        interruptStream('sys-int', '  Interrupted.')
+        return true
+      case 'exit':
+        cleanup()
+        if (sessionId) {
+          process.stdout.write(`\n\x1b[90m${'─'.repeat(80)}\x1b[0m\n`)
+          process.stdout.write(`\x1b[90mResume: evot --resume ${sessionId}\x1b[0m\n\n`)
         }
-        streamMachine = null
-        stopSpinner()
-        commitLines([{ id: 'sys-int', kind: 'system', text: '  Interrupted.' }])
+        process.exit(0)
+      case 'show-exit-hint':
+        exitHint = true
         renderStatus()
-      } else if (isEditorEmpty(editor)) {
-        if (exitHint) {
-          cleanup()
-          if (sessionId) {
-            process.stdout.write(`\n\x1b[90m${'─'.repeat(80)}\x1b[0m\n`)
-            process.stdout.write(`\x1b[90mResume: evot --resume ${sessionId}\x1b[0m\n\n`)
-          }
-          process.exit(0)
-        } else {
-          exitHint = true
-          renderStatus()
-          if (exitHintTimer) clearTimeout(exitHintTimer)
-          exitHintTimer = setTimeout(() => { exitHint = false; renderStatus() }, 2000)
-        }
-      } else {
+        if (exitHintTimer) clearTimeout(exitHintTimer)
+        exitHintTimer = setTimeout(() => { exitHint = false; renderStatus() }, 2000)
+        return true
+      case 'clear-editor':
         editor = clearEditor(editor)
         renderStatus()
-      }
-      return
-    }
-
-    // Any non-Ctrl+C input cancels exit hint
-    if (exitHint && !(event.type === 'ctrl' && event.key === 'c')) {
-      exitHint = false
-    }
-
-    if (event.type === 'escape') {
-      if (overlay.kind !== 'none') {
-        if (overlay.kind === 'ask-user' && streamRef) {
-          streamRef.abort()
-          streamRef = null
-          overlay = { kind: 'none' }
-          isLoading = false
-          if (streamMachine) {
-            const flushed = flushStreaming(streamMachine)
-            if (flushed.lines.length > 0) commitLines(flushed.lines)
-          }
-          streamMachine = null
-          stopSpinner()
-          commitLines([{ id: 'sys-ask-cancel', kind: 'system', text: '  ⏺ Cancelled.' }])
-          renderStatus()
-          return
-        }
-        if (overlay.kind === 'selector' && overlay.state.query) {
-          overlay = { kind: 'selector', state: selectorClearQuery(overlay.state) }
-          renderStatus()
-          return
-        }
+        return true
+      case 'clear-exit-hint':
+        exitHint = false
+        return false
+      case 'cancel-ask':
+        overlay = { kind: 'none' }
+        interruptStream('sys-ask-cancel', '  ⏺ Cancelled.')
+        return true
+      case 'clear-selector-query':
+        if (overlay.kind === 'selector') overlay = { kind: 'selector', state: selectorClearQuery(overlay.state) }
+        renderStatus()
+        return true
+      case 'close-overlay':
         overlay = { kind: 'none' }
         renderStatus()
-        return
-      }
-      if (isLoading && streamRef) {
-        streamRef.abort()
-        streamRef = null
-        isLoading = false
-        if (streamMachine) {
-          const flushed = flushStreaming(streamMachine)
-          if (flushed.lines.length > 0) commitLines(flushed.lines)
-        }
-        streamMachine = null
-        stopSpinner()
-        commitLines([{ id: 'sys-int', kind: 'system', text: '  Interrupted.' }])
-        renderStatus()
-      } else if (!isEditorEmpty(editor)) {
-        editor = clearEditor(editor)
-        renderStatus()
-      } else if (logMode) {
+        return true
+      case 'exit-log-mode':
         logMode = null
         commitLines([{ id: 'sys-log-exit', kind: 'system', text: '  [log mode] exited' }])
         renderStatus()
-      }
-      return
+        return true
+      case 'selector-key':
+        handleSelectorKey(event)
+        return true
+      case 'ask-key':
+        handleAskKey(event)
+        return true
+      case 'loading-enter':
+        handleLoadingEnter()
+        return true
+      case 'loading-char':
+        if (event.type === 'char') {
+          editor = insertText(editor, event.char)
+          renderStatus()
+        }
+        return true
+      case 'loading-paste':
+        if (event.type === 'paste') {
+          insertPaste(event.text)
+          renderStatus()
+        }
+        return true
+      case 'normal-key':
+        handleNormalKey(event)
+        return true
     }
+  }
 
-    if (overlay.kind === 'help') {
-      overlay = { kind: 'none' }
+  function interruptStream(id: string, text: string) {
+    if (streamRef) {
+      streamRef.abort()
+      streamRef = null
+    }
+    isLoading = false
+    if (streamMachine) {
+      const flushed = flushStreaming(streamMachine)
+      if (flushed.lines.length > 0) commitLines(flushed.lines)
+    }
+    streamMachine = null
+    stopSpinner()
+    commitLines([{ id, kind: 'system', text }])
+    renderStatus()
+  }
+
+  function handleLoadingEnter() {
+    const expandedText = getExpandedText()
+    const displayText = getDisplayText()
+    const imageBlocks = buildImageContentBlocks()
+
+    const trimmed = (expandedText || '').trim()
+    if (trimmed === '/log') {
+      clearAll()
+      const logPath = screenLog.filePath
+      if (logPath) commitLines([{ id: 'sys-log', kind: 'system', text: `  Log: ${logPath}` }])
+      else commitLines([{ id: 'sys-log', kind: 'system', text: '  No active screen log.' }])
       renderStatus()
       return
     }
 
-    if (overlay.kind === 'selector') {
-      handleSelectorKey(event)
-      return
-    }
-
-    if (overlay.kind === 'ask-user') {
-      handleAskKey(event)
-      return
-    }
-
-    if (isLoading) {
-      if (event.type === 'enter') {
-        const expandedText = getExpandedText()
-        const displayText = getDisplayText()
-        const imageBlocks = buildImageContentBlocks()
-
-        // /log (no args) works during execution — show screen log path
-        const trimmed = (expandedText || '').trim()
-        if (trimmed === '/log') {
-          clearAll()
-          const logPath = screenLog.filePath
-          if (logPath) commitLines([{ id: 'sys-log', kind: 'system', text: `  Log: ${logPath}` }])
-          else commitLines([{ id: 'sys-log', kind: 'system', text: '  No active screen log.' }])
-          renderStatus()
-          return
-        }
-
-        // Allow text, images, or both
-        if ((expandedText || imageBlocks) && streamRef) {
-          if (imageBlocks) {
-            // Steer with images (as content blocks)
-            const contentJson = JSON.stringify(imageBlocks)
-            streamRef.steer('', contentJson)
-          } else {
-            // Steer with text only
-            streamRef.steer(expandedText)
-          }
-          commitLines(buildUserMessage(displayText))
-          clearAll()
-          renderStatus()
-        }
-        return
-      } else if (event.type === 'char') {
-        editor = insertText(editor, event.char)
-        renderStatus()
-        return
-      } else if (event.type === 'paste') {
-        insertPaste(event.text)
-        renderStatus()
-        return
+    if ((expandedText || imageBlocks) && streamRef) {
+      if (imageBlocks) {
+        const contentJson = JSON.stringify(imageBlocks)
+        streamRef.steer('', contentJson)
+      } else {
+        streamRef.steer(expandedText)
       }
-      // Fall through to normal key handling (backspace, arrows, etc.)
+      commitLines(buildUserMessage(displayText))
+      clearAll()
+      renderStatus()
     }
+  }
 
-    // --- Ctrl shortcuts ---
+  function handleNormalKey(event: KeyEvent) {
     if (event.type === 'ctrl') {
       switch (event.key) {
         case 'u':
@@ -873,22 +852,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       compactLines.length = 0
       expandedLines.length = 0
       try { preloadedSessions = await agent.listSessions(20) } catch {}
-      const cwdSessions2 = preloadedSessions.filter(s => s.cwd === agent.cwd)
-      const bannerSessions2 = cwdSessions2.length > 0 ? cwdSessions2 : preloadedSessions
+      const bannerSessions2 = chooseBannerSessions(preloadedSessions, agent.cwd)
       const banner = renderBanner(agent.model, agent.cwd, configInfo, bannerSessions2, renderer.termCols, serverState)
       renderer.appendScroll(banner)
-      // Show previous session hint (same as startup)
-      const match = preloadedSessions.find((s) => s.cwd === agent.cwd)
-      if (match) {
-        const tag = match.source ? `[${match.source}] ` : ''
-        const title = match.title || '(untitled)'
-        const short = title.length > 40 ? title.slice(0, 39) + '…' : title
-        commitLines([{
-          id: `prev-session-${match.session_id}`,
-          kind: 'system',
-          text: `  previous session: ${tag}${short} · /resume ${match.session_id.slice(0, 8)}`,
-        }])
-      }
+      const match = findPreviousSession(preloadedSessions, agent.cwd)
+      if (match) commitLines([previousSessionLine(match)])
     }
     if (result.exit) { cleanup(); process.exit(0) }
     if (result.resumeSession) await resumeSession(result.resumeSession)
@@ -970,14 +938,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       await handleLogCommand(args)
     } else if (name === '/resume') {
       try {
-        const isHexPrefix = args ? /^[0-9a-f]{1,36}$/i.test(args) : false
-        if (args && isHexPrefix) {
+        if (args && isSessionIdPrefix(args)) {
           const allSessions: SessionMeta[] = await agent.listSessions(0)
-          const match = allSessions.find(
-            (s) => s.session_id === args || s.session_id.startsWith(args)
-          )
-          if (match) {
-            await resumeSession(match)
+          const resolved = resolveSessionByPrefix(allSessions, args)
+          if (resolved.kind === 'matched') {
+            await resumeSession(resolved.session)
           } else {
             openResumeSelector(args)
           }
@@ -1009,31 +974,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     renderStatus()
   }
 
-  function formatSessionItems(sessions: SessionMeta[]): import('./selector.js').SelectorItem[] {
-    return sessions.map(s => {
-      const tag = s.source ? `[${s.source}] ` : ''
-      const title = padRight(tag + (s.title || '(untitled)'), 50)
-      const turns = padRight(s.turns ? `[${s.turns} turns]` : '', 12)
-      const time = relativeTime(s.updated_at)
-      const searchText = `${s.session_id} ${s.title} ${s.cwd} ${s.source} ${s.model}`
-      return { label: s.session_id.slice(0, 8), id: s.session_id, detail: `${title} ${turns} ${time}`, searchText }
-    })
-  }
-
-  function formatSessionWithTextItems(items: SessionWithText[]): import('./selector.js').SelectorItem[] {
-    return items.map(s => {
-      const tag = s.source ? `[${s.source}] ` : ''
-      const title = padRight(tag + (s.title || '(untitled)'), 50)
-      const turns = padRight(s.turns ? `[${s.turns} turns]` : '', 12)
-      const time = relativeTime(s.updated_at)
-      return { label: s.session_id.slice(0, 8), id: s.session_id, detail: `${title} ${turns} ${time}`, searchText: s.search_text }
-    })
-  }
-
   function openResumeSelector(initialQuery?: string) {
     agent.listSessions(0).then(allSessions => {
-      const cwdSessions = allSessions.filter(s => s.cwd === agent.cwd)
-      const pool = cwdSessions.length > 0 ? cwdSessions : allSessions
+      const pool = selectSessionPool(allSessions, agent.cwd)
       if (pool.length === 0) {
         commitLines([{ id: 'sys-r', kind: 'system', text: '  No sessions found' }])
         return
@@ -1042,13 +985,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const allMetaItems = formatSessionItems(pool)
       overlay = {
         kind: 'selector',
-        state: createSelectorState('Resume session  (^D delete)', metaItems, allMetaItems, initialQuery),
+        state: createSelectorState(RESUME_SELECTOR_TITLE, metaItems, allMetaItems, initialQuery),
       }
       renderStatus()
       agent.listSessionsWithText(0).then(allWithText => {
-        if (overlay.kind !== 'selector' || !overlay.state.title.startsWith('Resume session')) return
-        const cwdItems = allWithText.filter(s => s.cwd === agent.cwd)
-        const fullPool = cwdItems.length > 0 ? cwdItems : allWithText
+        if (overlay.kind !== 'selector' || !isResumeSelectorTitle(overlay.state.title)) return
+        const fullPool = selectSessionPool(allWithText, agent.cwd)
         const fullItems = formatSessionWithTextItems(fullPool)
         overlay = {
           kind: 'selector',
@@ -1310,78 +1252,52 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function handleSelectorKey(event: KeyEvent) {
     if (overlay.kind !== 'selector') return
-    let state = overlay.state
+    const action = handleSelectorControl(overlay.state, event)
 
-    switch (event.type) {
-      case 'up':
-        state = selectorUp(state)
-        break
-      case 'down':
-        state = selectorDown(state)
-        break
-      case 'char':
-        state = selectorType(state, event.char)
-        break
-      case 'backspace':
-        state = selectorBackspace(state)
-        break
-      case 'enter': {
-        const selected = selectorSelect(state)
-        overlay = { kind: 'none' }
-        if (selected) {
-          if (state.title.startsWith('Resume session')) {
-            // Resume by id prefix — works for both preloaded and search-hit sessions
-            handleSlashInput(`/resume ${selected.label}`)
-          } else if (state.title.startsWith('History')) {
-            // History selector result — goto for user, preview for assistant
-            if (selected.label !== '…') {
-              const role = (selected as any).role as string | undefined
-              if (role === 'assistant') {
-                // Preview assistant message content
-                const detail = selected.detail ?? ''
-                const text = detail.replace(/^\s*assistant\s+/, '')
-                commitLines([{ id: 'sys-hist-preview', kind: 'system', text: `  ${selected.label} assistant: ${text}` }])
-              } else {
-                const seq = selected.label.replace('#', '')
-                handleSlashInput(`/goto ${seq}`)
-              }
-            }
-          } else {
-            // Model selector result
-            agent.model = selected.label
-            syncProvider(agent, selected.label, configInfo)
-            appState = { ...appState, model: selected.label }
-            commitLines([{ id: 'sys-model', kind: 'system', text: `  Model → ${selected.label}` }])
-          }
-        }
+    switch (action.kind) {
+      case 'update':
+        overlay = { kind: 'selector', state: action.state }
         renderStatus()
         return
-      }
-      case 'escape':
+      case 'close':
         overlay = { kind: 'none' }
         renderStatus()
         return
-      case 'delete':
-      case 'ctrl': {
-        if (event.type === 'ctrl' && event.key !== 'd') break
-        if (!state.title.startsWith('Resume session')) break
-        const target = selectorSelect(state)
-        if (!target || !target.id) break
-        const sessionId = target.id
-        state = selectorRemoveItem(state, state.focusIndex)
-        agent.deleteSession(sessionId).then(ok => {
+      case 'resume':
+        overlay = { kind: 'none' }
+        handleSlashInput(`/resume ${action.sessionPrefix}`)
+        renderStatus()
+        return
+      case 'history-goto':
+        overlay = { kind: 'none' }
+        handleSlashInput(`/goto ${action.seq}`)
+        renderStatus()
+        return
+      case 'history-preview':
+        overlay = { kind: 'none' }
+        commitLines([{ id: 'sys-hist-preview', kind: 'system', text: `  ${action.label} assistant: ${action.text}` }])
+        renderStatus()
+        return
+      case 'select-model':
+        overlay = { kind: 'none' }
+        agent.model = action.model
+        syncProvider(agent, action.model, configInfo)
+        appState = { ...appState, model: action.model }
+        commitLines([{ id: 'sys-model', kind: 'system', text: `  Model → ${action.model}` }])
+        renderStatus()
+        return
+      case 'delete-session':
+        overlay = { kind: 'selector', state: action.state }
+        agent.deleteSession(action.sessionId).then(ok => {
           if (ok) {
-            commitLines([{ id: 'sys-del', kind: 'system', text: `  Deleted session ${target.label}` }])
+            commitLines([{ id: 'sys-del', kind: 'system', text: `  Deleted session ${action.label}` }])
           }
         })
-        break
-      }
-      default:
-        break
+        renderStatus()
+        return
+      case 'none':
+        return
     }
-
-    overlay = { kind: 'selector', state }
-    renderStatus()
   }
 
   function handleAskKey(event: KeyEvent) {
