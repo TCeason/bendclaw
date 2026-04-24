@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { padRight, relativeTime } from '../src/render/format.js'
+import { padRight, relativeTime, renderPositionBar } from '../src/render/format.js'
 
 describe('padRight', () => {
   test('pads short string with spaces', () => {
@@ -24,6 +24,14 @@ describe('padRight', () => {
 
   test('handles n=1 with long string', () => {
     expect(padRight('hello', 1)).toBe('…')
+  })
+})
+
+describe('renderPositionBar', () => {
+  test('keeps unchanged marker consistent for L3', () => {
+    const { bar, legend } = renderPositionBar(10, [{ index: 2, end_index: 4, method: 'Dropped' }], 3)
+    expect(bar).toBe('[··DDD·····]')
+    expect(legend).toBe('·=unchanged/kept  D=Dropped')
   })
 })
 

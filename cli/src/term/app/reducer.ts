@@ -386,6 +386,8 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
           : []
 
         const { bar: posBar, legend } = renderPositionBar(beforeMsgs, sorted, level)
+        const deltaMsgs = beforeMsgs - afterMsgs
+        const messageDelta = deltaMsgs > 0 ? `−${deltaMsgs}` : '0'
 
         let summary: string
         if (level === 1) {
@@ -407,26 +409,27 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         }
 
         const lines: string[] = []
-        lines.push(`L${level}`)
-        lines.push(`  ${beforeMsgs} msgs ~${humanTokensInline(before)} → ${afterMsgs} msgs ~${humanTokensInline(after)}  (saved ~${humanTokensInline(saved)}, ${savedPct}%)`)
-        lines.push(`  ${posBar}`)
-        if (legend) lines.push(`  ${legend}`)
-        lines.push(`  ${summary}`)
+        lines.push(`L${level} completed`)
+        lines.push(`  msgs    ${beforeMsgs} → ${afterMsgs} (${messageDelta})`)
+        lines.push(`  tokens  ~${humanTokensInline(before)} → ~${humanTokensInline(after)} (saved ~${humanTokensInline(saved)}, ${savedPct}%)`)
+        lines.push(`  map     ${posBar}`)
+        if (legend) lines.push(`  legend  ${legend}`)
+        lines.push(`  result  ${summary}`)
 
         if (sorted.length > 0) {
           const totalActions = allActions?.length ?? 0
           const changed = sorted.length
           let header: string
           if (level === 1) {
-            header = `  actions: (${changed} of ${totalActions} changed)`
+            header = `  details changed ${changed}/${totalActions}`
           } else if (level === 2) {
             const totalMsgs = sorted.reduce((s: number, a: any) => s + 1 + ((a.related_count as number) ?? 0), 0)
-            header = `  actions: (${changed} turns, ${totalMsgs} msgs → ${changed} summaries)`
+            header = `  details summarized ${changed} turns (${totalMsgs} msgs → ${changed} summaries)`
           } else if (level === 3) {
             const kept = Math.max(afterMsgs - 1, 0)
-            header = `  actions: (${msgsDropped} dropped, ${kept} kept, 1 marker)`
+            header = `  details dropped ${msgsDropped}, kept ${kept}, marker 1`
           } else {
-            header = `  actions: (${changed} changed)`
+            header = `  details changed ${changed}`
           }
           lines.push(header)
 
@@ -486,7 +489,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       return {
         ...state,
         currentRunStats: updatedStats,
-        verboseEvents: [...state.verboseEvents, { kind: 'compact_done', text: `[COMPACT] · ${action}` }],
+        verboseEvents: [...state.verboseEvents, { kind: 'compact_done', text: `[COMPACT] ${action}` }],
       }
     }
 

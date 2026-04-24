@@ -57,6 +57,7 @@ export function renderBar(value: number, max: number, width: number): string {
 /**
  * Position bar character mapping for compaction methods.
  *
+ *   · — Unchanged / kept
  *   O — Outline (tree-sitter structural extraction)
  *   H — HeadTail (head + tail truncation)
  *   S — Summarized (turn summarized)
@@ -64,7 +65,6 @@ export function renderBar(value: number, max: number, width: number): string {
  *   C — LifecycleCleared (current-run result cleared after use)
  *   A — AgeCleared (old result cleared by age policy)
  *   X — OversizeCapped (oversized result capped)
- *   K — Kept (retained message, used as default in L3)
  */
 const COMPACTION_METHOD_CHARS: Record<string, string> = {
   Outline: 'O',
@@ -87,13 +87,12 @@ const CHAR_TO_METHOD: Record<string, string> = Object.fromEntries(
  *
  * Returns `{ bar, legend }` so the caller can place them independently.
  */
-export function renderPositionBar(beforeCount: number, sortedActions: any[], level: number): { bar: string; legend: string } {
+export function renderPositionBar(beforeCount: number, sortedActions: any[], _level: number): { bar: string; legend: string } {
   const WIDTH = 40
-  if (beforeCount === 0) return { bar: `[${'·'.repeat(WIDTH)}]`, legend: '' }
+  if (beforeCount === 0) return { bar: `[${'·'.repeat(WIDTH)}]`, legend: '·=unchanged/kept' }
 
-  const defaultChar = level === 3 ? 'K' : '·'
   const slotCount = Math.min(WIDTH, beforeCount)
-  const slots = new Array(slotCount).fill(defaultChar)
+  const slots = new Array(slotCount).fill('·')
 
   for (const a of sortedActions) {
     const start = (a.index as number) ?? 0
@@ -116,7 +115,7 @@ export function renderPositionBar(beforeCount: number, sortedActions: any[], lev
   // Build legend from chars that actually appear in the bar
   const seen = new Set(slots)
   const legendParts: string[] = []
-  if (seen.has('K')) legendParts.push('K=Kept')
+  if (seen.has('·')) legendParts.push('·=unchanged/kept')
   for (const [method, ch] of Object.entries(COMPACTION_METHOD_CHARS)) {
     if (seen.has(ch)) legendParts.push(`${ch}=${method}`)
   }
