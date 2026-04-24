@@ -21,8 +21,8 @@ const SKILLS_DIR = SKILLS_DIRS[0]!
 // /skill list
 // ---------------------------------------------------------------------------
 
-export function skillList(): string {
-  const entries = SKILLS_DIRS.flatMap((dir) => {
+export function skillListFromDirs(dirs: string[]): string {
+  const entries = dirs.flatMap((dir) => {
     if (!existsSync(dir)) return []
     return readdirSync(dir)
       .filter((name) => existsSync(join(dir, name, 'SKILL.md')))
@@ -34,6 +34,10 @@ export function skillList(): string {
   return `\n  Skills:\n${entries
     .map(({ name, dir }) => `  • [${name}] ${dir}`)
     .join('\n')}`
+}
+
+export function skillList(): string {
+  return skillListFromDirs(SKILLS_DIRS)
 }
 
 // ---------------------------------------------------------------------------

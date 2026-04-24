@@ -1,5 +1,9 @@
 import { describe, test, expect } from 'bun:test'
+import { mkdirSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { resolveCommand, isSlashCommand } from '../src/commands/index.js'
+import { skillListFromDirs } from '../src/commands/skill.js'
 
 describe('isSlashCommand', () => {
   test('recognizes slash commands', () => {
@@ -69,5 +73,29 @@ describe('resolveCommand', () => {
   test('handles extra whitespace in args', () => {
     const result = resolveCommand('/resume   abc123')
     expect(result).toEqual({ kind: 'resolved', name: '/resume', args: 'abc123' })
+  })
+})
+
+describe('skillListFromDirs', () => {
+  test('lists skills from evotai and claude directories', () => {
+    const home = join(tmpdir(), `evot-skill-list-${Date.now()}`)
+    const evotai = join(home, '.evotai', 'skills')
+    const claude = join(home, '.claude', 'skills')
+
+    try {
+      mkdirSync(join(evotai, 'evot-skill'), { recursive: true })
+      mkdirSync(join(claude, 'claude-skill'), { recursive: true })
+      writeFileSync(join(evotai, 'evot-skill', 'SKILL.md'), '---\ndescription: evot\n---\n')
+      writeFileSync(join(claude, 'claude-skill', 'SKILL.md'), '---\ndescription: claude\n---\n')
+
+      expect(skillListFromDirs([evotai, claude])).toBe([
+        '',
+        '  Skills:',
+        `  • [claude-skill] ${join(claude, 'claude-skill')}`,
+        `  • [evot-skill] ${join(evotai, 'evot-skill')}`,
+      ].join('\n'))
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 })
