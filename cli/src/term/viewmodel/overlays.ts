@@ -35,7 +35,7 @@ function buildHelpBlocks(columns: number): ViewBlock[] {
     ['Ctrl+D', 'Delete char / Exit if empty'],
     ['Ctrl+A/E', 'Move to start/end of line'],
     ['Ctrl+L', 'Clear all input'],
-    ['Ctrl+O', 'Toggle verbose mode'],
+    ['Ctrl+O', 'Expand/collapse output'],
     ['/help', 'Show this help'],
     ['/model <name>', 'Switch model'],
     ['/resume [id|query]', 'Resume session'],
