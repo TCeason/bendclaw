@@ -76,7 +76,7 @@ fn test_build_request_body_basic() {
     let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
     assert_eq!(body["model"], "gpt-4o");
     assert!(body["stream"].as_bool().unwrap());
-    assert_eq!(body["messages"][0]["role"], "developer");
+    assert_eq!(body["messages"][0]["role"], "system");
     assert_eq!(body["messages"][1]["role"], "user");
     assert!(body["max_completion_tokens"].is_number());
 }

@@ -14,6 +14,7 @@ import {
   hideCursor,
   showCursor,
   cursorToColumn,
+  cursorTo,
 } from './ansi.js'
 import stringWidth from 'string-width'
 
@@ -189,6 +190,36 @@ export class TermRenderer {
     this.prevStatusLines = lines
     this.statusHeight = lines.length
     this.drawStatus()
+    if (!outerBatch) this.flushBatch()
+  }
+
+  /**
+   * Redraw the current viewport in place, removing previous scroll content from the viewport.
+   * Keeps the normal screen buffer so terminal scrollback remains available.
+   */
+  redrawViewport(text: string): void {
+    const outerBatch = this.buffering
+    if (!outerBatch) this.beginBatch()
+    this.clearStatusArea()
+    this.write(cursorTo(1, 1) + eraseDown())
+    const lines = text ? text.split('\n') : []
+    if (text) {
+      this.write(text)
+      if (!text.endsWith('\n')) this.write('\n')
+    }
+    const usedRows = text ? this.screenRows(lines) : 0
+    const remainingRows = Math.max(0, this.rows - usedRows)
+    if (remainingRows > 0) this.write('\n'.repeat(remainingRows))
+    if (!outerBatch) this.flushBatch()
+  }
+
+  /** Clear the current viewport redraw without leaving normal scrollback. */
+  restoreViewport(): void {
+    const outerBatch = this.buffering
+    if (!outerBatch) this.beginBatch()
+    this.clearStatusArea()
+    this.write(cursorTo(1, 1) + eraseDown())
+    this.write('\n'.repeat(this.rows))
     if (!outerBatch) this.flushBatch()
   }
 

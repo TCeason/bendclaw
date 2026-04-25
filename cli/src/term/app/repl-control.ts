@@ -24,7 +24,7 @@ export type ReplControlAction =
   | { kind: 'close-overlay' }
   | { kind: 'exit-log-mode' }
   | { kind: 'selector-key' }
-  | { kind: 'ask-key' }
+  | { kind: 'toggle-expanded' }
   | { kind: 'loading-enter' }
   | { kind: 'loading-char' }
   | { kind: 'loading-paste' }
@@ -59,6 +59,7 @@ export function decideReplControl(input: ReplControlInput): ReplControlAction[] 
   if (overlay.kind === 'ask-user') return actions.concat({ kind: 'ask-key' })
 
   if (isLoading) {
+    if (event.type === 'ctrl' && event.key === 'o') return actions.concat({ kind: 'toggle-expanded' })
     if (event.type === 'enter') return actions.concat({ kind: 'loading-enter' })
     if (event.type === 'char') return actions.concat({ kind: 'loading-char' })
     if (event.type === 'paste') return actions.concat({ kind: 'loading-paste' })

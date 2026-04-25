@@ -215,6 +215,36 @@ describe('TermRenderer', () => {
       expect(matches).toBe(1)
       renderer.destroy()
     })
+    test('redrawViewport redraws normal screen without pushing blank rows or alternate buffer', () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      stdout.clear()
+      renderer.redrawViewport('line1\nline2')
+      const out = stdout.output
+      expect(out).toContain('\x1b[1;1H')
+      expect(out).toContain('\x1b[J')
+      expect(out).toContain('line1\nline2\n')
+      expect(out).toContain('\n'.repeat(22))
+      expect(out).not.toContain('\x1b[?1049h')
+      expect(out).not.toContain('\x1b[24A')
+      expect(out).not.toBe('\n'.repeat(24))
+      renderer.destroy()
+    })
+
+    test('restoreViewport clears normal screen and keeps scrollback available', () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      renderer.setStatus(['status1', 'status2'])
+      stdout.clear()
+      renderer.restoreViewport()
+      const out = stdout.output
+      expect(out).toContain('\x1b[2A')
+      expect(out).toContain('\x1b[1;1H')
+      expect(out).toContain('\x1b[J')
+      expect(out).toContain('\n'.repeat(24))
+      expect(out).not.toContain('\x1b[?1049l')
+      renderer.destroy()
+    })
   })
 
   describe('resize handling', () => {

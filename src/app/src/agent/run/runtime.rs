@@ -38,6 +38,7 @@ use crate::types::UsageSummary;
 // ---------------------------------------------------------------------------
 
 pub struct EngineOptions {
+    pub provider: String,
     pub protocol: Protocol,
     pub model: String,
     pub api_key: String,
@@ -712,7 +713,10 @@ pub(crate) fn build_agent(
 
     let mut model_config = match options.protocol {
         Protocol::Anthropic => ModelConfig::anthropic(&options.model, &options.model),
-        Protocol::OpenAi => ModelConfig::openai(&options.model, &options.model),
+        Protocol::OpenAi if options.provider == "openai" => {
+            ModelConfig::openai(&options.model, &options.model)
+        }
+        Protocol::OpenAi => ModelConfig::local("", &options.model),
     };
     if let Some(base_url) = &options.base_url {
         model_config.base_url = base_url.clone();

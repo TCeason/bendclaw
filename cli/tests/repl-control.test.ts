@@ -77,6 +77,10 @@ describe('repl control', () => {
     expect(kinds({ ...base, event: { type: 'paste', text: 'x' }, isLoading: true })).toEqual(['loading-paste'])
   })
 
+  test('ctrl-o toggles expanded view while loading', () => {
+    expect(kinds({ ...base, event: { type: 'ctrl', key: 'o' }, isLoading: true })).toEqual(['toggle-expanded'])
+  })
+
   test('loading movement falls through to normal key', () => {
     expect(kinds({ ...base, event: { type: 'left' }, isLoading: true })).toEqual(['normal-key'])
   })

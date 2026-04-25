@@ -248,6 +248,39 @@ describe('term stream machine', () => {
     expect(update.suppressToolStarted).toBe(true)
   })
 
+  test('heartbeat progress does not replace cached output', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    const state = {
+      ...createStreamMachineState(appState, spinner),
+      toolProgress: 'line 1\nline 2',
+      lastToolProgress: 'line 1\nline 2',
+    }
+    const update = reduceRunEvent(state, {
+      kind: 'tool_progress',
+      payload: { text: 'Running... 60s' },
+    }, { termRows: 24 })
+    expect(update.state.toolProgress).toBe('')
+    expect(update.state.lastToolProgress).toBe('line 1\nline 2')
+    expect(update.rerenderStatus).toBe(true)
+  })
+
+  test('tool started keeps last progress visible until next progress update', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    const state = {
+      ...createStreamMachineState(appState, spinner),
+      toolProgress: 'line 1\nline 2',
+      lastToolProgress: 'line 1\nline 2',
+    }
+    const update = reduceRunEvent(state, {
+      kind: 'tool_started',
+      payload: { tool_name: 'bash', args: {} },
+    }, { termRows: 24 })
+    expect(update.state.toolProgress).toBe('')
+    expect(update.state.lastToolProgress).toBe('line 1\nline 2')
+  })
+
   test('flushStreaming emits pending assistant text', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()

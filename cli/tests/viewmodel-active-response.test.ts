@@ -73,6 +73,13 @@ describe('buildActiveResponseBlocks', () => {
     expect(result).toContain('Executing')
   })
 
+  test('keeps a stable output area while executing before progress arrives', () => {
+    const spinner = setSpinnerPhase(createSpinnerState(), 'executing', 'bash')
+    const result = renderPlain(defaultInput({ spinner, toolProgress: '' }))
+    expect(result).toContain('Waiting for output…')
+    expect(result).toContain('Executing')
+  })
+
   test('truncates long progress lines', () => {
     const longLine = 'x'.repeat(200)
     const result = renderPlain(defaultInput({ toolProgress: longLine }))

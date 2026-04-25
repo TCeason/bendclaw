@@ -58,6 +58,8 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
       styledLines.push(line(dim(`  +${extraLines} lines  (ctrl+o to expand)`)))
     }
     blocks.push(block(styledLines, 1))
+  } else if (input.spinner.phase === 'executing' && !input.expanded) {
+    blocks.push(block([line(dim('  Waiting for output…'))], 1))
   }
 
   const spinnerText = formatSpinnerLine(input.spinner, Date.now())

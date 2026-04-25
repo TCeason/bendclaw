@@ -12,6 +12,7 @@ export interface StreamMachineState {
   spinnerState: SpinnerState
   pendingText: string
   toolProgress: string
+  lastToolProgress: string
   streamingText: string
   prefixEmitted: boolean
   assistantCommitted: boolean
@@ -31,12 +32,17 @@ export interface StreamUpdate {
   suppressToolFinished: boolean
 }
 
+function isHeartbeatProgress(text: string): boolean {
+  return /^Running\.\.\. \d+s$/.test(text.trim())
+}
+
 export function createStreamMachineState(appState: AppState, spinnerState: SpinnerState): StreamMachineState {
   return {
     appState,
     spinnerState,
     pendingText: '',
     toolProgress: '',
+    lastToolProgress: '',
     streamingText: '',
     prefixEmitted: false,
     assistantCommitted: false,
@@ -169,7 +175,9 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
   if (event.kind === 'tool_progress') {
     const text = p.text as string | undefined
     if (text) {
-      state = { ...state, toolProgress: text }
+      state = isHeartbeatProgress(text)
+        ? { ...state, toolProgress: '' }
+        : { ...state, toolProgress: text, lastToolProgress: text }
       rerenderStatus = true
     }
   }

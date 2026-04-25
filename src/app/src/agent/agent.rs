@@ -670,6 +670,7 @@ impl Agent {
 
         Ok(runtime::TurnInput {
             options: runtime::EngineOptions {
+                provider: llm.provider,
                 protocol: llm.protocol,
                 model: llm.model,
                 api_key: llm.api_key,

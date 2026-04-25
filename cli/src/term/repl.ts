@@ -204,10 +204,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
+  function currentToolProgress(): string {
+    return streamMachine?.toolProgress || streamMachine?.lastToolProgress || ''
+  }
+
   function renderStatus() {
     if (destroyed) return
     const pendingText = streamMachine?.pendingText ?? ''
-    const toolProgress = streamMachine?.toolProgress ?? ''
+    const toolProgress = currentToolProgress()
 
     // When ask-user is active, suppress the spinner — the agent is waiting
     // for user input, not "thinking" or "executing".
@@ -262,10 +266,22 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     expanded = !expanded
     const lines = expanded ? expandedLines : compactLines
     renderer.beginBatch()
-    renderer.clearScreen()
-    if (lines.length > 0) {
-      const blocks = buildOutputBlocks(lines)
-      renderer.appendScroll(blocksToLines(blocks).join('\n'))
+    if (expanded) {
+      const snapshot = currentToolProgress()
+      const snapshotLines: OutputLine[] = snapshot
+        ? snapshot.split('\n').map(l => ({
+            id: `prog-snapshot-${Date.now()}`,
+            kind: 'tool_result' as const,
+            text: `  ${l}`,
+          }))
+        : []
+      const viewLines = snapshotLines.length > 0 ? [...lines, ...snapshotLines] : lines
+      renderer.redrawViewport(viewLines.length > 0 ? blocksToLines(buildOutputBlocks(viewLines)).join('\n') : '')
+    } else {
+      renderer.restoreViewport()
+      if (lines.length > 0) {
+        renderer.appendScroll(blocksToLines(buildOutputBlocks(lines)).join('\n'))
+      }
     }
     renderStatus()
     renderer.flushBatch()
@@ -440,7 +456,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           const text = ((event.payload ?? {}) as Record<string, any>).text as string | undefined
           if (text) {
             const allLines = text.split('\n')
-            const newLines = allLines.slice(lastProgressLineCount)
+            const baseline = Math.max(lastProgressLineCount, currentToolProgress().split('\n').length)
+            const newLines = allLines.slice(baseline)
             lastProgressLineCount = allLines.length
             if (newLines.length > 0) {
               const outputLines: OutputLine[] = newLines.map(l => ({
@@ -448,8 +465,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
                 kind: 'tool_result' as const,
                 text: `  ${l}`,
               }))
-              // Commit to both arrays but only render to scroll
-              compactLines.push(...outputLines)
+              // In expanded mode, commit tool progress lines to the expanded view only.
               expandedLines.push(...outputLines)
               const blocks = buildOutputBlocks(outputLines)
               renderer.beginBatch()
@@ -552,8 +568,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       case 'selector-key':
         handleSelectorKey(event)
         return true
-      case 'ask-key':
-        handleAskKey(event)
+      case 'toggle-expanded':
+        toggleExpanded()
         return true
       case 'loading-enter':
         handleLoadingEnter()

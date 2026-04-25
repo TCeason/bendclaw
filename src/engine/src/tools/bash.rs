@@ -134,10 +134,6 @@ fn truncate_long_lines(text: &str) -> String {
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(3);
 /// Interval between partial output updates.
 const UPDATE_INTERVAL: Duration = Duration::from_secs(2);
-/// Max lines in a partial output update.
-const UPDATE_MAX_LINES: usize = 5;
-/// Max bytes in a partial output update.
-const UPDATE_MAX_BYTES: usize = 1024;
 /// Max lines in timeout error last-output summary.
 const TIMEOUT_SUMMARY_LINES: usize = 10;
 /// Max bytes in timeout error last-output summary.
@@ -391,7 +387,7 @@ impl AgentTool for BashTool {
                         if let Some(ref on_update) = ctx.on_update {
                             let snippet = {
                                 let buf = stdout_buf.lock();
-                                tail_lines(&buf, UPDATE_MAX_LINES, UPDATE_MAX_BYTES)
+                                String::from_utf8_lossy(&buf).to_string()
                             };
                             if !snippet.is_empty() {
                                 on_update(ToolResult {

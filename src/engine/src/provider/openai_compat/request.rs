@@ -22,13 +22,8 @@ pub fn build_request_body(
 
     // System prompt
     if !config.system_prompt.is_empty() {
-        let role = if compat.supports_developer_role {
-            "developer"
-        } else {
-            "system"
-        };
         messages.push(serde_json::json!({
-            "role": role,
+            "role": "system",
             "content": config.system_prompt,
         }));
     }

@@ -166,7 +166,9 @@ async fn test_bash_update_emitted() {
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
     };
 
-    // Command runs ~4s with output, update fires every 2s
+    // Command runs ~4s with output, update fires every 2s.
+    // Partial updates carry cumulative output so consumers can expand the
+    // latest progress event into all output seen so far.
     let tool = BashTool::new();
     let _result = tool
         .execute(
@@ -180,10 +182,13 @@ async fn test_bash_update_emitted() {
         !collected.is_empty(),
         "Expected at least 1 update callback with partial output"
     );
-    // At least one update should contain some of our output
     assert!(
-        collected.iter().any(|s| s.contains("line_")),
-        "Expected partial output to contain 'line_', got: {collected:?}"
+        collected.iter().any(|s| s.contains("line_1")),
+        "Expected cumulative partial output to contain first line, got: {collected:?}"
+    );
+    assert!(
+        collected.iter().any(|s| s.contains("line_2")),
+        "Expected cumulative partial output to contain later lines, got: {collected:?}"
     );
 }
 
