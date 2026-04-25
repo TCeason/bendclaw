@@ -618,6 +618,13 @@ pub(super) fn load_config_inner(env_file: Option<&str>) -> Result<Config> {
     let process_vars = load_process_env();
     apply_env(&mut config, &process_vars)?;
 
+    // Default provider: if not explicitly set, use the first registered provider
+    if config.llm.provider.is_empty() {
+        if let Some(first) = config.providers.keys().next() {
+            config.llm.provider = first.clone();
+        }
+    }
+
     // Apply instance isolation: if EVOT_ID is set, redirect fs storage
     if let Some(ref id) = config.id {
         let isolated_root = paths::state_root_dir()?.join(id);

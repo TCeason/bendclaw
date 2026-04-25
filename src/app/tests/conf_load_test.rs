@@ -23,9 +23,9 @@ fn restore_env_var(key: &str, value: Option<OsString>) {
 }
 
 #[test]
-fn default_provider_is_anthropic() {
+fn default_provider_is_empty() {
     let config = Config::new(std::path::PathBuf::from("/tmp"));
-    assert_eq!(config.llm.provider, "anthropic");
+    assert_eq!(config.llm.provider, "");
 }
 
 #[test]
@@ -521,7 +521,7 @@ fn with_model_none_is_noop() -> TestResult {
             model: "claude-sonnet-4-20250514".into(),
         });
     let config = config.with_model(None)?;
-    assert_eq!(config.llm.provider, "anthropic");
+    assert_eq!(config.llm.provider, "");
     assert_eq!(config.llm.model_override, None);
     Ok(())
 }
@@ -545,6 +545,7 @@ fn validate_missing_api_key() {
             base_url: "https://api.anthropic.com".into(),
             model: "claude-sonnet-4-20250514".into(),
         });
+    config.llm.provider = "anthropic".into();
     let err = config.validate().unwrap_err();
     assert!(format!("{err}").contains("api_key not set"));
 }
@@ -560,6 +561,7 @@ fn validate_missing_base_url() {
             base_url: String::new(),
             model: "claude-sonnet-4-20250514".into(),
         });
+    config.llm.provider = "anthropic".into();
     let err = config.validate().unwrap_err();
     assert!(format!("{err}").contains("base_url not set"));
 }
@@ -575,6 +577,7 @@ fn validate_missing_model() {
             base_url: "https://api.anthropic.com".into(),
             model: String::new(),
         });
+    config.llm.provider = "anthropic".into();
     let err = config.validate().unwrap_err();
     assert!(format!("{err}").contains("model not set"));
 }
@@ -590,6 +593,7 @@ fn validate_model_override_bypasses_empty_profile_model() {
             base_url: "https://api.anthropic.com".into(),
             model: String::new(),
         });
+    config.llm.provider = "anthropic".into();
     config.llm.model_override = Some("override-model".into());
     // Should pass because model_override is set
     assert!(config.validate().is_ok());

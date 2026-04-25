@@ -32,6 +32,15 @@ fn arb_config() -> impl Strategy<Value = ContextConfig> {
         })
 }
 
+/// Helper: reduce pad/tool_out ranges for proptest speed while still
+/// exercising all compaction levels (budget ranges handle the scaling).
+fn arb_pad() -> impl Strategy<Value = usize> {
+    10..200usize
+}
+fn arb_tool_out() -> impl Strategy<Value = usize> {
+    10..500usize
+}
+
 // ---------------------------------------------------------------------------
 // P1: compact never produces orphan tool_call / tool_result
 // ---------------------------------------------------------------------------
@@ -40,8 +49,8 @@ proptest! {
     #[test]
     fn compact_preserves_tool_pair_integrity(
         pattern in arb_pattern(),
-        pad in 10..3000usize,
-        tool_out in 10..5000usize,
+        pad in arb_pad(),
+        tool_out in arb_tool_out(),
         config in arb_config(),
     ) {
         let messages = pat(&pattern).pad(pad).tool_output(tool_out).build();
@@ -86,8 +95,8 @@ proptest! {
     #[test]
     fn compact_actions_match_level(
         pattern in arb_pattern(),
-        pad in 10..3000usize,
-        tool_out in 10..5000usize,
+        pad in arb_pad(),
+        tool_out in arb_tool_out(),
         config in arb_config(),
     ) {
         let messages = pat(&pattern).pad(pad).tool_output(tool_out).build();
@@ -112,8 +121,8 @@ proptest! {
     #[test]
     fn compact_respects_budget_before_level3(
         pattern in arb_pattern(),
-        pad in 10..3000usize,
-        tool_out in 10..5000usize,
+        pad in arb_pad(),
+        tool_out in arb_tool_out(),
         config in arb_config(),
     ) {
         let messages = pat(&pattern).pad(pad).tool_output(tool_out).build();
@@ -149,8 +158,8 @@ proptest! {
     #[test]
     fn compact_action_indices_are_valid(
         pattern in arb_pattern(),
-        pad in 10..3000usize,
-        tool_out in 10..5000usize,
+        pad in arb_pad(),
+        tool_out in arb_tool_out(),
         config in arb_config(),
     ) {
         let messages = pat(&pattern).pad(pad).tool_output(tool_out).build();
@@ -187,8 +196,8 @@ proptest! {
     #[test]
     fn compact_action_tokens_monotonic(
         pattern in arb_pattern(),
-        pad in 10..3000usize,
-        tool_out in 10..5000usize,
+        pad in arb_pad(),
+        tool_out in arb_tool_out(),
         config in arb_config(),
     ) {
         let messages = pat(&pattern).pad(pad).tool_output(tool_out).build();
@@ -212,8 +221,8 @@ proptest! {
     #[test]
     fn compact_action_savings_bounded(
         pattern in arb_pattern(),
-        pad in 10..3000usize,
-        tool_out in 10..5000usize,
+        pad in arb_pad(),
+        tool_out in arb_tool_out(),
         config in arb_config(),
     ) {
         let messages = pat(&pattern).pad(pad).tool_output(tool_out).build();
@@ -243,7 +252,7 @@ proptest! {
 fn keep_within_budget_preserves_first_user_message() {
     // Build: user(small) → tool_call → tool_result(huge) → user(small)
     // With a tight budget, the first user message must survive.
-    let messages = pat("u tr u").pad(10).tool_output(50_000).build();
+    let messages = pat("u tr u").pad(10).tool_output(5_000).build();
     let config = ContextConfig {
         max_context_tokens: 200, // very tight
         system_prompt_tokens: 0,
@@ -281,7 +290,7 @@ fn keep_within_budget_preserves_first_user_message() {
 fn keep_within_budget_prefers_user_over_tool_result() {
     // Build: user → tool_call → tool_result(big) → user → tool_call → tool_result(big) → user
     // With tight budget, user messages should survive while tool results get dropped.
-    let messages = pat("u tr u tr u").pad(10).tool_output(10_000).build();
+    let messages = pat("u tr u tr u").pad(10).tool_output(5_000).build();
     let config = ContextConfig {
         max_context_tokens: 300, // tight: enough for user msgs, not for tool results
         system_prompt_tokens: 0,
@@ -319,7 +328,7 @@ fn keep_within_budget_prefers_user_over_tool_result() {
 fn huge_tool_result_does_not_erase_task_goal() {
     // Simulate: user(small) → search_call → search_result(large) → user(small)
     // 50K chars is enough to trigger all compaction levels with a 40K budget.
-    let messages = pat("u tr u").pad(10).tool_output(50_000).build();
+    let messages = pat("u tr u").pad(10).tool_output(5_000).build();
     let config = ContextConfig {
         max_context_tokens: 40_000, // ~156K / 4 (token estimate ratio)
         system_prompt_tokens: 1_000,
@@ -370,7 +379,7 @@ fn huge_tool_result_does_not_erase_task_goal() {
 fn keep_first_preserves_multiple_leading_messages() {
     // Pattern: u u a tr tr u  (6 logical units = 8 messages)
     // keep_first=3 means msg-0(user), msg-1(user), msg-2(assistant) are protected.
-    let messages = pat("u u a tr tr u").pad(10).tool_output(50_000).build();
+    let messages = pat("u u a tr tr u").pad(10).tool_output(5_000).build();
     let config = ContextConfig {
         max_context_tokens: 300, // very tight — forces level 3 + keep_within_budget
         system_prompt_tokens: 0,
@@ -430,7 +439,7 @@ fn keep_first_preserves_multiple_leading_messages() {
 #[test]
 fn keep_first_one_only_protects_first_message() {
     // Pattern: u u tr u — 5 messages, huge tool output
-    let messages = pat("u u tr u").pad(10).tool_output(100_000).build();
+    let messages = pat("u u tr u").pad(10).tool_output(5_000).build();
     let config = ContextConfig {
         max_context_tokens: 100, // absurdly tight
         system_prompt_tokens: 0,

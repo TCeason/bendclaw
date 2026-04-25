@@ -76,7 +76,7 @@ pub struct LlmSelection {
 impl Default for LlmSelection {
     fn default() -> Self {
         Self {
-            provider: "anthropic".to_string(),
+            provider: String::new(),
             model_override: None,
             thinking_level: ThinkingLevel::Adaptive,
         }

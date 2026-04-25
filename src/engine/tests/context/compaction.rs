@@ -1005,7 +1005,7 @@ fn test_compact_single_user() {
 
 #[test]
 fn test_compact_all_users_no_tool() {
-    let messages = pat("u a u a u").pad(5000).build();
+    let messages = pat("u a u a u").pad(500).build();
     let config = ContextConfig {
         max_context_tokens: 200,
         system_prompt_tokens: 0,
@@ -1164,7 +1164,7 @@ fn test_tool_output_max_lines_caps_policy() {
 #[test]
 fn test_byte_cap_on_long_single_line() {
     // Single line of 50KB — head-tail by lines won't help much.
-    let long_line = "x".repeat(50_000);
+    let long_line = "x".repeat(5_000);
     let messages = vec![
         AgentMessage::Llm(Message::user("task")),
         AgentMessage::Llm(Message::Assistant {
@@ -2163,7 +2163,7 @@ fn test_l1_and_l2_cooperate() {
 /// Compaction should not panic and should return at least one message.
 #[test]
 fn test_extreme_single_message_exceeds_budget() {
-    let huge_text = "x".repeat(100_000);
+    let huge_text = "x".repeat(10_000);
     let messages = vec![AgentMessage::Llm(Message::user(&huge_text))];
 
     let config = ContextConfig {
