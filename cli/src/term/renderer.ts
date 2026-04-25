@@ -213,6 +213,22 @@ export class TermRenderer {
     if (!outerBatch) this.flushBatch()
   }
 
+  /**
+   * Redraw the current viewport tightly from the top, without padding to the bottom.
+   * Used when idle so the prompt can sit directly after the latest output.
+   */
+  redrawViewportTight(text: string): void {
+    const outerBatch = this.buffering
+    if (!outerBatch) this.beginBatch()
+    this.clearStatusArea()
+    this.write(cursorTo(1, 1) + eraseDown())
+    if (text) {
+      this.write(text)
+      if (!text.endsWith('\n')) this.write('\n')
+    }
+    if (!outerBatch) this.flushBatch()
+  }
+
   /** Clear the current viewport redraw without leaving normal scrollback. */
   restoreViewport(): void {
     const outerBatch = this.buffering

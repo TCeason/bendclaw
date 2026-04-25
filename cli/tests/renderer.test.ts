@@ -257,6 +257,19 @@ describe('TermRenderer', () => {
       renderer.destroy()
     })
 
+    test('redrawViewportTight redraws without padding blank rows', () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      stdout.clear()
+      renderer.redrawViewportTight('line1\nline2')
+      const out = stdout.output
+      expect(out).toContain('\x1b[1;1H')
+      expect(out).toContain('\x1b[J')
+      expect(out).toContain('line1\nline2\n')
+      expect(out).not.toContain('\n'.repeat(22))
+      renderer.destroy()
+    })
+
     test('restoreViewport clears normal screen and keeps scrollback available', () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()
