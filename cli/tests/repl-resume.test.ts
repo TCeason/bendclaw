@@ -54,7 +54,8 @@ describe('repl resume helpers', () => {
     const item = formatSessionItems([sessions[0]!])[0]!
     expect(item.label).toBe('aaaaaaaa')
     expect(item.id).toBe(sessions[0]!.session_id)
-    expect(item.detail).toContain('[local] cwd session')
+    expect(item.detail).toContain('local ')
+    expect(item.detail).toContain('cwd session')
     expect(item.detail).toContain('[3 turns]')
     expect(item.searchText).toContain('/work')
   })

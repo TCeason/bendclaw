@@ -31,21 +31,21 @@ export function isResumeSelectorTitle(title: string): boolean {
 
 export function formatSessionItems(sessions: SessionMeta[]): SelectorItem[] {
   return sessions.map(s => {
-    const tag = s.source ? `[${s.source}] ` : ''
-    const title = padRight(tag + (s.title || '(untitled)'), 50)
+    const source = padRight(s.source || '', 6)
+    const title = padRight(s.title || '(untitled)', 65)
     const turns = padRight(s.turns ? `[${s.turns} turns]` : '', 12)
     const time = relativeTime(s.updated_at)
     const searchText = `${s.session_id} ${s.title} ${s.cwd} ${s.source} ${s.model}`
-    return { label: s.session_id.slice(0, 8), id: s.session_id, detail: `${title} ${turns} ${time}`, searchText }
+    return { label: s.session_id.slice(0, 8), id: s.session_id, detail: `${source} ${title} ${turns} ${time}`, searchText }
   })
 }
 
 export function formatSessionWithTextItems(items: SessionWithText[]): SelectorItem[] {
   return items.map(s => {
-    const tag = s.source ? `[${s.source}] ` : ''
-    const title = padRight(tag + (s.title || '(untitled)'), 50)
+    const source = padRight(s.source || '', 6)
+    const title = padRight(s.title || '(untitled)', 65)
     const turns = padRight(s.turns ? `[${s.turns} turns]` : '', 12)
     const time = relativeTime(s.updated_at)
-    return { label: s.session_id.slice(0, 8), id: s.session_id, detail: `${title} ${turns} ${time}`, searchText: s.search_text }
+    return { label: s.session_id.slice(0, 8), id: s.session_id, detail: `${source} ${title} ${turns} ${time}`, searchText: s.search_text }
   })
 }

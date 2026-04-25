@@ -325,16 +325,16 @@ fn build_title(items: &[TranscriptItem]) -> Option<String> {
     let last = user_texts.last()?;
 
     if first == last || user_texts.len() == 1 {
-        // Single unique message — truncate to 56 chars
-        let mut title: String = first.chars().take(56).collect();
-        if first.chars().count() > 56 {
+        // Single unique message — truncate to 80 chars
+        let mut title: String = first.chars().take(80).collect();
+        if first.chars().count() > 80 {
             title.push_str("...");
         }
         return Some(title);
     }
 
     // head … tail — split budget between first and last
-    let max_half = 26;
+    let max_half = 40;
     let mut head: String = first.chars().take(max_half).collect();
     if first.chars().count() > max_half {
         head.push_str("..");
