@@ -325,7 +325,16 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     try {
       const transcript = await agent.loadTranscript(session.session_id)
       sessionId = session.session_id
-      appState = { ...appState, sessionId: session.session_id }
+      // Ensure we have the model — fetch from storage if missing
+      let model = session.model
+      if (!model) {
+        const full = await agent.findSession(session.session_id)
+        if (full?.model) model = full.model
+      }
+      if (model) {
+        agent.model = model
+      }
+      appState = { ...appState, sessionId: session.session_id, model: model || appState.model }
       const { messagesToOutputLines } = await import('../render/output.js')
       const { transcriptToMessages } = await import('../session/transcript.js')
       const messages = transcriptToMessages(transcript as any)

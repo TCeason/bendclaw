@@ -33,7 +33,7 @@ impl std::fmt::Display for Protocol {
 /// Infer protocol from provider name. Only "anthropic" maps to Anthropic;
 /// everything else defaults to OpenAI-compatible.
 pub fn infer_protocol(name: &str) -> Protocol {
-    if name == "anthropic" {
+    if name.starts_with("anthropic") {
         Protocol::Anthropic
     } else {
         Protocol::OpenAi

@@ -62,6 +62,10 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
     blocks.push(block([line(dim('  Waiting for output…'))], 1))
   }
 
+  if (input.expanded) {
+    blocks.push(block([line(dim('  ctrl+o to collapse'))], 1))
+  }
+
   const spinnerText = formatSpinnerLine(input.spinner, Date.now())
   blocks.push(block(
     [line(plain(spinnerText))],

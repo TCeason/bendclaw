@@ -80,6 +80,11 @@ describe('buildActiveResponseBlocks', () => {
     expect(result).toContain('Executing')
   })
 
+  test('shows collapse hint when expanded', () => {
+    const result = renderPlain(defaultInput({ expanded: true, toolProgress: 'line 1\nline 2' }))
+    expect(result).toContain('ctrl+o to collapse')
+  })
+
   test('truncates long progress lines', () => {
     const longLine = 'x'.repeat(200)
     const result = renderPlain(defaultInput({ toolProgress: longLine }))

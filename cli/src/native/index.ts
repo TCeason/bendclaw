@@ -204,6 +204,11 @@ export class Agent {
     return JSON.parse(json) as TranscriptItem[]
   }
 
+  async findSession(sessionId: string): Promise<SessionMeta | null> {
+    const json = await this.raw.findSession(sessionId)
+    return json ? JSON.parse(json) as SessionMeta : null
+  }
+
   fork(systemPrompt: string): ForkedAgent {
     const raw = this.raw.fork(systemPrompt)
     return new ForkedAgent(raw)

@@ -186,6 +186,22 @@ impl NapiAgent {
         serde_json::to_string(&items).map_err(|e| Error::from_reason(format!("serialize: {e}")))
     }
 
+    /// Find a single session by ID.
+    #[napi]
+    pub async fn find_session(&self, session_id: String) -> Result<Option<String>> {
+        let meta = self
+            .agent
+            .find_session(&session_id)
+            .await
+            .map_err(|e| Error::from_reason(format!("find session: {e}")))?;
+        match meta {
+            Some(m) => serde_json::to_string(&m)
+                .map(Some)
+                .map_err(|e| Error::from_reason(format!("serialize: {e}"))),
+            None => Ok(None),
+        }
+    }
+
     /// Fork the agent for a side conversation (readonly, ephemeral).
     #[napi]
     pub fn fork(&self, system_prompt: String) -> Result<NapiForkedAgent> {
