@@ -39,6 +39,7 @@ pub fn build_request_body(
             Message::Assistant { content, .. } => {
                 let mut parts: Vec<serde_json::Value> = Vec::new();
                 let mut tool_calls: Vec<serde_json::Value> = Vec::new();
+                let mut reasoning = String::new();
 
                 for c in content {
                     match c {
@@ -57,14 +58,18 @@ pub fn build_request_body(
                                 "function": {"name": name, "arguments": arguments.to_string()},
                             }));
                         }
+                        Content::Thinking { thinking, .. } => {
+                            reasoning.push_str(thinking);
+                        }
                         _ => {}
                     }
                 }
 
-                // Skip empty assistant messages that have neither content nor tool_calls.
+                // Skip empty assistant messages that have neither content nor tool_calls
+                // nor reasoning_content.
                 // Some providers (e.g. mimo-v2.5-pro) reject assistant messages without
                 // at least one of content, reasoning_content, or tool_calls.
-                if parts.is_empty() && tool_calls.is_empty() {
+                if parts.is_empty() && tool_calls.is_empty() && reasoning.is_empty() {
                     continue;
                 }
 
@@ -74,6 +79,9 @@ pub fn build_request_body(
                 }
                 if !tool_calls.is_empty() {
                     msg_obj["tool_calls"] = serde_json::json!(tool_calls);
+                }
+                if !reasoning.is_empty() {
+                    msg_obj["reasoning_content"] = serde_json::json!(reasoning);
                 }
                 messages.push(msg_obj);
             }

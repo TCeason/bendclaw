@@ -256,7 +256,9 @@ fn test_empty_assistant_message_is_skipped() {
     for msg in msgs {
         if msg["role"] == "assistant" {
             assert!(
-                msg.get("content").is_some() || msg.get("tool_calls").is_some(),
+                msg.get("content").is_some()
+                    || msg.get("tool_calls").is_some()
+                    || msg.get("reasoning_content").is_some(),
                 "assistant message must have content or tool_calls"
             );
         }
@@ -276,4 +278,74 @@ fn test_chunk_without_error_has_none() {
     let data = r#"{"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}"#;
     let chunk: OpenAiChunk = serde_json::from_str(data).unwrap();
     assert!(chunk.error.is_none());
+}
+
+#[test]
+fn test_reasoning_content_in_request() {
+    let model_config = ModelConfig::openai("deepseek-v4-pro", "DeepSeek V4 Pro");
+    let config = StreamConfigBuilder::openai()
+        .model("deepseek-v4-pro")
+        .messages(vec![
+            Message::user("hello"),
+            Message::Assistant {
+                content: vec![
+                    Content::Thinking {
+                        thinking: "Let me think about this...".into(),
+                        signature: None,
+                    },
+                    Content::Text {
+                        text: "Here is the answer.".into(),
+                    },
+                ],
+                stop_reason: StopReason::Stop,
+                model: "deepseek-v4-pro".into(),
+                provider: "deepseek".into(),
+                usage: Usage::default(),
+                timestamp: 0,
+                error_message: None,
+            },
+            Message::user("thanks"),
+        ])
+        .build();
+
+    let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
+    let msgs = body["messages"].as_array().unwrap();
+    assert_eq!(msgs.len(), 3);
+    let asst = &msgs[1];
+    assert_eq!(asst["role"], "assistant");
+    assert_eq!(asst["reasoning_content"], "Let me think about this...");
+    assert!(asst["content"].is_array());
+}
+
+#[test]
+fn test_thinking_only_assistant_not_skipped() {
+    let model_config = ModelConfig::openai("deepseek-v4-pro", "DeepSeek V4 Pro");
+    let config = StreamConfigBuilder::openai()
+        .model("deepseek-v4-pro")
+        .messages(vec![Message::user("test"), Message::Assistant {
+            content: vec![Content::Thinking {
+                thinking: "internal reasoning only".into(),
+                signature: None,
+            }],
+            stop_reason: StopReason::Stop,
+            model: "deepseek-v4-pro".into(),
+            provider: "deepseek".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+        }])
+        .build();
+
+    let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
+    let msgs = body["messages"].as_array().unwrap();
+    // user + assistant (thinking only, NOT skipped) = 2
+    assert_eq!(
+        msgs.len(),
+        2,
+        "assistant with only thinking should not be skipped"
+    );
+    let asst = &msgs[1];
+    assert_eq!(asst["role"], "assistant");
+    assert_eq!(asst["reasoning_content"], "internal reasoning only");
+    assert!(asst.get("content").is_none());
 }
