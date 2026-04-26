@@ -1,8 +1,4 @@
 <p align="center">
-  <img src="https://pbs.twimg.com/profile_banners/2024395183564214273/1773027467/1500x500" alt="Evot" />
-</p>
-
-<p align="center">
   <strong>Evot</strong>
 </p>
 
