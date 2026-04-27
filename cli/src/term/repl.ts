@@ -213,7 +213,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function renderStatus() {
     if (destroyed) return
-    const pendingText = streamMachine?.pendingText ?? ''
+    const isAssistantStreaming = streamMachine?.spinnerState.streaming ?? false
+    const pendingText = isAssistantStreaming ? '' : streamMachine?.pendingText ?? ''
     const toolProgress = currentToolProgress()
 
     // When ask-user is active, suppress the spinner — the agent is waiting
@@ -333,7 +334,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         titleFrame++
         setTerminalTitle(glyphs[idx])
       }
-      renderStatus()
+      if (!spinnerState.streaming) renderStatus()
     }, SPINNER_INTERVAL_MS)
   }
 
@@ -515,7 +516,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           commitLines(update.commitLines)
         }
 
-        if (update.rerenderStatus) renderStatus()
+        if (update.rerenderStatus && !streamMachine?.spinnerState.streaming) renderStatus()
       }
 
       if (streamMachine) {
