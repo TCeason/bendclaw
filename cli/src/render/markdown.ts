@@ -106,7 +106,7 @@ export function formatToken(
       return highlighted + EOL
     }
     case 'codespan':
-      return chalk.cyan(token.text)
+      return chalk.hex('#5fb3b3')(token.text)
     case 'del':
       // del is disabled via configureMarked; if somehow reached, render as-is
       return ''
@@ -127,9 +127,9 @@ export function formatToken(
         .map(t => formatToken(t, 0, null, null))
         .join('')
       if ((token as Tokens.Heading).depth === 1) {
-        return chalk.bold.italic.underline(text) + EOL + EOL
+        return chalk.hex('#c0c0c0').bold.italic.underline(text) + EOL + EOL
       }
-      return chalk.bold(text) + EOL + EOL
+      return chalk.hex('#c0c0c0').bold(text) + EOL + EOL
     }
     case 'hr':
       return '---'
