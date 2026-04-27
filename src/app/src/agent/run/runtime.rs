@@ -521,6 +521,7 @@ fn map_agent_event(
             usage,
             error,
             metrics,
+            context_window,
         } => {
             let usage_summary = UsageSummary {
                 input: usage.input,
@@ -543,6 +544,7 @@ fn map_agent_event(
                         usage: usage_summary.clone(),
                         metrics: Some(llm_metrics.clone()),
                         error: error.clone(),
+                        context_window: *context_window,
                     })
                     .to_item(),
                 ),
@@ -554,6 +556,7 @@ fn map_agent_event(
                     cache_write: usage_summary.cache_write,
                     error: error.clone(),
                     metrics: Some(llm_metrics),
+                    context_window: *context_window,
                 }),
             ]
         }
@@ -596,7 +599,11 @@ fn map_agent_event(
             ]
         }
 
-        evot_engine::AgentEvent::ContextCompactionEnd { stats, messages } => {
+        evot_engine::AgentEvent::ContextCompactionEnd {
+            stats,
+            messages,
+            context_window,
+        } => {
             let compacted_transcripts = from_agent_messages(messages);
 
             let result = if stats.level > 0 {
@@ -660,10 +667,14 @@ fn map_agent_event(
                 RuntimeEvent::Transcript(
                     TranscriptStats::ContextCompactionCompleted(ContextCompactionCompletedStats {
                         result: result.clone(),
+                        context_window: *context_window,
                     })
                     .to_item(),
                 ),
-                RuntimeEvent::Public(RunEventPayload::ContextCompactionCompleted { result }),
+                RuntimeEvent::Public(RunEventPayload::ContextCompactionCompleted {
+                    result,
+                    context_window: *context_window,
+                }),
             ]
         }
     }

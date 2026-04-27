@@ -263,6 +263,7 @@ pub(super) async fn stream_assistant_response(
                     usage: Usage::default(),
                     error: Some(e.to_string()),
                     metrics: error_metrics,
+                    context_window: budget.context_window,
                 })
                 .ok();
                 attempt += 1;
@@ -301,6 +302,7 @@ pub(super) async fn stream_assistant_response(
                 usage,
                 error: None,
                 metrics: collected_metrics,
+                context_window: budget.context_window,
             })
             .ok();
             msg.clone()
@@ -312,6 +314,7 @@ pub(super) async fn stream_assistant_response(
                 usage: Usage::default(),
                 error: Some(e.to_string()),
                 metrics: collected_metrics,
+                context_window: budget.context_window,
             })
             .ok();
             Message::Assistant {

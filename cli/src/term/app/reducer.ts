@@ -3,7 +3,7 @@
  */
 
 import type { RunEvent } from '../../native/index.js'
-import { humanTokens as humanTokensInline, renderBar, renderPositionBar } from '../../render/format.js'
+import { formatLlmCallStarted, formatLlmCallCompleted, formatCompactionStarted, formatCompactionCompleted } from '../../render/verbose.js'
 import { emptyRunStats, type AppState } from './state.js'
 import type { CompactRecord, MessageStats, UIMessage, UIToolCall } from './types.js'
 
@@ -167,14 +167,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
     case 'llm_call_started': {
       const model = (p.model as string) ?? state.model
       const turn = event.turn
-      const attempt = (p.attempt as number) ?? 0
-      const msgCount = (p.message_count as number) ?? 0
-      const tools = p.tools as any[] | undefined
-      const toolCount = (p.tool_count as number) ?? tools?.length ?? 0
       const sysTok = (p.system_prompt_tokens as number) ?? 0
-      const retryStr = attempt > 0 ? ` · retry ${attempt}` : ''
-      const injectedCount = (p.injected_count as number) ?? 0
-      const injectedStr = injectedCount > 0 ? ` · ${injectedCount} injected` : ''
 
       // Pre-computed message stats from Rust side (always present)
       const ms = p.message_stats as Record<string, any> | undefined
@@ -192,56 +185,13 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
           }
         : null
 
-      // Build detail lines
-      const detailLines: string[] = []
-
-      // Messages line
-      const parts: string[] = []
-      if (msgStats) {
-        if (msgStats.userCount > 0) parts.push(`user ${msgStats.userCount}`)
-        if (msgStats.assistantCount > 0) parts.push(`asst ${msgStats.assistantCount}`)
-        if (msgStats.toolResultCount > 0) parts.push(`tool ${msgStats.toolResultCount}`)
+      const data: Record<string, unknown> = {
+        ...p,
+        model,
+        turn,
+        context_window: state.currentRunStats.contextWindow,
       }
-      const msgPart = parts.length > 0 ? `${msgCount} msgs (${parts.join(' · ')})` : `${msgCount} msgs`
-      detailLines.push(`  ${msgPart}`)
-
-      // Budget bar
-      const budgetTokens = (p.budget_tokens as number) ?? 0
-      if (budgetTokens > 0 && msgStats) {
-        const total = sysTok + msgStats.userTokens + msgStats.assistantTokens + msgStats.toolResultTokens + msgStats.imageTokens
-        const pct = ((total / budgetTokens) * 100).toFixed(0)
-        const bar = renderBar(total, budgetTokens, 20)
-        detailLines.push(`  ${bar} ~${humanTokensInline(total)}/${humanTokensInline(budgetTokens)} (${pct}%)`)
-      }
-
-      // Token distribution by role
-      if (msgStats) {
-        const dist: string[] = []
-        if (sysTok > 0) dist.push(`sys ${humanTokensInline(sysTok)}`)
-        if (msgStats.userTokens > 0) dist.push(`user ${humanTokensInline(msgStats.userTokens)}`)
-        if (msgStats.assistantTokens > 0) dist.push(`asst ${humanTokensInline(msgStats.assistantTokens)}`)
-        if (msgStats.toolResultTokens > 0) dist.push(`tool ${humanTokensInline(msgStats.toolResultTokens)}`)
-        if (msgStats.imageTokens > 0) dist.push(`img ${humanTokensInline(msgStats.imageTokens)}`)
-        if (dist.length > 0) detailLines.push(`  ${dist.join(' · ')}`)
-      }
-
-      // Per-tool token breakdown
-      if (msgStats && msgStats.toolDetails.length >= 2) {
-        const agg = new Map<string, number>()
-        for (const [name, tokens] of msgStats.toolDetails) {
-          agg.set(name, (agg.get(name) ?? 0) + tokens)
-        }
-        const sorted = [...agg.entries()].sort((a, b) => b[1] - a[1])
-        const total = msgStats.toolResultTokens || 1
-        const maxNameLen = Math.max(...sorted.map(([n]) => n.length), 4)
-        for (const [name, tokens] of sorted) {
-          const pct = ((tokens / total) * 100).toFixed(0)
-          const bar = renderBar(tokens, total, 20)
-          detailLines.push(`      ${name.padEnd(maxNameLen)}  ~${humanTokensInline(tokens).padEnd(6)} (${pct.padStart(3)}%)  ${bar}`)
-        }
-      }
-
-      const text = `[LLM] call  ${model}  turn ${turn}${retryStr}${injectedStr}\n${detailLines.join('\n')}`
+      const text = formatLlmCallStarted(data)
 
       // Accumulate cumulative stats across all LLM calls
       const prev = state.currentRunStats.cumulativeStats
@@ -302,17 +252,12 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         tokPerSec,
       }]
 
-      let text: string
-      if (error) {
-        const durSec = (durationMs / 1000).toFixed(1)
-        text = `[LLM] failed · ${durSec}s\n  ${error}`
-      } else {
-        const durSec = (durationMs / 1000).toFixed(1)
-        const dur = durationMs || 1
-        const ttfbPct = ((ttfbMs / dur) * 100).toFixed(0)
-        const streamPct = ((streamingMs / dur) * 100).toFixed(0)
-        text = `[LLM] completed · ${durSec}s · ${tokPerSec.toFixed(0)} tok/s\n  tokens  ${humanTokensInline(inputTok)} in · ${outputTok} out\n  timing  ttfb ${(ttfbMs / 1000).toFixed(1)}s (${ttfbPct}%) · stream ${(streamingMs / 1000).toFixed(1)}s (${streamPct}%)`
+      const data: Record<string, unknown> = {
+        ...p,
+        model: (p.model as string) ?? state.model,
+        turn: event.turn,
       }
+      const text = formatLlmCallCompleted(data)
 
       return {
         ...state,
@@ -322,35 +267,15 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
     }
 
     case 'context_compaction_started': {
-      const msgCount = (p.message_count as number) ?? 0
-      const estTokens = (p.estimated_tokens as number) ?? 0
-      const budget = (p.budget_tokens as number) ?? 0
-      const window = (p.context_window as number) ?? 0
-      const sysTok = (p.system_prompt_tokens as number) ?? 0
-      const pct = budget > 0 ? ((estTokens / budget) * 100).toFixed(0) : '0'
-      const bar = renderBar(estTokens, budget, 20)
-
-      // Token distribution (compact)
-      const cms = p.message_stats as Record<string, any> | undefined
-      const compactDetails: string[] = []
-      compactDetails.push(`  ${bar}  ~${humanTokensInline(estTokens)}/${humanTokensInline(budget)} (${pct}%)`)
-      if (cms) {
-        const parts: string[] = []
-        const uTok = (cms.user_tokens as number) ?? 0
-        const aTok = (cms.assistant_tokens as number) ?? 0
-        const trTok = (cms.tool_result_tokens as number) ?? 0
-        const imgTok = (cms.image_tokens as number) ?? 0
-        if (sysTok > 0) parts.push(`sys ${humanTokensInline(sysTok)}`)
-        if (uTok > 0) parts.push(`user ${humanTokensInline(uTok)}`)
-        if (aTok > 0) parts.push(`asst ${humanTokensInline(aTok)}`)
-        if (trTok > 0) parts.push(`tool ${humanTokensInline(trTok)}`)
-        if (imgTok > 0) parts.push(`img ${humanTokensInline(imgTok)}`)
-        if (parts.length > 0) compactDetails.push(`  ${parts.join(' · ')}`)
+      const data: Record<string, unknown> = {
+        ...p,
+        context_window: state.currentRunStats.contextWindow,
       }
-      const text = `[COMPACT] call  ${msgCount} msgs\n${compactDetails.join('\n')}`
+      const text = formatCompactionStarted(data)
+
       return {
         ...state,
-        currentRunStats: { ...state.currentRunStats, contextTokens: estTokens, contextWindow: window },
+        currentRunStats: { ...state.currentRunStats, contextTokens: (p.estimated_tokens as number) ?? 0, contextWindow: (p.context_window as number) ?? 0 },
         verboseEvents: [...state.verboseEvents, { kind: 'compact_call', text }],
       }
     }
@@ -358,114 +283,12 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
     case 'context_compaction_completed': {
       const result = p.result as Record<string, any> | undefined
       const type = (result?.type as string) ?? 'done'
-      let action = type
-      if (type === 'no_op') {
-        action = 'no-op'
-      } else if (type === 'run_once_cleared') {
-        const saved = (result?.saved_tokens as number) ?? 0
-        action = `cleared (−${humanTokensInline(saved)})`
-      } else if (type === 'level_compacted') {
-        const level = (result?.level as number) ?? 0
-        const beforeMsgs = (result?.before_message_count as number) ?? 0
-        const afterMsgs = (result?.after_message_count as number) ?? 0
-        const before = (result?.before_estimated_tokens as number) ?? 0
-        const after = (result?.after_estimated_tokens as number) ?? 0
-        const msgsDropped = (result?.messages_dropped as number) ?? 0
-        const saved = before - after
-        const savedPct = before > 0 ? ((saved / before) * 100).toFixed(0) : '0'
 
-        const allActions = result?.actions as any[] | undefined
-        const sorted = allActions
-          ? [...allActions]
-              .filter((a: any) => a.method !== 'Skipped')
-              .sort((a: any, b: any) => {
-                const sa = (a.before_tokens ?? 0) - (a.after_tokens ?? 0)
-                const sb = (b.before_tokens ?? 0) - (b.after_tokens ?? 0)
-                return sb - sa
-              })
-          : []
-
-        const { bar: posBar, legend } = renderPositionBar(beforeMsgs, sorted, level)
-        const deltaMsgs = beforeMsgs - afterMsgs
-        const messageDelta = deltaMsgs > 0 ? `−${deltaMsgs}` : '0'
-
-        let summary: string
-        if (level === 1) {
-          const outlineCount = sorted.filter((a: any) => a.method === 'Outline').length
-          const headtailCount = sorted.filter((a: any) => a.method === 'HeadTail').length
-          const parts: string[] = []
-          if (outlineCount > 0) parts.push(`outlined ${outlineCount}`)
-          if (headtailCount > 0) parts.push(`head-tail ${headtailCount}`)
-          summary = parts.length > 0 ? `↓ ${parts.join(', ')}` : '↓ no changes'
-        } else if (level === 2) {
-          const turnCount = sorted.length
-          const totalMsgs = sorted.reduce((s: number, a: any) => s + 1 + ((a.related_count as number) ?? 0), 0)
-          summary = `↓ summarized ${turnCount} turns (${totalMsgs} msgs → ${turnCount} summaries)`
-        } else if (level === 3) {
-          const kept = Math.max(afterMsgs - 1, 0)
-          summary = `↓ dropped ${msgsDropped} msgs, kept ${kept} + 1 marker`
-        } else {
-          summary = '↓ no changes'
-        }
-
-        const lines: string[] = []
-        lines.push(`L${level} completed`)
-        lines.push(`  msgs    ${beforeMsgs} → ${afterMsgs} (${messageDelta})`)
-        lines.push(`  tokens  ~${humanTokensInline(before)} → ~${humanTokensInline(after)} (saved ~${humanTokensInline(saved)}, ${savedPct}%)`)
-        lines.push(`  map     ${posBar}`)
-        if (legend) lines.push(`  legend  ${legend}`)
-        lines.push(`  result  ${summary}`)
-
-        if (sorted.length > 0) {
-          const totalActions = allActions?.length ?? 0
-          const changed = sorted.length
-          let header: string
-          if (level === 1) {
-            header = `  details changed ${changed}/${totalActions}`
-          } else if (level === 2) {
-            const totalMsgs = sorted.reduce((s: number, a: any) => s + 1 + ((a.related_count as number) ?? 0), 0)
-            header = `  details summarized ${changed} turns (${totalMsgs} msgs → ${changed} summaries)`
-          } else if (level === 3) {
-            const kept = Math.max(afterMsgs - 1, 0)
-            header = `  details dropped ${msgsDropped}, kept ${kept}, marker 1`
-          } else {
-            header = `  details changed ${changed}`
-          }
-          lines.push(header)
-
-          const TOP = 3
-          const TAIL = 2
-          const fmtAction = (a: any) => {
-            const idx = (a.index as number) ?? 0
-            const toolName = (a.tool_name as string) ?? ''
-            const method = (a.method as string) ?? 'unknown'
-            const bTok = (a.before_tokens as number) ?? 0
-            const aTok = (a.after_tokens as number) ?? 0
-            const aSaved = bTok - aTok
-            if (method === 'Summarized') {
-              const rc = (a.related_count as number) ?? 0
-              return `    #${String(idx).padEnd(3)} turn(${1 + rc} msgs)  ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (−${humanTokensInline(aSaved)})`
-            }
-            if (method === 'Dropped') {
-              const endIdx = a.end_index as number | undefined
-              const idxStr = endIdx != null ? `#${idx}..#${String(endIdx).padEnd(3)}` : `#${String(idx).padEnd(3)}`
-              return `    ${idxStr}  ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (−${humanTokensInline(aSaved)})`
-            }
-            return `    #${String(idx).padEnd(3)} ${toolName.padEnd(12)} ${method.padEnd(12)} ~${humanTokensInline(bTok)} → ~${humanTokensInline(aTok)}  (−${humanTokensInline(aSaved)})`
-          }
-
-          if (sorted.length <= TOP + TAIL) {
-            for (const a of sorted) lines.push(fmtAction(a))
-          } else {
-            for (const a of sorted.slice(0, TOP)) lines.push(fmtAction(a))
-            const omitted = sorted.length - TOP - TAIL
-            lines.push(`    ... ${omitted} more ...`)
-            for (const a of sorted.slice(sorted.length - TAIL)) lines.push(fmtAction(a))
-          }
-        }
-
-        action = lines.join('\n')
+      const data: Record<string, unknown> = {
+        ...p,
+        context_window: state.currentRunStats.contextWindow,
       }
+      const text = formatCompactionCompleted(data)
 
       const compactRecord: CompactRecord | null =
         type === 'level_compacted'
@@ -489,7 +312,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       return {
         ...state,
         currentRunStats: updatedStats,
-        verboseEvents: [...state.verboseEvents, { kind: 'compact_done', text: `[COMPACT] ${action}` }],
+        verboseEvents: [...state.verboseEvents, { kind: 'compact_done', text }],
       }
     }
 

@@ -37,6 +37,8 @@ pub struct LlmCallCompletedStats {
     pub metrics: Option<LlmCallMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default)]
+    pub context_window: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +106,8 @@ pub enum CompactionResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextCompactionCompletedStats {
     pub result: CompactionResult,
+    #[serde(default)]
+    pub context_window: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

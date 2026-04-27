@@ -93,6 +93,8 @@ pub enum RunEventPayload {
         error: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         metrics: Option<LlmCallMetrics>,
+        #[serde(default)]
+        context_window: usize,
     },
     ContextCompactionStarted {
         message_count: usize,
@@ -105,6 +107,8 @@ pub enum RunEventPayload {
     },
     ContextCompactionCompleted {
         result: CompactionResult,
+        #[serde(default)]
+        context_window: usize,
     },
     RunFinished {
         text: String,

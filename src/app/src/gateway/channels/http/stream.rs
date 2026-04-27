@@ -174,7 +174,7 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
                 }
             }));
         }
-        RunEventPayload::ContextCompactionCompleted { result } => {
+        RunEventPayload::ContextCompactionCompleted { result, .. } => {
             events.push(json!({
                 "type": "context_compaction_completed",
                 "data": {

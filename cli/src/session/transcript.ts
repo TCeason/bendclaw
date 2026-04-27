@@ -4,7 +4,7 @@
  */
 
 import type { UIMessage, UIToolCall, VerboseEvent, RunStats } from '../term/app/types.js'
-import { humanTokens, renderBar } from '../render/format.js'
+import { formatLlmCallStarted, formatLlmCallCompleted, formatCompactionStarted, formatCompactionCompleted } from '../render/verbose.js'
 
 // ---------------------------------------------------------------------------
 // Raw transcript item shapes (from Rust TranscriptItem serialization)
@@ -169,96 +169,6 @@ function handleStats(item: RawItem, acc: RunAcc): void {
       acc.runStats.toolCallCount++
       break
     // run_finished, etc. — handled by buildRunStats
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Verbose event text formatters
-// ---------------------------------------------------------------------------
-
-function formatLlmCallStarted(data: Record<string, unknown>): string {
-  const model = (data.model as string) ?? '?'
-  const turn = (data.turn as number) ?? 0
-  const attempt = (data.attempt as number) ?? 1
-  const injected = (data.injected_count as number) ?? 0
-  const msgCount = (data.message_count as number) ?? 0
-  const bytes = (data.message_bytes as number) ?? 0
-  const sysTok = (data.system_prompt_tokens as number) ?? 0
-
-  const retryStr = attempt > 1 ? `  retry ${attempt}` : ''
-  const injectedStr = injected > 0 ? `  +${injected} injected` : ''
-  const kb = bytes >= 1024 ? `${(bytes / 1024).toFixed(0)} KB` : `${bytes} B`
-
-  return `[LLM] call  ${model}  turn ${turn}${retryStr}${injectedStr}\n  ${msgCount} msgs · ${kb} · system ${humanTokens(sysTok)}`
-}
-
-function formatLlmCallCompleted(data: Record<string, unknown>): string {
-  const error = data.error as string | undefined
-  const usage = data.usage as Record<string, number> | undefined
-  const metrics = data.metrics as Record<string, number> | undefined
-  const durationMs = metrics?.duration_ms ?? 0
-
-  if (error) {
-    return `[LLM] failed · ${(durationMs / 1000).toFixed(1)}s\n  ${error}`
-  }
-
-  const inputTok = usage?.input ?? 0
-  const outputTok = usage?.output ?? 0
-  const durSec = (durationMs / 1000).toFixed(1)
-  const tokPerSec = durationMs > 0 ? (outputTok / (durationMs / 1000)).toFixed(0) : '0'
-  const ttfbMs = metrics?.ttfb_ms ?? 0
-  const streamingMs = metrics?.streaming_ms ?? 0
-  const dur = durationMs || 1
-  const ttfbPct = ((ttfbMs / dur) * 100).toFixed(0)
-  const streamPct = ((streamingMs / dur) * 100).toFixed(0)
-
-  return `[LLM] completed · ${durSec}s · ${tokPerSec} tok/s\n  tokens  ${humanTokens(inputTok)} in · ${humanTokens(outputTok)} out\n  timing  ttfb ${(ttfbMs / 1000).toFixed(1)}s (${ttfbPct}%) · stream ${(streamingMs / 1000).toFixed(1)}s (${streamPct}%)`
-}
-
-function formatCompactionStarted(data: Record<string, unknown>): string {
-  const msgCount = (data.message_count as number) ?? 0
-  const estTokens = (data.estimated_tokens as number) ?? 0
-  const budget = (data.budget_tokens as number) ?? 0
-  const pct = budget > 0 ? ((estTokens / budget) * 100).toFixed(0) : '0'
-  const bar = renderBar(estTokens, budget, 20)
-
-  return `[COMPACT] call  ${msgCount} msgs\n  ${bar} ~${humanTokens(estTokens)}/${humanTokens(budget)} (${pct}%)`
-}
-
-function formatCompactionCompleted(data: Record<string, unknown>): string {
-  const result = data.result as Record<string, unknown> | undefined
-  if (!result) return '[COMPACT] done'
-
-  const type = (result.type as string) ?? 'done'
-  switch (type) {
-    case 'no_op':
-      return '[COMPACT] no-op'
-    case 'run_once_cleared': {
-      const saved = (result.saved_tokens as number) ?? 0
-      const before = (result.before_estimated_tokens as number) ?? 0
-      const after = (result.after_estimated_tokens as number) ?? 0
-      const savedPct = before > 0 ? ((saved / before) * 100).toFixed(0) : '0'
-      return `[COMPACT] cleared (−${humanTokens(saved)})\n  ~${humanTokens(before)} → ~${humanTokens(after)} (${savedPct}%)`
-    }
-    case 'level_compacted': {
-      const level = (result.level as number) ?? 0
-      const beforeMsgs = (result.before_message_count as number) ?? 0
-      const afterMsgs = (result.after_message_count as number) ?? 0
-      const before = (result.before_estimated_tokens as number) ?? 0
-      const after = (result.after_estimated_tokens as number) ?? 0
-      const saved = before - after
-      const savedPct = before > 0 ? ((saved / before) * 100).toFixed(0) : '0'
-      const truncated = (result.tool_outputs_truncated as number) ?? 0
-      const summarized = (result.turns_summarized as number) ?? 0
-      const dropped = (result.messages_dropped as number) ?? 0
-      const parts: string[] = []
-      if (summarized > 0) parts.push(`${summarized} summarized`)
-      if (truncated > 0) parts.push(`${truncated} truncated`)
-      if (dropped > 0) parts.push(`${dropped} dropped`)
-      return `[COMPACT] L${level}  ${beforeMsgs}→${afterMsgs} msgs  saved ${humanTokens(saved)} (${savedPct}%)\n  ${parts.join(' · ')}`
-    }
-    default:
-      return `[COMPACT] ${type}`
   }
 }
 

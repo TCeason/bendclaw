@@ -55,6 +55,7 @@ fn aggregator_ingests_llm_call_completed() {
             chunk_count: 42,
         }),
         error: None,
+        context_window: 0,
     }));
     assert_eq!(agg.llm_metrics.len(), 1);
     assert_eq!(agg.llm_output_tokens, vec![200]);
@@ -119,6 +120,7 @@ fn aggregator_ingests_compaction_completed() {
                 age_cleared: 0,
                 actions: vec![],
             },
+            context_window: 0,
         },
     ));
     assert_eq!(agg.compact_history.len(), 1);
@@ -134,6 +136,7 @@ fn aggregator_ignores_noop_compaction() {
     agg.ingest(&TranscriptStats::ContextCompactionCompleted(
         ContextCompactionCompletedStats {
             result: evot::types::CompactionResult::NoOp,
+            context_window: 0,
         },
     ));
     assert!(agg.compact_history.is_empty());
@@ -173,6 +176,7 @@ fn aggregator_ingests_run_once_cleared_compaction() {
                     },
                 ],
             },
+            context_window: 0,
         },
     ));
     assert_eq!(agg.compact_history.len(), 1);
@@ -231,6 +235,7 @@ fn aggregator_compaction_action_map_positions() {
                     },
                 ],
             },
+            context_window: 0,
         },
     ));
     assert_eq!(agg.compact_history.len(), 1);
@@ -292,6 +297,7 @@ fn aggregator_to_run_summary_produces_correct_data() {
             chunk_count: 20,
         }),
         error: None,
+        context_window: 0,
     }));
     agg.ingest(&TranscriptStats::ToolFinished(ToolFinishedStats {
         tool_call_id: "tc1".into(),
@@ -326,6 +332,7 @@ fn aggregator_to_run_summary_produces_correct_data() {
             chunk_count: 15,
         }),
         error: None,
+        context_window: 0,
     }));
 
     let usage = UsageSummary {
@@ -430,6 +437,7 @@ fn aggregator_from_items_batch_ingest() {
             },
             metrics: None,
             error: None,
+            context_window: 0,
         })
         .to_item(),
         TranscriptItem::Assistant {

@@ -56,6 +56,7 @@ pub(super) fn compact_context(
     tx.send(AgentEvent::ContextCompactionEnd {
         stats: result.stats,
         messages: context.messages.clone(),
+        context_window: budget.context_window,
     })
     .ok();
 }
@@ -122,6 +123,7 @@ pub(super) fn compact_for_recovery(
     tx.send(AgentEvent::ContextCompactionEnd {
         stats: compact_result.stats,
         messages: context.messages.clone(),
+        context_window: budget.context_window,
     })
     .ok();
 

@@ -277,7 +277,8 @@ describe('TermRenderer', () => {
       stdout.clear()
       renderer.restoreViewport()
       const out = stdout.output
-      expect(out).toContain('\x1b[2A')
+      // cursorTo(1,1) + eraseDown() clears the entire visible viewport,
+      // including any status area. No relative cursorUp() needed.
       expect(out).toContain('\x1b[1;1H')
       expect(out).toContain('\x1b[J')
       expect(out).toContain('\n'.repeat(24))

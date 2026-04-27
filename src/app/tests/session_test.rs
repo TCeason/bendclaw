@@ -534,6 +534,7 @@ async fn stats_items_persisted_but_filtered_on_resume() -> TestResult {
             },
             metrics: None,
             error: None,
+            context_window: 0,
         })
         .to_item();
 
@@ -623,6 +624,7 @@ async fn stats_after_compact_filtered_on_resume() -> TestResult {
                 age_cleared: 0,
                 actions: vec![],
             },
+            context_window: 0,
         },
     )
     .to_item();

@@ -49,6 +49,7 @@ fn stats_llm_call_completed_round_trip() {
             chunk_count: 42,
         }),
         error: None,
+        context_window: 0,
     });
     let item = stats.to_item();
     let decoded = TranscriptStats::try_from_item(&item);
@@ -118,6 +119,7 @@ fn stats_context_compaction_completed_round_trip() {
             age_cleared: 0,
             actions: vec![],
         },
+        context_window: 0,
     });
     let item = stats.to_item();
     let decoded = TranscriptStats::try_from_item(&item);

@@ -200,7 +200,12 @@ export class TermRenderer {
   redrawViewport(text: string): void {
     const outerBatch = this.buffering
     if (!outerBatch) this.beginBatch()
-    this.clearStatusArea()
+    // Reset status bookkeeping directly — cursorTo(1,1)+eraseDown handles
+    // clearing the visible viewport regardless of scroll position.
+    // clearStatusArea() would use relative cursorUp() which breaks when
+    // the user has scrolled up and auto-scroll is off.
+    this.statusHeight = 0
+    this.prevStatusLines = []
     this.write(cursorTo(1, 1) + eraseDown())
     const lines = text ? text.split('\n') : []
     if (text) {
@@ -220,7 +225,9 @@ export class TermRenderer {
   redrawViewportTight(text: string): void {
     const outerBatch = this.buffering
     if (!outerBatch) this.beginBatch()
-    this.clearStatusArea()
+    // Reset state directly — cursorTo(1,1)+eraseDown handles clearing.
+    this.statusHeight = 0
+    this.prevStatusLines = []
     this.write(cursorTo(1, 1) + eraseDown())
     if (text) {
       this.write(text)
@@ -233,7 +240,8 @@ export class TermRenderer {
   restoreViewport(): void {
     const outerBatch = this.buffering
     if (!outerBatch) this.beginBatch()
-    this.clearStatusArea()
+    this.statusHeight = 0
+    this.prevStatusLines = []
     this.write(cursorTo(1, 1) + eraseDown())
     this.write('\n'.repeat(this.rows))
     if (!outerBatch) this.flushBatch()
@@ -247,7 +255,6 @@ export class TermRenderer {
   clearScreen(): void {
     const outerBatch = this.buffering
     if (!outerBatch) this.beginBatch()
-    this.clearStatusArea()
     this.statusHeight = 0
     this.prevStatusLines = []
     // Push old content into scrollback with blank lines instead of erasing

@@ -104,6 +104,7 @@ pub enum AgentEvent {
         usage: Usage,
         error: Option<String>,
         metrics: LlmCallMetrics,
+        context_window: usize,
     },
     ContextCompactionStart {
         message_count: usize,
@@ -115,6 +116,7 @@ pub enum AgentEvent {
     ContextCompactionEnd {
         stats: crate::context::CompactionStats,
         messages: Vec<AgentMessage>,
+        context_window: usize,
     },
 }
 
