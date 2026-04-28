@@ -90,26 +90,36 @@ pub fn build_request_body(
                 content,
                 ..
             } => {
-                let content_val = if content.iter().any(|c| matches!(c, Content::Image { .. })) {
-                    content_to_openai(content)
-                } else {
-                    let text = content
-                        .iter()
-                        .find_map(|c| match c {
-                            Content::Text { text } => Some(text.clone()),
-                            _ => None,
-                        })
-                        .unwrap_or_default();
-                    serde_json::json!(text)
-                };
+                let has_image = content.iter().any(|c| matches!(c, Content::Image { .. }));
+                let text = content
+                    .iter()
+                    .find_map(|c| match c {
+                        Content::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| {
+                        if has_image {
+                            "Image output is attached in the next user message.".into()
+                        } else {
+                            String::new()
+                        }
+                    });
 
                 let mut msg_obj = serde_json::json!({
                     "role": "tool",
                     "tool_call_id": tool_call_id,
-                    "content": content_val,
+                    "content": text,
                 });
                 apply_tool_result_compat(&mut msg_obj, compat, tool_name);
                 messages.push(msg_obj);
+
+                if has_image {
+                    let image_content = tool_result_images_as_user_content(tool_name, content);
+                    messages.push(serde_json::json!({
+                        "role": "user",
+                        "content": content_to_openai(&image_content),
+                    }));
+                }
             }
         }
     }
@@ -195,6 +205,20 @@ fn apply_reasoning_effort(
         }
         _ => {}
     }
+}
+
+fn tool_result_images_as_user_content(tool_name: &str, content: &[Content]) -> Vec<Content> {
+    let mut user_content = vec![Content::Text {
+        text: format!("Image output from tool `{}`:", tool_name),
+    }];
+    user_content.extend(content.iter().filter_map(|c| match c {
+        Content::Image { data, mime_type } => Some(Content::Image {
+            data: data.clone(),
+            mime_type: mime_type.clone(),
+        }),
+        _ => None,
+    }));
+    user_content
 }
 
 pub fn content_to_openai(content: &[Content]) -> serde_json::Value {

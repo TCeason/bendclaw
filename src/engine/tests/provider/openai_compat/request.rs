@@ -184,8 +184,21 @@ fn test_tool_result_with_image() {
     let msgs = body["messages"].as_array().unwrap();
     let tool_msg = &msgs[1];
     assert_eq!(tool_msg["role"], "tool");
-    let content = tool_msg["content"].as_array().unwrap();
-    assert_eq!(content[0]["type"], "image_url");
+    assert_eq!(
+        tool_msg["content"],
+        "Image output is attached in the next user message."
+    );
+
+    let image_msg = &msgs[2];
+    assert_eq!(image_msg["role"], "user");
+    let content = image_msg["content"].as_array().unwrap();
+    assert_eq!(content[0]["type"], "text");
+    assert_eq!(content[0]["text"], "Image output from tool `read_file`:");
+    assert_eq!(content[1]["type"], "image_url");
+    assert_eq!(
+        content[1]["image_url"]["url"],
+        "data:image/png;base64,aW1hZ2VkYXRh"
+    );
 }
 
 #[test]

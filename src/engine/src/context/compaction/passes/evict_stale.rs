@@ -5,10 +5,10 @@
 //! Strategy: EvictionStrategy
 //!   Keeps `keep_first` messages + `keep_recent` messages.
 //!   Drops the middle, inserting a marker.
-//!   If still over budget, uses priority-based retention:
-//!     1. First `keep_first` messages (task goal) — always kept
-//!     2. user/assistant messages (from tail)
-//!     3. tool_result (lowest priority)
+//!   If still over budget, uses tail-first retention:
+//!     Protect `keep_first`, then fill remaining budget from tail.
+//!     Naturally drops old messages — including accumulated summaries
+//!     that pile up at the front of the list.
 
 use crate::context::compaction::compact::CompactionAction;
 use crate::context::compaction::compact::CompactionMethod;
@@ -107,7 +107,11 @@ pub fn run(messages: Vec<AgentMessage>, ctx: &CompactContext) -> PassResult {
     }
 }
 
-/// Keep messages within budget using priority-based retention.
+/// Keep messages within budget using tail-first retention.
+///
+/// Protects the first `keep_first` messages, then fills the remaining
+/// budget from the tail (most-recent-first). Old messages — including
+/// compaction summaries accumulated at the front — are naturally dropped.
 fn keep_within_budget(
     messages: &[AgentMessage],
     keep_first: usize,
@@ -139,43 +143,18 @@ fn keep_within_budget(
     let mut remaining = budget - protected_tokens;
     let rest = &messages[protected_end..];
 
-    // Pass 1: user and assistant messages (high priority)
-    let mut included = vec![false; rest.len()];
-    for (i, msg) in rest.iter().enumerate().rev() {
-        let is_user_or_assistant = matches!(
-            msg,
-            AgentMessage::Llm(Message::User { .. }) | AgentMessage::Llm(Message::Assistant { .. })
-        );
-        if !is_user_or_assistant {
-            continue;
-        }
-        let tokens = message_tokens(msg);
-        if tokens > remaining {
-            continue;
-        }
-        remaining -= tokens;
-        included[i] = true;
-    }
-
-    // Pass 2: tool results (low priority)
-    for (i, msg) in rest.iter().enumerate().rev() {
-        if included[i] {
-            continue;
-        }
-        let tokens = message_tokens(msg);
-        if tokens > remaining {
-            continue;
-        }
-        remaining -= tokens;
-        included[i] = true;
-    }
-
+    // Tail-first: most recent messages first. Old summaries naturally
+    // fall behind newer messages and are dropped when budget fills.
     let mut tail: Vec<AgentMessage> = Vec::new();
-    for (i, msg) in rest.iter().enumerate() {
-        if included[i] {
-            tail.push(msg.clone());
+    for msg in rest.iter().rev() {
+        let tokens = message_tokens(msg);
+        if tokens > remaining {
+            break;
         }
+        remaining -= tokens;
+        tail.push(msg.clone());
     }
+    tail.reverse();
 
     let kept = protected_end + tail.len();
     let removed = messages.len() - kept;
