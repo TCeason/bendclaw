@@ -7,6 +7,7 @@ use crate::context::ContextConfig;
 use crate::context::ExecutionLimits;
 use crate::provider::ModelConfig;
 use crate::provider::StreamProvider;
+use crate::spill::FsSpill;
 use crate::types::*;
 
 /// Type alias for convert_to_llm callback.
@@ -75,6 +76,9 @@ pub struct AgentLoopConfig {
     /// Filters run in order; first `Reject` wins and discards any accumulated
     /// warnings. `Warn` messages accumulate and are appended to the user message.
     pub input_filters: Vec<Arc<dyn InputFilter>>,
+
+    /// Spill: large tool results are written to disk instead of truncated.
+    pub spill: Option<Arc<FsSpill>>,
 }
 
 /// Default convert_to_llm: keep only user/assistant/toolResult messages.

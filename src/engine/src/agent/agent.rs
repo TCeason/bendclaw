@@ -17,6 +17,7 @@ use crate::provider::ModelConfig;
 use crate::provider::StreamProvider;
 use crate::r#loop::AfterTurnFn;
 use crate::r#loop::BeforeTurnFn;
+use crate::spill::FsSpill;
 use crate::tools::guard::PathGuard;
 use crate::types::*;
 
@@ -62,6 +63,9 @@ pub struct Agent {
     // Custom compaction strategy
     pub(super) compaction_strategy: Option<Arc<dyn CompactionStrategy>>,
 
+    // Spill: large tool results written to disk
+    pub(super) spill: Option<Arc<FsSpill>>,
+
     // Control
     pub(super) cancel: Option<CancellationToken>,
     pub(super) is_streaming: bool,
@@ -103,6 +107,7 @@ impl Agent {
             after_turn: None,
             input_filters: Vec::new(),
             compaction_strategy: None,
+            spill: None,
             cancel: None,
             is_streaming: false,
             last_run_handle: None,
@@ -248,6 +253,18 @@ impl Agent {
     /// `compact_messages()` call during context compaction.
     pub fn with_compaction_strategy(mut self, strategy: impl CompactionStrategy + 'static) -> Self {
         self.compaction_strategy = Some(Arc::new(strategy));
+        self
+    }
+
+    /// Set spill for large tool results.
+    pub fn with_spill(mut self, spill: Arc<FsSpill>) -> Self {
+        self.spill = Some(spill);
+        self
+    }
+
+    /// Set spill from an optional value.
+    pub fn with_spill_opt(mut self, spill: Option<Arc<FsSpill>>) -> Self {
+        self.spill = spill;
         self
     }
 

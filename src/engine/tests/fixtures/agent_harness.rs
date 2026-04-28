@@ -246,6 +246,7 @@ impl TestHarness {
             before_turn: None,
             after_turn: None,
             input_filters: self.input_filters,
+            spill: None,
         };
 
         let mut context = AgentContext {
@@ -294,6 +295,7 @@ impl TestHarness {
             before_turn: None,
             after_turn: None,
             input_filters: self.input_filters,
+            spill: None,
         };
 
         let mut context = AgentContext {
@@ -485,5 +487,6 @@ pub fn make_config(provider: MockProvider) -> AgentLoopConfig {
         before_turn: None,
         after_turn: None,
         input_filters: vec![],
+        spill: None,
     }
 }

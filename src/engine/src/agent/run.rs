@@ -251,6 +251,7 @@ impl Agent {
             before_turn: self.before_turn.clone(),
             after_turn: self.after_turn.clone(),
             input_filters: self.input_filters.clone(),
+            spill: self.spill.clone(),
         }
     }
 }

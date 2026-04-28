@@ -51,6 +51,7 @@ pub struct EngineOptions {
     pub compat_caps: evot_engine::provider::CompatCaps,
     pub cwd: std::path::PathBuf,
     pub path_guard: std::sync::Arc<evot_engine::PathGuard>,
+    pub spill_dir: Option<std::path::PathBuf>,
 }
 
 // ---------------------------------------------------------------------------
@@ -788,4 +789,9 @@ pub(crate) fn build_agent(
         .with_path_guard(options.path_guard)
         .with_skills(skills)
         .with_thinking(options.thinking_level)
+        .with_spill_opt(
+            options
+                .spill_dir
+                .map(|dir| Arc::new(evot_engine::spill::FsSpill::new(dir))),
+        )
 }

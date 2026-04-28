@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 
 use super::config::GetMessagesFn;
 use crate::context;
+use crate::spill::FsSpill;
 use crate::tools::guard::PathGuard;
 use crate::types::*;
 
@@ -38,17 +39,47 @@ pub(super) async fn execute_tool_calls(
     strategy: &ToolExecutionStrategy,
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
+    spill: &Option<Arc<FsSpill>>,
 ) -> ToolExecutionResult {
     match strategy {
         ToolExecutionStrategy::Sequential => {
-            execute_sequential(tools, tool_calls, tx, cancel, get_steering, cwd, path_guard).await
+            execute_sequential(
+                tools,
+                tool_calls,
+                tx,
+                cancel,
+                get_steering,
+                cwd,
+                path_guard,
+                spill,
+            )
+            .await
         }
         ToolExecutionStrategy::Parallel => {
             if all_concurrency_safe(tools, tool_calls) {
-                execute_batch(tools, tool_calls, tx, cancel, get_steering, cwd, path_guard).await
+                execute_batch(
+                    tools,
+                    tool_calls,
+                    tx,
+                    cancel,
+                    get_steering,
+                    cwd,
+                    path_guard,
+                    spill,
+                )
+                .await
             } else {
-                execute_sequential(tools, tool_calls, tx, cancel, get_steering, cwd, path_guard)
-                    .await
+                execute_sequential(
+                    tools,
+                    tool_calls,
+                    tx,
+                    cancel,
+                    get_steering,
+                    cwd,
+                    path_guard,
+                    spill,
+                )
+                .await
             }
         }
         ToolExecutionStrategy::Batched { size } => {
@@ -57,9 +88,9 @@ pub(super) async fn execute_tool_calls(
 
             for (batch_idx, batch) in tool_calls.chunks(*size).enumerate() {
                 let batch_result = if all_concurrency_safe(tools, batch) {
-                    execute_batch(tools, batch, tx, cancel, None, cwd, path_guard).await
+                    execute_batch(tools, batch, tx, cancel, None, cwd, path_guard, spill).await
                 } else {
-                    execute_sequential(tools, batch, tx, cancel, None, cwd, path_guard).await
+                    execute_sequential(tools, batch, tx, cancel, None, cwd, path_guard, spill).await
                 };
                 results.extend(batch_result.tool_results);
 
@@ -89,6 +120,7 @@ pub(super) async fn execute_tool_calls(
 }
 
 /// Execute tool calls one at a time, checking steering between each.
+#[allow(clippy::too_many_arguments)]
 async fn execute_sequential(
     tools: &[Box<dyn AgentTool>],
     tool_calls: &[(String, String, serde_json::Value)],
@@ -97,13 +129,14 @@ async fn execute_sequential(
     get_steering: Option<&GetMessagesFn>,
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
+    spill: &Option<Arc<FsSpill>>,
 ) -> ToolExecutionResult {
     let mut results: Vec<Message> = Vec::new();
     let mut steering_messages: Option<Vec<AgentMessage>> = None;
 
     for (index, (id, name, args)) in tool_calls.iter().enumerate() {
         let (msg, _is_error) =
-            execute_single_tool(tools, id, name, args, tx, cancel, cwd, path_guard).await;
+            execute_single_tool(tools, id, name, args, tx, cancel, cwd, path_guard, spill).await;
         results.push(msg);
 
         // Check for steering — skip remaining tools if user interrupted
@@ -126,6 +159,7 @@ async fn execute_sequential(
 }
 
 /// Execute a batch of tool calls concurrently using futures::join_all.
+#[allow(clippy::too_many_arguments)]
 async fn execute_batch(
     tools: &[Box<dyn AgentTool>],
     tool_calls: &[(String, String, serde_json::Value)],
@@ -134,13 +168,14 @@ async fn execute_batch(
     get_steering: Option<&GetMessagesFn>,
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
+    spill: &Option<Arc<FsSpill>>,
 ) -> ToolExecutionResult {
     use futures::future::join_all;
 
     let futures: Vec<_> = tool_calls
         .iter()
         .map(|(id, name, args)| {
-            execute_single_tool(tools, id, name, args, tx, cancel, cwd, path_guard)
+            execute_single_tool(tools, id, name, args, tx, cancel, cwd, path_guard, spill)
         })
         .collect();
 
@@ -177,6 +212,7 @@ async fn execute_single_tool(
     cancel: &tokio_util::sync::CancellationToken,
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
+    spill: &Option<Arc<FsSpill>>,
 ) -> (Message, bool) {
     let tool = tools.iter().find(|t| t.name() == name);
 
@@ -276,18 +312,10 @@ async fn execute_single_tool(
         ),
     };
 
-    // System-level tool result size cap.  Prevents any single tool from
-    // blowing up the context window and triggering aggressive compaction
-    // that drops the entire conversation history.
-    // Cap is applied to the TOTAL bytes across all Content::Text blocks,
-    // not per-block, to prevent multi-block results from slipping through.
-    let result = ToolResult {
-        content: crate::tools::validation::cap_tool_result_content(
-            result.content,
-            crate::tools::validation::MAX_TOOL_RESULT_BYTES,
-        ),
-        ..result
-    };
+    // System-level tool result size management.
+    // If spill is configured, large results are written to disk with a preview.
+    // Otherwise, fall back to truncation.
+    let result = process_result(spill, id, name, result, is_error).await;
 
     let result_tokens = context::content_tokens(&result.content);
     let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
@@ -460,4 +488,114 @@ fn build_doom_loop_preview(tool_name: &str, args: &serde_json::Value) -> String 
         }
     }
     parts.join(" ")
+}
+
+// ── Spill / truncation helpers ──────────────────────────────────────────
+
+const PREVIEW_CAP: usize = 4_000;
+
+async fn process_result(
+    spill: &Option<Arc<FsSpill>>,
+    tool_call_id: &str,
+    tool_name: &str,
+    result: ToolResult,
+    is_error: bool,
+) -> ToolResult {
+    if is_error {
+        return truncate_result(result);
+    }
+
+    let spill = match spill {
+        Some(s) => s,
+        None => return truncate_result(result),
+    };
+
+    let text = merge_text_blocks(&result.content);
+    if text.is_empty() {
+        return result;
+    }
+
+    let req = crate::spill::SpillRequest {
+        key: tool_call_id.to_string(),
+        text,
+    };
+
+    match spill.spill(req).await {
+        Ok(Some(spill_ref)) => build_spilled_result(result, spill_ref),
+        Ok(None) => truncate_result(result),
+        Err(e) => {
+            tracing::warn!(
+                tool_name = tool_name,
+                tool_call_id = tool_call_id,
+                "spill failed: {e}"
+            );
+            truncate_result(result)
+        }
+    }
+}
+
+fn build_spilled_result(result: ToolResult, spill_ref: crate::spill::SpillRef) -> ToolResult {
+    let preview = if spill_ref.preview.len() > PREVIEW_CAP {
+        let boundary = spill_ref.preview.floor_char_boundary(PREVIEW_CAP);
+        &spill_ref.preview[..boundary]
+    } else {
+        &spill_ref.preview
+    };
+
+    let msg = format!(
+        "Tool output was too large ({} bytes) and was saved to:\n{}\n\n\
+         Only a preview is shown below. Use read_file with offset/limit to read the full output.\n\n\
+         Preview:\n{}",
+        spill_ref.size_bytes,
+        spill_ref.path.display(),
+        preview,
+    );
+
+    let ToolResult {
+        content,
+        details,
+        retention,
+    } = result;
+
+    let mut new_content: Vec<Content> = vec![Content::Text { text: msg }];
+    for c in content {
+        if !matches!(c, Content::Text { .. }) {
+            new_content.push(c);
+        }
+    }
+
+    ToolResult {
+        content: new_content,
+        details,
+        retention,
+    }
+}
+
+fn truncate_result(result: ToolResult) -> ToolResult {
+    let ToolResult {
+        content,
+        details,
+        retention,
+    } = result;
+    ToolResult {
+        content: crate::tools::validation::cap_tool_result_content(
+            content,
+            crate::tools::validation::MAX_TOOL_RESULT_BYTES,
+        ),
+        details,
+        retention,
+    }
+}
+
+fn merge_text_blocks(content: &[Content]) -> String {
+    let mut merged = String::new();
+    for c in content {
+        if let Content::Text { text } = c {
+            if !merged.is_empty() {
+                merged.push('\n');
+            }
+            merged.push_str(text);
+        }
+    }
+    merged
 }

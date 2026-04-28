@@ -369,6 +369,7 @@ async fn run_loop(
                     &config.tool_execution,
                     &context.cwd,
                     &context.path_guard,
+                    &config.spill,
                 )
                 .await;
 

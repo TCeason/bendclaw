@@ -161,20 +161,25 @@ impl AgentTool for ReadFileTool {
         }
 
         // Text files: check size limit and apply line offset/limit
+        let offset = params["offset"].as_u64().map(|v| v.max(1) as usize);
+        let limit = params["limit"].as_u64().map(|v| v as usize);
+
         if metadata.len() as usize > self.max_bytes {
-            return Err(ToolError::Failed(format!(
-                "File too large ({} bytes, max {}). Use offset/limit for partial reads.",
-                metadata.len(),
-                self.max_bytes
-            )));
+            let Some(lim) = limit else {
+                return Err(ToolError::Failed(format!(
+                    "File too large ({} bytes, max {}). Use offset and limit for partial reads.",
+                    metadata.len(),
+                    self.max_bytes
+                )));
+            };
+            return self
+                .read_lines_streaming(&path, path_str, offset.unwrap_or(1), lim)
+                .await;
         }
 
         let content = tokio::fs::read_to_string(&path)
             .await
             .map_err(|e| ToolError::Failed(format!("Cannot read {}: {}", path.display(), e)))?;
-
-        let offset = params["offset"].as_u64().map(|v| v.max(1) as usize);
-        let limit = params["limit"].as_u64().map(|v| v as usize);
 
         // Always show line numbers — helps agent reference exact lines for edit_file
         let lines: Vec<&str> = content.lines().collect();
@@ -206,6 +211,54 @@ impl AgentTool for ReadFileTool {
         };
 
         let output = format!("{}\n{}", header, numbered.join("\n"));
+
+        Ok(ToolResult {
+            content: vec![Content::Text { text: output }],
+            details: serde_json::json!({ "path": path_str }),
+            retention: Retention::Normal,
+        })
+    }
+}
+
+impl ReadFileTool {
+    /// Stream-read a large file by lines, only collecting the requested range.
+    async fn read_lines_streaming(
+        &self,
+        path: &std::path::Path,
+        path_str: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ToolResult, ToolError> {
+        use tokio::io::AsyncBufReadExt;
+        use tokio::io::BufReader;
+
+        let file = tokio::fs::File::open(path)
+            .await
+            .map_err(|e| ToolError::Failed(format!("Cannot read {}: {}", path.display(), e)))?;
+        let reader = BufReader::new(file);
+        let mut lines = reader.lines();
+
+        let start = offset.saturating_sub(1);
+        let end = start + limit;
+        let mut collected: Vec<String> = Vec::with_capacity(limit);
+        let mut line_num: usize = 0;
+
+        while let Some(line) = lines
+            .next_line()
+            .await
+            .map_err(|e| ToolError::Failed(format!("Read error: {e}")))?
+        {
+            if line_num >= end {
+                break;
+            }
+            if line_num >= start {
+                collected.push(format!("{:>4} | {}", line_num + 1, line));
+            }
+            line_num += 1;
+        }
+
+        let header = format!("[Lines {}-{}]", start + 1, start + collected.len());
+        let output = format!("{}\n{}", header, collected.join("\n"));
 
         Ok(ToolResult {
             content: vec![Content::Text { text: output }],

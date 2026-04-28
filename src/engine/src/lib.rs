@@ -3,6 +3,7 @@ pub mod context;
 mod r#loop;
 pub mod provider;
 pub mod retry;
+pub mod spill;
 pub mod tools;
 pub mod types;
 

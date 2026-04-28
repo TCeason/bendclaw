@@ -20,6 +20,8 @@ mod memory;
 mod search;
 #[path = "tools/skill.rs"]
 mod skill;
+#[path = "tools/spill.rs"]
+mod spill;
 #[path = "tools/tool_sets.rs"]
 mod tool_sets;
 #[path = "tools/validation.rs"]

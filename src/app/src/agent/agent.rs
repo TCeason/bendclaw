@@ -127,6 +127,8 @@ pub struct Agent {
     limits: RwLock<ExecutionLimits>,
     skills_dirs: RwLock<Vec<PathBuf>>,
     cwd: String,
+    /// Root dir for spill files. Only set when storage backend is Fs.
+    spill_root: Option<PathBuf>,
     storage: RwLock<Arc<dyn Storage>>,
     variables: RwLock<Option<Arc<Variables>>>,
     sandbox: super::sandbox::SandboxPolicy,
@@ -145,6 +147,10 @@ impl Agent {
             limits: RwLock::new(ExecutionLimits::default()),
             skills_dirs: RwLock::new(Vec::new()),
             cwd,
+            spill_root: match config.storage.backend {
+                crate::conf::StorageBackend::Fs => Some(config.storage.fs.root_dir.clone()),
+                _ => None,
+            },
             storage: RwLock::new(storage),
             variables: RwLock::new(None),
             sandbox: super::sandbox::SandboxPolicy::from_config(&config.sandbox),
@@ -492,6 +498,7 @@ impl Agent {
             limits,
             skills_dirs: _,
             cwd,
+            spill_root: _,
             storage: _,
             variables: _,
             sandbox,
@@ -504,6 +511,7 @@ impl Agent {
             limits: RwLock::new(limits.read().clone()),
             skills_dirs: RwLock::new(vec![]),
             cwd: cwd.clone(),
+            spill_root: None,
             storage: RwLock::new(Arc::new(MemoryStorage::new())),
             variables: RwLock::new(None),
             sandbox: super::sandbox::SandboxPolicy {
@@ -688,6 +696,10 @@ impl Agent {
                 compat_caps: llm.compat_caps,
                 cwd: cwd_path.to_path_buf(),
                 path_guard: sandbox_rt.path_guard,
+                spill_dir: self
+                    .spill_root
+                    .as_ref()
+                    .map(|root| root.join("sessions").join(session_id).join("tool-results")),
             },
             history: prior_messages,
             input: request.input.clone(),
