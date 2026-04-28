@@ -1645,9 +1645,9 @@ fn test_oversized_user_multi_block_merged() {
     }
 }
 
-/// Oversized user message with images should strip images and truncate text.
+/// Oversized user message with images should preserve images and truncate text.
 #[test]
-fn test_oversized_user_with_images_truncated() {
+fn test_oversized_user_with_images_preserved() {
     let big_text = (1..=2000)
         .map(|i| format!("line {} with padding to make it large enough", i))
         .collect::<Vec<_>>()
@@ -1682,17 +1682,13 @@ fn test_oversized_user_with_images_truncated() {
     let result = compact_messages(messages, &config, &budget_state);
 
     if let AgentMessage::Llm(Message::User { content, .. }) = &result.messages[1] {
-        // Text block (truncated) + image marker
-        assert_eq!(content.len(), 2, "expected text + image marker");
+        // Text block (truncated) + image block preserved
+        assert!(content.len() >= 2, "expected text + image");
         if let Content::Text { text } = &content[0] {
             assert!(text.contains("truncated"), "text should be truncated");
         }
-        if let Content::Text { text } = &content[1] {
-            assert!(
-                text.contains("image") && text.contains("omitted"),
-                "image should be replaced with marker"
-            );
-        }
+        let has_image = content.iter().any(|c| matches!(c, Content::Image { .. }));
+        assert!(has_image, "image should be preserved, not stripped");
     } else {
         panic!("expected user message at index 1");
     }

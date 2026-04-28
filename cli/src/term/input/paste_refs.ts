@@ -69,6 +69,24 @@ export function expandPasteRefs(
 }
 
 /**
+ * Strip only resolved image refs from text.
+ * Unresolved image refs (e.g., from history where image data is no longer
+ * available) are kept as text markers so the model at least knows an image
+ * was referenced.
+ */
+export function stripResolvedImageRefs(text: string, resolvedIds: Set<number>): string {
+  const refs = parsePasteRefs(text)
+  let result = text
+  for (let i = refs.length - 1; i >= 0; i--) {
+    const ref = refs[i]!
+    if (ref.type !== 'image') continue
+    if (!resolvedIds.has(ref.id)) continue // keep unresolved as text
+    result = result.slice(0, ref.start) + result.slice(ref.end)
+  }
+  return result.replace(/  +/g, ' ').trim()
+}
+
+/**
  * Strip image refs from text, returning only the text portion.
  * Used when storing to history (images are not persisted).
  */

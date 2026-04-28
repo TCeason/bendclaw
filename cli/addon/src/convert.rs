@@ -15,6 +15,7 @@ pub(crate) enum JsContent {
 }
 
 /// Convert a JSON string of content blocks into engine Content items.
+/// Images are resized to max 2000×2000 before entering context.
 pub(crate) fn parse_content_blocks(
     json: &str,
 ) -> std::result::Result<Vec<evot_engine::Content>, String> {
@@ -28,7 +29,16 @@ pub(crate) fn parse_content_blocks(
                 Some(evot_engine::Content::Text { text })
             }
             JsContent::Image { data, mime_type } if !data.is_empty() => {
-                Some(evot_engine::Content::Image { data, mime_type })
+                match evot_engine::resize_image(&data, &mime_type) {
+                    Ok((resized_data, new_mime)) => Some(evot_engine::Content::Image {
+                        data: resized_data,
+                        mime_type: new_mime,
+                    }),
+                    Err(e) => {
+                        eprintln!("image resize failed, using original: {e}");
+                        Some(evot_engine::Content::Image { data, mime_type })
+                    }
+                }
             }
             _ => None,
         })

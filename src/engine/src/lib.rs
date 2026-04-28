@@ -9,6 +9,7 @@ pub mod types;
 
 pub use agent::Agent;
 pub use agent::RunHandle;
+pub use context::resize_image;
 pub use context::sanitize_tool_pairs;
 pub use context::CompactionBudgetState;
 pub use context::CompactionResult;

@@ -6,8 +6,9 @@
 //!
 //! Handles two message types:
 //! - **User messages**: truncate oversized old (non-pinned, non-recent) user
-//!   text (budget-gated) and strip images from old messages.
+//!   text (budget-gated). Images are never stripped.
 //! - **Tool results**: policy-driven truncation via `ToolPolicy`.
+//!   Images in tool results are preserved.
 //!
 //! Strategy: `ToolPolicy` from `policy::tool_policy()`.
 //! Global thresholds control *when* a result is oversized; per-tool policy
@@ -57,19 +58,14 @@ pub fn run(messages: Vec<AgentMessage>, ctx: &CompactContext, current_tokens: us
                     let before_tokens = content_tokens(content);
                     let max_lines = ctx.tool_output_max_lines;
 
-                    // Concatenate all text blocks, truncate as a whole, then byte-cap.
+                    // Concatenate text blocks, truncate as a whole.
                     let mut combined_text = String::new();
-                    let mut has_image = false;
                     for c in content {
-                        match c {
-                            Content::Text { text } => {
-                                if !combined_text.is_empty() {
-                                    combined_text.push('\n');
-                                }
-                                combined_text.push_str(text);
+                        if let Content::Text { text } = c {
+                            if !combined_text.is_empty() {
+                                combined_text.push('\n');
                             }
-                            Content::Image { .. } => has_image = true,
-                            _ => {}
+                            combined_text.push_str(text);
                         }
                     }
                     let truncated_text = truncate_text_head_tail(&combined_text, max_lines);
@@ -78,13 +74,14 @@ pub fn run(messages: Vec<AgentMessage>, ctx: &CompactContext, current_tokens: us
                         COMPACTION_MAX_BYTES,
                     );
 
-                    let mut truncated = vec![Content::Text {
+                    // Preserve images alongside truncated text
+                    let mut truncated: Vec<Content> = vec![Content::Text {
                         text: truncated_text,
                     }];
-                    if has_image {
-                        truncated.push(Content::Text {
-                            text: "[image(s) omitted during compaction]".into(),
-                        });
+                    for c in content {
+                        if let Content::Image { .. } = c {
+                            truncated.push(c.clone());
+                        }
                     }
                     let after_tokens = content_tokens(&truncated);
                     if after_tokens < before_tokens {
@@ -101,36 +98,6 @@ pub fn run(messages: Vec<AgentMessage>, ctx: &CompactContext, current_tokens: us
                     }
                     result.push(AgentMessage::Llm(Message::User {
                         content: truncated,
-                        timestamp: *timestamp,
-                    }));
-                    continue;
-                }
-                UserAction::StripOldImages => {
-                    let before_tokens = content_tokens(content);
-                    let stripped: Vec<Content> = content
-                        .iter()
-                        .map(|c| match c {
-                            Content::Image { .. } => Content::Text {
-                                text: "[image omitted during compaction]".into(),
-                            },
-                            other => other.clone(),
-                        })
-                        .collect();
-                    let after_tokens = content_tokens(&stripped);
-                    if after_tokens < before_tokens {
-                        running_tokens -= before_tokens - after_tokens;
-                        actions.push(CompactionAction {
-                            index: idx,
-                            tool_name: "user".into(),
-                            method: CompactionMethod::OversizeCapped,
-                            before_tokens,
-                            after_tokens,
-                            end_index: None,
-                            related_count: None,
-                        });
-                    }
-                    result.push(AgentMessage::Llm(Message::User {
-                        content: stripped,
                         timestamp: *timestamp,
                     }));
                     continue;
@@ -292,10 +259,8 @@ pub fn run(messages: Vec<AgentMessage>, ctx: &CompactContext, current_tokens: us
 
 /// What to do with a user message during shrink.
 enum UserAction {
-    /// Over budget + oversized: truncate text and strip images
+    /// Over budget + oversized: truncate text
     TruncateOversized,
-    /// Old (non-recent) message with images: strip images only
-    StripOldImages,
     /// No action needed
     Keep,
 }
@@ -316,9 +281,8 @@ fn classify_user_action(
     if running_tokens > budget && tokens > oversize_threshold {
         return UserAction::TruncateOversized;
     }
-    if content.iter().any(|c| matches!(c, Content::Image { .. })) {
-        return UserAction::StripOldImages;
-    }
+    // Images are never stripped — they are irreplaceable context.
+    // Entry-point resize already caps per-image token cost.
     UserAction::Keep
 }
 
@@ -371,10 +335,8 @@ fn truncate_content(
                 Content::Text { text: truncated }
             }
             Content::Image { .. } => {
-                // Replace image with a text marker to reclaim tokens.
-                Content::Text {
-                    text: "[image omitted during compaction]".into(),
-                }
+                // Preserve images in tool results — they are irreplaceable.
+                c.clone()
             }
             other => other.clone(),
         })

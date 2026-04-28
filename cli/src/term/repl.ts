@@ -69,10 +69,12 @@ import {
   parsePasteRefs,
   expandPasteRefs,
   stripImageRefs,
+  stripResolvedImageRefs,
   deleteRefBackspace,
   skipRefOnMove,
 } from './input/paste_refs.js'
 import { getImageFromClipboard } from './input/clipboard_image.js'
+import { storeImage, formatImageSourceText } from './input/image_store.js'
 import type { ContentBlock } from '../native/index.js'
 import { tryStartServer, formatUptime, type ServerState } from './app/server.js'
 import {
@@ -135,7 +137,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   // Paste ref state
   const pastedChunks = new Map<number, string>()
-  const pastedImages = new Map<number, { id: number; base64: string; mediaType: string }>()
+  const pastedImages = new Map<number, { id: number; base64: string; mediaType: string; filePath?: string }>()
   let nextPasteId = 1
 
   // Update hint
@@ -362,11 +364,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
-  /** Get expanded text (paste refs resolved, image refs stripped). */
-  function getExpandedText(): string {
+  /** Get expanded text — resolves paste refs, strips only resolved image refs. */
+  function getExpandedText(resolvedImageIds?: Set<number>): string {
     const raw = getEditorText(editor)
     const expanded = expandPasteRefs(raw, pastedChunks)
-    return stripImageRefs(expanded).trim()
+    if (resolvedImageIds && resolvedImageIds.size > 0) {
+      return stripResolvedImageRefs(expanded, resolvedImageIds).trim()
+    }
+    return expanded.trim()
   }
 
   /** Get display text (raw with refs intact). */
@@ -400,27 +405,43 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const img = await getImageFromClipboard()
     if (img) {
       const id = nextPasteId++
-      pastedImages.set(id, { id, base64: img.base64, mediaType: img.mediaType })
+      // Store to disk immediately so images survive past session memory
+      const filePath = await storeImage(img.base64, img.mediaType)
+      pastedImages.set(id, { id, base64: img.base64, mediaType: img.mediaType, filePath: filePath ?? undefined })
       editor = insertText(editor, formatImageRef(id))
       renderStatus()
     }
   }
 
-  /** Build content blocks for images. */
-  function buildImageContentBlocks(): ContentBlock[] | null {
+  /** Build content blocks for images. Returns blocks and resolved image IDs. */
+  function buildImageContentBlocks(): { blocks: ContentBlock[]; resolvedIds: Set<number> } | null {
     const displayText = getDisplayText()
     const imageRefs = parsePasteRefs(displayText).filter(r => r.type === 'image')
-    const images = imageRefs
-      .map(r => pastedImages.get(r.id))
-      .filter((img): img is { id: number; base64: string; mediaType: string } => img !== undefined)
-    if (images.length === 0) return null
+    const resolved: { id: number; base64: string; mediaType: string; filePath?: string }[] = []
+    const unresolvedIds = new Set<number>()
+    for (const ref of imageRefs) {
+      const img = pastedImages.get(ref.id)
+      if (img) {
+        resolved.push(img)
+      } else {
+        unresolvedIds.add(ref.id)
+      }
+    }
+    if (resolved.length === 0) return null
     const blocks: ContentBlock[] = []
-    const text = getExpandedText()
-    if (text) blocks.push({ type: 'text', text })
-    for (const img of images) {
+    // Only strip resolved image refs from text — unresolved ones stay as [Image #N]
+    const text = getExpandedText(new Set(resolved.map(r => r.id)))
+    // Annotate with image source paths so the model can reference files on disk
+    const sourceAnnotations = resolved
+      .filter(r => r.filePath)
+      .map(r => formatImageSourceText(r.id, r.filePath!))
+      .join('\n')
+    const fullText = sourceAnnotations ? `${text}\n${sourceAnnotations}` : text
+    if (fullText) blocks.push({ type: 'text', text: fullText })
+    for (const img of resolved) {
       blocks.push({ type: 'image', data: img.base64, mimeType: img.mediaType })
     }
-    return blocks
+    return { blocks, resolvedIds: new Set(resolved.map(r => r.id)) }
   }
 
   async function runQuery(text: string, contentJson?: string) {
@@ -644,9 +665,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   function handleLoadingEnter() {
-    const expandedText = getExpandedText()
     const displayText = getDisplayText()
-    const imageBlocks = buildImageContentBlocks()
+    const imageResult = buildImageContentBlocks()
+    const imageBlocks = imageResult?.blocks ?? null
+    const expandedText = imageResult
+      ? getExpandedText(imageResult.resolvedIds)
+      : getDisplayText()
 
     const trimmed = (expandedText || '').trim()
     if (trimmed === '/log') {
@@ -727,10 +751,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           renderStatus()
           return
         }
-        const expandedText = getExpandedText()
         const displayText = getDisplayText()
-        const imageBlocks = buildImageContentBlocks()
-        // Allow image-only submissions
+        const imageResult = buildImageContentBlocks()
+        const imageBlocks = imageResult?.blocks ?? null
+        // expandedText: only strip image refs that have resolved data.
+        // Unresolved ones (e.g. from history) stay as [Image #N] text markers.
+        const expandedText = imageResult
+          ? getExpandedText(imageResult.resolvedIds)
+          : getDisplayText()
+        // Allow image-only or text-only submissions
         if (!expandedText && !imageBlocks) return
         clearAll()
         renderStatus()
@@ -738,18 +767,16 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           handleSlashInput(expandedText || rawText)
         } else if (logMode) {
           // In log mode, send to forked agent
-          const historyText = stripImageRefs(displayText)
-          if (historyText) {
-            historyMgr.append(historyText)
-            historyState = pushHistory(historyState, historyText)
+          if (displayText) {
+            historyMgr.append(displayText)
+            historyState = pushHistory(historyState, displayText)
           }
           runLogQuery(logMode, expandedText)
         } else {
-          // Save to history (strip image refs)
-          const historyText = stripImageRefs(displayText)
-          if (historyText) {
-            historyMgr.append(historyText)
-            historyState = pushHistory(historyState, historyText)
+          // Save to history
+          if (displayText) {
+            historyMgr.append(displayText)
+            historyState = pushHistory(historyState, displayText)
           }
           commitLines(buildUserMessage(displayText))
           if (imageBlocks) {

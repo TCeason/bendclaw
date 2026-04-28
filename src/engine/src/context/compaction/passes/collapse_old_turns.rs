@@ -12,8 +12,8 @@
 //!        (> 3 tools: `[Summary] [Assistant used N tool(s)]`)
 //!     4. Only replace if summary is shorter than original
 //!
-//!   For user messages before the boundary (outside keep_first):
-//!     Images are replaced with a text marker to reclaim tokens.
+//!   Images are never stripped — they are irreplaceable context.
+//!   Entry-point resize caps per-image token cost at ~5333 tokens.
 
 use crate::context::compaction::compact::CompactionAction;
 use crate::context::compaction::compact::CompactionMethod;
@@ -153,51 +153,9 @@ pub fn run(messages: Vec<AgentMessage>, ctx: &CompactContext, current_tokens: us
                 continue;
             }
             other => {
-                // Strip images from old user messages to reclaim tokens
-                // (but preserve keep_first pinned messages)
-                if i >= ctx.keep_first {
-                    if let AgentMessage::Llm(Message::User { content, timestamp }) = other {
-                        let has_image = content.iter().any(|c| matches!(c, Content::Image { .. }));
-                        if has_image {
-                            let before_tokens = message_tokens(other);
-                            let stripped: Vec<Content> = content
-                                .iter()
-                                .map(|c| match c {
-                                    Content::Image { .. } => Content::Text {
-                                        text: "[image omitted during compaction]".into(),
-                                    },
-                                    other => other.clone(),
-                                })
-                                .collect();
-                            let replaced = AgentMessage::Llm(Message::User {
-                                content: stripped,
-                                timestamp: *timestamp,
-                            });
-                            let after_tokens = message_tokens(&replaced);
-                            if after_tokens < before_tokens {
-                                running_tokens -= before_tokens - after_tokens;
-                                actions.push(CompactionAction {
-                                    index: i,
-                                    tool_name: "user".into(),
-                                    method: CompactionMethod::OversizeCapped,
-                                    before_tokens,
-                                    after_tokens,
-                                    end_index: None,
-                                    related_count: None,
-                                });
-                                result.push(replaced);
-                            } else {
-                                result.push(other.clone());
-                            }
-                        } else {
-                            result.push(other.clone());
-                        }
-                    } else {
-                        result.push(other.clone());
-                    }
-                } else {
-                    result.push(other.clone());
-                }
+                // Images in messages are preserved — they are irreplaceable context.
+                // Entry-point resize already caps per-image token cost.
+                result.push(other.clone());
             }
         }
         i += 1;
