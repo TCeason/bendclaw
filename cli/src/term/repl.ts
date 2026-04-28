@@ -235,17 +235,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     renderer.setStatus(statusLines)
   }
 
-  function renderIdleTightStatus() {
-    if (destroyed) return
-    const lines = expanded ? expandedLines : compactLines
-    const output = lines.length > 0 ? blocksToLines(buildOutputBlocks(lines)).join('\n') : ''
-    const text = [currentBannerText().trimEnd(), output].filter(Boolean).join('\n')
-    renderer.beginBatch()
-    renderer.redrawViewportTight(text)
-    renderStatus()
-    renderer.flushBatch()
-  }
-
   function restoreCurrentViewport() {
     const lines = expanded ? expandedLines : compactLines
     const output = lines.length > 0 ? blocksToLines(buildOutputBlocks(lines)).join('\n') : ''
@@ -538,7 +527,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       isLoading = false
       streamMachine = null
       stopSpinner()
-      renderIdleTightStatus()
+      renderStatus()
     }
   }
 
@@ -652,7 +641,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     streamMachine = null
     stopSpinner()
     commitLines([{ id, kind: 'system', text }])
-    renderIdleTightStatus()
   }
 
   function handleLoadingEnter() {
