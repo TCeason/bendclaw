@@ -758,6 +758,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         clearAll()
         renderStatus()
         if (isSlashCommand(expandedText || rawText)) {
+          if (displayText) {
+            historyMgr.append(displayText)
+            historyState = pushHistory(historyState, displayText)
+          }
           handleSlashInput(expandedText || rawText)
         } else if (logMode) {
           // In log mode, send to forked agent
@@ -941,16 +945,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
     const { name, args } = resolved
 
-    if (name === '/new') {
-      if (isLoading && streamRef) {
-        streamRef.abort(); streamRef = null; isLoading = false
-        if (streamMachine) { const f = flushStreaming(streamMachine); if (f.lines.length > 0) commitLines(f.lines) }
-        streamMachine = null; stopSpinner()
-      }
-      sessionId = null
-      appState = { ...createInitialState(appState.model, agent.cwd), verbose: appState.verbose }
-      commitLines([{ id: 'sys-new', kind: 'system', text: '  New session started.' }])
-    } else if (name === '/goto') {
+    if (name === '/goto') {
       if (!args) {
         commitLines([{ id: 'sys-goto', kind: 'system', text: '  Usage: /goto <message_number>' }])
       } else {

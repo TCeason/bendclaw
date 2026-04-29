@@ -27,6 +27,9 @@ export function supportsHyperlinks(): boolean {
   if (env.TERM_PROGRAM === 'iTerm.app') return true
   if (env.TERM_PROGRAM === 'WezTerm') return true
   if (env.TERM_PROGRAM === 'ghostty') return true
+  // WarpTerminal does NOT support OSC 8 (warpdotdev/Warp#4194)
+  // but it auto-detects file paths in plain text — see isWarpTerminal()
+  if (env.TERM_PROGRAM === 'WarpTerminal') return false
   if (env.WT_SESSION) return true // Windows Terminal
   if (env.TERM_PROGRAM === 'vscode') return true
   if (env.KITTY_PID) return true
@@ -39,6 +42,14 @@ export function supportsHyperlinks(): boolean {
   }
   // Default: off (safe fallback)
   return false
+}
+
+/**
+ * Warp Terminal auto-detects file paths in plain text and makes them clickable,
+ * but ANSI color codes break this detection. Use this to skip coloring file paths.
+ */
+export function isWarpTerminal(): boolean {
+  return process.env.TERM_PROGRAM === 'WarpTerminal'
 }
 
 /**
@@ -56,4 +67,15 @@ export function createHyperlink(url: string, text?: string): string {
   const display = text ?? url
   const colored = chalk.blue(display)
   return `${OSC8_START}${url}${OSC8_END}${colored}${OSC8_START}${OSC8_END}`
+}
+
+/**
+ * Wrap pre-styled text in an OSC 8 hyperlink without changing its color.
+ * Falls back to the original text when the terminal doesn't support hyperlinks.
+ */
+export function wrapHyperlink(url: string, styledText: string): string {
+  if (!supportsHyperlinks()) {
+    return styledText
+  }
+  return `${OSC8_START}${url}${OSC8_END}${styledText}${OSC8_START}${OSC8_END}`
 }

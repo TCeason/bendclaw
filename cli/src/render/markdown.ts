@@ -8,7 +8,7 @@ import chalk from 'chalk'
 import { marked, type Token, type Tokens } from 'marked'
 import stripAnsi from 'strip-ansi'
 import stringWidth from 'string-width'
-import { createHyperlink, supportsHyperlinks } from './hyperlink.js'
+import { createHyperlink, isWarpTerminal, supportsHyperlinks, wrapHyperlink } from './hyperlink.js'
 import { linkifyIssueRefs } from './linkify.js'
 
 let highlighter: typeof import('cli-highlight') | null = null
@@ -105,8 +105,24 @@ export function formatToken(
       }
       return highlighted + EOL
     }
-    case 'codespan':
-      return chalk.hex('#5fb3b3')(token.text)
+    case 'codespan': {
+      const raw = token.text as string
+      const isFilePath = /^[~/][\w./_-]+$/.test(raw)
+      // Warp auto-detects file paths in plain text; ANSI codes break detection.
+      // Skip coloring for file paths unless hyperlinks are force-enabled.
+      if (isFilePath && isWarpTerminal() && process.env.FORCE_HYPERLINK !== '1') {
+        return raw
+      }
+      const colored = chalk.hex('#5fb3b3')(raw)
+      // Make absolute file paths clickable (file:// hyperlink)
+      if (supportsHyperlinks() && isFilePath) {
+        const resolved = raw.startsWith('~')
+          ? raw.replace('~', process.env.HOME ?? '~')
+          : raw
+        return wrapHyperlink(`file://${resolved}`, colored)
+      }
+      return colored
+    }
     case 'del':
       // del is disabled via configureMarked; if somehow reached, render as-is
       return ''

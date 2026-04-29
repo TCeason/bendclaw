@@ -59,6 +59,7 @@ export function handleSlashCommand(text: string, ctx: CommandContext): CommandRe
       }
     }
 
+    case '/new':
     case '/clear':
       return { ...baseResult(ctx), clearContext: true }
 

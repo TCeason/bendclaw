@@ -153,8 +153,65 @@ describe('formatToken', () => {
 })
 
 // ---------------------------------------------------------------------------
-// splitMarkdownBlocks
+// File path linkification in codespan and text
 // ---------------------------------------------------------------------------
+
+describe('file path linkification', () => {
+  const OSC8_START = '\x1b]8;;'
+
+  test('codespan with absolute path produces file:// hyperlink', () => {
+    const prev = process.env.FORCE_HYPERLINK
+    process.env.FORCE_HYPERLINK = '1'
+    try {
+      const result = renderMarkdown('see `/tmp/simple.md`')
+      expect(result).toContain(OSC8_START)
+      expect(result).toContain('file:///tmp/simple.md')
+      // The path text should still be present
+      expect(stripAnsi(result)).toContain('/tmp/simple.md')
+    } finally {
+      if (prev === undefined) delete process.env.FORCE_HYPERLINK
+      else process.env.FORCE_HYPERLINK = prev
+    }
+  })
+
+  test('codespan with non-path content does not linkify', () => {
+    const prev = process.env.FORCE_HYPERLINK
+    process.env.FORCE_HYPERLINK = '1'
+    try {
+      const result = renderMarkdown('use `foo()` here')
+      expect(result).not.toContain(OSC8_START)
+    } finally {
+      if (prev === undefined) delete process.env.FORCE_HYPERLINK
+      else process.env.FORCE_HYPERLINK = prev
+    }
+  })
+
+  test('plain text with absolute path produces file:// hyperlink', () => {
+    const prev = process.env.FORCE_HYPERLINK
+    process.env.FORCE_HYPERLINK = '1'
+    try {
+      const result = renderMarkdown('已生成：/tmp/simple.md')
+      expect(result).toContain(OSC8_START)
+      expect(result).toContain('file:///tmp/simple.md')
+    } finally {
+      if (prev === undefined) delete process.env.FORCE_HYPERLINK
+      else process.env.FORCE_HYPERLINK = prev
+    }
+  })
+
+  test('no hyperlink when FORCE_HYPERLINK=0', () => {
+    const prev = process.env.FORCE_HYPERLINK
+    process.env.FORCE_HYPERLINK = '0'
+    try {
+      const result = renderMarkdown('see `/tmp/simple.md`')
+      expect(result).not.toContain(OSC8_START)
+      expect(stripAnsi(result)).toContain('/tmp/simple.md')
+    } finally {
+      if (prev === undefined) delete process.env.FORCE_HYPERLINK
+      else process.env.FORCE_HYPERLINK = prev
+    }
+  })
+})
 
 import { splitMarkdownBlocks } from '../src/render/markdown.js'
 
