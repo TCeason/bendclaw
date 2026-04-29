@@ -61,7 +61,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
 
   if (prev.appState.verbose && (event.kind === 'llm_call_started' || event.kind === 'context_compaction_started')) {
     const flushed = flushStreaming(state)
-    state = flushed.state
+    state = { ...flushed.state, toolProgress: '', lastToolProgress: '' }
     commitLines.push(...flushed.lines)
     writeLines.push(...flushed.lines)
     const newEvents = state.appState.verboseEvents.slice(prev.appState.verboseEvents.length)
@@ -135,6 +135,8 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     const flushed = flushStreaming(state)
     state = {
       ...flushed.state,
+      toolProgress: '',
+      lastToolProgress: '',
       spinnerState: { ...flushed.state.spinnerState, streaming: false },
     }
     commitLines.push(...flushed.lines)
@@ -166,6 +168,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     state = {
       ...state,
       toolProgress: '',
+      lastToolProgress: '',
       spinnerState: setSpinnerPhase(state.spinnerState, spinnerPhase, toolName),
     }
     suppressToolStarted = toolName === 'ask_user'
@@ -187,6 +190,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     state = {
       ...state,
       toolProgress: '',
+      lastToolProgress: '',
       spinnerState: setSpinnerPhase(state.spinnerState, 'thinking'),
     }
     suppressToolFinished = toolName === 'ask_user'

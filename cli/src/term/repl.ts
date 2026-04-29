@@ -318,6 +318,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     titleFrame = 0
     spinnerTimer = setInterval(() => {
       spinnerState = advanceSpinner(spinnerState)
+      if (streamMachine) {
+        streamMachine = { ...streamMachine, spinnerState }
+      }
       // Terminal title animation — update at ~960ms, not every spinner frame
       if (spinnerState.frame % TITLE_INTERVAL_FRAMES === 0) {
         const glyphs = ['⠂', '⠐']

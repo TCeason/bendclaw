@@ -265,7 +265,7 @@ describe('term stream machine', () => {
     expect(update.rerenderStatus).toBe(true)
   })
 
-  test('tool started keeps last progress visible until next progress update', () => {
+  test('tool started clears stale progress cache', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     const state = {
@@ -278,7 +278,71 @@ describe('term stream machine', () => {
       payload: { tool_name: 'bash', args: {} },
     }, { termRows: 24 })
     expect(update.state.toolProgress).toBe('')
-    expect(update.state.lastToolProgress).toBe('line 1\nline 2')
+    expect(update.state.lastToolProgress).toBe('')
+  })
+
+  test('tool finished clears stale progress cache', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    const state = {
+      ...createStreamMachineState(appState, spinner),
+      toolProgress: 'line 1\nline 2',
+      lastToolProgress: 'line 1\nline 2',
+    }
+    const update = reduceRunEvent(state, {
+      kind: 'tool_finished',
+      payload: { tool_name: 'bash', args: {}, content: 'ok' },
+    }, { termRows: 24 })
+    expect(update.state.toolProgress).toBe('')
+    expect(update.state.lastToolProgress).toBe('')
+  })
+
+  test('turn started clears stale progress cache', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    const state = {
+      ...createStreamMachineState(appState, spinner),
+      toolProgress: 'line 1\nline 2',
+      lastToolProgress: 'line 1\nline 2',
+    }
+    const update = reduceRunEvent(state, {
+      kind: 'turn_started',
+      payload: {},
+    }, { termRows: 24 })
+    expect(update.state.toolProgress).toBe('')
+    expect(update.state.lastToolProgress).toBe('')
+  })
+
+  test('llm call started clears stale progress cache', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    const state = {
+      ...createStreamMachineState({ ...appState, verbose: true }, spinner),
+      toolProgress: 'line 1\nline 2',
+      lastToolProgress: 'line 1\nline 2',
+    }
+    const update = reduceRunEvent(state, {
+      kind: 'llm_call_started',
+      payload: { model: 'model' },
+    }, { termRows: 24 })
+    expect(update.state.toolProgress).toBe('')
+    expect(update.state.lastToolProgress).toBe('')
+  })
+
+  test('context compaction started clears stale progress cache', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    const state = {
+      ...createStreamMachineState({ ...appState, verbose: true }, spinner),
+      toolProgress: 'line 1\nline 2',
+      lastToolProgress: 'line 1\nline 2',
+    }
+    const update = reduceRunEvent(state, {
+      kind: 'context_compaction_started',
+      payload: { estimated_tokens: 10, context_window: 100 },
+    }, { termRows: 24 })
+    expect(update.state.toolProgress).toBe('')
+    expect(update.state.lastToolProgress).toBe('')
   })
 
   test('flushStreaming emits pending assistant text', () => {
