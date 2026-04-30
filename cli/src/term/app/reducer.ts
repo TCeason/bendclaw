@@ -213,6 +213,8 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         ...state,
         currentRunStats: {
           ...state.currentRunStats,
+          contextTokens: (p.estimated_context_tokens as number) ?? state.currentRunStats.contextTokens,
+          contextWindow: (p.context_window as number) ?? state.currentRunStats.contextWindow,
           lastMessageStats: msgStats,
           cumulativeStats: cumulative,
           systemPromptTokens: sysTok,
@@ -256,6 +258,8 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         ...p,
         model: (p.model as string) ?? state.model,
         turn: event.turn,
+        estimated_context_tokens: state.currentRunStats.contextTokens,
+        context_window: state.currentRunStats.contextWindow,
       }
       const text = formatLlmCallCompleted(data)
 

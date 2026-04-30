@@ -142,14 +142,13 @@ export function formatLlmCallCompleted(data: Record<string, unknown>): string {
   lines.push(`[LLM] ✓ ${model ?? 'unknown'}${turn != null ? ` · turn ${turn}` : ''} · ${formatDuration(durationMs)} · ${tokPerSec} tok/s`)
   lines.push(`  tok     ${humanTokens(inputTok)} in · ${humanTokens(outputTok)} out`)
 
-  // Context window bar with delta
-  if (contextWindow > 0) {
-    const total = inputTok + outputTok
-    if (total > 0) {
-      const pct = ((total / contextWindow) * 100).toFixed(0)
-      const bar = renderBar(total, contextWindow, 20)
-      lines.push(`  ctx     ${bar}  ~${humanTokens(total)} / ${humanTokens(contextWindow)} · ${pct}% · +${humanTokens(outputTok)} out`)
-    }
+  // Context window bar with delta. Use the prompt snapshot from llm_call_started;
+  // provider usage can be missing/zero for input tokens and should not reset ctx.
+  const estimatedContextTokens = (data.estimated_context_tokens as number) ?? 0
+  if (contextWindow > 0 && estimatedContextTokens > 0) {
+    const pct = ((estimatedContextTokens / contextWindow) * 100).toFixed(0)
+    const bar = renderBar(estimatedContextTokens, contextWindow, 20)
+    lines.push(`  ctx     ${bar}  ~${humanTokens(estimatedContextTokens)} / ${humanTokens(contextWindow)} · ${pct}% · +${humanTokens(outputTok)} out`)
   }
 
   lines.push(`  timing  ttfb ${(ttfbMs / 1000).toFixed(1)}s · ${ttfbPct}% · stream ${(streamingMs / 1000).toFixed(1)}s · ${streamPct}%`)
