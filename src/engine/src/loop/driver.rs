@@ -15,6 +15,7 @@ use super::input_filter::apply_input_filters;
 use super::llm_call::stream_assistant_response;
 use super::tool_exec::execute_tool_calls;
 use super::tool_exec::skip_tool_call_doom_loop;
+use super::tool_only_guard::ToolOnlyGuard;
 use crate::context::ContextTracker;
 use crate::context::ExecutionTracker;
 use crate::context::{self};
@@ -133,6 +134,7 @@ async fn run_loop(
         .as_ref()
         .map(|limits| ExecutionTracker::new(limits.clone()));
     let mut doom_detector = DoomLoopDetector::new(3);
+    let mut tool_only_guard = ToolOnlyGuard::new(5);
     let mut context_tracker = ContextTracker::new();
     let mut consecutive_errors: usize = 0;
     let mut compacted_after_error = false;
@@ -331,6 +333,10 @@ async fn run_loop(
             let has_tool_calls = !tool_calls.is_empty();
             let mut tool_results: Vec<Message> = Vec::new();
 
+            if let Some(intervention) = tool_only_guard.check(&message, has_tool_calls) {
+                pending.push(intervention.steering_message);
+            }
+
             // Doom-loop detection: if the same tool batch repeats >= threshold
             // times, skip execution and inject a steering message instead.
             if has_tool_calls {
@@ -424,6 +430,10 @@ async fn run_loop(
                     pending = steering;
                     continue;
                 }
+            }
+
+            if !pending.is_empty() {
+                continue;
             }
 
             pending = config
