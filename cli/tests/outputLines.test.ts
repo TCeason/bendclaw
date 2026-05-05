@@ -108,6 +108,24 @@ describe('buildToolResult', () => {
     expect(all).toContain('ctrl+o to expand')
   })
 
+  test('expanded multiline result shows collapse hint', () => {
+    const result = Array.from({ length: 7 }, (_, i) => `line ${i}`).join('\n')
+    const lines = buildToolResult('bash', {}, 'done', result, undefined, true)
+    const all = lines.map(l => l.text).join('\n')
+    expect(all).toContain('line 0')
+    expect(all).toContain('line 6')
+    expect(all).toContain('ctrl+o to collapse')
+  })
+
+  test('expanded progress shows collapse hint', () => {
+    const progress = Array.from({ length: 7 }, (_, i) => `line ${i}`).join('\n')
+    const lines = buildToolProgress('bash', progress, true)
+    const all = lines.map(l => l.text).join('\n')
+    expect(all).toContain('line 0')
+    expect(all).toContain('line 6')
+    expect(all).toContain('ctrl+o to collapse')
+  })
+
   test('creates progress badge and preserves progress details', () => {
     const lines = buildToolProgress('bash', 'line1\nline2\nline3')
     expect(lines[0]!.text).toBe('[BASH] ● · 3 lines')

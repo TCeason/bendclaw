@@ -160,7 +160,14 @@ export function buildToolResult(
           text: `  ${rl}`,
         })
       }
-      // Show expand hint in compact mode when content was truncated
+      // Show expand/collapse hint for multiline results.
+      if (expanded && resultLines.length > 1) {
+        lines.push({
+          id: genId('tool-hint'),
+          kind: 'tool_result',
+          text: '  \x1b[2m(ctrl+o to collapse)\x1b[0m',
+        })
+      }
       if (!expanded) {
         const allLines = formattedResult.replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n')
         if (allLines.length > 5 && !resultLines.some(l => l.includes('ctrl+o to expand'))) {
@@ -186,6 +193,9 @@ export function buildToolProgress(name: string, text: string, expanded?: boolean
   const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: header }]
   for (const l of visible) {
     lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${l}` })
+  }
+  if (expanded && visible.length > 1) {
+    lines.push({ id: genId('tool-hint'), kind: 'tool_result', text: '  \x1b[2m(ctrl+o to collapse)\x1b[0m' })
   }
   if (hidden > 0) {
     lines.push({ id: genId('tool-hint'), kind: 'tool_result', text: `  \x1b[2m... (+${hidden} lines, ctrl+o to expand)\x1b[0m` })
