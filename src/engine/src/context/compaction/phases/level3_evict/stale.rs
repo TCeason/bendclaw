@@ -136,10 +136,14 @@ fn message_limit_target(ctx: &PhaseContext, current_len: usize) -> usize {
 /// Choose which messages to drop from the middle section.
 ///
 /// Priority:
-///   1. Drop tool-call rounds (Assistant with stop_reason=ToolUse + following ToolResults).
-///      These are verbose intermediate steps whose results are reflected in the final response.
-///      Only drops a tool-call round if the same turn still has a final assistant response retained.
-///   2. Drop complete turns (user + all its responses) oldest-first.
+///   0. Drop tool-call rounds (assistant(ToolUse) + following ToolResults) first.
+///      These are the biggest token consumers and their results are already
+///      reflected in the final assistant response. Only dropped when the same
+///      turn still has a final assistant response retained.
+///   1. Drop complete stale turns (user + all responses) oldest-first.
+///      Removes the old user prompt together with its answer so it cannot
+///      look like an unfinished task.
+///   2. Drop orphan assistant/tool runs that are fully in the stale range.
 ///
 /// Drops are always in complete spans — never truncates a turn midway.
 /// May exceed `remove_count` to avoid leaving orphaned messages.
@@ -172,6 +176,7 @@ fn choose_message_limit_drops(
             }
             let turn_end = j;
 
+            // Priority 0: tool rounds (only if turn has a final assistant)
             let has_final = (turn_start + 1..turn_end).any(|k| is_final_assistant(&messages[k]));
             if has_final {
                 for (ts, te) in &tool_spans {
@@ -184,22 +189,25 @@ fn choose_message_limit_drops(
                 }
             }
 
+            // Priority 1: complete turn
             if turn_start >= start && turn_end <= end {
                 spans.push(Span {
                     indices: (turn_start..turn_end).collect(),
                     priority: 1,
                 });
             }
+
             i = turn_end;
         } else if is_assistant_or_tool(&messages[i]) {
             let span_start = i;
             while i < messages.len() && is_assistant_or_tool(&messages[i]) {
                 i += 1;
             }
+            // Priority 2: orphan assistant/tool runs
             if span_start >= start && i <= end {
                 spans.push(Span {
                     indices: (span_start..i).collect(),
-                    priority: 0,
+                    priority: 2,
                 });
             }
         } else {
@@ -241,7 +249,7 @@ fn choose_message_limit_drops(
 
 struct Span {
     indices: Vec<usize>,
-    priority: u8, // 0 = drop first, 1 = drop later
+    priority: u8, // 0 = tool rounds, 1 = complete turns, 2 = orphan runs
 }
 
 fn is_user_message(message: &AgentMessage) -> bool {

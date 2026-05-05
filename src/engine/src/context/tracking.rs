@@ -219,11 +219,11 @@ pub struct ContextConfig {
     /// Maximum messages before L2 eviction drops stale middle context, even if
     /// the token estimate is within budget. This keeps long sessions compact
     /// and avoids accumulating low-value summaries forever.
-    /// Set to 0 to disable message-count eviction. Default: 80.
+    /// Set to 0 to disable message-count eviction. Default: 300.
     pub max_messages: usize,
     /// Target percentage of `max_messages` when message-count eviction runs.
     /// This avoids dropping a session from just-over-limit to only the pinned
-    /// head/tail. Clamped to 1–100. Default: 85.
+    /// head/tail. Clamped to 1–100. Default: 90.
     pub message_limit_target_pct: u8,
 }
 
@@ -237,8 +237,8 @@ impl Default for ContextConfig {
             tool_output_max_lines: 50,
             compact_trigger_pct: 80,
             compact_target_pct: 75,
-            max_messages: 100,
-            message_limit_target_pct: 85,
+            max_messages: 300,
+            message_limit_target_pct: 90,
         }
     }
 }

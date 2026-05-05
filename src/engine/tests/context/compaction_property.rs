@@ -596,16 +596,21 @@ proptest! {
 
         assert_no_orphan_tool_pairs(&r2.messages);
 
-        // Second pass should not reduce significantly — allow 10% margin for
+        // Second pass should not reduce significantly — allow 15% margin for
         // rounding in sanitize and token estimation.
-        let floor = r1.stats.after_estimated_tokens * 85 / 100;
-        prop_assert!(
-            r2.stats.after_estimated_tokens >= floor,
-            "second compact reduced too aggressively: {} -> {} (floor={})",
-            r1.stats.after_estimated_tokens,
-            r2.stats.after_estimated_tokens,
-            floor,
-        );
+        // Skip this check when the first result still exceeds the available
+        // token budget — further reduction on the second pass is expected.
+        let available = config.max_context_tokens.saturating_sub(config.system_prompt_tokens);
+        if r1.stats.after_estimated_tokens <= available {
+            let floor = r1.stats.after_estimated_tokens * 85 / 100;
+            prop_assert!(
+                r2.stats.after_estimated_tokens >= floor,
+                "second compact reduced too aggressively: {} -> {} (floor={})",
+                r1.stats.after_estimated_tokens,
+                r2.stats.after_estimated_tokens,
+                floor,
+            );
+        }
     }
 }
 
