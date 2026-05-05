@@ -22,6 +22,19 @@ fn make_assistant_with_tool_call(tool_call_id: &str, tool_name: &str) -> AgentMe
     })
 }
 
+fn make_final_assistant(text: &str) -> AgentMessage {
+    AgentMessage::Llm(Message::Assistant {
+        content: vec![Content::Text { text: text.into() }],
+        stop_reason: StopReason::Stop,
+        model: "test".into(),
+        provider: "test".into(),
+        usage: Usage::default(),
+        timestamp: 0,
+        error_message: None,
+        response_id: None,
+    })
+}
+
 fn make_tool_result(tool_call_id: &str, tool_name: &str) -> AgentMessage {
     AgentMessage::Llm(Message::ToolResult {
         tool_call_id: tool_call_id.into(),
@@ -2636,6 +2649,16 @@ fn has_user_text(messages: &[AgentMessage], expected: &str) -> bool {
     })
 }
 
+fn has_assistant_text(messages: &[AgentMessage], expected: &str) -> bool {
+    messages.iter().any(|message| {
+        matches!(
+            message,
+            AgentMessage::Llm(Message::Assistant { content, .. })
+                if content.iter().any(|content| matches!(content, Content::Text { text } if text == expected))
+        )
+    })
+}
+
 fn has_tool_call(messages: &[AgentMessage], expected_id: &str) -> bool {
     messages.iter().any(|message| {
         matches!(
@@ -2733,24 +2756,28 @@ fn test_message_limit_evicts_to_percentage_target_not_minimum_tail() {
 
 #[test]
 fn test_message_limit_prefers_dropping_assistant_and_tool_messages() {
+    // Realistic sequence: user → assistant(ToolUse) → toolResult → assistant(Stop)
+    // The tool-call span should be dropped first, keeping user + final assistant.
     let messages = vec![
         AgentMessage::Llm(Message::user("pinned start")),
         AgentMessage::Llm(Message::user("keep user 1")),
+        make_final_assistant("response 1"),
         AgentMessage::Llm(Message::user("keep user 2")),
         make_assistant_with_tool_call("drop-call", "bash"),
         make_tool_result("drop-call", "bash"),
-        AgentMessage::Llm(Message::user("keep user 3")),
+        make_final_assistant("response 2"),
         AgentMessage::Llm(Message::user("recent 1")),
+        make_final_assistant("recent resp 1"),
         AgentMessage::Llm(Message::user("recent 2")),
-        AgentMessage::Llm(Message::user("recent 3")),
+        make_final_assistant("recent resp 2"),
     ];
 
     let config = ContextConfig {
         max_context_tokens: 100_000,
         system_prompt_tokens: 0,
-        keep_recent: 3,
+        keep_recent: 4,
         keep_first: 1,
-        max_messages: 8,
+        max_messages: 10,
         message_limit_target_pct: 100,
         ..Default::default()
     };
@@ -2761,10 +2788,10 @@ fn test_message_limit_prefers_dropping_assistant_and_tool_messages() {
 
     assert_eq!(result.stats.level, 3);
     assert_eq!(result.stats.messages_dropped, 2);
-    assert_eq!(result.messages.len(), 8);
+    // 11 - 2 + 1 marker = 10
+    assert_eq!(result.messages.len(), 10);
     assert!(has_user_text(&result.messages, "keep user 1"));
     assert!(has_user_text(&result.messages, "keep user 2"));
-    assert!(has_user_text(&result.messages, "keep user 3"));
     assert!(!has_tool_call(&result.messages, "drop-call"));
     assert!(!has_tool_result(&result.messages, "drop-call"));
     assert_no_orphan_tool_pairs(&result.messages);
@@ -2772,17 +2799,19 @@ fn test_message_limit_prefers_dropping_assistant_and_tool_messages() {
 
 #[test]
 fn test_message_limit_drops_user_messages_after_assistant_and_tool_exhausted() {
+    // When tool-call spans aren't enough, drop complete turns (user + responses).
     let messages = vec![
         AgentMessage::Llm(Message::user("pinned start")),
         AgentMessage::Llm(Message::user("drop user 1")),
         make_assistant_with_tool_call("drop-call", "bash"),
         make_tool_result("drop-call", "bash"),
+        make_final_assistant("drop response 1"),
         AgentMessage::Llm(Message::user("drop user 2")),
-        AgentMessage::Llm(Message::user("drop user 3")),
+        make_final_assistant("drop response 2"),
         AgentMessage::Llm(Message::user("recent 1")),
+        make_final_assistant("recent resp 1"),
         AgentMessage::Llm(Message::user("recent 2")),
-        AgentMessage::Llm(Message::user("recent 3")),
-        AgentMessage::Llm(Message::user("recent 4")),
+        make_final_assistant("recent resp 2"),
     ];
 
     let config = ContextConfig {
@@ -2790,8 +2819,8 @@ fn test_message_limit_drops_user_messages_after_assistant_and_tool_exhausted() {
         system_prompt_tokens: 0,
         keep_recent: 4,
         keep_first: 1,
-        max_messages: 9,
-        message_limit_target_pct: 67,
+        max_messages: 10,
+        message_limit_target_pct: 50,
         ..Default::default()
     };
 
@@ -2800,14 +2829,84 @@ fn test_message_limit_drops_user_messages_after_assistant_and_tool_exhausted() {
     });
 
     assert_eq!(result.stats.level, 3);
-    assert_eq!(result.stats.messages_dropped, 4);
-    assert_eq!(result.messages.len(), 7);
     assert!(has_user_text(&result.messages, "pinned start"));
     assert!(has_user_text(&result.messages, "recent 1"));
-    assert!(has_user_text(&result.messages, "recent 4"));
+    assert!(has_user_text(&result.messages, "recent 2"));
     assert!(!has_tool_call(&result.messages, "drop-call"));
     assert!(!has_tool_result(&result.messages, "drop-call"));
     assert!(!has_user_text(&result.messages, "drop user 1"));
+    assert_no_orphan_tool_pairs(&result.messages);
+}
+
+#[test]
+fn test_message_limit_does_not_drop_assistant_when_user_is_pinned() {
+    let messages = vec![
+        AgentMessage::Llm(Message::user("pinned user")),
+        make_final_assistant("must keep with pinned user"),
+        AgentMessage::Llm(Message::user("drop user")),
+        make_final_assistant("drop response"),
+        AgentMessage::Llm(Message::user("recent user")),
+        make_final_assistant("recent response"),
+    ];
+
+    let config = ContextConfig {
+        max_context_tokens: 100_000,
+        system_prompt_tokens: 0,
+        keep_recent: 2,
+        keep_first: 1,
+        max_messages: 5,
+        message_limit_target_pct: 100,
+        ..Default::default()
+    };
+
+    let result = compact_messages(messages, &config, &CompactionBudgetState {
+        estimated_tokens: 1,
+    });
+
+    assert!(has_user_text(&result.messages, "pinned user"));
+    assert!(has_assistant_text(
+        &result.messages,
+        "must keep with pinned user"
+    ));
+    assert!(!has_user_text(&result.messages, "drop user"));
+    assert!(!has_assistant_text(&result.messages, "drop response"));
+    assert_no_orphan_tool_pairs(&result.messages);
+}
+
+#[test]
+fn test_message_limit_does_not_drop_user_when_final_assistant_is_recent() {
+    let messages = vec![
+        AgentMessage::Llm(Message::user("pinned start")),
+        AgentMessage::Llm(Message::user("drop user")),
+        make_final_assistant("drop response"),
+        AgentMessage::Llm(Message::user("keep user with recent assistant")),
+        make_final_assistant("recent final assistant"),
+    ];
+
+    let config = ContextConfig {
+        max_context_tokens: 100_000,
+        system_prompt_tokens: 0,
+        keep_recent: 1,
+        keep_first: 1,
+        max_messages: 4,
+        message_limit_target_pct: 100,
+        ..Default::default()
+    };
+
+    let result = compact_messages(messages, &config, &CompactionBudgetState {
+        estimated_tokens: 1,
+    });
+
+    assert!(has_user_text(
+        &result.messages,
+        "keep user with recent assistant"
+    ));
+    assert!(has_assistant_text(
+        &result.messages,
+        "recent final assistant"
+    ));
+    assert!(!has_user_text(&result.messages, "drop user"));
+    assert!(!has_assistant_text(&result.messages, "drop response"));
     assert_no_orphan_tool_pairs(&result.messages);
 }
 

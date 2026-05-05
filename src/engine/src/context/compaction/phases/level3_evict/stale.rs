@@ -59,6 +59,13 @@ fn drop_to_message_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> Ph
     }
 
     let drop_indices = choose_message_limit_drops(&messages, first_end, recent_start, remove_count);
+    if drop_indices.is_empty() {
+        return PhaseResult {
+            messages,
+            actions: Vec::new(),
+        };
+    }
+
     let dropped_tokens: usize = drop_indices
         .iter()
         .map(|&idx| message_tokens(&messages[idx]))
@@ -126,37 +133,143 @@ fn message_limit_target(ctx: &PhaseContext, current_len: usize) -> usize {
         .max(1)
 }
 
+/// Choose which messages to drop from the middle section.
+///
+/// Priority:
+///   1. Drop tool-call rounds (Assistant with stop_reason=ToolUse + following ToolResults).
+///      These are verbose intermediate steps whose results are reflected in the final response.
+///      Only drops a tool-call round if the same turn still has a final assistant response retained.
+///   2. Drop complete turns (user + all its responses) oldest-first.
+///
+/// Drops are always in complete spans — never truncates a turn midway.
+/// May exceed `remove_count` to avoid leaving orphaned messages.
 fn choose_message_limit_drops(
     messages: &[AgentMessage],
     start: usize,
     end: usize,
     remove_count: usize,
 ) -> Vec<usize> {
-    let mut drops = Vec::with_capacity(remove_count);
-
-    for (idx, message) in messages.iter().enumerate().take(end).skip(start) {
-        if is_assistant_or_tool(message) {
-            drops.push(idx);
-            if drops.len() == remove_count {
-                drops.sort_unstable();
-                return drops;
+    // Identify turns in the full message list, then only emit spans fully contained in
+    // the droppable range. This avoids keep_first/keep_recent slicing through a turn.
+    let mut spans: Vec<Span> = Vec::new();
+    let mut i = 0;
+    while i < messages.len() {
+        if is_user_message(&messages[i]) {
+            let turn_start = i;
+            let mut j = i + 1;
+            let mut tool_spans: Vec<(usize, usize)> = Vec::new();
+            while j < messages.len() && is_assistant_or_tool(&messages[j]) {
+                if is_tool_use_assistant(&messages[j]) {
+                    let span_start = j;
+                    j += 1;
+                    while j < messages.len() && is_tool_result(&messages[j]) {
+                        j += 1;
+                    }
+                    tool_spans.push((span_start, j));
+                } else {
+                    j += 1;
+                }
             }
+            let turn_end = j;
+
+            let has_final = (turn_start + 1..turn_end).any(|k| is_final_assistant(&messages[k]));
+            if has_final {
+                for (ts, te) in &tool_spans {
+                    if *ts >= start && *te <= end {
+                        spans.push(Span {
+                            indices: (*ts..*te).collect(),
+                            priority: 0,
+                        });
+                    }
+                }
+            }
+
+            if turn_start >= start && turn_end <= end {
+                spans.push(Span {
+                    indices: (turn_start..turn_end).collect(),
+                    priority: 1,
+                });
+            }
+            i = turn_end;
+        } else if is_assistant_or_tool(&messages[i]) {
+            let span_start = i;
+            while i < messages.len() && is_assistant_or_tool(&messages[i]) {
+                i += 1;
+            }
+            if span_start >= start && i <= end {
+                spans.push(Span {
+                    indices: (span_start..i).collect(),
+                    priority: 0,
+                });
+            }
+        } else {
+            i += 1;
         }
     }
 
-    for (idx, message) in messages.iter().enumerate().take(end).skip(start) {
-        if !is_assistant_or_tool(message) {
-            drops.push(idx);
-            if drops.len() == remove_count {
-                drops.sort_unstable();
-                return drops;
-            }
+    spans.sort_by_key(|s| s.priority);
+
+    let mut dropped: Vec<bool> = vec![false; messages.len()];
+    let mut total_dropped = 0;
+
+    for span in &spans {
+        if total_dropped >= remove_count {
+            break;
         }
+        let new_indices: Vec<usize> = span
+            .indices
+            .iter()
+            .filter(|&&idx| !dropped[idx])
+            .copied()
+            .collect();
+        if new_indices.is_empty() {
+            continue;
+        }
+        for &idx in &new_indices {
+            dropped[idx] = true;
+        }
+        total_dropped += new_indices.len();
     }
 
-    drops.sort_unstable();
-    drops.truncate(remove_count);
-    drops
+    dropped
+        .iter()
+        .enumerate()
+        .filter(|(_, &d)| d)
+        .map(|(idx, _)| idx)
+        .collect()
+}
+
+struct Span {
+    indices: Vec<usize>,
+    priority: u8, // 0 = drop first, 1 = drop later
+}
+
+fn is_user_message(message: &AgentMessage) -> bool {
+    matches!(message, AgentMessage::Llm(Message::User { .. }))
+}
+
+fn is_tool_use_assistant(message: &AgentMessage) -> bool {
+    matches!(
+        message,
+        AgentMessage::Llm(Message::Assistant {
+            stop_reason: StopReason::ToolUse,
+            ..
+        })
+    )
+}
+
+fn is_final_assistant(message: &AgentMessage) -> bool {
+    matches!(
+        message,
+        AgentMessage::Llm(Message::Assistant {
+            stop_reason: StopReason::Stop,
+            ..
+        })
+    )
+}
+
+fn is_tool_result(message: &AgentMessage) -> bool {
+    matches!(message, AgentMessage::Llm(Message::ToolResult { .. }))
 }
 
 fn is_assistant_or_tool(message: &AgentMessage) -> bool {
@@ -173,7 +286,8 @@ fn drop_to_token_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> Phas
         .saturating_add(ctx.keep_recent)
         .saturating_add(1)
         .max(1);
-    if len <= target_messages && total_tokens(&messages) <= ctx.compact_target {
+    let before_tokens = total_tokens(&messages);
+    if len <= target_messages && before_tokens <= ctx.compact_target {
         return PhaseResult {
             messages,
             actions: Vec::new(),
@@ -185,14 +299,15 @@ fn drop_to_token_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> Phas
 
     if first_end >= recent_start {
         let result = keep_within_budget(&messages, first_end, ctx.compact_target);
+        let after_tokens = total_tokens(&result);
         let dropped = len.saturating_sub(result.len());
-        let actions = if dropped > 0 {
+        let actions = if dropped > 0 && after_tokens <= before_tokens {
             vec![CompactionAction {
                 index: 0,
                 tool_name: "messages".into(),
                 method: CompactionMethod::MessagesEvicted,
-                before_tokens: total_tokens(&messages),
-                after_tokens: total_tokens(&result),
+                before_tokens,
+                after_tokens,
                 end_index: None,
                 related_count: Some(dropped),
             }]
@@ -229,16 +344,41 @@ fn drop_to_token_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> Phas
     result.push(marker);
     result.extend_from_slice(recent_msgs);
 
-    if total_tokens(&result) > ctx.compact_target {
-        let result = keep_within_budget(&result, first_end, ctx.compact_target);
-        let dropped = len.saturating_sub(result.len());
-        let actions = if dropped > 0 {
+    let result_tokens = total_tokens(&result);
+    if result_tokens >= before_tokens {
+        let fallback = keep_within_budget(&messages, first_end, ctx.compact_target);
+        let fallback_tokens = total_tokens(&fallback);
+        let dropped = len.saturating_sub(fallback.len());
+        let actions = if dropped > 0 && fallback_tokens <= before_tokens {
             vec![CompactionAction {
                 index: 0,
                 tool_name: "messages".into(),
                 method: CompactionMethod::MessagesEvicted,
-                before_tokens: total_tokens(&messages),
-                after_tokens: total_tokens(&result),
+                before_tokens,
+                after_tokens: fallback_tokens,
+                end_index: None,
+                related_count: Some(dropped),
+            }]
+        } else {
+            vec![]
+        };
+        return PhaseResult {
+            messages: fallback,
+            actions,
+        };
+    }
+
+    if result_tokens > ctx.compact_target {
+        let result = keep_within_budget(&result, first_end, ctx.compact_target);
+        let after_tokens = total_tokens(&result);
+        let dropped = len.saturating_sub(result.len());
+        let actions = if dropped > 0 && after_tokens <= before_tokens {
+            vec![CompactionAction {
+                index: 0,
+                tool_name: "messages".into(),
+                method: CompactionMethod::MessagesEvicted,
+                before_tokens,
+                after_tokens,
                 end_index: None,
                 related_count: Some(dropped),
             }]
@@ -321,12 +461,21 @@ fn keep_within_budget(
 
     let mut result: Vec<AgentMessage> = protected.to_vec();
     if removed > 0 {
-        result.push(AgentMessage::Llm(Message::User {
+        let marker = AgentMessage::Llm(Message::User {
             content: vec![Content::Text {
                 text: format!("[Context compacted: {} messages removed]", removed),
             }],
             timestamp: now_ms(),
-        }));
+        });
+        let removed_end = messages.len() - tail.len();
+        debug_assert!(removed_end >= protected_end);
+        let removed_tokens: usize = messages[protected_end..removed_end]
+            .iter()
+            .map(message_tokens)
+            .sum();
+        if message_tokens(&marker) < removed_tokens {
+            result.push(marker);
+        }
     }
     result.extend(tail);
     result
