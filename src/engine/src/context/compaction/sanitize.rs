@@ -81,5 +81,17 @@ pub fn sanitize_tool_pairs(messages: Vec<AgentMessage>) -> Vec<AgentMessage> {
         })
         .collect();
 
+    // Never produce empty output from non-empty input. If sanitization would
+    // remove everything (e.g. only orphan tool results remain after eviction),
+    // insert a minimal context marker so the conversation stays valid.
+    if filtered.is_empty() {
+        return vec![AgentMessage::Llm(Message::User {
+            content: vec![Content::Text {
+                text: "[Context compacted: messages removed]".to_string(),
+            }],
+            timestamp: crate::types::now_ms(),
+        })];
+    }
+
     filtered
 }

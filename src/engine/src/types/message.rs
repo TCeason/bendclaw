@@ -60,10 +60,11 @@ pub enum Content {
 }
 
 impl Content {
-    /// Resolve image data: if `data` is empty but `source` is set, load from disk.
+    /// Resolve image data: load from disk if path-based, then resize to fit
+    /// within 2000×2000 and 5MB limits before sending to the provider.
     /// Returns `(base64_data, mime_type)` or `None` if resolution fails.
     pub fn resolve_image_data(&self) -> Option<(String, String)> {
-        match self {
+        let raw = match self {
             Content::Image { mime_type, source } => match source {
                 ImageSource::Base64 { data } if !data.is_empty() => {
                     Some((data.clone(), mime_type.clone()))
@@ -79,7 +80,12 @@ impl Content {
                 ImageSource::Base64 { .. } => None,
             },
             _ => None,
-        }
+        };
+
+        // Apply resize to cap dimensions at 2000×2000 and size at 5MB.
+        // This ensures the fixed token estimate (5333) is accurate.
+        // If resize fails (e.g., unrecognized format), fall back to original data.
+        raw.map(|(data, mime)| crate::context::resize_image(&data, &mime).unwrap_or((data, mime)))
     }
 }
 

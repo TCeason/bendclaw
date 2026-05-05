@@ -22,15 +22,25 @@ const FALLBACK_DIM: u32 = 1000;
 const JPEG_QUALITY: u8 = 60;
 
 /// Encode a DynamicImage as JPEG bytes at the given quality.
+/// Converts RGBA/GrayA to RGB/Gray first since JPEG has no alpha support.
 fn encode_jpeg(img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, String> {
+    use image::DynamicImage;
+    // JPEG doesn't support alpha — strip it before encoding.
+    let rgb = match img {
+        DynamicImage::ImageRgba8(_)
+        | DynamicImage::ImageRgba16(_)
+        | DynamicImage::ImageRgba32F(_) => img.to_rgb8().into(),
+        DynamicImage::ImageLumaA8(_) | DynamicImage::ImageLumaA16(_) => img.to_luma8().into(),
+        _ => img.clone(),
+    };
     let mut buf = Vec::new();
     let encoder = JpegEncoder::new_with_quality(&mut buf, quality);
     encoder
         .write_image(
-            img.as_bytes(),
-            img.width(),
-            img.height(),
-            img.color().into(),
+            rgb.as_bytes(),
+            rgb.width(),
+            rgb.height(),
+            rgb.color().into(),
         )
         .map_err(|e| format!("encode jpeg: {e}"))?;
     Ok(buf)

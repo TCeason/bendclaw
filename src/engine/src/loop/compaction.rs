@@ -61,7 +61,7 @@ pub(super) fn compact_context(
             .stats
             .before_estimated_tokens
             .saturating_sub(result.stats.after_estimated_tokens);
-        context_tracker.record_compaction_savings(saved);
+        context_tracker.record_compaction_savings(saved, context.messages.len());
     }
 
     tx.send(AgentEvent::ContextCompactionEnd {
@@ -118,7 +118,7 @@ pub(super) fn compact_for_recovery(
         .stats
         .before_estimated_tokens
         .saturating_sub(compact_result.stats.after_estimated_tokens);
-    context_tracker.record_compaction_savings(saved);
+    context_tracker.record_compaction_savings(saved, context.messages.len());
 
     tx.send(AgentEvent::ContextCompactionStart {
         message_count: compact_result.stats.before_message_count,

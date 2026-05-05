@@ -63,9 +63,19 @@ impl ContextTracker {
     /// severely underestimates images. Instead, subtract what compaction saved
     /// so the baseline still reflects the real API cost of remaining content
     /// (especially images that compaction cannot reduce).
-    pub fn record_compaction_savings(&mut self, tokens_saved: usize) {
+    ///
+    /// Also adjusts the baseline index when it points beyond the new array,
+    /// since message eviction invalidates the old index position.
+    pub fn record_compaction_savings(&mut self, tokens_saved: usize, new_message_count: usize) {
         if let Some(ref mut baseline) = self.last_baseline_tokens {
             *baseline = baseline.saturating_sub(tokens_saved);
+        }
+        // Only clamp when the old index is out of bounds for the new array.
+        // This prevents fallback to chars/4 which severely underestimates images.
+        if let Some(ref mut idx) = self.last_baseline_index {
+            if *idx >= new_message_count && new_message_count > 0 {
+                *idx = new_message_count - 1;
+            }
         }
     }
 
