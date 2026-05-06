@@ -61,10 +61,10 @@ impl ToolOnlyGuard {
 
     fn build_intervention(count: usize) -> ToolOnlyIntervention {
         let warning = format!(
-            "You have used tools for {count} consecutive turns without providing a visible conclusion. \
-             Stop broad investigation now. In your next response, either solve the user's request with \
-             a concise answer or explain the concrete blocker and the single next action needed. Do not \
-             call another tool unless it is strictly necessary to complete that final answer."
+            "<system-reminder>\n\
+             You've made {count} tool calls without a visible update. This is a reminder, not a limit — you may continue calling tools.\n\
+             Before your next tool call, briefly state: the user's goal, what you've learned so far, and your next step. Then continue.\n\
+             </system-reminder>"
         );
 
         ToolOnlyIntervention {

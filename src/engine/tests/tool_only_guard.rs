@@ -100,8 +100,8 @@ fn intervention_is_user_steering_message() {
                 }
             })
             .collect::<String>();
-        assert!(text.contains("without providing a visible conclusion"));
-        assert!(text.contains("Do not call another tool"));
+        assert!(text.contains("reminder, not a limit"));
+        assert!(text.contains("your next step"));
     } else {
         panic!("expected user steering message");
     }
