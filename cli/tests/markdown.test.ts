@@ -154,6 +154,51 @@ describe('renderMarkdown', () => {
     expect(result).toContain('---')
   })
 
+  test('splits hr glued to end of sentence without whitespace', () => {
+    // Models sometimes emit `通用框架。---\n核心抽象` (no space/newline before
+    // the --- marker). Treat it as a thematic break, not literal dashes.
+    const result = render('通用框架。---\n核心抽象三个独立').replace(/\u200b/g, '')
+    expect(result).toContain('通用框架。')
+    expect(result).toContain('核心抽象三个独立')
+    expect(result).not.toMatch(/通用框架。---/)
+  })
+
+  test('splits hr glued before heading', () => {
+    const result = render('---### 方案分层：从零代码到完整 Eval').replace(/\u200b/g, '')
+
+    expect(result).toContain('---\n\n方案分层：从零代码到完整 Eval')
+    expect(result).not.toContain('---###')
+  })
+
+  test('does not split em-dash mid-sentence', () => {
+    // Plain em-dash usage with surrounding spaces must stay intact.
+    const result = render('foo --- bar').replace(/\u200b/g, '')
+    expect(result).toContain('foo --- bar')
+  })
+
+  test('preserves hand-drawn box art whitespace via code-fence wrap', () => {
+    // Hand-drawn boxes go through a code-fence wrapper so marked does not
+    // collapse the internal whitespace as paragraph text. We do NOT pad
+    // ambiguous-width pictographs (terminals disagree about their width),
+    // so the fix only guarantees the block is preserved verbatim.
+    const box = [
+      '┌──────────────────┐',
+      '│ Datafuse         │',
+      '├──────────────────┤',
+      '│ 🏠 Dashboard     │',
+      '│ 🛠  Evaluators   │',
+      '│ ▶  Eval Runs     │',
+      '└──────────────────┘',
+    ].join('\n')
+    const rendered = stripAnsi(renderMarkdown(box)).replace(/\u200b/g, '')
+    // Every original line should appear verbatim in the output.
+    for (const line of box.split('\n')) {
+      expect(rendered).toContain(line)
+    }
+    // And no raw fence markers should leak through.
+    expect(rendered).not.toContain('```')
+  })
+
   test('renders tables with box-drawing characters', () => {
     const md = '| A | B |\n|---|---|\n| 1 | 2 |'
     const result = render(md)
@@ -168,6 +213,22 @@ describe('renderMarkdown', () => {
     expect(result).toContain('┤')
     expect(result).toContain('└')
     expect(result).toContain('┘')
+  })
+
+  test('aligns emoji-capable symbols in tables using terminal width', () => {
+    const md = [
+      '| 状态 | 工具 | 说明 |',
+      '|---|---|---|',
+      '| ▶ | 🛠Read | 读取文件内容 |',
+      '| ▶ | 🛠Edit | 编辑已有文件 |',
+      '| ▶ | 🛠Bash | 执行 shell 命令 |',
+      '| ▶ | 🛠Grep | 搜索代码 |',
+    ].join('\n')
+    const result = render(md).replace(/\u200b/g, '')
+    const lines = result.split('\n').filter(Boolean)
+
+    expect(lines).toContain('│ ▶    │ 🛠Read │ 读取文件内容    │')
+    expect(lines).toContain('│ ▶    │ 🛠Edit │ 编辑已有文件    │')
   })
 
   test('collapses excessive newlines', () => {

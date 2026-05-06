@@ -74,6 +74,10 @@ const CODE_ASSIGNMENT_RE = /^[\w$.'"`-]+\s*[:=]/
 // Box-drawing characters used in tree/diagram structures (U+2500–U+257F)
 const BOX_DRAWING_RE = /[\u2500-\u257f]/
 
+function terminalDisplayWidth(text: string): number {
+  return stringWidth(stripAnsi(text))
+}
+
 function terminalContentWidth(): number {
   const columns = process.stdout.columns ?? 80
   return Math.max(20, Math.min(columns - SAFETY_MARGIN, MAX_RENDER_WIDTH))
@@ -87,7 +91,7 @@ function terminalTableWidth(): number {
 }
 
 function wrapDisplayLine(line: string, width: number): string[] {
-  if (!line || width <= 0 || stringWidth(stripAnsi(line)) <= width) return [line]
+  if (!line || width <= 0 || terminalDisplayWidth(line) <= width) return [line]
   // Tree/diagram lines with box-drawing characters are structural —
   // never wrap them; let the terminal handle overflow.
   if (BOX_DRAWING_RE.test(stripAnsi(line))) return [line]
@@ -253,8 +257,101 @@ function repairUnclosedFences(content: string, finalClose: boolean): string {
   return out
 }
 
+// Matches a line that contains only a thematic-break marker (---, ***, ___).
+// Models often write `foo.\n---\n### heading` without the surrounding blank
+// lines CommonMark requires, and marked then swallows `---` as a setext h2
+// underline, collapsing the separator and the next heading visually.
+// Insert blank lines before/after isolated markers so they're recognized as hr.
+const HR_MARKER_INLINE_RE = /([^\n])\n([ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*)\n(?!\n)/g
+const HR_MARKER_TRAILING_RE = /([^\n])\n([ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*)$/g
+// Matches a thematic-break marker glued directly to the end of a sentence
+// with no intervening space, e.g. `通用框架。---\n核心抽象`. Only trigger
+// after strong sentence terminators (CJK or ASCII punctuation that ends a
+// clause) so we don't mangle em-dash usage like `foo --- bar`.
+const HR_MARKER_GLUED_RE = /([。．！？!?:：])([ \t]*)(-{3,}|\*{3,}|_{3,})[ \t]*(\n|$)/g
+const HR_MARKER_BEFORE_HEADING_RE = /(^|\n)([ \t]*(?:-{3,}|\*{3,}|_{3,}))[ \t]*(#{1,6}\s)/g
+
+function normalizeHrLines(text: string): string {
+  return text
+    .replace(HR_MARKER_BEFORE_HEADING_RE, '$1$2\n\n$3')
+    .replace(HR_MARKER_GLUED_RE, '$1\n\n$3\n\n')
+    .replace(HR_MARKER_INLINE_RE, '$1\n\n$2\n\n')
+    .replace(HR_MARKER_TRAILING_RE, '$1\n\n$2')
+}
+
+// Matches a line that looks like part of a hand-drawn box: starts with a
+// vertical border / corner character (ASCII `|` or Unicode box-drawing).
+const BOX_LINE_START_RE = /^\s*[|\u2500\u2502\u250c\u2510\u2514\u2518\u251c\u2524\u252c\u2534\u253c]/
+// Unicode border line (top/middle/bottom) — the strong signal that this block
+// is hand-drawn box art rather than a markdown table or blockquote.
+const BOX_BORDER_LINE_RE = /^\s*[\u250c\u2514\u251c][\u2500\u252c\u2534\u253c]+[\u2510\u2518\u2524]\s*$/
+// Trailing closing border character that should be right-aligned.
+const BOX_LINE_END_RE = /[|\u2502\u2510\u2518\u2524]\s*$/
+// Markdown table separator line — exclude from box-art treatment.
+const MD_TABLE_SEP_RE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/
+
+/**
+ * Wrap hand-drawn boxes (ASCII `|` or Unicode `│`) in a fenced code block so
+ * marked preserves whitespace exactly instead of collapsing it as paragraph
+ * text. We deliberately do NOT pad rows: terminals disagree about the width
+ * of ambiguous/text-presentation pictographs (e.g. `▶` U+25B6, `🛠` U+1F6E0)
+ * — some show them as 1 cell, others as 2 — and `string-width` follows the
+ * Unicode text-default, which mismatches most modern emoji-capable terminals.
+ * Since models typically emit box art under the "emoji = 2 cells" assumption,
+ * leaving the content untouched produces correct alignment on the majority
+ * of terminals. Markdown tables (identified by a `|---|---|` separator) are
+ * skipped so the dedicated table renderer handles them.
+ */
+function alignBoxArt(text: string): string {
+  if (!/[|\u250c\u2514\u251c\u2502]/.test(text)) return text
+  const lines = text.split('\n')
+  const out: string[] = []
+  let i = 0
+  // Track whether we're currently inside a fenced code block in the source
+  // markdown. If the author already wrapped the box in ``` ``` we must NOT
+  // wrap again — that produces literal "```text" in the rendered output.
+  let inFence = false
+  let fenceMarker = ''
+  while (i < lines.length) {
+    const line = lines[i]!
+    const fenceMatch = CODE_FENCE_RE.exec(line)
+    if (fenceMatch) {
+      const marker = fenceMatch[2]!
+      if (!inFence) {
+        inFence = true
+        fenceMarker = marker
+      } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
+        inFence = false
+        fenceMarker = ''
+      }
+      out.push(line)
+      i++
+      continue
+    }
+    if (inFence || !BOX_LINE_START_RE.test(line)) {
+      out.push(line)
+      i++
+      continue
+    }
+    let j = i
+    while (j < lines.length && BOX_LINE_START_RE.test(lines[j]!)) j++
+    const block = lines.slice(i, j)
+    const isMdTable = block.some(l => MD_TABLE_SEP_RE.test(l))
+    const hasBorderLine = block.some(l => BOX_BORDER_LINE_RE.test(l))
+    if (block.length >= 2 && hasBorderLine && !isMdTable) {
+      out.push('```text')
+      out.push(...block)
+      out.push('```')
+    } else {
+      out.push(...block)
+    }
+    i = j
+  }
+  return out.join('\n')
+}
+
 function prepareMarkdownForLex(text: string): string {
-  return repairUnclosedFences(text, true)
+  return repairUnclosedFences(normalizeHrLines(alignBoxArt(text)), true)
 }
 
 /**
@@ -427,10 +524,10 @@ export function formatToken(
       function longestWord(tokens: Token[] | undefined): number {
         const words = plainText(tokens).split(/\s+/).filter(w => w.length > 0)
         if (words.length === 0) return MIN_COL
-        return Math.max(...words.map(w => stringWidth(w)), MIN_COL)
+        return Math.max(...words.map(w => terminalDisplayWidth(w)), MIN_COL)
       }
       function idealWidth(tokens: Token[] | undefined): number {
-        return Math.max(stringWidth(plainText(tokens)), MIN_COL)
+        return Math.max(terminalDisplayWidth(plainText(tokens)), MIN_COL)
       }
 
       // --- column width calculation ---
@@ -516,7 +613,7 @@ export function formatToken(
 
             // Two-pass wrap: first line is narrower (label takes space),
             // continuation lines get the full width minus indent.
-            const firstLineWidth = termWidth - stringWidth(label) - 3
+            const firstLineWidth = termWidth - terminalDisplayWidth(label) - 3
             const subsequentLineWidth = termWidth - wrapIndent.length - 1
             const firstPassLines = wrapCell(value, Math.max(firstLineWidth, 10))
             const firstLine = firstPassLines[0] || ''
@@ -569,7 +666,7 @@ export function formatToken(
             const vPad = Math.floor((height - cellLines.length) / 2)
             const vi = li - vPad
             const content = (vi >= 0 && vi < cellLines.length) ? cellLines[vi]! : ''
-            const dw = stringWidth(stripAnsi(content))
+            const dw = terminalDisplayWidth(content)
             const align = forceCenter ? 'center' : tableToken.align?.[ci]
             line += ' ' + padAligned(content, dw, colWidths[ci]!, align) + ' │'
           }
@@ -592,7 +689,7 @@ export function formatToken(
 
       // Safety check: if any line exceeds terminal width (e.g. terminal
       // resized between calculation and render), fall back to vertical format.
-      const maxLineWidth = Math.max(...tableLines.map(l => stringWidth(stripAnsi(l))))
+      const maxLineWidth = Math.max(...tableLines.map(l => terminalDisplayWidth(l)))
       if (maxLineWidth > termWidth) {
         return renderVerticalFormat() + EOL
       }
