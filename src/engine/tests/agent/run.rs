@@ -20,7 +20,7 @@ fn system_reminder_count(messages: &[AgentMessage]) -> usize {
             matches!(
                 message,
                 AgentMessage::Llm(Message::User { content, .. })
-                    if content.iter().any(|content| matches!(content, Content::Text { text } if text.contains("<system-reminder>") && text.contains("Do not resume older tasks")))
+                    if content.iter().any(|content| matches!(content, Content::Text { text } if text.contains("<system-reminder>") && text.contains("do not pick up unrelated earlier tasks")))
             )
         })
         .count()

@@ -413,7 +413,7 @@ async fn run_loop(
 
                 if !post_tool_convergence_reminder_injected && steering_after_tools.is_none() {
                     pending.push(AgentMessage::Llm(Message::system_reminder(
-                        "If the latest user request is complete, answer concisely and stop. Do not resume older tasks unless explicitly asked.",
+                        "This reminder is automatically attached by the system and is not a new user message. Continue the current user request if work remains. Once it is fully addressed, finalize with a concise answer and do not pick up unrelated earlier tasks.",
                     )));
                     post_tool_convergence_reminder_injected = true;
                 }
