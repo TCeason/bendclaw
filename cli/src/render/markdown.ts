@@ -49,7 +49,7 @@ export function configureMarked(): void {
 const MD_SYNTAX_RE = /[#*`|[>\-_~]|\n\n|^\d+\. |\n\d+\. /
 
 function hasMarkdownSyntax(s: string): boolean {
-  return MD_SYNTAX_RE.test(s.length > 500 ? s.slice(0, 500) : s)
+  return MD_SYNTAX_RE.test(s)
 }
 
 /** Build a plain-text paragraph token (no marked.lexer overhead). */
@@ -90,24 +90,39 @@ function terminalTableWidth(): number {
   return Math.max(20, columns - SAFETY_MARGIN)
 }
 
-function wrapDisplayLine(line: string, width: number): string[] {
-  if (!line || width <= 0 || terminalDisplayWidth(line) <= width) return [line]
-  // Tree/diagram lines with box-drawing characters are structural —
-  // never wrap them; let the terminal handle overflow.
-  if (BOX_DRAWING_RE.test(stripAnsi(line))) return [line]
-  const wrapped = wrapAnsi(line, width, { hard: true, trim: false, wordWrap: true })
-  return wrapped.split('\n')
-}
-
-function wrapDisplayText(text: string, width = terminalContentWidth()): string {
+function wrapDisplayTextWithIndent(
+  text: string,
+  firstIndent: string,
+  restIndent: string,
+  width = terminalContentWidth(),
+): string {
+  const innerWidth = Math.max(1, width - terminalDisplayWidth(firstIndent))
   return text
     .split(EOL)
-    .flatMap(line => wrapDisplayLine(line, width))
+    .flatMap(line => {
+      if (!line || BOX_DRAWING_RE.test(stripAnsi(line))) return [line]
+      return wrapAnsi(line, innerWidth, { hard: true, trim: false, wordWrap: true }).split('\n')
+    })
+    .map((line, index) => `${index === 0 ? firstIndent : restIndent}${line}`)
     .join(EOL)
 }
 
-function wrapPlainTokenText(text: string): string {
-  return wrapDisplayText(linkifyIssueRefs(text))
+/**
+ * Soft-wrap a paragraph to fit the terminal width. Skips lines that contain
+ * Unicode box-drawing characters — those are structural tree/diagram art and
+ * must not be reflowed. Compare with claudecode, which never wraps inside
+ * formatToken and relies on Ink/Yoga for layout; we wrap here because the CLI
+ * writes ANSI strings directly.
+ */
+function wrapParagraph(text: string, width = terminalContentWidth()): string {
+  return text
+    .split(EOL)
+    .flatMap(line => {
+      if (!line || BOX_DRAWING_RE.test(stripAnsi(line))) return [line]
+      if (terminalDisplayWidth(line) <= width) return [line]
+      return wrapAnsi(line, width, { hard: true, trim: false, wordWrap: true }).split('\n')
+    })
+    .join(EOL)
 }
 
 function looksLikeMarkdownBoundary(line: string): boolean {
@@ -279,44 +294,30 @@ function normalizeHrLines(text: string): string {
     .replace(HR_MARKER_TRAILING_RE, '$1\n\n$2')
 }
 
-// Matches a line that looks like part of a hand-drawn box: starts with a
-// vertical border / corner character (ASCII `|` or Unicode box-drawing).
-const BOX_LINE_START_RE = /^\s*[|\u2500\u2502\u250c\u2510\u2514\u2518\u251c\u2524\u252c\u2534\u253c]/
-// Unicode border line (top/middle/bottom) — the strong signal that this block
-// is hand-drawn box art rather than a markdown table or blockquote.
-const BOX_BORDER_LINE_RE = /^\s*[\u250c\u2514\u251c][\u2500\u252c\u2534\u253c]+[\u2510\u2518\u2524]\s*$/
-// A line that OPENS a Unicode box: starts with `┌` and ends with `┐` (may
-// contain a label in between, e.g. `┌─ Samples ─┐`).
-const BOX_TOP_LINE_RE = /^(\s*)\u250c.*\u2510\s*$/
-// A line that CLOSES a Unicode box: starts with `└` and ends with `┘`.
-const BOX_BOTTOM_LINE_RE = /^(\s*)\u2514.*\u2518\s*$/
-// Trailing closing border character that should be right-aligned.
-const BOX_LINE_END_RE = /[|\u2502\u2510\u2518\u2524]\s*$/
-// Markdown table separator line — exclude from box-art treatment.
+// Markdown table separator line — exclude from box-drawing preservation.
 const MD_TABLE_SEP_RE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/
 
 /**
- * Wrap hand-drawn boxes (ASCII `|` or Unicode `│`) in a fenced code block so
- * marked preserves whitespace exactly instead of collapsing it as paragraph
- * text. We deliberately do NOT pad rows: terminals disagree about the width
- * of ambiguous/text-presentation pictographs (e.g. `▶` U+25B6, `🛠` U+1F6E0)
- * — some show them as 1 cell, others as 2 — and `string-width` follows the
- * Unicode text-default, which mismatches most modern emoji-capable terminals.
- * Since models typically emit box art under the "emoji = 2 cells" assumption,
- * leaving the content untouched produces correct alignment on the majority
- * of terminals. Markdown tables (identified by a `|---|---|` separator) are
- * skipped so the dedicated table renderer handles them.
+ * Preserve any paragraph that contains Unicode box-drawing characters
+ * (U+2500–U+257F) by wrapping it in a fenced code block. This delegates
+ * whitespace preservation to marked's code-block handling instead of
+ * trying to identify specific shapes (hand-drawn boxes, tree listings,
+ * ASCII tables, …) with fragile per-shape regexes.
+ *
+ * Why this works: marked emits paragraphs by trimming and joining lines
+ * with spaces, so multi-space indentation (`│   ├── foo`) collapses and
+ * tree/box columns go out of alignment. A code block keeps every line
+ * verbatim. GFM tables use ASCII `|` and do not contain box-drawing
+ * characters, so they are skipped here and rendered by marked's table
+ * tokenizer.
  */
-function alignBoxArt(text: string): string {
-  if (!/[|\u250c\u2514\u251c\u2502]/.test(text)) return text
+function preserveBoxDrawingBlocks(text: string): string {
+  if (!BOX_DRAWING_RE.test(text)) return text
   const lines = text.split('\n')
   const out: string[] = []
-  let i = 0
-  // Track whether we're currently inside a fenced code block in the source
-  // markdown. If the author already wrapped the box in ``` ``` we must NOT
-  // wrap again — that produces literal "```text" in the rendered output.
   let inFence = false
   let fenceMarker = ''
+  let i = 0
   while (i < lines.length) {
     const line = lines[i]!
     const fenceMatch = CODE_FENCE_RE.exec(line)
@@ -333,40 +334,25 @@ function alignBoxArt(text: string): string {
       i++
       continue
     }
-    if (inFence || !BOX_LINE_START_RE.test(line)) {
+    if (inFence || line.trim() === '') {
       out.push(line)
       i++
       continue
     }
+
+    // Collect a paragraph = contiguous non-empty, non-fence lines.
     let j = i
-    // If this line opens a Unicode box (┌...┐), extend the block up to and
-    // including the matching closer (└...┘) regardless of whether interior
-    // lines start with a vertical border. Models often emit interior labels
-    // (`Error`, `Trace → ...`) that don't start with `│`, and the box may
-    // contain nested sub-boxes. Without this, the block gets truncated at
-    // the first non-border interior line and the rest leaks out into the
-    // paragraph renderer — where stray `|` chars get parsed as GFM table
-    // column separators, producing misaligned output.
-    if (BOX_TOP_LINE_RE.test(line)) {
-      let depth = 1
-      j = i + 1
-      while (j < lines.length && depth > 0) {
-        const l = lines[j]!
-        if (BOX_TOP_LINE_RE.test(l)) depth++
-        else if (BOX_BOTTOM_LINE_RE.test(l)) depth--
-        j++
-      }
-      // Continue extending while subsequent lines still look like box-art
-      // (start with a vertical border). This captures trailing border-only
-      // lines that belong to the same visual block.
-      while (j < lines.length && BOX_LINE_START_RE.test(lines[j]!)) j++
-    } else {
-      while (j < lines.length && BOX_LINE_START_RE.test(lines[j]!)) j++
+    while (
+      j < lines.length
+      && lines[j]!.trim() !== ''
+      && !CODE_FENCE_RE.test(lines[j]!)
+    ) {
+      j++
     }
     const block = lines.slice(i, j)
+    const hasBoxDrawing = block.some(l => BOX_DRAWING_RE.test(l))
     const isMdTable = block.some(l => MD_TABLE_SEP_RE.test(l))
-    const hasBorderLine = block.some(l => BOX_BORDER_LINE_RE.test(l))
-    if (block.length >= 2 && hasBorderLine && !isMdTable) {
+    if (hasBoxDrawing && !isMdTable) {
       out.push('```text')
       out.push(...block)
       out.push('```')
@@ -379,7 +365,7 @@ function alignBoxArt(text: string): string {
 }
 
 function prepareMarkdownForLex(text: string): string {
-  return repairUnclosedFences(normalizeHrLines(alignBoxArt(text)), true)
+  return repairUnclosedFences(normalizeHrLines(preserveBoxDrawingBlocks(text)), true)
 }
 
 /**
@@ -423,7 +409,8 @@ export function formatToken(
           // fallback
         }
       }
-      return wrapDisplayText(highlighted) + EOL
+      // Emit code blocks verbatim — terminal/renderer handles any soft wrap.
+      return highlighted + EOL
     }
     case 'codespan': {
       const raw = token.text as string
@@ -508,12 +495,19 @@ export function formatToken(
             `${'  '.repeat(listDepth)}${formatToken(t, listDepth + 1, orderedListNumber, token)}`,
         )
         .join('')
-    case 'paragraph':
-      return (
-        wrapDisplayText((token.tokens ?? [])
-          .map(t => formatToken(t, 0, null, null))
-          .join('')) + EOL
-      )
+    case 'paragraph': {
+      const rendered = (token.tokens ?? [])
+        .map(t => formatToken(t, 0, null, null))
+        .join('')
+      // Preserve verbatim whenever the paragraph contains box-drawing
+      // characters (U+2500–U+257F) — these indicate tree/diagram art whose
+      // indentation must not be reflowed. Otherwise soft-wrap long lines so
+      // very wide output stays readable on narrow terminals.
+      if (BOX_DRAWING_RE.test(stripAnsi(rendered))) {
+        return rendered + EOL
+      }
+      return wrapParagraph(rendered) + EOL
+    }
     case 'space':
       return EOL
     case 'br':
@@ -523,18 +517,25 @@ export function formatToken(
         return token.text
       }
       if (parent?.type === 'list_item') {
-        const bullet = orderedListNumber === null
+        const marker = orderedListNumber === null
           ? '-'
           : `${getListNumber(listDepth, orderedListNumber)}.`
+        const depthPad = '  '.repeat(Math.max(0, listDepth - 1))
+        const firstIndent = `${depthPad}${marker} `
+        const restIndent = `${depthPad}${' '.repeat(terminalDisplayWidth(marker) + 1)}`
         const inner = token.tokens
           ? token.tokens.map(t => formatToken(t, listDepth, orderedListNumber, token)).join('')
           : linkifyIssueRefs(token.text)
-        return `${bullet} ${inner}${EOL}`
+        return `${wrapDisplayTextWithIndent(inner, firstIndent, restIndent)}${EOL}`
       }
       if (token.tokens) {
         return token.tokens.map(t => formatToken(t, listDepth, orderedListNumber, token)).join('')
       }
-      return wrapPlainTokenText(token.text)
+      // Plain text nodes: emit verbatim (claudecode-style). Do not soft-wrap
+      // here — marked keeps the original newlines/indentation in token.text
+      // (including tree-art and box-drawing lines), and re-wrapping here
+      // collapses multi-space indentation.
+      return linkifyIssueRefs(token.text)
     }
     case 'table': {
       const tableToken = token as Tokens.Table
@@ -838,37 +839,10 @@ export function renderMarkdown(text: string): string {
     const tokens = hasMarkdownSyntax(lexText)
       ? marked.lexer(lexText)
       : plainTextTokens(text)
-    return insertWordBoundaries(formatTokens(tokens))
+    return formatTokens(tokens)
   } catch {
     return text
   }
-}
-
-// ---------------------------------------------------------------------------
-// Word boundary insertion for CJK text
-// ---------------------------------------------------------------------------
-
-// CJK Unified Ideographs, CJK Extension A, CJK Compat Ideographs
-const CJK_IDEO = '[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]'
-const ASCII_RE = '[\x21-\x7e]'
-// CJK punctuation: CJK Symbols, Fullwidth punctuation, quotation marks, etc.
-const CJK_PUNCT = '[\u3001-\u3003\u3008-\u3011\u3014-\u301f\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65\u2018-\u201f\u2026\u2014\u3000\uff0c\uff0e]'
-const ZWSP = '\u200B'
-const CJK_TO_ASCII = new RegExp(`(${CJK_IDEO})(${ASCII_RE})`, 'g')
-const ASCII_TO_CJK = new RegExp(`(${ASCII_RE})(${CJK_IDEO})`, 'g')
-const CJK_PUNCT_RE = new RegExp(`(${CJK_PUNCT})`, 'g')
-const DOUBLE_ZWSP = /\u200B\u200B+/g
-
-/**
- * Insert zero-width spaces at CJK / ASCII boundaries and around CJK
- * punctuation so terminal double-click word selection stops correctly.
- */
-export function insertWordBoundaries(s: string): string {
-  return s
-    .replace(ASCII_TO_CJK, `$1${ZWSP}$2`)
-    .replace(CJK_TO_ASCII, `$1${ZWSP}$2`)
-    .replace(CJK_PUNCT_RE, `${ZWSP}$1${ZWSP}`)
-    .replace(DOUBLE_ZWSP, ZWSP)
 }
 
 // ---------------------------------------------------------------------------

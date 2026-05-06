@@ -117,6 +117,41 @@ describe('renderMarkdown', () => {
     }
   })
 
+  test('keeps list item continuation lines hanging indented', () => {
+    const prev = process.stdout.columns
+    process.stdout.columns = 42
+    try {
+      const result = render('- 检查 `cli/src/render/markdown.ts` 的渲染链路：这是很长很长很长很长很长的一行')
+        .replace(/\u200b/g, '')
+      const lines = result.split('\n')
+
+      expect(lines.length).toBeGreaterThan(1)
+      expect(lines[0]).toStartWith('- ')
+      expect(lines.slice(1).every(line => line.startsWith('  '))).toBe(true)
+      expect(lines.slice(1).every(line => !line.startsWith('- '))).toBe(true)
+    } finally {
+      process.stdout.columns = prev
+    }
+  })
+
+  test('does not insert word boundaries around every CJK punctuation mark', () => {
+    const result = renderMarkdown('中文，标点。继续：说明')
+
+    expect(result).not.toContain(`\u200b，`)
+    expect(result).not.toContain(`，\u200b`)
+    expect(result).not.toContain(`\u200b。`)
+    expect(result).not.toContain(`。\u200b`)
+    expect(result).not.toContain(`\u200b：`)
+    expect(result).not.toContain(`：\u200b`)
+  })
+
+  test('detects markdown syntax after the first 500 characters', () => {
+    const result = render(`${'a'.repeat(520)}\n\n# Tail heading`)
+
+    expect(result).toContain('Tail heading')
+    expect(result).not.toContain('# Tail heading')
+  })
+
   test('renders code blocks', () => {
     const result = render('```js\nconst x = 1\n```')
     expect(result).toContain('const x = 1')
@@ -229,6 +264,34 @@ describe('renderMarkdown', () => {
     // Ensure the `Error` line keeps its trailing `| |` text intact rather
     // than being split across synthesized table columns.
     expect(rendered).toContain('Error   | |')
+  })
+
+  test('preserves tree-style directory listings with branch connectors', () => {
+    // `tree`-style output uses `├──` / `└──` connectors but no closed
+    // `┌────┐` border. Without special handling the lines get merged as
+    // paragraph text (consecutive connectors collapse onto one line) and
+    // indentation-only whitespace is lost, producing misaligned output.
+    const tree = [
+      'evot/',
+      '├── .gitignore',
+      '├── Cargo.lock',
+      '├── Cargo.toml',
+      '├── src/',
+      '│   ├── app/',
+      '│   │   └── src/',
+      '│   │       └── lib.rs',
+      '│   └── engine/',
+      '│       └── src/',
+      '│           └── lib.rs',
+      '└── cli/',
+      '    └── src/',
+      '        └── cli.ts',
+    ].join('\n')
+    const rendered = stripAnsi(renderMarkdown(tree)).replace(/\u200b/g, '')
+    for (const line of tree.split('\n')) {
+      expect(rendered).toContain(line)
+    }
+    expect(rendered).not.toContain('```')
   })
 
   test('renders tables with box-drawing characters', () => {
