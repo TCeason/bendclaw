@@ -118,7 +118,7 @@ export interface TextContentBlock {
 
 export type ImageContentSource =
   | { type: 'path'; path: string }
-  | { type: 'base64'; data: string }
+  | { type: 'base64'; data: string; path?: string }
 
 export interface ImageContentBlock {
   type: 'image'

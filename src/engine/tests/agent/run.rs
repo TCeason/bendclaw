@@ -1634,6 +1634,7 @@ async fn test_filter_non_text_content_only_text_extracted() {
                 mime_type: "image/png".into(),
                 source: evotengine::ImageSource::Base64 {
                     data: "base64data".into(),
+                    path: None,
                 },
             },
         ],
@@ -2051,6 +2052,7 @@ async fn test_llm_call_stats_image_tokens_separate_from_user() {
                     mime_type: "image/png".into(),
                     source: evotengine::ImageSource::Base64 {
                         data: "A".repeat(3000),
+                        path: None,
                     },
                 },
             ],

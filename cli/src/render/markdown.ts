@@ -285,6 +285,11 @@ const BOX_LINE_START_RE = /^\s*[|\u2500\u2502\u250c\u2510\u2514\u2518\u251c\u252
 // Unicode border line (top/middle/bottom) — the strong signal that this block
 // is hand-drawn box art rather than a markdown table or blockquote.
 const BOX_BORDER_LINE_RE = /^\s*[\u250c\u2514\u251c][\u2500\u252c\u2534\u253c]+[\u2510\u2518\u2524]\s*$/
+// A line that OPENS a Unicode box: starts with `┌` and ends with `┐` (may
+// contain a label in between, e.g. `┌─ Samples ─┐`).
+const BOX_TOP_LINE_RE = /^(\s*)\u250c.*\u2510\s*$/
+// A line that CLOSES a Unicode box: starts with `└` and ends with `┘`.
+const BOX_BOTTOM_LINE_RE = /^(\s*)\u2514.*\u2518\s*$/
 // Trailing closing border character that should be right-aligned.
 const BOX_LINE_END_RE = /[|\u2502\u2510\u2518\u2524]\s*$/
 // Markdown table separator line — exclude from box-art treatment.
@@ -334,7 +339,30 @@ function alignBoxArt(text: string): string {
       continue
     }
     let j = i
-    while (j < lines.length && BOX_LINE_START_RE.test(lines[j]!)) j++
+    // If this line opens a Unicode box (┌...┐), extend the block up to and
+    // including the matching closer (└...┘) regardless of whether interior
+    // lines start with a vertical border. Models often emit interior labels
+    // (`Error`, `Trace → ...`) that don't start with `│`, and the box may
+    // contain nested sub-boxes. Without this, the block gets truncated at
+    // the first non-border interior line and the rest leaks out into the
+    // paragraph renderer — where stray `|` chars get parsed as GFM table
+    // column separators, producing misaligned output.
+    if (BOX_TOP_LINE_RE.test(line)) {
+      let depth = 1
+      j = i + 1
+      while (j < lines.length && depth > 0) {
+        const l = lines[j]!
+        if (BOX_TOP_LINE_RE.test(l)) depth++
+        else if (BOX_BOTTOM_LINE_RE.test(l)) depth--
+        j++
+      }
+      // Continue extending while subsequent lines still look like box-art
+      // (start with a vertical border). This captures trailing border-only
+      // lines that belong to the same visual block.
+      while (j < lines.length && BOX_LINE_START_RE.test(lines[j]!)) j++
+    } else {
+      while (j < lines.length && BOX_LINE_START_RE.test(lines[j]!)) j++
+    }
     const block = lines.slice(i, j)
     const isMdTable = block.some(l => MD_TABLE_SEP_RE.test(l))
     const hasBorderLine = block.some(l => BOX_BORDER_LINE_RE.test(l))

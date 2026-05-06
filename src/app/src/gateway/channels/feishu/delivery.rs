@@ -624,6 +624,7 @@ pub async fn resolve_message_parts(
                         mime_type: img.mime_type,
                         source: evot_engine::ImageSource::Base64 {
                             data: img.data_base64,
+                            path: None,
                         },
                     });
                 }

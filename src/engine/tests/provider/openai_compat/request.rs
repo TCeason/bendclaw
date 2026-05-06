@@ -138,7 +138,10 @@ fn test_content_to_openai_multipart() {
         },
         Content::Image {
             mime_type: "image/png".into(),
-            source: ImageSource::Base64 { data: "abc".into() },
+            source: ImageSource::Base64 {
+                data: "abc".into(),
+                path: None,
+            },
         },
     ];
     let result = content_to_openai(&content);
@@ -174,6 +177,7 @@ fn test_tool_result_with_image() {
                     mime_type: "image/png".into(),
                     source: ImageSource::Base64 {
                         data: "aW1hZ2VkYXRh".into(),
+                        path: None,
                     },
                 }],
                 is_error: false,

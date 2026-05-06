@@ -281,6 +281,7 @@ fn user_content_round_trip_preserves_multimodal_order() {
             mime_type: "image/png".into(),
             source: evot_engine::ImageSource::Base64 {
                 data: "img1".into(),
+                path: None,
             },
         },
         evot_engine::Content::Text {
@@ -290,6 +291,7 @@ fn user_content_round_trip_preserves_multimodal_order() {
             mime_type: "image/jpeg".into(),
             source: evot_engine::ImageSource::Base64 {
                 data: "img2".into(),
+                path: None,
             },
         },
     ]);
@@ -301,11 +303,11 @@ fn user_content_round_trip_preserves_multimodal_order() {
     assert_eq!(content.len(), 4);
     assert!(matches!(&content[0], TranscriptUserContent::Text { text } if text == "before"));
     assert!(
-        matches!(&content[1], TranscriptUserContent::Image { mime_type, source } if mime_type == "image/png" && matches!(source, TranscriptImageSource::Base64 { data } if data == "img1"))
+        matches!(&content[1], TranscriptUserContent::Image { mime_type, source } if mime_type == "image/png" && matches!(source, TranscriptImageSource::Base64 { data, .. } if data == "img1"))
     );
     assert!(matches!(&content[2], TranscriptUserContent::Text { text } if text == "between"));
     assert!(
-        matches!(&content[3], TranscriptUserContent::Image { mime_type, source } if mime_type == "image/jpeg" && matches!(source, TranscriptImageSource::Base64 { data } if data == "img2"))
+        matches!(&content[3], TranscriptUserContent::Image { mime_type, source } if mime_type == "image/jpeg" && matches!(source, TranscriptImageSource::Base64 { data, .. } if data == "img2"))
     );
 }
 

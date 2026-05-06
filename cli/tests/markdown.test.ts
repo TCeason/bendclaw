@@ -199,6 +199,38 @@ describe('renderMarkdown', () => {
     expect(rendered).not.toContain('```')
   })
 
+  test('preserves box art with non-border interior lines', () => {
+    // Regression: models sometimes emit boxes whose interior includes lines
+    // that don't start with `│` (labels like `Error`, `Trace → ...`). The
+    // block detector used to truncate at the first such line, letting the
+    // remainder leak into paragraph parsing — where stray ASCII `|` got
+    // treated as GFM table column separators, producing misaligned output.
+    // By matching `┌...┐`/`└...┘` pairs we keep the whole block inside one
+    // code fence regardless of interior line shape.
+    const box = [
+      '┌─ Samples ─┐',
+      '│ ▼ × failed    a1b2c3d4e5f6…   8.2s   │ │',
+      'Error   | |',
+      '  no numeric metrics in judge output:    | |',
+      '  instruction_following,groundedness,... | |',
+      'Trace  → 7efc7485db736bcaa114efe991d8cb3 ↗   | |',
+      'Sample → dsi_motxmny0_e252389b               | |',
+      '[↻ Retry this sample]                        │',
+      '└────────────┘',
+    ].join('\n')
+    const rendered = stripAnsi(renderMarkdown(box)).replace(/\u200b/g, '')
+    for (const line of box.split('\n')) {
+      expect(rendered).toContain(line)
+    }
+    // The interior `| |` tokens must NOT be promoted into a GFM table — a
+    // table render would produce header separator lines like `┌─┬─┐` on
+    // their own at the top of the output, which we assert absent here.
+    expect(rendered).not.toContain('```')
+    // Ensure the `Error` line keeps its trailing `| |` text intact rather
+    // than being split across synthesized table columns.
+    expect(rendered).toContain('Error   | |')
+  })
+
   test('renders tables with box-drawing characters', () => {
     const md = '| A | B |\n|---|---|\n| 1 | 2 |'
     const result = render(md)

@@ -134,7 +134,7 @@ async fn run_loop(
         .as_ref()
         .map(|limits| ExecutionTracker::new(limits.clone()));
     let mut doom_detector = DoomLoopDetector::new(3);
-    let mut tool_only_guard = ToolOnlyGuard::new(20);
+    let mut tool_only_guard = ToolOnlyGuard::new(10);
     let mut context_tracker = ContextTracker::new();
     let mut consecutive_errors: usize = 0;
     let mut compacted_after_error = false;

@@ -1759,6 +1759,7 @@ fn test_oversized_user_with_images_preserved() {
                 mime_type: "image/png".into(),
                 source: ImageSource::Base64 {
                     data: "base64data".into(),
+                    path: None,
                 },
             }],
             timestamp: 0,
@@ -2923,6 +2924,7 @@ fn test_old_images_preserved_until_severe_pressure() {
                     mime_type: "image/png".into(),
                     source: ImageSource::Base64 {
                         data: "base64data".into(),
+                        path: None,
                     },
                 },
             ],
@@ -2966,6 +2968,7 @@ fn test_images_stripped_under_severe_pressure() {
                 mime_type: "image/png".into(),
                 source: ImageSource::Base64 {
                     data: "base64data".into(),
+                    path: None,
                 },
             }],
             timestamp: 0,
@@ -3012,6 +3015,7 @@ fn test_images_in_pinned_message_do_not_stall_compaction() {
                     mime_type: "image/png".into(),
                     source: ImageSource::Base64 {
                         data: "very-large-image".into(),
+                        path: None,
                     },
                 },
             ],
@@ -3078,4 +3082,132 @@ fn test_extreme_zero_budget() {
         "zero budget should still return at least one message"
     );
     assert_no_orphan_tool_pairs(&result.messages);
+}
+
+#[test]
+fn test_old_image_with_path_downgrades_to_path_variant() {
+    // Two images both with a `path:`: the older one should be downgraded to
+    // `ImageSource::Path`, freeing its base64 payload. The most recent image
+    // (still in the final user turn) keeps its `Base64` variant so the model
+    // does not have to round-trip the disk on the very next call.
+    let messages = vec![
+        AgentMessage::Llm(Message::user("task")),
+        AgentMessage::Llm(Message::User {
+            content: vec![
+                Content::Text {
+                    text: "old image".into(),
+                },
+                Content::Image {
+                    mime_type: "image/png".into(),
+                    source: ImageSource::Base64 {
+                        data: "a".repeat(20_000),
+                        path: Some("/tmp/old.png".into()),
+                    },
+                },
+            ],
+            timestamp: 0,
+        }),
+        AgentMessage::Llm(Message::user("middle")),
+        AgentMessage::Llm(Message::User {
+            content: vec![
+                Content::Text {
+                    text: "recent image".into(),
+                },
+                Content::Image {
+                    mime_type: "image/png".into(),
+                    source: ImageSource::Base64 {
+                        data: "b".repeat(20_000),
+                        path: Some("/tmp/recent.png".into()),
+                    },
+                },
+            ],
+            timestamp: 0,
+        }),
+    ];
+
+    let config = ContextConfig {
+        max_context_tokens: 1_000_000,
+        system_prompt_tokens: 0,
+        keep_recent: 1,
+        keep_first: 1,
+        ..Default::default()
+    };
+
+    let result = compact_messages(messages, &config, &CompactionBudgetState {
+        estimated_tokens: 12_000,
+    });
+
+    // Collect (index, variant) for each image-bearing user turn.
+    let variants: Vec<(usize, &'static str)> = result
+        .messages
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, m)| match m {
+            AgentMessage::Llm(Message::User { content, .. }) => {
+                for c in content {
+                    if let Content::Image { source, .. } = c {
+                        let tag = match source {
+                            ImageSource::Path { .. } => "path",
+                            ImageSource::Base64 { .. } => "base64",
+                        };
+                        return Some((idx, tag));
+                    }
+                }
+                None
+            }
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(variants.len(), 2, "both images should survive");
+    // Older image (earlier index) is downgraded to Path.
+    assert_eq!(variants[0].1, "path", "old image must be downgraded");
+    // Most recent image is kept verbatim.
+    assert_eq!(variants[1].1, "base64", "recent image must keep Base64");
+}
+
+#[test]
+fn test_image_downgrade_without_path_is_noop() {
+    // Images without a known disk path must stay as Base64 (we can never
+    // recover their data from disk on demand).
+    let messages = vec![
+        AgentMessage::Llm(Message::user("task")),
+        AgentMessage::Llm(Message::User {
+            content: vec![Content::Image {
+                mime_type: "image/png".into(),
+                source: ImageSource::Base64 {
+                    data: "a".repeat(20_000),
+                    path: None,
+                },
+            }],
+            timestamp: 0,
+        }),
+        AgentMessage::Llm(Message::user("recent")),
+    ];
+
+    let config = ContextConfig {
+        max_context_tokens: 1_000_000,
+        system_prompt_tokens: 0,
+        keep_recent: 1,
+        keep_first: 1,
+        ..Default::default()
+    };
+
+    let result = compact_messages(messages, &config, &CompactionBudgetState {
+        estimated_tokens: 12_000,
+    });
+
+    let still_base64 = result.messages.iter().any(|m| match m {
+        AgentMessage::Llm(Message::User { content, .. }) => content.iter().any(|c| {
+            matches!(c, Content::Image {
+                source: ImageSource::Base64 { path: None, .. },
+                ..
+            })
+        }),
+        _ => false,
+    });
+    assert!(
+        still_base64,
+        "path-less images must not be downgraded (no recovery path)"
+    );
 }

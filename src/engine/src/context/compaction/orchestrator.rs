@@ -12,6 +12,7 @@ use super::accounting::image_count;
 use super::accounting::StatsInput;
 use super::phase::PhaseContext;
 use super::phases::level0_reclaim::current_run;
+use super::phases::level0_reclaim::image_path_downgrade;
 use super::phases::level1_shrink;
 use super::phases::level2_collapse::old_turns;
 use super::phases::level3_evict::stale;
@@ -121,7 +122,16 @@ pub fn compact_messages(
 
         let pre_phase_tokens = total_tokens(&messages);
         let result = match phase {
-            Phase::Reclaim => current_run::run(messages, &ctx),
+            Phase::Reclaim => {
+                let first = current_run::run(messages, &ctx);
+                let second = image_path_downgrade::run(first.messages, &ctx);
+                let mut actions = first.actions;
+                actions.extend(second.actions);
+                super::phase::PhaseResult {
+                    messages: second.messages,
+                    actions,
+                }
+            }
             Phase::Shrink => level1_shrink::run(messages, &ctx, current_tokens),
             Phase::Collapse => old_turns::run(messages, &ctx, current_tokens),
             Phase::Evict => stale::run(messages, &ctx),

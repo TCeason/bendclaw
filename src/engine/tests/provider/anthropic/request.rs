@@ -195,6 +195,7 @@ fn test_tool_result_with_image() {
                         mime_type: "image/png".into(),
                         source: ImageSource::Base64 {
                             data: "aW1hZ2VkYXRh".into(),
+                            path: None,
                         },
                     },
                 ],
