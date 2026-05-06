@@ -167,9 +167,17 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
         }
       }
 
-      // Update pendingText for status area (shows last line of in-progress text)
+      // Update pendingText for status area so the dynamic zone shows the
+      // growing markdown block (trees, long paragraphs) incrementally. Pace
+      // re-renders at PACE_INTERVAL_MS to avoid re-parsing and re-drawing on
+      // every byte — matches the refresh rate of claudecode's Ink re-render.
+      const now = Date.now()
+      const shouldPace = now - state.lastPendingRender >= PACE_INTERVAL_MS
       state = { ...state, pendingText: state.streamingText }
-      rerenderStatus = true
+      if (shouldPace || state.streamingText.length === 0) {
+        state = { ...state, lastPendingRender: now }
+        rerenderStatus = true
+      }
     }
   }
 

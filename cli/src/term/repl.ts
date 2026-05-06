@@ -239,8 +239,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function renderStatus() {
     if (destroyed) return
-    const isAssistantStreaming = streamMachine?.spinnerState.streaming ?? false
-    const pendingText = isAssistantStreaming ? '' : streamMachine?.pendingText ?? ''
+    // Always expose streamingText as pendingText so the active-response
+    // viewmodel can render the growing markdown block (trees, long paragraphs)
+    // into the dynamic zone. It was previously suppressed while streaming,
+    // which made long single-paragraph content (e.g. tree listings) appear
+    // "all at once" at commit time instead of incrementally.
+    const pendingText = streamMachine?.pendingText ?? ''
     const pendingThinkingText = streamMachine?.pendingThinkingText ?? ''
     const toolProgress = currentToolProgress()
 
