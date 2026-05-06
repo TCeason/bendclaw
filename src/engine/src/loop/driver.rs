@@ -138,6 +138,7 @@ async fn run_loop(
     let mut context_tracker = ContextTracker::new();
     let mut consecutive_errors: usize = 0;
     let mut compacted_after_error = false;
+    let mut post_tool_convergence_reminder_injected = false;
 
     // Check for steering messages at start
     let mut pending: Vec<AgentMessage> = config
@@ -397,6 +398,24 @@ async fn run_loop(
                     let am: AgentMessage = result.clone().into();
                     context.messages.push(am.clone());
                     new_messages.push(am);
+                }
+
+                if steering_after_tools.is_none() {
+                    let steering = config
+                        .get_steering_messages
+                        .as_ref()
+                        .map(|f| f())
+                        .unwrap_or_default();
+                    if !steering.is_empty() {
+                        steering_after_tools = Some(steering);
+                    }
+                }
+
+                if !post_tool_convergence_reminder_injected && steering_after_tools.is_none() {
+                    pending.push(AgentMessage::Llm(Message::system_reminder(
+                        "If the latest user request is complete, answer concisely and stop. Do not resume older tasks unless explicitly asked.",
+                    )));
+                    post_tool_convergence_reminder_injected = true;
                 }
             }
 

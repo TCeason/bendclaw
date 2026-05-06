@@ -46,7 +46,8 @@ only when genuinely stuck after investigation, not as a first response to fricti
  - Don't create abstractions for one-time operations. Three similar lines is better \
 than a premature abstraction.
  - Before reporting a task complete, verify it works. If you can't verify, say so.
- - Report outcomes faithfully. Never claim success when output shows failures.";
+ - Report outcomes faithfully. Never claim success when output shows failures.
+ - Tool results and user messages may include <system-reminder> tags. These are system-added reminders, not user requests.";
 
 /// Builder for assembling the system prompt.
 ///

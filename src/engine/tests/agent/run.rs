@@ -13,6 +13,19 @@ use super::fixtures::agent_harness::make_config;
 use super::fixtures::agent_harness::MockTool;
 use super::fixtures::agent_harness::TestHarness;
 
+fn system_reminder_count(messages: &[AgentMessage]) -> usize {
+    messages
+        .iter()
+        .filter(|message| {
+            matches!(
+                message,
+                AgentMessage::Llm(Message::User { content, .. })
+                    if content.iter().any(|content| matches!(content, Content::Text { text } if text.contains("<system-reminder>") && text.contains("Do not resume older tasks")))
+            )
+        })
+        .count()
+}
+
 // ---------------------------------------------------------------------------
 // Tests using TestHarness
 // ---------------------------------------------------------------------------
@@ -52,12 +65,14 @@ async fn test_tool_call_and_response() {
     assert!(output.has_event("ToolExecStart"));
     assert!(output.has_event("ToolExecEnd"));
 
-    // Messages: user, assistant(tool_call), toolResult, assistant(text)
-    output.assert_message_count(4);
+    // Messages: user, assistant(tool_call), toolResult, system-reminder, assistant(text)
+    output.assert_message_count(5);
     assert_eq!(output.messages[0].role(), "user");
     assert_eq!(output.messages[1].role(), "assistant");
     assert_eq!(output.messages[2].role(), "toolResult");
-    assert_eq!(output.messages[3].role(), "assistant");
+    assert_eq!(output.messages[3].role(), "user");
+    assert_eq!(output.messages[4].role(), "assistant");
+    assert_eq!(system_reminder_count(&output.messages), 1);
 }
 
 #[tokio::test]
@@ -139,6 +154,110 @@ async fn test_unknown_tool_reports_error() {
         .await;
 
     assert_eq!(output.tool_errors().len(), 1);
+}
+
+#[tokio::test]
+async fn test_post_tool_convergence_reminder_injected_once() {
+    let output = TestHarness::new()
+        .responses(vec![
+            MockResponse::ToolCalls(vec![MockToolCall {
+                name: "read_file".into(),
+                arguments: serde_json::json!({"path": "a.txt"}),
+            }]),
+            MockResponse::ToolCalls(vec![MockToolCall {
+                name: "read_file".into(),
+                arguments: serde_json::json!({"path": "b.txt"}),
+            }]),
+            MockResponse::Text("Done.".into()),
+        ])
+        .tool(MockTool::ok("read_file", "hello"))
+        .run("Read files")
+        .await;
+
+    assert_eq!(system_reminder_count(&output.messages), 1);
+    assert_eq!(output.injected_counts(), vec![0, 1, 0]);
+}
+
+#[tokio::test]
+async fn test_post_tool_convergence_reminder_skips_when_steering_arrives() {
+    struct SteeringTool {
+        queue: std::sync::Arc<parking_lot::Mutex<Vec<AgentMessage>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentTool for SteeringTool {
+        fn name(&self) -> &str {
+            "steering_tool"
+        }
+        fn label(&self) -> &str {
+            "steering_tool"
+        }
+        fn description(&self) -> &str {
+            "Tool that queues steering while executing"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        async fn execute(
+            &self,
+            _params: serde_json::Value,
+            _ctx: ToolContext,
+        ) -> Result<ToolResult, ToolError> {
+            self.queue
+                .lock()
+                .push(AgentMessage::Llm(Message::user("stop now")));
+            Ok(ToolResult {
+                content: vec![Content::Text {
+                    text: "hello".into(),
+                }],
+                details: serde_json::Value::Null,
+                retention: Retention::Normal,
+            })
+        }
+    }
+
+    let provider = MockProvider::new(vec![
+        MockResponse::ToolCalls(vec![MockToolCall {
+            name: "steering_tool".into(),
+            arguments: serde_json::json!({}),
+        }]),
+        MockResponse::Text("Handled steering.".into()),
+    ]);
+    let queue: std::sync::Arc<parking_lot::Mutex<Vec<AgentMessage>>> =
+        std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let mut config = make_config(provider);
+    config.get_steering_messages = {
+        let queue = queue.clone();
+        Some(Box::new(move || queue.lock().drain(..).collect()))
+    };
+
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: Vec::new(),
+        tools: vec![Box::new(SteeringTool {
+            queue: queue.clone(),
+        })],
+        cwd: std::path::PathBuf::new(),
+        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+    };
+    let prompt = AgentMessage::Llm(Message::user("Read test.txt"));
+    let (tx, rx) = mpsc::unbounded_channel();
+    let cancel = CancellationToken::new();
+
+    let messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
+    let events = collect_events(rx);
+    let output = super::fixtures::agent_harness::TestOutput {
+        messages,
+        events,
+        context_messages: context.messages,
+    };
+
+    assert_eq!(system_reminder_count(&output.messages), 0);
+    assert!(output.messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::Llm(Message::User { content, .. })
+            if content.iter().any(|content| matches!(content, Content::Text { text } if text == "stop now"))
+    )));
 }
 
 // ---------------------------------------------------------------------------

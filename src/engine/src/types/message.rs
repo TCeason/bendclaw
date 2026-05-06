@@ -139,6 +139,15 @@ impl Message {
         }
     }
 
+    pub fn system_reminder(text: impl Into<String>) -> Self {
+        Self::User {
+            content: vec![Content::Text {
+                text: format!("<system-reminder>\n{}\n</system-reminder>", text.into()),
+            }],
+            timestamp: now_ms(),
+        }
+    }
+
     pub fn role(&self) -> &str {
         match self {
             Self::User { .. } => "user",
