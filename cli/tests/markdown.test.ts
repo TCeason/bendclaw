@@ -57,13 +57,17 @@ describe('renderMarkdown', () => {
     expect(result).not.toContain('```')
   })
 
-  test('fenced code blocks render with a left gutter', () => {
-    // Code blocks and prose must be visually distinct. Without a gutter,
-    // back-to-back prose and code collapse into indistinguishable
-    // paragraphs on terminals without syntax highlighting.
+  test('fenced code blocks render with a copy-safe left gutter', () => {
+    // Code blocks must be visually distinct from prose, but the gutter
+    // character must not leak into copy-pasted commands. We use a
+    // background-coloured space (not `│`) so `stripAnsi` leaves a plain
+    // leading space on each code line.
     const md = '介绍一下：\n```bash\nnpm install\n```\n之后运行。'
     const result = render(md)
-    expect(result).toMatch(/│ npm install/)
+    expect(result).toMatch(/^ {2}npm install$/m)
+    // Must not leave literal box-drawing characters that would corrupt
+    // pasted shell commands.
+    expect(result).not.toContain('│')
   })
 
   test('renders unclosed tilde fence as code', () => {

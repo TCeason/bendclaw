@@ -643,10 +643,11 @@ export function formatToken(
           // fallback
         }
       }
-      // Prefix a muted left gutter so fenced code blocks are visually
-      // distinct from prose. Without this, back-to-back prose and code
-      // collapse into indistinguishable paragraphs on dark terminals.
-      const bar = theme.codeBlockGutter.paint('│')
+      // Paint a left "gutter" column using a background-coloured space
+      // instead of a literal `│`. This reads as a shaded left bar in the
+      // terminal but copies out as a plain space, so pasted commands are
+      // not polluted with U+2502 box-drawing characters.
+      const bar = theme.codeBlockGutter.paint(' ')
       const withGutter = highlighted
         .split('\n')
         .map(line => `${bar} ${line}`)

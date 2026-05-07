@@ -105,7 +105,11 @@ function darkTheme(): Theme {
     // for long CJK quotes.
     blockquoteText: style(s => chalk.italic(s)),
 
-    codeBlockGutter: style(s => gray(s)),
+    // Code-block gutter: paint a background tint on a plain space instead
+    // of a literal `│`. Visually it still reads as a left bar; when users
+    // copy a code block the gutter column becomes plain spaces rather than
+    // Unicode box-drawing characters that would corrupt pasted commands.
+    codeBlockGutter: style(s => chalk.bgHex('#3a3a3a')(s)),
 
     tableBorder: style(s => gray(s)),
     tableHeader: style(s => chalk.bold(s)),
@@ -156,7 +160,9 @@ function lightTheme(): Theme {
     blockquoteBorder: style(s => gray(s)),
     blockquoteText: style(s => chalk.italic(s)),
 
-    codeBlockGutter: style(s => gray(s)),
+    // See darkTheme: background-tinted space avoids a literal `│` in copied
+    // code blocks. Light bg → slightly darker tint.
+    codeBlockGutter: style(s => chalk.bgHex('#e5e5e5')(s)),
 
     tableBorder: style(s => gray(s)),
     tableHeader: style(s => chalk.bold(s)),
