@@ -90,7 +90,8 @@ describe('renderMarkdown', () => {
       .replace(/\u200b/g, '')
 
     expect(result).toContain('"is_deleted": 0')
-    expect(result).toContain('---\n\n第 8 站：补充 input / output')
+    expect(result).toContain('────────────────')
+    expect(result).toContain('第 8 站：补充 input / output')
     expect(result).not.toContain('```json')
   })
 
@@ -186,7 +187,8 @@ describe('renderMarkdown', () => {
 
   test('renders horizontal rules', () => {
     const result = render('---')
-    expect(result).toContain('---')
+    expect(result).toContain('─')
+    expect(result).not.toContain('---')
   })
 
   test('splits hr glued to end of sentence without whitespace', () => {
@@ -201,7 +203,7 @@ describe('renderMarkdown', () => {
   test('splits hr glued before heading', () => {
     const result = render('---### 方案分层：从零代码到完整 Eval').replace(/\u200b/g, '')
 
-    expect(result).toContain('---\n\n方案分层：从零代码到完整 Eval')
+    expect(result).toContain('─\n\n方案分层：从零代码到完整 Eval')
     expect(result).not.toContain('---###')
   })
 
@@ -362,7 +364,7 @@ describe('formatToken', () => {
 
   test('renders hr as horizontal line', () => {
     const result = stripAnsi(formatToken({ type: 'hr', raw: '---' } as Token))
-    expect(result).toContain('---')
+    expect(result).toContain('─')
   })
 
   test('renders image as href', () => {

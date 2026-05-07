@@ -4,14 +4,13 @@
  * Approach modeled after Claude Code's formatToken.
  */
 
-import chalk from 'chalk'
 import { marked, type Token, type Tokens } from 'marked'
 import stripAnsi from 'strip-ansi'
 import stringWidth from 'string-width'
 import wrapAnsi from 'wrap-ansi'
 import { createHyperlink, isWarpTerminal, supportsHyperlinks, wrapHyperlink } from './hyperlink.js'
 import { linkifyIssueRefs } from './linkify.js'
-import { getTheme } from './theme.js'
+import { getTheme, type Theme } from './theme.js'
 
 let highlighter: typeof import('cli-highlight') | null = null
 try {
@@ -376,17 +375,18 @@ export function formatToken(
   listDepth = 0,
   orderedListNumber: number | null = null,
   parent: Token | null = null,
+  theme: Theme = getTheme(),
 ): string {
   switch (token.type) {
     case 'blockquote': {
       const inner = (token.tokens ?? [])
-        .map(t => formatToken(t, 0, null, null))
+        .map(t => formatToken(t, 0, null, null, theme))
         .join('')
-      const bar = chalk.dim('▎')
+      const bar = theme.blockquoteBorder.paint('▎')
       return inner
         .split(EOL)
         .map(line =>
-          stripAnsi(line).trim() ? `${bar} ${chalk.italic(line)}` : line,
+          stripAnsi(line).trim() ? `${bar} ${theme.blockquoteText.paint(line)}` : line,
         )
         .join(EOL)
     }
@@ -420,7 +420,7 @@ export function formatToken(
       if (isFilePath && isWarpTerminal() && process.env.FORCE_HYPERLINK !== '1') {
         return raw
       }
-      const colored = chalk.hex(getTheme().inlineCode)(raw)
+      const colored = theme.codeInline.paint(raw)
       // Make absolute file paths clickable (file:// hyperlink)
       if (supportsHyperlinks() && isFilePath) {
         const resolved = raw.startsWith('~')
@@ -434,34 +434,40 @@ export function formatToken(
       // del is disabled via configureMarked; if somehow reached, render as-is
       return ''
     case 'em':
-      return chalk.italic(
+      return theme.italic.paint(
         (token.tokens ?? [])
-          .map(t => formatToken(t, 0, null, parent))
+          .map(t => formatToken(t, 0, null, parent, theme))
           .join(''),
       )
     case 'strong':
-      return chalk.bold(
+      return theme.bold.paint(
         (token.tokens ?? [])
-          .map(t => formatToken(t, 0, null, parent))
+          .map(t => formatToken(t, 0, null, parent, theme))
           .join(''),
       )
     case 'heading': {
       const text = (token.tokens ?? [])
-        .map(t => formatToken(t, 0, null, null))
+        .map(t => formatToken(t, 0, null, null, theme))
         .join('')
-      if ((token as Tokens.Heading).depth === 1) {
-        return chalk.hex(getTheme().heading).bold.italic.underline(text) + EOL
-      }
-      return chalk.hex(getTheme().heading).bold(text) + EOL
+      const depth = (token as Tokens.Heading).depth
+      const style = depth === 1 ? theme.h1
+        : depth === 2 ? theme.h2
+          : depth === 3 ? theme.h3
+            : depth === 4 ? theme.h4
+              : depth === 5 ? theme.h5
+                : theme.h6
+      return style.paint(text) + EOL
     }
-    case 'hr':
-      return `---${EOL}`
+    case 'hr': {
+      const width = Math.min(terminalContentWidth(), 80)
+      return theme.hr.paint('─'.repeat(width)) + EOL
+    }
     case 'link': {
       if (token.href.startsWith('mailto:')) {
         return token.href.replace(/^mailto:/, '')
       }
       const linkText = (token.tokens ?? [])
-        .map(t => formatToken(t, 0, null, token))
+        .map(t => formatToken(t, 0, null, token, theme))
         .join('')
       const plainText = stripAnsi(linkText)
       // If the terminal supports OSC 8 hyperlinks, render as clickable link
@@ -473,9 +479,9 @@ export function formatToken(
       }
       // Fallback: show text + dimmed URL, or underlined URL
       if (plainText && plainText !== token.href) {
-        return `${linkText} (${chalk.dim(token.href)})`
+        return `${linkText} (${theme.thinkText.paint(token.href)})`
       }
-      return chalk.underline(token.href)
+      return theme.link.paint(token.href)
     }
     case 'list':
       return (token as Tokens.List).items
@@ -485,6 +491,7 @@ export function formatToken(
             listDepth,
             (token as Tokens.List).ordered ? ((token as Tokens.List).start as number) + index : null,
             token,
+            theme,
           ),
         )
         .join('')
@@ -492,12 +499,12 @@ export function formatToken(
       return (token.tokens ?? [])
         .map(
           t =>
-            `${'  '.repeat(listDepth)}${formatToken(t, listDepth + 1, orderedListNumber, token)}`,
+            `${'  '.repeat(listDepth)}${formatToken(t, listDepth + 1, orderedListNumber, token, theme)}`,
         )
         .join('')
     case 'paragraph': {
       const rendered = (token.tokens ?? [])
-        .map(t => formatToken(t, 0, null, null))
+        .map(t => formatToken(t, 0, null, null, theme))
         .join('')
       // Preserve verbatim whenever the paragraph contains box-drawing
       // characters (U+2500–U+257F) — these indicate tree/diagram art whose
@@ -524,12 +531,12 @@ export function formatToken(
         const firstIndent = `${depthPad}${marker} `
         const restIndent = `${depthPad}${' '.repeat(terminalDisplayWidth(marker) + 1)}`
         const inner = token.tokens
-          ? token.tokens.map(t => formatToken(t, listDepth, orderedListNumber, token)).join('')
+          ? token.tokens.map(t => formatToken(t, listDepth, orderedListNumber, token, theme)).join('')
           : linkifyIssueRefs(token.text)
         return `${wrapDisplayTextWithIndent(inner, firstIndent, restIndent)}${EOL}`
       }
       if (token.tokens) {
-        return token.tokens.map(t => formatToken(t, listDepth, orderedListNumber, token)).join('')
+        return token.tokens.map(t => formatToken(t, listDepth, orderedListNumber, token, theme)).join('')
       }
       // Plain text nodes: emit verbatim (claudecode-style). Do not soft-wrap
       // here — marked keeps the original newlines/indentation in token.text
@@ -545,7 +552,7 @@ export function formatToken(
 
       // --- helpers ---
       function renderCell(tokens: Token[] | undefined): string {
-        return tokens?.map(t => formatToken(t, 0, null, null)).join('').trimEnd() ?? ''
+        return tokens?.map(t => formatToken(t, 0, null, null, theme)).join('').trimEnd() ?? ''
       }
       function plainText(tokens: Token[] | undefined): string {
         return stripAnsi(renderCell(tokens))
@@ -657,7 +664,7 @@ export function formatToken(
               wrappedValue = [firstLine, ...rewrapped]
             }
 
-            vLines.push(`${chalk.bold(label)}: ${wrappedValue[0] || ''}`)
+            vLines.push(`${theme.tableHeader.paint(label)}: ${wrappedValue[0] || ''}`)
             for (let i = 1; i < wrappedValue.length; i++) {
               const ln = wrappedValue[i]!
               if (!stripAnsi(ln).trim()) continue
@@ -809,11 +816,12 @@ const BLOCK_TYPES = new Set([
 ])
 
 function formatTokens(tokens: Token[]): string {
+  const theme = getTheme()
   let out = ''
   let prevWasBlock = false
 
   for (const token of tokens) {
-    const rendered = formatToken(token)
+    const rendered = formatToken(token, 0, null, null, theme)
     if (!rendered) continue
     const isBlock = BLOCK_TYPES.has(token.type)
     // Insert blank line between consecutive block-level elements

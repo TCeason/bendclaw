@@ -1,57 +1,177 @@
 /**
- * Minimal dark/light theme for terminal rendering.
+ * Dark/light theme for terminal rendering.
  *
- * Detects background brightness from COLORFGBG (e.g. "15;0" → dark)
- * and falls back to dark. Override with EVOT_THEME=light|dark.
+ * All ANSI-styled text goes through `theme.<field>.paint(s)` so a theme
+ * swap is a single-point change. Colors are kept narrow (two brand hues
+ * + three shades of gray) to stay coherent across components.
  */
 
+import chalk, { type ChalkInstance } from 'chalk'
+
+export interface Style {
+  paint(text: string): string
+}
+
+const plain: Style = { paint: s => s }
+
+function style(fn: (s: string) => string): Style {
+  return { paint: fn }
+}
+
 export interface Theme {
-  // Markdown
-  heading: string
-  inlineCode: string
-  // Diff
+  // Inline
+  text: Style
+  bold: Style
+  italic: Style
+  boldItalic: Style
+  strikethrough: Style
+  underline: Style
+  link: Style
+  codeInline: Style
+
+  // Headings (h1..h6)
+  h1: Style
+  h2: Style
+  h3: Style
+  h4: Style
+  h5: Style
+  h6: Style
+
+  // Lists
+  bullet: Style
+  listNumber: Style
+
+  // Blockquote
+  blockquoteBorder: Style
+  blockquoteText: Style
+
+  // Code block
+  codeBlockGutter: Style
+
+  // Table
+  tableBorder: Style
+  tableHeader: Style
+
+  // Misc
+  hr: Style
+  thinkBorder: Style
+  thinkText: Style
+
+  // Diff (kept for compatibility)
   addedBg: [number, number, number]
   removedBg: [number, number, number]
   addedWord: [number, number, number]
   removedWord: [number, number, number]
-  // Links
+
+  // Legacy aliases kept for existing call sites
+  heading: string
+  inlineCode: string
   linkColor: string
 }
 
-const dark: Theme = {
-  heading: '#c0c0c0',
-  inlineCode: '#5fb3b3',
-  addedBg: [2, 40, 0],
-  removedBg: [61, 1, 0],
-  addedWord: [4, 71, 0],
-  removedWord: [92, 2, 0],
-  linkColor: 'blue',
+function darkTheme(): Theme {
+  const gray = chalk.hex('#808080')
+  const dimGray = chalk.hex('#6a6a6a')
+  return {
+    text: plain,
+    bold: style(s => chalk.bold(s)),
+    italic: style(s => chalk.italic(s)),
+    boldItalic: style(s => chalk.bold.italic(s)),
+    strikethrough: style(s => chalk.dim.strikethrough(s)),
+    underline: style(s => chalk.underline(s)),
+    link: style(s => chalk.underline.cyan(s)),
+    codeInline: style(s => chalk.hex('#e5c07b')(s)),
+
+    h1: style(s => chalk.bold.hex('#c678dd')(s)),
+    h2: style(s => chalk.bold.hex('#61afef')(s)),
+    h3: style(s => chalk.bold.hex('#56b6c2')(s)),
+    h4: style(s => chalk.bold.hex('#98c379')(s)),
+    h5: style(s => chalk.bold.hex('#e5c07b')(s)),
+    h6: style(s => chalk.bold.hex('#abb2bf')(s)),
+
+    bullet: style(s => chalk.cyan(s)),
+    listNumber: style(s => chalk.cyan(s)),
+
+    blockquoteBorder: style(s => gray(s)),
+    blockquoteText: style(s => dimGray.italic(s)),
+
+    codeBlockGutter: style(s => gray(s)),
+
+    tableBorder: style(s => gray(s)),
+    tableHeader: style(s => chalk.bold(s)),
+
+    hr: style(s => gray(s)),
+    thinkBorder: style(s => gray(s)),
+    thinkText: style(s => dimGray.italic(s)),
+
+    addedBg: [2, 40, 0],
+    removedBg: [61, 1, 0],
+    addedWord: [4, 71, 0],
+    removedWord: [92, 2, 0],
+
+    heading: '#c0c0c0',
+    inlineCode: '#5fb3b3',
+    linkColor: 'blue',
+  }
 }
 
-const light: Theme = {
-  heading: '#333333',
-  inlineCode: '#0d7d7d',
-  addedBg: [210, 255, 210],
-  removedBg: [255, 220, 220],
-  addedWord: [170, 235, 170],
-  removedWord: [255, 185, 185],
-  linkColor: 'blue',
+function lightTheme(): Theme {
+  const gray = chalk.hex('#6a6a6a')
+  const dimGray = chalk.hex('#8a8a8a')
+  return {
+    text: plain,
+    bold: style(s => chalk.bold(s)),
+    italic: style(s => chalk.italic(s)),
+    boldItalic: style(s => chalk.bold.italic(s)),
+    strikethrough: style(s => chalk.dim.strikethrough(s)),
+    underline: style(s => chalk.underline(s)),
+    link: style(s => chalk.underline.blue(s)),
+    codeInline: style(s => chalk.hex('#b45309')(s)),
+
+    h1: style(s => chalk.bold.hex('#7c3aed')(s)),
+    h2: style(s => chalk.bold.hex('#1d4ed8')(s)),
+    h3: style(s => chalk.bold.hex('#0e7490')(s)),
+    h4: style(s => chalk.bold.hex('#15803d')(s)),
+    h5: style(s => chalk.bold.hex('#b45309')(s)),
+    h6: style(s => chalk.bold.hex('#374151')(s)),
+
+    bullet: style(s => chalk.hex('#0e7490')(s)),
+    listNumber: style(s => chalk.hex('#0e7490')(s)),
+
+    blockquoteBorder: style(s => gray(s)),
+    blockquoteText: style(s => dimGray.italic(s)),
+
+    codeBlockGutter: style(s => gray(s)),
+
+    tableBorder: style(s => gray(s)),
+    tableHeader: style(s => chalk.bold(s)),
+
+    hr: style(s => gray(s)),
+    thinkBorder: style(s => gray(s)),
+    thinkText: style(s => dimGray.italic(s)),
+
+    addedBg: [210, 255, 210],
+    removedBg: [255, 220, 220],
+    addedWord: [170, 235, 170],
+    removedWord: [255, 185, 185],
+
+    heading: '#333333',
+    inlineCode: '#0d7d7d',
+    linkColor: 'blue',
+  }
 }
 
 function detectDarkBackground(): boolean {
   const env = process.env
-  // Explicit override
   const override = env.EVOT_THEME?.toLowerCase()
   if (override === 'light') return false
   if (override === 'dark') return true
-  // COLORFGBG is "fg;bg" — bg >= 8 usually means light background
   const colorfgbg = env.COLORFGBG
   if (colorfgbg) {
     const parts = colorfgbg.split(';')
     const bg = parseInt(parts[parts.length - 1] ?? '', 10)
     if (!isNaN(bg) && bg >= 8) return false
   }
-  // Default to dark
   return true
 }
 
@@ -59,11 +179,16 @@ let cached: Theme | null = null
 
 export function getTheme(): Theme {
   if (cached) return cached
-  cached = detectDarkBackground() ? dark : light
+  cached = detectDarkBackground() ? darkTheme() : lightTheme()
   return cached
 }
 
 /** Reset cached theme (for tests). */
 export function resetThemeCache(): void {
   cached = null
+}
+
+/** Exported for code that only needs the chalk instance. */
+export function getChalk(): ChalkInstance {
+  return chalk
 }
