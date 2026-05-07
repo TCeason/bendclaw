@@ -361,7 +361,7 @@ const HR_MARKER_TRAILING_RE = /([^\n])\n([ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*)$/g
 // after strong sentence terminators (CJK or ASCII punctuation that ends a
 // clause) so we don't mangle em-dash usage like `foo --- bar`.
 const HR_MARKER_GLUED_RE = /([。．！？!?:：])([ \t]*)(-{3,}|\*{3,}|_{3,})[ \t]*(\n|$)/g
-const HR_MARKER_BEFORE_HEADING_RE = /(^|\n)([ \t]*(?:-{3,}|\*{3,}|_{3,}))[ \t]*(#{1,6}\s)/g
+const HR_MARKER_BEFORE_HEADING_RE = /(^|\n)([ \t]*(?:-{3,}|\*{3,}|_{3,}))[ \t]*(#{1,6})([ \t]*)(?=[\S])/g
 
 // Heading marker glued directly to its body with no space, e.g. `##改进清单`.
 // CommonMark requires `## text`, but models routinely omit the space when
@@ -423,7 +423,7 @@ const ORDERED_OVER_INDENT_RE = /^[ \t]{4,}(?=\d{1,9}[.)][\s\u3400-\u4dbf\u4e00-\
 
 function normalizeHrLines(text: string): string {
   return text
-    .replace(HR_MARKER_BEFORE_HEADING_RE, '$1$2\n\n$3')
+    .replace(HR_MARKER_BEFORE_HEADING_RE, '$1$2\n\n$3 ')
     .replace(HR_MARKER_GLUED_RE, '$1\n\n$3\n\n')
     .replace(HR_MARKER_INLINE_RE, '$1\n\n$2\n\n')
     .replace(HR_MARKER_TRAILING_RE, '$1\n\n$2')

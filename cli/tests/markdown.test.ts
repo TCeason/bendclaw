@@ -488,6 +488,24 @@ describe('renderMarkdown', () => {
     expect(result).not.toMatch(/通用框架。---/)
   })
 
+  test('splits hr glued to heading with zero space and CJK body', () => {
+    // `---###第 4 / 5 步` — models omit every whitespace between the HR,
+    // the `###`, and the heading body. `---` + heading are ASCII; the CJK
+    // body is kept because real-world failures came from CJK content.
+    const result = render('---###第 4 / 5 步').replace(/\u200b/g, '')
+    expect(result).toContain('---')
+    expect(result).toContain('第 4 / 5 步')
+    expect(result).not.toContain('###第')
+    expect(result).not.toContain('---###')
+  })
+
+  test('splits hr glued to heading after preceding prose', () => {
+    const result = render('prose.\n---###step 4').replace(/\u200b/g, '')
+    expect(result).toContain('prose.')
+    expect(result).toContain('step 4')
+    expect(result).not.toContain('---###')
+  })
+
   test('splits hr glued before heading', () => {
     const result = render('---### 方案分层：从零代码到完整 Eval').replace(/\u200b/g, '')
 
