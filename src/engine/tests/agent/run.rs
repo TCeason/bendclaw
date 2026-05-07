@@ -20,7 +20,7 @@ fn system_reminder_count(messages: &[AgentMessage]) -> usize {
             matches!(
                 message,
                 AgentMessage::Llm(Message::User { content, .. })
-                    if content.iter().any(|content| matches!(content, Content::Text { text } if text.contains("<system-reminder>") && text.contains("do not pick up unrelated earlier tasks")))
+                    if content.iter().any(|content| matches!(content, Content::Text { text } if text.contains("<system-reminder>")))
             )
         })
         .count()
@@ -65,14 +65,17 @@ async fn test_tool_call_and_response() {
     assert!(output.has_event("ToolExecStart"));
     assert!(output.has_event("ToolExecEnd"));
 
-    // Messages: user, assistant(tool_call), toolResult, system-reminder, assistant(text)
-    output.assert_message_count(5);
+    // Messages: user, assistant(tool_call), toolResult, assistant(text)
+    // No convergence reminder is injected — the guidance that used to live in
+    // a runtime <system-reminder> now sits in the static system prompt, so
+    // nothing extra gets pushed into context between tool_result and the next
+    // assistant turn.
+    output.assert_message_count(4);
     assert_eq!(output.messages[0].role(), "user");
     assert_eq!(output.messages[1].role(), "assistant");
     assert_eq!(output.messages[2].role(), "toolResult");
-    assert_eq!(output.messages[3].role(), "user");
-    assert_eq!(output.messages[4].role(), "assistant");
-    assert_eq!(system_reminder_count(&output.messages), 1);
+    assert_eq!(output.messages[3].role(), "assistant");
+    assert_eq!(system_reminder_count(&output.messages), 0);
 }
 
 #[tokio::test]
@@ -157,7 +160,13 @@ async fn test_unknown_tool_reports_error() {
 }
 
 #[tokio::test]
-async fn test_post_tool_convergence_reminder_injected_once() {
+async fn test_no_convergence_reminder_injected() {
+    // Historical behaviour: the loop injected a "Continue the current user
+    // request..." <system-reminder> after the first batch of tool calls.
+    // That reminder turned out to train the model to open the next turn with
+    // `Continue:` / `<system>继续：…` preambles copied from the wording, so
+    // the injection was removed. The guidance now lives in the system prompt
+    // instead.
     let output = TestHarness::new()
         .responses(vec![
             MockResponse::ToolCalls(vec![MockToolCall {
@@ -174,12 +183,15 @@ async fn test_post_tool_convergence_reminder_injected_once() {
         .run("Read files")
         .await;
 
-    assert_eq!(system_reminder_count(&output.messages), 1);
-    assert_eq!(output.injected_counts(), vec![0, 1, 0]);
+    assert_eq!(system_reminder_count(&output.messages), 0);
+    assert_eq!(output.injected_counts(), vec![0, 0, 0]);
 }
 
 #[tokio::test]
-async fn test_post_tool_convergence_reminder_skips_when_steering_arrives() {
+async fn test_no_convergence_reminder_with_steering() {
+    // With steering arriving from the tool channel, the loop used to skip the
+    // convergence reminder. The reminder is gone entirely now, so we just
+    // verify steering still flows through as a normal user message.
     struct SteeringTool {
         queue: std::sync::Arc<parking_lot::Mutex<Vec<AgentMessage>>>,
     }

@@ -60,10 +60,19 @@ impl ToolOnlyGuard {
     }
 
     fn build_intervention(count: usize) -> ToolOnlyIntervention {
+        // Wording is deliberately flat and declarative. Earlier drafts used
+        // imperatives like "Continue" and templates like
+        // "briefly state the user's goal, then continue" — the model would
+        // mimic the template in the next turn, producing `<system>继续：…`
+        // or `Continue: …` preambles copied straight from the reminder.
+        // Keep it as status text without verbs the model can ape.
         let warning = format!(
             "<system-reminder>\n\
-             You've made {count} tool calls without a visible update. This is a reminder, not a limit — you may continue calling tools.\n\
-             Before your next tool call, briefly state: the user's goal, what you've learned so far, and your next step. Then continue.\n\
+             Status: {count} consecutive tool calls without any assistant text. \
+             Not a limit, just a note. The next assistant text block should \
+             include a short progress update, written naturally as part of \
+             your reply — do not prefix it with 'Continue', 'Next step:', or \
+             any status template.\n\
              </system-reminder>"
         );
 

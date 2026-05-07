@@ -7,6 +7,7 @@
 
 use tokio::sync::mpsc;
 
+use super::assistant_sanitize::sanitize_assistant_text;
 use super::compaction::compact_context;
 use super::compaction::compact_for_recovery;
 use super::config::AgentLoopConfig;
@@ -138,7 +139,6 @@ async fn run_loop(
     let mut context_tracker = ContextTracker::new();
     let mut consecutive_errors: usize = 0;
     let mut compacted_after_error = false;
-    let mut post_tool_convergence_reminder_injected = false;
 
     // Check for steering messages at start
     let mut pending: Vec<AgentMessage> = config
@@ -243,6 +243,12 @@ async fn run_loop(
                 budget_snapshot,
             )
             .await;
+
+            // Strip any `<system-reminder>` / `<system>` tags or status-template
+            // preambles the model may have mimicked from reminders it saw in
+            // context. Without this, the fake tags land back in the prompt next
+            // turn and teach the model to keep producing them.
+            let message = sanitize_message(message);
 
             let agent_msg: AgentMessage = message.clone().into();
             context.messages.push(agent_msg.clone());
@@ -410,13 +416,6 @@ async fn run_loop(
                         steering_after_tools = Some(steering);
                     }
                 }
-
-                if !post_tool_convergence_reminder_injected && steering_after_tools.is_none() {
-                    pending.push(AgentMessage::Llm(Message::system_reminder(
-                        "This reminder is automatically attached by the system and is not a new user message. Continue the current user request if work remains. Once it is fully addressed, finalize with a concise answer and do not pick up unrelated earlier tasks.",
-                    )));
-                    post_tool_convergence_reminder_injected = true;
-                }
             }
 
             // Track turn for execution limits
@@ -480,5 +479,46 @@ async fn run_loop(
         }
 
         break;
+    }
+}
+
+/// Run the assistant-text sanitizer over every `Content::Text` block in an
+/// Assistant message. Non-assistant variants pass through unchanged.
+fn sanitize_message(message: Message) -> Message {
+    match message {
+        Message::Assistant {
+            mut content,
+            stop_reason,
+            model,
+            provider,
+            usage,
+            timestamp,
+            error_message,
+            response_id,
+        } => {
+            for block in content.iter_mut() {
+                if let Content::Text { text } = block {
+                    let cleaned = sanitize_assistant_text(text);
+                    if cleaned != *text {
+                        *text = cleaned;
+                    }
+                }
+            }
+            // Drop text blocks that sanitized to empty — keeping them would
+            // serialize as zero-length assistant text, which some providers
+            // reject on the next turn.
+            content.retain(|c| !matches!(c, Content::Text { text } if text.trim().is_empty()));
+            Message::Assistant {
+                content,
+                stop_reason,
+                model,
+                provider,
+                usage,
+                timestamp,
+                error_message,
+                response_id,
+            }
+        }
+        other => other,
     }
 }

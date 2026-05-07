@@ -3,6 +3,7 @@ mod config;
 mod driver;
 mod input_filter;
 
+pub(crate) mod assistant_sanitize;
 pub(crate) mod doom_loop;
 mod llm_call;
 mod tool_exec;

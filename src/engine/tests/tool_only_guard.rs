@@ -100,8 +100,8 @@ fn intervention_is_user_steering_message() {
                 }
             })
             .collect::<String>();
-        assert!(text.contains("reminder, not a limit"));
-        assert!(text.contains("your next step"));
+        assert!(text.contains("Status:"));
+        assert!(text.contains("short progress update"));
     } else {
         panic!("expected user steering message");
     }

@@ -98,8 +98,8 @@ async fn test_agent_with_tools() {
     while rx.recv().await.is_some() {}
     agent.finish().await;
 
-    // user + assistant(tool_call) + toolResult + system-reminder + assistant(text)
-    assert_eq!(agent.messages().len(), 5);
+    // user + assistant(tool_call) + toolResult + assistant(text)
+    assert_eq!(agent.messages().len(), 4);
 }
 
 #[tokio::test]
