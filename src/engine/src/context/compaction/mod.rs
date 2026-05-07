@@ -1,5 +1,6 @@
 pub(crate) mod accounting;
 pub(crate) mod compact;
+pub(crate) mod marker;
 pub(crate) mod orchestrator;
 pub(crate) mod phase;
 mod phases;

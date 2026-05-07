@@ -66,7 +66,11 @@ const SAFETY_MARGIN = 4
 const MAX_TABLE_ROW_LINES = 4
 const MAX_RENDER_WIDTH = 140
 const CODE_FENCE_RE = /^( {0,3})(`{3,}|~{3,})(.*)$/
-const MARKDOWN_BOUNDARY_RE = /^(#{1,6}\s|(?:[-*+]\s)|(?:\d+\.\s)|>\s|\|.*\||-{3,}\s*$)/
+// Heading matches `#{1,6}` followed by either whitespace/EOL (classic ATX)
+// OR a non-hash, non-space character (glued form we still want to recognise,
+// e.g. `##改进清单`). Only classic ATX (`#{2,6}<non-space>`) is permitted in
+// the glued case so `#include`/`#1` don't collide.
+const MARKDOWN_BOUNDARY_RE = /^(#{1,6}(?:\s|$)|#{2,6}(?=[^#\s])|(?:[-*+]\s)|(?:\d+\.\s)|>\s|\|.*\||-{3,}\s*$)/
 const CODE_LIKE_START_RE = /^[\[{(}\]),;]|^\/\/|^#\s*include\b/
 const CODE_KEYWORD_RE = /^(return|if|else|for|while|switch|case|break|continue|try|catch|finally|throw|await|async|const|let|var|function|class|def|import|export|from|SELECT|CREATE|INSERT|UPDATE|DELETE|WITH|WHERE|ORDER|GROUP|LIMIT)\b/i
 const CODE_ASSIGNMENT_RE = /^[\w$.'"`-]+\s*[:=]/
@@ -136,11 +140,60 @@ function isFenceLine(line: string, marker?: string, minLength?: number): boolean
   return true
 }
 
+function parseFenceLine(line: string): { indent: string, marker: string, rest: string } | null {
+  const match = CODE_FENCE_RE.exec(line)
+  if (!match) return null
+  return { indent: match[1]!, marker: match[2]!, rest: match[3]! }
+}
+
 function fenceLanguageFromLine(line: string): string | null {
   const match = CODE_FENCE_RE.exec(line)
   if (!match) return null
   const info = match[3]!.trim()
   return /^([A-Za-z0-9_+.#-]+)\s*$/.exec(info)?.[1] ?? null
+}
+
+function splitGluedMarkdownAfterFenceClose(line: string, marker: string, minLength: number): string[] | null {
+  const parsed = parseFenceLine(line)
+  if (!parsed) return null
+  if (parsed.marker[0] !== marker || parsed.marker.length < minLength) return null
+
+  // Normalize heading markers like `##改进清单` (and `#改进清单` when the
+  // body is non-ASCII) so we look them up against the proper CommonMark
+  // shape (`## 改进清单`).
+  const rest = parsed.rest
+    .trimStart()
+    .replace(/^(#{2,6})(?=[^#\s])/, '$1 ')
+    .replace(/^(#)(?=[^\x00-\x7f])/, '$1 ')
+  if (!rest) return null
+  if (!looksLikeMarkdownBoundary(rest) && !looksLikePlainMarkdownAfterCode(rest)) return null
+  return [`${parsed.indent}${parsed.marker}`, rest]
+}
+
+/**
+ * Detect a content line with a trailing fence marker glued to it — e.g.
+ * `    }\`\`\`` inside an open JSON fence. Models occasionally emit the
+ * closing fence without the required newline, which leaks literal backticks
+ * into the rendered output. We split it into the content line plus a
+ * standalone fence-close line so marked sees a proper code block.
+ *
+ * Only triggers when the marker at the end matches the currently open fence
+ * (same char and length >= open length) so unrelated prose backticks stay
+ * untouched.
+ */
+function splitTrailingFenceClose(line: string, marker: string, minLength: number): string[] | null {
+  // If the whole line is already a fence, nothing to split.
+  if (CODE_FENCE_RE.test(line)) return null
+  const suffix = new RegExp(`^(.*?)(${marker === '`' ? '`' : '~'}{${minLength},})[ \\t]*$`)
+  const match = suffix.exec(line)
+  if (!match) return null
+  const content = match[1]!
+  const fence = match[2]!
+  // The content must not be empty (otherwise it's just a fence) and must
+  // not itself contain the fence marker — keeps inline backticks alone.
+  if (!content.trim()) return null
+  if (content.includes(marker.repeat(minLength))) return null
+  return [content.trimEnd(), fence]
 }
 
 function isLikelyFenceClose(line: string, marker: string, minLength: number): boolean {
@@ -240,6 +293,31 @@ function repairUnclosedFences(content: string, finalClose: boolean): string {
       continue
     }
 
+    const gluedClose = splitGluedMarkdownAfterFenceClose(line, openMarker, openLength)
+    if (gluedClose) {
+      openMarker = ''
+      openLength = 0
+      openClose = ''
+      openLang = null
+      codeLines = []
+      out += `${gluedClose[0]}\n${gluedClose[1]}${newline}`
+      continue
+    }
+
+    const trailingClose = splitTrailingFenceClose(line, openMarker, openLength)
+    if (trailingClose) {
+      // Emit the content line (still inside the fence) then the standalone
+      // fence-close line, and mark the fence as closed.
+      codeLines.push(trailingClose[0]!)
+      out += `${trailingClose[0]}\n${trailingClose[1]}${newline}`
+      openMarker = ''
+      openLength = 0
+      openClose = ''
+      openLang = null
+      codeLines = []
+      continue
+    }
+
     if (isLikelyFenceClose(line, openMarker, openLength)) {
       openMarker = ''
       openLength = 0
@@ -285,12 +363,133 @@ const HR_MARKER_TRAILING_RE = /([^\n])\n([ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*)$/g
 const HR_MARKER_GLUED_RE = /([。．！？!?:：])([ \t]*)(-{3,}|\*{3,}|_{3,})[ \t]*(\n|$)/g
 const HR_MARKER_BEFORE_HEADING_RE = /(^|\n)([ \t]*(?:-{3,}|\*{3,}|_{3,}))[ \t]*(#{1,6}\s)/g
 
+// Heading marker glued directly to its body with no space, e.g. `##改进清单`.
+// CommonMark requires `## text`, but models routinely omit the space when
+// writing CJK content. We apply two independent rules:
+//   • 2–6 hashes followed by any non-hash/non-space → always normalise
+//   • 1 hash followed by a non-ASCII letter → normalise `#改进清单` but leave
+//     `#1` issue refs and `#include` preprocessor directives alone
+const HEADING_MISSING_SPACE_MANY_RE = /^([ \t]{0,3})(#{2,6})(?=[^#\s])/gm
+const HEADING_MISSING_SPACE_ONE_RE = /^([ \t]{0,3})(#)(?=[^\x00-\x7f])/gm
+// Heading marker glued to the end of a preceding paragraph, e.g.
+// `…零语义风险） ##粘连`. Split it onto its own line before the lexer runs
+// so marked recognises it as a heading. Trigger only after a sentence-ending
+// punctuation (ASCII or CJK) and require at least 2 hashes with CJK/letter
+// body so we don't rewrite `x ## y` in technical discussions or `x: #1`.
+const HEADING_GLUED_AFTER_TEXT_RE =
+  /([。．！？?!：）】」』》])[ \t]+(#{2,6}(?:\s|$|[^\s#]))/g
+// Zero-whitespace variant: the punctuation or a CJK character is glued
+// directly to `##…##` with no space in between, e.g. `。###档 1`,
+// `这个###档 1`, or `。### 一句话总结` (where only the preceding side is
+// glued). We require the heading body to start with a non-hash character so
+// the regex still terminates at the correct heading depth; the existing
+// HEADING_MISSING_SPACE_* rules then add a space when the body itself is
+// glued (`###档` → `### 档`).
+const HEADING_GLUED_NO_SPACE_RE =
+  /([。．！？?!：）】」』》\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff])(#{2,6})(?=[^#])/g
+// Unordered-list marker glued directly to a CJK body, e.g. `-summary 的详略`
+// or `*这个改动`. CommonMark requires a space after `-`/`*`/`+`; models
+// routinely drop it in CJK contexts. We only rewrite when the body starts
+// with a non-ASCII character so that `-1` (negatives), `--flag` (CLI flags),
+// `---` (HR) and `*emphasis*` all stay untouched.
+const BULLET_MISSING_SPACE_RE = /^([ \t]{0,3})([-*+])(?=[^\s\-*+\x00-\x7f])/gm
+// Ordered-list marker glued directly to a non-ASCII body, e.g. `3.多指标`.
+// Only rewrite when the body starts with a non-ASCII character so decimals
+// (`3.14`), version strings (`v1.2.3`), and IPs (`192.168`) stay untouched.
+const ORDERED_MISSING_SPACE_RE = /^([ \t]{0,3})(\d{1,9}[.)])(?=[^\s\x00-\x7f])/gm
+// Bullet marker glued to the end of a prose line after a colon, e.g.
+// `分歧：- 切片：只有 Phoenix…` or `分歧：-切片`. Split so the bullet starts a
+// real list. Trigger only when a bullet marker immediately follows a colon
+// with real prose to the left; `$1` captures the preceding character so
+// negatives like `key:-1` (digit body) and plain text don't match. The
+// body after the bullet must start with whitespace or a non-ASCII character
+// so CLI flags (`--foo`) and HR runs (`---`) stay untouched.
+const BULLET_GLUED_AFTER_COLON_RE =
+  /([^\s:：])([：:])[ \t]*([-*+])[ \t]*(?=[^\s\-*+\x00-\x7f]|[ \t])/g
+// Ordered marker glued to the end of a prose line after a colon, e.g.
+// `共识：1. 必须有…`. Same treatment as the bullet variant above.
+// The lookahead `[ \t]+\D` is essential: require whitespace + non-digit
+// after the period so decimals like `task_1: 0.8` (colon + `0.` + digit)
+// stay intact. A real ordered-list item always has a space + non-digit
+// body after its number.
+const ORDERED_GLUED_AFTER_COLON_RE =
+  /([^\s:：])([：:])[ \t]*(\d{1,9}[.)])(?=[ \t]+\D)[ \t]*/g
+// Ordered list item whose indentation is ≥4 spaces: CommonMark treats this
+// as either a code block or a lazy continuation of the previous paragraph,
+// so the item silently merges with whatever came before. Models routinely
+// over-indent mid-list items in CJK contexts (`     3.多指标…`). Normalise
+// to at most 3 leading spaces before the other rules run.
+const ORDERED_OVER_INDENT_RE = /^[ \t]{4,}(?=\d{1,9}[.)][\s\u3400-\u4dbf\u4e00-\u9fff])/gm
+
 function normalizeHrLines(text: string): string {
   return text
     .replace(HR_MARKER_BEFORE_HEADING_RE, '$1$2\n\n$3')
     .replace(HR_MARKER_GLUED_RE, '$1\n\n$3\n\n')
     .replace(HR_MARKER_INLINE_RE, '$1\n\n$2\n\n')
     .replace(HR_MARKER_TRAILING_RE, '$1\n\n$2')
+}
+
+/**
+ * Normalize ATX headings that are glued to their body or to preceding prose.
+ * Walks lines so we never touch content inside a fenced code block.
+ *
+ * Handles three common model outputs:
+ *   `##改进清单（共 8 项）`    → `## 改进清单（共 8 项）`
+ *   `#改进清单`                 → `# 改进清单`   (single-# only when body is non-ASCII)
+ *   `…零语义风险） ##粘连`     → `…零语义风险）\n\n## 粘连`
+ *
+ * For 2–6 `#`s we're permissive (unambiguous heading intent). For a single
+ * `#` we only fix glue when the body starts with a non-ASCII letter so
+ * `#1` issue refs and `#include` preprocessor directives stay untouched.
+ */
+function normalizeGluedHeadings(text: string): string {
+  const lines = text.split('\n')
+  let inFence = false
+  let fenceMarker = ''
+  const out: string[] = []
+  for (const line of lines) {
+    const fenceMatch = CODE_FENCE_RE.exec(line)
+    if (fenceMatch) {
+      const marker = fenceMatch[2]!
+      if (!inFence) {
+        inFence = true
+        fenceMarker = marker
+      } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
+        inFence = false
+        fenceMarker = ''
+      }
+      out.push(line)
+      continue
+    }
+    if (inFence) {
+      out.push(line)
+      continue
+    }
+    // Split glued `…） ##text` into two lines first, then ensure every
+    // heading line has a space after its marker. Also split the no-space
+    // variants like `。###档` / `这个###档` where the heading marker sits
+    // flush against the preceding CJK character or punctuation. Finally
+    // normalize bullet markers glued to CJK bodies (`-这个` → `- 这个`)
+    // and split list markers glued to the end of a prose line after a
+    // colon (`分歧：- 切片` / `共识：1. 必须…`).
+    const split = line
+      .replace(HEADING_GLUED_AFTER_TEXT_RE, '$1\n\n$2')
+      .replace(HEADING_GLUED_NO_SPACE_RE, '$1\n\n$2 ')
+      .replace(BULLET_GLUED_AFTER_COLON_RE, '$1$2\n\n$3 ')
+      .replace(ORDERED_GLUED_AFTER_COLON_RE, '$1$2\n\n$3 ')
+      .replace(ORDERED_OVER_INDENT_RE, '   ')
+      .split('\n')
+    for (const s of split) {
+      out.push(
+        s
+          .replace(HEADING_MISSING_SPACE_MANY_RE, '$1$2 ')
+          .replace(HEADING_MISSING_SPACE_ONE_RE, '$1$2 ')
+          .replace(BULLET_MISSING_SPACE_RE, '$1$2 ')
+          .replace(ORDERED_MISSING_SPACE_RE, '$1$2 '),
+      )
+    }
+  }
+  return out.join('\n')
 }
 
 // Markdown table separator line — exclude from box-drawing preservation.
@@ -363,13 +562,48 @@ function preserveBoxDrawingBlocks(text: string): string {
   return out.join('\n')
 }
 
-function prepareMarkdownForLex(text: string): string {
-  return repairUnclosedFences(normalizeHrLines(preserveBoxDrawingBlocks(text)), true)
+// Model prompts occasionally carry reminder tags that leak into visible text
+// when normalization breaks. Strip them before the lexer sees the input so
+// the renderer never displays `<system-reminder>…</system-reminder>` blocks
+// verbatim. Matches claudecode's stripPromptXMLTags behavior.
+const STRIPPED_PROMPT_TAGS_RE =
+  /<(system-reminder|commit_analysis|context|function_analysis|pr_analysis)>[\s\S]*?<\/\1>\n?/g
+
+function stripPromptXMLTags(content: string): string {
+  return content.replace(STRIPPED_PROMPT_TAGS_RE, '')
 }
 
-/**
- * Render a single marked token to an ANSI-styled string.
- */
+function prepareMarkdownForLex(text: string): string {
+  return repairUnclosedFences(
+    normalizeHrLines(preserveBoxDrawingBlocks(normalizeGluedHeadings(text))),
+    true,
+  )
+}
+
+// ---------------------------------------------------------------------------
+// CJK ↔ Latin/digit spacing ("pangu")
+// ---------------------------------------------------------------------------
+//
+// Mixed CJK/Latin prose without interstitial whitespace is hard to read
+// (`一条trace` looks glued) and starves word-wrap of good break points. We
+// insert a regular space between adjacent CJK characters and ASCII
+// letters/digits — the classic pangu-style rule. Only applied to plain-text
+// leaves, so inline code, links and URLs are preserved verbatim.
+//
+// Covers CJK Unified (U+4E00–U+9FFF), CJK Extension A (U+3400–U+4DBF),
+// CJK Compat (U+F900–U+FAFF), Hiragana (U+3040–U+309F), Katakana
+// (U+30A0–U+30FF). Intentionally skipped: CJK punctuation (`，。：`) — those
+// already act as visual separators and double-spacing would look wrong.
+const CJK_CHAR = '\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff'
+const PANGU_CJK_THEN_LATIN_RE = new RegExp(`([${CJK_CHAR}])([A-Za-z0-9])`, 'g')
+const PANGU_LATIN_THEN_CJK_RE = new RegExp(`([A-Za-z0-9])([${CJK_CHAR}])`, 'g')
+
+function applyPangu(text: string): string {
+  return text
+    .replace(PANGU_CJK_THEN_LATIN_RE, '$1 $2')
+    .replace(PANGU_LATIN_THEN_CJK_RE, '$1 $2')
+}
+
 export function formatToken(
   token: Token,
   listDepth = 0,
@@ -409,8 +643,15 @@ export function formatToken(
           // fallback
         }
       }
-      // Emit code blocks verbatim — terminal/renderer handles any soft wrap.
-      return highlighted + EOL
+      // Prefix a muted left gutter so fenced code blocks are visually
+      // distinct from prose. Without this, back-to-back prose and code
+      // collapse into indistinguishable paragraphs on dark terminals.
+      const bar = theme.codeBlockGutter.paint('│')
+      const withGutter = highlighted
+        .split('\n')
+        .map(line => `${bar} ${line}`)
+        .join('\n')
+      return withGutter + EOL
     }
     case 'codespan': {
       const raw = token.text as string
@@ -459,8 +700,10 @@ export function formatToken(
       return style.paint(text) + EOL
     }
     case 'hr': {
-      const width = Math.min(terminalContentWidth(), 80)
-      return theme.hr.paint('─'.repeat(width)) + EOL
+      // Match claudecode: literal `---` (three dashes) instead of a full-width
+      // box-drawing rule. Keeps the separator inconspicuous and avoids the
+      // visual "second heading" effect on wide terminals.
+      return theme.hr.paint('---') + EOL
     }
     case 'link': {
       if (token.href.startsWith('mailto:')) {
@@ -477,9 +720,11 @@ export function formatToken(
         }
         return createHyperlink(token.href)
       }
-      // Fallback: show text + dimmed URL, or underlined URL
+      // Fallback (claudecode-style): prefer the display text alone, only
+      // surface the URL when there is no meaningful text. Avoids noisy
+      // `text (url)` when OSC 8 is not available.
       if (plainText && plainText !== token.href) {
-        return `${linkText} (${theme.thinkText.paint(token.href)})`
+        return linkText
       }
       return theme.link.paint(token.href)
     }
@@ -532,7 +777,7 @@ export function formatToken(
         const restIndent = `${depthPad}${' '.repeat(terminalDisplayWidth(marker) + 1)}`
         const inner = token.tokens
           ? token.tokens.map(t => formatToken(t, listDepth, orderedListNumber, token, theme)).join('')
-          : linkifyIssueRefs(token.text)
+          : linkifyIssueRefs(applyPangu(token.text))
         return `${wrapDisplayTextWithIndent(inner, firstIndent, restIndent)}${EOL}`
       }
       if (token.tokens) {
@@ -541,8 +786,9 @@ export function formatToken(
       // Plain text nodes: emit verbatim (claudecode-style). Do not soft-wrap
       // here — marked keeps the original newlines/indentation in token.text
       // (including tree-art and box-drawing lines), and re-wrapping here
-      // collapses multi-space indentation.
-      return linkifyIssueRefs(token.text)
+      // collapses multi-space indentation. Apply pangu spacing so mixed
+      // CJK/Latin prose ("一条trace") gets a breathable space.
+      return linkifyIssueRefs(applyPangu(token.text))
     }
     case 'table': {
       const tableToken = token as Tokens.Table
@@ -843,10 +1089,13 @@ export function renderMarkdown(text: string): string {
 
   configureMarked()
   try {
-    const lexText = prepareMarkdownForLex(text)
+    // Strip prompt XML tags (system-reminder, commit_analysis, …) first so
+    // they never reach the lexer or the plain-text fast path.
+    const stripped = stripPromptXMLTags(text)
+    const lexText = prepareMarkdownForLex(stripped)
     const tokens = hasMarkdownSyntax(lexText)
       ? marked.lexer(lexText)
-      : plainTextTokens(text)
+      : plainTextTokens(stripped)
     return formatTokens(tokens)
   } catch {
     return text

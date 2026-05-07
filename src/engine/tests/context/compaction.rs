@@ -3211,3 +3211,110 @@ fn test_image_downgrade_without_path_is_noop() {
         "path-less images must not be downgraded (no recovery path)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Compaction marker: task anchor + continuation instruction
+// ---------------------------------------------------------------------------
+//
+// Regression guard for the "agent re-orients to the oldest user prompt after
+// compaction" bug: when eviction happens, the synthetic marker inserted into
+// the retained window must carry a verbatim quote of the most recent user
+// request plus a "do not re-orient" instruction.
+
+fn marker_text(messages: &[AgentMessage]) -> Option<String> {
+    messages.iter().find_map(|m| match m {
+        AgentMessage::Llm(Message::User { content, .. }) => content.iter().find_map(|c| match c {
+            Content::Text { text } if text.starts_with("[Context compacted") => Some(text.clone()),
+            _ => None,
+        }),
+        _ => None,
+    })
+}
+
+#[test]
+fn compaction_marker_embeds_recent_user_request_and_continuation() {
+    // Build: many tiny user/assistant turns exceeding max_messages. This
+    // forces stale eviction (level 3) which is what inserts the marker
+    // carrying the task anchor.
+    let mut messages = vec![AgentMessage::Llm(Message::user(
+        "old task: look at EverOn and list what's worth borrowing",
+    ))];
+    for i in 0..20 {
+        messages.push(AgentMessage::Llm(Message::user(format!("filler {i}"))));
+        messages.push(make_final_assistant("ack"));
+    }
+    messages.push(AgentMessage::Llm(Message::user(
+        "strip the triple backticks from the markdown renderer — it's causing glue bugs",
+    )));
+    messages.push(make_final_assistant("on it"));
+
+    let config = ContextConfig {
+        max_context_tokens: 100_000,
+        system_prompt_tokens: 0,
+        keep_recent: 4,
+        keep_first: 2,
+        max_messages: 10,
+        message_limit_target_pct: 60,
+        compact_trigger_pct: 80,
+        compact_target_pct: 60,
+        ..Default::default()
+    };
+
+    let result = compact_messages(messages, &config, &CompactionBudgetState {
+        estimated_tokens: 20_000,
+    });
+
+    let marker = marker_text(&result.messages).expect("marker must be present after eviction");
+    assert!(
+        marker.contains("strip the triple backticks"),
+        "marker must quote the most recent user request verbatim, got: {marker}"
+    );
+    assert!(
+        !marker.contains("old task: look at EverOn"),
+        "marker must not promote the oldest user prompt as the anchor"
+    );
+    assert!(
+        marker.to_lowercase().contains("do not re-orient"),
+        "marker must carry a continuation instruction, got: {marker}"
+    );
+}
+
+#[test]
+fn compaction_marker_falls_back_to_minimal_when_drop_is_tiny() {
+    // Small drops (a few short messages) shouldn't pay for the full marker.
+    // The minimal form keeps the bookkeeping line only so marker tokens
+    // never exceed dropped tokens in tight-budget scenarios.
+    let messages = vec![
+        AgentMessage::Llm(Message::user("first")),
+        make_final_assistant("ack"),
+        AgentMessage::Llm(Message::user("second")),
+        make_final_assistant("ack"),
+        AgentMessage::Llm(Message::user("third")),
+        make_final_assistant("ack"),
+        AgentMessage::Llm(Message::user("fourth")),
+    ];
+
+    let config = ContextConfig {
+        max_context_tokens: 100,
+        system_prompt_tokens: 65,
+        keep_recent: 1,
+        keep_first: 1,
+        max_messages: 3,
+        compact_trigger_pct: 80,
+        compact_target_pct: 60,
+        ..Default::default()
+    };
+
+    let result = compact_messages(messages, &config, &CompactionBudgetState {
+        estimated_tokens: 200,
+    });
+
+    if let Some(marker) = marker_text(&result.messages) {
+        // Tiny drops never attach the continuation block — only the single
+        // bookkeeping line.
+        assert!(
+            !marker.to_lowercase().contains("do not re-orient"),
+            "tiny drops must emit the minimal marker, got: {marker}"
+        );
+    }
+}

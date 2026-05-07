@@ -70,15 +70,8 @@ fn drop_to_message_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> Ph
         .iter()
         .map(|&idx| message_tokens(&messages[idx]))
         .sum();
-    let marker = AgentMessage::Llm(Message::User {
-        content: vec![Content::Text {
-            text: format!(
-                "[Context compacted: {} messages removed]",
-                drop_indices.len()
-            ),
-        }],
-        timestamp: now_ms(),
-    });
+    let marker =
+        super::super::super::marker::build_marker(&messages, drop_indices.len(), dropped_tokens);
     let marker_tokens = message_tokens(&marker);
 
     let mut result = Vec::with_capacity(target_len);
@@ -337,15 +330,11 @@ fn drop_to_token_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> Phas
         .map(message_tokens)
         .sum();
 
-    let marker = AgentMessage::Llm(Message::User {
-        content: vec![Content::Text {
-            text: format!(
-                "[Context compacted: {} messages removed to fit context window]",
-                removed
-            ),
-        }],
-        timestamp: now_ms(),
-    });
+    let marker = super::super::super::marker::build_marker_with_note(
+        &messages,
+        &format!("{} messages removed to fit context window", removed),
+        dropped_tokens,
+    );
     let marker_tokens = message_tokens(&marker);
 
     let mut result = first_msgs.to_vec();
@@ -469,18 +458,13 @@ fn keep_within_budget(
 
     let mut result: Vec<AgentMessage> = protected.to_vec();
     if removed > 0 {
-        let marker = AgentMessage::Llm(Message::User {
-            content: vec![Content::Text {
-                text: format!("[Context compacted: {} messages removed]", removed),
-            }],
-            timestamp: now_ms(),
-        });
         let removed_end = messages.len() - tail.len();
         debug_assert!(removed_end >= protected_end);
         let removed_tokens: usize = messages[protected_end..removed_end]
             .iter()
             .map(message_tokens)
             .sum();
+        let marker = super::super::super::marker::build_marker(messages, removed, removed_tokens);
         if message_tokens(&marker) < removed_tokens {
             result.push(marker);
         }

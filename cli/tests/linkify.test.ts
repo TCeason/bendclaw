@@ -49,4 +49,19 @@ describe('linkifyIssueRefs', () => {
     const input = 'no issue refs here'
     expect(linkifyIssueRefs(input)).toBe(input)
   })
+
+  test('ref without OSC 8 support is not colored (claudecode-style)', () => {
+    // Without hyperlink support we leave the ref as plain text: there is no
+    // clickable target, and coloring bare refs just adds noise.
+    const prev = process.env.FORCE_HYPERLINK
+    process.env.FORCE_HYPERLINK = '0'
+    try {
+      const result = linkifyIssueRefs('see foo/bar#42')
+      expect(result).toBe('see foo/bar#42')
+      expect(result).not.toContain('\x1b[')
+    } finally {
+      if (prev === undefined) delete process.env.FORCE_HYPERLINK
+      else process.env.FORCE_HYPERLINK = prev
+    }
+  })
 })

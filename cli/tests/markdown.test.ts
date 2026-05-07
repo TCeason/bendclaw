@@ -1,5 +1,7 @@
 import { describe, test, expect } from 'bun:test'
 import { renderMarkdown, formatToken } from '../src/render/markdown.js'
+import { getTheme } from '../src/render/theme.js'
+import chalk from 'chalk'
 import { marked, type Token } from 'marked'
 import stripAnsi from 'strip-ansi'
 
@@ -55,6 +57,15 @@ describe('renderMarkdown', () => {
     expect(result).not.toContain('```')
   })
 
+  test('fenced code blocks render with a left gutter', () => {
+    // Code blocks and prose must be visually distinct. Without a gutter,
+    // back-to-back prose and code collapse into indistinguishable
+    // paragraphs on terminals without syntax highlighting.
+    const md = '介绍一下：\n```bash\nnpm install\n```\n之后运行。'
+    const result = render(md)
+    expect(result).toMatch(/│ npm install/)
+  })
+
   test('renders unclosed tilde fence as code', () => {
     const result = render('~~~sql\nSELECT 1')
     expect(result).toContain('SELECT 1')
@@ -66,6 +77,201 @@ describe('renderMarkdown', () => {
     const result = render(md)
     expect(result).toContain('{"id":"evt-001"}')
     expect(result).toContain('原样保存')
+    expect(result).not.toContain('```')
+  })
+
+  test('splits fence close glued to following heading', () => {
+    const result = render('```json\n{\n  "id": "tr-abc"\n}\n```### 5.1 接口')
+      .replace(/\u200b/g, '')
+
+    expect(result).toContain('"id": "tr-abc"')
+    expect(result).toContain('5.1 接口')
+    expect(result).not.toContain('```')
+  })
+
+  test('splits fence close glued to heading without a space', () => {
+    // Models often omit the space in CJK contexts: `\`\`\`##改进清单`.
+    // We should normalise it so marked sees `## 改进清单`.
+    const result = render('```json\n{"x":1}\n```##改进清单（共 8 项，零语义风险）')
+      .replace(/\u200b/g, '')
+
+    expect(result).toContain('"x":1')
+    expect(result).toContain('改进清单（共 8 项，零语义风险）')
+    expect(result).not.toContain('##改进清单')
+    expect(result).not.toContain('```')
+  })
+
+  test('promotes ATX heading glued after a preceding paragraph', () => {
+    // `…零语义风险） ##粘连` — split the heading onto its own line.
+    const result = render('目标保持不变。 ##粘连').replace(/\u200b/g, '')
+
+    expect(result).toContain('目标保持不变。')
+    expect(result).toContain('粘连')
+    // Should not keep `) ##` on a single line.
+    expect(result).not.toMatch(/目标保持不变。\s*##/)
+  })
+
+  test('promotes ATX heading glued with zero space after CJK punctuation', () => {
+    // Models often drop the space entirely: `。###档 1`.
+    const result = render('每档独立可落地。###档 1 ·零改动').replace(/\u200b/g, '')
+
+    expect(result).toContain('每档独立可落地。')
+    expect(result).toContain('档 1 ·零改动')
+    expect(result).not.toMatch(/。###/)
+  })
+
+  test('promotes ATX heading glued with zero space after CJK character', () => {
+    // No punctuation at all — `这个###档 1` still needs a line break.
+    const result = render('追加两节： 比如这个###档 1').replace(/\u200b/g, '')
+
+    expect(result).toContain('比如这个')
+    expect(result).toContain('档 1')
+    expect(result).not.toMatch(/这个###/)
+  })
+
+  test('promotes ATX heading glued before a body that has its own space', () => {
+    // `前言说明。### 一句话总结` — the heading body is well-formed (`###`
+    // followed by a space), only the preceding prose is glued to the marker.
+    const result = render('前言说明。### 一句话总结\n\n正文').replace(/\u200b/g, '')
+
+    expect(result).toContain('前言说明。')
+    expect(result).toContain('一句话总结')
+    expect(result).toContain('正文')
+    expect(result).not.toMatch(/。###/)
+  })
+
+  test('normalises bullet marker glued to CJK body', () => {
+    // `-这个改动` / `-summary 的详略` — CommonMark needs `- body`.
+    const result = render('-这个改动是不是也管用？\n- 另一条').replace(/\u200b/g, '')
+    // Should render as a list: bullet + body, not a dash-prefixed paragraph.
+    expect(result).toContain('- 这个改动是不是也管用？')
+    expect(result).toContain('- 另一条')
+  })
+
+  test('does not normalise `-`/`*` that are not bullet intents', () => {
+    // Guard rails — make sure we don't mangle negatives, CLI flags, HR, or
+    // emphasis markers.
+    expect(render('-1.5 is negative').replace(/\u200b/g, '')).toContain('-1.5 is negative')
+    expect(render('--flag is an option').replace(/\u200b/g, '')).toContain('--flag is an option')
+    expect(render('---').replace(/\u200b/g, '')).toContain('---')
+    expect(render('use *emphasis* here').replace(/\u200b/g, '')).toContain('emphasis')
+  })
+
+  test('splits bullet glued to end of prose after a colon', () => {
+    // CJK colon `：` is the trigger; prose itself can be ASCII.
+    const result = render('consensus：- sliced by something').replace(
+      /\u200b/g,
+      '',
+    )
+    expect(result).toContain('consensus：')
+    expect(result).toContain('- sliced by something')
+    expect(result).not.toMatch(/consensus：[ \t]*- /)
+  })
+
+  test('splits ordered list glued to end of prose after a colon', () => {
+    // CJK colon `：` is the trigger; prose itself can be ASCII.
+    const result = render('consensus：1. must have baseline').replace(/\u200b/g, '')
+    expect(result).toContain('consensus：')
+    expect(result).toContain('must have baseline')
+    expect(result).not.toMatch(/consensus：[ \t]*1\. /)
+  })
+
+  test('normalises ordered item glued to non-ASCII body', () => {
+    // `3.多指标` — CommonMark needs `3. body`. CJK body is essential:
+    // ORDERED_MISSING_SPACE_RE only fires when the body is non-ASCII so
+    // decimals/versions stay intact.
+    const result = render('1. first\n2.二\n3.三').replace(/\u200b/g, '')
+    expect(result).toContain('二')
+    expect(result).toContain('三')
+    expect(result).not.toContain('2.二')
+    expect(result).not.toContain('3.三')
+  })
+
+  test('does not normalise decimals/versions as ordered list', () => {
+    // Guard rails — decimals and version strings must stay intact.
+    expect(render('3.14 is pi').replace(/\u200b/g, '')).toContain('3.14')
+    expect(render('see v1.2.3 for details').replace(/\u200b/g, '')).toContain('v1.2.3')
+    expect(render('192.168.1.1 is local').replace(/\u200b/g, '')).toContain(
+      '192.168.1.1',
+    )
+  })
+
+  test('does not split inline JSON-like objects with decimals after a colon', () => {
+    // Guard rails for ORDERED_GLUED_AFTER_COLON_RE: `task_1: 0.8` is a
+    // colon + decimal, not a colon + ordered marker. Splitting it would
+    // rip the line apart and the decimal would become a fake list number.
+    const md = 'scores_by_task: {task_1: 0.8, task_2: 1.6}'
+    const result = render(md).replace(/\u200b/g, '')
+    expect(result).toContain('{task_1: 0.8, task_2: 1.6}')
+    expect(result).not.toMatch(/^\s*0\.\s+8/m)
+    expect(result).not.toMatch(/^\s*1\.\s+6/m)
+  })
+
+  test('dedents over-indented ordered item so it stays in the list', () => {
+    // Models routinely over-indent mid-list items (`     3.多`). ≥4 spaces
+    // would otherwise trigger a code block or lazy continuation. CJK body
+    // is essential to trigger the dedent regex.
+    const md = '1. first item\n2. second item\n     3.三'
+    const result = render(md).replace(/\u200b/g, '')
+    expect(result).toContain('三')
+    expect(result).not.toContain('     3.')
+  })
+
+  test('normalises ATX heading missing the space after #', () => {
+    const result = render('##改进清单').replace(/\u200b/g, '')
+    expect(result).toContain('改进清单')
+    expect(result).not.toContain('##改进清单')
+  })
+
+  test('normalises single-# heading when body is non-ASCII', () => {
+    // `#改进清单` is a valid CJK heading intent. We only rewrite single-`#`
+    // when the body is non-ASCII so `#1` / `#include` stay untouched.
+    const result = render('#改进清单').replace(/\u200b/g, '')
+    expect(result).toContain('改进清单')
+    expect(result).not.toContain('#改进清单')
+  })
+
+  test('preserves `#1` and `#include` (single-# ASCII body)', () => {
+    // Issue refs and preprocessor directives must not become headings.
+    const issue = render('see #1 for context')
+    expect(issue).toContain('#1')
+    const preproc = render('#include <stdio.h>')
+    expect(preproc).toContain('#include')
+  })
+
+  test('splits fence close glued to following list item', () => {
+    const result = render('```ts\nconst a = 1\n```- 命中规则')
+
+    expect(result).toContain('const a = 1')
+    expect(result).toContain('- 命中规则')
+    expect(result).not.toContain('```')
+  })
+
+  test('splits fence close glued to following inline bold prose', () => {
+    const result = render('```rust\nErr(ToolError::Failed(format!("binary")))\n```**为什么安全**：只加元数据，不动内容。')
+
+    expect(result).toContain('ToolError::Failed')
+    expect(result).toContain('为什么安全')
+    expect(result).toContain('只加元数据')
+    expect(result).not.toContain('```')
+  })
+
+  test('splits fence close glued to following chinese prose', () => {
+    const result = render('```text\nsrc/engine/\nsrc/engine/Cargo.toml\n```**为什么安全**：多给信息不压信息。')
+
+    expect(result).toContain('src/engine/Cargo.toml')
+    expect(result).toContain('多给信息不压信息')
+    expect(result).not.toContain('```')
+  })
+
+  test('splits trailing fence close glued to last code line', () => {
+    // Models sometimes omit the newline before the closing fence, e.g.
+    // `    }\`\`\``. The renderer used to leak literal backticks; we now
+    // split the marker onto its own line so marked sees a clean code block.
+    const md = '输出:\n```json\n   {\n  "diagnoses": ["a"],\n  "hypotheses": ["b"]\n    }```'
+    const result = render(md)
+    expect(result).toContain('"diagnoses"')
+    expect(result).toContain('"hypotheses"')
     expect(result).not.toContain('```')
   })
 
@@ -90,7 +296,7 @@ describe('renderMarkdown', () => {
       .replace(/\u200b/g, '')
 
     expect(result).toContain('"is_deleted": 0')
-    expect(result).toContain('────────────────')
+    expect(result).toContain('---')
     expect(result).toContain('第 8 站：补充 input / output')
     expect(result).not.toContain('```json')
   })
@@ -146,6 +352,21 @@ describe('renderMarkdown', () => {
     expect(result).not.toContain(`：\u200b`)
   })
 
+  test('inserts pangu space between CJK and latin/digit characters', () => {
+    // `一条trace` reads better (and wraps better) as `一条 trace`.
+    const result = render('钉住一条trace，把它当 target').replace(/\u200b/g, '')
+    expect(result).toContain('一条 trace')
+    expect(result).not.toMatch(/一条trace/)
+  })
+
+  test('does not touch latin/digit inside inline code and links', () => {
+    // Inline code must stay verbatim so copy-paste matches source.
+    const inline = render('用 `eval()` 跑一下 42次').replace(/\u200b/g, '')
+    expect(inline).toContain('eval()')
+    // Surrounding CJK↔digit still gets a space: `42次` → `42 次`.
+    expect(inline).toContain('42 次')
+  })
+
   test('detects markdown syntax after the first 500 characters', () => {
     const result = render(`${'a'.repeat(520)}\n\n# Tail heading`)
 
@@ -177,18 +398,81 @@ describe('renderMarkdown', () => {
     expect(result).toContain('quoted text')
   })
 
+  test('blockquote text is italic but not dimmed', () => {
+    // Dimming long CJK quotes on dark backgrounds is nearly invisible. We
+    // keep italic for emphasis but drop the dim grey foreground.
+    const theme = getTheme()
+    expect(theme.blockquoteText.paint('x')).toBe(chalk.italic('x'))
+    const raw = renderMarkdown('> 引用的一段中文文本')
+    expect(raw).toContain(theme.blockquoteText.paint('引用的一段中文文本'))
+  })
+
   test('renders links', () => {
-    const result = render('[click](https://example.com)')
-    expect(result).toContain('click')
-    // URL may be inside an OSC 8 hyperlink (stripped by stripAnsi) or shown as fallback text
-    const raw = renderMarkdown('[click](https://example.com)')
-    expect(raw).toContain('https://example.com')
+    const prev = process.env.FORCE_HYPERLINK
+    process.env.FORCE_HYPERLINK = '1'
+    try {
+      const result = render('[click](https://example.com)')
+      expect(result).toContain('click')
+      // With OSC 8 on, the URL is attached as a hyperlink target inside the
+      // escape sequence (not stripped by stripAnsi, so test the raw output).
+      const raw = renderMarkdown('[click](https://example.com)')
+      expect(raw).toContain('https://example.com')
+    } finally {
+      if (prev === undefined) delete process.env.FORCE_HYPERLINK
+      else process.env.FORCE_HYPERLINK = prev
+    }
+  })
+
+  test('link fallback without OSC 8 shows only the display text', () => {
+    // Claudecode-style: when hyperlinks are off we drop the trailing `(url)`
+    // to keep prose quiet. The raw URL only appears if there is no text.
+    const prev = process.env.FORCE_HYPERLINK
+    process.env.FORCE_HYPERLINK = '0'
+    try {
+      const result = render('[click](https://example.com)')
+      expect(result).toContain('click')
+      expect(result).not.toContain('(https://example.com)')
+      expect(result).not.toContain('https://example.com')
+    } finally {
+      if (prev === undefined) delete process.env.FORCE_HYPERLINK
+      else process.env.FORCE_HYPERLINK = prev
+    }
+  })
+
+  test('link fallback without OSC 8 shows bare URL when there is no text', () => {
+    const prev = process.env.FORCE_HYPERLINK
+    process.env.FORCE_HYPERLINK = '0'
+    try {
+      const result = render('<https://example.com>')
+      expect(result).toContain('https://example.com')
+    } finally {
+      if (prev === undefined) delete process.env.FORCE_HYPERLINK
+      else process.env.FORCE_HYPERLINK = prev
+    }
+  })
+
+  test('h1 heading is bold italic underlined', () => {
+    // Follow claudecode: h1 gets bold+italic+underline, no hue.
+    const theme = getTheme()
+    expect(theme.h1.paint('Title')).toBe(chalk.bold.italic.underline('Title'))
+    const raw = renderMarkdown('# Title')
+    expect(raw).toContain(theme.h1.paint('Title'))
+  })
+
+  test('h2 heading is plain bold without colour', () => {
+    // h2+ is bold only; coloured headings feel chatty in long responses.
+    const theme = getTheme()
+    expect(theme.h2.paint('Subtitle')).toBe(chalk.bold('Subtitle'))
+    const raw = renderMarkdown('## Subtitle')
+    expect(raw).toContain(theme.h2.paint('Subtitle'))
+    // No 24-bit RGB colour sequences should be emitted for the heading body.
+    expect(raw).not.toContain('\x1b[38;2;')
   })
 
   test('renders horizontal rules', () => {
+    // Claudecode-style: literal `---`, not a box-drawing row.
     const result = render('---')
-    expect(result).toContain('─')
-    expect(result).not.toContain('---')
+    expect(result).toContain('---')
   })
 
   test('splits hr glued to end of sentence without whitespace', () => {
@@ -203,7 +487,7 @@ describe('renderMarkdown', () => {
   test('splits hr glued before heading', () => {
     const result = render('---### 方案分层：从零代码到完整 Eval').replace(/\u200b/g, '')
 
-    expect(result).toContain('─\n\n方案分层：从零代码到完整 Eval')
+    expect(result).toContain('---\n\n方案分层：从零代码到完整 Eval')
     expect(result).not.toContain('---###')
   })
 
@@ -338,6 +622,23 @@ describe('renderMarkdown', () => {
     const result = renderMarkdown('just plain text')
     expect(result).toContain('just plain text')
   })
+
+  test('strips system-reminder prompt tags before rendering', () => {
+    // Models occasionally echo the reminder envelope into visible output.
+    // Match claudecode's stripPromptXMLTags: drop the tags and their body.
+    const result = render('hello\n<system-reminder>\ninternal only\n</system-reminder>\nworld')
+    expect(result).toContain('hello')
+    expect(result).toContain('world')
+    expect(result).not.toContain('system-reminder')
+    expect(result).not.toContain('internal only')
+  })
+
+  test('strips claudecode-style analysis tags', () => {
+    const result = render('<commit_analysis>\nhidden\n</commit_analysis>\nvisible body')
+    expect(result).toContain('visible body')
+    expect(result).not.toContain('hidden')
+    expect(result).not.toContain('commit_analysis')
+  })
 })
 
 describe('formatToken', () => {
@@ -364,7 +665,7 @@ describe('formatToken', () => {
 
   test('renders hr as horizontal line', () => {
     const result = stripAnsi(formatToken({ type: 'hr', raw: '---' } as Token))
-    expect(result).toContain('─')
+    expect(result).toContain('---')
   })
 
   test('renders image as href', () => {

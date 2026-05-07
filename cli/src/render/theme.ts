@@ -79,21 +79,31 @@ function darkTheme(): Theme {
     boldItalic: style(s => chalk.bold.italic(s)),
     strikethrough: style(s => chalk.dim.strikethrough(s)),
     underline: style(s => chalk.underline(s)),
-    link: style(s => chalk.underline.cyan(s)),
-    codeInline: style(s => chalk.hex('#e5c07b')(s)),
+    // link style follows claudecode: rely on OSC 8 for clickability and keep
+    // the URL in normal colour. Fallback is a bare URL without underline/hue.
+    link: plain,
+    // Inline code colour mirrors claudecode's `permission` hex exactly:
+    // rgb(177,185,249) = #b1b9f9 (light blue-purple). Keeps `foo()`
+    // references in the same semantic family as links without dominating
+    // long prose on dark terminals.
+    codeInline: style(s => chalk.hex('#b1b9f9')(s)),
 
-    h1: style(s => chalk.bold.hex('#c678dd')(s)),
-    h2: style(s => chalk.bold.hex('#61afef')(s)),
-    h3: style(s => chalk.bold.hex('#56b6c2')(s)),
-    h4: style(s => chalk.bold.hex('#98c379')(s)),
-    h5: style(s => chalk.bold.hex('#e5c07b')(s)),
-    h6: style(s => chalk.bold.hex('#abb2bf')(s)),
+    // Heading style follows claudecode: h1 bold·italic·underline, h2+ plain bold.
+    // Colored headings read well in demos but are noisy in long responses.
+    h1: style(s => chalk.bold.italic.underline(s)),
+    h2: style(s => chalk.bold(s)),
+    h3: style(s => chalk.bold(s)),
+    h4: style(s => chalk.bold(s)),
+    h5: style(s => chalk.bold(s)),
+    h6: style(s => chalk.bold(s)),
 
-    bullet: style(s => chalk.cyan(s)),
-    listNumber: style(s => chalk.cyan(s)),
+    bullet: plain,
+    listNumber: plain,
 
     blockquoteBorder: style(s => gray(s)),
-    blockquoteText: style(s => dimGray.italic(s)),
+    // Italic but not dim — dimGray on dark backgrounds is nearly invisible
+    // for long CJK quotes.
+    blockquoteText: style(s => chalk.italic(s)),
 
     codeBlockGutter: style(s => gray(s)),
 
@@ -125,21 +135,26 @@ function lightTheme(): Theme {
     boldItalic: style(s => chalk.bold.italic(s)),
     strikethrough: style(s => chalk.dim.strikethrough(s)),
     underline: style(s => chalk.underline(s)),
-    link: style(s => chalk.underline.blue(s)),
-    codeInline: style(s => chalk.hex('#b45309')(s)),
+    // See darkTheme: link stays neutral and relies on OSC 8 for clickability.
+    link: plain,
+    // Inline code colour mirrors claudecode's `permission` hex exactly:
+    // rgb(87,105,247) = #5769f7 (medium blue).
+    codeInline: style(s => chalk.hex('#5769f7')(s)),
 
-    h1: style(s => chalk.bold.hex('#7c3aed')(s)),
-    h2: style(s => chalk.bold.hex('#1d4ed8')(s)),
-    h3: style(s => chalk.bold.hex('#0e7490')(s)),
-    h4: style(s => chalk.bold.hex('#15803d')(s)),
-    h5: style(s => chalk.bold.hex('#b45309')(s)),
-    h6: style(s => chalk.bold.hex('#374151')(s)),
+    // See darkTheme: claudecode-style headings (h1 bold·italic·underline,
+    // h2+ plain bold) keep long responses calm.
+    h1: style(s => chalk.bold.italic.underline(s)),
+    h2: style(s => chalk.bold(s)),
+    h3: style(s => chalk.bold(s)),
+    h4: style(s => chalk.bold(s)),
+    h5: style(s => chalk.bold(s)),
+    h6: style(s => chalk.bold(s)),
 
-    bullet: style(s => chalk.hex('#0e7490')(s)),
-    listNumber: style(s => chalk.hex('#0e7490')(s)),
+    bullet: plain,
+    listNumber: plain,
 
     blockquoteBorder: style(s => gray(s)),
-    blockquoteText: style(s => dimGray.italic(s)),
+    blockquoteText: style(s => chalk.italic(s)),
 
     codeBlockGutter: style(s => gray(s)),
 

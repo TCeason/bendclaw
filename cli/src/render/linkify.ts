@@ -3,7 +3,6 @@
  * When the terminal supports OSC 8, refs become clickable hyperlinks.
  */
 
-import chalk from 'chalk'
 import { createHyperlink, supportsHyperlinks } from './hyperlink.js'
 
 /**
@@ -71,7 +70,10 @@ function linkifyGitHubRefs(input: string, hyperlinks: boolean): string {
     if (hyperlinks) {
       out += createHyperlink(`https://github.com/${owner}/${name}/issues/${num}`, refText)
     } else {
-      out += chalk.cyan(refText)
+      // Claudecode-style fallback: leave the ref text untouched when OSC 8 is
+      // not available. Coloring bare refs adds visual noise without benefit
+      // (no click target, already recognizable to the eye).
+      out += refText
     }
     cursor = hashPos + m[0].length
   }
