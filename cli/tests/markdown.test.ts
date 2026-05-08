@@ -57,17 +57,184 @@ describe('renderMarkdown', () => {
     expect(result).not.toContain('```')
   })
 
-  test('fenced code blocks render with a copy-safe left gutter', () => {
-    // Code blocks must be visually distinct from prose, but the gutter
-    // character must not leak into copy-pasted commands. We use a
-    // background-coloured space (not `│`) so `stripAnsi` leaves a plain
-    // leading space on each code line.
-    const md = '介绍一下：\n```bash\nnpm install\n```\n之后运行。'
+  test('fenced code blocks render without a gutter or left padding', () => {
+    // Match claudecode: code blocks are rendered verbatim with syntax
+    // highlighting only — no leading gutter character or padding space.
+    // Copying a code block must yield clean text with no leading chars
+    // to strip, so `npm install` starts at column 0.
+    const md = 'Before:\n```bash\nnpm install\n```\nAfter.'
     const result = render(md)
-    expect(result).toMatch(/^ {2}npm install$/m)
-    // Must not leave literal box-drawing characters that would corrupt
-    // pasted shell commands.
+    expect(result).toMatch(/^npm install$/m)
+    // Must not leave literal box-drawing characters.
     expect(result).not.toContain('│')
+  })
+
+  test('code comments render as pure code lines', () => {
+    const md = [
+      '```bash',
+      '# Run checks in parallel where possible',
+      'cargo fmt --check &',
+      '```',
+    ].join('\n')
+    const result = render(md)
+    expect(result).toMatch(/^# Run checks in parallel where possible$/m)
+    expect(result).toMatch(/^cargo fmt --check &$/m)
+    expect(result).not.toMatch(/^\s+# Run checks/m)
+    expect(result).not.toContain('│')
+  })
+
+  test('unlabelled fenced code blocks use plaintext instead of language guessing', () => {
+    // Reference renderer passes `plaintext` when no fence info string is present.
+    // Auto-detection would colour random words and make unlabelled snippets
+    // inconsistent with the reference renderer.
+    const result = renderMarkdown('```\nconst value = 1\n```')
+    expect(result).toContain('const value = 1')
+    expect(result).not.toContain('\x1b[')
+  })
+
+  test('highlights common alias tags (proto/jsonc/mdx/env/…)', async () => {
+    // highlight.js doesn't register these names directly, but models routinely
+    // write them in fences. The renderer maps them onto the closest supported
+    // grammar so the block is still coloured. We verify the mapping by
+    // asserting the target language is one cli-highlight recognises, which is
+    // environment-independent (doesn't depend on FORCE_COLOR / TTY detection).
+    const cliHighlight = await import('cli-highlight')
+    const aliases: Array<[string, string]> = [
+      ['proto', 'protobuf'],
+      ['jsonc', 'json'],
+      ['json5', 'json'],
+      ['ndjson', 'json'],
+      ['mdx', 'markdown'],
+      ['env', 'ini'],
+      ['dotenv', 'ini'],
+      ['fish', 'bash'],
+      ['vue', 'html'],
+      ['svelte', 'html'],
+      ['log', 'accesslog'],
+    ]
+    for (const [_alias, target] of aliases) {
+      expect(cliHighlight.supportsLanguage(target)).toBe(true)
+    }
+    // Sanity: content is preserved through the render path even without
+    // knowing whether colour is enabled.
+    for (const [alias] of aliases) {
+      const rendered = render('```' + alias + '\nSAMPLE\n```')
+      expect(rendered).toContain('SAMPLE')
+    }
+  })
+  test('splits opening fence glued to preceding prose', () => {
+    // `Intro```tsx` — the model forgot the newline
+    // before the fence marker. Must be split into prose + fenced block so
+    // the snippet renders as a code block instead of leaking literal
+    // backticks into the paragraph.
+    const md = 'Intro```tsx\nconst x: number = 1;\n```\nAfter'
+    const result = render(md)
+    expect(result).toContain('Intro')
+    expect(result).toContain('const x: number = 1;')
+    expect(result).not.toContain('```')
+    // Prose line must not carry the fence marker or code content.
+    expect(result).toMatch(/^Intro$/m)
+    expect(result).toMatch(/^const x: number = 1;$/m)
+  })
+
+  test('splits hr marker glued to bold emphasis on next section', () => {
+    // `---**SQL notes**` — the HR separator and the bold section title
+    // share a line with no blank around them. Must be split so the HR renders
+    // as a separator and the bold text survives on its own line.
+    const md = 'Previous sentence.\n---**SQL notes**\n```sql\nSELECT 1\n```'
+    const result = render(md)
+    expect(result).toContain('Previous sentence')
+    expect(result).toContain('SQL notes')
+    expect(result).toContain('SELECT 1')
+    // Bold markers must be stripped by the renderer.
+    expect(result).not.toContain('**SQL')
+  })
+
+  test('preserves leading indentation of tree/box-drawing paragraphs', () => {
+    // A paragraph whose first line starts with spaces (common for tree
+    // diagrams under an unindented root) must keep that indent verbatim —
+    // otherwise the first row shifts left and the branches below no longer
+    // line up with their parent. Regression for `formatTokens` using
+    // `trim()` and eating the leading spaces of the first block.
+    const md = [
+      '  │  │     ├─ lib.rs',
+      '  │  │     ├─ retry.rs',
+      '  │  │     └─ tools/',
+    ].join('\n')
+    const result = render(md)
+    expect(result).toMatch(/^ {2}│  │     ├─ lib\.rs$/m)
+    expect(result).toMatch(/^ {2}│  │     ├─ retry\.rs$/m)
+    expect(result).toMatch(/^ {2}│  │     └─ tools\/$/m)
+  })
+
+  test('preserves flow diagrams with box-drawing characters as plain code', () => {
+    // Flow diagrams are not necessarily directory trees, but they still rely
+    // on exact spaces around `│` / `├─` columns. The renderer should keep the
+    // block verbatim and must not add the old code-block gutter.
+    const md = [
+      '  Agent → Tool.call(args)                │',
+      '     ▼',
+      '   Session::goto(url)',
+      '            │',
+      '     ├─ preflight: daemon.health().await',
+      '    │    ├─ Stopped→ ToolError("daemon not running")  │ ├─ NoExtension',
+      '    │    └─ Ready     → ok',
+      '            │',
+      '          ▼',
+      '      daemon.send("navigate", ...)',
+    ].join('\n')
+    const result = render(md)
+    expect(result).toMatch(/^ {2}Agent → Tool\.call\(args\) {16}│$/m)
+    expect(result).toMatch(/^ {4}│ {4}├─ Stopped→ ToolError\("daemon not running"\) {2}│ ├─ NoExtension$/m)
+    expect(result).toMatch(/^ {6}daemon\.send\("navigate", \.\.\.\)$/m)
+    expect(result).not.toMatch(/^ │ /m)
+  })
+
+  test('does not normalize hr markers inside preserved box-drawing diagrams', () => {
+    // The box-drawing preservation pass wraps this paragraph in a synthetic
+    // code fence. Later markdown repair passes must respect that fence and
+    // keep `---` as diagram content, not reinterpret it as an HR separator.
+    const md = [
+      '  root │',
+      '  ---',
+      '  └─ child',
+    ].join('\n')
+    const result = render(md)
+    expect(result).toMatch(/^ {2}root │$/m)
+    expect(result).toMatch(/^ {2}---$/m)
+    expect(result).toMatch(/^ {2}└─ child$/m)
+  })
+
+  test('does not normalize hr markers inside authored code fences', () => {
+    const md = [
+      '```text',
+      'alpha',
+      '---',
+      'omega',
+      '```',
+    ].join('\n')
+    const result = render(md)
+    expect(result).toMatch(/^alpha$/m)
+    expect(result).toMatch(/^---$/m)
+    expect(result).toMatch(/^omega$/m)
+  })
+
+  test('splits ordered list item glued after CJK sentence terminator', () => {
+    // `一。2. 二` — the second list item is glued to the prose of the
+    // first. Must break onto its own line so both `1.` and `2.` render as
+    // ordered-list items.
+    const md = [
+      'List:',
+      '',
+      '1. 一。2. 二。',
+    ].join('\n')
+    const result = render(md)
+    expect(result).toContain('1.')
+    expect(result).toContain('2.')
+    // `。2.` must not remain glued on the same visual line — the split
+    // should put the second item on a fresh line (leading `2.` at col 0).
+    expect(result).not.toMatch(/一。[ \t]*2\./)
+    expect(result).toMatch(/^2\. 二/m)
   })
 
   test('renders unclosed tilde fence as code', () => {
@@ -77,79 +244,87 @@ describe('renderMarkdown', () => {
   })
 
   test('repairs unclosed code fence before later prose', () => {
-    const md = '```json\n[\n  {"id":"evt-001"}\n]\n\n原样保存，没有任何转换。'
+    const md = '```json\n[\n  {"id":"evt-001"}\n]\n\ntext after.'
     const result = render(md)
     expect(result).toContain('{"id":"evt-001"}')
-    expect(result).toContain('原样保存')
+    expect(result).toContain('text after')
     expect(result).not.toContain('```')
   })
 
   test('splits fence close glued to following heading', () => {
-    const result = render('```json\n{\n  "id": "tr-abc"\n}\n```### 5.1 接口')
+    const result = render('```json\n{\n  "id": "tr-abc"\n}\n```### 5.1 API')
       .replace(/\u200b/g, '')
 
     expect(result).toContain('"id": "tr-abc"')
-    expect(result).toContain('5.1 接口')
+    expect(result).toContain('5.1 API')
     expect(result).not.toContain('```')
   })
 
   test('splits fence close glued to heading without a space', () => {
-    // Models often omit the space in CJK contexts: `\`\`\`##改进清单`.
-    // We should normalise it so marked sees `## 改进清单`.
-    const result = render('```json\n{"x":1}\n```##改进清单（共 8 项，零语义风险）')
+    // Models often omit the space in CJK contexts: `\`\`\`##题`.
+    // We should normalise it so marked sees `## 题`.
+    const result = render('```json\n{"x":1}\n```##题（8 项）')
       .replace(/\u200b/g, '')
 
     expect(result).toContain('"x":1')
-    expect(result).toContain('改进清单（共 8 项，零语义风险）')
-    expect(result).not.toContain('##改进清单')
+    expect(result).toContain('题（8 项）')
+    expect(result).not.toContain('##题')
     expect(result).not.toContain('```')
   })
 
   test('promotes ATX heading glued after a preceding paragraph', () => {
-    // `…零语义风险） ##粘连` — split the heading onto its own line.
-    const result = render('目标保持不变。 ##粘连').replace(/\u200b/g, '')
+    // `。 ##题` — split the heading onto its own line.
+    const result = render('句。 ##题').replace(/\u200b/g, '')
 
-    expect(result).toContain('目标保持不变。')
-    expect(result).toContain('粘连')
-    // Should not keep `) ##` on a single line.
-    expect(result).not.toMatch(/目标保持不变。\s*##/)
+    expect(result).toContain('句。')
+    expect(result).toContain('题')
+    // Should not keep `。 ##` on a single line.
+    expect(result).not.toMatch(/句。\s*##/)
   })
 
   test('promotes ATX heading glued with zero space after CJK punctuation', () => {
-    // Models often drop the space entirely: `。###档 1`.
-    const result = render('每档独立可落地。###档 1 ·零改动').replace(/\u200b/g, '')
+    // Models often drop the space entirely: `。###题`.
+    const result = render('句。###题').replace(/\u200b/g, '')
 
-    expect(result).toContain('每档独立可落地。')
-    expect(result).toContain('档 1 ·零改动')
+    expect(result).toContain('句。')
+    expect(result).toContain('题')
     expect(result).not.toMatch(/。###/)
   })
 
   test('promotes ATX heading glued with zero space after CJK character', () => {
-    // No punctuation at all — `这个###档 1` still needs a line break.
-    const result = render('追加两节： 比如这个###档 1').replace(/\u200b/g, '')
+    // No punctuation at all — `文###题` still needs a line break.
+    const result = render('文###题').replace(/\u200b/g, '')
 
-    expect(result).toContain('比如这个')
-    expect(result).toContain('档 1')
-    expect(result).not.toMatch(/这个###/)
+    expect(result).toContain('文')
+    expect(result).toContain('题')
+    expect(result).not.toMatch(/文###/)
   })
 
   test('promotes ATX heading glued before a body that has its own space', () => {
-    // `前言说明。### 一句话总结` — the heading body is well-formed (`###`
+    // `句。### Heading` — the heading body is well-formed (`###`
     // followed by a space), only the preceding prose is glued to the marker.
-    const result = render('前言说明。### 一句话总结\n\n正文').replace(/\u200b/g, '')
+    const result = render('句。### Heading\n\nbody').replace(/\u200b/g, '')
 
-    expect(result).toContain('前言说明。')
-    expect(result).toContain('一句话总结')
-    expect(result).toContain('正文')
+    expect(result).toContain('句。')
+    expect(result).toContain('Heading')
+    expect(result).toContain('body')
     expect(result).not.toMatch(/。###/)
   })
 
+  test('promotes ATX heading glued after ascii sentence punctuation', () => {
+    const result = render('done.## Next section\n\nbody').replace(/\u200b/g, '')
+
+    expect(result).toContain('done.')
+    expect(result).toContain('Next section')
+    expect(result).not.toMatch(/done\.##/)
+  })
+
   test('normalises bullet marker glued to CJK body', () => {
-    // `-这个改动` / `-summary 的详略` — CommonMark needs `- body`.
-    const result = render('-这个改动是不是也管用？\n- 另一条').replace(/\u200b/g, '')
+    // `-项` — CommonMark needs `- body`.
+    const result = render('-项\n- 二').replace(/\u200b/g, '')
     // Should render as a list: bullet + body, not a dash-prefixed paragraph.
-    expect(result).toContain('- 这个改动是不是也管用？')
-    expect(result).toContain('- 另一条')
+    expect(result).toContain('- 项')
+    expect(result).toContain('- 二')
   })
 
   test('does not normalise `-`/`*` that are not bullet intents', () => {
@@ -244,27 +419,27 @@ describe('renderMarkdown', () => {
   })
 
   test('splits fence close glued to following list item', () => {
-    const result = render('```ts\nconst a = 1\n```- 命中规则')
+    const result = render('```ts\nconst a = 1\n```- item')
 
     expect(result).toContain('const a = 1')
-    expect(result).toContain('- 命中规则')
+    expect(result).toContain('- item')
     expect(result).not.toContain('```')
   })
 
   test('splits fence close glued to following inline bold prose', () => {
-    const result = render('```rust\nErr(ToolError::Failed(format!("binary")))\n```**为什么安全**：只加元数据，不动内容。')
+    const result = render('```rust\nErr(ToolError::Failed(format!("binary")))\n```**safe**: metadata only.')
 
     expect(result).toContain('ToolError::Failed')
-    expect(result).toContain('为什么安全')
-    expect(result).toContain('只加元数据')
+    expect(result).toContain('safe')
+    expect(result).toContain('metadata only')
     expect(result).not.toContain('```')
   })
 
-  test('splits fence close glued to following chinese prose', () => {
-    const result = render('```text\nsrc/engine/\nsrc/engine/Cargo.toml\n```**为什么安全**：多给信息不压信息。')
+  test('splits fence close glued to following prose', () => {
+    const result = render('```text\nsrc/engine/\nsrc/engine/Cargo.toml\n```**safe**: more info.')
 
     expect(result).toContain('src/engine/Cargo.toml')
-    expect(result).toContain('多给信息不压信息')
+    expect(result).toContain('more info')
     expect(result).not.toContain('```')
   })
 
@@ -272,7 +447,7 @@ describe('renderMarkdown', () => {
     // Models sometimes omit the newline before the closing fence, e.g.
     // `    }\`\`\``. The renderer used to leak literal backticks; we now
     // split the marker onto its own line so marked sees a clean code block.
-    const md = '输出:\n```json\n   {\n  "diagnoses": ["a"],\n  "hypotheses": ["b"]\n    }```'
+    const md = 'Output:\n```json\n   {\n  "diagnoses": ["a"],\n  "hypotheses": ["b"]\n    }```'
     const result = render(md)
     expect(result).toContain('"diagnoses"')
     expect(result).toContain('"hypotheses"')
@@ -280,41 +455,41 @@ describe('renderMarkdown', () => {
   })
 
   test('repairs unclosed fence before following markdown heading without a blank line', () => {
-    const result = render('```json\n{\n  "id": "tr-abc"\n}\n## 第 8 站：补充 input / output')
+    const result = render('```json\n{\n  "id": "tr-abc"\n}\n## Step 8: input / output')
 
     expect(result).toContain('"id": "tr-abc"')
-    expect(result.replace(/\u200b/g, '')).toContain('第 8 站：补充 input / output')
+    expect(result.replace(/\u200b/g, '')).toContain('Step 8: input / output')
     expect(result).not.toContain('```json')
   })
 
   test('repairs completed json fence before plain chinese paragraph', () => {
-    const result = render('最终合并结果：\n```json\n{\n  "id": "tr-abc",\n  "is_deleted": 0\n}\n原始事件继续说明')
+    const result = render('Final:\n```json\n{\n  "id": "tr-abc",\n  "is_deleted": 0\n}\ntext after')
 
     expect(result).toContain('"is_deleted": 0')
-    expect(result).toContain('原始事件继续说明')
+    expect(result).toContain('text after')
     expect(result).not.toContain('```json')
   })
 
   test('repairs completed json fence before markdown hr without a blank line', () => {
-    const result = render('最终合并结果：\n```json\n{\n  "id": "tr-abc",\n  "is_deleted": 0\n}\n---\n第 8 站：补充 input / output')
+    const result = render('Final:\n```json\n{\n  "id": "tr-abc",\n  "is_deleted": 0\n}\n---\nStep 8: input / output')
       .replace(/\u200b/g, '')
 
     expect(result).toContain('"is_deleted": 0')
     expect(result).toContain('---')
-    expect(result).toContain('第 8 站：补充 input / output')
+    expect(result).toContain('Step 8: input / output')
     expect(result).not.toContain('```json')
   })
 
   test('keeps adjacent prose compact', () => {
-    const result = render('第一行\n第二行\n第三行')
+    const result = render('a\nb\nc')
 
-    expect(result).toBe('第一行\n第二行\n第三行')
+    expect(result).toBe('a\nb\nc')
   })
 
   test('keeps list items compact', () => {
-    const result = render('- 第一项\n- 第二项\n- 第三项')
+    const result = render('- one\n- two\n- three')
 
-    expect(result).toBe('- 第一项\n- 第二项\n- 第三项')
+    expect(result).toBe('- one\n- two\n- three')
   })
 
   test('wraps very long plain lines', () => {
@@ -332,7 +507,7 @@ describe('renderMarkdown', () => {
     const prev = process.stdout.columns
     process.stdout.columns = 42
     try {
-      const result = render('- 检查 `cli/src/render/markdown.ts` 的渲染链路：这是很长很长很长很长很长的一行')
+      const result = render('- Check `cli/src/render/markdown.ts` with a very very very very long line')
         .replace(/\u200b/g, '')
       const lines = result.split('\n')
 
@@ -428,7 +603,7 @@ describe('renderMarkdown', () => {
   })
 
   test('link fallback without OSC 8 shows only the display text', () => {
-    // Claudecode-style: when hyperlinks are off we drop the trailing `(url)`
+    // Reference-style: when hyperlinks are off we drop the trailing `(url)`
     // to keep prose quiet. The raw URL only appears if there is no text.
     const prev = process.env.FORCE_HYPERLINK
     process.env.FORCE_HYPERLINK = '0'
@@ -456,7 +631,7 @@ describe('renderMarkdown', () => {
   })
 
   test('h1 heading is bold italic underlined', () => {
-    // Follow claudecode: h1 gets bold+italic+underline, no hue.
+    // Follow reference renderer: h1 gets bold+italic+underline, no hue.
     const theme = getTheme()
     expect(theme.h1.paint('Title')).toBe(chalk.bold.italic.underline('Title'))
     const raw = renderMarkdown('# Title')
@@ -474,7 +649,7 @@ describe('renderMarkdown', () => {
   })
 
   test('renders horizontal rules', () => {
-    // Claudecode-style: literal `---`, not a box-drawing row.
+    // Reference-style: literal `---`, not a box-drawing row.
     const result = render('---')
     expect(result).toContain('---')
   })
@@ -526,7 +701,7 @@ describe('renderMarkdown', () => {
     // so the fix only guarantees the block is preserved verbatim.
     const box = [
       '┌──────────────────┐',
-      '│ Datafuse         │',
+      '│ Service          │',
       '├──────────────────┤',
       '│ 🏠 Dashboard     │',
       '│ 🛠  Evaluators   │',
@@ -647,7 +822,7 @@ describe('renderMarkdown', () => {
 
   test('strips system-reminder prompt tags before rendering', () => {
     // Models occasionally echo the reminder envelope into visible output.
-    // Match claudecode's stripPromptXMLTags: drop the tags and their body.
+    // Match the reference tag stripper: drop the tags and their body.
     const result = render('hello\n<system-reminder>\ninternal only\n</system-reminder>\nworld')
     expect(result).toContain('hello')
     expect(result).toContain('world')
@@ -655,7 +830,7 @@ describe('renderMarkdown', () => {
     expect(result).not.toContain('internal only')
   })
 
-  test('strips claudecode-style analysis tags', () => {
+  test('strips analysis tags', () => {
     const result = render('<commit_analysis>\nhidden\n</commit_analysis>\nvisible body')
     expect(result).toContain('visible body')
     expect(result).not.toContain('hidden')

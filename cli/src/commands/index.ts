@@ -18,6 +18,7 @@ export const COMMANDS: SlashCommand[] = [
   { name: '/history', description: 'Show recent messages with seq numbers', usage: '/history [count]', handler: 'builtin' },
   { name: '/model', description: 'Show or change model', usage: '/model [name]', handler: 'builtin' },
   { name: '/plan', description: 'Enter planning mode', handler: 'builtin' },
+  { name: '/harden', description: 'Stress-test current changes or a plan', usage: '/harden [subject]', handler: 'builtin' },
   { name: '/skill', description: 'Manage skills', usage: '/skill [list | install <source> | remove <name>]', handler: 'builtin' },
   { name: '/clear', description: 'Clear session context', handler: 'builtin' },
 ]

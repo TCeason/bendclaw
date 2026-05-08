@@ -39,6 +39,12 @@ describe('resolveCommand', () => {
     expect(result).toEqual({ kind: 'resolved', name: '/model', args: 'gpt-4o' })
   })
 
+  test('resolves /harden command', () => {
+    const result = resolveCommand('/harden plan')
+    expect(result).toEqual({ kind: 'resolved', name: '/harden', args: 'plan' })
+    expect(isSlashCommand('/harden')).toBe(true)
+  })
+
   test('resolves aliases', () => {
     const result = resolveCommand('/q')
     expect(result).toEqual({ kind: 'resolved', name: '/exit', args: '' })

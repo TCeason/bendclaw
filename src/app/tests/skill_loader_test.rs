@@ -155,6 +155,20 @@ fn builtin_review_skill_loaded() {
 }
 
 #[test]
+fn builtin_harden_skill_loaded() -> Result<(), Box<dyn std::error::Error>> {
+    let empty: Vec<std::path::PathBuf> = vec![];
+    let specs = load_skills(&empty)?;
+    let harden = match specs.iter().find(|s| s.name == "harden") {
+        Some(skill) => skill,
+        None => return Err("builtin harden skill should be present".into()),
+    };
+    assert!(!harden.description.is_empty());
+    assert!(harden.instructions.contains("# Harden"));
+    assert!(harden.base_dir.as_os_str().is_empty());
+    Ok(())
+}
+
+#[test]
 fn fs_skill_overrides_builtin() {
     let tmp = TempDir::new().unwrap();
     create_skill(tmp.path(), "review", "Custom review");
@@ -166,4 +180,18 @@ fn fs_skill_overrides_builtin() {
         !review.base_dir.as_os_str().is_empty(),
         "fs skill should have a base_dir"
     );
+}
+
+#[test]
+fn filesystem_skill_error_does_not_drop_builtins() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    let skill_dir = tmp.path().join("bad");
+    fs::create_dir_all(&skill_dir)?;
+    fs::write(skill_dir.join("SKILL.md"), "No frontmatter here.")?;
+
+    let specs = load_skills(&[tmp.path().to_path_buf()])?;
+    assert!(specs.iter().any(|s| s.name == "review"));
+    assert!(specs.iter().any(|s| s.name == "harden"));
+    assert!(specs.iter().all(|s| s.name != "bad"));
+    Ok(())
 }

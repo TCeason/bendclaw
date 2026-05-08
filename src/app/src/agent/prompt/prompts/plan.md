@@ -54,6 +54,24 @@ src/
 - **Files** — reference existing functions and utilities to reuse, with file paths
 - **Verification** — how to test the changes end-to-end
 
+### Self-audit before converging
+
+Before declaring the plan ready, run one pass of adversarial review on your own
+plan. Do not ask "am I 100% confident" — that question has no grounded answer.
+Instead, enumerate concrete loopholes:
+
+- Edge cases the plan doesn't handle (empty input, concurrency, partial failure,
+  migration from existing state).
+- Assumptions about code or behavior you haven't actually read.
+- Integration points that bypass existing conventions in the codebase.
+- Verification steps that wouldn't actually catch a regression.
+
+For each loophole, either update the plan, or note it explicitly as accepted
+risk. Stop when remaining loopholes are fixed or acknowledged — not when the
+plan "feels" solid. Do not invent extra fallbacks, normalizers, or abstractions
+just to appear thorough; a missing loophole is a real issue, a speculative one
+is noise.
+
 ### When to Converge
 
 The plan is ready when it covers: what to change, which files to modify, what

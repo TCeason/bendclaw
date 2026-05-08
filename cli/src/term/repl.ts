@@ -1056,6 +1056,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
     } else if (name === '/env') {
       handleEnvCommand(args)
+    } else if (name === '/harden') {
+      const subject = buildHardenPrompt(args)
+      commitLines(buildUserMessage(text.trim()))
+      runQuery(subject)
     } else if (name === '/skill') {
       await handleSkillCommand(args)
     } else if (name === '/update') {
@@ -1135,6 +1139,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }).catch((err: any) => {
       commitLines([{ id: 'sys-r-err', kind: 'system', text: chalk.red(`  Failed to list sessions: ${err?.message ?? err}`) }])
     })
+  }
+
+  function buildHardenPrompt(args: string): string {
+    const subject = args.trim()
+    if (!subject || subject === 'changes') {
+      return 'harden current git changes'
+    }
+    if (subject === 'plan') {
+      return 'harden the current plan'
+    }
+    return `harden this strategy: ${subject}`
   }
 
   function handleEnvCommand(args: string) {

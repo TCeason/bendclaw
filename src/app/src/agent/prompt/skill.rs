@@ -14,10 +14,16 @@ struct BuiltinDef {
     content: &'static str,
 }
 
-const BUILTINS: &[BuiltinDef] = &[BuiltinDef {
-    name: "review",
-    content: include_str!("prompts/review.md"),
-}];
+const BUILTINS: &[BuiltinDef] = &[
+    BuiltinDef {
+        name: "review",
+        content: include_str!("prompts/review.md"),
+    },
+    BuiltinDef {
+        name: "harden",
+        content: include_str!("prompts/harden.md"),
+    },
+];
 
 /// Parse builtin skill definitions into `SkillSpec` values.
 /// Returns specs with an empty `base_dir` (no filesystem path).
@@ -66,15 +72,23 @@ pub fn load_skills(dirs: &[impl AsRef<Path>]) -> Result<Vec<SkillSpec>, SkillLoa
         .map(|s| (s.name.clone(), s))
         .collect();
 
-    // Filesystem skills override builtins with the same name
+    // Filesystem skills override builtins with the same name.
+    // Invalid user-installed skills should not disable builtin skills for the
+    // whole run; keep filesystem-only loading strict via `load_fs_skills`.
     for dir in dirs {
         let dir = dir.as_ref();
         if !dir.exists() {
             continue;
         }
-        let specs = load_skills_from_dir(dir)?;
-        for spec in specs {
-            by_name.insert(spec.name.clone(), spec);
+        match load_skills_from_dir(dir) {
+            Ok(specs) => {
+                for spec in specs {
+                    by_name.insert(spec.name.clone(), spec);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("failed to load skills from {}: {e}", dir.display());
+            }
         }
     }
 

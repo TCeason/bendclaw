@@ -23,6 +23,13 @@ describe('slash command completion', () => {
     expect(result).toBeNull()
   })
 
+  test('completes /ha to /harden', () => {
+    const result = complete('/ha', 3)
+    expect(result).not.toBeNull()
+    expect(result!.replacement).toBe('/harden ')
+    expect(result!.candidates).toEqual(['/harden'])
+  })
+
   test('returns null when past the command word', () => {
     const result = complete('/model gpt', 10)
     expect(result).toBeNull()
