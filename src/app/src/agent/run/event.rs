@@ -83,6 +83,13 @@ pub enum RunEventPayload {
         #[serde(default)]
         context_window: usize,
     },
+    LlmCallRetry {
+        turn: usize,
+        attempt: usize,
+        max_retries: usize,
+        delay_ms: u64,
+        error: String,
+    },
     LlmCallCompleted {
         turn: usize,
         attempt: usize,
@@ -176,6 +183,7 @@ impl RunEventPayload {
             Self::ToolProgress { .. } => "tool_progress",
             Self::ToolFinished { .. } => "tool_finished",
             Self::LlmCallStarted { .. } => "llm_call_started",
+            Self::LlmCallRetry { .. } => "llm_call_retry",
             Self::LlmCallCompleted { .. } => "llm_call_completed",
             Self::ContextCompactionStarted { .. } => "context_compaction_started",
             Self::ContextCompactionCompleted { .. } => "context_compaction_completed",

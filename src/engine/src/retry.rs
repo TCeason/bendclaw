@@ -13,7 +13,7 @@ use crate::provider::ProviderError;
 /// Controls *how many* times and *how long* to wait between retries.
 /// Use [`RetryPolicy::disabled()`] to fail immediately on any error.
 ///
-/// Internal backoff parameters (1 s initial, 2× multiplier, 30 s cap,
+/// Internal backoff parameters (2 s initial, 2× multiplier, 30 s cap,
 /// ±20 % jitter) are intentionally not exposed — callers express intent
 /// via [`new()`](RetryPolicy::new) and the
 /// implementation is free to evolve.
@@ -24,12 +24,12 @@ pub struct RetryPolicy {
 
 impl Default for RetryPolicy {
     fn default() -> Self {
-        Self { max_retries: 3 }
+        Self { max_retries: 10 }
     }
 }
 
 // Internal backoff constants.
-const INITIAL_DELAY_MS: f64 = 1000.0;
+const INITIAL_DELAY_MS: f64 = 2000.0;
 const BACKOFF_MULTIPLIER: f64 = 2.0;
 const MAX_DELAY_MS: f64 = 30_000.0;
 

@@ -166,6 +166,45 @@ fn run_event_round_trip_tool_finished() {
 }
 
 #[test]
+fn run_event_round_trip_llm_call_retry() -> Result<(), Box<dyn std::error::Error>> {
+    let event = RunEvent::new(
+        "run-1".into(),
+        "sess-1".into(),
+        1,
+        RunEventPayload::LlmCallRetry {
+            turn: 1,
+            attempt: 2,
+            max_retries: 3,
+            delay_ms: 2100,
+            error: "tls handshake eof".into(),
+        },
+    );
+    let json = serde_json::to_string(&event)?;
+    let parsed: serde_json::Value = serde_json::from_str(&json)?;
+    assert_eq!(parsed["kind"], "llm_call_retry");
+    assert_eq!(parsed["payload"]["attempt"], 2);
+    assert_eq!(parsed["payload"]["delay_ms"], 2100);
+
+    let deserialized: RunEvent = serde_json::from_str(&json)?;
+    if let RunEventPayload::LlmCallRetry {
+        attempt,
+        max_retries,
+        delay_ms,
+        error,
+        ..
+    } = &deserialized.payload
+    {
+        assert_eq!(*attempt, 2);
+        assert_eq!(*max_retries, 3);
+        assert_eq!(*delay_ms, 2100);
+        assert_eq!(error, "tls handshake eof");
+    } else {
+        panic!("wrong variant");
+    }
+    Ok(())
+}
+
+#[test]
 fn run_event_round_trip_run_finished() {
     let event = RunEvent::new(
         "run-1".into(),

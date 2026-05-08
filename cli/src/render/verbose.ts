@@ -117,6 +117,19 @@ export function formatLlmCallStarted(data: Record<string, unknown>): string {
   return `[LLM] ● ${model}${turnStr} · ${msgCount} msgs${msgBreakdown}${retryStr}${injectedStr}\n${detailLines.join('\n')}`
 }
 
+export function formatLlmCallRetry(data: Record<string, unknown>): string {
+  const attempt = (data.attempt as number) ?? 0
+  const maxRetries = (data.max_retries as number) ?? 0
+  const delayMs = (data.retry_delay_ms as number) ?? (data.delay_ms as number) ?? 0
+  const error = (data.error as string) ?? ''
+  const seconds = Math.max(0, Math.round(delayMs / 1000))
+  const unit = seconds === 1 ? 'second' : 'seconds'
+  const attemptStr = maxRetries > 0 ? ` · attempt ${attempt}/${maxRetries}` : ` · attempt ${attempt}`
+  const lines = [`[LLM] ↻ retrying in ${seconds} ${unit}${attemptStr}`]
+  if (error) lines.push(`  ${error}`)
+  return lines.join('\n')
+}
+
 // ---------------------------------------------------------------------------
 // LLM call completed
 // ---------------------------------------------------------------------------

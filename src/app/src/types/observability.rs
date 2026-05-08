@@ -31,6 +31,15 @@ pub struct LlmCallStartedStats {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmCallRetryStats {
+    pub turn: usize,
+    pub attempt: usize,
+    pub max_retries: usize,
+    pub delay_ms: u64,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmCallCompletedStats {
     pub turn: usize,
     pub attempt: usize,
@@ -129,6 +138,7 @@ pub struct RunFinishedStats {
 #[derive(Debug, Clone)]
 pub enum TranscriptStats {
     LlmCallStarted(LlmCallStartedStats),
+    LlmCallRetry(LlmCallRetryStats),
     LlmCallCompleted(LlmCallCompletedStats),
     ToolFinished(ToolFinishedStats),
     ContextCompactionStarted(ContextCompactionStartedStats),
@@ -141,6 +151,7 @@ impl TranscriptStats {
     pub fn kind_str(&self) -> &'static str {
         match self {
             Self::LlmCallStarted(_) => "llm_call_started",
+            Self::LlmCallRetry(_) => "llm_call_retry",
             Self::LlmCallCompleted(_) => "llm_call_completed",
             Self::ToolFinished(_) => "tool_finished",
             Self::ContextCompactionStarted(_) => "context_compaction_started",
@@ -154,6 +165,7 @@ impl TranscriptStats {
         let kind = self.kind_str().to_string();
         let data = match self {
             Self::LlmCallStarted(s) => serde_json::to_value(s),
+            Self::LlmCallRetry(s) => serde_json::to_value(s),
             Self::LlmCallCompleted(s) => serde_json::to_value(s),
             Self::ToolFinished(s) => serde_json::to_value(s),
             Self::ContextCompactionStarted(s) => serde_json::to_value(s),
@@ -176,6 +188,9 @@ impl TranscriptStats {
             "llm_call_started" => serde_json::from_value(data.clone())
                 .ok()
                 .map(Self::LlmCallStarted),
+            "llm_call_retry" => serde_json::from_value(data.clone())
+                .ok()
+                .map(Self::LlmCallRetry),
             "llm_call_completed" => serde_json::from_value(data.clone())
                 .ok()
                 .map(Self::LlmCallCompleted),

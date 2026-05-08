@@ -82,6 +82,20 @@ fn classify_rate_limit_with_retry_after() {
 }
 
 #[test]
+fn retry_policy_default_matches_claude_style_backoff_budget() {
+    let policy = evotengine::RetryPolicy::default();
+    assert_eq!(policy.max_retries(), 10);
+
+    let first = policy.delay_for_attempt(1).as_millis();
+    let second = policy.delay_for_attempt(2).as_millis();
+    let late = policy.delay_for_attempt(10).as_millis();
+
+    assert!((1600..=2400).contains(&first));
+    assert!((3200..=4800).contains(&second));
+    assert!((24000..=36000).contains(&late));
+}
+
+#[test]
 fn classify_auth_error() {
     let err = ProviderError::classify(401, "invalid api key", None);
     assert!(matches!(err, ProviderError::Auth(_)));

@@ -353,6 +353,7 @@ impl TestOutput {
                 AgentEvent::ProgressMessage { .. } => "ProgressMessage",
                 AgentEvent::Error { .. } => "Error",
                 AgentEvent::LlmCallStart { .. } => "LlmCallStart",
+                AgentEvent::LlmCallRetry { .. } => "LlmCallRetry",
                 AgentEvent::LlmCallEnd { .. } => "LlmCallEnd",
                 AgentEvent::ContextCompactionStart { .. } => "CompactionStart",
                 AgentEvent::ContextCompactionEnd { .. } => "CompactionEnd",

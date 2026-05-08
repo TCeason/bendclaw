@@ -282,6 +282,14 @@ pub(super) async fn stream_assistant_response(
                 let delay = e
                     .retry_after()
                     .unwrap_or_else(|| retry.delay_for_attempt(attempt));
+                tx.send(AgentEvent::LlmCallRetry {
+                    turn,
+                    attempt,
+                    max_retries: retry.max_retries(),
+                    delay_ms: delay.as_millis() as u64,
+                    error: e.to_string(),
+                })
+                .ok();
                 tokio::time::sleep(delay).await;
                 continue;
             }

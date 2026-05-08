@@ -91,6 +91,7 @@ impl StatsAggregator {
                 self.system_prompt_tokens = s.system_prompt_tokens;
                 self.last_model = Some(s.model.clone());
             }
+            TranscriptStats::LlmCallRetry(_) => {}
             TranscriptStats::LlmCallCompleted(s) => {
                 if let Some(m) = &s.metrics {
                     self.llm_metrics.push(m.clone());

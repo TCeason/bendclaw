@@ -67,7 +67,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
   let suppressToolStarted = false
   let suppressToolFinished = false
 
-  if (prev.appState.verbose && (event.kind === 'llm_call_started' || event.kind === 'context_compaction_started')) {
+  if (prev.appState.verbose && (event.kind === 'llm_call_started' || event.kind === 'llm_call_retry' || event.kind === 'api_retry' || event.kind === 'context_compaction_started')) {
     const flushed = flushStreaming(state)
     state = { ...flushed.state, toolProgress: '', lastToolProgress: '' }
     commitLines.push(...flushed.lines)

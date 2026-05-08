@@ -125,6 +125,24 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
                 }
             }));
         }
+        RunEventPayload::LlmCallRetry {
+            turn,
+            attempt,
+            max_retries,
+            delay_ms,
+            error,
+        } => {
+            events.push(json!({
+                "type": "api_retry",
+                "data": {
+                    "turn": turn,
+                    "attempt": attempt,
+                    "max_retries": max_retries,
+                    "retry_delay_ms": delay_ms,
+                    "error": error,
+                }
+            }));
+        }
         RunEventPayload::LlmCallCompleted {
             turn,
             attempt,

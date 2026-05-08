@@ -3,7 +3,7 @@
  */
 
 import type { RunEvent } from '../../native/index.js'
-import { formatLlmCallStarted, formatLlmCallCompleted, formatCompactionStarted, formatCompactionCompleted } from '../../render/verbose.js'
+import { formatLlmCallStarted, formatLlmCallRetry, formatLlmCallCompleted, formatCompactionStarted, formatCompactionCompleted } from '../../render/verbose.js'
 import { emptyRunStats, type AppState } from './state.js'
 import type { CompactRecord, MessageStats, UIMessage, UIToolCall } from './types.js'
 
@@ -221,6 +221,15 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
           systemPromptTokens: sysTok + toolDefTok,
         },
         verboseEvents: [...state.verboseEvents, { kind: 'llm_call', text }],
+      }
+    }
+
+    case 'llm_call_retry':
+    case 'api_retry': {
+      const text = formatLlmCallRetry(p)
+      return {
+        ...state,
+        verboseEvents: [...state.verboseEvents, { kind: 'llm_retry', text }],
       }
     }
 

@@ -11,7 +11,7 @@ import {
   findSafeSplitPoint,
   resetIdCounter,
 } from '../src/render/output.js'
-import { formatLlmCallStarted, formatLlmCallCompleted, formatCompactionStarted, formatCompactionCompleted } from '../src/render/verbose.js'
+import { formatLlmCallStarted, formatLlmCallRetry, formatLlmCallCompleted, formatCompactionStarted, formatCompactionCompleted } from '../src/render/verbose.js'
 
 beforeEach(() => {
   resetIdCounter()
@@ -174,6 +174,17 @@ describe('buildVerboseEvent', () => {
     expect(text).toContain('  ctx       ')
     expect(text).toContain('  tok       sys 8k · user 12k · asst 4k · tool 18k')
     expect(text).toContain('            read_file  ~8k')
+  })
+
+  test('formats llm retry with wait time and attempt', () => {
+    const text = formatLlmCallRetry({
+      attempt: 2,
+      max_retries: 3,
+      retry_delay_ms: 2100,
+      error: 'tls handshake eof',
+    })
+    expect(text).toContain('[LLM] ↻ retrying in 2 seconds · attempt 2/3')
+    expect(text).toContain('  tls handshake eof')
   })
 
   test('formats llm completed with status symbol and timing details', () => {

@@ -376,6 +376,24 @@ describe('term stream machine', () => {
     expect(update.state.lastToolProgress).toBe('')
   })
 
+  test('llm retry emits visible backoff line in verbose mode', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    const state = createStreamMachineState({ ...appState, verbose: true }, spinner)
+    const update = reduceRunEvent(state, {
+      kind: 'llm_call_retry',
+      payload: {
+        attempt: 1,
+        max_retries: 3,
+        retry_delay_ms: 1200,
+        error: 'network error',
+      },
+    }, { termRows: 24 })
+    const text = update.commitLines.map(l => l.text).join('\n')
+    expect(text).toContain('[LLM] ↻ retrying in 1 second · attempt 1/3')
+    expect(text).toContain('network error')
+  })
+
   test('flushStreaming emits pending assistant text', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()

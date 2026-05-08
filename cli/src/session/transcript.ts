@@ -4,7 +4,7 @@
  */
 
 import type { UIMessage, UIToolCall, VerboseEvent, RunStats } from '../term/app/types.js'
-import { formatLlmCallStarted, formatLlmCallCompleted, formatCompactionStarted, formatCompactionCompleted } from '../render/verbose.js'
+import { formatLlmCallStarted, formatLlmCallRetry, formatLlmCallCompleted, formatCompactionStarted, formatCompactionCompleted } from '../render/verbose.js'
 
 // ---------------------------------------------------------------------------
 // Raw transcript item shapes (from Rust TranscriptItem serialization)
@@ -153,6 +153,10 @@ function handleStats(item: RawItem, acc: RunAcc): void {
   switch (kind) {
     case 'llm_call_started':
       acc.verboseEvents.push({ kind: 'llm_call', text: formatLlmCallStarted(data) })
+      break
+    case 'llm_call_retry':
+    case 'api_retry':
+      acc.verboseEvents.push({ kind: 'llm_retry', text: formatLlmCallRetry(data) })
       break
     case 'llm_call_completed': {
       const result = formatLlmCallCompleted(data)

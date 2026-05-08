@@ -32,6 +32,31 @@ fn stats_llm_call_started_round_trip() {
 }
 
 #[test]
+fn stats_llm_call_retry_round_trip() {
+    let stats = TranscriptStats::LlmCallRetry(LlmCallRetryStats {
+        turn: 1,
+        attempt: 2,
+        max_retries: 3,
+        delay_ms: 2100,
+        error: "tls handshake eof".into(),
+    });
+    let item = stats.to_item();
+    assert!(matches!(&item, TranscriptItem::Stats { kind, .. } if kind == "llm_call_retry"));
+
+    let decoded = TranscriptStats::try_from_item(&item);
+    assert!(decoded.is_some());
+    if let Some(TranscriptStats::LlmCallRetry(s)) = decoded {
+        assert_eq!(s.turn, 1);
+        assert_eq!(s.attempt, 2);
+        assert_eq!(s.max_retries, 3);
+        assert_eq!(s.delay_ms, 2100);
+        assert_eq!(s.error, "tls handshake eof");
+    } else {
+        panic!("expected LlmCallRetry");
+    }
+}
+
+#[test]
 fn stats_llm_call_completed_round_trip() {
     let stats = TranscriptStats::LlmCallCompleted(LlmCallCompletedStats {
         turn: 2,

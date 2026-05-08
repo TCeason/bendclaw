@@ -729,6 +729,28 @@ async fn test_retry_on_rate_limit_succeeds() {
     // Should have succeeded after 2 failures + 1 success
     assert_eq!(new_messages.len(), 2); // user + assistant
     let events = collect_events(rx);
+    let retry_events: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::LlmCallRetry {
+                attempt,
+                max_retries,
+                delay_ms,
+                error,
+                ..
+            } => Some((*attempt, *max_retries, *delay_ms, error.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(retry_events.len(), 2);
+    assert_eq!(retry_events[0].0, 1);
+    assert_eq!(retry_events[0].1, 3);
+    assert_eq!(retry_events[0].2, 10);
+    assert_eq!(retry_events[0].3, "Rate limited, retry after 10ms");
+    assert_eq!(retry_events[1].0, 2);
+    assert_eq!(retry_events[1].1, 3);
+    assert_eq!(retry_events[1].2, 10);
+    assert_eq!(retry_events[1].3, "Rate limited, retry after 10ms");
     assert!(events
         .iter()
         .any(|e| matches!(e, AgentEvent::AgentEnd { .. })));

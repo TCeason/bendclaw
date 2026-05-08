@@ -27,6 +27,7 @@ use crate::types::ContextCompactionCompletedStats;
 use crate::types::ContextCompactionStartedStats;
 use crate::types::LlmCallCompletedStats;
 use crate::types::LlmCallMetrics;
+use crate::types::LlmCallRetryStats;
 use crate::types::LlmCallStartedStats;
 use crate::types::RunFinishedStats;
 use crate::types::ToolFinishedStats;
@@ -350,6 +351,7 @@ fn drive_otel(
                 content,
             );
         }
+        evot_engine::AgentEvent::LlmCallRetry { .. } => {}
         evot_engine::AgentEvent::ToolExecutionStart {
             tool_call_id,
             tool_name,
@@ -620,6 +622,34 @@ fn map_agent_event(
                     message_stats,
                     budget_tokens: budget.budget_tokens,
                     context_window: budget.context_window,
+                }),
+            ]
+        }
+
+        evot_engine::AgentEvent::LlmCallRetry {
+            turn,
+            attempt,
+            max_retries,
+            delay_ms,
+            error,
+        } => {
+            vec![
+                RuntimeEvent::Transcript(
+                    TranscriptStats::LlmCallRetry(LlmCallRetryStats {
+                        turn: *turn,
+                        attempt: *attempt,
+                        max_retries: *max_retries,
+                        delay_ms: *delay_ms,
+                        error: error.clone(),
+                    })
+                    .to_item(),
+                ),
+                RuntimeEvent::Public(RunEventPayload::LlmCallRetry {
+                    turn: *turn,
+                    attempt: *attempt,
+                    max_retries: *max_retries,
+                    delay_ms: *delay_ms,
+                    error: error.clone(),
                 }),
             ]
         }

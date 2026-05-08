@@ -104,6 +104,13 @@ pub enum AgentEvent {
         /// OTel: server port extracted from base_url.
         server_port: Option<u16>,
     },
+    LlmCallRetry {
+        turn: usize,
+        attempt: usize,
+        max_retries: usize,
+        delay_ms: u64,
+        error: String,
+    },
     LlmCallEnd {
         turn: usize,
         attempt: usize,

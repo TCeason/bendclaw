@@ -432,6 +432,14 @@ fn aggregator_from_items_batch_ingest() {
             tool_definition_tokens: 0,
         })
         .to_item(),
+        TranscriptStats::LlmCallRetry(LlmCallRetryStats {
+            turn: 1,
+            attempt: 1,
+            max_retries: 3,
+            delay_ms: 1000,
+            error: "network".into(),
+        })
+        .to_item(),
         TranscriptStats::LlmCallCompleted(LlmCallCompletedStats {
             turn: 1,
             attempt: 0,
