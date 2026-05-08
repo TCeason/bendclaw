@@ -259,7 +259,23 @@ function looksLikeCodeCompleted(lines: string[], lang: string | null): boolean {
   return false
 }
 
+function isShellFenceLanguage(lang: string | null): boolean {
+  return !!lang && /^(bash|sh|zsh|shell|fish|nu|nushell)$/i.test(lang)
+}
+
+function startsWithCjkProse(line: string): boolean {
+  return /^(?:\*\*|__)?[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff]/.test(line.trimStart())
+}
+
+function shouldCloseShellFenceBeforeProse(line: string, codeLines: string[], lang: string | null): boolean {
+  if (!isShellFenceLanguage(lang)) return false
+  if (codeLines.length === 0 || codeLines[codeLines.length - 1]!.trim() !== '') return false
+  if (!startsWithCjkProse(line)) return false
+  return looksLikePlainMarkdownAfterCode(line)
+}
+
 function shouldCloseOpenFenceBeforeLine(line: string, codeLines: string[], lang: string | null): boolean {
+  if (shouldCloseShellFenceBeforeProse(line, codeLines, lang)) return true
   if (!looksLikeStructuredCode(codeLines, lang)) return false
   if (looksLikeMarkdownBoundary(line)) return looksLikeCodeCompleted(codeLines, lang)
   if (!looksLikeCodeCompleted(codeLines, lang)) return false

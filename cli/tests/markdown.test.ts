@@ -539,6 +539,35 @@ describe('renderMarkdown', () => {
     expect(result).not.toContain('```json')
   })
 
+  test('repairs shell fence before following CJK prose and keeps later text fence visible', () => {
+    const md = [
+      '```bash',
+      'cd cli && bun test tests/term-commands.test.ts tests/repl-control.test.ts tests/outputLines.test.ts tests/viewmodel-output.test.ts tests/term-stream.test.ts',
+      '',
+      '重点：   ⏺ 当前目录有 12 个文件...',
+      '',
+      '所有 verbose 块塌成一行 dim gutter，工具调用主导视觉。',
+      '',
+      '**Verbose 模式（ctrl+o 切换）**',
+      '',
+      '```text',
+      '❯ 帮我列一下目录',
+      '',
+      '  ⋮ llm · claude-sonnet-4 · turn 1 · 3 msgs',
+      '  ⋮ ctx  ████░░░░░░░░░░░░░░░░  ~12k / 200k · 6%',
+      '  ⋮ tok  sys 8k · user 2k · tool 2k',
+    ].join('\n')
+
+    const result = render(md)
+
+    expect(result).toMatch(/^cd cli && bun test tests\/term-commands\.test\.ts/m)
+    expect(result).toContain('重点：')
+    expect(result).toContain('Verbose 模式（ctrl+o 切换）')
+    expect(result).toMatch(/^❯ 帮我列一下目录$/m)
+    expect(result).toMatch(/^ {2}⋮ llm · claude-sonnet-4 · turn 1 · 3 msgs$/m)
+    expect(result).not.toContain('```text')
+  })
+
   test('keeps adjacent prose compact', () => {
     const result = render('a\nb\nc')
 
