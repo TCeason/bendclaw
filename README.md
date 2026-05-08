@@ -104,6 +104,7 @@ EVOT_LLM_ANTHROPIC_MODEL=claude-opus-4-6
 evot                                          # interactive REPL
 evot -p "summarize today's PRs"               # one-shot task
 evot -p "review this" -f ./src/main.rs        # attach file context
+evot -p "continue work" -c                   # continue latest session in cwd
 evot -p "continue work" -r my-session         # resume or create session
 ```
 
@@ -114,6 +115,7 @@ evot -p "continue work" -r my-session         # resume or create session
 |------|-------------|
 | `-p, --prompt` | Run a single prompt and exit |
 | `-f, --file <path>` | Attach file/directory context |
+| `-c, --continue` | Continue the latest session in the current directory |
 | `-r, --resume <id>` | Resume or create a session |
 | `--model <model>` | Override the configured model |
 | `--verbose` | Enable info-level logging |
