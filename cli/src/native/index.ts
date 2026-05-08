@@ -189,6 +189,11 @@ export class Agent {
     return { kind: 'run', stream: new QueryStream(run) }
   }
 
+  async createSession(): Promise<SessionMeta> {
+    const json = await this.raw.createSession()
+    return JSON.parse(json) as SessionMeta
+  }
+
   async listSessions(limit?: number): Promise<SessionMeta[]> {
     const json = await this.raw.listSessions(limit ?? null)
     return JSON.parse(json) as SessionMeta[]

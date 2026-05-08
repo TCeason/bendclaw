@@ -41,6 +41,18 @@ describe('term commands', () => {
     expect(result.systemLines.length).toBe(0)
   })
 
+  test('/new starts a new persisted session', () => {
+    const result = handleSlashCommand('/new', mkCtx())
+    expect(result.newSession).toBe(true)
+    expect(result.clearContext).toBeUndefined()
+  })
+
+  test('/clear only clears local context', () => {
+    const result = handleSlashCommand('/clear', mkCtx())
+    expect(result.clearContext).toBe(true)
+    expect(result.newSession).toBeUndefined()
+  })
+
   test('/resume defers to async handler', () => {
     const result = handleSlashCommand('/resume abc', mkCtx())
     // /resume is now handled asynchronously in handleSlashInput

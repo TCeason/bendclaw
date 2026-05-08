@@ -19,6 +19,7 @@ export interface CommandResult {
   overlay?: OverlayState
   clearScreen?: boolean
   clearContext?: boolean
+  newSession?: boolean
   exit?: boolean
   resumeSession?: SessionMeta
   systemLines: OutputLine[]
@@ -60,6 +61,8 @@ export function handleSlashCommand(text: string, ctx: CommandContext): CommandRe
     }
 
     case '/new':
+      return { ...baseResult(ctx), newSession: true }
+
     case '/clear':
       return { ...baseResult(ctx), clearContext: true }
 

@@ -397,6 +397,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const { messagesToOutputLines } = await import('../render/output.js')
       const { transcriptToMessages } = await import('../session/transcript.js')
       const messages = transcriptToMessages(transcript as any)
+      renderer.clearScreen()
+      compactLines.length = 0
+      expandedLines.length = 0
       commitLines(messagesToOutputLines(messages))
       commitLines([
         { id: 'sys-resumed-gap', kind: 'system', text: '' },
@@ -992,13 +995,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       expandedLines.length = 0
     }
     if (result.clearContext) {
-      // Abort any in-flight streaming
+      // Abort any in-flight streaming and clear local context view without switching sessions.
       if (isLoading && streamRef) {
         streamRef.abort(); streamRef = null; isLoading = false
         flushStreamContent()
         streamMachine = null; stopSpinner()
       }
-      // Start a fresh session — clear screen, re-render banner, reset state
       sessionId = null
       appState = { ...createInitialState(appState.model, agent.cwd), verbose: appState.verbose }
       refreshGitInfo(agent.cwd)
@@ -1010,6 +1012,26 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       renderer.appendScroll(banner)
       const match = findPreviousSession(preloadedSessions, agent.cwd)
       if (match) commitLines([previousSessionLine(match)])
+    }
+    if (result.newSession) {
+      // Abort any in-flight streaming
+      if (isLoading && streamRef) {
+        streamRef.abort(); streamRef = null; isLoading = false
+        flushStreamContent()
+        streamMachine = null; stopSpinner()
+      }
+      // Start and bind a fresh empty session so /resume can see it immediately.
+      const newSession = await agent.createSession()
+      sessionId = newSession.session_id
+      appState = { ...createInitialState(newSession.model || appState.model, agent.cwd), verbose: appState.verbose, sessionId }
+      refreshGitInfo(agent.cwd)
+      renderer.clearScreen()
+      compactLines.length = 0
+      expandedLines.length = 0
+      try { preloadedSessions = await agent.listSessions(20) } catch { preloadedSessions = [newSession] }
+      const banner = currentBannerText()
+      renderer.appendScroll(banner)
+      commitLines([{ id: 'sys-new-session', kind: 'system', text: chalk.dim(`  new session ${sessionId.slice(0, 8)}`) }])
     }
     if (result.exit) { cleanup(); process.exit(0) }
     if (result.resumeSession) await resumeSession(result.resumeSession)

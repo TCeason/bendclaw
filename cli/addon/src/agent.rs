@@ -146,6 +146,17 @@ impl NapiAgent {
     }
 
     #[napi]
+    pub async fn create_session(&self) -> Result<String> {
+        let meta = self
+            .agent
+            .create_session("repl")
+            .await
+            .map_err(|e| Error::from_reason(format!("create session: {e}")))?;
+
+        serde_json::to_string(&meta).map_err(|e| Error::from_reason(format!("serialize: {e}")))
+    }
+
+    #[napi]
     pub async fn list_sessions(&self, limit: Option<u32>) -> Result<String> {
         let sessions = self
             .agent

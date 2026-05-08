@@ -4,6 +4,7 @@ export interface NapiAgent {
   model: string
   readonly cwd: string
   query(prompt: string, sessionId?: string | null, toolMode?: string | null, contentJson?: string | null): Promise<NapiSubmitOutcome>
+  createSession(): Promise<string>
   listSessions(limit?: number | null): Promise<string>
   deleteSession(sessionId: string): Promise<boolean>
   loadTranscript(sessionId: string): Promise<string>

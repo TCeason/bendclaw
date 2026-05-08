@@ -1,5 +1,7 @@
 use evot::agent::session::Session;
 use evot::agent::*;
+use evot::conf::Protocol;
+use evot::conf::ProviderProfile;
 use evot::conf::StorageConfig;
 use evot::storage::open_storage;
 use tempfile::TempDir;
@@ -34,6 +36,41 @@ async fn new_session_creates_meta_and_empty_transcript() -> TestResult {
         .join("sess-100")
         .join("session.json")
         .exists());
+    Ok(())
+}
+
+#[tokio::test]
+async fn agent_create_session_persists_empty_repl_session() -> TestResult {
+    let dir = TempDir::new()?;
+    let mut config = evot::conf::Config::new(dir.path().to_path_buf());
+    config.providers.insert("test".into(), ProviderProfile {
+        protocol: Protocol::OpenAi,
+        api_key: "test-key".into(),
+        base_url: "http://localhost".into(),
+        models: vec!["test-model".into()],
+        compat_caps: Default::default(),
+    });
+    config.llm.provider = "test".into();
+
+    let agent = Agent::new(&config, "/work")?;
+    let meta = agent.create_session("repl").await?;
+
+    assert_eq!(meta.cwd, "/work");
+    assert_eq!(meta.model, "test-model");
+    assert_eq!(meta.source, "repl");
+    assert_eq!(meta.turns, 0);
+
+    let loaded = agent
+        .find_session(&meta.session_id)
+        .await?
+        .ok_or_else(|| missing_error("missing created session"))?;
+    assert_eq!(loaded.session_id, meta.session_id);
+
+    let transcript = agent.load_transcript(&meta.session_id).await?;
+    assert!(transcript.is_empty());
+
+    let sessions = agent.list_sessions(0).await?;
+    assert!(sessions.iter().any(|s| s.session_id == meta.session_id));
     Ok(())
 }
 

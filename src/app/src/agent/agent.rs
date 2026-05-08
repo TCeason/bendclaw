@@ -564,6 +564,15 @@ impl Agent {
         storage.delete_session(session_id).await
     }
 
+    pub async fn create_session(&self, source: &str) -> Result<SessionMeta> {
+        let model = self.llm.read().model.clone();
+        let storage = self.storage.read().clone();
+        let id = crate::types::new_id();
+        let session =
+            Session::new_with_source(id, self.cwd.clone(), model, source, storage).await?;
+        Ok(session.meta().await)
+    }
+
     pub async fn load_transcript(&self, id: &str) -> Result<Vec<TranscriptItem>> {
         let storage = self.storage.read().clone();
         match Session::open(id, storage).await? {
