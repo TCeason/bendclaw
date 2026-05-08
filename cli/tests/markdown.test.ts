@@ -36,6 +36,13 @@ describe('renderMarkdown', () => {
     expect(result).toContain('Subtitle')
   })
 
+  test('renders indented h3 headings', () => {
+    const result = render('2 行 verbose，工具调用是视觉主体。\n\n  ### 改造后（ctrl+o 展开，和改造前等价）\n\n完全等于改造前的 11 行 — 数据一字不差。')
+
+    expect(result).toContain('改造后（ctrl+o 展开，和改造前等价）')
+    expect(result).not.toContain('### 改造后')
+  })
+
   test('renders bold text', () => {
     const result = render('this is **bold** text')
     expect(result).toContain('bold')

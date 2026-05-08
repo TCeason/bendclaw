@@ -2,7 +2,7 @@ import { describe, test, expect } from 'bun:test'
 import { mkdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { resolveCommand, isSlashCommand } from '../src/commands/index.js'
+import { resolveCommand, isSlashCommand, buildHardenPrompt } from '../src/commands/index.js'
 import { skillListFromDirs } from '../src/commands/skill.js'
 
 describe('isSlashCommand', () => {
@@ -82,6 +82,29 @@ describe('resolveCommand', () => {
   })
 })
 
+describe('buildHardenPrompt', () => {
+  test('defaults to previous plan or conclusion with git diff as supporting context', () => {
+    const prompt = buildHardenPrompt('')
+
+    expect(prompt).toContain('immediately preceding conversation context')
+    expect(prompt).toContain('If local git changes exist')
+    expect(prompt).toContain('supporting context')
+    expect(prompt).toContain('do not default to hardening the diff')
+    expect(prompt).not.toBe('harden current git changes')
+  })
+
+  test('keeps explicit changes subject focused on git changes', () => {
+    expect(buildHardenPrompt('changes')).toBe('harden current git changes')
+  })
+
+  test('keeps explicit plan subject focused on previous context', () => {
+    expect(buildHardenPrompt('plan')).toContain('immediately preceding conversation context')
+  })
+
+  test('passes custom subject through as strategy', () => {
+    expect(buildHardenPrompt('retry rollout')).toBe('harden this strategy: retry rollout')
+  })
+})
 describe('skillListFromDirs', () => {
   test('lists skills from evotai and claude directories', () => {
     const home = join(tmpdir(), `evot-skill-list-${Date.now()}`)

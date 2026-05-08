@@ -18,7 +18,7 @@ export const COMMANDS: SlashCommand[] = [
   { name: '/history', description: 'Show recent messages with seq numbers', usage: '/history [count]', handler: 'builtin' },
   { name: '/model', description: 'Show or change model', usage: '/model [name]', handler: 'builtin' },
   { name: '/plan', description: 'Enter planning mode', handler: 'builtin' },
-  { name: '/harden', description: 'Stress-test current changes or a plan', usage: '/harden [subject]', handler: 'builtin' },
+  { name: '/harden', description: 'Stress-test the previous plan or current changes', usage: '/harden [plan | changes | subject]', handler: 'builtin' },
   { name: '/skill', description: 'Manage skills', usage: '/skill [list | install <source> | remove <name>]', handler: 'builtin' },
   { name: '/clear', description: 'Clear session context', handler: 'builtin' },
 ]
@@ -41,6 +41,20 @@ export type ResolvedCommand =
   | { kind: 'resolved'; name: string; args: string }
   | { kind: 'ambiguous'; candidates: string[] }
   | { kind: 'unknown' }
+
+export function buildHardenPrompt(args: string): string {
+  const subject = args.trim()
+  if (!subject || subject === 'plan') {
+    return [
+      'harden the plan, strategy, or conclusion from the immediately preceding conversation context.',
+      'If local git changes exist, inspect them only as supporting context and combine any relevant findings with the hardening pass; do not default to hardening the diff as the primary subject.',
+    ].join(' ')
+  }
+  if (subject === 'changes') {
+    return 'harden current git changes'
+  }
+  return `harden this strategy: ${subject}`
+}
 
 /**
  * Resolve a slash command input to a known command.

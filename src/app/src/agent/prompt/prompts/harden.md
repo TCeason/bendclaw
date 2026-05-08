@@ -11,9 +11,10 @@ accepted.
 
 ## When to Use
 
-- User asks you to validate, pressure-test, or "poke holes in" a plan before
-  coding starts.
-- User asks you to harden current git changes before commit or merge. In this
+- User asks you to validate, pressure-test, or "poke holes in" a plan,
+  strategy, or conclusion before coding starts. For a bare `/harden`, treat the
+  immediately preceding plan/conclusion as the primary subject.
+- User explicitly asks you to harden current git changes before commit or merge. In this
   case, inspect the diff to infer the implementation strategy, then harden that
   strategy.
 - You have a proposed approach but suspect gaps and want a disciplined pass
@@ -28,11 +29,17 @@ accepted.
 
 The subject of hardening is one of:
 
-- the currently-proposed plan or strategy from the previous turn, plan mode, or
-  the user's message;
-- the current git changes, when the user asks to harden local work. Inspect
-  staged and unstaged diffs, summarize the inferred strategy, then harden that
-  strategy rather than reviewing every changed line.
+- the currently-proposed plan, strategy, or conclusion from the previous turn,
+  plan mode, or the user's message. This is the default subject for a bare
+  `/harden` request;
+- the current git changes, when the user explicitly asks to harden local work
+  (for example, `harden changes` or `/harden changes`). Inspect staged and
+  unstaged diffs, summarize the inferred strategy, then harden that strategy
+  rather than reviewing every changed line;
+- when a plan/strategy/conclusion is available and local git changes also exist,
+  use the diff only as supporting context. Combine relevant findings from the
+  diff with the hardening pass, but do not switch the primary subject from the
+  previous conclusion to the diff.
 
 If no plan, strategy, or git change is available, ask the user to state the
 subject in one paragraph before starting.

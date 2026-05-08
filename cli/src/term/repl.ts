@@ -10,7 +10,7 @@ import { createInitialState, type AppState } from './app/state.js'
 import type { AskUserRequest } from './app/types.js'
 import { HistoryManager, parseHistoryItems } from '../session/history.js'
 import { ScreenLog } from '../session/screen-log.js'
-import { isSlashCommand, resolveCommand } from '../commands/index.js'
+import { isSlashCommand, resolveCommand, buildHardenPrompt } from '../commands/index.js'
 import { renderBanner } from './banner.js'
 import {
   buildOutputBlocks,
@@ -1139,17 +1139,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }).catch((err: any) => {
       commitLines([{ id: 'sys-r-err', kind: 'system', text: chalk.red(`  Failed to list sessions: ${err?.message ?? err}`) }])
     })
-  }
-
-  function buildHardenPrompt(args: string): string {
-    const subject = args.trim()
-    if (!subject || subject === 'changes') {
-      return 'harden current git changes'
-    }
-    if (subject === 'plan') {
-      return 'harden the current plan'
-    }
-    return `harden this strategy: ${subject}`
   }
 
   function handleEnvCommand(args: string) {
