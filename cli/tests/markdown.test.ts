@@ -964,6 +964,29 @@ describe('renderMarkdown', () => {
     expect(result).toContain('┘')
   })
 
+  test('repairs table rows glued to separators and following prose', () => {
+    const md = [
+      'Storage cost estimate',
+      '',
+      '| Storage | Unit price | Monthly cost |',
+      '|---|---|---|| OSS Standard | 0.148 CNY/GB/month | ~30 CNY |',
+      '| OSS Infrequent Access | 0.08 CNY/GB/month | ~16 CNY |',
+      '| OSS Archive | 0.033 CNY/GB/month | ~7 CNY |Archive is cheapest for write-once, rarely-read compliance retention.',
+    ].join('\n')
+
+    const result = render(md).replace(/\u200b/g, '')
+    expect(result).toContain('┌')
+    expect(result).toContain('└')
+    expect(result).toContain('OSS Standard')
+    expect(result).toContain('0.148')
+    expect(result).toContain('CNY/GB/month')
+    expect(result).toContain('~7')
+    expect(result).toContain('CNY')
+    expect(result).toContain('Archive is cheapest for write-once, rarely-read compliance retention.')
+    expect(result).not.toContain('|---|---|---|')
+    expect(result).not.toContain('|Archive is')
+  })
+
   test('renders <br> inside table cells as a line break', () => {
     // GFM tables don't support literal newlines in a cell, so models use
     // `<br>` to force bullet-style line breaks. Previously our renderer

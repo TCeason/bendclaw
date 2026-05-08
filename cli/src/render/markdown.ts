@@ -546,6 +546,137 @@ function normalizeGluedHeadings(text: string): string {
 // Markdown table separator line — exclude from box-drawing preservation.
 const MD_TABLE_SEP_RE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/
 
+function parseMarkdownTableSeparator(line: string): number | null {
+  const trimmed = line.trim()
+  if (!MD_TABLE_SEP_RE.test(trimmed)) return null
+  const cells = trimmed
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+  if (cells.length < 2) return null
+  return cells.every(cell => /^\s*:?-+:?\s*$/.test(cell)) ? cells.length : null
+}
+
+function unescapedPipeIndexes(line: string): number[] {
+  const indexes: number[] = []
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] !== '|') continue
+    let slashCount = 0
+    for (let j = i - 1; j >= 0 && line[j] === '\\'; j--) slashCount++
+    if (slashCount % 2 === 0) indexes.push(i)
+  }
+  return indexes
+}
+
+function splitGluedTableSeparatorLine(line: string): string[] | null {
+  let searchFrom = 0
+  while (searchFrom < line.length) {
+    const doublePipe = line.indexOf('||', searchFrom)
+    if (doublePipe < 0) return null
+    const separator = line.slice(0, doublePipe + 1)
+    const rest = line.slice(doublePipe + 1)
+    if (parseMarkdownTableSeparator(separator) !== null && rest.trimStart().startsWith('|')) {
+      return [separator, rest]
+    }
+    searchFrom = doublePipe + 1
+  }
+  return null
+}
+
+function splitGluedTableRowTrailingText(line: string, columnCount: number): string[] | null {
+  if (!line.trimStart().startsWith('|')) return null
+  const pipeIndexes = unescapedPipeIndexes(line)
+  const finalPipe = pipeIndexes[columnCount]
+  if (finalPipe === undefined) return null
+
+  const row = line.slice(0, finalPipe + 1)
+  const trailing = line.slice(finalPipe + 1)
+  if (!/^\S/.test(trailing) || trailing.startsWith('|')) return null
+  return [row, trailing]
+}
+
+function normalizeGluedTables(text: string): string {
+  const expandedLines: string[] = []
+  let inFence = false
+  let fenceMarker = ''
+
+  for (const line of text.split('\n')) {
+    const fenceMatch = CODE_FENCE_RE.exec(line)
+    if (fenceMatch) {
+      const marker = fenceMatch[2]!
+      if (!inFence) {
+        inFence = true
+        fenceMarker = marker
+      } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
+        inFence = false
+        fenceMarker = ''
+      }
+      expandedLines.push(line)
+      continue
+    }
+
+    if (inFence) {
+      expandedLines.push(line)
+      continue
+    }
+
+    const split = splitGluedTableSeparatorLine(line)
+    if (split) {
+      expandedLines.push(...split)
+    } else {
+      expandedLines.push(line)
+    }
+  }
+
+  const out: string[] = []
+  let activeTableColumns: number | null = null
+  inFence = false
+  fenceMarker = ''
+
+  for (const line of expandedLines) {
+    const fenceMatch = CODE_FENCE_RE.exec(line)
+    if (fenceMatch) {
+      const marker = fenceMatch[2]!
+      if (!inFence) {
+        inFence = true
+        fenceMarker = marker
+      } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
+        inFence = false
+        fenceMarker = ''
+      }
+      activeTableColumns = null
+      out.push(line)
+      continue
+    }
+
+    if (inFence) {
+      out.push(line)
+      continue
+    }
+
+    const separatorColumns = parseMarkdownTableSeparator(line)
+    if (separatorColumns !== null && out.length > 0 && out[out.length - 1]!.includes('|')) {
+      activeTableColumns = separatorColumns
+      out.push(line)
+      continue
+    }
+
+    if (activeTableColumns !== null) {
+      const split = splitGluedTableRowTrailingText(line, activeTableColumns)
+      if (split) {
+        out.push(split[0]!, '', split[1]!)
+        activeTableColumns = null
+        continue
+      }
+      if (!line.trimStart().startsWith('|')) activeTableColumns = null
+    }
+
+    out.push(line)
+  }
+
+  return out.join('\n')
+}
+
 interface TreeTrailingComment {
   lineIndex: number
   prefix: string
@@ -782,7 +913,7 @@ function splitGluedFenceOpens(text: string): string {
 
 function prepareMarkdownForLex(text: string): string {
   return repairUnclosedFences(
-    normalizeHrLines(preserveBoxDrawingBlocks(normalizeGluedHeadings(splitGluedFenceOpens(text)))),
+    normalizeHrLines(preserveBoxDrawingBlocks(normalizeGluedTables(normalizeGluedHeadings(splitGluedFenceOpens(text))))),
     true,
   )
 }
