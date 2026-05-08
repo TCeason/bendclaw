@@ -546,6 +546,109 @@ function normalizeGluedHeadings(text: string): string {
 // Markdown table separator line — exclude from box-drawing preservation.
 const MD_TABLE_SEP_RE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/
 
+interface TreeTrailingComment {
+  lineIndex: number
+  prefix: string
+  comment: string
+  prefixWidth: number
+}
+
+function findTreeTrailingComment(line: string): Omit<TreeTrailingComment, 'lineIndex' | 'prefixWidth'> | null {
+  const hashIndex = line.indexOf('#')
+  if (hashIndex < 0) return null
+  if (hashIndex === 0 || !/\s/.test(line[hashIndex - 1]!)) return null
+
+  const prefix = line.slice(0, hashIndex).trimEnd()
+  if (!prefix.trim()) return null
+  if (!BOX_DRAWING_RE.test(prefix)) return null
+
+  return {
+    prefix,
+    comment: line.slice(hashIndex).trimEnd(),
+  }
+}
+
+function alignTreeTrailingComments(lines: string[]): string[] {
+  const comments: TreeTrailingComment[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const comment = findTreeTrailingComment(lines[i]!)
+    if (!comment) continue
+    comments.push({
+      ...comment,
+      lineIndex: i,
+      prefixWidth: terminalDisplayWidth(comment.prefix),
+    })
+  }
+
+  if (comments.length < 2) return lines
+
+  const aligned = [...lines]
+  const targetEndColumn = Math.max(
+    ...comments.map(comment => comment.prefixWidth + 2 + terminalDisplayWidth(comment.comment)),
+    terminalContentWidth(),
+  )
+  for (const comment of comments) {
+    const padding = ' '.repeat(Math.max(2, targetEndColumn - comment.prefixWidth - terminalDisplayWidth(comment.comment)))
+    aligned[comment.lineIndex] = `${comment.prefix}${padding}${comment.comment}`
+  }
+  return aligned
+}
+
+function alignTreeBlocks(lines: string[]): string[] {
+  const normalized = normalizeTreeSiblingIndent(lines)
+  const out = [...normalized]
+  let blockStart: number | null = null
+  let blockHasComment = false
+
+  function flush(until: number): void {
+    if (blockStart === null) return
+    const block = normalized.slice(blockStart, until)
+    if (blockHasComment) {
+      out.splice(blockStart, block.length, ...alignTreeTrailingComments(block))
+    }
+    blockStart = null
+    blockHasComment = false
+  }
+
+  for (let i = 0; i < normalized.length; i++) {
+    const line = normalized[i]!
+    const isTreeLine = BOX_DRAWING_RE.test(line)
+      || /^\s*$/.test(line)
+      || /^\s*[├└]──\s+/.test(line)
+      || (blockStart !== null && /^\s*[^\s].*/.test(line))
+
+    if (!isTreeLine) {
+      flush(i)
+      continue
+    }
+
+    if (blockStart === null) blockStart = i
+    if (findTreeTrailingComment(line)) blockHasComment = true
+  }
+  flush(normalized.length)
+  return out
+}
+
+function normalizeTreeSiblingIndent(lines: string[]): string[] {
+  const normalized = [...lines]
+  for (let i = 0; i < normalized.length - 1; i++) {
+    const parent = /^(\s*)└──\s+.*\/$/.exec(normalized[i]!)
+    if (!parent) continue
+
+    const childIndent = `${parent[1]!}    `
+    for (let j = i + 1; j < normalized.length; j++) {
+      const line = normalized[j]!
+      if (!line.trim()) break
+      if (/^\s*[├└]──\s+/.test(line)) {
+        normalized[j] = line.replace(/^\s*(?=[├└]──\s+)/, childIndent)
+        continue
+      }
+      break
+    }
+  }
+  return normalized
+}
+
 /**
  * Preserve any paragraph that contains Unicode box-drawing characters
  * (U+2500–U+257F) by wrapping it in a fenced code block. This delegates
@@ -603,7 +706,7 @@ function preserveBoxDrawingBlocks(text: string): string {
     const isMdTable = block.some(l => MD_TABLE_SEP_RE.test(l))
     if (hasBoxDrawing && !isMdTable) {
       out.push('```text')
-      out.push(...block)
+      out.push(...alignTreeBlocks(block))
       out.push('```')
     } else {
       out.push(...block)
@@ -1479,8 +1582,51 @@ export function splitMarkdownBlocks(text: string): MarkdownSplit {
   }
 }
 
+function streamingTreeTailCommitPoint(text: string): number | null {
+  if (!BOX_DRAWING_RE.test(text) || text.endsWith('\n\n')) return null
+  const lines = text.split('\n')
+  let lastNonEmptyIndex = lines.length - 1
+  while (lastNonEmptyIndex >= 0 && lines[lastNonEmptyIndex]!.trim() === '') {
+    lastNonEmptyIndex--
+  }
+  if (lastNonEmptyIndex < 0) return null
+
+  let tailLineStart = lastNonEmptyIndex
+  while (tailLineStart > 0 && lines[tailLineStart - 1]!.trim() !== '') {
+    tailLineStart--
+  }
+  const tailLines = lines.slice(tailLineStart, lastNonEmptyIndex + 1)
+  if (!tailLooksLikeTreeBlock(tailLines)) return null
+  if (tailLineStart === 0) return 0
+
+  let offset = 0
+  for (let i = 0; i < tailLineStart; i++) {
+    offset += lines[i]!.length + 1
+  }
+  return offset
+}
+
+function tailLooksLikeTreeBlock(lines: string[]): boolean {
+  const meaningful = lines.filter(line => line.trim() !== '')
+  if (meaningful.length === 0) return false
+  const treeLineCount = meaningful.filter(looksLikeTreeLine).length
+  return treeLineCount > 0 && treeLineCount === meaningful.length
+}
+
+function looksLikeTreeLine(line: string): boolean {
+  const trimmed = line.trimStart()
+  return /^⏺\s+\S/.test(trimmed)
+    || /^[/~.][^\s]*/.test(trimmed)
+    || /^[│├└]\s*$/.test(trimmed)
+    || /^[│ ]*[├└]──\s+/.test(trimmed)
+    || /^[│ ]+│/.test(trimmed)
+}
+
 export function findStreamingCommitPoint(text: string): number {
   if (!text) return 0
+
+  const treeTailCommitPoint = streamingTreeTailCommitPoint(text)
+  if (treeTailCommitPoint !== null) return treeTailCommitPoint
 
   const repaired = repairUnclosedFences(text, false)
   if (repaired !== text) {

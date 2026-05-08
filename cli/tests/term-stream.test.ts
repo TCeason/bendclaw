@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import stringWidth from 'string-width'
 import { createSpinnerState } from '../src/term/spinner.js'
 import { createInitialState } from '../src/term/app/state.js'
 import { createStreamMachineState, reduceRunEvent, flushStreaming, buildToolStartedLines, buildToolFinishedLines } from '../src/term/app/stream.js'
@@ -99,6 +100,36 @@ describe('term stream machine', () => {
     // Final flush should be empty
     const final = flushStreaming(state)
     expect(final.lines.length).toBe(0)
+  })
+
+  test('streaming tree is committed as one block so comments align globally', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+    const allCommitted: string[] = []
+    const deltas = [
+      '⏺ /Users/bohu/github/evotai/evot\n',
+      '  ├── Cargo.toml     # Rust workspace root (engine/app/addon)\n',
+      '  ├── Cargo.lock\n',
+      '  │\n',
+      '  ├── src/      # Rust 核心代码\n',
+      '  │   ├── engine/              # evotengine — agent 运行时\n',
+      '\n要点：\n',
+    ]
+
+    for (const delta of deltas) {
+      const update = reduceRunEvent(state, {
+        kind: 'assistant_delta',
+        payload: { delta },
+      }, { termRows: 24 })
+      state = update.state
+      allCommitted.push(...update.commitLines.map(line => line.text))
+    }
+
+    const commentLines = allCommitted.filter(line => line.includes('#'))
+    expect(commentLines.length).toBe(3)
+    expect(new Set(commentLines.map(line => stringWidth(line))).size).toBe(1)
+    expect(state.streamingText).toBe('要点：\n')
   })
 
   test('verbose mode: no duplicate commits across llm_call_completed and assistant_completed', () => {

@@ -1,9 +1,10 @@
 import { describe, test, expect } from 'bun:test'
-import { renderMarkdown, formatToken } from '../src/render/markdown.js'
+import { renderMarkdown, formatToken, findStreamingCommitPoint } from '../src/render/markdown.js'
 import { getTheme } from '../src/render/theme.js'
 import chalk from 'chalk'
 import { marked, type Token } from 'marked'
 import stripAnsi from 'strip-ansi'
+import stringWidth from 'string-width'
 
 // Helper: render markdown and strip ANSI codes for assertion
 function render(md: string): string {
@@ -833,6 +834,118 @@ describe('renderMarkdown', () => {
       expect(rendered).toContain(line)
     }
     expect(rendered).not.toContain('```')
+  })
+
+  test('aligns trailing comments in tree-style directory listings', () => {
+    const prev = process.stdout.columns
+    process.stdout.columns = 120
+    try {
+      const tree = [
+        'Directory',
+        '',
+        '  cli/',
+        '  ├── src/',
+        '  │   ├── render/',
+        '  │   │   ├── verbose.ts      # [modify] 4 formatter 改为 { text, expandedText }',
+        '  │   │   └── output.ts                # [modify] buildRunSummary 紧凑化',
+        '  │   ├── term/',
+        '  │   │   └── app/',
+        '  │   │       ├── reducer.ts           # [modify] llm_started/compact_started 存 expandedText',
+        '  │   │       └── stream.ts            # [modify] 合并 started/completed 分支，统一 dual-commit',
+        '  │   └── session/',
+        '  │       └── transcript.ts       #[modify] 存储新字段，resume 兼容老会话',
+        '  └── tests/',
+        '  ├── outputLines.test.ts          # [modify] 断言 text 单行 + expandedText 详情',
+        '   └── term-stream.test.ts          # [modify] 4 种事件都产出 expandedCommitLines',
+      ].join('\n')
+      const rendered = stripAnsi(renderMarkdown(tree)).replace(/\u200b/g, '')
+      const commentEnds = rendered
+        .split('\n')
+        .filter(line => line.includes('modify]'))
+        .map(line => stringWidth(line))
+
+      expect(new Set(commentEnds).size).toBe(1)
+      expect(commentEnds[0]).toBeGreaterThanOrEqual(110)
+      expect(rendered).toContain('  │       └── transcript.ts')
+      expect(rendered).toContain('      ├── outputLines.test.ts')
+      expect(rendered).toContain('      └── term-stream.test.ts')
+    } finally {
+      process.stdout.columns = prev
+    }
+  })
+
+  test('right-aligns trailing comment ends in tree-style directory listings', () => {
+    const prev = process.stdout.columns
+    process.stdout.columns = 120
+    try {
+      const tree = [
+        '⏺ /Users/bohu/github/evotai/evot',
+        '  ├── Cargo.toml     # Rust workspace root (engine/app/addon)',
+        '  ├── Cargo.lock',
+        '  ├── Makefile          # make check/build/test 入口',
+        '  ├── README.md',
+        '  ├── CLAUDE.md     # 项目级 AI 指令',
+        '  ├── FEATURE_COMPARISON.md',
+        '  ├── install.sh                    # 安装脚本',
+        '  ├── rust-toolchain.toml',
+        '  ├── rustfmt.toml',
+        '  │',
+        '  ├── .github/workflows/  # CI 与发布流水线',
+        '  │   ├── ci.yml',
+        '  │   └── release.yml',
+        '  │',
+        '  ├── src/      # Rust 核心代码',
+        '  │   ├── engine/              # evotengine — agent 运行时',
+        '  │   │   ├── Cargo.toml',
+        '  │   │   └── src/',
+        '  │   │       ├── lib.rs   # 仅模块声明与 re-export',
+        '  │   │       ├── retry.rs       # 通用重试逻辑',
+        '  │   │   ├── agent/  # Agent 主体',
+        '  │   │ │   ├── agent.rs      #  Agent 结构与生命周期',
+        '  │   │       │   ├── handle.rs   #   外部控制句柄',
+        '  │   │       │   └── run.rs #   单次 run 驱动',
+        '  │   │       ├── context/          # 上下文管理',
+        '  │   │       │   ├── tokens.rs   #   token 计数',
+      ].join('\n')
+      const rendered = stripAnsi(renderMarkdown(tree)).replace(/\u200b/g, '')
+      const commentEnds = rendered
+        .split('\n')
+        .filter(line => line.includes('#'))
+        .map(line => stringWidth(line))
+
+      expect(new Set(commentEnds).size).toBe(1)
+      expect(commentEnds[0]).toBeGreaterThanOrEqual(116)
+    } finally {
+      process.stdout.columns = prev
+    }
+  })
+
+  test('keeps streaming tree blocks pending until the tree ends', () => {
+    const tree = [
+      '⏺ /Users/bohu/github/evotai/evot',
+      '  ├── Cargo.toml     # Rust workspace root (engine/app/addon)',
+      '  ├── Cargo.lock',
+      '  │',
+      '  ├── src/      # Rust 核心代码',
+      '  │   ├── engine/              # evotengine — agent 运行时',
+    ].join('\n')
+
+    expect(findStreamingCommitPoint(tree)).toBe(0)
+    expect(findStreamingCommitPoint(`intro\n\n${tree}`)).toBe('intro\n\n'.length)
+    expect(findStreamingCommitPoint(`${tree}\n\n要点：`)).toBeGreaterThan(0)
+  })
+
+  test('does not treat markdown tables containing box-drawing text as streaming tree tails', () => {
+    const table = [
+      '| Name | Shape |',
+      '| --- | --- |',
+      '| flow | │ box │ |',
+      '',
+      'next',
+    ].join('\n')
+
+    expect(findStreamingCommitPoint(table)).toBeGreaterThan(0)
+    expect(stripAnsi(renderMarkdown(table))).toContain('Shape')
   })
 
   test('renders tables with box-drawing characters', () => {
