@@ -15,9 +15,12 @@
 # Testing
 
 - All tests go in the crate's `tests/` directory, never inline
-- Rust: `cargo test`; TS: `cd cli && bun test`
+- Rust targeted tests: `cargo test -p <crate> <test-name>` or the narrowest relevant `cargo test` command
+- TS targeted tests: `cd cli && bun test <test-file>` for the changed area
+- Run full `cargo test` or full `cd cli && bun test` only when changes are broad or cross-cutting
 - Keep tests explicit and fast; focus on core logic
 
 # Pre-commit
 
-- Always run `make check` before committing
+- Before committing, run the relevant targeted tests for the files changed
+- Run `make check` before committing only when Rust code, shared build config, or cross-workspace behavior changed
