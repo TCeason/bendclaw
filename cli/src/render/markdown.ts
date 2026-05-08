@@ -751,6 +751,147 @@ function resolveLanguage(lang: string | undefined): string | undefined {
   return LANG_ALIASES[normalized] ?? normalized
 }
 
+type LineCommentMarker = '--' | '//' | '#'
+
+interface TrailingCodeComment {
+  lineIndex: number
+  prefix: string
+  comment: string
+  prefixWidth: number
+}
+
+const SQL_START_RE = /^(SELECT|CREATE|INSERT|UPDATE|DELETE|WITH|ALTER|DROP|MERGE|TRUNCATE)\b/i
+
+function looksLikeSqlCode(text: string): boolean {
+  const firstContentLine = text.split(EOL).find(line => line.trim())
+  return firstContentLine ? SQL_START_RE.test(firstContentLine.trimStart()) : false
+}
+
+function lineCommentMarkersForCode(lang: string, text: string): LineCommentMarker[] {
+  if (/^(sql|pgsql|plsql|mysql|sqlite|postgresql)$/.test(lang) || looksLikeSqlCode(text)) return ['--']
+  if (/^(javascript|js|typescript|ts|tsx|jsx|java|c|cpp|c\+\+|csharp|cs|go|rust|rs|swift|kotlin|scala|php|css|scss|less)$/.test(lang)) return ['//']
+  if (/^(bash|sh|zsh|fish|nu|nushell|python|py|ruby|rb|perl|pl|yaml|yml|toml|ini|dockerfile|makefile|make|env|dotenv|properties|conf)$/.test(lang)) return ['#']
+  return []
+}
+
+function findTrailingCodeComment(line: string, markers: LineCommentMarker[]): Omit<TrailingCodeComment, 'lineIndex' | 'prefixWidth'> | null {
+  let quote: string | null = null
+  let escaped = false
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!
+
+    if (quote) {
+      if (escaped) {
+        escaped = false
+      } else if (ch === '\\') {
+        escaped = true
+      } else if (ch === quote) {
+        if (line[i + 1] === quote) {
+          i++
+        } else {
+          quote = null
+        }
+      }
+      continue
+    }
+
+    if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch
+      continue
+    }
+
+    for (const marker of markers) {
+      if (!line.startsWith(marker, i)) continue
+      if (i === 0 || !/\s/.test(line[i - 1]!)) continue
+
+      const prefix = line.slice(0, i).trimEnd()
+      if (!prefix.trim()) continue
+
+      return {
+        prefix,
+        comment: line.slice(i).trimEnd(),
+      }
+    }
+  }
+
+  return null
+}
+
+function leadingWhitespace(line: string): string {
+  return /^\s*/.exec(line)?.[0] ?? ''
+}
+
+function lineIsStandaloneComment(line: string, markers: LineCommentMarker[]): boolean {
+  const trimmed = line.trimStart()
+  return markers.some(marker => trimmed.startsWith(marker))
+}
+
+function lineIsCodeForIndent(line: string, markers: LineCommentMarker[]): boolean {
+  return !!line.trim() && !lineIsStandaloneComment(line, markers)
+}
+
+function nearestCodeIndent(lines: string[], lineIndex: number, markers: LineCommentMarker[]): string | null {
+  for (let i = lineIndex + 1; i < lines.length; i++) {
+    if (!lines[i]!.trim()) continue
+    if (lineIsCodeForIndent(lines[i]!, markers)) return leadingWhitespace(lines[i]!)
+    break
+  }
+
+  for (let i = lineIndex - 1; i >= 0; i--) {
+    if (!lines[i]!.trim()) continue
+    if (lineIsCodeForIndent(lines[i]!, markers)) return leadingWhitespace(lines[i]!)
+    break
+  }
+
+  return null
+}
+
+function alignStandaloneCodeComments(lines: string[], markers: LineCommentMarker[]): boolean {
+  let changed = false
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!
+    if (!lineIsStandaloneComment(line, markers)) continue
+
+    const indent = nearestCodeIndent(lines, i, markers)
+    if (indent === null) continue
+    const aligned = `${indent}${line.trimStart()}`
+    if (aligned === line) continue
+    lines[i] = aligned
+    changed = true
+  }
+  return changed
+}
+
+function alignTrailingCodeComments(text: string, lang: string): string {
+  const markers = lineCommentMarkersForCode(lang, text)
+  if (markers.length === 0) return text
+
+  const lines = text.split(EOL)
+  const standaloneChanged = alignStandaloneCodeComments(lines, markers)
+
+  const comments: TrailingCodeComment[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const comment = findTrailingCodeComment(lines[i]!, markers)
+    if (!comment) continue
+    comments.push({
+      ...comment,
+      lineIndex: i,
+      prefixWidth: terminalDisplayWidth(comment.prefix),
+    })
+  }
+
+  if (comments.length < 2) return standaloneChanged ? lines.join(EOL) : text
+
+  const targetColumn = Math.max(...comments.map(comment => comment.prefixWidth)) + 2
+  for (const comment of comments) {
+    const padding = ' '.repeat(Math.max(2, targetColumn - comment.prefixWidth))
+    lines[comment.lineIndex] = `${comment.prefix}${padding}${comment.comment}`
+  }
+
+  return lines.join(EOL)
+}
+
 export function formatToken(
   token: Token,
   listDepth = 0,
@@ -774,11 +915,11 @@ export function formatToken(
     case 'code': {
       const text = token.text as string
       const lang = resolveLanguage((token as Tokens.Code).lang) ?? 'plaintext'
-      let highlighted = text
+      let highlighted = alignTrailingCodeComments(text, lang)
       if (highlighter) {
         try {
           if (highlighter.supportsLanguage(lang)) {
-            highlighted = highlighter.highlight(text, { language: lang })
+            highlighted = highlighter.highlight(highlighted, { language: lang })
           }
         } catch {
           // fallback to plain text

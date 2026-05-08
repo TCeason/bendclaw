@@ -83,6 +83,57 @@ describe('renderMarkdown', () => {
     expect(result).not.toContain('│')
   })
 
+  test('aligns trailing SQL comments in fenced code blocks', () => {
+    const prev = process.stdout.columns
+    process.stdout.columns = 100
+    try {
+      const md = [
+        '```sql',
+        'CREATE TABLE tracelake.events (',
+        '  id   STRING NOT NULL STATS_TRUNCATE_LEN 24,   -- 16 hex+ 裕量',
+        '  trace_id   STRING NOT NULL STATS_TRUNCATE_LEN 40,    -- 32 hex + 裕量',
+        '  parent_id  STRING DEFAULT \'\'STATS_TRUNCATE_LEN 24,',
+        '  session_id STRING DEFAULT \'\'STATS_TRUNCATE_LEN 32,   -- session-xxxxxxxxxxxx',
+        '  response_id     STRING DEFAULT \'\' STATS_TRUNCATE_LEN 48, -- "resp_" + 16 hex',
+        ') CLUSTER BY (start_time, trace_id);',
+        '```',
+      ].join('\n')
+      const result = render(md)
+      const commentColumns = result
+        .split('\n')
+        .filter(line => line.includes('--'))
+        .map(line => line.indexOf('--'))
+
+      expect(new Set(commentColumns).size).toBe(1)
+    } finally {
+      process.stdout.columns = prev
+    }
+  })
+
+  test('aligns standalone comments with nearby Python code indentation', () => {
+    const prev = process.stdout.columns
+    process.stdout.columns = 100
+    try {
+      const md = [
+        '```python',
+        'def generate_trace(profile: str, target_spans: int) -> Iterator[...]:',
+        '      trace_id = rand_hex(32)                 # 32 hex → 128-bit',
+        '      root_id = rand_hex(16)                  # 16 hex → 64-bit',
+        '      # span:',
+        '      "id":rand_hex(16),                      # 16 hex → 64-bit',
+        '     # session_id: 自定义，非 OTel',
+        '      session_id = f"session-{rand_hex(12)}"  # "session-xxxxxxxxxxxx" = 20 字符',
+        '```',
+      ].join('\n')
+      const result = render(md)
+
+      expect(result).toMatch(/^ {6}# span:$/m)
+      expect(result).toMatch(/^ {6}# session_id: 自定义，非 OTel$/m)
+    } finally {
+      process.stdout.columns = prev
+    }
+  })
+
   test('unlabelled fenced code blocks use plaintext instead of language guessing', () => {
     // Reference renderer passes `plaintext` when no fence info string is present.
     // Auto-detection would colour random words and make unlabelled snippets
