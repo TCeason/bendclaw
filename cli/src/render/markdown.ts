@@ -69,7 +69,7 @@ const CODE_FENCE_RE = /^( {0,3})(`{3,}|~{3,})(.*)$/
 // OR a non-hash, non-space character (glued form we still want to recognise,
 // e.g. `##改进清单`). Only classic ATX (`#{2,6}<non-space>`) is permitted in
 // the glued case so `#include`/`#1` don't collide.
-const MARKDOWN_BOUNDARY_RE = /^([ \t]{0,3})?(#{1,6}(?:\s|$)|#{2,6}(?=[^#\s])|(?:\*\*|__)|(?:[-*+]\s)|(?:\d+\.\s)|>\s|\|.*\||-{3,}\s*$)/
+const MARKDOWN_BOUNDARY_RE = /^(#{1,6}(?:\s|$)|#{2,6}(?=[^#\s])|(?:\*\*|__)|(?:[-*+]\s)|(?:\d+\.\s)|>\s|\|.*\||-{3,}\s*$)/
 const CODE_LIKE_START_RE = /^[\[{(}\]),;]|^\/\/|^#\s*include\b/
 const CODE_KEYWORD_RE = /^(return|if|else|for|while|switch|case|break|continue|try|catch|finally|throw|await|async|const|let|var|function|class|def|import|export|from|SELECT|CREATE|INSERT|UPDATE|DELETE|WITH|WHERE|ORDER|GROUP|LIMIT)\b/i
 const CODE_ASSIGNMENT_RE = /^[\w$.'"`-]+\s*[:=]/
