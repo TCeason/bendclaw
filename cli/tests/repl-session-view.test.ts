@@ -4,8 +4,8 @@ import type { SessionMeta } from '../src/native/index.js'
 
 describe('repl session view helpers', () => {
   const sessions: SessionMeta[] = [
-    { session_id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', title: 'cwd session', cwd: '/work', source: 'local' } as any,
-    { session_id: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb', title: 'other session', cwd: '/other' } as any,
+    { session_id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', title: 'cwd session', cwd: '/work', source: 'local', updated_at: '2026-01-02T00:00:00Z' } as any,
+    { session_id: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb', title: 'other session', cwd: '/other', updated_at: '2026-01-03T00:00:00Z' } as any,
   ]
 
   test('chooseBannerSessions prefers cwd sessions', () => {
@@ -16,8 +16,9 @@ describe('repl session view helpers', () => {
     expect(chooseBannerSessions(sessions, '/missing')).toEqual(sessions)
   })
 
-  test('findPreviousSession returns first cwd session', () => {
-    expect(findPreviousSession(sessions, '/work')).toBe(sessions[0])
+  test('findPreviousSession returns latest cwd session', () => {
+    const older = { session_id: 'cccccccc-3333-4333-8333-cccccccccccc', title: 'older cwd session', cwd: '/work', updated_at: '2026-01-01T00:00:00Z' } as any
+    expect(findPreviousSession([older, ...sessions], '/work')).toBe(sessions[0])
   })
 
   test('previousSessionLine formats source, title, and resume prefix', () => {

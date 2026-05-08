@@ -18,6 +18,13 @@ describe('parseArgs', () => {
     expect(opts.resume).toBe('sid-123')
   })
 
+  test('-c / --continue resumes the latest session', async () => {
+    const shortOpts = await parseArgs(['-p', 'hello', '-c'])
+    const longOpts = await parseArgs(['-p', 'hello', '--continue'])
+    expect(shortOpts.continueLatest).toBe(true)
+    expect(longOpts.continueLatest).toBe(true)
+  })
+
   test('files defaults to empty array', async () => {
     const opts = await parseArgs(['-p', 'hello'])
     expect(opts.files).toEqual([])

@@ -96,6 +96,7 @@ export interface ReplOptions {
   agent: Agent
   verbose?: boolean
   resumeSessionId?: string
+  continueLatest?: boolean
   serverPort?: number
   envFile?: string
 }
@@ -159,7 +160,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   try { configInfo = agent.configInfo() } catch {}
 
   let preloadedSessions: SessionMeta[] = []
-  try { preloadedSessions = await agent.listSessions(20) } catch {}
+  try { preloadedSessions = await agent.listSessions(opts.continueLatest ? 0 : 20) } catch {}
 
   // Git info (computed once at startup, refreshed on cwd change)
   let gitRepo: string | null = null
@@ -186,7 +187,16 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   renderer.appendScroll(bannerText)
   setTerminalTitle('✳')
 
-  if (opts.resumeSessionId) {
+  if (opts.continueLatest) {
+    const match = findPreviousSession(preloadedSessions, agent.cwd)
+    if (match) {
+      await resumeSession(match)
+    } else {
+      commitLines([{ id: 'sys-continue-err', kind: 'system', text: chalk.red('No conversation found to continue') }])
+      cleanup()
+      process.exit(1)
+    }
+  } else if (opts.resumeSessionId) {
     const match = preloadedSessions.find(
       (s) => s.session_id === opts.resumeSessionId || s.session_id.startsWith(opts.resumeSessionId!)
     )

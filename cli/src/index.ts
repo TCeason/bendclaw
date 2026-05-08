@@ -50,6 +50,7 @@ async function main() {
         agent,
         verbose: opts.verbose,
         resumeSessionId: opts.resume,
+        continueLatest: opts.continueLatest,
         serverPort: opts.port,
         envFile: opts.envFile,
       })

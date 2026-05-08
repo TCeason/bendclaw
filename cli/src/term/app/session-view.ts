@@ -7,7 +7,9 @@ export function chooseBannerSessions(preloaded: SessionMeta[], cwd: string): Ses
 }
 
 export function findPreviousSession(preloaded: SessionMeta[], cwd: string): SessionMeta | undefined {
-  return preloaded.find(s => s.cwd === cwd)
+  return [...preloaded]
+    .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''))
+    .find(s => s.cwd === cwd)
 }
 
 export function previousSessionLine(session: SessionMeta): OutputLine {

@@ -2,6 +2,7 @@ import { Agent } from './native/index.js'
 import type { CliOptions } from './cli.js'
 import { createAgent } from './cli.js'
 import { loadFileBlocks } from './file-loader.js'
+import { findPreviousSession } from './term/app/session-view.js'
 
 export async function runPrompt(opts: CliOptions) {
   if (!opts.prompt) {
@@ -23,11 +24,13 @@ export async function runPrompt(opts: CliOptions) {
     process.exit(1)
   }
 
+  const resumeSessionId = await resolveResumeSessionId(agent, opts)
+
   const stream = await agent.query(
     // When contentJson is present, the native layer uses it as the full input
     // and ignores the prompt parameter. We pass empty string to make this explicit.
     contentJson ? '' : opts.prompt,
-    opts.resume,
+    resumeSessionId,
     undefined,
     contentJson,
   )
@@ -57,5 +60,25 @@ function printEventText(event: any) {
     case 'run_finished':
       console.log()
       break
+  }
+}
+
+export async function resolveResumeSessionId(agent: Agent, opts: Pick<CliOptions, 'resume' | 'continueLatest' | 'outputFormat'>): Promise<string | undefined> {
+  if (!opts.continueLatest) return opts.resume
+
+  const sessions = await agent.listSessions(0)
+  const session = findPreviousSession(sessions, agent.cwd)
+  if (!session) {
+    emitLoadError('No conversation found to continue', opts.outputFormat)
+    process.exit(1)
+  }
+  return session.session_id
+}
+
+function emitLoadError(message: string, outputFormat: CliOptions['outputFormat']): void {
+  if (outputFormat === 'stream-json') {
+    console.log(JSON.stringify({ kind: 'error', payload: { message } }))
+  } else {
+    console.error(message)
   }
 }

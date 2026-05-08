@@ -6,6 +6,7 @@ export interface CliOptions {
   prompt?: string
   port?: number
   resume?: string
+  continueLatest: boolean
   envFile?: string
   outputFormat: 'text' | 'stream-json'
   verbose: boolean
@@ -22,6 +23,7 @@ export async function parseArgs(argv: string[]): Promise<CliOptions> {
     command: 'repl',
     outputFormat: 'text',
     verbose: true,
+    continueLatest: false,
     maxTurns: 512,
     maxTokens: 100_000_000,
     maxDuration: 3600,
@@ -52,6 +54,7 @@ export async function parseArgs(argv: string[]): Promise<CliOptions> {
     if (arg === '--env-file' && argv[i + 1]) { opts.envFile = argv[++i]; continue }
     if (arg === '--port' && argv[i + 1]) { opts.port = parseIntArg(argv[++i], '--port'); continue }
     if ((arg === '-r' || arg === '--resume') && argv[i + 1]) { opts.resume = argv[++i]; continue }
+    if (arg === '-c' || arg === '--continue') { opts.continueLatest = true; continue }
     if (arg === '--output-format' && argv[i + 1]) {
       const fmt = argv[++i]
       if (fmt !== 'text' && fmt !== 'stream-json') {
@@ -110,6 +113,7 @@ export async function printHelp() {
   console.log('  --env-file <path>      Path to evot.env file')
   console.log('  --port <number>        Server port (default: 8082)')
   console.log('  -r, --resume <id>      Resume or create a session by ID')
+  console.log('  -c, --continue         Resume the latest session in the current directory')
   console.log('  --output-format <fmt>  text | stream-json (default: text)')
   console.log('  --max-turns <n>        Max turns (default: 512)')
   console.log('  --max-tokens <n>       Max tokens (default: 100000000)')
