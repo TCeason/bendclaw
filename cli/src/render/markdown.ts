@@ -63,7 +63,6 @@ function plainTextTokens(content: string): Token[] {
 
 const EOL = '\n'
 const SAFETY_MARGIN = 4
-const MAX_TABLE_ROW_LINES = 4
 const MAX_RENDER_WIDTH = 140
 const CODE_FENCE_RE = /^( {0,3})(`{3,}|~{3,})(.*)$/
 // Heading matches `#{1,6}` followed by either whitespace/EOL (classic ATX)
@@ -941,13 +940,17 @@ export function formatToken(
       function plainText(tokens: Token[] | undefined): string {
         return stripAnsi(renderCell(tokens))
       }
+      function visualLineWidths(tokens: Token[] | undefined): number[] {
+        const lines = plainText(tokens).split(EOL)
+        return lines.length > 0 ? lines.map(line => terminalDisplayWidth(line)) : [0]
+      }
       function longestWord(tokens: Token[] | undefined): number {
         const words = plainText(tokens).split(/\s+/).filter(w => w.length > 0)
         if (words.length === 0) return MIN_COL
         return Math.max(...words.map(w => terminalDisplayWidth(w)), MIN_COL)
       }
       function idealWidth(tokens: Token[] | undefined): number {
-        return Math.max(terminalDisplayWidth(plainText(tokens)), MIN_COL)
+        return Math.max(...visualLineWidths(tokens), MIN_COL)
       }
 
       // --- column width calculation ---
@@ -1005,18 +1008,13 @@ export function formatToken(
         return lines.length > 0 ? lines : ['']
       }
 
-      // --- check if vertical format is needed ---
-      const MAX_ROW_LINES = MAX_TABLE_ROW_LINES
-      let needVertical = false
-      for (const row of tableToken.rows) {
-        for (let ci = 0; ci < numCols; ci++) {
-          const wrapped = wrapCell(renderCell(row[ci]?.tokens), colWidths[ci]!)
-          if (wrapped.length > MAX_ROW_LINES) { needVertical = true; break }
-        }
-        if (needVertical) break
-      }
-
-      // --- vertical key-value format ---
+      // --- vertical key-value fallback ---
+      // Used only when the rendered horizontal table genuinely does not fit
+      // in the terminal (see safety check after the table body is built).
+      // We intentionally do NOT flip to this form based on per-cell line
+      // count: CJK-heavy cells wrap often and demoting a legitimate table
+      // into `label: value` lines separated by `────` loses the column
+      // structure the author wrote the table for.
       function renderVerticalFormat(): string {
         const headers = tableToken.header.map(h => plainText(h.tokens))
         const separatorWidth = Math.min(termWidth - 1, 40)
@@ -1057,10 +1055,6 @@ export function formatToken(
           })
         })
         return vLines.join(EOL) + EOL
-      }
-
-      if (needVertical) {
-        return renderVerticalFormat() + EOL
       }
 
       // --- horizontal table with wrapping ---
@@ -1107,9 +1101,16 @@ export function formatToken(
       })
       tableLines.push(borderLine('└', '─', '┴', '┘'))
 
-      // Safety check: if any line exceeds terminal width (e.g. terminal
-      // resized between calculation and render), fall back to vertical format.
-      const maxLineWidth = Math.max(...tableLines.map(l => terminalDisplayWidth(l)))
+      // Safety check: if any single rendered line exceeds terminal width
+      // (e.g. terminal resized between width computation and render), fall
+      // back to the vertical form. Row strings built by renderRow can span
+      // multiple visual lines (wrapped cells), so split on EOL first before
+      // measuring — otherwise stringWidth effectively sums the widths of
+      // every wrapped line in the row, which trips the guard on every CJK
+      // row and silently destroys the table layout.
+      const maxLineWidth = Math.max(
+        ...tableLines.flatMap(chunk => chunk.split(EOL).map(l => terminalDisplayWidth(l))),
+      )
       if (maxLineWidth > termWidth) {
         return renderVerticalFormat() + EOL
       }
@@ -1121,8 +1122,17 @@ export function formatToken(
     case 'image':
       return token.href
     case 'def':
-    case 'html':
       return ''
+    case 'html': {
+      // `marked` lexes `<br>` as an html token. It's the most common inline
+      // HTML models emit — especially inside table cells, where it's the
+      // canonical way to force a line break (GFM tables don't support
+      // literal newlines inside cells). Convert it to an actual newline so
+      // downstream wrapping sees the intended break; strip everything else.
+      const raw = (token as Tokens.HTML).text ?? (token as Tokens.HTML).raw ?? ''
+      if (/^\s*<\s*br\s*\/?\s*>\s*$/i.test(raw)) return EOL
+      return ''
+    }
     default:
       return ''
   }

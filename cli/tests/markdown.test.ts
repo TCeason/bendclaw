@@ -793,6 +793,72 @@ describe('renderMarkdown', () => {
     expect(result).toContain('┘')
   })
 
+  test('renders <br> inside table cells as a line break', () => {
+    // GFM tables don't support literal newlines in a cell, so models use
+    // `<br>` to force bullet-style line breaks. Previously our renderer
+    // dropped all html tokens, which glued the fragments together into one
+    // long blob and word-wrapped anywhere.
+    const prev = process.stdout.columns
+    process.stdout.columns = 120
+    try {
+      const md = [
+        '| 维度 | Rust |',
+        '|------|------|',
+        '| 类型系统 | 静态强类型<br>编译期检查<br>所有权 + 借用 |',
+      ].join('\n')
+      const result = render(md).replace(/\u200b/g, '')
+      const lines = result.split('\n')
+      // Each fragment should appear on its own line inside the cell.
+      expect(lines.some(l => /│\s*静态强类型\s+│/.test(l))).toBe(true)
+      expect(lines.some(l => /│\s*编译期检查\s+│/.test(l))).toBe(true)
+      expect(lines.some(l => /│\s*所有权 \+ 借用\s+│/.test(l))).toBe(true)
+      // The column width should be based on the longest visual <br> line,
+      // not the combined width of every line joined by newlines.
+      const borderLine = lines.find(l => l.startsWith('┌'))
+      expect(borderLine).toBeDefined()
+      expect(borderLine!.length).toBeLessThan(80)
+      // And the literal `<br>` must not leak into the output.
+      expect(result).not.toContain('<br>')
+    } finally {
+      process.stdout.columns = prev
+    }
+  })
+
+  test('keeps CJK-heavy tables as horizontal tables even when cells wrap', () => {
+    // Regression: previously any row whose cell wrapped past 4 lines flipped
+    // the whole table to a `label: value` key-value fallback with `────`
+    // row separators. CJK-heavy rows tripped this trigger routinely, so
+    // legitimate tables silently turned into verbose lists.
+    const prev = process.stdout.columns
+    process.stdout.columns = 80
+    try {
+      const md = [
+        '| 事件 | 触发点 | 行为 |',
+        '|---|---|---|',
+        '| TurnStarted | tasks/mod.rs:332 | 快照 turn_id 和当前 TokenUsage 作为基线；从 DB 读 goal，把 goal_id 绑到这一 turn 的计量快照 |',
+        '| ToolCompleted | tools/registry.rs:490 每次工具调用后 | 工具名不是 update_goal 时，调用 account_thread_goal_progress（允许 budget steering 注入） |',
+        '| TurnFinished | tasks/mod.rs:737 | 完成时再做一次最终计量；清理 turn 快照；取消 continuation 标记 |',
+      ].join('\n')
+      const result = render(md).replace(/\u200b/g, '')
+      // Must render as a horizontal table with borders, not as the
+      // key-value vertical fallback.
+      expect(result).toContain('┌')
+      expect(result).toContain('└')
+      expect(result).toContain('事件')
+      expect(result).toContain('触发点')
+      // The vertical fallback uses a long `─` separator line between rows —
+      // reject any line that is purely `─` repeated (no `┬`/`┴`/`┼`/`│`).
+      const lines = result.split('\n')
+      const sepOnly = lines.find(l => /^─{10,}$/.test(l))
+      expect(sepOnly).toBeUndefined()
+      // And must not rewrite the row as `事件: TurnStarted` / `触发点: …`.
+      expect(result).not.toMatch(/^事件:\s/m)
+      expect(result).not.toMatch(/^触发点:\s/m)
+    } finally {
+      process.stdout.columns = prev
+    }
+  })
+
   test('aligns emoji-capable symbols in tables using terminal width', () => {
     const md = [
       '| 状态 | 工具 | 说明 |',
