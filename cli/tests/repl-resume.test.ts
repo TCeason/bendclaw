@@ -16,12 +16,12 @@ describe('repl resume helpers', () => {
     { session_id: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb', title: 'other session', cwd: '/other', model: 'm2', updated_at: Date.now() } as any,
   ]
 
-  test('selectSessionPool prefers cwd sessions', () => {
+  test('selectSessionPool returns cwd sessions only', () => {
     expect(selectSessionPool(sessions, '/work')).toEqual([sessions[0]])
   })
 
-  test('selectSessionPool falls back to all sessions', () => {
-    expect(selectSessionPool(sessions, '/missing')).toEqual(sessions)
+  test('selectSessionPool returns empty when cwd has no sessions', () => {
+    expect(selectSessionPool(sessions, '/missing')).toEqual([])
   })
 
   test('isSessionIdPrefix accepts hex prefix only', () => {

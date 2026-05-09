@@ -10,8 +10,7 @@ export type SessionPrefixResolution =
   | { kind: 'ambiguous'; matches: SessionMeta[] }
 
 export function selectSessionPool<T extends { cwd?: string }>(sessions: T[], cwd: string): T[] {
-  const cwdSessions = sessions.filter(s => s.cwd === cwd)
-  return cwdSessions.length > 0 ? cwdSessions : sessions
+  return sessions.filter(s => s.cwd === cwd)
 }
 
 export function isSessionIdPrefix(value: string): boolean {
