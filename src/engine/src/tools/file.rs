@@ -172,9 +172,28 @@ impl AgentTool for ReadFileTool {
                     self.max_bytes
                 )));
             };
-            return self
+            let read_start = std::time::Instant::now();
+            let result = self
                 .read_lines_streaming(&path, path_str, offset.unwrap_or(1), lim)
                 .await;
+            if result.is_ok()
+                && ctx
+                    .spill
+                    .as_ref()
+                    .is_some_and(|spill| spill.contains_path(&path))
+            {
+                if let Some(progress) = &ctx.on_progress {
+                    progress(
+                        SpillProgress::read(
+                            path.to_string_lossy(),
+                            metadata.len() as usize,
+                            read_start.elapsed().as_millis() as u64,
+                        )
+                        .to_progress_text(),
+                    );
+                }
+            }
+            return result;
         }
 
         let content = tokio::fs::read_to_string(&path)

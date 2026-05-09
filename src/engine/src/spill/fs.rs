@@ -30,6 +30,10 @@ impl FsSpill {
         self
     }
 
+    pub fn contains_path(&self, path: &std::path::Path) -> bool {
+        path.starts_with(&self.dir)
+    }
+
     pub async fn spill(&self, req: SpillRequest) -> Result<Option<SpillRef>, SpillError> {
         if req.text.len() <= self.threshold_bytes {
             return Ok(None);

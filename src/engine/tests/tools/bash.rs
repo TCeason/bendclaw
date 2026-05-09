@@ -126,6 +126,7 @@ async fn test_bash_progress_emitted() {
         on_progress,
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+        spill: None,
     };
 
     // Command runs ~4s, progress fires every 3s, so we should get at least 1
@@ -164,6 +165,7 @@ async fn test_bash_update_emitted() {
         on_progress: None,
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+        spill: None,
     };
 
     // Command runs ~4s with output, update fires every 2s.

@@ -297,13 +297,20 @@ async fn test_agent_loop_spill_integration() {
     let prompts = vec![AgentMessage::Llm(Message::user("run large_tool"))];
     agent_loop(prompts, &mut context, &config, tx, cancel).await;
 
-    // Collect events and find the tool result
+    // Collect events and find the tool result and visible spill event
     let mut found_spill_message = false;
+    let mut found_spill_progress = false;
     while let Ok(event) = rx.try_recv() {
-        if let AgentEvent::ToolExecutionEnd { result, .. } = event {
+        if let AgentEvent::ToolExecutionEnd { ref result, .. } = event {
             if let Some(Content::Text { text }) = result.content.first() {
                 if text.contains("Tool output was too large") && text.contains("saved to:") {
                     found_spill_message = true;
+                    if let serde_json::Value::Object(details) = &result.details {
+                        assert_eq!(details["spill"]["kind"], "write");
+                        assert_eq!(details["spill"]["size_bytes"], 200);
+                    } else {
+                        panic!("expected spill details");
+                    }
                     // Verify the referenced file exists
                     if let Some(path_line) = text.lines().find(|l| l.ends_with(".txt")) {
                         let path = std::path::Path::new(path_line.trim());
@@ -315,8 +322,22 @@ async fn test_agent_loop_spill_integration() {
                 }
             }
         }
+        if let AgentEvent::ProgressMessage { text, .. } = event {
+            if text.starts_with("__evot_spill_event__ ") {
+                found_spill_progress = true;
+                let json = text.trim_start_matches("__evot_spill_event__ ");
+                let payload: serde_json::Value =
+                    serde_json::from_str(json).expect("spill progress should be json");
+                assert_eq!(payload["kind"], "write");
+                assert_eq!(payload["size_bytes"], 200);
+            }
+        }
     }
     assert!(found_spill_message, "expected spill message in tool result");
+    assert!(
+        found_spill_progress,
+        "expected visible spill progress event"
+    );
 
     // Verify context messages contain the spill reference, not the raw 200-byte output
     let has_raw_output = context.messages.iter().any(|m| {

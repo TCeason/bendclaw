@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import stringWidth from 'string-width'
 import { createSpinnerState } from '../src/term/spinner.js'
 import { createInitialState } from '../src/term/app/state.js'
-import { createStreamMachineState, reduceRunEvent, flushStreaming, buildToolStartedLines, buildToolFinishedLines } from '../src/term/app/stream.js'
+import { createStreamMachineState, reduceRunEvent, flushStreaming, buildToolStartedLines, buildToolFinishedLines, buildToolProgressLines } from '../src/term/app/stream.js'
 
 describe('term stream machine', () => {
   test('assistant delta commits completed markdown blocks', () => {
@@ -266,6 +266,37 @@ describe('term stream machine', () => {
     }, { termRows: 24 })
     expect(update.state.toolProgress).toBe('running')
     expect(update.rerenderStatus).toBe(true)
+  })
+
+  test('spill progress commits visible event line', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    const state = createStreamMachineState(appState, spinner)
+    const update = reduceRunEvent(state, {
+      kind: 'tool_progress',
+      payload: {
+        tool_name: 'bash',
+        text: '__evot_spill_event__ {"kind":"write","path":"/tmp/spill.txt","size_bytes":120000,"preview_bytes":4000}',
+      },
+    }, { termRows: 24 })
+    const text = update.commitLines.map(l => l.text).join('\n')
+    expect(text).toContain('[SPILL] ↪ 117.2 KB written · 3.9 KB preview · bash')
+    expect(text).toContain('/tmp/spill.txt')
+    expect(update.state.toolProgress).toBe('')
+  })
+
+  test('tool progress builder renders spill marker as event', () => {
+    const lines = buildToolProgressLines({
+      kind: 'tool_progress',
+      payload: {
+        tool_name: 'read_file',
+        text: '__evot_spill_event__ {"kind":"read","path":"/tmp/tool-results/spill.txt","size_bytes":2048,"duration_ms":12}',
+      },
+    } as any, true)
+    const text = lines.map(l => l.text).join('\n')
+    expect(text).toContain('[SPILL] ↩ 2.0 KB read · 12ms · read_file')
+    expect(text).toContain('/tmp/tool-results/spill.txt')
+    expect(text).not.toContain('__evot_spill_event__')
   })
 
   test('tool started suppresses ask_user', () => {

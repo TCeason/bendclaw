@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::json;
 
 use super::message::Content;
 use super::message::Retention;
@@ -26,6 +27,43 @@ pub type ToolUpdateFn = Arc<dyn Fn(ToolResult) + Send + Sync>;
 /// notifications), not structured tool results.
 pub type ProgressFn = Arc<dyn Fn(String) + Send + Sync>;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpillProgress {
+    pub kind: String,
+    pub path: String,
+    pub size_bytes: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+}
+
+impl SpillProgress {
+    pub fn write(path: impl Into<String>, size_bytes: usize, preview_bytes: usize) -> Self {
+        Self {
+            kind: "write".to_string(),
+            path: path.into(),
+            size_bytes,
+            preview_bytes: Some(preview_bytes),
+            duration_ms: None,
+        }
+    }
+
+    pub fn read(path: impl Into<String>, size_bytes: usize, duration_ms: u64) -> Self {
+        Self {
+            kind: "read".to_string(),
+            path: path.into(),
+            size_bytes,
+            preview_bytes: None,
+            duration_ms: Some(duration_ms),
+        }
+    }
+
+    pub fn to_progress_text(&self) -> String {
+        format!("__evot_spill_event__ {}", json!(self))
+    }
+}
+
 /// Context passed to tool execution. Bundles all per-invocation state.
 ///
 /// Using a struct instead of individual parameters future-proofs the trait —
@@ -45,6 +83,8 @@ pub struct ToolContext {
     pub cwd: PathBuf,
     /// Path access guard — restricts file tools to allowed directories.
     pub path_guard: Arc<PathGuard>,
+    /// Optional spill storage. Used by file tools to mark reads from spilled tool output.
+    pub spill: Option<Arc<crate::spill::FsSpill>>,
 }
 
 impl Clone for ToolContext {
@@ -57,6 +97,7 @@ impl Clone for ToolContext {
             on_progress: self.on_progress.clone(),
             cwd: self.cwd.clone(),
             path_guard: self.path_guard.clone(),
+            spill: self.spill.clone(),
         }
     }
 }
@@ -74,6 +115,7 @@ impl std::fmt::Debug for ToolContext {
             )
             .field("cwd", &self.cwd)
             .field("path_guard", &self.path_guard)
+            .field("spill", &self.spill.as_ref().map(|_| "<spill>"))
             .finish()
     }
 }

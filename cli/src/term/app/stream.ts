@@ -1,4 +1,5 @@
 import { buildError, buildRunSummary, buildToolCall, buildToolProgress, buildToolResult, buildVerboseEvent, buildAssistantLines, buildThinkingLines, type OutputLine } from '../../render/output.js'
+import { formatDuration } from '../../render/format.js'
 import { findStreamingCommitPoint } from '../../render/markdown.js'
 import { setSpinnerPhase, type SpinnerState } from '../spinner.js'
 import { applyEvent } from './reducer.js'
@@ -39,6 +40,40 @@ export interface StreamUpdate {
 
 function isHeartbeatProgress(text: string): boolean {
   return /^Running\.\.\. \d+s$/.test(text.trim())
+}
+
+function parseSpillProgress(text: string): Record<string, unknown> | undefined {
+  const prefix = '__evot_spill_event__ '
+  if (!text.startsWith(prefix)) return undefined
+  try {
+    const parsed = JSON.parse(text.slice(prefix.length))
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function buildSpillEventLines(event: Record<string, unknown>, toolName?: string): OutputLine[] {
+  const kind = event.kind === 'read' ? 'read' : 'write'
+  const path = typeof event.path === 'string' ? event.path : ''
+  const sizeBytes = typeof event.size_bytes === 'number' ? event.size_bytes : 0
+  const previewBytes = typeof event.preview_bytes === 'number' ? event.preview_bytes : undefined
+  const durationMs = typeof event.duration_ms === 'number' ? event.duration_ms : undefined
+  const bits = [`${humanBytes(sizeBytes)} ${kind === 'read' ? 'read' : 'written'}`]
+  if (previewBytes !== undefined) bits.push(`${humanBytes(previewBytes)} preview`)
+  if (durationMs !== undefined) bits.push(formatDuration(durationMs))
+  if (toolName) bits.push(toolName)
+  return [
+    { id: `spill-${Date.now()}-0`, kind: 'verbose', text: `[SPILL] ${kind === 'read' ? '↩' : '↪'} ${bits.join(' · ')}` },
+    ...(path ? [{ id: `spill-${Date.now()}-1`, kind: 'verbose' as const, text: `  ${path}` }] : []),
+  ]
+}
+
+function humanBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return '0 B'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
 export function createStreamMachineState(appState: AppState, spinnerState: SpinnerState): StreamMachineState {
@@ -239,9 +274,20 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
   if (event.kind === 'tool_progress') {
     const text = p.text as string | undefined
     if (text) {
-      state = isHeartbeatProgress(text)
-        ? { ...state, toolProgress: '' }
-        : { ...state, toolProgress: text, lastToolProgress: text }
+      const spill = parseSpillProgress(text)
+      if (spill) {
+        const flushed = flushStreaming(state)
+        state = { ...flushed.state, toolProgress: '', lastToolProgress: '' }
+        commitLines.push(...flushed.lines)
+        writeLines.push(...flushed.lines)
+        const spillLines = buildSpillEventLines(spill, p.tool_name as string | undefined)
+        commitLines.push(...spillLines)
+        writeLines.push(...spillLines)
+      } else {
+        state = isHeartbeatProgress(text)
+          ? { ...state, toolProgress: '' }
+          : { ...state, toolProgress: text, lastToolProgress: text }
+      }
       rerenderStatus = true
     }
   }
@@ -306,6 +352,8 @@ export function buildToolProgressLines(event: RunEvent, expanded?: boolean): Out
   const p = (event.payload ?? {}) as Record<string, any>
   const toolName = (p.tool_name as string) ?? 'unknown'
   const text = (p.text as string) ?? ''
+  const spill = parseSpillProgress(text)
+  if (spill) return buildSpillEventLines(spill, toolName)
   return text ? buildToolProgress(toolName, text, expanded) : []
 }
 

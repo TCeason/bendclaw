@@ -264,6 +264,7 @@ async fn execute_single_tool(
         on_progress,
         cwd: cwd.to_path_buf(),
         path_guard: path_guard.clone(),
+        spill: spill.clone(),
     };
 
     let (result, is_error) = match tool {
@@ -315,7 +316,15 @@ async fn execute_single_tool(
     // System-level tool result size management.
     // If spill is configured, large results are written to disk with a preview.
     // Otherwise, fall back to truncation.
-    let result = process_result(spill, id, name, result, is_error).await;
+    let (result, spill_event) = process_result(spill, id, name, result, is_error).await;
+    if let Some(event) = spill_event {
+        tx.send(AgentEvent::ProgressMessage {
+            tool_call_id: id.to_string(),
+            tool_name: name.to_string(),
+            text: event.to_progress_text(),
+        })
+        .ok();
+    }
 
     let result_tokens = context::content_tokens(&result.content);
     let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
@@ -494,25 +503,34 @@ fn build_doom_loop_preview(tool_name: &str, args: &serde_json::Value) -> String 
 
 const PREVIEW_CAP: usize = 4_000;
 
+#[derive(Debug)]
+struct SpillEvent(SpillProgress);
+
+impl SpillEvent {
+    fn to_progress_text(&self) -> String {
+        self.0.to_progress_text()
+    }
+}
+
 async fn process_result(
     spill: &Option<Arc<FsSpill>>,
     tool_call_id: &str,
     tool_name: &str,
     result: ToolResult,
     is_error: bool,
-) -> ToolResult {
+) -> (ToolResult, Option<SpillEvent>) {
     if is_error {
-        return truncate_result(result);
+        return (truncate_result(result), None);
     }
 
     let spill = match spill {
         Some(s) => s,
-        None => return truncate_result(result),
+        None => return (truncate_result(result), None),
     };
 
     let text = merge_text_blocks(&result.content);
     if text.is_empty() {
-        return result;
+        return (result, None);
     }
 
     let req = crate::spill::SpillRequest {
@@ -521,20 +539,37 @@ async fn process_result(
     };
 
     match spill.spill(req).await {
-        Ok(Some(spill_ref)) => build_spilled_result(result, spill_ref),
-        Ok(None) => truncate_result(result),
+        Ok(Some(spill_ref)) => {
+            let mut details = result.details;
+            merge_spill_details(&mut details, &spill_ref);
+            let event = SpillEvent(SpillProgress::write(
+                spill_ref.path.to_string_lossy(),
+                spill_ref.size_bytes,
+                spill_ref.preview.len(),
+            ));
+            (
+                build_spilled_result(result.content, details, result.retention, spill_ref),
+                Some(event),
+            )
+        }
+        Ok(None) => (truncate_result(result), None),
         Err(e) => {
             tracing::warn!(
                 tool_name = tool_name,
                 tool_call_id = tool_call_id,
                 "spill failed: {e}"
             );
-            truncate_result(result)
+            (truncate_result(result), None)
         }
     }
 }
 
-fn build_spilled_result(result: ToolResult, spill_ref: crate::spill::SpillRef) -> ToolResult {
+fn build_spilled_result(
+    content: Vec<Content>,
+    details: serde_json::Value,
+    retention: Retention,
+    spill_ref: crate::spill::SpillRef,
+) -> ToolResult {
     let preview = if spill_ref.preview.len() > PREVIEW_CAP {
         let boundary = spill_ref.preview.floor_char_boundary(PREVIEW_CAP);
         &spill_ref.preview[..boundary]
@@ -551,12 +586,6 @@ fn build_spilled_result(result: ToolResult, spill_ref: crate::spill::SpillRef) -
         preview,
     );
 
-    let ToolResult {
-        content,
-        details,
-        retention,
-    } = result;
-
     let mut new_content: Vec<Content> = vec![Content::Text { text: msg }];
     for c in content {
         if !matches!(c, Content::Text { .. }) {
@@ -568,6 +597,24 @@ fn build_spilled_result(result: ToolResult, spill_ref: crate::spill::SpillRef) -
         content: new_content,
         details,
         retention,
+    }
+}
+
+fn merge_spill_details(details: &mut serde_json::Value, spill_ref: &crate::spill::SpillRef) {
+    let spill_details = serde_json::json!({
+        "kind": "write",
+        "path": spill_ref.path.to_string_lossy(),
+        "size_bytes": spill_ref.size_bytes,
+        "preview_bytes": spill_ref.preview.len(),
+    });
+
+    match details {
+        serde_json::Value::Object(map) => {
+            map.insert("spill".to_string(), spill_details);
+        }
+        _ => {
+            *details = serde_json::json!({ "spill": spill_details });
+        }
     }
 }
 
