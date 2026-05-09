@@ -14,6 +14,7 @@ use crate::provider::stream_http;
 use crate::provider::stream_http::SseEvent;
 use crate::provider::traits::StreamConfig;
 use crate::provider::traits::StreamEvent;
+use crate::provider::traits::StreamOutcome;
 use crate::types::*;
 
 /// Drive an Anthropic SSE stream from a raw HTTP response.
@@ -25,7 +26,7 @@ pub(crate) async fn decode_sse_stream(
     tx: mpsc::UnboundedSender<StreamEvent>,
     cancel: CancellationToken,
     config: &StreamConfig,
-) -> Result<Message, ProviderError> {
+) -> Result<StreamOutcome, ProviderError> {
     let (sse_tx, mut sse_rx) = mpsc::unbounded_channel::<SseEvent>();
 
     // Spawn SSE frame parser
@@ -39,6 +40,7 @@ pub(crate) async fn decode_sse_stream(
     let mut usage = Usage::default();
     let mut stop_reason = StopReason::Stop;
     let mut response_id: Option<String> = None;
+    let mut incomplete_tool_use_error: Option<ProviderError> = None;
 
     let _ = tx.send(StreamEvent::Start);
 
@@ -51,18 +53,16 @@ pub(crate) async fn decode_sse_stream(
                 match event {
                     None => break,
                     Some(sse) => {
-                        if let Some(err) = process_sse_event(
+                        if process_sse_event(
                             &sse,
                             &tx,
                             &mut content,
                             &mut usage,
                             &mut stop_reason,
                             &mut response_id,
+                            &mut incomplete_tool_use_error,
                         )? {
-                            // message_stop received
-                            if err {
-                                break;
-                            }
+                            break;
                         }
                     }
                 }
@@ -85,6 +85,8 @@ pub(crate) async fn decode_sse_stream(
         ));
     }
 
+    finalize_tool_call_inputs(&mut content);
+
     let has_tool_calls = content
         .iter()
         .any(|c| matches!(c, Content::ToolCall { .. }));
@@ -106,13 +108,20 @@ pub(crate) async fn decode_sse_stream(
     let _ = tx.send(StreamEvent::Done {
         message: message.clone(),
     });
-    Ok(message)
+
+    if let Some(error) = incomplete_tool_use_error {
+        Ok(StreamOutcome::IncompleteToolUse {
+            assistant: message,
+            error,
+        })
+    } else {
+        Ok(StreamOutcome::Complete(message))
+    }
 }
 
-/// Process a single SSE event. Returns:
-/// - `Ok(None)` — event processed, continue
-/// - `Ok(Some(true))` — message_stop, break
-/// - `Err(...)` — error event
+/// Process a single SSE event. Returns `true` when the stream should stop
+/// because Anthropic sent `message_stop` or a recoverable incomplete tool_use
+/// error was converted into [`StreamOutcome::IncompleteToolUse`].
 fn process_sse_event(
     sse: &SseEvent,
     tx: &mpsc::UnboundedSender<StreamEvent>,
@@ -120,7 +129,8 @@ fn process_sse_event(
     usage: &mut Usage,
     stop_reason: &mut StopReason,
     response_id: &mut Option<String>,
-) -> Result<Option<bool>, ProviderError> {
+    incomplete_tool_use_error: &mut Option<ProviderError>,
+) -> Result<bool, ProviderError> {
     match sse.event.as_str() {
         "message_start" => {
             if let Ok(data) = serde_json::from_str::<AnthropicMessageStart>(&sse.data) {
@@ -233,25 +243,8 @@ fn process_sse_event(
         "content_block_stop" => {
             if let Ok(data) = serde_json::from_str::<serde_json::Value>(&sse.data) {
                 let idx = data["index"].as_u64().unwrap_or(0) as usize;
-                // Parse accumulated JSON for tool calls
-                if let Some(Content::ToolCall {
-                    ref mut arguments, ..
-                }) = content.get_mut(idx)
-                {
-                    if let Some(partial) = arguments
-                        .as_object()
-                        .and_then(|o| o.get("__partial_json"))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                    {
-                        match crate::provider::json_repair::try_repair_json(&partial) {
-                            Ok(parsed) => *arguments = parsed,
-                            Err(e) => {
-                                debug!("Failed to parse tool call JSON: {} ({})", partial, e);
-                                *arguments = serde_json::Value::Object(Default::default());
-                            }
-                        }
-                    }
+                if let Some(Content::ToolCall { arguments, .. }) = content.get_mut(idx) {
+                    finalize_tool_call_input(arguments);
                 }
                 let _ = tx.send(StreamEvent::ToolCallEnd { content_index: idx });
             }
@@ -267,16 +260,66 @@ fn process_sse_event(
             }
         }
         "message_stop" => {
-            return Ok(Some(true));
+            return Ok(true);
         }
         "ping" | "message" => {}
         "error" => {
             let provider_err = classify_sse_error_event(&sse.data);
+            if has_partial_tool_use_input(content) {
+                debug!("Anthropic SSE error after partial tool_use input; returning incomplete tool_use outcome for conversation recovery: {provider_err}");
+                *incomplete_tool_use_error = Some(provider_err);
+                return Ok(true);
+            }
             return Err(provider_err);
         }
         other => {
             debug!("Unknown Anthropic event: {}", other);
         }
     }
-    Ok(None)
+    Ok(false)
+}
+
+fn finalize_tool_call_inputs(content: &mut [Content]) {
+    for block in content.iter_mut() {
+        let Content::ToolCall { arguments, .. } = block else {
+            continue;
+        };
+        finalize_tool_call_input(arguments);
+    }
+}
+
+fn finalize_tool_call_input(arguments: &mut serde_json::Value) {
+    let Some(partial) = arguments
+        .as_object()
+        .and_then(|o| o.get("__partial_json"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+    else {
+        return;
+    };
+
+    match crate::provider::json_repair::try_repair_json(&partial) {
+        Ok(parsed) => *arguments = parsed,
+        Err(e) => {
+            debug!("Failed to parse tool call JSON: {} ({})", partial, e);
+            *arguments = serde_json::Value::Object(Default::default());
+        }
+    }
+}
+
+fn has_partial_tool_use_input(content: &[Content]) -> bool {
+    content.iter().any(|c| {
+        let Content::ToolCall { arguments, .. } = c else {
+            return false;
+        };
+        let Some(obj) = arguments.as_object() else {
+            return true;
+        };
+        obj.iter().any(|(key, value)| {
+            if key == "__partial_json" {
+                return value.as_str().map(|s| !s.is_empty()).unwrap_or(false);
+            }
+            true
+        })
+    })
 }

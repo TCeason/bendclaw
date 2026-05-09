@@ -11,7 +11,6 @@ use crate::provider::error::*;
 use crate::provider::stream_http::StreamResponseKind;
 use crate::provider::stream_http::{self};
 use crate::provider::traits::*;
-use crate::types::*;
 
 const API_VERSION: &str = "2023-06-01";
 
@@ -24,7 +23,7 @@ impl StreamProvider for AnthropicProvider {
         config: StreamConfig,
         tx: mpsc::UnboundedSender<StreamEvent>,
         cancel: tokio_util::sync::CancellationToken,
-    ) -> Result<Message, ProviderError> {
+    ) -> Result<StreamOutcome, ProviderError> {
         let is_oauth = config.api_key.contains("sk-ant-oat");
 
         let base_url = config
@@ -88,9 +87,9 @@ impl StreamProvider for AnthropicProvider {
             StreamResponseKind::Streaming => {
                 sse_decode::decode_sse_stream(response, tx, cancel, &config).await
             }
-            StreamResponseKind::Json => {
-                json_fallback::handle_json_response(response, tx, &config).await
-            }
+            StreamResponseKind::Json => json_fallback::handle_json_response(response, tx, &config)
+                .await
+                .map(StreamOutcome::complete),
             StreamResponseKind::Other(ct) => Err(ProviderError::Api(format!(
                 "Unexpected content type from Anthropic: {ct}"
             ))),

@@ -29,7 +29,7 @@ impl StreamProvider for BedrockProvider {
         config: StreamConfig,
         tx: mpsc::UnboundedSender<StreamEvent>,
         cancel: tokio_util::sync::CancellationToken,
-    ) -> Result<Message, ProviderError> {
+    ) -> Result<StreamOutcome, ProviderError> {
         let model_config = config
             .model_config
             .as_ref()
@@ -212,7 +212,7 @@ impl StreamProvider for BedrockProvider {
         let _ = tx.send(StreamEvent::Done {
             message: message.clone(),
         });
-        Ok(message)
+        Ok(StreamOutcome::complete(message))
     }
 }
 

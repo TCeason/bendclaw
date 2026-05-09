@@ -79,6 +79,133 @@ async fn test_tool_call_and_response() {
 }
 
 #[tokio::test]
+async fn test_incomplete_tool_use_recovery_does_not_execute_tool() {
+    struct IncompleteToolUseProvider {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl StreamProvider for IncompleteToolUseProvider {
+        async fn stream(
+            &self,
+            _config: StreamConfig,
+            tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+            _cancel: tokio_util::sync::CancellationToken,
+        ) -> Result<StreamOutcome, ProviderError> {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let _ = tx.send(StreamEvent::Start);
+            if call > 0 {
+                let message = Message::Assistant {
+                    content: vec![Content::Text {
+                        text: "recovered".into(),
+                    }],
+                    stop_reason: StopReason::Stop,
+                    model: "mock".into(),
+                    provider: "mock".into(),
+                    usage: Usage::default(),
+                    timestamp: 0,
+                    error_message: None,
+                    response_id: None,
+                };
+                let _ = tx.send(StreamEvent::Done {
+                    message: message.clone(),
+                });
+                return Ok(StreamOutcome::complete(message));
+            }
+
+            let message = Message::Assistant {
+                content: vec![Content::ToolCall {
+                    id: "toolu_interrupted".into(),
+                    name: "read_file".into(),
+                    arguments: serde_json::json!({"path": "test.txt"}),
+                }],
+                stop_reason: StopReason::ToolUse,
+                model: "mock".into(),
+                provider: "mock".into(),
+                usage: Usage::default(),
+                timestamp: 0,
+                error_message: None,
+                response_id: None,
+            };
+            let _ = tx.send(StreamEvent::Done {
+                message: message.clone(),
+            });
+            Ok(StreamOutcome::IncompleteToolUse {
+                assistant: message,
+                error: ProviderError::Api("overloaded_error".into()),
+            })
+        }
+    }
+
+    let provider = std::sync::Arc::new(IncompleteToolUseProvider {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let config = AgentLoopConfig {
+        provider,
+        model: "mock".into(),
+        api_key: "test".into(),
+        thinking_level: ThinkingLevel::Off,
+        max_tokens: None,
+        temperature: None,
+        model_config: None,
+        convert_to_llm: None,
+        transform_context: None,
+        get_steering_messages: None,
+        get_follow_up_messages: None,
+        context_config: None,
+        compaction_strategy: None,
+        execution_limits: None,
+        cache_config: CacheConfig::default(),
+        tool_execution: ToolExecutionStrategy::default(),
+        retry_policy: evotengine::RetryPolicy::default(),
+        before_turn: None,
+        after_turn: None,
+        input_filters: vec![],
+        spill: None,
+    };
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: Vec::new(),
+        tools: vec![Box::new(MockTool::ok("read_file", "should not run"))],
+        cwd: std::path::PathBuf::new(),
+        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+    };
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    let messages = agent_loop(
+        vec![AgentMessage::Llm(Message::user("read test.txt"))],
+        &mut context,
+        &config,
+        tx,
+        CancellationToken::new(),
+    )
+    .await;
+    let events = collect_events(rx);
+
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::ToolExecutionStart { .. })));
+    assert_eq!(messages.len(), 4);
+    match &messages[1] {
+        AgentMessage::Llm(Message::Assistant { stop_reason, .. }) => {
+            assert_eq!(*stop_reason, StopReason::ToolUse);
+        }
+        other => panic!("Expected recovery assistant tool call, got {other:?}"),
+    }
+    match &messages[2] {
+        AgentMessage::Llm(Message::ToolResult {
+            is_error, content, ..
+        }) => {
+            assert!(*is_error);
+            assert!(
+                matches!(&content[0], Content::Text { text } if text.contains("interrupted before the full input"))
+            );
+        }
+        other => panic!("Expected recovery tool result, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn test_abort_cancels_loop() {
     // This test needs direct cancel token access — keep manual setup
     let provider = MockProvider::text("Should not appear");
@@ -649,6 +776,7 @@ struct FailThenSucceedProvider {
 use evotengine::provider::ProviderError;
 use evotengine::provider::StreamConfig;
 use evotengine::provider::StreamEvent;
+use evotengine::provider::StreamOutcome;
 use evotengine::provider::StreamProvider;
 
 #[async_trait::async_trait]
@@ -658,7 +786,7 @@ impl StreamProvider for FailThenSucceedProvider {
         config: StreamConfig,
         tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
         cancel: tokio_util::sync::CancellationToken,
-    ) -> Result<evotengine::Message, ProviderError> {
+    ) -> Result<StreamOutcome, ProviderError> {
         let attempt = self
             .fail_count
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -2157,7 +2285,7 @@ impl StreamProvider for EmptyThenSucceedProvider {
         config: StreamConfig,
         tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
         cancel: tokio_util::sync::CancellationToken,
-    ) -> Result<evotengine::Message, ProviderError> {
+    ) -> Result<StreamOutcome, ProviderError> {
         let attempt = self
             .call_count
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -2176,7 +2304,7 @@ impl StreamProvider for EmptyThenSucceedProvider {
             let _ = tx.send(StreamEvent::Done {
                 message: msg.clone(),
             });
-            return Ok(msg);
+            return Ok(StreamOutcome::complete(msg));
         }
         self.inner.stream(config, tx, cancel).await
     }

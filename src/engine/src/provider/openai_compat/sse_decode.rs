@@ -16,6 +16,7 @@ use crate::provider::stream_http;
 use crate::provider::stream_http::SseEvent;
 use crate::provider::traits::StreamConfig;
 use crate::provider::traits::StreamEvent;
+use crate::provider::traits::StreamOutcome;
 use crate::types::*;
 
 /// Drive an OpenAI-compatible SSE stream from a raw HTTP response.
@@ -25,7 +26,7 @@ pub(crate) async fn decode_sse_stream(
     cancel: CancellationToken,
     config: &StreamConfig,
     compat: &OpenAiCompat,
-) -> Result<Message, ProviderError> {
+) -> Result<StreamOutcome, ProviderError> {
     let (sse_tx, mut sse_rx) = mpsc::unbounded_channel::<SseEvent>();
 
     let sse_cancel = cancel.clone();
@@ -120,7 +121,7 @@ pub(crate) async fn decode_sse_stream(
     let _ = tx.send(StreamEvent::Done {
         message: message.clone(),
     });
-    Ok(message)
+    Ok(StreamOutcome::complete(message))
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -17,7 +17,6 @@ use crate::provider::error::*;
 use crate::provider::stream_http::StreamResponseKind;
 use crate::provider::stream_http::{self};
 use crate::provider::traits::*;
-use crate::types::*;
 
 pub struct OpenAiCompatProvider;
 
@@ -28,7 +27,7 @@ impl StreamProvider for OpenAiCompatProvider {
         config: StreamConfig,
         tx: mpsc::UnboundedSender<StreamEvent>,
         cancel: tokio_util::sync::CancellationToken,
-    ) -> Result<Message, ProviderError> {
+    ) -> Result<StreamOutcome, ProviderError> {
         let model_config = config.model_config.as_ref().ok_or_else(|| {
             ProviderError::Other("ModelConfig required for OpenAI provider".into())
         })?;
@@ -66,7 +65,9 @@ impl StreamProvider for OpenAiCompatProvider {
                 sse_decode::decode_sse_stream(response, tx, cancel, &config, &compat).await
             }
             StreamResponseKind::Json => {
-                json_fallback::handle_json_response(response, tx, &config, &compat).await
+                json_fallback::handle_json_response(response, tx, &config, &compat)
+                    .await
+                    .map(StreamOutcome::complete)
             }
             StreamResponseKind::Other(ct) => Err(ProviderError::Api(format!(
                 "Unexpected content type from OpenAI-compatible endpoint: {ct}"

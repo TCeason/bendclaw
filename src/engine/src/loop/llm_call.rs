@@ -7,8 +7,34 @@ use super::config::AgentLoopConfig;
 use crate::provider::ProviderError;
 use crate::provider::StreamConfig;
 use crate::provider::StreamEvent;
+use crate::provider::StreamOutcome;
 use crate::provider::ToolDefinition;
 use crate::types::*;
+
+pub(super) struct AssistantStreamResult {
+    pub message: Message,
+    pub recovery: Option<AssistantRecovery>,
+}
+
+pub(super) struct AssistantRecovery {
+    pub error: ProviderError,
+}
+
+impl AssistantStreamResult {
+    fn complete(message: Message) -> Self {
+        Self {
+            message,
+            recovery: None,
+        }
+    }
+
+    fn incomplete_tool_use(message: Message, error: ProviderError) -> Self {
+        Self {
+            message,
+            recovery: Some(AssistantRecovery { error }),
+        }
+    }
+}
 
 /// Stream an assistant response from the LLM.
 pub(super) async fn stream_assistant_response(
@@ -19,7 +45,7 @@ pub(super) async fn stream_assistant_response(
     turn: usize,
     injected_count: usize,
     budget: crate::context::ContextBudgetSnapshot,
-) -> Message {
+) -> AssistantStreamResult {
     // Apply context transform
     let messages = if let Some(transform) = &config.transform_context {
         transform(context.messages.clone())
@@ -225,7 +251,8 @@ pub(super) async fn stream_assistant_response(
         // Promote empty Ok(Message) to a retryable error so the retry loop
         // handles it uniformly instead of terminating the agent loop.
         let result = match result {
-            Ok(ref msg) => {
+            Ok(ref outcome) => {
+                let msg = outcome.message();
                 let is_empty = match msg {
                     Message::Assistant {
                         content,
@@ -310,7 +337,8 @@ pub(super) async fn stream_assistant_response(
         shared_metrics.lock().map(|m| m.clone()).unwrap_or_default();
 
     match result {
-        Ok(ref msg) => {
+        Ok(outcome) => {
+            let msg = outcome.message();
             let (usage, stop_reason, content, response_model, response_id) = match msg {
                 Message::Assistant {
                     usage,
@@ -342,7 +370,12 @@ pub(super) async fn stream_assistant_response(
                 response_id,
             })
             .ok();
-            msg.clone()
+            match outcome {
+                StreamOutcome::Complete(msg) => AssistantStreamResult::complete(msg),
+                StreamOutcome::IncompleteToolUse { assistant, error } => {
+                    AssistantStreamResult::incomplete_tool_use(assistant, error)
+                }
+            }
         }
         Err(e) => {
             tx.send(AgentEvent::LlmCallEnd {
@@ -358,7 +391,7 @@ pub(super) async fn stream_assistant_response(
                 response_id: None,
             })
             .ok();
-            Message::Assistant {
+            AssistantStreamResult::complete(Message::Assistant {
                 content: vec![Content::Text {
                     text: String::new(),
                 }],
@@ -369,7 +402,7 @@ pub(super) async fn stream_assistant_response(
                 timestamp: now_ms(),
                 error_message: Some(e.to_string()),
                 response_id: None,
-            }
+            })
         }
     }
 }

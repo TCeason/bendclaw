@@ -3,6 +3,7 @@
 use evotengine::provider::error::ProviderError;
 use evotengine::provider::model::ModelConfig;
 use evotengine::provider::traits::*;
+use evotengine::provider::StreamOutcome;
 use evotengine::provider::StreamProvider;
 use evotengine::types::*;
 use tokio_util::sync::CancellationToken;
@@ -40,7 +41,35 @@ pub async fn run_provider_sse(
     let result = provider.stream(config, tx, cancel).await;
     let events = collect_stream_events(&mut rx);
 
-    result.map(|msg| (msg, events))
+    result.map(|outcome| (outcome.into_message(), events))
+}
+
+pub async fn run_provider_sse_outcome(
+    provider: &dyn StreamProvider,
+    config: StreamConfig,
+    sse_body: &str,
+    status: u16,
+) -> Result<(StreamOutcome, Vec<StreamEvent>), ProviderError> {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(status)
+                .insert_header("content-type", "text/event-stream")
+                .insert_header("cache-control", "no-cache")
+                .set_body_raw(sse_body.to_string(), "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let config = override_base_url(config, &server.uri());
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let cancel = CancellationToken::new();
+
+    let result = provider.stream(config, tx, cancel).await;
+    let events = collect_stream_events(&mut rx);
+
+    result.map(|outcome| (outcome, events))
 }
 
 /// Run a provider against a wiremock server returning JSON.
@@ -66,7 +95,7 @@ pub async fn run_provider_json(
     let result = provider.stream(config, tx, cancel).await;
     let events = collect_stream_events(&mut rx);
 
-    result.map(|msg| (msg, events))
+    result.map(|outcome| (outcome.into_message(), events))
 }
 
 /// Override the base_url in a StreamConfig's model_config to point at the mock server.

@@ -8,7 +8,6 @@ use super::error::*;
 use super::model::ApiProtocol;
 use super::model::ModelConfig;
 use super::traits::*;
-use crate::types::*;
 
 /// Registry of all available stream providers, keyed by API protocol.
 pub struct ProviderRegistry {
@@ -50,7 +49,7 @@ impl ProviderRegistry {
         config: StreamConfig,
         tx: mpsc::UnboundedSender<StreamEvent>,
         cancel: tokio_util::sync::CancellationToken,
-    ) -> Result<Message, ProviderError> {
+    ) -> Result<StreamOutcome, ProviderError> {
         let provider = self.providers.get(&model.api).ok_or_else(|| {
             ProviderError::Other(format!(
                 "No provider registered for protocol: {}",

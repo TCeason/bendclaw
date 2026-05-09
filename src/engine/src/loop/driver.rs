@@ -233,7 +233,7 @@ async fn run_loop(
                 context_tracker.budget_snapshot(&context.messages, config.context_config.as_ref());
 
             // Stream assistant response
-            let message = stream_assistant_response(
+            let assistant_result = stream_assistant_response(
                 context,
                 config,
                 tx,
@@ -243,6 +243,8 @@ async fn run_loop(
                 budget_snapshot,
             )
             .await;
+            let recovery = assistant_result.recovery;
+            let message = assistant_result.message;
 
             // Strip any `<system-reminder>` / `<system>` tags or status-template
             // preambles the model may have mimicked from reminders it saw in
@@ -338,7 +340,47 @@ async fn run_loop(
             };
 
             let has_tool_calls = !tool_calls.is_empty();
-            let mut tool_results: Vec<Message> = Vec::new();
+
+            if let Some(recovery) = recovery {
+                let tool_results = incomplete_tool_use_recovery_results(&message, &recovery.error);
+                for result in &tool_results {
+                    let am: AgentMessage = result.clone().into();
+                    tx.send(AgentEvent::MessageStart {
+                        message: am.clone(),
+                    })
+                    .ok();
+                    tx.send(AgentEvent::MessageEnd {
+                        message: am.clone(),
+                    })
+                    .ok();
+                    context.messages.push(am.clone());
+                    new_messages.push(am);
+                }
+
+                if let Some(ref mut tracker) = tracker {
+                    let turn_tokens = match &message {
+                        Message::Assistant { usage, .. } => (usage.input + usage.output) as usize,
+                        _ => context::message_tokens(&agent_msg),
+                    };
+                    tracker.record_turn(turn_tokens);
+                }
+                if let Some(ref after_turn) = config.after_turn {
+                    // A recovered mid-stream provider error may have only the
+                    // input usage from message_start; output usage is available
+                    // only if Anthropic emitted message_delta before failing.
+                    let usage = match &message {
+                        Message::Assistant { usage, .. } => usage.clone(),
+                        _ => Usage::default(),
+                    };
+                    after_turn(&context.messages, &usage);
+                }
+                tx.send(AgentEvent::TurnEnd {
+                    message: agent_msg,
+                    tool_results,
+                })
+                .ok();
+                continue;
+            }
 
             if let Some(intervention) = tool_only_guard.check(&message, has_tool_calls) {
                 pending.push(intervention.steering_message);
@@ -348,6 +390,7 @@ async fn run_loop(
             // times, skip execution and inject a steering message instead.
             if has_tool_calls {
                 if let Some(intervention) = doom_detector.check(&tool_calls) {
+                    let mut tool_results = Vec::new();
                     for (id, name, args) in &tool_calls {
                         let result = skip_tool_call_doom_loop(id, name, args, tx);
                         let am: AgentMessage = result.clone().into();
@@ -383,6 +426,7 @@ async fn run_loop(
                 }
             }
 
+            let mut tool_results = Vec::new();
             if has_tool_calls {
                 let execution = execute_tool_calls(
                     &context.tools,
@@ -520,5 +564,49 @@ fn sanitize_message(message: Message) -> Message {
             }
         }
         other => other,
+    }
+}
+
+fn incomplete_tool_use_recovery_results(
+    message: &Message,
+    error: &crate::provider::ProviderError,
+) -> Vec<Message> {
+    let Message::Assistant { content, .. } = message else {
+        return Vec::new();
+    };
+
+    content
+        .iter()
+        .filter_map(|block| {
+            let Content::ToolCall { id, name, .. } = block else {
+                return None;
+            };
+            Some(Message::ToolResult {
+                tool_call_id: id.clone(),
+                tool_name: name.clone(),
+                content: vec![Content::Text {
+                    text: format!(
+                        "The generated tool use was interrupted before the full input was received due to a {}. Try again, and if the tool input is large, split the work between multiple smaller tool uses.",
+                        provider_error_category(error)
+                    ),
+                }],
+                is_error: true,
+                timestamp: now_ms(),
+                retention: Retention::Normal,
+            })
+        })
+        .collect()
+}
+
+fn provider_error_category(error: &crate::provider::ProviderError) -> &'static str {
+    match error {
+        crate::provider::ProviderError::RateLimited { .. } => "rate limit",
+        crate::provider::ProviderError::Network(_) => "transient network error",
+        crate::provider::ProviderError::Api(message)
+            if message.to_lowercase().contains("overloaded") =>
+        {
+            "transient upstream overload"
+        }
+        _ => "transient upstream error",
     }
 }

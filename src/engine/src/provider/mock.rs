@@ -56,7 +56,7 @@ impl StreamProvider for MockProvider {
         _config: StreamConfig,
         tx: mpsc::UnboundedSender<StreamEvent>,
         cancel: tokio_util::sync::CancellationToken,
-    ) -> Result<Message, ProviderError> {
+    ) -> Result<StreamOutcome, ProviderError> {
         let response = {
             let mut responses = self.responses.lock();
             if responses.is_empty() {
@@ -125,6 +125,6 @@ impl StreamProvider for MockProvider {
         let _ = tx.send(StreamEvent::Done {
             message: message.clone(),
         });
-        Ok(message)
+        Ok(StreamOutcome::complete(message))
     }
 }
