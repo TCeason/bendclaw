@@ -91,6 +91,128 @@ describe('renderMarkdown', () => {
     expect(result).not.toContain('```')
   })
 
+  test('wraps implicit SQL snippets in code blocks', () => {
+    const md = [
+      'Minimal test table',
+      '',
+      'DROP TABLE IF EXISTS decimal_driver_compat;',
+      '',
+      'CREATE TABLE decimal_driver_compat (',
+      '    id INT,',
+      '    d38 DECIMAL(38, 18),',
+      '    d76 DECIMAL(76, 18)',
+      ');',
+      '',
+      'Continue explanation.',
+    ].join('\n')
+
+    const result = render(md)
+
+    expect(result).toContain('DROP TABLE IF EXISTS decimal_driver_compat;')
+    expect(result).toMatch(/^CREATE TABLE decimal_driver_compat \($/m)
+    expect(result).toMatch(/^ {4}id INT,$/m)
+    expect(result).toContain('Continue explanation.')
+    expect(result).not.toContain('```sql')
+  })
+
+  test('wraps implicit Java and Python driver snippets in code blocks', () => {
+    const md = [
+      'Java MariaDB JDBC example',
+      '',
+      'try (ResultSet rs = stmt.executeQuery("SELECT d38, d76 FROM decimal_driver_compat")) {',
+      '    ResultSetMetaData md = rs.getMetaData();',
+      '    System.out.println(md.getPrecision(1));',
+      '}',
+      '',
+      'Python driver example',
+      '',
+      'from decimal import Decimal',
+      '',
+      'cur.execute("SELECT d38, d76 FROM decimal_driver_compat ORDER BY id")',
+      'for row in cur.fetchall():',
+      '    print(type(row[0]), row[0])',
+    ].join('\n')
+
+    const result = render(md)
+
+    expect(result).toMatch(/^try \(ResultSet rs = stmt\.executeQuery/m)
+    expect(result).toMatch(/^ {4}ResultSetMetaData md = rs\.getMetaData\(\);$/m)
+    expect(result).toMatch(/^from decimal import Decimal$/m)
+    expect(result).toMatch(/^ {4}print\(type\(row\[0\]\), row\[0\]\)$/m)
+    expect(result).not.toContain('```java')
+    expect(result).not.toContain('```python')
+  })
+
+  test('stops implicit Java block at blank line before prose', () => {
+    const md = [
+      'try (ResultSet rs = stmt.executeQuery("SELECT 1")) {',
+      '    System.out.println(rs.getInt(1));',
+      '}',
+      '',
+      'Driver compatibility summary',
+      '',
+      '- Java: OK',
+    ].join('\n')
+
+    const result = render(md)
+
+    expect(result).toMatch(/^try \(ResultSet rs = stmt\.executeQuery/m)
+    expect(result).toContain('Driver compatibility summary')
+    expect(result).toContain('- Java: OK')
+  })
+
+  test('does not swallow following CJK prose into implicit SQL block', () => {
+    const md = [
+      'SELECT d38, d76',
+      'FROM decimal_driver_compat',
+      'ORDER BY id;',
+      '这里重点是：',
+      '',
+      '- d38：普通 DECIMAL(38,18)',
+    ].join('\n')
+
+    const result = render(md)
+
+    expect(result).toMatch(/^SELECT d38, d76$/m)
+    expect(result).toContain('这里重点是：')
+    expect(result).toContain('- d38：普通 DECIMAL(38,18)')
+  })
+
+  test('renders markdown tables from decimal compatibility log as actual tables', () => {
+    const result = render([
+      '## Verification matrix',
+      '',
+      '| Client | Protocol | Focus | Risk |',
+      '|---|---|---|---|',
+      '| Java mariadb-java-client | MySQL | `ResultSet.getBigDecimal()` precision/scale | low |',
+      '| Spark JDBC | MySQL JDBC | **DecimalType limit 38** | **high** |',
+    ].join('\n')).replace(/\u200b/g, '')
+
+    expect(result).toContain('Verification matrix')
+    expect(result).toContain('┌')
+    expect(result).toContain('Java')
+    expect(result).toContain('mariadb-java-client')
+    expect(result).toContain('Spark JDBC')
+    expect(result).not.toContain('|---|---|---|---|')
+  })
+
+  test('preserves box-drawing conclusion tables from decimal compatibility log', () => {
+    const result = render([
+      'Final delivery table',
+      '',
+      '┌─────────────┬─────────────────────────────┬──────────┐',
+      '│    Link     │         Driver              │ Result   │',
+      '├─────────────┼─────────────────────────────┼──────────┤',
+      '│ Java main   │ mariadb-java-client x.y.z   │ OK       │',
+      '└─────────────┴─────────────────────────────┴──────────┘',
+    ].join('\n'))
+
+    expect(result).toContain('Final delivery table')
+    expect(result).toContain('┌─────────────┬')
+    expect(result).toContain('│ Java main   │ mariadb-java-client x.y.z   │ OK')
+    expect(result).not.toContain('```text')
+  })
+
   test('fenced code blocks render without a gutter or left padding', () => {
     // Match claudecode: code blocks are rendered verbatim with syntax
     // highlighting only — no leading gutter character or padding space.

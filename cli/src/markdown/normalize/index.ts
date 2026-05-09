@@ -12,8 +12,10 @@ const CODE_FENCE_RE = /^( {0,3})(`{3,}|~{3,})(.*)$/
 // the glued case so `#include`/`#1` don't collide.
 const MARKDOWN_BOUNDARY_RE = /^([ \t]{0,3})?(#{1,6}(?:\s|$)|#{2,6}(?=[^#\s])|(?:\*\*|__)|(?:[-*+]\s)|(?:\d+\.\s)|>\s|\|.*\||-{3,}\s*$)/
 const CODE_LIKE_START_RE = /^[\[{(}\]),;]|^\/\/|^#\s*include\b/
-const CODE_KEYWORD_RE = /^(return|if|else|for|while|switch|case|break|continue|try|catch|finally|throw|await|async|const|let|var|function|class|def|import|export|from|SELECT|CREATE|INSERT|UPDATE|DELETE|WITH|WHERE|ORDER|GROUP|LIMIT)\b/i
+const CODE_KEYWORD_RE = /^(return|if|else|for|while|switch|case|break|continue|try|catch|finally|throw|await|async|const|let|var|function|class|def|import|export|from|SELECT|CREATE|INSERT|UPDATE|DELETE|WITH|WHERE|ORDER|GROUP|LIMIT|DROP|SET)\b/i
+const SQL_KEYWORD_RE = /^(SELECT|CREATE|INSERT|UPDATE|DELETE|WITH|ALTER|DROP|SET|MERGE|TRUNCATE)\b/i
 const CODE_ASSIGNMENT_RE = /^[\w$.'"`-]+\s*[:=]/
+const CODE_BLOCK_START_RE = /^(try\s*\(|while\s*\(|for\s*\(|if\s*\(|class\s+\w|def\s+\w|function\s+\w|val\s+\w|const\s+\w|let\s+\w|var\s+\w|from\s+\w+(?:\.\w+)*\s+import\b|import\s+\w+(?:\.\w+)*(?:\s+as\s+\w+)?$)\b/i
 // Box-drawing characters used in tree/diagram structures (U+2500–U+257F)
 const BOX_DRAWING_RE = /[\u2500-\u257f]/
 
@@ -150,9 +152,44 @@ function looksLikeStructuredCode(lines: string[], lang: string | null): boolean 
   const content = lines.join('\n').trim()
   if (!content) return false
   if (/^[\[{]/.test(content)) return true
-  if (/^(SELECT|CREATE|INSERT|UPDATE|DELETE|WITH|ALTER|DROP)\b/i.test(content)) return true
+  if (SQL_KEYWORD_RE.test(content)) return true
   if (/^(import|export|const|let|var|function|class|def|async|type|interface)\b/.test(content)) return true
   return false
+}
+
+function looksLikeImplicitCodeStart(line: string): boolean {
+  const trimmed = line.trimStart()
+  if (!trimmed) return false
+  if (CODE_BLOCK_START_RE.test(trimmed)) return true
+  if (SQL_KEYWORD_RE.test(trimmed)) return true
+  if (/^#\s+(databend-driver|mysql-connector-python|PyMySQL)\b/.test(trimmed)) return true
+  return false
+}
+
+function looksLikeImplicitCodeContinuation(line: string, lang: string): boolean {
+  const trimmed = line.trimStart()
+  if (!trimmed) return true
+  if (/^[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff]/.test(trimmed)) return false
+  if (lang === 'sql') {
+    return SQL_KEYWORD_RE.test(trimmed)
+      || /^(FROM|WHERE|ORDER\s+BY|GROUP\s+BY|HAVING|LIMIT|VALUES|AS)\b/i.test(trimmed)
+      || /^[(),;]/.test(trimmed)
+      || /^\w[\w.]*\s+/.test(trimmed)
+      || /^\)/.test(trimmed)
+  }
+  if (lang === 'java') return !looksLikeMarkdownBoundary(trimmed) || /^[})];?/.test(trimmed)
+  if (lang === 'python') return !looksLikeMarkdownBoundary(trimmed)
+  if (lang === 'scala') return !looksLikeMarkdownBoundary(trimmed) || /^\./.test(trimmed)
+  return false
+}
+
+function implicitCodeLanguage(line: string): string {
+  const trimmed = line.trimStart()
+  if (SQL_KEYWORD_RE.test(trimmed)) return 'sql'
+  if (/^try\s*\(|^while\s*\(/.test(trimmed)) return 'java'
+  if (/^from\s+\w+(?:\.\w+)*\s+import\b|^import\s+\w+(?:\.\w+)*(?:\s+as\s+\w+)?$/i.test(trimmed)) return 'python'
+  if (/^val\s+\w/.test(trimmed)) return 'scala'
+  return 'text'
 }
 
 function looksLikePlainMarkdownAfterCode(line: string): boolean {
@@ -935,9 +972,69 @@ function normalizeEmphasisClosing(text: string): string {
   return out.join('\n')
 }
 
+function implicitCodeCanContinueAcrossBlank(lang: string, nextLine: string | undefined): boolean {
+  if (nextLine === undefined) return true
+  const trimmed = nextLine.trimStart()
+  if (!trimmed) return true
+  if (/^[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff]/.test(trimmed)) return false
+  if (looksLikeImplicitCodeStart(trimmed)) return true
+  if (lang === 'sql') return looksLikeImplicitCodeContinuation(trimmed, lang)
+  if (lang === 'scala') return /^\./.test(trimmed)
+  return /^[})\]]/.test(trimmed)
+}
+
+function normalizeImplicitCodeBlocks(text: string): string {
+  const lines = text.split('\n')
+  const out: string[] = []
+  let inFence = false
+  let fenceMarker = ''
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!
+    const fenceMatch = CODE_FENCE_RE.exec(line)
+    if (fenceMatch) {
+      const marker = fenceMatch[2]!
+      if (!inFence) {
+        inFence = true
+        fenceMarker = marker
+      } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
+        inFence = false
+        fenceMarker = ''
+      }
+      out.push(line)
+      continue
+    }
+
+    if (inFence || !looksLikeImplicitCodeStart(line)) {
+      out.push(line)
+      continue
+    }
+
+    const lang = implicitCodeLanguage(line)
+    const block = [line]
+    let j = i + 1
+    while (j < lines.length && looksLikeImplicitCodeContinuation(lines[j]!, lang)) {
+      if (!lines[j]!.trim() && !implicitCodeCanContinueAcrossBlank(lang, lines[j + 1])) break
+      block.push(lines[j]!)
+      j++
+    }
+
+    const nonBlank = block.filter(blockLine => blockLine.trim())
+    if (nonBlank.length >= 2 || /[;{(]$/.test(line.trimEnd())) {
+      out.push(`\`\`\`${lang}`, ...block, '```')
+      i = j - 1
+      continue
+    }
+
+    out.push(line)
+  }
+
+  return out.join('\n')
+}
+
 function prepareMarkdownForLex(text: string): string {
   return repairUnclosedFences(
-    normalizeEmphasisClosing(normalizeHrLines(preserveBoxDrawingBlocks(normalizeGluedTables(normalizeGluedHeadings(splitGluedFenceOpens(text)))))),
+    normalizeEmphasisClosing(normalizeHrLines(preserveBoxDrawingBlocks(normalizeGluedTables(normalizeImplicitCodeBlocks(normalizeGluedHeadings(splitGluedFenceOpens(text))))))),
     true,
   )
 }
@@ -972,5 +1069,6 @@ export {
   stripPromptXMLTags,
   splitGluedFenceOpens,
   normalizeEmphasisClosing,
+  normalizeImplicitCodeBlocks,
   prepareMarkdownForLex,
 }
