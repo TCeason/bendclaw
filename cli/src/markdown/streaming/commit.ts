@@ -150,6 +150,77 @@ export function findStreamingCommitPoint(text: string): number {
   return splitAt
 }
 
+export function findNaturalPlainTextCommitPoint(text: string, termRows: number): number {
+  if (!text) return 0
+  if (repairUnclosedFences(text, false) !== text) return 0
+  if (hasMarkdownBlockSyntax(text)) return 0
+  if (hasUnclosedInlineSyntax(text)) return 0
+
+  const lines = text.split('\n')
+  const threshold = Math.max(6, Math.floor(termRows / 3))
+  if (lines.length <= threshold) return 0
+
+  let commitLineCount = lines.length - 2
+  while (commitLineCount > 0 && lines[commitLineCount - 1]!.trim() === '') {
+    commitLineCount--
+  }
+  if (commitLineCount <= 0) return 0
+
+  let splitAt = 0
+  for (let i = 0; i < commitLineCount; i++) {
+    splitAt += lines[i]!.length + 1
+  }
+  if (splitAt <= 0 || splitAt >= text.length) return 0
+  return splitAt
+}
+
+function hasMarkdownBlockSyntax(text: string): boolean {
+  for (const line of text.split('\n')) {
+    const trimmed = line.trimStart()
+    if (!trimmed) continue
+    if (/^(```|~~~)/.test(trimmed)) return true
+    if (BOX_DRAWING_RE.test(line)) return true
+    if (/^⏺\s+\S/.test(trimmed)) return true
+    if (/^(?: {4}|\t)\S/.test(line)) return true
+    if (/^#{1,6}(?:\s|$)/.test(trimmed)) return true
+    if (/^[-*+]\s+/.test(trimmed)) return true
+    if (/^\d+\.\s+/.test(trimmed)) return true
+    if (/^>\s?/.test(trimmed)) return true
+    if (/^\|.*\|\s*$/.test(trimmed)) return true
+    if (/^<\/?[A-Za-z][^>]*>\s*$/.test(trimmed)) return true
+    if (/^[-*_]{3,}\s*$/.test(trimmed)) return true
+  }
+  return false
+}
+
+function hasUnclosedInlineSyntax(text: string): boolean {
+  return countUnescaped(text, '`') % 2 === 1
+    || countUnescaped(text, '[') !== countUnescaped(text, ']')
+    || countUnescaped(text, '(') !== countUnescaped(text, ')')
+    || countUnescaped(text, '**') % 2 === 1
+    || countUnescaped(text, '__') % 2 === 1
+}
+
+function countUnescaped(text: string, needle: string): number {
+  let count = 0
+  let idx = 0
+  while (idx < text.length) {
+    const found = text.indexOf(needle, idx)
+    if (found === -1) break
+    if (!isEscaped(text, found)) count++
+    idx = found + needle.length
+  }
+  return count
+}
+
+function isEscaped(text: string, index: number): boolean {
+  let slashCount = 0
+  for (let i = index - 1; i >= 0 && text[i] === '\\'; i--) {
+    slashCount++
+  }
+  return slashCount % 2 === 1
+}
+
 function firstDifferenceIndex(a: string, b: string): number {
   const limit = Math.min(a.length, b.length)
   for (let i = 0; i < limit; i++) {

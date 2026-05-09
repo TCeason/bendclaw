@@ -4,6 +4,7 @@ import { renderMarkdown } from '../../render/markdown.js'
 
 const MAX_PROGRESS_LINES = 5
 const MAX_PROGRESS_LINE_WIDTH = 120
+const MAX_PROSE_PENDING_LINES = 3
 
 export interface ActiveResponseInput {
   isLoading: boolean
@@ -14,6 +15,23 @@ export interface ActiveResponseInput {
   termRows: number
   expanded?: boolean
   assistantCommitted?: boolean
+}
+
+function isPlainProsePending(text: string): boolean {
+  for (const line of text.split('\n')) {
+    const trimmed = line.trimStart()
+    if (!trimmed) continue
+    if (/^(```|~~~)/.test(trimmed)) return false
+    if (/^⏺\s+\S/.test(trimmed)) return false
+    if (/^(?: {4}|\t)\S/.test(line)) return false
+    if (/^#{1,6}(?:\s|$)/.test(trimmed)) return false
+    if (/^[-*+]\s+/.test(trimmed)) return false
+    if (/^\d+\.\s+/.test(trimmed)) return false
+    if (/^>\s?/.test(trimmed)) return false
+    if (/^\|.*\|\s*$/.test(trimmed)) return false
+    if (/^[│├└]/.test(trimmed)) return false
+  }
+  return true
 }
 
 export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock[] {
@@ -44,15 +62,20 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
     // start of an assistant block (nothing committed yet).
     const rendered = renderMarkdown(input.pendingText)
     const lines = (rendered || input.pendingText).split('\n')
-    // Reserve space for spinner + prompt; show as many trailing lines as fit
+    // Reserve space for spinner + prompt. Plain prose should feel like a
+    // typing tail, not a separate scrolling pane; structured markdown keeps
+    // more context because it may need to be re-rendered as a unit.
     const maxLines = Math.max(1, input.termRows - 10)
-    const visible = lines.slice(-maxLines)
+    const visibleLineCount = isPlainProsePending(input.pendingText)
+      ? Math.min(MAX_PROSE_PENDING_LINES, maxLines)
+      : maxLines
+    const visible = lines.slice(-visibleLineCount)
     const isBlockStart = !input.assistantCommitted
     // The ⏺ dot marks the start of an assistant block. It should only appear
     // on the block's first line (lines[0]). If the block has grown beyond the
     // visible window, the first line is no longer visible — don't put ⏺ on
     // visible[0] because that would make a middle line suddenly gain a dot.
-    const blockStartVisible = isBlockStart && lines.length <= maxLines
+    const blockStartVisible = isBlockStart && lines.length <= visibleLineCount
     const styledLines: StyledLine[] = visible.map((l, i) =>
       i === 0 && blockStartVisible
         ? line(colored('⏺ ', 'cyan'), plain(l))

@@ -132,6 +132,58 @@ describe('term stream machine', () => {
     expect(state.streamingText).toBe('要点：\n')
   })
 
+  test('assistant delta naturally commits long plain text leading lines', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+    const text = Array.from({ length: 9 }, (_, i) => `plain line ${i}`).join('\n')
+
+    const update = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { delta: text },
+    }, { termRows: 18 })
+
+    state = update.state
+    const committed = update.commitLines.map(line => line.text).join('\n')
+    expect(committed).toContain('plain line 0')
+    expect(committed).toContain('plain line 6')
+    expect(committed).not.toContain('plain line 7')
+    expect(state.streamingText).toBe('plain line 7\nplain line 8')
+    expect(state.assistantCommitted).toBe(true)
+  })
+
+  test('assistant delta does not naturally commit markdown list text', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+    const text = Array.from({ length: 9 }, (_, i) => `- item ${i}`).join('\n')
+
+    const update = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { delta: text },
+    }, { termRows: 18 })
+
+    state = update.state
+    expect(update.commitLines.length).toBe(0)
+    expect(state.streamingText).toBe(text)
+  })
+
+  test('assistant delta does not naturally commit indented code text', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+    const text = Array.from({ length: 9 }, (_, i) => `    const value${i} = ${i}`).join('\n')
+
+    const update = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { delta: text },
+    }, { termRows: 18 })
+
+    state = update.state
+    expect(update.commitLines.length).toBe(0)
+    expect(state.streamingText).toBe(text)
+  })
+
   test('verbose mode: no duplicate commits across llm_call_completed and assistant_completed', () => {
     const appState = { ...createInitialState('model', '/tmp'), verbose: true }
     const spinner = createSpinnerState()

@@ -18,7 +18,7 @@ import { renderMarkdownNodes } from '../markdown/render/ansi.js'
 
 export { configureMarked } from '../markdown/parse/marked.js'
 export { formatToken } from '../markdown/render/ansi.js'
-export { findStreamingCommitPoint, splitMarkdownBlocks, type MarkdownSplit } from '../markdown/streaming/commit.js'
+export { findStreamingCommitPoint, findNaturalPlainTextCommitPoint, splitMarkdownBlocks, type MarkdownSplit } from '../markdown/streaming/commit.js'
 
 /**
  * Render markdown text to terminal-friendly ANSI output.

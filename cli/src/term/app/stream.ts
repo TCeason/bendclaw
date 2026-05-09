@@ -1,6 +1,6 @@
 import { buildError, buildRunSummary, buildToolCall, buildToolProgress, buildToolResult, buildVerboseEvent, buildAssistantLines, buildThinkingLines, type OutputLine } from '../../render/output.js'
 import { formatDuration } from '../../render/format.js'
-import { findStreamingCommitPoint } from '../../render/markdown.js'
+import { findStreamingCommitPoint, findNaturalPlainTextCommitPoint } from '../../render/markdown.js'
 import { setSpinnerPhase, type SpinnerState } from '../spinner.js'
 import { applyEvent } from './reducer.js'
 import type { AppState } from './state.js'
@@ -161,15 +161,20 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
         },
       }
 
-      // Commit completed markdown blocks directly to scroll area.
-      const commitPoint = findStreamingCommitPoint(state.streamingText)
+      // Commit completed markdown blocks directly to scroll area. If markdown
+      // has no safe block boundary yet, allow long plain-text prose to flow by
+      // committing complete leading lines while keeping the active tail dynamic.
+      const markdownCommitPoint = findStreamingCommitPoint(state.streamingText)
+      const naturalCommitPoint = markdownCommitPoint > 0 ? 0 : findNaturalPlainTextCommitPoint(state.streamingText, ctx.termRows)
+      const commitPoint = markdownCommitPoint || naturalCommitPoint
       if (commitPoint > 0) {
         const completed = state.streamingText.slice(0, commitPoint)
         const pending = state.streamingText.slice(commitPoint)
         const builtLines = buildAssistantLines(completed)
-        // Insert blank line between consecutive committed chunks so block
-        // spacing matches the full-document render (trim strips it otherwise).
-        if (state.assistantCommitted && builtLines.length > 0) {
+        // Insert blank line between consecutive committed markdown chunks so
+        // block spacing matches the full-document render (trim strips it
+        // otherwise). Natural plain-text continuation stays visually connected.
+        if (markdownCommitPoint > 0 && state.assistantCommitted && builtLines.length > 0) {
           const sep: OutputLine = { id: `sep-${sepId++}`, kind: 'assistant', text: '' }
           commitLines.push(sep)
           writeLines.push(sep)
@@ -181,17 +186,19 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
 
       // Force-split when pending text exceeds a fraction of the visible area
       // so content flows into the scroll zone (append) instead of staying in
-      // the status area (re-render in place). Only split at markdown-safe
-      // boundaries; otherwise keep the whole growing block dynamic.
+      // the status area (re-render in place). Prefer markdown-safe boundaries,
+      // then fall back to plain prose line boundaries.
       const pendingLineCount = state.streamingText.split('\n').length
       const forceThreshold = Math.max(4, Math.floor(ctx.termRows / 3))
       if (pendingLineCount > forceThreshold) {
-        const splitAt = findStreamingCommitPoint(state.streamingText)
+        const markdownSplitAt = findStreamingCommitPoint(state.streamingText)
+        const naturalSplitAt = markdownSplitAt > 0 ? 0 : findNaturalPlainTextCommitPoint(state.streamingText, ctx.termRows)
+        const splitAt = markdownSplitAt || naturalSplitAt
         if (splitAt > 0 && splitAt < state.streamingText.length) {
           const chunk = state.streamingText.slice(0, splitAt)
           const rest = state.streamingText.slice(splitAt)
           const builtLines = buildAssistantLines(chunk)
-          if (state.assistantCommitted && builtLines.length > 0) {
+          if (markdownSplitAt > 0 && state.assistantCommitted && builtLines.length > 0) {
             const sep: OutputLine = { id: `sep-${sepId++}`, kind: 'assistant', text: '' }
             commitLines.push(sep)
             writeLines.push(sep)
