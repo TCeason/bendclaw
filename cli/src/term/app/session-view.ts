@@ -3,7 +3,8 @@ import type { OutputLine } from '../../render/output.js'
 import { selectSessionPool } from './resume.js'
 
 export function chooseBannerSessions(preloaded: SessionMeta[], cwd: string): SessionMeta[] {
-  return selectSessionPool(preloaded, cwd)
+  const cwdSessions = selectSessionPool(preloaded, cwd)
+  return cwdSessions.length > 0 ? cwdSessions : preloaded
 }
 
 export function findPreviousSession(preloaded: SessionMeta[], cwd: string): SessionMeta | undefined {
