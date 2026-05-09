@@ -128,6 +128,7 @@ function collectFiles(sessionId: string): string[] {
     join(sessionDir, 'transcript.jsonl'),
     join('logs', `${sessionId}.log`),
     join('logs', `${sessionId}.screen.log`),
+    join('logs', `${sessionId}.markdown.log`),
   ]
   for (const f of candidates) {
     if (existsSync(join(EVOTAI_DIR, f))) {
@@ -140,7 +141,7 @@ function collectFiles(sessionId: string): string[] {
 /** Validate extracted files and move them into the target dir (default ~/.evotai) */
 function validateAndImport(tmpDir: string, targetRoot?: string): string {
   const destRoot = targetRoot ?? EVOTAI_DIR
-  const allowedPattern = /^(sessions\/[0-9a-f-]+\/(session\.json|transcript\.jsonl)|logs\/[0-9a-f-]+\.(log|screen\.log))$/
+  const allowedPattern = /^(sessions\/[0-9a-f-]+\/(session\.json|transcript\.jsonl)|logs\/[0-9a-f-]+\.(log|screen\.log|markdown\.log))$/
 
   // Enumerate all files
   const allFiles = listFilesRecursive(tmpDir)

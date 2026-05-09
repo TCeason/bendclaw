@@ -101,6 +101,8 @@ describe('validateAndImport', () => {
     writeFileSync(join(tmpDir, 'sessions', SID, 'session.json'), '{}')
     writeFileSync(join(tmpDir, 'sessions', SID, 'transcript.jsonl'), '')
     writeFileSync(join(tmpDir, 'logs', `${SID}.log`), 'log data')
+    writeFileSync(join(tmpDir, 'logs', `${SID}.screen.log`), 'screen data')
+    writeFileSync(join(tmpDir, 'logs', `${SID}.markdown.log`), '--- markdown trace asst-1 ---\n')
 
     const targetDir = join(tmpdir(), `evot-test-target-${Date.now()}`)
     mkdirSync(targetDir, { recursive: true })
@@ -112,6 +114,8 @@ describe('validateAndImport', () => {
     expect(existsSync(join(targetDir, 'sessions', SID, 'session.json'))).toBe(true)
     expect(existsSync(join(targetDir, 'sessions', SID, 'transcript.jsonl'))).toBe(true)
     expect(existsSync(join(targetDir, 'logs', `${SID}.log`))).toBe(true)
+    expect(existsSync(join(targetDir, 'logs', `${SID}.screen.log`))).toBe(true)
+    expect(existsSync(join(targetDir, 'logs', `${SID}.markdown.log`))).toBe(true)
 
     rmSync(targetDir, { recursive: true, force: true })
   })

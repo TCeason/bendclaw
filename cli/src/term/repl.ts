@@ -101,8 +101,21 @@ export interface ReplOptions {
   envFile?: string
 }
 
+function getGitVersion(cwd: string): string | null {
+  try {
+    const result = Bun.spawnSync(['git', 'rev-parse', '--short=12', 'HEAD'], { cwd, stdout: 'pipe', stderr: 'pipe' })
+    if (result.exitCode !== 0) return null
+    const sha = result.stdout.toString().trim()
+    return sha || null
+  } catch {
+    return null
+  }
+}
+
 export async function startRepl(opts: ReplOptions): Promise<void> {
   const { agent } = opts
+  const { version } = await import('../native/index.js')
+  const appVersion = version()
   const renderer = new TermRenderer()
   renderer.init()
 
@@ -129,6 +142,21 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const expandedLines: OutputLine[] = []
   let lastProgressLineCount = 0
   const screenLog = new ScreenLog()
+  const gitVersion = getGitVersion(agent.cwd)
+  const markdownRendererVersion = `evot-${appVersion}:markdown-trace-v1${gitVersion ? `:git-${gitVersion}` : ''}`
+  let markdownTraceId = 0
+
+  function logMarkdownTrace(outputLines: OutputLine[], renderedLines: string[]) {
+    const raw = outputLines.find(line => line.kind === 'assistant' && line.rawMarkdown)?.rawMarkdown
+    if (!raw) return
+    const firstLine = outputLines.find(line => line.kind === 'assistant' && line.rawMarkdown === raw)
+    screenLog.logMarkdownTrace({
+      messageId: firstLine?.id ?? `markdown-${++markdownTraceId}`,
+      rendererVersion: markdownRendererVersion,
+      rawMarkdown: raw,
+      renderedLines,
+    })
+  }
 
   // Server state
   let serverState: ServerState | null = null
@@ -144,7 +172,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   // Update hint
   let updateHint: string | null = null
   const updateMgr = new (await import('../update/index.js')).UpdateManager(
-    (await import('../native/index.js')).version()
+    appVersion
   )
   updateMgr.on('update-available', (info: { version: string }) => {
     updateHint = `v${info.version} available · /update`
@@ -298,9 +326,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     renderStatus()
     renderer.flushBatch()
     screenLog.logLines(rendered)
+    logMarkdownTrace(outputLines, rendered)
   }
 
-  /** Commit tool_finished with both compact and expanded versions. */
   function commitToolFinished(event: import('../native/index.js').RunEvent): void {
     const compact = buildToolFinishedLines(event)
     const exp = buildToolFinishedLines(event, true)
@@ -581,6 +609,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             renderStatus()
             renderer.flushBatch()
             screenLog.logLines(rendered)
+            logMarkdownTrace(visible, rendered)
           } else {
             commitLines(update.commitLines)
           }
@@ -750,7 +779,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (trimmed === '/log') {
       clearAll()
       const logPath = screenLog.filePath
-      if (logPath) commitLines([{ id: 'sys-log', kind: 'system', text: `  Log: ${logPath}` }])
+      const markdownPath = screenLog.markdownTraceFilePath
+      if (logPath) {
+        const text = markdownPath ? `  Log: ${logPath}\n  Markdown: ${markdownPath}` : `  Log: ${logPath}`
+        commitLines([{ id: 'sys-log', kind: 'system', text }])
+      }
       else commitLines([{ id: 'sys-log', kind: 'system', text: '  No active screen log.' }])
       renderStatus()
       return
@@ -1342,8 +1375,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
     } else if (!query) {
       const logPath = screenLog.filePath
-      if (logPath) commitLines([{ id: 'sys-log', kind: 'system', text: `  Log: ${logPath}` }])
-      else if (sid) commitLines([{ id: 'sys-log', kind: 'system', text: `  Log: ${join(logDir, `${sid}.screen.log`)}` }])
+      const markdownPath = screenLog.markdownTraceFilePath
+      if (logPath) {
+        const text = markdownPath ? `  Log: ${logPath}\n  Markdown: ${markdownPath}` : `  Log: ${logPath}`
+        commitLines([{ id: 'sys-log', kind: 'system', text }])
+      }
+      else if (sid) commitLines([{ id: 'sys-log', kind: 'system', text: `  Log: ${join(logDir, `${sid}.screen.log`)}\n  Markdown: ${join(logDir, `${sid}.markdown.log`)}` }])
       else commitLines([{ id: 'sys-log', kind: 'system', text: `  Log dir: ${logDir} (no active session)` }])
     } else if (!sid) {
       commitLines([{ id: 'sys-log-err', kind: 'system', text: '  No active session to analyze.' }])
@@ -1354,7 +1391,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         'You are in a temporary log analysis session.',
         'This session is not persisted and does not affect the main session context.',
         '',
-        `Log file to analyze:\n${logPath}`,
+        `Screen log file to analyze:\n${logPath}`,
+        `Raw markdown trace, if present:\n${join(logDir, `${sid}.markdown.log`)}`,
         '',
         'Rules:',
         '- Read relevant log sections before answering; do not guess',

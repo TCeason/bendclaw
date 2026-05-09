@@ -100,6 +100,11 @@ interface TrailingCodeComment {
 }
 
 const SQL_START_RE = /^(SELECT|CREATE|INSERT|UPDATE|DELETE|WITH|ALTER|DROP|MERGE|TRUNCATE)\b/i
+const DIAGRAM_ARROW_RE = /(?:[-=]{2,}>|<[-=]{2,}|[→←↑↓↗↘↙↖▲▼▶◀])/
+const DIAGRAM_BOX_SIDE_RE = /[│├└┌]/
+const DIAGRAM_BORDER_OR_SIDE_RE = /[┌└│][─┴┬\s]/
+const PLAIN_DIAGRAM_LANGUAGE = '__plain_diagram__'
+const DIAGRAM_BRANCH_MARKER_RE = /[├└]─►/g
 
 function looksLikeSqlCode(text: string): boolean {
   const firstContentLine = text.split(EOL).find(line => line.trim())
@@ -231,6 +236,72 @@ function alignTrailingCodeComments(text: string, lang: string): string {
   return lines.join(EOL)
 }
 
+function leftmostIndexOfAny(line: string, re: RegExp): number | null {
+  const match = new RegExp(re.source, re.flags.replace('g', '')).exec(line)
+  return match ? match.index : null
+}
+
+function padLineToColumn(line: string, fromIndex: number, targetColumn: number): string {
+  const before = line.slice(0, fromIndex)
+  const beforeWidth = terminalDisplayWidth(before)
+  if (beforeWidth >= targetColumn) return line
+  return `${before}${' '.repeat(targetColumn - beforeWidth)}${line.slice(fromIndex)}`
+}
+
+function medianColumn(columns: number[]): number | null {
+  if (columns.length < 2) return null
+  const sorted = [...columns].sort((a, b) => a - b)
+  return sorted[Math.floor(sorted.length / 2)] ?? null
+}
+
+function normalizeDiagramIndent(text: string): string {
+  if (!BOX_DRAWING_RE.test(text)) return text
+  const lines = text.split(EOL)
+  const borderColumns = lines
+    .flatMap(line => {
+      const cols: number[] = []
+      const side = leftmostIndexOfAny(line, DIAGRAM_BORDER_OR_SIDE_RE)
+      if (side !== null) cols.push(terminalDisplayWidth(line.slice(0, side)))
+      return cols
+    })
+  const branchColumns = lines
+    .flatMap(line => {
+      const cols: number[] = []
+      const matches = line.matchAll(DIAGRAM_BRANCH_MARKER_RE)
+      for (const match of matches) cols.push(terminalDisplayWidth(line.slice(0, match.index)))
+      return cols
+    })
+
+  const targetBorder = medianColumn(borderColumns)
+  const targetBranch = medianColumn(branchColumns)
+  if (targetBorder === null && targetBranch === null) return text
+
+  return lines.map(line => {
+    if (targetBorder !== null) {
+      const borderIndex = leftmostIndexOfAny(line, DIAGRAM_BORDER_OR_SIDE_RE)
+      if (borderIndex !== null) return padLineToColumn(line, borderIndex, targetBorder)
+    }
+    if (targetBranch !== null) {
+      const branchIndex = leftmostIndexOfAny(line, DIAGRAM_BRANCH_MARKER_RE)
+      if (branchIndex !== null) return padLineToColumn(line, branchIndex, targetBranch)
+    }
+    return line
+  }).join(EOL)
+}
+
+function styleDiagramCode(text: string, theme: Theme): string {
+  const hasDiagramMarkers = BOX_DRAWING_RE.test(text) || DIAGRAM_ARROW_RE.test(text)
+  if (!hasDiagramMarkers) return text
+
+  return text
+    .split(EOL)
+    .map(line => line
+      .replace(/[\u2500-\u257f]/g, ch => theme.tableBorder.paint(ch))
+      .replace(/[-=]{2,}>|<[-=]{2,}|[→←↑↓↗↘↙↖▲▼▶◀]/g, arrow => theme.hr.paint(arrow)),
+    )
+    .join(EOL)
+}
+
 export function formatToken(
   token: Token,
   listDepth = 0,
@@ -253,9 +324,12 @@ export function formatToken(
     }
     case 'code': {
       const text = token.text as string
-      const lang = resolveLanguage((token as Tokens.Code).lang) ?? 'plaintext'
+      const lang = resolveLanguage((token as Tokens.Code).lang) ?? (BOX_DRAWING_RE.test(text) || DIAGRAM_ARROW_RE.test(text) ? PLAIN_DIAGRAM_LANGUAGE : 'plaintext')
       let highlighted = alignTrailingCodeComments(text, lang)
-      if (highlighter) {
+      const isPlainDiagram = lang === PLAIN_DIAGRAM_LANGUAGE || (lang === 'plaintext' && (BOX_DRAWING_RE.test(highlighted) || DIAGRAM_ARROW_RE.test(highlighted)))
+      if (isPlainDiagram) {
+        highlighted = styleDiagramCode(normalizeDiagramIndent(highlighted), theme)
+      } else if (highlighter) {
         try {
           if (highlighter.supportsLanguage(lang)) {
             highlighted = highlighter.highlight(highlighted, { language: lang })

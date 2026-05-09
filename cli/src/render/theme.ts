@@ -102,7 +102,7 @@ function darkTheme(): Theme {
     // for long CJK quotes.
     blockquoteText: style(s => chalk.italic(s)),
 
-    tableBorder: style(s => gray(s)),
+  tableBorder: style(s => chalk.hex('#8a8a8a')(s)),
     tableHeader: style(s => chalk.bold(s)),
 
     hr: style(s => gray(s)),
@@ -151,7 +151,7 @@ function lightTheme(): Theme {
     blockquoteBorder: style(s => gray(s)),
     blockquoteText: style(s => chalk.italic(s)),
 
-    tableBorder: style(s => gray(s)),
+  tableBorder: style(s => chalk.hex('#8a8a8a')(s)),
     tableHeader: style(s => chalk.bold(s)),
 
     hr: style(s => gray(s)),

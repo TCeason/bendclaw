@@ -21,6 +21,7 @@ export interface OutputLine {
   id: string
   kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'tool_result' | 'verbose' | 'error' | 'system' | 'run_summary'
   text: string
+  rawMarkdown?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -56,6 +57,7 @@ export function buildAssistantLines(markdownText: string): OutputLine[] {
     id: genId('asst'),
     kind: 'assistant' as const,
     text: line,
+    rawMarkdown: markdownText,
   }))
 }
 

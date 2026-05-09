@@ -108,7 +108,7 @@ function splitGluedMarkdownAfterFenceClose(line: string, marker: string, minLeng
     .replace(/^(#{2,6})(?=[^#\s])/, '$1 ')
     .replace(/^(#)(?=[^\x00-\x7f])/, '$1 ')
   if (!rest) return null
-  if (!looksLikeMarkdownBoundary(rest) && !looksLikePlainMarkdownAfterCode(rest)) return null
+  if (!looksLikeMarkdownBoundary(rest) && !looksLikePlainMarkdownAfterCode(rest) && !/^[A-Z][A-Za-z\s]+\./.test(rest)) return null
   return [`${parsed.indent}${parsed.marker}`, rest]
 }
 
@@ -126,16 +126,33 @@ function splitGluedMarkdownAfterFenceClose(line: string, marker: string, minLeng
 function splitTrailingFenceClose(line: string, marker: string, minLength: number): string[] | null {
   // If the whole line is already a fence, nothing to split.
   if (CODE_FENCE_RE.test(line)) return null
-  const suffix = new RegExp(`^(.*?)(${marker === '`' ? '`' : '~'}{${minLength},})[ \\t]*$`)
-  const match = suffix.exec(line)
-  if (!match) return null
-  const content = match[1]!
-  const fence = match[2]!
-  // The content must not be empty (otherwise it's just a fence) and must
-  // not itself contain the fence marker — keeps inline backticks alone.
+  const fenceRun = `${marker === '`' ? '`' : '~'}{${minLength},}`
+  const trailing = new RegExp(`^(.*?)(${fenceRun})[ \\t]*$`)
+  const trailingMatch = trailing.exec(line)
+  if (trailingMatch) {
+    const content = trailingMatch[1]!
+    const fence = trailingMatch[2]!
+    // The content must not be empty (otherwise it's just a fence) and must
+    // not itself contain the fence marker — keeps inline backticks alone.
+    if (!content.trim()) return null
+    if (content.includes(marker.repeat(minLength))) return null
+    return [content.trimEnd(), fence]
+  }
+
+  const gluedMarkdown = new RegExp(`^(.*?)(${fenceRun})(.*)$`)
+  const gluedMatch = gluedMarkdown.exec(line)
+  if (!gluedMatch) return null
+  const content = gluedMatch[1]!
+  const fence = gluedMatch[2]!
+  const rest = gluedMatch[3]!.trimStart()
   if (!content.trim()) return null
   if (content.includes(marker.repeat(minLength))) return null
-  return [content.trimEnd(), fence]
+  if (!rest) return null
+  const normalizedRest = rest
+    .replace(/^(#{2,6})(?=[^#\s])/, '$1 ')
+    .replace(/^(#)(?=[^\x00-\x7f])/, '$1 ')
+  if (!looksLikeMarkdownBoundary(normalizedRest) && !looksLikePlainMarkdownAfterCode(normalizedRest) && !/^[A-Z][A-Za-z\s]+\./.test(normalizedRest)) return null
+  return [content.trimEnd(), fence, normalizedRest]
 }
 
 function isLikelyFenceClose(line: string, marker: string, minLength: number): boolean {
@@ -273,6 +290,20 @@ function shouldCloseOpenFenceBeforeLine(line: string, codeLines: string[], lang:
   return looksLikePlainMarkdownAfterCode(line)
 }
 
+function shouldTreatAsStrayFenceClose(lines: string[], index: number): boolean {
+  const line = lines[index]!
+  const match = CODE_FENCE_RE.exec(line)
+  if (!match) return false
+  if (match[3]!.trim()) return false
+  for (let i = index + 1; i < lines.length; i++) {
+    const next = lines[i]!
+    if (!next.trim()) continue
+    if (isLikelyFenceClose(next, match[2]![0]!, match[2]!.length)) return false
+    return looksLikeMarkdownBoundary(next) || startsWithCjkProse(next) || looksLikePlainMarkdownAfterCode(next)
+  }
+  return false
+}
+
 function repairUnclosedFences(content: string, finalClose: boolean): string {
   const lines = content.split('\n')
   let out = ''
@@ -289,11 +320,17 @@ function repairUnclosedFences(content: string, finalClose: boolean): string {
 
     if (!openMarker) {
       if (match) {
+        if (shouldTreatAsStrayFenceClose(lines, i)) continue
         openMarker = match[2]![0]!
         openLength = match[2]!.length
         openClose = openMarker.repeat(openLength)
         openLang = fenceLanguageFromLine(line)
         codeLines = []
+        out += line + newline
+        continue
+      }
+      if (shouldTreatAsStrayFenceClose(lines, i)) {
+        continue
       }
       out += line + newline
       continue
@@ -315,7 +352,9 @@ function repairUnclosedFences(content: string, finalClose: boolean): string {
       // Emit the content line (still inside the fence) then the standalone
       // fence-close line, and mark the fence as closed.
       codeLines.push(trailingClose[0]!)
-      out += `${trailingClose[0]}\n${trailingClose[1]}${newline}`
+      out += trailingClose[2] !== undefined
+        ? `${trailingClose[0]}\n${trailingClose[1]}\n${trailingClose[2]}${newline}`
+        : `${trailingClose[0]}\n${trailingClose[1]}${newline}`
       openMarker = ''
       openLength = 0
       openClose = ''
@@ -557,6 +596,7 @@ function normalizeGluedHeadings(text: string): string {
     for (const s of split) {
       out.push(
         s
+          .replace(EMPHASIS_HEADING_GLUED_BULLET_RE, '$1$2$3$2\n$1$4 ')
           .replace(HEADING_MISSING_SPACE_MANY_RE, '$1$2 ')
           .replace(HEADING_MISSING_SPACE_ONE_RE, '$1$2 ')
           .replace(BULLET_MISSING_SPACE_RE, '$1$2 ')
@@ -578,6 +618,10 @@ const MD_TABLE_SEP_RE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/
 // token is stripped by formatToken, preserving the visible text while letting
 // marked parse the strong span.
 const EMPHASIS_CLOSING_GLUED_TO_CJK_RE = /((\*\*|__)[^\n]*?[。．.!！？?!][ \t]*(?:\2))(?=[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff])/g
+// Bold section label glued directly to a bullet marker, e.g.
+// `**内存分配策略**- 静态分配`. Split it into a standalone label and a real
+// list item so marked can parse both instead of leaking raw `**` / `-` text.
+const EMPHASIS_HEADING_GLUED_BULLET_RE = /^([ \t]{0,3})(\*\*|__)([^\n]+?)\2[ \t]*([-*+])[ \t]*(?=\S)/gm
 
 
 function parseMarkdownTableSeparator(line: string): number | null {
@@ -600,6 +644,22 @@ function unescapedPipeIndexes(line: string): number[] {
     if (slashCount % 2 === 0) indexes.push(i)
   }
   return indexes
+}
+
+function splitGluedTableHeaderSeparatorLine(line: string): string[] | null {
+  const indexes = unescapedPipeIndexes(line)
+  for (const pipeIndex of indexes) {
+    const header = line.slice(0, pipeIndex + 1)
+    const separator = line.slice(pipeIndex + 1)
+    if (!header.trimStart().startsWith('|')) continue
+    if (!separator.trimStart().startsWith('|')) continue
+    const headerColumns = header.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').length
+    const separatorColumns = parseMarkdownTableSeparator(separator)
+    if (separatorColumns !== null && separatorColumns === headerColumns) {
+      return [header, separator]
+    }
+  }
+  return null
 }
 
 function splitGluedTableSeparatorLine(line: string): string[] | null {
@@ -651,6 +711,12 @@ function normalizeGluedTables(text: string): string {
 
     if (inFence) {
       expandedLines.push(line)
+      continue
+    }
+
+    const headerSplit = splitGluedTableHeaderSeparatorLine(line)
+    if (headerSplit) {
+      expandedLines.push(...headerSplit)
       continue
     }
 
@@ -903,12 +969,33 @@ function stripPromptXMLTags(content: string): string {
 // escape should not accidentally match.
 const FENCE_OPEN_GLUED_RE = /^([^\n`]*?[^\s`])(`{3,}|~{3,})([^\n`]*)$/gm
 
+function splitSingleLineFence(line: string): string[] | null {
+  const match = /^( {0,3})(`{3,}|~{3,})([^`~\n]*?)(`{3,}|~{3,})[ \t]*$/.exec(line)
+  if (!match) return null
+  const indent = match[1]!
+  const open = match[2]!
+  const content = match[3]!.trim()
+  const close = match[4]!
+  if (!content) return null
+  if (close[0] !== open[0] || close.length < open.length) return null
+  if (/^[A-Za-z0-9_+.#-]+$/.test(content)) return null
+  return [`${indent}${open}`, content, close]
+}
+
 function splitGluedFenceOpens(text: string): string {
   const lines = text.split('\n')
   let inFence = false
   let fenceMarker = ''
   const out: string[] = []
   for (const line of lines) {
+    if (!inFence) {
+      const singleLineFence = splitSingleLineFence(line)
+      if (singleLineFence) {
+        out.push(...singleLineFence)
+        continue
+      }
+    }
+
     // Track existing fence state so we don't rewrite anything inside a code
     // block — content lines may legitimately contain backticks.
     const fenceMatch = CODE_FENCE_RE.exec(line)
@@ -1032,11 +1119,32 @@ function normalizeImplicitCodeBlocks(text: string): string {
   return out.join('\n')
 }
 
+interface MarkdownNormalizeStage {
+  name: string
+  apply: (text: string) => string
+}
+
+const MARKDOWN_NORMALIZE_STAGES: MarkdownNormalizeStage[] = [
+  { name: 'fence-open-glue', apply: splitGluedFenceOpens },
+  { name: 'fence-close-repair', apply: text => repairUnclosedFences(text, false) },
+  { name: 'heading-list-glue', apply: normalizeGluedHeadings },
+  { name: 'implicit-code-blocks', apply: normalizeImplicitCodeBlocks },
+  { name: 'table-glue', apply: normalizeGluedTables },
+  { name: 'box-drawing-preserve', apply: preserveBoxDrawingBlocks },
+  { name: 'hr-boundary', apply: normalizeHrLines },
+  { name: 'emphasis-boundary', apply: normalizeEmphasisClosing },
+]
+
+function applyMarkdownNormalizeStages(text: string): string {
+  let current = text
+  for (const stage of MARKDOWN_NORMALIZE_STAGES) {
+    current = stage.apply(current)
+  }
+  return current
+}
+
 function prepareMarkdownForLex(text: string): string {
-  return repairUnclosedFences(
-    normalizeEmphasisClosing(normalizeHrLines(preserveBoxDrawingBlocks(normalizeGluedTables(normalizeImplicitCodeBlocks(normalizeGluedHeadings(splitGluedFenceOpens(text))))))),
-    true,
-  )
+  return repairUnclosedFences(applyMarkdownNormalizeStages(text), true)
 }
 
 
@@ -1070,5 +1178,7 @@ export {
   splitGluedFenceOpens,
   normalizeEmphasisClosing,
   normalizeImplicitCodeBlocks,
+  MARKDOWN_NORMALIZE_STAGES,
+  applyMarkdownNormalizeStages,
   prepareMarkdownForLex,
 }

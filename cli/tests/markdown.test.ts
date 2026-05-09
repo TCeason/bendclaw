@@ -196,6 +196,19 @@ describe('renderMarkdown', () => {
     expect(result).not.toContain('|---|---|---|---|')
   })
 
+  test('renders markdown table when header and separator are glued', () => {
+    const result = render([
+      '| Client | Protocol | Focus ||---|---|---|',
+      '| Java | MySQL | `getBigDecimal()` precision |',
+      '| Spark JDBC | MySQL JDBC | **DecimalType limit** |',
+    ].join('\n')).replace(/\u200b/g, '')
+
+    expect(result).toContain('┌')
+    expect(result).toContain('Client')
+    expect(result).toContain('Spark JDBC')
+    expect(result).not.toContain('|---|---|---|')
+  })
+
   test('preserves box-drawing conclusion tables from decimal compatibility log', () => {
     const result = render([
       'Final delivery table',
@@ -372,6 +385,55 @@ describe('renderMarkdown', () => {
     expect(result).toMatch(/^ {2}│  │     ├─ lib\.rs$/m)
     expect(result).toMatch(/^ {2}│  │     ├─ retry\.rs$/m)
     expect(result).toMatch(/^ {2}│  │     └─ tools\/$/m)
+  })
+
+  test('styles plain ascii diagrams without changing their visible text', () => {
+    const prevLevel = chalk.level
+    chalk.level = 3
+    const diagram = [
+      'prompt ──► Prefill ──► K/V 写入 cache',
+      '           │',
+      '           ▼',
+      '      Decode --> token',
+    ].join('\n')
+
+    try {
+      const rendered = renderMarkdown(`\`\`\`text\n${diagram}\n\`\`\``)
+      const plain = stripAnsi(rendered).replace(/\u200b/g, '')
+
+      for (const line of diagram.split('\n')) {
+        expect(plain).toContain(line)
+      }
+      expect(rendered).not.toBe(plain)
+      expect(plain).not.toContain('```')
+    } finally {
+      chalk.level = prevLevel
+    }
+  })
+
+  test('aligns drifted diagram box borders and branch markers conservatively', () => {
+    const md = [
+      '```',
+      '物理显存:   ┌────┬────┬────┐',
+      '   │ B3 │ B0 │ B5 │',
+      '            └────┴────┴────┘',
+      '',
+      '2. Prefill',
+      '   ├─► 把 prompt 送入模型├─► 逐层计算',
+      '3.Decode 循环',
+      ' ├─► 取上一步生成的 token',
+      '    └─► 采样下一个 token',
+      '```',
+    ].join('\n')
+
+    const rendered = render(md).replace(/\u200b/g, '')
+
+    expect(rendered).toMatch(/^物理显存:   ┌────┬────┬────┐$/m)
+    expect(rendered).toMatch(/^            │ B3 │ B0 │ B5 │$/m)
+    expect(rendered).toMatch(/^            └────┴────┴────┘$/m)
+    expect(rendered).toMatch(/^    ├─► 把 prompt 送入模型├─► 逐层计算$/m)
+    expect(rendered).toMatch(/^    ├─► 取上一步生成的 token$/m)
+    expect(rendered).toMatch(/^    └─► 采样下一个 token$/m)
   })
 
   test('preserves flow diagrams with box-drawing characters as plain code', () => {
@@ -688,6 +750,29 @@ describe('renderMarkdown', () => {
     expect(result).not.toContain('```')
   })
 
+  test('splits trailing fence close glued to last code line and following prose', () => {
+    const result = render('Output:\n```python\nprint("hello")```Continue explanation.')
+
+    expect(result).toContain('print("hello")')
+    expect(result).toContain('Continue explanation.')
+    expect(result).not.toContain('```')
+  })
+
+  test('splits fence close glued to following plain prose', () => {
+    const result = render('```python\nprint("hello")\n```Continue explanation.')
+
+    expect(result).toContain('print("hello")')
+    expect(result).toContain('Continue explanation.')
+    expect(result).not.toContain('```')
+  })
+
+  test('splits single-line fenced code', () => {
+    const result = render('```const value = 1```')
+
+    expect(result).toContain('const value = 1')
+    expect(result).not.toContain('```')
+  })
+
   test('repairs unclosed fence before following markdown heading without a blank line', () => {
     const result = render('```json\n{\n  "id": "tr-abc"\n}\n## Step 8: input / output')
 
@@ -741,6 +826,32 @@ describe('renderMarkdown', () => {
     expect(result).toMatch(/^❯ 帮我列一下目录$/m)
     expect(result).toMatch(/^ {2}⋮ llm · claude-sonnet-4 · turn 1 · 3 msgs$/m)
     expect(result).not.toContain('```text')
+  })
+
+  test('repairs stray fence close before following markdown blocks', () => {
+    const md = [
+      '```',
+      '循环到 EOS 或达到长度上限。',
+      '',
+      '## 关键工程点',
+      '',
+      '**内存分配策略**- 静态分配：一次开 `max_seq_len`，简单但浪费。',
+      '- PagedAttention（vLLM）：把 cache 切成固定 block。',
+      '',
+      '**batch 管理**',
+      '- Continuous batching：请求长度不一。',
+    ].join('\n')
+
+    const result = render(md).replace(/\u200b/g, '')
+
+    expect(result).toContain('循环到 EOS 或达到长度上限。')
+    expect(result).toContain('关键工程点')
+    expect(result).toContain('内存分配策略')
+    expect(result).toContain('- 静态分配：一次开 max_seq_len，简单但浪费。')
+    expect(result).toContain('batch 管理')
+    expect(result).not.toContain('```')
+    expect(result).not.toContain('## 关键工程点')
+    expect(result).not.toContain('**内存分配策略**-')
   })
 
   test('repairs unclosed text diagram fence before following bold paragraph', () => {
