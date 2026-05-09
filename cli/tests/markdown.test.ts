@@ -49,6 +49,32 @@ describe('renderMarkdown', () => {
     expect(result).toContain('bold')
   })
 
+  test('renders strong emphasis when closing marker is glued to following CJK text', () => {
+    const md = '换句话说：**KV cache 的持久化是推理引擎的特权，因为 KV cache 本来就是推理引擎自己家的东西。**调 API 的用户没这个能力，本地跑的引擎作者想怎么存就怎么存。'
+    const result = render(md).replace(/\u200b/g, '')
+    expect(result).toContain('KV cache 的持久化是推理引擎的特权')
+    expect(result).toContain('调 API')
+    expect(result).toContain('的用户没这个能力')
+    expect(result).not.toContain('**KV cache')
+    expect(result).not.toContain('东西。**调')
+  })
+
+  test('does not expose emphasis separator comments', () => {
+    const result = render('说明：**重要。**下一句').replace(/\u200b/g, '')
+    expect(result).toContain('说明：')
+    expect(result).toContain('重要。')
+    expect(result).toContain('下一句')
+    expect(result).not.toContain('<!-- -->')
+    expect(result).not.toContain('**重要')
+  })
+
+  test('does not rewrite emphasis-like text inside code fences', () => {
+    const result = render('```text\nliteral **重要。**下一句\n```').replace(/\u200b/g, '')
+
+    expect(result).toContain('literal **重要。**下一句')
+    expect(result).not.toContain('<!-- -->')
+  })
+
   test('renders italic text', () => {
     const result = render('this is *italic* text')
     expect(result).toContain('italic')
@@ -414,6 +440,33 @@ describe('renderMarkdown', () => {
     expect(result).not.toMatch(/consensus：[ \t]*1\. /)
   })
 
+  test('normalises ascii bullet marker glued before CJK prose', () => {
+    const result = render('-prompt 不是扩展：丢弃 checkpoint').replace(/\u200b/g, '')
+    expect(result).toContain('- prompt 不是扩展')
+    expect(result).not.toContain('-prompt')
+  })
+
+  test('normalises ascii bullet marker glued before CJK colon detail', () => {
+    const result = render('模型结构带来的 KV 分层（ds4_layer_compress_ratio）：-Layer0-1：dense，ratio=0，只有 raw cache').replace(/\u200b/g, '')
+    expect(result).toContain('模型结构带来的 KV 分层')
+    expect(result).toContain('- Layer0-1：dense')
+    expect(result).not.toContain('：-Layer0')
+  })
+
+  test('splits bullet glued after sentence punctuation', () => {
+    const result = render('- **跳过前 24050 的 prefill**，只 prefill 新增的 350 token（~1.5 秒）- Decode 继续').replace(/\u200b/g, '')
+    expect(result).toContain('- 跳过前 24050')
+    expect(result).toContain('- Decode 继续')
+    expect(result).not.toContain('秒）- Decode')
+  })
+
+  test('does not normalise ascii bullet-like command options', () => {
+    expect(render('-p value').replace(/\u200b/g, '')).toContain('-p value')
+    expect(render('-1 remains negative').replace(/\u200b/g, '')).toContain('-1 remains negative')
+    expect(render('config:-foo:bar').replace(/\u200b/g, '')).toContain('config:-foo:bar')
+    expect(render('This is fine - not a bullet').replace(/\u200b/g, '')).toContain('This is fine - not a bullet')
+  })
+
   test('normalises ordered item glued to non-ASCII body', () => {
     // `3.多指标` — CommonMark needs `3. body`. CJK body is essential:
     // ORDERED_MISSING_SPACE_RE only fires when the body is non-ASCII so
@@ -566,6 +619,43 @@ describe('renderMarkdown', () => {
     expect(result).toMatch(/^❯ 帮我列一下目录$/m)
     expect(result).toMatch(/^ {2}⋮ llm · claude-sonnet-4 · turn 1 · 3 msgs$/m)
     expect(result).not.toContain('```text')
+  })
+
+  test('repairs unclosed text diagram fence before following bold paragraph', () => {
+    const md = [
+      '一张图总结',
+      '',
+      '```text',
+      '      冷启动 (昨天)       命中磁盘 (今天)',
+      '    ─────────────────                ──────────────────',
+      '  prompt: A B C            prompt: A B C D E F',
+      '     │                                 │',
+      '     ├─ prefill 3 次前向   ├─ 扫磁盘，SHA1 匹配',
+      '',
+      '**模型权重从头到尾是同一份只读数据。变的只是那些 K/V缓冲区里装的数值。**',
+    ].join('\n')
+
+    const result = render(md).replace(/\u200b/g, '')
+
+    expect(result).toContain('冷启动 (昨天)')
+    expect(result).toContain('prompt: A B C')
+    expect(result).toContain('模型权重从头到尾是同一份只读数据')
+    expect(result).not.toContain('```text')
+    expect(result).not.toContain('**模型权重')
+  })
+
+  test('does not close plain text fence without diagram content before bold literal', () => {
+    const md = [
+      '```text',
+      'literal plain text',
+      '',
+      '**not markdown**',
+    ].join('\n')
+
+    const result = render(md).replace(/\u200b/g, '')
+
+    expect(result).toContain('literal plain text')
+    expect(result).toContain('**not markdown**')
   })
 
   test('keeps adjacent prose compact', () => {
@@ -1295,6 +1385,60 @@ describe('splitMarkdownBlocks', () => {
     expect(result.completed).toContain('# Title')
     expect(result.completed).toContain('Some text')
     expect(result.pending).toBe('More text')
+  })
+
+  test('unclosed text diagram fence stays pending while streaming', () => {
+    const text = [
+      'before',
+      '',
+      '```text',
+      '  left      right',
+      '  ────      ─────',
+      '  │         │',
+      '',
+    ].join('\n')
+
+    const result = splitMarkdownBlocks(text)
+
+    expect(result.completed).toBe('before\n\n')
+    expect(result.pending).toBe('```text\n  left      right\n  ────      ─────\n  │         │\n')
+  })
+
+  test('unclosed indented text diagram fence stays pending while streaming', () => {
+    const text = [
+      '  before',
+      '',
+      '  ```text',
+      '        冷启动 (昨天)       命中磁盘 (今天)',
+      '      ─────────────────                ──────────────────',
+      '    prompt: A B C            prompt: A B C D E F',
+      '       │                                 │',
+      '',
+    ].join('\n')
+
+    const result = splitMarkdownBlocks(text)
+
+    expect(result.completed).toBe('  before\n\n')
+    expect(result.pending).toStartWith('  ```text\n')
+    expect(result.pending).toContain('冷启动 (昨天)')
+  })
+
+  test('unclosed text diagram fence can commit with following markdown paragraph', () => {
+    const text = [
+      'before',
+      '',
+      '```text',
+      '  left      right',
+      '  ────      ─────',
+      '  │         │',
+      '',
+      '**after**',
+    ].join('\n')
+
+    const result = splitMarkdownBlocks(text)
+
+    expect(result.completed).toBe('before\n\n```text\n  left      right\n  ────      ─────\n  │         │\n\n')
+    expect(result.pending).toBe('**after**')
   })
 
   test('tilde code fence handled', () => {
