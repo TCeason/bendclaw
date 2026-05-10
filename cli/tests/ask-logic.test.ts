@@ -11,6 +11,7 @@ import {
   askSelect,
   handleAskKeyEvent,
 } from '../src/term/ask.js'
+import { askStateToResponse } from '../src/term/app/ask-user.js'
 import { buildOverlayBlocks } from '../src/term/viewmodel/overlays.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
 import stripAnsi from 'strip-ansi'
@@ -114,12 +115,23 @@ describe('askNextTab / askPrevTab', () => {
     expect(state.focusIndex).toBe(0)
   })
 
-  test('next tab at last does nothing', () => {
+  test('next tab at last opens submit review', () => {
     let state = createAskState(multiQuestion)
     state = askNextTab(state)
     const next = askNextTab(state)
     expect(next.currentTab).toBe(1)
-    expect(next).toBe(state)
+    expect(next.onSubmitTab).toBe(true)
+    expect(next.submitFocus).toBe(0)
+  })
+
+  test('right arrow at last question opens submit review', () => {
+    let state = createAskState(multiQuestion)
+    state = askNextTab(state)
+    const result = handleAskKeyEvent(state, 'right')
+    expect(result.action).toBe('update')
+    if (result.action !== 'update') return
+    expect(result.state.currentTab).toBe(1)
+    expect(result.state.onSubmitTab).toBe(true)
   })
 
   test('prev tab goes back', () => {
@@ -262,6 +274,80 @@ describe('askSelect', () => {
     const keyResult = handleAskKeyEvent(state, 'enter')
     expect(keyResult.action).toBe('cancel')
   })
+
+  test('j/k and ctrl+n/p navigate options', () => {
+    let state = createAskState(singleQuestion)
+    state = handleAskKeyEvent(state, 'char', 'j').state
+    expect(state.focusIndex).toBe(1)
+    state = handleAskKeyEvent(state, 'ctrl+p', 'p').state
+    expect(state.focusIndex).toBe(0)
+    state = handleAskKeyEvent(state, 'ctrl+n', 'n').state
+    expect(state.focusIndex).toBe(1)
+    state = handleAskKeyEvent(state, 'char', 'k').state
+    expect(state.focusIndex).toBe(0)
+  })
+
+  test('j/k type normally in other mode', () => {
+    let state = createAskState(singleQuestion)
+    state = handleAskKeyEvent(state, 'char', '3').state
+    state = handleAskKeyEvent(state, 'char', 'j').state
+    state = handleAskKeyEvent(state, 'char', 'k').state
+    const ui0 = state.uiStates.get(0) ?? { inOtherMode: false, otherText: '', focusIndex: 0 }
+    expect(ui0.otherText).toBe('jk')
+  })
+
+  test('submit review supports j/k after answering last question with other text', () => {
+    let state = createAskState(multiQuestion)
+    state = handleAskKeyEvent(state, 'char', '1').state
+    state = handleAskKeyEvent(state, 'char', '4').state
+    state = handleAskKeyEvent(state, 'char', 'x').state
+    state = handleAskKeyEvent(state, 'enter').state
+    expect(state.onSubmitTab).toBe(true)
+    state = handleAskKeyEvent(state, 'char', 'j').state
+    expect(state.submitFocus).toBe(1)
+    state = handleAskKeyEvent(state, 'char', 'k').state
+    expect(state.submitFocus).toBe(0)
+  })
+
+  test('shift-tab moves to previous question', () => {
+    let state = createAskState(multiQuestion)
+    state = askNextTab(state)
+    const keyResult = handleAskKeyEvent(state, 'shift-tab')
+    expect(keyResult.state.currentTab).toBe(0)
+  })
+
+  test('paste enters other mode and appends text', () => {
+    const state = createAskState(singleQuestion)
+    const keyResult = handleAskKeyEvent(state, 'paste', 'hello\nworld')
+    const ui0 = keyResult.state.uiStates.get(0) ?? { inOtherMode: false, otherText: '', focusIndex: 0 }
+    expect(ui0.inOtherMode).toBe(true)
+    expect(ui0.otherText).toBe('hello world')
+    expect(keyResult.state.focusIndex).toBe(2)
+  })
+
+  test('whitespace-only paste leaves state unchanged', () => {
+    const state = createAskState(singleQuestion)
+    const keyResult = handleAskKeyEvent(state, 'paste', '\n\n')
+    const ui0 = keyResult.state.uiStates.get(0) ?? { inOtherMode: false, otherText: '', focusIndex: 0 }
+    expect(ui0.inOtherMode).toBe(false)
+    expect(keyResult.state.focusIndex).toBe(0)
+  })
+
+  test('number key selects an option', () => {
+    const state = createAskState(singleQuestion)
+    const keyResult = handleAskKeyEvent(state, 'char', '2')
+    expect(keyResult.action).toBe('submit')
+    expect(keyResult.state.answers[0]!.selectedOption).toBe(1)
+  })
+
+  test('number key focuses other without submitting', () => {
+    const state = createAskState(singleQuestion)
+    const keyResult = handleAskKeyEvent(state, 'char', '3')
+    const ui0 = keyResult.state.uiStates.get(0) ?? { inOtherMode: false, otherText: '', focusIndex: 0 }
+    expect(keyResult.action).toBe('update')
+    expect(ui0.inOtherMode).toBe(true)
+    expect(ui0.otherText).toBe('')
+  })
 })
 
 describe('renderAsk via viewmodel', () => {
@@ -273,8 +359,9 @@ describe('renderAsk via viewmodel', () => {
   test('shows all options', () => {
     const state = createAskState(singleQuestion)
     const text = renderAskVM(state)
-    expect(text).toContain('Rust')
-    expect(text).toContain('TypeScript')
+    expect(text).toContain('1. Rust')
+    expect(text).toContain('2. TypeScript')
+    expect(text).toContain('3. Type something.')
   })
 
   test('shows descriptions', () => {
@@ -296,19 +383,109 @@ describe('renderAsk via viewmodel', () => {
     expect(text).toContain('Style')
   })
 
-  test('other mode shows typed text', () => {
+  test('other mode keeps input option structure while typing', () => {
     let state = createAskState(singleQuestion)
     state = askDown(state)
     state = askDown(state)
     state = askTypeChar(state, 'h')
     state = askTypeChar(state, 'i')
-    expect(renderAskVM(state)).toContain('hi')
+    const text = renderAskVM(state)
+    expect(text).toContain('3. hi')
+    expect(text).toContain('hi')
+  })
+
+  test('selected option shows trailing checkmark', () => {
+    let state = createAskState(multiQuestion)
+    state = askSelect(state).state
+    state = askPrevTab(state)
+    const text = renderAskVM(state)
+    expect(text).toContain('1. Rust')
+    expect(text).toContain('✓')
   })
 
   test('other mode shows placeholder when empty', () => {
     let state = createAskState(singleQuestion)
     state = askDown(state)
     state = askDown(state)
-    expect(renderAskVM(state)).toContain('Type something.')
+    const text = renderAskVM(state)
+    expect(text).toContain('3.  Type something.')
+  })
+
+  test('submit review warns when questions are unanswered', () => {
+    let state = createAskState(multiQuestion)
+    state = askNextTab(state)
+    state = askNextTab(state)
+    const text = renderAskVM(state)
+    expect(text).toContain('✓ Submit')
+    expect(text).toContain('→')
+    expect(text).toContain('Review your answers')
+    expect(text).toContain('⚠ You have not answered all questions')
+    expect(text).toContain('Ready to submit your answers?')
+    expect(text).not.toContain('→ —')
+  })
+
+  test('submit review lists only answered questions', () => {
+    let state = createAskState(multiQuestion)
+    state = askSelect(state).state
+    state = askNextTab(state)
+    const text = renderAskVM(state)
+    expect(text).toContain('• Which language?')
+    expect(text).toContain('→ Rust')
+    expect(text).not.toContain('• Which style?')
+  })
+
+  test('other mode shows cursor before placeholder when empty', () => {
+    let state = createAskState(singleQuestion)
+    state = askDown(state)
+    state = askDown(state)
+    const blocks = buildOverlayBlocks({ kind: 'ask-user', state }, 80)
+    const otherLine = blocks.flatMap(b => b.lines).find(l => l.spans.some(s => s.text.includes('Type something.')))
+    const spans = otherLine?.spans ?? []
+    const cursorIndex = spans.findIndex(span => span.text === ' ' && span.inverse === true)
+    const placeholderIndex = spans.findIndex(span => span.text === 'Type something.')
+
+    expect(cursorIndex).toBeGreaterThan(-1)
+    expect(placeholderIndex).toBeGreaterThan(-1)
+    expect(cursorIndex).toBeLessThan(placeholderIndex)
+    expect(spans.map(span => span.text).join('')).toContain('3.  Type something.')
+  })
+
+  test('selected other shows label, green checkmark, and custom text', () => {
+    let state = createAskState(multiQuestion)
+    state = handleAskKeyEvent(state, 'char', '3').state
+    state = handleAskKeyEvent(state, 'char', 'c').state
+    state = handleAskKeyEvent(state, 'char', 'u').state
+    state = handleAskKeyEvent(state, 'char', 's').state
+    state = handleAskKeyEvent(state, 'char', 't').state
+    state = handleAskKeyEvent(state, 'char', 'o').state
+    state = handleAskKeyEvent(state, 'char', 'm').state
+    state = handleAskKeyEvent(state, 'enter').state
+    state = askPrevTab(state)
+    const text = renderAskVM(state)
+    expect(text).toContain('3. custom ✓')
+    expect(text).toContain('custom')
+
+    const blocks = buildOverlayBlocks({ kind: 'ask-user', state }, 80)
+    const otherLine = blocks.flatMap(b => b.lines).find(l => l.spans.some(s => s.text === 'custom'))
+    const spans = otherLine?.spans ?? []
+    const textIndex = spans.findIndex(span => span.text === 'custom')
+    const tickIndex = spans.findIndex(span => span.text === '✓' && span.fg === 'green')
+    expect(textIndex).toBeGreaterThan(-1)
+    expect(tickIndex).toBeGreaterThan(-1)
+    expect(tickIndex).toBeGreaterThan(textIndex)
+  })
+
+})
+
+describe('askStateToResponse', () => {
+  test('keeps unanswered questions as skipped when submitting incomplete review', () => {
+    let state = createAskState(multiQuestion)
+    state = askSelect(state).state
+    state = askNextTab(state)
+    const response = askStateToResponse(state)
+    expect(response).toEqual([
+      { header: 'Language', question: 'Which language?', answer: 'Rust' },
+      { header: 'Style', question: 'Which style?', answer: 'Skipped' },
+    ])
   })
 })

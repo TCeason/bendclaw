@@ -130,7 +130,44 @@ function buildSelectorBlocks(state: SelectorState): ViewBlock[] {
 
 const CHECKBOX_ON = '☒'
 const CHECKBOX_OFF = '☐'
-const TICK = '✔'
+const TICK = '✓'
+const POINTER = '❯'
+const BULLET = '•'
+const ARROW_RIGHT = '→'
+
+function optionCountStringWidth(count: number): number {
+  return count.toString().length
+}
+
+function optionIndexText(index: number, maxIndexWidth: number): string {
+  return `${index}.`.padEnd(maxIndexWidth + 2)
+}
+
+function appendTick(spans: StyledSpan[]): StyledSpan[] {
+  return [...spans, colored(TICK, 'green')]
+}
+
+function selectedAnswerKind(state: AskState, questionIndex: number): 'option' | 'other' | null {
+  const answer = state.answers[questionIndex]
+  if (!answer) return null
+  if (answer.customText !== null) return 'other'
+  if (answer.selectedOption !== null) return 'option'
+  return null
+}
+
+function selectedOptionIndex(state: AskState, questionIndex: number): number | null {
+  const answer = state.answers[questionIndex]
+  if (!answer) return null
+  return answer.selectedOption
+}
+
+function selectedAnswerText(state: AskState, questionIndex: number): string | null {
+  const answer = state.answers[questionIndex]
+  if (!answer) return null
+  if (answer.customText !== null) return answer.customText
+  if (answer.selectedOption !== null) return state.questions[questionIndex]?.options[answer.selectedOption]?.label ?? null
+  return null
+}
 
 function isAnswered(state: AskState, index: number): boolean {
   const a = state.answers[index]
@@ -164,18 +201,15 @@ export function buildAskBlocks(state: AskState, columns: number): ViewBlock[] {
     }
 
     // Submit tab
-    const allAnswered = state.questions.every((_, i) => isAnswered(state, i))
-    if (allAnswered) {
-      tabLine.push(plain('  '))
-      if (state.onSubmitTab) {
-        tabLine.push(inverse(` ${TICK} Submit `))
-      } else {
-        tabLine.push(plain(` ${TICK} Submit `))
-      }
+    tabLine.push(plain('  '))
+    if (state.onSubmitTab) {
+      tabLine.push(inverse(` ${TICK} Submit `))
+    } else {
+      tabLine.push(plain(` ${TICK} Submit `))
     }
 
     // Right arrow
-    const canGoRight = !state.onSubmitTab && state.currentTab < state.questions.length - 1
+    const canGoRight = !state.onSubmitTab
     tabLine.push(canGoRight ? plain(' →') : dim(' →'))
 
     result.push(line(...tabLine))
@@ -184,28 +218,37 @@ export function buildAskBlocks(state: AskState, columns: number): ViewBlock[] {
 
   // ── Submit review page ─────────────────────────────────────────
   if (state.onSubmitTab) {
+    const allAnswered = state.questions.every((_, i) => isAnswered(state, i))
+
     result.push(line(bold('Review your answers')))
     result.push(line(plain('')))
 
-    for (let i = 0; i < state.questions.length; i++) {
-      const qq = state.questions[i]!
-      const a = state.answers[i]
-      const answerText = a?.customText ?? (a?.selectedOption !== null ? qq.options[a!.selectedOption!]?.label : '—')
-      result.push(line(plain(`  ${qq.question}`)))
-      result.push(line(colored(`    → ${answerText}`, 'green')))
+    if (!allAnswered) {
+      result.push(line(colored('⚠ You have not answered all questions', 'yellow')))
+      result.push(line(plain('')))
     }
 
+    for (let i = 0; i < state.questions.length; i++) {
+      const qq = state.questions[i]!
+      const answerText = selectedAnswerText(state, i)
+      if (!answerText) continue
+      result.push(line(plain(`  ${BULLET} ${qq.question}`)))
+      result.push(line(colored(`    ${ARROW_RIGHT} ${answerText}`, 'green')))
+    }
+
+    result.push(line(plain('')))
+    result.push(line(dim('Ready to submit your answers?')))
     result.push(line(plain('')))
 
     // Submit / Cancel options
     const submitFocused = state.submitFocus === 0
     const cancelFocused = state.submitFocus === 1
     result.push(line(
-      submitFocused ? colored('❯ ', 'cyan') : plain('  '),
+      submitFocused ? colored(`${POINTER} `, 'cyan') : plain('  '),
       submitFocused ? bold('Submit answers') : plain('Submit answers')
     ))
     result.push(line(
-      cancelFocused ? colored('❯ ', 'cyan') : plain('  '),
+      cancelFocused ? colored(`${POINTER} `, 'cyan') : plain('  '),
       cancelFocused ? bold('Cancel') : plain('Cancel')
     ))
 
@@ -223,27 +266,47 @@ export function buildAskBlocks(state: AskState, columns: number): ViewBlock[] {
   result.push(line(plain('')))
 
   const ui = state.uiStates.get(state.currentTab) ?? { focusIndex: 0, inOtherMode: false, otherText: '' }
+  const selectedKind = selectedAnswerKind(state, state.currentTab)
+  const selectedIndex = selectedOptionIndex(state, state.currentTab)
+  const selectedText = selectedAnswerText(state, state.currentTab)
+  const maxIndexWidth = optionCountStringWidth(q.options.length + 1)
 
   // ── Options ────────────────────────────────────────────────────
   for (let i = 0; i < q.options.length; i++) {
     const opt = q.options[i]!
     const focused = !ui.inOtherMode && i === state.focusIndex
-    const prefix: StyledSpan = focused ? colored('❯ ', 'cyan') : plain('  ')
-    const label: StyledSpan = focused ? bold(opt.label) : plain(opt.label)
-    const desc: StyledSpan = opt.description ? dim(` — ${opt.description}`) : plain('')
-    result.push(line(prefix, label, desc))
+    const selected = selectedKind === 'option' && selectedIndex === i
+    const spans: StyledSpan[] = [
+      focused ? colored(`${POINTER} `, 'cyan') : plain('  '),
+      dim(optionIndexText(i + 1, maxIndexWidth)),
+      selected
+        ? colored(opt.label, 'green')
+        : focused
+          ? colored(opt.label, 'cyan')
+          : plain(opt.label),
+    ]
+    if (opt.description) spans.push(dim(` — ${opt.description}`))
+    result.push(line(...(selected ? appendTick(spans) : spans)))
   }
 
   // ── Other ──────────────────────────────────────────────────────
-  if (ui.inOtherMode && ui.otherText) {
-    result.push(line(colored('❯ ', 'cyan'), plain(ui.otherText), inverse(' ')))
-  } else if (ui.inOtherMode) {
-    result.push(line(colored('❯ ', 'cyan'), inverse(' '), dim(' Type something.')))
+  const otherSelected = selectedKind === 'other'
+  const otherFocused = ui.inOtherMode
+  const otherText = otherFocused ? ui.otherText : otherSelected ? selectedText ?? '' : ui.otherText
+  const otherSpans: StyledSpan[] = [
+    otherFocused ? colored(`${POINTER} `, 'cyan') : plain('  '),
+    dim(optionIndexText(q.options.length + 1, maxIndexWidth)),
+  ]
+  if (otherFocused) {
+    if (otherText) {
+      otherSpans.push(plain(otherText), inverse(' '))
+    } else {
+      otherSpans.push(inverse(' '), dim('Type something.'))
+    }
   } else {
-    const isOtherSelected = state.focusIndex === q.options.length
-    const prefix: StyledSpan = isOtherSelected ? colored('❯ ', 'cyan') : plain('  ')
-    result.push(line(prefix, dim('Other...')))
+    otherSpans.push(otherSelected ? colored(otherText || 'Type something.', 'green') : dim(otherText || 'Type something.'))
   }
+  result.push(line(...(otherSelected ? appendTick(otherSpans) : otherSpans)))
 
   result.push(line(plain('')))
 

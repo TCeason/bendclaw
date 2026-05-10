@@ -98,6 +98,16 @@ function otherText(state: AskState): string {
   return getUIState(state, state.currentTab).otherText
 }
 
+function focusOption(state: AskState, index: number): AskState {
+  const tab = state.currentTab
+  const max = optionCount(state) - 1
+  const next = Math.max(0, Math.min(index, max))
+  return setUIState(state, tab, {
+    focusIndex: next,
+    inOtherMode: next === max,
+  })
+}
+
 export function askUp(state: AskState): AskState {
   const tab = state.currentTab
   const ui = getUIState(state, tab)
@@ -130,9 +140,7 @@ export function askNextTab(state: AskState): AskState {
   if (state.onSubmitTab) return state
 
   if (state.currentTab >= state.questions.length - 1) {
-    // At last question: check if all answered to enter submit tab
-    const allAnswered = state.answers.every(a => a.selectedOption !== null || a.customText !== null)
-    if (allAnswered && state.questions.length > 1) {
+    if (state.questions.length > 1) {
       return { ...state, onSubmitTab: true, submitFocus: 0 }
     }
     return state
@@ -189,6 +197,26 @@ export function askTypeChar(state: AskState, char: string): AskState {
   return setUIState(state, tab, { otherText: ui.otherText + char })
 }
 
+/**
+ * Paste text into the Other field. Enters Other mode if not already,
+ * strips ANSI codes, and collapses newlines to spaces since the field
+ * is rendered on a single line.
+ */
+export function askPasteText(state: AskState, text: string): AskState {
+  const cleaned = text
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n/g, ' ')
+  if (!cleaned.trim()) return state
+  const tab = state.currentTab
+  const ui = getUIState(state, tab)
+  return setUIState(state, tab, {
+    inOtherMode: true,
+    focusIndex: optionCount(state) - 1,
+    otherText: ui.otherText + cleaned,
+  })
+}
+
 export function askBackspace(state: AskState): AskState {
   if (!inOther(state)) return state
   const tab = state.currentTab
@@ -210,18 +238,35 @@ export function handleAskKeyEvent(
   eventType: string,
   char?: string,
 ): AskKeyResult {
+  const key = (state.onSubmitTab || !inOther(state)) && eventType === 'char' && char === 'j'
+    ? 'j'
+    : (state.onSubmitTab || !inOther(state)) && eventType === 'char' && char === 'k'
+      ? 'k'
+      : eventType
   // On submit tab, special handling
   if (state.onSubmitTab) {
-    switch (eventType) {
+    switch (key) {
       case 'escape':
         return { action: 'cancel' }
       case 'up':
-      case 'down':
+      case 'ctrl+p':
+      case 'k':
         return {
           action: 'update',
-          state: { ...state, submitFocus: state.submitFocus === 0 ? 1 : 0 },
+          state: { ...state, submitFocus: 0 },
         }
+      case 'down':
+      case 'ctrl+n':
+      case 'j':
+        return {
+          action: 'update',
+          state: { ...state, submitFocus: 1 },
+        }
+      case 'right':
+      case 'tab':
+        return { action: 'update', state: askNextTab(state) }
       case 'left':
+      case 'shift-tab':
         return { action: 'update', state: askPrevTab(state) }
       case 'enter': {
         if (state.submitFocus === 0) {
@@ -236,13 +281,23 @@ export function handleAskKeyEvent(
     }
   }
 
-  switch (eventType) {
+  switch (key) {
     case 'escape':
       return { action: 'cancel' }
     case 'up':
+    case 'ctrl+p':
+    case 'k':
       return { action: 'update', state: askUp(state) }
     case 'down':
+    case 'ctrl+n':
+    case 'j':
       return { action: 'update', state: askDown(state) }
+    case 'page-up':
+      return { action: 'update', state: focusOption(state, state.focusIndex - 5) }
+    case 'page-down':
+      return { action: 'update', state: focusOption(state, state.focusIndex + 5) }
+    case 'shift-tab':
+      return { action: 'update', state: askPrevTab(state) }
     case 'tab':
       return { action: 'update', state: askNextTab(state) }
     case 'right':
@@ -252,6 +307,20 @@ export function handleAskKeyEvent(
     case 'char':
       if (inOther(state) && char)
         return { action: 'update', state: askTypeChar(state, char) }
+      if (!inOther(state) && char && /^[1-9]$/.test(char)) {
+        const index = Number(char) - 1
+        if (index >= 0 && index < optionCount(state)) {
+          const focused = focusOption(state, index)
+          if (index === optionCount(state) - 1) return { action: 'update', state: focused }
+          const result = askSelect(focused)
+          if (result.done) return { action: 'submit', state: result.state }
+          return { action: 'update', state: result.state }
+        }
+      }
+      return { action: 'update', state }
+    case 'paste':
+      if (char !== undefined)
+        return { action: 'update', state: askPasteText(state, char) }
       return { action: 'update', state }
     case 'backspace':
       if (inOther(state))

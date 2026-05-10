@@ -101,6 +101,15 @@ describe('parseInput', () => {
       expect(parse('\x1b[3~')).toEqual([{ type: 'delete' }])
     })
 
+    test('shift-tab (CSI Z)', () => {
+      expect(parse('\x1b[Z')).toEqual([{ type: 'shift-tab' }])
+    })
+
+    test('page up and page down', () => {
+      expect(parse('\x1b[5~')).toEqual([{ type: 'page-up' }])
+      expect(parse('\x1b[6~')).toEqual([{ type: 'page-down' }])
+    })
+
     test('backspace (0x7f)', () => {
       expect(parse('\x7f')).toEqual([{ type: 'backspace' }])
     })

@@ -10,6 +10,7 @@ export type KeyEvent =
   | { type: 'backspace' }
   | { type: 'delete' }
   | { type: 'tab' }
+  | { type: 'shift-tab' }
   | { type: 'escape' }
   | { type: 'up' }
   | { type: 'down' }
@@ -17,6 +18,8 @@ export type KeyEvent =
   | { type: 'right' }
   | { type: 'home' }
   | { type: 'end' }
+  | { type: 'page-up' }
+  | { type: 'page-down' }
   | { type: 'ctrl'; key: string }
   | { type: 'paste'; text: string }
 
@@ -107,7 +110,10 @@ export function parseInput(data: Buffer): KeyEvent[] {
         if (rest.startsWith('D')) { events.push({ type: 'left' }); i += 3; continue }
         if (rest.startsWith('H')) { events.push({ type: 'home' }); i += 3; continue }
         if (rest.startsWith('F')) { events.push({ type: 'end' }); i += 3; continue }
+        if (rest.startsWith('Z')) { events.push({ type: 'shift-tab' }); i += 3; continue }
         if (rest.startsWith('3~')) { events.push({ type: 'delete' }); i += 4; continue }
+        if (rest.startsWith('5~')) { events.push({ type: 'page-up' }); i += 4; continue }
+        if (rest.startsWith('6~')) { events.push({ type: 'page-down' }); i += 4; continue }
         if (rest.startsWith('1~')) { events.push({ type: 'home' }); i += 4; continue }
         if (rest.startsWith('4~')) { events.push({ type: 'end' }); i += 4; continue }
         // Skip unknown CSI sequences

@@ -129,6 +129,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let isLoading = false
   let streamRef: QueryStream | null = null
   let spinnerTimer: ReturnType<typeof setInterval> | null = null
+  let titleFrozen = false
   let destroyed = false
   let sessionId: string | null = null
   let planning = false
@@ -372,10 +373,23 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   function setTerminalTitle(suffix?: string) {
+    if (titleFrozen) return
     const base = 'Evot'
     const portPart = serverState ? ` · :${serverState.port}` : ''
     const title = suffix ? `${suffix} ${base}${portPart}` : `${base}${portPart}`
     process.stdout.write(`\x1b]0;${title}\x07`)
+  }
+
+  function freezeTerminalTitle(suffix?: string) {
+    const base = 'Evot'
+    const portPart = serverState ? ` · :${serverState.port}` : ''
+    const title = suffix ? `${suffix} ${base}${portPart}` : `${base}${portPart}`
+    process.stdout.write(`\x1b]0;${title}\x07`)
+    titleFrozen = true
+  }
+
+  function unfreezeTerminalTitle() {
+    titleFrozen = false
   }
 
   let titleFrame = 0
@@ -546,6 +560,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
               options: q.options.map(o => ({ label: o.label, description: o.description })),
             }))
             overlay = { kind: 'ask-user', state: createAskState(questions) }
+            freezeTerminalTitle('?')
             // Append a single prompt line to scroll zone so the question
             // appears inline with message history; the actual interactive UI
             // renders in the status area and updates in-place.
@@ -642,6 +657,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       commitLines([{ id: 'sys-err', kind: 'error', text: err?.message ?? String(err) }])
     } finally {
+      unfreezeTerminalTitle()
       streamRef = null
       isLoading = false
       streamMachine = null
@@ -693,6 +709,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         return false
       case 'cancel-ask':
         overlay = { kind: 'none' }
+        unfreezeTerminalTitle()
         interruptStream('sys-ask-cancel', '  ⏺ Cancelled.')
         return true
       case 'clear-selector-query':
@@ -765,6 +782,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   function interruptStream(id: string, text: string) {
+    unfreezeTerminalTitle()
     if (streamRef) {
       streamRef.abort()
       streamRef = null
@@ -1031,6 +1049,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         }
         break
       }
+      case 'page-up':
+      case 'page-down':
+        break
       default:
         break
     }
@@ -1539,7 +1560,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   function handleAskKey(event: KeyEvent) {
     if (overlay.kind !== 'ask-user') return
 
-    const result = handleAskKeyEvent(overlay.state, event.type, event.type === 'char' ? event.char : undefined)
+    const extra = event.type === 'char'
+      ? event.char
+      : event.type === 'paste'
+        ? event.text
+        : event.type === 'ctrl' && (event.key === 'n' || event.key === 'p')
+          ? event.key
+          : undefined
+    const eventType = event.type === 'ctrl' && (event.key === 'n' || event.key === 'p')
+      ? `ctrl+${event.key}`
+      : event.type
+    const result = handleAskKeyEvent(overlay.state, eventType, extra)
 
     switch (result.action) {
       case 'cancel':
@@ -1548,6 +1579,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           streamRef = null
         }
         overlay = { kind: 'none' }
+        unfreezeTerminalTitle()
         isLoading = false
         flushStreamContent()
         streamMachine = null
@@ -1560,11 +1592,19 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           const response = askStateToResponse(result.state)
           streamRef.respondAskUser(JSON.stringify({ Answered: response }))
           overlay = { kind: 'none' }
-          const answerLines: OutputLine[] = response.map((r, i) => ({
-            id: `sys-ask-${i}`,
-            kind: 'system' as const,
-            text: `  ● ${r.header}: ${r.answer}`,
-          }))
+          unfreezeTerminalTitle()
+          const answerLines: OutputLine[] = response.flatMap((r, i) => ([
+            {
+              id: `sys-ask-${i}-question`,
+              kind: 'system' as const,
+              text: `  • ${r.question}`,
+            },
+            {
+              id: `sys-ask-${i}-answer`,
+              kind: 'system' as const,
+              text: `    → ${r.answer}`,
+            },
+          ]))
           commitLines(answerLines)
         }
         renderStatus()
@@ -1591,6 +1631,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function cleanup() {
     destroyed = true
+    unfreezeTerminalTitle()
     stopSpinner()
     updateMgr.cleanup()
     if (exitHintTimer) clearTimeout(exitHintTimer)
