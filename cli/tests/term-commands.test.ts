@@ -21,7 +21,7 @@ describe('term commands', () => {
 
   test('/verbose toggles flag', () => {
     const result = handleSlashCommand('/verbose', mkCtx())
-    expect(result.appState.verbose).toBe(false)
+    expect(result.appState.verbose).toBe(true)
   })
 
   test('/plan toggles planning', () => {

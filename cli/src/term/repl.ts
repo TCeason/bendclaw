@@ -615,6 +615,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           }
         }
 
+        // writeLines are log-only: verbose events produced while verbose is
+        // off. Render them with the same formatting pipeline so screen.log
+        // still captures LLM/COMPACT/SPILL observability for post-hoc debug.
+        if (update.writeLines.length > 0) {
+          const blocks = buildOutputBlocks(update.writeLines)
+          const rendered = blocksToLines(blocks)
+          screenLog.logLines(rendered)
+        }
+
         if (update.rerenderStatus && !streamMachine?.spinnerState.streaming) renderStatus()
       }
 

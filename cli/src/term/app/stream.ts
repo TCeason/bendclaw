@@ -102,16 +102,25 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
   let suppressToolStarted = false
   let suppressToolFinished = false
 
-  if (prev.appState.verbose && (event.kind === 'llm_call_started' || event.kind === 'llm_call_retry' || event.kind === 'api_retry' || event.kind === 'context_compaction_started')) {
+  // Verbose events (LLM / COMPACT / SPILL) are always produced; the `verbose`
+  // flag only controls whether they land in the TUI or only in screen.log.
+  // Error and retry events are force-visible so the user always sees them.
+  const verboseOn = prev.appState.verbose
+  const pickVerboseTarget = (kind: string): OutputLine[] => {
+    if (verboseOn) return commitLines
+    if (kind === 'llm_retry' || kind === 'llm_error') return commitLines
+    return writeLines
+  }
+
+  if (event.kind === 'llm_call_started' || event.kind === 'llm_call_retry' || event.kind === 'api_retry' || event.kind === 'context_compaction_started') {
     const flushed = flushStreaming(state)
     state = { ...flushed.state, toolProgress: '', lastToolProgress: '' }
     commitLines.push(...flushed.lines)
-    writeLines.push(...flushed.lines)
     const newEvents = state.appState.verboseEvents.slice(prev.appState.verboseEvents.length)
     for (const evt of newEvents) {
       const verboseLines = buildVerboseEvent(evt.text)
-      commitLines.push(...verboseLines)
-      writeLines.push(...verboseLines)
+      const target = pickVerboseTarget(evt.kind)
+      target.push(...verboseLines)
     }
   }
 
@@ -139,7 +148,6 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
       if (state.streamingThinkingText) {
         const thinkingLines = buildThinkingLines(state.streamingThinkingText)
         commitLines.push(...thinkingLines)
-        writeLines.push(...thinkingLines)
         state = { ...state, streamingThinkingText: '', pendingThinkingText: '' }
       }
 
@@ -177,10 +185,8 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
         if (markdownCommitPoint > 0 && state.assistantCommitted && builtLines.length > 0) {
           const sep: OutputLine = { id: `sep-${sepId++}`, kind: 'assistant', text: '' }
           commitLines.push(sep)
-          writeLines.push(sep)
         }
         commitLines.push(...builtLines)
-        writeLines.push(...builtLines)
         state = { ...state, streamingText: pending, assistantCommitted: true }
       }
 
@@ -201,10 +207,8 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
           if (markdownSplitAt > 0 && state.assistantCommitted && builtLines.length > 0) {
             const sep: OutputLine = { id: `sep-${sepId++}`, kind: 'assistant', text: '' }
             commitLines.push(sep)
-            writeLines.push(sep)
           }
           commitLines.push(...builtLines)
-          writeLines.push(...builtLines)
           state = { ...state, streamingText: rest, assistantCommitted: true }
         }
       }
@@ -232,26 +236,29 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
       spinnerState: { ...flushed.state.spinnerState, streaming: false },
     }
     commitLines.push(...flushed.lines)
-    writeLines.push(...flushed.lines)
     rerenderStatus = true
   }
 
   let expandedCommitLines: OutputLine[] | undefined
 
-  if (prev.appState.verbose && (event.kind === 'llm_call_completed' || event.kind === 'context_compaction_completed')) {
+  if (event.kind === 'llm_call_completed' || event.kind === 'context_compaction_completed') {
     const flushed = flushStreaming(state)
     state = flushed.state
     commitLines.push(...flushed.lines)
-    writeLines.push(...flushed.lines)
     const newEvents = state.appState.verboseEvents.slice(prev.appState.verboseEvents.length)
+    // Error / retry flows must always surface, regardless of verbose flag.
+    const hasForceVisible = newEvents.some(evt =>
+      /^[↻✗]\s+LLM\b/.test(evt.text) || /^\[LLM\]\s+[↻✗]/.test(evt.text)
+    )
     let hasExpanded = false
     for (const evt of newEvents) {
       const verboseLines = buildVerboseEvent(evt.text)
-      commitLines.push(...verboseLines)
-      writeLines.push(...verboseLines)
+      const forceVisible = /^[↻✗]\s+LLM\b/.test(evt.text) || /^\[LLM\]\s+[↻✗]/.test(evt.text)
+      const target = verboseOn || forceVisible ? commitLines : writeLines
+      target.push(...verboseLines)
       if (evt.expandedText) hasExpanded = true
     }
-    if (hasExpanded) {
+    if (hasExpanded && (verboseOn || hasForceVisible)) {
       expandedCommitLines = [...flushed.lines]
       for (const evt of newEvents) {
         const expLines = buildVerboseEvent(evt.expandedText ?? evt.text)
@@ -264,7 +271,6 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     const flushed = flushStreaming(state)
     state = flushed.state
     commitLines.push(...flushed.lines)
-    writeLines.push(...flushed.lines)
     const toolName = (p.tool_name as string) ?? 'unknown'
     // ask_user is waiting for user input, not "executing" — keep thinking phase
     const spinnerPhase = toolName === 'ask_user' ? 'thinking' : 'executing'
@@ -286,10 +292,8 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
         const flushed = flushStreaming(state)
         state = { ...flushed.state, toolProgress: '', lastToolProgress: '' }
         commitLines.push(...flushed.lines)
-        writeLines.push(...flushed.lines)
         const spillLines = buildSpillEventLines(spill, p.tool_name as string | undefined)
         commitLines.push(...spillLines)
-        writeLines.push(...spillLines)
       } else {
         state = isHeartbeatProgress(text)
           ? { ...state, toolProgress: '' }
@@ -319,11 +323,10 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     commitLines.push(...buildError((p.message as string) ?? 'Unknown error'))
   }
 
-  if (event.kind === 'run_finished' && prev.appState.verbose) {
+  if (event.kind === 'run_finished') {
     const flushed = flushStreaming(state)
     state = flushed.state
     commitLines.push(...flushed.lines)
-    writeLines.push(...flushed.lines)
     commitLines.push(...buildRunSummary(state.appState.currentRunStats))
   }
 

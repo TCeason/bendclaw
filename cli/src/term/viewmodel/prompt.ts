@@ -93,6 +93,10 @@ function buildFooter(input: PromptVMInput): ViewBlock {
     leftSpans.push(plain('  '))
     leftSpans.push(colored('[plan]', 'yellow', { bold: true }))
   }
+  if (input.verbose) {
+    leftSpans.push(plain('  '))
+    leftSpans.push(colored('[verbose]', 'cyan', { bold: true }))
+  }
 
   // git repo · branch
   if (input.gitRepo) {

@@ -477,6 +477,57 @@ describe('term stream machine', () => {
     expect(text).toContain('network error')
   })
 
+  test('verbose off: llm events route to writeLines, not commitLines', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState({ ...appState, verbose: false }, spinner)
+
+    const started = reduceRunEvent(state, {
+      kind: 'llm_call_started',
+      payload: { model: 'test', messages: [] },
+    }, { termRows: 24 })
+    state = started.state
+    const startedCommit = started.commitLines.map(l => l.text).join('\n')
+    const startedWrite = started.writeLines.map(l => l.text).join('\n')
+    expect(startedCommit).not.toContain('[LLM]')
+    expect(startedWrite).toContain('[LLM] ● · test')
+
+    const completed = reduceRunEvent(state, {
+      kind: 'llm_call_completed',
+      payload: { model: 'test', usage: { input: 10, output: 5, cache_read: 0, cache_write: 0 }, metrics: { duration_ms: 1000, ttfb_ms: 400, streaming_ms: 600 } },
+    }, { termRows: 24 })
+    state = completed.state
+    const completedCommit = completed.commitLines.map(l => l.text).join('\n')
+    const completedWrite = completed.writeLines.map(l => l.text).join('\n')
+    expect(completedCommit).not.toContain('[LLM]')
+    expect(completedWrite).toContain('[LLM] ✓')
+  })
+
+  test('verbose off: llm retry still surfaces in commitLines', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    const state = createStreamMachineState({ ...appState, verbose: false }, spinner)
+    const update = reduceRunEvent(state, {
+      kind: 'llm_call_retry',
+      payload: { attempt: 1, max_retries: 3, retry_delay_ms: 500, error: 'rate limited' },
+    }, { termRows: 24 })
+    const text = update.commitLines.map(l => l.text).join('\n')
+    expect(text).toContain('[LLM] ↻')
+    expect(text).toContain('rate limited')
+  })
+
+  test('verbose off: run_summary is visible in commitLines', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    const state = createStreamMachineState({ ...appState, verbose: false }, spinner)
+    const update = reduceRunEvent(state, {
+      kind: 'run_finished',
+      payload: {},
+    }, { termRows: 24 })
+    const hasSummary = update.commitLines.some(l => l.kind === 'run_summary')
+    expect(hasSummary).toBe(true)
+  })
+
   test('flushStreaming emits pending assistant text', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()

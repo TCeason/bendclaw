@@ -87,6 +87,16 @@ describe('buildPromptBlocks', () => {
     expect(result).toContain('[log]')
   })
 
+  test('shows [verbose] when verbose is on', () => {
+    const result = renderPlain(defaultInput({ verbose: true }))
+    expect(result).toContain('[verbose]')
+  })
+
+  test('no [verbose] when verbose is off', () => {
+    const result = renderPlain(defaultInput({ verbose: false }))
+    expect(result).not.toContain('[verbose]')
+  })
+
   test('shows exit hint', () => {
     const result = renderPlain(defaultInput({ exitHint: true }))
     expect(result).toContain('Press Ctrl+C again to exit')
