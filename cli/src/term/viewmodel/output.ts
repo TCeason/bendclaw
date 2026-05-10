@@ -100,6 +100,17 @@ function buildToolBlock(text: string): ViewBlock {
 }
 
 function buildVerboseBlock(text: string): ViewBlock {
+  const naturalMatch = text.match(/^([●✓✗↻])\s+(LLM|COMPACT|SPILL)\s*(.*)$/)
+  if (naturalMatch) {
+    const status = naturalMatch[1]!
+    const badge = naturalMatch[2]!
+    const rest = naturalMatch[3] ?? ''
+    const color = verboseStatusColor()
+    const spans = [colored(status, color, { bold: true }), colored(` ${badge}`, color, { bold: true })]
+    if (rest) spans.push(dim(` ${rest}`))
+    return block([line(...spans)], 1)
+  }
+
   const badgeMatch = text.match(/^\[(\w+)\]\s*(.*)$/)
   if (badgeMatch) {
     const badge = badgeMatch[1]!

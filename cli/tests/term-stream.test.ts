@@ -473,7 +473,7 @@ describe('term stream machine', () => {
       },
     }, { termRows: 24 })
     const text = update.commitLines.map(l => l.text).join('\n')
-    expect(text).toContain('[LLM] ↻ retrying in 1 second · attempt 1/3')
+    expect(text).toContain('↻ LLM  retrying in 1 second · attempt 1/3')
     expect(text).toContain('network error')
   })
 

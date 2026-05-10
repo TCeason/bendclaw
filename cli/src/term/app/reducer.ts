@@ -305,17 +305,17 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const text = formatCompactionCompleted(data)
 
       const compactRecord: CompactRecord | null =
-        type === 'level_compacted'
+        type === 'level_compacted' || type === 'level_done'
           ? {
               level: (result?.level as number) ?? 0,
-              beforeTokens: (result?.before_estimated_tokens as number) ?? 0,
-              afterTokens: (result?.after_estimated_tokens as number) ?? 0,
+              beforeTokens: ((result?.before_estimated_tokens as number) ?? (result?.tokens_before as number)) ?? 0,
+              afterTokens: ((result?.after_estimated_tokens as number) ?? (result?.tokens_after as number)) ?? 0,
             }
           : type === 'run_once_cleared'
             ? {
                 level: 0,
-                beforeTokens: state.currentRunStats.contextTokens,
-                afterTokens: state.currentRunStats.contextTokens - ((result?.saved_tokens as number) ?? 0),
+                beforeTokens: ((result?.before_estimated_tokens as number) ?? state.currentRunStats.contextTokens) ?? 0,
+                afterTokens: ((result?.after_estimated_tokens as number) ?? (state.currentRunStats.contextTokens - ((result?.saved_tokens as number) ?? 0))) ?? 0,
               }
             : null
 

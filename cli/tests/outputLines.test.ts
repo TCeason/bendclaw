@@ -170,10 +170,10 @@ describe('buildVerboseEvent', () => {
         tool_details: [['read_file', 8000], ['search', 6000], ['bash', 4000]],
       },
     })
-    expect(text).toContain('[LLM] ● claude-sonnet-4 · turn 2 · 18 msgs (user 6 · asst 5 · tool 7)')
-    expect(text).toContain('  ctx       ')
-    expect(text).toContain('  tok       sys 8k · user 12k · asst 4k · tool 18k')
-    expect(text).toContain('            read_file  ~8k')
+    expect(text).toContain('● LLM  claude-sonnet-4 · turn 2 · 18 msgs · user 6 / asst 5 / tool 7')
+    expect(text).toContain('    context   ')
+    expect(text).toContain('    tokens    sys 8k · user 12k · asst 4k · tool 18k')
+    expect(text).toContain('    by tool   read_file 8k (44%)')
   })
 
   test('formats llm retry with wait time and attempt', () => {
@@ -183,8 +183,8 @@ describe('buildVerboseEvent', () => {
       retry_delay_ms: 2100,
       error: 'tls handshake eof',
     })
-    expect(text).toContain('[LLM] ↻ retrying in 2 seconds · attempt 2/3')
-    expect(text).toContain('  tls handshake eof')
+    expect(text).toContain('↻ LLM  retrying in 2 seconds · attempt 2/3')
+    expect(text).toContain('    error     tls handshake eof')
   })
 
   test('formats llm completed with status symbol and timing details', () => {
@@ -198,9 +198,9 @@ describe('buildVerboseEvent', () => {
       estimated_context_tokens: 42000,
       time_to_first_byte_ms: 1100,
     })
-    expect(result.text).toContain('[LLM] ✓ claude-sonnet-4 · turn 2 · 8.4s')
-    expect(result.text).toContain('  tok       42k in · 352 out')
-    expect(result.text).toContain('  timing    ttfb 1.1s (13%) · stream 7.3s (87%)')
+    expect(result.text).toContain('✓ LLM  claude-sonnet-4 · turn 2 · 8.4s')
+    expect(result.text).toContain('    tokens    42k in → 352 out')
+    expect(result.text).toContain('    timing    ttfb 1.1s (13%) · stream 7.3s (87%)')
   })
 
   test('formats compact verbose with status symbols and preserves details', () => {
@@ -211,9 +211,9 @@ describe('buildVerboseEvent', () => {
       context_window: 200000,
       token_breakdown: { system: 8000, user: 24000, assistant: 18000, tool: 118000 },
     })
-    expect(started).toContain('[COMPACT] ● compacting · L1 · 48 msgs')
-    expect(started).toContain('  ctx       ')
-    expect(started).toContain('  tok       sys 8k · user 24k · asst 18k · tool 118k')
+    expect(started).toContain('● COMPACT  L1 · 48 msgs')
+    expect(started).toContain('    context   ')
+    expect(started).toContain('    tokens    sys 8k · user 24k · asst 18k · tool 118k')
 
     const completed = formatCompactionCompleted({
       result: {
@@ -230,11 +230,11 @@ describe('buildVerboseEvent', () => {
         details: ['changed 5/48', '#12 read_file HeadTail ~18k → ~4k (−14k)'],
       },
     })
-    expect(completed).toContain('[COMPACT] ✓ L1 done · 48 → 35 msgs · −42k · 25%')
-    expect(completed).toContain('  ctx       ')
-    expect(completed).toContain('  map       [··OHHH··SS]  ·=kept  O=Outline  H=HeadTail  S=Summarized')
-    expect(completed).toContain('  result    ↓ outlined 2, head-tail 3')
-    expect(completed).toContain('  actions   #12 read_file HeadTail ~18k → ~4k (−14k)')
+    expect(completed).toContain('✓ COMPACT  L1 · 48 → 35 msgs · saved 42k (25%)')
+    expect(completed).toContain('    context   ')
+    expect(completed).toContain('    map       [··OHHH··SS]   · kept   O Outline   H HeadTail   S Summarized')
+    expect(completed).toContain('    summary   outlined 2 · head-tail 3')
+    expect(completed).toContain('    actions   #12 read_file HeadTail 18k → 4k (−14k)')
   })
 })
 
@@ -266,10 +266,10 @@ describe('buildRunSummary', () => {
     expect(lines.length).toBeGreaterThan(1)
     expect(lines[0]!.text).toBe('')
     expect(lines[1]!.text).toContain('run summary')
-    const statsLine = lines.find((l) => l.text.includes('turn'))!
+    const statsLine = lines.find((l) => l.text.includes('overview'))!
     expect(statsLine.text).toContain('2.5s')
     expect(statsLine.text).toContain('3 turns')
-    expect(statsLine.text).toContain('5 tool calls')
+    expect(statsLine.text).toContain('5 tools')
     expect(statsLine.text).toContain('1k tokens')
     // Footer removed — no trailing separator line
     const lastLine = lines[lines.length - 1]!
@@ -300,10 +300,10 @@ describe('buildRunSummary', () => {
       systemPromptTokens: 0,
     })
     expect(lines.some((l) => l.text.includes('llm'))).toBe(true)
-    expect(lines.some((l) => l.text.includes('ttft avg'))).toBe(true)
+    expect(lines.some((l) => l.text.includes('ttft'))).toBe(true)
     expect(lines.some((l) => l.text.includes('#1'))).toBe(true)
     expect(lines.some((l) => l.text.includes('cache'))).toBe(true)
-    expect(lines.some((l) => l.text.includes(' in '))).toBe(true)
+    expect(lines.some((l) => l.text.includes(' in → '))).toBe(true)
   })
 
   test('includes token breakdown by role', () => {
