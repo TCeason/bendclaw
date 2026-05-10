@@ -134,28 +134,71 @@ describe('TermRenderer', () => {
       renderer.destroy()
     })
 
-    test('changed lines trigger full redraw', () => {
+    test('growing line appends only new suffix', () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      renderer.setStatus(['⏺ hello'])
+      stdout.clear()
+      renderer.setStatus(['⏺ hello world'])
+
+      expect(stdout.output).toContain(' world')
+      expect(stdout.output).toContain('\x1b[1A')
+      expect(stdout.output).toContain('\x1b[8G')
+      expect(stdout.output).toContain('\x1b[1B')
+      expect(stdout.output).not.toContain('⏺ hello world')
+      renderer.destroy()
+    })
+
+    test('growing line falls back when it would wrap', () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      stdout.columns = 10
+      stdout.emit('resize')
+      stdout.clear()
+      renderer.setStatus(['123456789'])
+      stdout.clear()
+      renderer.setStatus(['1234567890'])
+
+      expect(stdout.output).toContain('1234567890')
+      expect(stdout.output).toContain('\x1b[1G')
+      renderer.destroy()
+    })
+
+    test('changed suffix keeps unchanged prefix in place', () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      renderer.setStatus(['pending line 1', 'pending line 2', 'spinner a'])
+      stdout.clear()
+      renderer.setStatus(['pending line 1', 'pending line 2', 'spinner b'])
+
+      expect(stdout.output).toContain('spinner b')
+      expect(stdout.output).toContain('\x1b[1A')
+      expect(stdout.output).not.toContain('pending line 1')
+      expect(stdout.output).not.toContain('pending line 2')
+      renderer.destroy()
+    })
+
+    test('changed middle line redraws changed suffix', () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()
       renderer.setStatus(['line1', 'line2', 'line3'])
       stdout.clear()
       renderer.setStatus(['line1', 'CHANGED', 'line3'])
-      // Should contain the changed line
+      // Should contain the changed line and unchanged suffix.
       expect(stdout.output).toContain('CHANGED')
-      // Full redraw: cursorUp to clear old status, then rewrite all lines
-      expect(stdout.output).toContain('\x1b[3A') // cursorUp(3) to go back to start of status
-      expect(stdout.output).toContain('line1')
+      expect(stdout.output).toContain('\x1b[2A')
+      expect(stdout.output).not.toContain('line1')
       expect(stdout.output).toContain('line3')
       renderer.destroy()
     })
 
-    test('height increase triggers full redraw', () => {
+    test('height increase appends changed suffix only', () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()
       renderer.setStatus(['line1'])
       stdout.clear()
       renderer.setStatus(['line1', 'line2', 'line3'])
-      expect(stdout.output).toContain('line1')
+      expect(stdout.output).not.toContain('line1')
       expect(stdout.output).toContain('line2')
       expect(stdout.output).toContain('line3')
       renderer.destroy()

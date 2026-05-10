@@ -10,7 +10,9 @@
 
 import {
   cursorUp,
+  cursorDown,
   eraseDown,
+  eraseToEndOfLine,
   hideCursor,
   showCursor,
   cursorToColumn,
@@ -89,17 +91,25 @@ export class TermRenderer {
 
   /**
    * Update the status area (fixed bottom lines).
-   * Only redraws lines that changed.
+   * Redraws only the changed suffix so stable pending markdown does not flash
+   * when the spinner or prompt line changes.
    */
   setStatus(lines: string[]): void {
     const prev = this.prevStatusLines
     const next = lines
 
-    // If height changed, full redraw
-    if (next.length !== prev.length) {
-      const outerBatch = this.buffering
-      if (!outerBatch) this.beginBatch()
-      this.clearStatusArea()
+    let firstChanged = 0
+    const shared = Math.min(prev.length, next.length)
+    while (firstChanged < shared && prev[firstChanged] === next[firstChanged]) {
+      firstChanged++
+    }
+
+    if (firstChanged === prev.length && firstChanged === next.length) return
+
+    const outerBatch = this.buffering
+    if (!outerBatch) this.beginBatch()
+
+    if (this.statusHeight === 0 || prev.length === 0) {
       this.prevStatusLines = [...next]
       this.statusHeight = next.length
       this.drawStatus()
@@ -107,34 +117,32 @@ export class TermRenderer {
       return
     }
 
-    // Line-level diff: only update changed lines
-    if (this.statusHeight === 0) {
-      const outerBatch = this.buffering
-      if (!outerBatch) this.beginBatch()
-      this.prevStatusLines = [...next]
-      this.statusHeight = next.length
-      this.drawStatus()
-      if (!outerBatch) this.flushBatch()
-      return
-    }
-
-    let needsUpdate = false
-    for (let i = 0; i < next.length; i++) {
-      if (next[i] !== prev[i]) {
-        needsUpdate = true
-        break
+    if (firstChanged < prev.length && firstChanged < next.length) {
+      const prevLine = prev[firstChanged] ?? ''
+      const nextLine = next[firstChanged] ?? ''
+      const endCol = this.appendColumn(prevLine, nextLine)
+      const unchangedSuffix = prev.length === next.length
+        && prev.slice(firstChanged + 1).every((line, idx) => line === next[firstChanged + 1 + idx])
+      if (unchangedSuffix && endCol !== null && nextLine.startsWith(prevLine) && nextLine.length > prevLine.length) {
+        const rowsAfter = this.screenRows(prev.slice(firstChanged + 1))
+        this.write(cursorUp(rowsAfter + 1) + cursorToColumn(endCol) + eraseToEndOfLine())
+        this.write(nextLine.slice(prevLine.length) + cursorToColumn(1) + cursorDown(rowsAfter + 1))
+        this.prevStatusLines = [...next]
+        this.statusHeight = next.length
+        if (!outerBatch) this.flushBatch()
+        return
       }
     }
 
-    if (!needsUpdate) return
+    const rowsToReplace = this.screenRows(prev.slice(firstChanged))
+    this.write(cursorUp(rowsToReplace) + cursorToColumn(1) + eraseDown())
 
-    // Full redraw — line-level diff is unreliable when lines wrap
-    const outerBatch = this.buffering
-    if (!outerBatch) this.beginBatch()
-    this.clearStatusArea()
     this.prevStatusLines = [...next]
     this.statusHeight = next.length
-    this.drawStatus()
+    for (const line of next.slice(firstChanged)) {
+      this.write(this.truncateLine(line) + '\n')
+    }
+
     if (!outerBatch) this.flushBatch()
   }
 
@@ -161,6 +169,13 @@ export class TermRenderer {
       total += width === 0 ? 1 : Math.ceil(width / this.cols)
     }
     return total
+  }
+
+  private appendColumn(prevLine: string, nextLine: string): number | null {
+    const prevWidth = stringWidth(prevLine)
+    const nextWidth = stringWidth(nextLine)
+    if (prevWidth >= this.cols || nextWidth >= this.cols) return null
+    return prevWidth + 1
   }
 
   /** Clear the status area (move up and erase). */
