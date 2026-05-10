@@ -96,6 +96,7 @@ function buildFooter(input: PromptVMInput): ViewBlock {
   if (input.verbose) {
     leftSpans.push(plain('  '))
     leftSpans.push(colored('[verbose]', 'cyan', { bold: true }))
+    leftSpans.push(dim(' /v to toggle'))
   }
 
   // git repo · branch
