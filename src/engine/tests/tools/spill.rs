@@ -292,6 +292,7 @@ async fn test_agent_loop_spill_integration() {
         tools,
         cwd: std::path::PathBuf::from("/tmp"),
         path_guard: Arc::new(PathGuard::open()),
+        prompt_cache_key: None,
     };
 
     let prompts = vec![AgentMessage::Llm(Message::user("run large_tool"))];
