@@ -89,10 +89,20 @@ Hardening fails when it degrades into these:
 When you converge, present:
 
 - **Subject** — the plan, strategy, or current git changes being hardened.
-- **Updated direction** — the revised plan or the implementation adjustments
-  needed for current changes.
 - **Closed loopholes** — each one as: `condition → fix`, one line.
 - **Accepted risks** — each one as: `condition → why it's acceptable`, one line.
+- **Final plan** — the revised plan, rewritten as a self-contained, ready-to-execute
+  specification that already incorporates every closed loophole. Do not describe
+  it as a diff against the original or a list of adjustments — write it as if the
+  original plan never existed. It must be concrete enough that the next step is
+  implementation, not another round of planning. When the subject is current
+  git changes rather than a forward-looking plan, replace this with
+  **Implementation adjustments** — the specific file-level edits still needed
+  to close the loopholes.
 - **Iterations** — a short count (e.g. "converged after 2 passes").
 
-Keep it compact. One page is usually enough.
+Put **Final plan** (or **Implementation adjustments**) last so the reader ends
+on the actionable output and does not need to ask "now give me the revised plan".
+
+Keep it compact. One page is usually enough, but do not shrink the final plan
+to the point it loses the detail needed to execute.
