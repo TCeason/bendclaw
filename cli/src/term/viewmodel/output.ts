@@ -115,7 +115,7 @@ function buildVerboseBlock(text: string): ViewBlock {
   if (badgeMatch) {
     const badge = badgeMatch[1]!
     const rest = badgeMatch[2] ?? ''
-    const statusMatch = rest.match(/^([●✓✗])\s*(.*)$/)
+    const statusMatch = rest.match(/^([●✓✗↻])\s*(.*)$/)
     const color = verboseStatusColor()
     const spans = [colored(`[${badge}]`, color, { bold: true })]
     if (statusMatch) {

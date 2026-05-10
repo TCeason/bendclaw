@@ -283,8 +283,10 @@ export function summarizeInline(value: string, maxChars: number): string {
   return truncate(collapsed, maxChars)
 }
 
-export function toolResultLines(content: string, isError: boolean, _toolName?: string, expanded?: boolean): string[] {
-  const TAIL_LINES = 5
+export function toolResultLines(content: string, isError: boolean, toolName?: string, expanded?: boolean): string[] {
+  const DEFAULT_LINES = 3
+  const COMPACT_TOOLS = new Set(['search', 'list_files', 'web_fetch', 'bash'])
+  const TAIL_LINES = toolName && COMPACT_TOOLS.has(toolName) ? DEFAULT_LINES : 5
   const MAX_LINE_WIDTH = 256
 
   const capLine = (l: string) => l.length <= MAX_LINE_WIDTH ? l : truncateHeadTail(l, MAX_LINE_WIDTH)

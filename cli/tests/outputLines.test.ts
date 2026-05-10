@@ -99,13 +99,24 @@ describe('buildToolResult', () => {
     expect(all).toContain('    "items": [')
   })
 
-  test('compact JSON result shows head with expand hint', () => {
+  test('compact JSON result shows shorter head with expand hint', () => {
     const result = JSON.stringify({ a: 1, b: 2, c: 3, d: 4, e: 5, f: 6 })
     const lines = buildToolResult('web_fetch', {}, 'done', result)
     const all = lines.map(l => l.text).join('\n')
     expect(all).toContain('  {')
     expect(all).toContain('  ... (+')
     expect(all).toContain('ctrl+o to expand')
+    expect(lines.filter(l => l.kind === 'tool_result' && !l.text.includes('ctrl+o'))).toHaveLength(3)
+  })
+
+  test('compact search result shows fewer lines by default', () => {
+    const result = Array.from({ length: 8 }, (_, i) => `match ${i}`).join('\n')
+    const lines = buildToolResult('search', {}, 'done', result)
+    const all = lines.map(l => l.text).join('\n')
+    expect(all).toContain('match 0')
+    expect(all).toContain('match 2')
+    expect(all).not.toContain('match 3')
+    expect(all).toContain('... (+5 lines, ctrl+o to expand)')
   })
 
   test('expanded multiline result shows collapse hint', () => {
@@ -170,7 +181,7 @@ describe('buildVerboseEvent', () => {
         tool_details: [['read_file', 8000], ['search', 6000], ['bash', 4000]],
       },
     })
-    expect(text).toContain('● LLM  claude-sonnet-4 · turn 2 · 18 msgs · user 6 / asst 5 / tool 7')
+    expect(text).toContain('[LLM] ● · claude-sonnet-4 · turn 2 · 18 msgs · user 6 / asst 5 / tool 7')
     expect(text).toContain('    context   ')
     expect(text).toContain('    tokens    sys 8k · user 12k · asst 4k · tool 18k')
     expect(text).toContain('    by tool   read_file 8k (44%)')
@@ -183,7 +194,7 @@ describe('buildVerboseEvent', () => {
       retry_delay_ms: 2100,
       error: 'tls handshake eof',
     })
-    expect(text).toContain('↻ LLM  retrying in 2 seconds · attempt 2/3')
+    expect(text).toContain('[LLM] ↻ · retrying in 2 seconds · attempt 2/3')
     expect(text).toContain('    error     tls handshake eof')
   })
 
@@ -199,11 +210,15 @@ describe('buildVerboseEvent', () => {
       time_to_first_byte_ms: 1100,
       cache_read: 21000,
       cache_write: 0,
+      tool_calls: [{ id: 'tc-1', name: 'search', arguments: { pattern: 'foo' } }],
     })
-    expect(result.text).toContain('✓ LLM  claude-sonnet-4 · turn 2 · 8.4s')
+    expect(result.text).toContain('[LLM] ✓ · claude-sonnet-4 · turn 2 · 8.4s')
     expect(result.text).toContain('    tokens    42k in → 352 out')
     expect(result.text).toContain('    cache     21k read · 0 write · 33% hit')
     expect(result.text).toContain('    timing    ttfb 1.1s (13%) · stream 7.3s (87%)')
+    expect(result.text).toContain('    tools     search')
+    expect(result.text).not.toContain('    output    ')
+    expect(result.expandedText).toBeUndefined()
   })
 
   test('formats compact verbose with status symbols and preserves details', () => {
@@ -214,7 +229,7 @@ describe('buildVerboseEvent', () => {
       context_window: 200000,
       token_breakdown: { system: 8000, user: 24000, assistant: 18000, tool: 118000 },
     })
-    expect(started).toContain('● COMPACT  L1 · 48 msgs')
+    expect(started).toContain('[COMPACT] ● · L1 · 48 msgs')
     expect(started).toContain('    context   ')
     expect(started).toContain('    tokens    sys 8k · user 24k · asst 18k · tool 118k')
 
@@ -233,7 +248,7 @@ describe('buildVerboseEvent', () => {
         details: ['changed 5/48', '#12 read_file HeadTail ~18k → ~4k (−14k)'],
       },
     })
-    expect(completed).toContain('✓ COMPACT  L1 · 48 → 35 msgs · saved 42k (25%)')
+    expect(completed).toContain('[COMPACT] ✓ · L1 · 48 → 35 msgs · saved 42k (25%)')
     expect(completed).toContain('    context   ')
     expect(completed).toContain('    map       [··OHHH··SS]   · kept   O Outline   H HeadTail   S Summarized')
     expect(completed).toContain('    summary   outlined 2 · head-tail 3')

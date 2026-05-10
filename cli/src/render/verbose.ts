@@ -151,7 +151,7 @@ export function formatLlmCallStarted(data: Record<string, unknown>): string {
   const injectedStr = injectedCount > 0 ? ` · ${injectedCount} injected` : ''
 
   const ms = data.message_stats as Record<string, any> | undefined
-  const lines: string[] = [`● LLM  ${model} · turn ${turn} · ${msgCount} msgs${msgBreakdown(ms)}${retryStr}${injectedStr}`]
+  const lines: string[] = [`[LLM] ● · ${model} · turn ${turn} · ${msgCount} msgs${msgBreakdown(ms)}${retryStr}${injectedStr}`]
 
   const contextWindow = (data.context_window as number) ?? 0
   const estimatedContextTokens = (data.estimated_context_tokens as number) ?? 0
@@ -187,7 +187,7 @@ export function formatLlmCallRetry(data: Record<string, unknown>): string {
   const seconds = Math.max(0, Math.round(delayMs / 1000))
   const unit = seconds === 1 ? 'second' : 'seconds'
   const attemptStr = maxRetries > 0 ? ` · attempt ${attempt}/${maxRetries}` : ` · attempt ${attempt}`
-  const lines = [`↻ LLM  retrying in ${seconds} ${unit}${attemptStr}`]
+  const lines = [`[LLM] ↻ · retrying in ${seconds} ${unit}${attemptStr}`]
   if (error) lines.push(`    error     ${error}`)
   return lines.join('\n')
 }
@@ -205,7 +205,7 @@ export function formatLlmCallCompleted(data: Record<string, unknown>): { text: s
   const durationMs = (data.duration_ms as number) ?? metrics?.duration_ms ?? 0
 
   if (error) {
-    return { text: `✗ LLM  ${model ?? 'unknown'}${turn != null ? ` · turn ${turn}` : ''} · ${formatDuration(durationMs)}\n    error     ${error}` }
+    return { text: `[LLM] ✗ · ${model ?? 'unknown'}${turn != null ? ` · turn ${turn}` : ''} · ${formatDuration(durationMs)}\n    error     ${error}` }
   }
 
   const inputTok = usage?.input ?? (data.input_tokens as number) ?? 0
@@ -222,7 +222,7 @@ export function formatLlmCallCompleted(data: Record<string, unknown>): { text: s
   const streamPct = ((streamingMs / dur) * 100).toFixed(0)
 
   const lines: string[] = []
-  lines.push(`✓ LLM  ${model ?? 'unknown'}${turn != null ? ` · turn ${turn}` : ''} · ${formatDuration(durationMs)} · ${tokPerSec} tok/s`)
+  lines.push(`[LLM] ✓ · ${model ?? 'unknown'}${turn != null ? ` · turn ${turn}` : ''} · ${formatDuration(durationMs)} · ${tokPerSec} tok/s`)
   lines.push(`    tokens    ${humanTokens(inputTok)} in → ${humanTokens(outputTok)} out`)
   if (cacheReadTok > 0 || cacheWriteTok > 0) {
     lines.push(`    cache     ${humanTokens(cacheReadTok)} read · ${humanTokens(cacheWriteTok)} write · ${cacheHitRate}% hit`)
@@ -230,24 +230,11 @@ export function formatLlmCallCompleted(data: Record<string, unknown>): { text: s
   lines.push(`    timing    ttfb ${(ttfbMs / 1000).toFixed(1)}s (${ttfbPct}%) · stream ${(streamingMs / 1000).toFixed(1)}s (${streamPct}%)`)
 
   const toolCalls = data.tool_calls as { id: string; name: string; arguments: Record<string, unknown> }[] | undefined
-  let expandedCallsLine: string | undefined
   if (toolCalls && toolCalls.length > 0) {
-    const json = JSON.stringify(toolCalls)
-    const maxLen = 200
-    if (json.length > maxLen) {
-      lines.push(`    output    ${json.slice(0, maxLen)}…`)
-      expandedCallsLine = `    output    ${json}`
-    } else {
-      lines.push(`    output    ${json}`)
-    }
+    lines.push(`    tools     ${toolCalls.map(tc => tc.name).join(' · ')}`)
   }
 
-  const compact = lines.join('\n')
-  if (expandedCallsLine) {
-    const expandedLines = [...lines.slice(0, -1), expandedCallsLine]
-    return { text: compact, expandedText: expandedLines.join('\n') }
-  }
-  return { text: compact }
+  return { text: lines.join('\n') }
 }
 
 // ---------------------------------------------------------------------------
@@ -263,7 +250,7 @@ export function formatCompactionStarted(data: Record<string, unknown>): string {
   const cms = (data.message_stats as Record<string, any> | undefined) ?? (data.token_breakdown as Record<string, any> | undefined)
   const level = (data.level as string | undefined) ?? (data.level_name as string | undefined)
   const header = level ? `${level} · ${msgCount} msgs${compactMsgBreakdown(cms)}` : `${msgCount} msgs${compactMsgBreakdown(cms)}`
-  const lines: string[] = [`● COMPACT  ${header}`]
+  const lines: string[] = [`[COMPACT] ● · ${header}`]
 
   const ctx = contextLine(estTokens, contextWindow)
   if (ctx) lines.push(ctx)
@@ -283,7 +270,7 @@ export function formatCompactionStarted(data: Record<string, unknown>): string {
 export function formatCompactionCompleted(data: Record<string, unknown>): string {
   const result = data.result as Record<string, any> | undefined
 
-  if (!result) return '✓ COMPACT  done'
+  if (!result) return '[COMPACT] ✓ · done'
 
   const type = (result.type as string) ?? 'done'
 
@@ -293,9 +280,9 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
       const estTokens = (data.estimated_tokens as number) ?? 0
       if (contextWindow > 0 && estTokens > 0) {
         const pct = ((estTokens / contextWindow) * 100).toFixed(0)
-        return `✓ COMPACT  skipped · within budget · ${humanTokens(estTokens)} / ${humanTokens(contextWindow)} · ${pct}%`
+        return `[COMPACT] ✓ · skipped · within budget · ${humanTokens(estTokens)} / ${humanTokens(contextWindow)} · ${pct}%`
       }
-      return '✓ COMPACT  skipped · within budget'
+      return '[COMPACT] ✓ · skipped · within budget'
     }
 
     case 'run_once_cleared': {
@@ -306,7 +293,7 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
       const contextWindow = (data.context_window as number) ?? 0
 
       const lines: string[] = []
-      lines.push(`✓ COMPACT  cleared · ${humanTokens(before)} → ${humanTokens(after)} · saved ${humanTokens(saved)} (${savedPct}%)`)
+      lines.push(`[COMPACT] ✓ · cleared · ${humanTokens(before)} → ${humanTokens(after)} · saved ${humanTokens(saved)} (${savedPct}%)`)
 
       const ctx = contextLine(after, contextWindow, saved)
       if (ctx) lines.push(ctx)
@@ -368,7 +355,7 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
       }
 
       const lines: string[] = []
-      lines.push(`✓ COMPACT  L${level} · ${beforeMsgs} → ${afterMsgs} msgs · saved ${humanTokens(saved)} (${savedPct}%)`)
+      lines.push(`[COMPACT] ✓ · L${level} · ${beforeMsgs} → ${afterMsgs} msgs · saved ${humanTokens(saved)} (${savedPct}%)`)
 
       const contextWindow = ((data.context_window as number) ?? (result.context_window as number)) ?? 0
       const ctx = contextLine(after, contextWindow, saved)
@@ -408,6 +395,6 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
     }
 
     default:
-      return `✓ COMPACT  ${type}`
+      return `[COMPACT] ✓ · ${type}`
   }
 }

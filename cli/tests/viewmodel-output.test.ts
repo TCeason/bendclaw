@@ -73,7 +73,7 @@ describe('buildOutputBlocks', () => {
   test('verbose badge has marginTop=1', () => {
     const result = renderPlain([
       { id: 'a1', kind: 'assistant', text: 'text' },
-      { id: 'v1', kind: 'verbose', text: '● LLM  started model=gpt-4' },
+      { id: 'v1', kind: 'verbose', text: '[LLM] ● · started model=gpt-4' },
     ])
     const lines = result.split('\n')
     const verboseIdx = lines.findIndex(l => l.includes('LLM'))
@@ -82,9 +82,9 @@ describe('buildOutputBlocks', () => {
 
   test('verbose status colors are unified', () => {
     const result = render([
-      { id: 'v1', kind: 'verbose', text: '● COMPACT  1 msgs' },
-      { id: 'v2', kind: 'verbose', text: '✓ COMPACT  skipped · within budget' },
-      { id: 'v3', kind: 'verbose', text: '✓ LLM  gpt-5.5 · turn 1 · 3.1s' },
+      { id: 'v1', kind: 'verbose', text: '[COMPACT] ● · 1 msgs' },
+      { id: 'v2', kind: 'verbose', text: '[COMPACT] ✓ · skipped · within budget' },
+      { id: 'v3', kind: 'verbose', text: '[LLM] ✓ · gpt-5.5 · turn 1 · 3.1s' },
     ])
     expect(result).toContain('\x1b[36m')
     expect(result).not.toContain('\x1b[32m')
