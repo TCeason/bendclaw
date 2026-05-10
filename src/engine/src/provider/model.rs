@@ -78,6 +78,7 @@ impl CompatCaps {
     pub const TOOL_RESULT_NAME: Self = Self(1 << 4);
     pub const ASSISTANT_AFTER_TOOL_RESULT: Self = Self(1 << 5);
     pub const REASONING_CONTENT_REQUIRED: Self = Self(1 << 6);
+    pub const PROMPT_CACHE_KEY: Self = Self(1 << 7);
 
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
@@ -114,6 +115,7 @@ impl Serialize for CompatCaps {
                 Self::REASONING_CONTENT_REQUIRED,
                 "reasoning_content_required",
             ),
+            (Self::PROMPT_CACHE_KEY, "prompt_cache_key"),
         ];
         let count = all.iter().filter(|(f, _)| self.contains(*f)).count();
         let mut seq = serializer.serialize_seq(Some(count))?;
@@ -139,6 +141,7 @@ impl<'de> Deserialize<'de> for CompatCaps {
                 "tool_result_name" => Self::TOOL_RESULT_NAME,
                 "assistant_after_tool_result" => Self::ASSISTANT_AFTER_TOOL_RESULT,
                 "reasoning_content_required" => Self::REASONING_CONTENT_REQUIRED,
+                "prompt_cache_key" => Self::PROMPT_CACHE_KEY,
                 other => {
                     return Err(serde::de::Error::unknown_variant(other, &[
                         "store",
@@ -148,6 +151,7 @@ impl<'de> Deserialize<'de> for CompatCaps {
                         "tool_result_name",
                         "assistant_after_tool_result",
                         "reasoning_content_required",
+                        "prompt_cache_key",
                     ]))
                 }
             };
@@ -190,7 +194,8 @@ impl OpenAiCompat {
             caps: CompatCaps::STORE
                 | CompatCaps::DEVELOPER_ROLE
                 | CompatCaps::REASONING_EFFORT
-                | CompatCaps::USAGE_IN_STREAMING,
+                | CompatCaps::USAGE_IN_STREAMING
+                | CompatCaps::PROMPT_CACHE_KEY,
             max_tokens_field: MaxTokensField::MaxCompletionTokens,
             ..Default::default()
         }

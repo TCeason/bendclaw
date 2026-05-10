@@ -45,6 +45,8 @@ pub struct StreamConfig {
     pub model_config: Option<ModelConfig>,
     /// Prompt caching configuration. Default: enabled with auto strategy.
     pub cache_config: CacheConfig,
+    /// Optional key for provider-side prompt cache routing.
+    pub prompt_cache_key: Option<String>,
 }
 
 /// Tool definition sent to the LLM (schema only, no execute fn)

@@ -244,8 +244,9 @@ export function buildRunSummary(stats: RunStats): OutputLine[] {
   const overallTps = totalStreamMs > 0 ? (stats.outputTokens / (totalStreamMs / 1000)).toFixed(0) : '0'
   let tokLine = `tokens      ${humanTokens(totalInput)} in → ${humanTokens(stats.outputTokens)} out · ${overallTps} tok/s`
   if (stats.cacheReadTokens > 0 || stats.cacheWriteTokens > 0) {
-    const hitRate = totalInput > 0
-      ? (stats.cacheReadTokens / totalInput * 100).toFixed(0)
+    const cacheTotalInput = stats.inputTokens + stats.cacheReadTokens + stats.cacheWriteTokens
+    const hitRate = cacheTotalInput > 0
+      ? (stats.cacheReadTokens / cacheTotalInput * 100).toFixed(0)
       : '0'
     tokLine += ` · cache ${hitRate}%`
   }

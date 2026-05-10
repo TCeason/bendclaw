@@ -87,6 +87,7 @@ pub(super) async fn stream_assistant_response(
             temperature: config.temperature,
             model_config: config.model_config.clone(),
             cache_config: config.cache_config.clone(),
+            prompt_cache_key: context.prompt_cache_key.clone(),
         };
 
         // Emit LlmCallStart before each provider attempt

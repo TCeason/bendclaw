@@ -6,6 +6,7 @@ use evot::conf::thinking_level_from_str;
 use evot::conf::Config;
 use evot::conf::Protocol;
 use evot::conf::StorageBackend;
+use evot_engine::provider::CompatCaps;
 use evot_engine::ThinkingLevel;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -257,6 +258,42 @@ EVOT_ANTHROPIC_MODEL=claude-sonnet-4-20250514
     let config = result?;
     assert_eq!(config.active_llm()?.api_key, "legacy-key");
     assert_eq!(config.active_llm()?.protocol, Protocol::Anthropic);
+    Ok(())
+}
+
+#[test]
+fn load_config_accepts_prompt_cache_key_compat_cap() -> TestResult {
+    let _guard = env_lock()
+        .lock()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    let temp = tempfile::tempdir()?;
+    let env_home = temp.path().join("home");
+    std::fs::create_dir_all(env_home.join(".evotai"))?;
+    std::fs::write(
+        env_home.join(".evotai").join("evot.env"),
+        "\
+EVOT_LLM_PROVIDER=custom
+EVOT_LLM_CUSTOM_API_KEY=key
+EVOT_LLM_CUSTOM_BASE_URL=https://example.com
+EVOT_LLM_CUSTOM_MODEL=gpt-test
+EVOT_LLM_CUSTOM_COMPAT_CAPS=usage_in_streaming,prompt_cache_key
+",
+    )?;
+
+    let original_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &env_home);
+
+    let result = Config::load();
+
+    restore_env_var("HOME", original_home);
+
+    let config = result?;
+    let provider = config.providers.get("custom").ok_or("missing provider")?;
+    assert!(provider
+        .compat_caps
+        .contains(CompatCaps::USAGE_IN_STREAMING));
+    assert!(provider.compat_caps.contains(CompatCaps::PROMPT_CACHE_KEY));
     Ok(())
 }
 

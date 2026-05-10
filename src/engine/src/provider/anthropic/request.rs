@@ -3,6 +3,8 @@
 use crate::provider::traits::StreamConfig;
 use crate::types::*;
 
+const DYNAMIC_BOUNDARY: &str = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
+
 pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::Value {
     let mut messages: Vec<serde_json::Value> = Vec::new();
 
@@ -127,28 +129,16 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
             "type": "text",
             "text": "You are Claude Code, Anthropic's official CLI for Claude.",
         })];
-        if !config.system_prompt.is_empty() {
-            system_blocks.push(serde_json::json!({
-                "type": "text",
-                "text": config.system_prompt,
-            }));
-        }
-        // Cache the last system block
-        if caching_enabled && cache_system {
-            if let Some(last) = system_blocks.last_mut() {
-                last["cache_control"] = serde_json::json!({"type": "ephemeral"});
-            }
-        }
+        system_blocks.extend(system_prompt_blocks(
+            &config.system_prompt,
+            caching_enabled && cache_system,
+        ));
         body["system"] = serde_json::json!(system_blocks);
     } else if !config.system_prompt.is_empty() {
-        let mut block = serde_json::json!({
-            "type": "text",
-            "text": config.system_prompt,
-        });
-        if caching_enabled && cache_system {
-            block["cache_control"] = serde_json::json!({"type": "ephemeral"});
-        }
-        body["system"] = serde_json::json!([block]);
+        body["system"] = serde_json::json!(system_prompt_blocks(
+            &config.system_prompt,
+            caching_enabled && cache_system,
+        ));
     }
 
     // Breakpoint 2: last tool definition (tools are stable between turns)
@@ -183,6 +173,38 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
     }
 
     body
+}
+
+fn system_prompt_blocks(prompt: &str, cache_static: bool) -> Vec<serde_json::Value> {
+    if prompt.is_empty() {
+        return Vec::new();
+    }
+
+    let (static_part, dynamic_part) = match prompt.rsplit_once(DYNAMIC_BOUNDARY) {
+        Some((static_part, dynamic_part)) => (static_part.trim_end(), dynamic_part.trim_start()),
+        None => (prompt, ""),
+    };
+
+    let mut blocks = Vec::new();
+    if !static_part.is_empty() {
+        let mut block = serde_json::json!({
+            "type": "text",
+            "text": static_part,
+        });
+        if cache_static {
+            block["cache_control"] = serde_json::json!({"type": "ephemeral"});
+        }
+        blocks.push(block);
+    }
+
+    if !dynamic_part.is_empty() {
+        blocks.push(serde_json::json!({
+            "type": "text",
+            "text": dynamic_part,
+        }));
+    }
+
+    blocks
 }
 
 pub fn content_to_anthropic(content: &[Content]) -> Vec<serde_json::Value> {

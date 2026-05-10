@@ -197,9 +197,12 @@ describe('buildVerboseEvent', () => {
       context_window: 200000,
       estimated_context_tokens: 42000,
       time_to_first_byte_ms: 1100,
+      cache_read: 21000,
+      cache_write: 0,
     })
     expect(result.text).toContain('✓ LLM  claude-sonnet-4 · turn 2 · 8.4s')
     expect(result.text).toContain('    tokens    42k in → 352 out')
+    expect(result.text).toContain('    cache     21k read · 0 write · 33% hit')
     expect(result.text).toContain('    timing    ttfb 1.1s (13%) · stream 7.3s (87%)')
   })
 

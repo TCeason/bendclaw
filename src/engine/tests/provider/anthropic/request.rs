@@ -91,6 +91,59 @@ fn test_cache_auto_places_all_breakpoints() {
 }
 
 #[test]
+fn test_system_prompt_boundary_splits_dynamic_part_without_cache_control() {
+    let config = StreamConfigBuilder::anthropic()
+        .system_prompt("stable\n__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__\ndynamic")
+        .build();
+
+    let body = build_request_body(&config, false);
+    let system = body["system"].as_array().unwrap();
+    assert_eq!(system.len(), 2);
+    assert_eq!(system[0]["text"], "stable");
+    assert_eq!(system[0]["cache_control"]["type"], "ephemeral");
+    assert_eq!(system[1]["text"], "dynamic");
+    assert!(system[1].get("cache_control").is_none());
+}
+
+#[test]
+fn test_system_prompt_boundary_uses_last_marker() {
+    let config = StreamConfigBuilder::anthropic()
+        .system_prompt(
+            "project mentions __SYSTEM_PROMPT_DYNAMIC_BOUNDARY__ literally\n__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__\ndynamic",
+        )
+        .build();
+
+    let body = build_request_body(&config, false);
+    let system = body["system"].as_array().unwrap();
+    assert_eq!(system.len(), 2);
+    assert_eq!(
+        system[0]["text"],
+        "project mentions __SYSTEM_PROMPT_DYNAMIC_BOUNDARY__ literally"
+    );
+    assert_eq!(system[1]["text"], "dynamic");
+}
+
+#[test]
+fn test_oauth_system_prompt_boundary_preserves_prelude() {
+    let config = StreamConfigBuilder::anthropic()
+        .system_prompt("stable\n__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__\ndynamic")
+        .build();
+
+    let body = build_request_body(&config, true);
+    let system = body["system"].as_array().unwrap();
+    assert_eq!(system.len(), 3);
+    assert_eq!(
+        system[0]["text"],
+        "You are Claude Code, Anthropic's official CLI for Claude."
+    );
+    assert!(system[0].get("cache_control").is_none());
+    assert_eq!(system[1]["text"], "stable");
+    assert_eq!(system[1]["cache_control"]["type"], "ephemeral");
+    assert_eq!(system[2]["text"], "dynamic");
+    assert!(system[2].get("cache_control").is_none());
+}
+
+#[test]
 fn test_cache_disabled_no_breakpoints() {
     let config = CacheConfig {
         enabled: false,

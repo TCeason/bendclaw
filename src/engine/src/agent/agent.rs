@@ -50,6 +50,7 @@ pub struct Agent {
     pub(super) context_management_disabled: bool,
     pub execution_limits: Option<ExecutionLimits>,
     pub cache_config: CacheConfig,
+    pub prompt_cache_key: Option<String>,
     pub tool_execution: ToolExecutionStrategy,
     pub retry_policy: crate::retry::RetryPolicy,
 
@@ -101,6 +102,7 @@ impl Agent {
             context_management_disabled: false,
             execution_limits: Some(ExecutionLimits::default()),
             cache_config: CacheConfig::default(),
+            prompt_cache_key: None,
             tool_execution: ToolExecutionStrategy::default(),
             retry_policy: crate::retry::RetryPolicy::default(),
             before_turn: None,
@@ -169,6 +171,16 @@ impl Agent {
 
     pub fn with_cache_config(mut self, config: CacheConfig) -> Self {
         self.cache_config = config;
+        self
+    }
+
+    pub fn with_prompt_cache_key(mut self, key: impl Into<String>) -> Self {
+        self.prompt_cache_key = Some(key.into());
+        self
+    }
+
+    pub fn with_prompt_cache_key_opt(mut self, key: Option<String>) -> Self {
+        self.prompt_cache_key = key;
         self
     }
 

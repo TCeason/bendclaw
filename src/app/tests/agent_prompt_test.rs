@@ -2,10 +2,20 @@ use evot::agent::prompt::SystemPrompt;
 
 fn build_prompt(cwd: &str) -> String {
     SystemPrompt::new(cwd)
-        .with_system()
-        .with_git()
+        .with_system_guidance()
+        .with_agent_behavior()
+        .with_tool_guidance()
+        .with_tone_and_style()
+        .with_output_format()
+        .with_clarifying_questions()
+        .with_text_output()
+        .with_context_management()
+        .with_environment_static()
         .with_tools()
         .with_project_context()
+        .with_dynamic_boundary()
+        .with_today_date()
+        .with_git()
         .build()
 }
 
@@ -14,6 +24,30 @@ fn no_context_files_produces_base_prompt_with_system() {
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
     let prompt = build_prompt(&tmp.path().to_string_lossy());
     assert!(prompt.contains("# System"));
+    assert!(prompt.contains("# Agent behavior"));
+    assert!(prompt.contains("# Using your tools"));
+    assert!(prompt.contains("# Tone and style"));
+    assert!(prompt.contains("# Output format"));
+    assert!(prompt.contains("__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__"));
+    assert!(prompt.contains("# Clarifying questions"));
+    assert!(prompt.contains("read-only investigation"));
+    assert!(prompt.contains("tool mode, sandbox, safety policy, or user approval flow"));
+    assert!(prompt.contains("denied, blocked, or unavailable"));
+    assert!(prompt.contains("# Text output"));
+    assert!(prompt.contains("# Context management"));
+    assert!(prompt.contains("# Environment"));
+    assert!(prompt.contains("All text you output outside of tool use is displayed to the user."));
+    assert!(prompt.contains("Github-flavored markdown"));
+    assert!(prompt.contains("CommonMark specification"));
+    assert!(prompt.contains("prompt injection"));
+    assert!(prompt.contains("Use `search` instead of `grep` or `rg` through bash."));
+    assert!(prompt.contains("Do not use a colon before a tool call."));
+    assert!(prompt.contains("Avoid long single lines, especially in Chinese"));
+    assert!(prompt.contains("`file_path:line_number`"));
+    assert!(prompt.contains(
+        "Each sentence of text output should change what the reader knows or does next."
+    ));
+    assert!(prompt.contains("original tool result may be cleared later"));
     assert!(prompt.contains("Working directory:"));
     assert!(prompt.contains("Today's date:"));
     assert!(prompt.contains("Platform:"));
@@ -54,7 +88,7 @@ fn skips_empty_context_files() {
 fn append_is_included() {
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
     let prompt = SystemPrompt::new(&tmp.path().to_string_lossy())
-        .with_system()
+        .with_environment()
         .with_git()
         .with_tools()
         .with_project_context()
@@ -142,12 +176,77 @@ fn git_repo_shows_branch_and_status() {
 }
 
 #[test]
-fn sections_are_ordered_system_git_tools() {
+fn sections_are_ordered_static_then_dynamic() {
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
     let prompt = build_prompt(&tmp.path().to_string_lossy());
     let system_pos = prompt.find("# System").expect("missing # System");
+    let agent_pos = prompt
+        .find("# Agent behavior")
+        .expect("missing # Agent behavior");
+    let tools_guidance_pos = prompt
+        .find("# Using your tools")
+        .expect("missing # Using your tools");
+    let tone_pos = prompt
+        .find("# Tone and style")
+        .expect("missing # Tone and style");
+    let output_pos = prompt
+        .find("# Output format")
+        .expect("missing # Output format");
+    let boundary_pos = prompt
+        .find("__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__")
+        .expect("missing dynamic boundary");
+    let date_pos = prompt.find("# Date").expect("missing # Date");
+    let clarifying_pos = prompt
+        .find("# Clarifying questions")
+        .expect("missing # Clarifying questions");
+    let text_output_pos = prompt.find("# Text output").expect("missing # Text output");
+    let context_pos = prompt
+        .find("# Context management")
+        .expect("missing # Context management");
+    let env_pos = prompt.find("# Environment").expect("missing # Environment");
     let git_pos = prompt.find("# Git").expect("missing # Git");
-    assert!(system_pos < git_pos, "# System should come before # Git");
+
+    assert!(
+        system_pos < agent_pos,
+        "# System should come before # Agent behavior"
+    );
+    assert!(
+        agent_pos < tools_guidance_pos,
+        "# Agent behavior should come before # Using your tools"
+    );
+    assert!(
+        tools_guidance_pos < tone_pos,
+        "# Using your tools should come before # Tone and style"
+    );
+    assert!(
+        tone_pos < output_pos,
+        "# Tone and style should come before # Output format"
+    );
+    assert!(
+        output_pos < clarifying_pos,
+        "# Output format should come before # Clarifying questions"
+    );
+    assert!(
+        clarifying_pos < text_output_pos,
+        "# Clarifying questions should come before # Text output"
+    );
+    assert!(
+        text_output_pos < context_pos,
+        "# Text output should come before # Context management"
+    );
+    assert!(
+        context_pos < env_pos,
+        "# Context management should come before # Environment"
+    );
+    assert!(
+        env_pos < boundary_pos,
+        "# Environment should come before dynamic boundary"
+    );
+    assert!(
+        boundary_pos < date_pos,
+        "dynamic boundary should come before # Date"
+    );
+    assert!(date_pos < git_pos, "# Date should come before # Git");
 }
 
 // ---------------------------------------------------------------------------

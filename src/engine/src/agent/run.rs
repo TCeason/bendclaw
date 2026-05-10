@@ -59,6 +59,7 @@ impl Agent {
             tools: std::mem::take(&mut self.tools),
             cwd: self.cwd.clone(),
             path_guard: self.path_guard.clone(),
+            prompt_cache_key: self.prompt_cache_key.clone(),
         };
 
         let config = self.build_config_with_queues(run_steering, run_follow_up);
@@ -137,6 +138,7 @@ impl Agent {
             tools: std::mem::take(&mut self.tools),
             cwd: self.cwd.clone(),
             path_guard: self.path_guard.clone(),
+            prompt_cache_key: self.prompt_cache_key.clone(),
         };
 
         let config = self.build_config_with_queues(run_steering, run_follow_up);

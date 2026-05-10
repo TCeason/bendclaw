@@ -465,6 +465,7 @@ fn parse_compat_caps(value: &str) -> Result<CompatCaps> {
             "tool_result_name" => CompatCaps::TOOL_RESULT_NAME,
             "assistant_after_tool_result" => CompatCaps::ASSISTANT_AFTER_TOOL_RESULT,
             "reasoning_content_required" => CompatCaps::REASONING_CONTENT_REQUIRED,
+            "prompt_cache_key" => CompatCaps::PROMPT_CACHE_KEY,
             other => return Err(EvotError::Conf(format!("unknown compat cap: {other}"))),
         };
     }

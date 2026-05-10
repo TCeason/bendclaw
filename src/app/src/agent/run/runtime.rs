@@ -54,6 +54,7 @@ pub struct EngineOptions {
     pub cwd: std::path::PathBuf,
     pub path_guard: std::sync::Arc<evot_engine::PathGuard>,
     pub spill_dir: Option<std::path::PathBuf>,
+    pub prompt_cache_key: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -953,6 +954,7 @@ pub(crate) fn build_agent(
         .with_path_guard(options.path_guard)
         .with_skills(skills)
         .with_thinking(options.thinking_level)
+        .with_prompt_cache_key_opt(options.prompt_cache_key)
         .with_spill_opt(
             options
                 .spill_dir

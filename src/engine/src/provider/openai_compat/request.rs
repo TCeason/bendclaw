@@ -135,6 +135,12 @@ pub fn build_request_body(
         body["stream_options"] = serde_json::json!({"include_usage": true});
     }
 
+    if compat.has_cap(CompatCaps::PROMPT_CACHE_KEY) {
+        if let Some(key) = &config.prompt_cache_key {
+            body["prompt_cache_key"] = serde_json::json!(key);
+        }
+    }
+
     match compat.max_tokens_field {
         MaxTokensField::MaxCompletionTokens => {
             body["max_completion_tokens"] = serde_json::json!(max_tokens_val);

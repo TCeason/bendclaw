@@ -210,6 +210,10 @@ export function formatLlmCallCompleted(data: Record<string, unknown>): { text: s
 
   const inputTok = usage?.input ?? (data.input_tokens as number) ?? 0
   const outputTok = usage?.output ?? (data.output_tokens as number) ?? 0
+  const cacheReadTok = usage?.cache_read ?? (data.cache_read as number) ?? 0
+  const cacheWriteTok = usage?.cache_write ?? (data.cache_write as number) ?? 0
+  const cacheTotalInput = inputTok + cacheReadTok + cacheWriteTok
+  const cacheHitRate = cacheTotalInput > 0 ? (cacheReadTok / cacheTotalInput * 100).toFixed(0) : '0'
   const tokPerSec = durationMs > 0 ? (outputTok / (durationMs / 1000)).toFixed(0) : '0'
   const ttfbMs = (data.time_to_first_byte_ms as number) ?? metrics?.ttfb_ms ?? 0
   const streamingMs = metrics?.streaming_ms ?? Math.max(0, durationMs - ttfbMs)
@@ -220,6 +224,9 @@ export function formatLlmCallCompleted(data: Record<string, unknown>): { text: s
   const lines: string[] = []
   lines.push(`✓ LLM  ${model ?? 'unknown'}${turn != null ? ` · turn ${turn}` : ''} · ${formatDuration(durationMs)} · ${tokPerSec} tok/s`)
   lines.push(`    tokens    ${humanTokens(inputTok)} in → ${humanTokens(outputTok)} out`)
+  if (cacheReadTok > 0 || cacheWriteTok > 0) {
+    lines.push(`    cache     ${humanTokens(cacheReadTok)} read · ${humanTokens(cacheWriteTok)} write · ${cacheHitRate}% hit`)
+  }
   lines.push(`    timing    ttfb ${(ttfbMs / 1000).toFixed(1)}s (${ttfbPct}%) · stream ${(streamingMs / 1000).toFixed(1)}s (${streamPct}%)`)
 
   const toolCalls = data.tool_calls as { id: string; name: string; arguments: Record<string, unknown> }[] | undefined

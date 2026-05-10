@@ -722,6 +722,7 @@ impl Agent {
                     .spill_root
                     .as_ref()
                     .map(|root| root.join("sessions").join(session_id).join("tool-results")),
+                prompt_cache_key: Some(session_id.to_string()),
             },
             history: prior_messages,
             input: request.input.clone(),

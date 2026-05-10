@@ -16,6 +16,7 @@ pub struct StreamConfigBuilder {
     temperature: Option<f32>,
     model_config: Option<ModelConfig>,
     cache_config: CacheConfig,
+    prompt_cache_key: Option<String>,
 }
 
 impl StreamConfigBuilder {
@@ -32,6 +33,7 @@ impl StreamConfigBuilder {
             temperature: None,
             model_config: None,
             cache_config: CacheConfig::default(),
+            prompt_cache_key: None,
         }
     }
 
@@ -112,6 +114,11 @@ impl StreamConfigBuilder {
         self
     }
 
+    pub fn prompt_cache_key(mut self, key: &str) -> Self {
+        self.prompt_cache_key = Some(key.into());
+        self
+    }
+
     pub fn build(self) -> StreamConfig {
         StreamConfig {
             model: self.model,
@@ -124,6 +131,7 @@ impl StreamConfigBuilder {
             temperature: self.temperature,
             model_config: self.model_config,
             cache_config: self.cache_config,
+            prompt_cache_key: self.prompt_cache_key,
         }
     }
 }

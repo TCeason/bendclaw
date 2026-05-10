@@ -15,6 +15,7 @@ pub struct AgentContext {
     pub tools: Vec<Box<dyn AgentTool>>,
     pub cwd: PathBuf,
     pub path_guard: Arc<PathGuard>,
+    pub prompt_cache_key: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

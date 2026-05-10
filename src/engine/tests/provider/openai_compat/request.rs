@@ -82,6 +82,28 @@ fn test_build_request_body_basic() {
 }
 
 #[test]
+fn test_prompt_cache_key_is_included_for_openai() {
+    let model_config = ModelConfig::openai("gpt-4o", "GPT-4o");
+    let config = StreamConfigBuilder::openai()
+        .prompt_cache_key("session-123")
+        .build();
+
+    let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
+    assert_eq!(body["prompt_cache_key"], "session-123");
+}
+
+#[test]
+fn test_prompt_cache_key_omitted_without_capability() {
+    let model_config = ModelConfig::openai("gpt-4o", "GPT-4o");
+    let config = StreamConfigBuilder::openai()
+        .prompt_cache_key("session-123")
+        .build();
+
+    let body = build_request_body(&config, &model_config, &OpenAiCompat::default());
+    assert!(body.get("prompt_cache_key").is_none());
+}
+
+#[test]
 fn test_build_request_body_with_tools() {
     let model_config = ModelConfig::openai("gpt-4o", "GPT-4o");
     let compat = OpenAiCompat::openai();
