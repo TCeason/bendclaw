@@ -798,6 +798,22 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       return
     }
 
+    // Allow toggling verbose mid-run so users can flip detail level without
+    // interrupting the agent. Mirrors the idle-mode /verbose handler: update
+    // both the appState snapshot and the live streamMachine so the next
+    // reduceRunEvent sees the new flag.
+    if (trimmed === '/verbose' || trimmed === '/v') {
+      const next = !appState.verbose
+      appState = { ...appState, verbose: next }
+      if (streamMachine) {
+        streamMachine = { ...streamMachine, appState: { ...streamMachine.appState, verbose: next } }
+      }
+      commitLines([{ id: 'sys-v', kind: 'system', text: `  verbose: ${next ? 'on' : 'off'}` }])
+      clearAll()
+      renderStatus()
+      return
+    }
+
     if ((expandedText || imageBlocks) && streamRef) {
       if (imageBlocks) {
         const contentJson = JSON.stringify(imageBlocks)
