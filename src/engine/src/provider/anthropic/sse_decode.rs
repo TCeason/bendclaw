@@ -257,6 +257,16 @@ fn process_sse_event(
                     _ => StopReason::Stop,
                 };
                 usage.output = data.usage.output_tokens;
+                // Only override cache fields when the delta actually carries
+                // them — Anthropic's SSE spec only guarantees `output_tokens`
+                // in `message_delta.usage`, so a missing field (decoded as 0)
+                // must not clobber values captured from `message_start`.
+                if data.usage.cache_read_input_tokens > 0 {
+                    usage.cache_read = data.usage.cache_read_input_tokens;
+                }
+                if data.usage.cache_creation_input_tokens > 0 {
+                    usage.cache_write = data.usage.cache_creation_input_tokens;
+                }
             }
         }
         "message_stop" => {

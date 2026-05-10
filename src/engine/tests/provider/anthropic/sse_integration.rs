@@ -365,6 +365,36 @@ async fn anthropic_sse_cache_usage() {
     }
 }
 
+// Some Anthropic-compatible proxies report cache tokens only in the final
+// `message_delta`, leaving `message_start.usage` as zero. The decoder must
+// pick up cache_read/cache_write from `message_delta.usage` as well.
+#[tokio::test]
+async fn anthropic_sse_cache_usage_in_message_delta() {
+    let sse = anthropic_sse::body(vec![
+        anthropic_sse::message_start(100, 0),
+        anthropic_sse::text_block_start(0),
+        anthropic_sse::text_delta(0, "cached"),
+        anthropic_sse::block_stop(0),
+        anthropic_sse::message_delta_with_usage("end_turn", 100, 5, 500, 100),
+        anthropic_sse::message_stop(),
+    ]);
+
+    let config = StreamConfigBuilder::anthropic().cache_disabled().build();
+    let (msg, _) = run_provider_sse(&AnthropicProvider, config, &sse, 200)
+        .await
+        .unwrap();
+
+    match &msg {
+        Message::Assistant { usage, .. } => {
+            assert_eq!(usage.input, 100);
+            assert_eq!(usage.output, 5);
+            assert_eq!(usage.cache_read, 500);
+            assert_eq!(usage.cache_write, 100);
+        }
+        _ => panic!("Expected Assistant message"),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // HTTP error — 429 rate limit
 // ---------------------------------------------------------------------------

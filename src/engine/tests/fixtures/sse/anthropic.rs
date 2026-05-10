@@ -115,6 +115,29 @@ pub fn message_delta(stop_reason: &str, output_tokens: u64) -> String {
     )
 }
 
+/// message_delta with full cumulative usage including cache tokens.
+pub fn message_delta_with_usage(
+    stop_reason: &str,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read: u64,
+    cache_write: u64,
+) -> String {
+    format!(
+        "event: message_delta\ndata: {}",
+        serde_json::json!({
+            "type": "message_delta",
+            "delta": {"stop_reason": stop_reason},
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cache_read_input_tokens": cache_read,
+                "cache_creation_input_tokens": cache_write
+            }
+        })
+    )
+}
+
 /// message_stop event.
 pub fn message_stop() -> String {
     "event: message_stop\ndata: {\"type\":\"message_stop\"}".into()
