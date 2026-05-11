@@ -1,11 +1,5 @@
 import type { SessionMeta } from '../../native/index.js'
 import type { OutputLine } from '../../render/output.js'
-import { selectSessionPool } from './resume.js'
-
-export function chooseBannerSessions(preloaded: SessionMeta[], cwd: string): SessionMeta[] {
-  const cwdSessions = selectSessionPool(preloaded, cwd)
-  return cwdSessions.length > 0 ? cwdSessions : preloaded
-}
 
 export function findPreviousSession(preloaded: SessionMeta[], cwd: string): SessionMeta | undefined {
   return [...preloaded]

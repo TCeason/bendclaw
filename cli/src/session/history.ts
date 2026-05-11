@@ -1,14 +1,49 @@
 /**
- * Persistent command history backed by ~/.evotai/evot_history.
+ * Persistent command history bound to the project (cwd).
+ * History file: ~/.evotai/projects/<slug>/evot_history
  */
 
 import { readFileSync, appendFileSync, mkdirSync, existsSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
+import { spawnSync } from 'child_process'
 
 const STATE_DIR = join(homedir(), '.evotai')
-const HISTORY_FILE = join(STATE_DIR, 'evot_history')
 const DEFAULT_LIMIT = 200
+const MAX_SLUG_LENGTH = 200
+
+function findGitRoot(cwd: string): string {
+  try {
+    const result = spawnSync('git', ['--no-optional-locks', 'rev-parse', '--show-toplevel'], {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    if (result.status === 0 && result.stdout) {
+      const root = result.stdout.trim()
+      if (root.length > 0) return root
+    }
+  } catch {}
+  return cwd
+}
+
+function sanitizeForPath(name: string): string {
+  const sanitized = name.replace(/[^a-zA-Z0-9]/g, '-')
+  if (sanitized.length <= MAX_SLUG_LENGTH) return sanitized
+  // FNV-1a hash for long paths
+  let hash = BigInt('0xcbf29ce484222325')
+  for (let i = 0; i < name.length; i++) {
+    hash ^= BigInt(name.charCodeAt(i))
+    hash = BigInt.asUintN(64, hash * BigInt('0x100000001b3'))
+  }
+  return sanitized.slice(0, MAX_SLUG_LENGTH) + '-' + hash.toString()
+}
+
+function resolveHistoryPath(cwd: string): string {
+  const root = findGitRoot(cwd)
+  const slug = sanitizeForPath(root)
+  return join(STATE_DIR, 'projects', slug, 'evot_history')
+}
 
 function escape(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n')
@@ -57,8 +92,12 @@ export class HistoryManager {
   private filePath: string
   private lastEntry: string | null = null
 
-  constructor(filePath?: string) {
-    this.filePath = filePath ?? HISTORY_FILE
+  constructor(cwdOrPath?: string, opts?: { explicitPath?: boolean }) {
+    if (opts?.explicitPath) {
+      this.filePath = cwdOrPath!
+    } else {
+      this.filePath = cwdOrPath ? resolveHistoryPath(cwdOrPath) : join(STATE_DIR, 'evot_history')
+    }
   }
 
   load(limit = DEFAULT_LIMIT): string[] {

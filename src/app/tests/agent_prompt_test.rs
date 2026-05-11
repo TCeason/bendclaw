@@ -31,24 +31,21 @@ fn no_context_files_produces_base_prompt_with_system() {
     assert!(prompt.contains("__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__"));
     assert!(prompt.contains("# Clarifying questions"));
     assert!(prompt.contains("read-only investigation"));
-    assert!(prompt.contains("tool mode, sandbox, safety policy, or user approval flow"));
-    assert!(prompt.contains("denied, blocked, or unavailable"));
+    assert!(prompt.contains("denied or blocked, adjust your approach"));
     assert!(prompt.contains("# Text output"));
     assert!(prompt.contains("# Context management"));
     assert!(prompt.contains("# Environment"));
-    assert!(prompt.contains("All text you output outside of tool use is displayed to the user."));
-    assert!(prompt.contains("Github-flavored markdown"));
-    assert!(prompt.contains("CommonMark specification"));
+    assert!(prompt
+        .contains("displayed to the user as GitHub-flavored markdown in a monospace terminal"));
+    assert!(prompt.contains("GitHub-flavored markdown"));
     assert!(prompt.contains("prompt injection"));
     assert!(prompt.contains("Use `search` instead of `grep` or `rg` through bash."));
     assert!(prompt.contains("Work in short passes"));
     assert!(prompt.contains("stop using tools and report it"));
-    assert!(prompt.contains("Do not use a colon before a tool call."));
+    assert!(prompt.contains("Do not use a colon before tool calls."));
     assert!(prompt.contains("Avoid long single lines, especially in Chinese"));
     assert!(prompt.contains("`file_path:line_number`"));
-    assert!(prompt.contains(
-        "Each sentence of text output should change what the reader knows or does next."
-    ));
+    assert!(prompt.contains("Brief is good — silent is not."));
     assert!(prompt.contains("original tool result may be cleared later"));
     assert!(prompt.contains("Working directory:"));
     assert!(prompt.contains("Today's date:"));

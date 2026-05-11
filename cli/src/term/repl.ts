@@ -86,7 +86,7 @@ import {
   resolveSessionByPrefix,
   selectSessionPool,
 } from './app/resume.js'
-import { chooseBannerSessions, findPreviousSession, previousSessionLine } from './app/session-view.js'
+import { findPreviousSession, previousSessionLine } from './app/session-view.js'
 import { handleSelectorControl } from './app/selector-control.js'
 import { decideReplControl, type ReplControlAction } from './app/repl-control.js'
 
@@ -181,7 +181,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   })
   updateMgr.start()
 
-  const historyMgr = new HistoryManager()
+  const historyMgr = new HistoryManager(agent.cwd)
   const entries = historyMgr.load()
   historyState = createHistoryState(entries)
 
@@ -272,8 +272,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   function currentBannerText(): string {
-    const sessions = chooseBannerSessions(preloadedSessions, agent.cwd)
-    return renderBanner(agent.model, agent.cwd, configInfo, sessions, renderer.termCols, serverState)
+    return renderBanner(agent.model, agent.cwd, configInfo, renderer.termCols, serverState)
   }
 
   function renderStatus() {
