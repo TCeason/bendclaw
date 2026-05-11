@@ -8,6 +8,7 @@ pub mod memory;
 pub mod sandbox;
 pub mod search;
 pub mod skill;
+pub mod slim;
 pub mod validation;
 pub mod web_fetch;
 

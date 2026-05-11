@@ -348,7 +348,15 @@ export function buildToolFinishedLines(event: RunEvent, expanded?: boolean): Out
   const details = p.details as Record<string, any> | undefined
   const mergedArgs = details?.diff ? { ...args, diff: details.diff } : args
   const status = p.is_error ? 'error' as const : 'done' as const
-  return buildToolResult(toolName, mergedArgs, status, p.content as string | undefined, p.duration_ms as number | undefined, expanded)
+  const rawSlim = details?.slim as Record<string, any> | undefined
+  const slim = rawSlim && typeof rawSlim.filter === 'string'
+    ? {
+        filter: rawSlim.filter as string,
+        original: Number(rawSlim.original ?? 0),
+        slimmed: Number(rawSlim.slimmed ?? 0),
+      }
+    : undefined
+  return buildToolResult(toolName, mergedArgs, status, p.content as string | undefined, p.duration_ms as number | undefined, expanded, slim)
 }
 
 export function buildToolStartedLines(event: RunEvent): OutputLine[] {

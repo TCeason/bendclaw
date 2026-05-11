@@ -11,7 +11,7 @@
 import { renderMarkdown } from './markdown.js'
 import { colorizeUnifiedDiff } from './diff.js'
 import { truncate, humanTokens, formatDuration, renderBar, toolResultLines, padRight } from './format.js'
-import type { RunStats, UIMessage } from '../term/app/types.js'
+import type { RunStats, SlimStats, UIMessage } from '../term/app/types.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -105,6 +105,7 @@ export function buildToolResult(
   result?: string,
   durationMs?: number,
   expanded?: boolean,
+  slim?: SlimStats,
 ): OutputLine[] {
   const lines: OutputLine[] = []
   const isError = status === 'error'
@@ -112,7 +113,10 @@ export function buildToolResult(
   const dur = durationMs !== undefined ? ` · ${formatDuration(durationMs)}` : ''
   const badge = name.toUpperCase()
   const resultInfo = result ? formatToolResultInfo(result) : ''
-  const label = isError ? `[${badge}] ✗${dur}${resultInfo}` : `[${badge}] ✓${dur}${resultInfo}`
+  const slimSuffix = formatSlimSuffix(slim)
+  const label = isError
+    ? `[${badge}] ✗${dur}${resultInfo}${slimSuffix}`
+    : `[${badge}] ✓${dur}${resultInfo}${slimSuffix}`
   lines.push({
     id: genId('tool'),
     kind: 'tool',
@@ -415,6 +419,8 @@ export function messagesToOutputLines(messages: UIMessage[]): OutputLine[] {
             tc.status === 'error' ? 'error' : 'done',
             tc.result,
             tc.durationMs,
+            undefined,
+            tc.slim,
           ))
         }
       }
@@ -569,6 +575,44 @@ function formatToolResultInfo(content: string): string {
   }
   const lineCount = content.replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n').length
   return lineCount > 1 ? ` · ${lineCount} lines · ${humanBytes(bytes)}` : ` · ${humanBytes(bytes)}`
+}
+
+/**
+ * Render a compact slim indicator for the tool result header.
+ * Kept terse so the status line still fits on narrow terminals.
+ */
+function formatSlimSuffix(slim?: SlimStats): string {
+  if (!slim) return ''
+  const { filter, original, slimmed } = slim
+  // No-ops: don't render badges for these.
+  if (filter === 'off' || filter === 'raw_error' || filter === 'none' || !filter) {
+    return ''
+  }
+  if (filter === 'cache_hit') return formatSlimTokenRange('cache hit', original, slimmed, 0)
+  if (original <= 0) return ''
+  const saved = original - slimmed
+  if (saved <= 0) return ''
+  const pct = Math.round((saved / original) * 100)
+  return pct >= 10 ? formatSlimTokenRange(`slim(${filter})`, original, slimmed, pct) : ''
+}
+
+function formatSlimTokenRange(label: string, originalBytes: number, slimmedBytes: number, pct: number): string {
+  const originalTokens = estimatedTokens(originalBytes)
+  const slimmedTokens = estimatedTokens(slimmedBytes)
+  const pctSuffix = pct > 0 ? ` −${pct}%` : ''
+  return ` · ${label} ~${formatTokenCount(originalTokens)}→~${formatTokenCount(slimmedTokens)} tok${pctSuffix}`
+}
+
+function estimatedTokens(bytes: number): number {
+  return Math.max(1, Math.round(bytes / 4))
+}
+
+function formatTokenCount(tokens: number): string {
+  if (tokens >= 1000) {
+    const value = tokens / 1000
+    return `${value >= 10 ? Math.round(value) : value.toFixed(1)}k`
+  }
+  return String(tokens)
 }
 
 function formatToolResultContent(content: string): string {
