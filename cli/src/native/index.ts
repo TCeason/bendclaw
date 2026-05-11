@@ -5,7 +5,7 @@
  */
 
 // @ts-ignore — binding.js is generated
-import { NapiAgent as RawAgent, version as rawVersion, startServer as rawStartServer, startServerBackground as rawStartServerBackground } from './binding.js'
+import { NapiAgent as RawAgent, version as rawVersion, startServer as rawStartServer, startServerBackground as rawStartServerBackground, fastExit as rawFastExit } from './binding.js'
 import type { NapiAgent as RawAgentType, NapiRun as RawRunType, NapiForkedAgent as RawForkedType } from './binding.d.ts'
 
 // ---------------------------------------------------------------------------
@@ -312,4 +312,17 @@ export async function startServerBackground(port?: number, model?: string, envFi
   const json = await rawStartServerBackground(port ?? null, model ?? null, envFile ?? null)
   if (json === null) return null
   return JSON.parse(json) as ServerInfo
+}
+
+/**
+ * Terminate the process immediately via `std::process::exit`, bypassing all
+ * Rust `Drop` impls and async runtime shutdown. Use on user-triggered exit so
+ * large sessions don't stall on telemetry flush or tokio runtime teardown.
+ * Callers must restore terminal state (raw mode, cursor, bracketed paste)
+ * before invoking this.
+ */
+export function fastExit(code = 0): never {
+  rawFastExit(code)
+  // rawFastExit does not return; this satisfies the `never` type
+  throw new Error('unreachable')
 }

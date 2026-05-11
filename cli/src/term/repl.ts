@@ -5,7 +5,7 @@ import { createSpinnerState, advanceSpinner } from './spinner.js'
 import { createSelectorState, selectorExpandItems, selectorClearQuery } from './selector.js'
 import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
 import { buildUserMessage, buildAssistantLines, type OutputLine } from '../render/output.js'
-import { Agent, QueryStream, type SessionMeta, type ConfigInfo } from '../native/index.js'
+import { Agent, QueryStream, fastExit, type SessionMeta, type ConfigInfo } from '../native/index.js'
 import { createInitialState, type AppState } from './app/state.js'
 import type { AskUserRequest } from './app/types.js'
 import { HistoryManager, parseHistoryItems } from '../session/history.js'
@@ -223,7 +223,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     } else {
       commitLines([{ id: 'sys-continue-err', kind: 'system', text: chalk.red('No conversation found to continue') }])
       cleanup()
-      process.exit(1)
+      fastExit(1)
     }
   } else if (opts.resumeSessionId) {
     const match = preloadedSessions.find(
@@ -328,6 +328,22 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     renderer.flushBatch()
     screenLog.logLines(rendered)
     logMarkdownTrace(outputLines, rendered)
+  }
+
+  function commitToolStarted(event: import('../native/index.js').RunEvent): void {
+    const compact = buildToolStartedLines(event)
+    const exp = buildToolStartedLines(event, true)
+    const prevKind = compactLines.length > 0 ? compactLines[compactLines.length - 1]!.kind : undefined
+    compactLines.push(...compact)
+    expandedLines.push(...exp)
+    const visible = expanded ? exp : compact
+    const blocks = buildOutputBlocks(visible, prevKind)
+    const rendered = blocksToLines(blocks)
+    renderer.beginBatch()
+    renderer.appendScroll(rendered.join('\n'))
+    renderStatus()
+    renderer.flushBatch()
+    screenLog.logLines(rendered)
   }
 
   function commitToolFinished(event: import('../native/index.js').RunEvent): void {
@@ -577,7 +593,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         spinnerState = update.state.spinnerState
 
         if (!update.suppressToolStarted && event.kind === 'tool_started') {
-          commitLines(buildToolStartedLines(event))
+          commitToolStarted(event)
           lastProgressLineCount = 0
         }
         if (!update.suppressToolFinished && event.kind === 'tool_finished') {
@@ -693,7 +709,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           process.stdout.write(`\n\x1b[90m${'─'.repeat(80)}\x1b[0m\n`)
           process.stdout.write(`\x1b[90mResume: evot --resume ${sessionId}\x1b[0m\n\n`)
         }
-        process.exit(0)
+        fastExit(0)
       case 'show-exit-hint':
         exitHint = true
         renderStatus()
@@ -859,7 +875,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         case 'd':
           if (isEditorEmpty(editor)) {
             cleanup()
-            process.exit(0)
+            fastExit(0)
           }
           editor = deleteForward(editor)
           renderStatus()
@@ -1112,7 +1128,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       renderer.appendScroll(banner)
       commitLines([{ id: 'sys-new-session', kind: 'system', text: chalk.dim(`  new session ${sessionId.slice(0, 8)}`) }])
     }
-    if (result.exit) { cleanup(); process.exit(0) }
+    if (result.exit) { cleanup(); fastExit(0) }
     if (result.resumeSession) await resumeSession(result.resumeSession)
     if (result.systemLines.length > 0) commitLines(result.systemLines)
 
@@ -1488,7 +1504,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           }
         } else if (event.kind === 'tool_started') {
           if (streamingText.trim()) { commitLines(buildAssistantLines(streamingText)); streamingText = '' }
-          commitLines(buildToolStartedLines(event))
+          commitToolStarted(event)
         } else if (event.kind === 'tool_progress') {
           if (streamingText.trim()) { commitLines(buildAssistantLines(streamingText)); streamingText = '' }
           commitLines(buildToolProgressLines(event, true))
@@ -1642,8 +1658,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     renderer.destroy()
   }
 
-  process.on('SIGINT', cleanup)
-  process.on('SIGTERM', cleanup)
+  process.on('SIGINT', () => { cleanup(); fastExit(130) })
+  process.on('SIGTERM', () => { cleanup(); fastExit(143) })
 
   await new Promise<void>(() => {})
 }

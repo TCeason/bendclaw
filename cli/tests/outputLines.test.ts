@@ -4,6 +4,7 @@ import {
   buildAssistantLines,
   buildToolResult,
   buildToolProgress,
+  buildToolCall,
   buildVerboseEvent,
   buildRunSummary,
   buildError,
@@ -66,8 +67,33 @@ describe('buildAssistantLines', () => {
 })
 
 // ---------------------------------------------------------------------------
-// buildToolResult
+// buildToolCall
 // ---------------------------------------------------------------------------
+
+describe('buildToolCall', () => {
+  test('compact bash preview shows head and expand hint', () => {
+    const preview = ['python3 << EOF', 'import json', 'print(1)', 'print(2)', 'EOF'].join('\n')
+    const lines = buildToolCall('bash', {}, preview)
+    const all = lines.map(l => l.text).join('\n')
+
+    expect(all).toContain('command · 5 lines')
+    expect(all).toContain('  ❯ python3 << EOF')
+    expect(all).toContain('    import json')
+    expect(all).toContain('    print(1)')
+    expect(all).not.toContain('    print(2)')
+    expect(all).toContain('... (+2 lines, ctrl+o to expand)')
+  })
+
+  test('expanded bash preview shows full command', () => {
+    const preview = ['python3 << EOF', 'import json', 'print(1)', 'print(2)', 'EOF'].join('\n')
+    const lines = buildToolCall('bash', {}, preview, true)
+    const all = lines.map(l => l.text).join('\n')
+
+    expect(all).toContain('    print(2)')
+    expect(all).toContain('    EOF')
+    expect(all).not.toContain('ctrl+o to expand')
+  })
+})
 
 describe('buildToolResult', () => {
   test('creates tool badge with uppercase name, status dot, and duration', () => {

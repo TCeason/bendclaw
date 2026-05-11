@@ -359,11 +359,11 @@ export function buildToolFinishedLines(event: RunEvent, expanded?: boolean): Out
   return buildToolResult(toolName, mergedArgs, status, p.content as string | undefined, p.duration_ms as number | undefined, expanded, slim)
 }
 
-export function buildToolStartedLines(event: RunEvent): OutputLine[] {
+export function buildToolStartedLines(event: RunEvent, expanded?: boolean): OutputLine[] {
   const p = (event.payload ?? {}) as Record<string, any>
   const toolName = (p.tool_name as string) ?? 'unknown'
   const previewCommand = p.preview_command as string | undefined
-  return buildToolCall(toolName, (p.args as Record<string, unknown>) ?? {}, previewCommand)
+  return buildToolCall(toolName, (p.args as Record<string, unknown>) ?? {}, previewCommand, expanded)
 }
 
 export function buildToolProgressLines(event: RunEvent, expanded?: boolean): OutputLine[] {

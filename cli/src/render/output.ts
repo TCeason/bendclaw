@@ -75,6 +75,7 @@ export function buildToolCall(
   name: string,
   args: Record<string, unknown>,
   previewCommand?: string,
+  expanded?: boolean,
 ): OutputLine[] {
   const lines: OutputLine[] = []
   const inputInfo = formatToolInputInfo(args, previewCommand)
@@ -83,12 +84,16 @@ export function buildToolCall(
     kind: 'tool',
     text: `[${name.toUpperCase()}] ●${inputInfo}`,
   })
-  // Detail: preview command takes priority (shown in full), otherwise show args
+  // Detail: preview command takes priority, otherwise show args
   if (previewCommand) {
-    const cmdLines = previewCommand.split('\n')
-    lines.push({ id: genId('tool'), kind: 'tool', text: `  ❯ ${cmdLines[0]}` })
-    for (let i = 1; i < cmdLines.length; i++) {
-      lines.push({ id: genId('tool'), kind: 'tool', text: `    ${cmdLines[i]}` })
+    const cmdLines = previewCommand.replace(/\r\n/g, '\n').split('\n')
+    const visible = expanded ? cmdLines : cmdLines.slice(0, 3)
+    lines.push({ id: genId('tool'), kind: 'tool', text: `  ❯ ${visible[0] ?? ''}` })
+    for (let i = 1; i < visible.length; i++) {
+      lines.push({ id: genId('tool'), kind: 'tool', text: `    ${visible[i]}` })
+    }
+    if (!expanded && cmdLines.length > visible.length) {
+      lines.push({ id: genId('tool'), kind: 'tool', text: `    ... (+${cmdLines.length - visible.length} lines, ctrl+o to expand)` })
     }
   } else {
     for (const line of formatToolInputLines(args)) {
