@@ -4,12 +4,17 @@ use tokio::sync::mpsc;
 
 use super::config::default_convert_to_llm;
 use super::config::AgentLoopConfig;
+use crate::context::ContextConfig;
 use crate::provider::ProviderError;
 use crate::provider::StreamConfig;
 use crate::provider::StreamEvent;
 use crate::provider::StreamOutcome;
 use crate::provider::ToolDefinition;
 use crate::types::*;
+
+const REQUEST_TOOL_RESULT_MAX_BYTES: usize = 16_000;
+const REQUEST_TOOL_RESULT_MAX_LINES: usize = 80;
+const REQUEST_OLD_TOOL_RESULTS_TOTAL_MAX_BYTES: usize = 64_000;
 
 pub(super) struct AssistantStreamResult {
     pub message: Message,
@@ -59,6 +64,8 @@ pub(super) async fn stream_assistant_response(
         Some(f) => f(&messages),
         None => default_convert_to_llm(&messages),
     };
+    let llm_messages =
+        shrink_old_tool_results_for_request(llm_messages, config.context_config.as_ref());
 
     // Build tool definitions
     let tool_defs: Vec<ToolDefinition> = context
@@ -406,6 +413,128 @@ pub(super) async fn stream_assistant_response(
             })
         }
     }
+}
+
+pub fn shrink_old_tool_results_for_request(
+    messages: Vec<Message>,
+    ctx_config: Option<&ContextConfig>,
+) -> Vec<Message> {
+    let Some(ctx_config) = ctx_config else {
+        return messages;
+    };
+
+    let recent_boundary = messages.len().saturating_sub(ctx_config.keep_recent);
+    let mut candidates: Vec<(usize, usize)> = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, msg)| {
+            if idx >= recent_boundary {
+                return None;
+            }
+            match msg {
+                Message::ToolResult { content, .. } => {
+                    let bytes = tool_result_request_bytes(content);
+                    (bytes > 0).then_some((idx, bytes))
+                }
+                _ => None,
+            }
+        })
+        .collect();
+    let total_old_tool_bytes: usize = candidates.iter().map(|(_, bytes)| *bytes).sum();
+    let compact_all_old_results = total_old_tool_bytes > REQUEST_OLD_TOOL_RESULTS_TOTAL_MAX_BYTES;
+    let mut force_compact = std::collections::HashSet::new();
+
+    if compact_all_old_results {
+        candidates.sort_by_key(|(idx, _)| *idx);
+        let mut kept = 0usize;
+        for (idx, bytes) in candidates.iter().rev() {
+            if kept + *bytes <= REQUEST_OLD_TOOL_RESULTS_TOTAL_MAX_BYTES {
+                kept += *bytes;
+            } else {
+                force_compact.insert(*idx);
+            }
+        }
+    }
+
+    messages
+        .into_iter()
+        .enumerate()
+        .map(|(idx, msg)| {
+            if idx >= recent_boundary {
+                return msg;
+            }
+
+            match msg {
+                Message::ToolResult {
+                    tool_call_id,
+                    tool_name,
+                    content,
+                    is_error,
+                    timestamp,
+                    retention,
+                } => Message::ToolResult {
+                    tool_call_id,
+                    tool_name,
+                    content: shrink_tool_result_content_for_request(
+                        content,
+                        force_compact.contains(&idx),
+                    ),
+                    is_error,
+                    timestamp,
+                    retention,
+                },
+                other => other,
+            }
+        })
+        .collect()
+}
+
+fn tool_result_request_bytes(content: &[Content]) -> usize {
+    content
+        .iter()
+        .map(|c| match c {
+            Content::Text { text } => text.len(),
+            Content::Thinking { thinking, .. } => thinking.len(),
+            Content::ToolCall { arguments, .. } => arguments.to_string().len(),
+            Content::Image {
+                source: ImageSource::Base64 { data, .. },
+                ..
+            } => data.len(),
+            Content::Image { .. } => 0,
+        })
+        .sum()
+}
+
+fn shrink_tool_result_content_for_request(
+    content: Vec<Content>,
+    force_compact: bool,
+) -> Vec<Content> {
+    if force_compact {
+        return content
+            .into_iter()
+            .filter(|c| {
+                matches!(c, Content::Image {
+                    source: ImageSource::Path { .. },
+                    ..
+                })
+            })
+            .collect();
+    }
+
+    content
+        .into_iter()
+        .map(|c| match c {
+            Content::Text { text } => Content::Text {
+                text: shrink_tool_result_text_for_request(&text),
+            },
+            other => other,
+        })
+        .collect()
+}
+
+fn shrink_tool_result_text_for_request(text: &str) -> String {
+    let line_capped = crate::context::truncate_text_head_tail(text, REQUEST_TOOL_RESULT_MAX_LINES);
+    crate::tools::validation::truncate_tool_text(&line_capped, REQUEST_TOOL_RESULT_MAX_BYTES)
 }
 
 /// Extract OTel-standard provider name and server address/port from config.

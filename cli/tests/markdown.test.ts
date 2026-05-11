@@ -1013,16 +1013,18 @@ describe('renderMarkdown', () => {
     }
   })
 
-  test('link fallback without OSC 8 shows only the display text', () => {
-    // Reference-style: when hyperlinks are off we drop the trailing `(url)`
-    // to keep prose quiet. The raw URL only appears if there is no text.
+  test('link fallback without OSC 8 shows only the URL', () => {
+    // Mirror claudecode: when hyperlinks aren't supported, createHyperlink
+    // returns the bare URL. The display text is dropped rather than
+    // surfaced as `text (url)` because (a) parentheses are noisy in
+    // paragraph-style prose and (b) search/copy still works with the URL
+    // alone.
     const prev = process.env.FORCE_HYPERLINK
     process.env.FORCE_HYPERLINK = '0'
     try {
       const result = render('[click](https://example.com)')
-      expect(result).toContain('click')
-      expect(result).not.toContain('(https://example.com)')
-      expect(result).not.toContain('https://example.com')
+      expect(result).toContain('https://example.com')
+      expect(result).not.toContain('click')
     } finally {
       if (prev === undefined) delete process.env.FORCE_HYPERLINK
       else process.env.FORCE_HYPERLINK = prev

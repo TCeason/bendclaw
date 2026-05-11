@@ -161,7 +161,7 @@ fn is_overloaded_message(message: &str) -> bool {
 // HTTP client
 // ---------------------------------------------------------------------------
 
-const USER_AGENT: &str = "evot/0.1.0";
+const USER_AGENT: &str = concat!("evot/", env!("CARGO_PKG_VERSION"));
 
 pub fn new_client() -> Result<reqwest::Client, ProviderError> {
     reqwest::Client::builder()

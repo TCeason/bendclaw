@@ -2199,6 +2199,304 @@ async fn test_llm_call_start_carries_budget_and_window() {
 }
 
 #[tokio::test]
+async fn test_request_view_shrinks_old_tool_results_only() {
+    use evotengine::context::ContextConfig;
+
+    let old_big = (0..120)
+        .map(|i| format!("old line {i} {}", "x".repeat(300)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let recent_big = (0..120)
+        .map(|i| format!("recent line {i} {}", "y".repeat(300)))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("ok".into())])
+        .prior_messages(vec![
+            AgentMessage::Llm(Message::Assistant {
+                content: vec![Content::ToolCall {
+                    id: "old-tc".into(),
+                    name: "bash".into(),
+                    arguments: serde_json::json!({"command": "old"}),
+                }],
+                stop_reason: StopReason::ToolUse,
+                model: "test".into(),
+                provider: "test".into(),
+                usage: Usage::default(),
+                timestamp: 0,
+                error_message: None,
+                response_id: None,
+            }),
+            AgentMessage::Llm(Message::ToolResult {
+                tool_call_id: "old-tc".into(),
+                tool_name: "bash".into(),
+                content: vec![Content::Text {
+                    text: old_big.clone(),
+                }],
+                is_error: false,
+                timestamp: 0,
+                retention: Retention::Normal,
+            }),
+            AgentMessage::Llm(Message::Assistant {
+                content: vec![Content::ToolCall {
+                    id: "recent-tc".into(),
+                    name: "bash".into(),
+                    arguments: serde_json::json!({"command": "recent"}),
+                }],
+                stop_reason: StopReason::ToolUse,
+                model: "test".into(),
+                provider: "test".into(),
+                usage: Usage::default(),
+                timestamp: 0,
+                error_message: None,
+                response_id: None,
+            }),
+            AgentMessage::Llm(Message::ToolResult {
+                tool_call_id: "recent-tc".into(),
+                tool_name: "bash".into(),
+                content: vec![Content::Text {
+                    text: recent_big.clone(),
+                }],
+                is_error: false,
+                timestamp: 0,
+                retention: Retention::Normal,
+            }),
+        ])
+        .context_config(ContextConfig {
+            keep_recent: 3,
+            ..Default::default()
+        })
+        .run("continue")
+        .await;
+
+    let request_messages = output
+        .events
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::LlmCallStart { request, .. } => Some(&request.messages),
+            _ => None,
+        })
+        .expect("expected LlmCallStart");
+
+    let old_text = request_messages
+        .iter()
+        .find_map(|message| match message {
+            Message::ToolResult {
+                tool_call_id,
+                content,
+                ..
+            } if tool_call_id == "old-tc" => match &content[0] {
+                Content::Text { text } => Some(text),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("old tool result should be present");
+    assert!(old_text.len() < old_big.len());
+    assert!(old_text.contains("truncated"));
+
+    let force_cleared = request_messages
+        .iter()
+        .filter(|message| match message {
+            Message::ToolResult { content, .. } => {
+                content.iter().all(|c| !matches!(c, Content::Text { .. }))
+            }
+            _ => false,
+        })
+        .count();
+    assert_eq!(force_cleared, 0);
+
+    let recent_text = request_messages
+        .iter()
+        .find_map(|message| match message {
+            Message::ToolResult {
+                tool_call_id,
+                content,
+                ..
+            } if tool_call_id == "recent-tc" => match &content[0] {
+                Content::Text { text } => Some(text),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("recent tool result should be present");
+    assert_eq!(recent_text, &recent_big);
+
+    let stored_old_text = output
+        .context_messages
+        .iter()
+        .find_map(|message| match message {
+            AgentMessage::Llm(Message::ToolResult {
+                tool_call_id,
+                content,
+                ..
+            }) if tool_call_id == "old-tc" => match &content[0] {
+                Content::Text { text } => Some(text),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("stored old tool result should remain present");
+    assert_eq!(stored_old_text, &old_big);
+}
+
+#[tokio::test]
+async fn test_request_view_caps_total_old_tool_results() {
+    use evotengine::context::ContextConfig;
+
+    let old_medium = (0..90)
+        .map(|i| format!("old medium line {i} {}", "x".repeat(120)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let recent_big = (0..120)
+        .map(|i| format!("recent line {i} {}", "y".repeat(300)))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let mut prior = Vec::new();
+    for i in 0..12 {
+        prior.push(AgentMessage::Llm(Message::Assistant {
+            content: vec![Content::ToolCall {
+                id: format!("old-tc-{i}"),
+                name: "bash".into(),
+                arguments: serde_json::json!({"command": format!("old-{i}")}),
+            }],
+            stop_reason: StopReason::ToolUse,
+            model: "test".into(),
+            provider: "test".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+            response_id: None,
+        }));
+        prior.push(AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: format!("old-tc-{i}"),
+            tool_name: "bash".into(),
+            content: vec![Content::Text {
+                text: old_medium.clone(),
+            }],
+            is_error: false,
+            timestamp: 0,
+            retention: Retention::Normal,
+        }));
+    }
+    prior.push(AgentMessage::Llm(Message::Assistant {
+        content: vec![Content::ToolCall {
+            id: "recent-tc".into(),
+            name: "bash".into(),
+            arguments: serde_json::json!({"command": "recent"}),
+        }],
+        stop_reason: StopReason::ToolUse,
+        model: "test".into(),
+        provider: "test".into(),
+        usage: Usage::default(),
+        timestamp: 0,
+        error_message: None,
+        response_id: None,
+    }));
+    prior.push(AgentMessage::Llm(Message::ToolResult {
+        tool_call_id: "recent-tc".into(),
+        tool_name: "bash".into(),
+        content: vec![Content::Text {
+            text: recent_big.clone(),
+        }],
+        is_error: false,
+        timestamp: 0,
+        retention: Retention::Normal,
+    }));
+
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("ok".into())])
+        .prior_messages(prior)
+        .context_config(ContextConfig {
+            keep_recent: 3,
+            ..Default::default()
+        })
+        .run("continue")
+        .await;
+
+    let request_messages = output
+        .events
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::LlmCallStart { request, .. } => Some(&request.messages),
+            _ => None,
+        })
+        .expect("expected LlmCallStart");
+
+    let old_tool_text_bytes: usize = request_messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResult {
+                tool_call_id,
+                content,
+                ..
+            } if tool_call_id.starts_with("old-tc-") => Some(
+                content
+                    .iter()
+                    .map(|c| match c {
+                        Content::Text { text } => text.len(),
+                        _ => 0,
+                    })
+                    .sum::<usize>(),
+            ),
+            _ => None,
+        })
+        .sum();
+    assert!(
+        old_tool_text_bytes <= 64_000,
+        "old tool results should be globally capped, got {old_tool_text_bytes} bytes"
+    );
+
+    let cleared_old_results = request_messages
+        .iter()
+        .filter(|message| match message {
+            Message::ToolResult {
+                tool_call_id,
+                content,
+                ..
+            } if tool_call_id.starts_with("old-tc-") => {
+                content.iter().all(|c| !matches!(c, Content::Text { .. }))
+            }
+            _ => false,
+        })
+        .count();
+    assert!(
+        cleared_old_results > 0,
+        "some older medium-sized tool results should be cleared under aggregate pressure"
+    );
+
+    let recent_text = request_messages
+        .iter()
+        .find_map(|message| match message {
+            Message::ToolResult {
+                tool_call_id,
+                content,
+                ..
+            } if tool_call_id == "recent-tc" => match &content[0] {
+                Content::Text { text } => Some(text),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("recent tool result should be present");
+    assert_eq!(recent_text, &recent_big);
+
+    let stored_old_count = output
+        .context_messages
+        .iter()
+        .filter(|message| match message {
+            AgentMessage::Llm(Message::ToolResult { tool_call_id, .. }) => {
+                tool_call_id.starts_with("old-tc-")
+            }
+            _ => false,
+        })
+        .count();
+    assert_eq!(stored_old_count, 12);
+}
+
+#[tokio::test]
 async fn test_llm_call_start_zero_budget_without_context_config() {
     let output = TestHarness::new()
         .responses(vec![MockResponse::Text("ok".into())])

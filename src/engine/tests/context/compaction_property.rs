@@ -74,6 +74,7 @@ fn arb_config_extreme() -> impl Strategy<Value = ContextConfig> {
 }
 
 /// Helper: reduce pad/tool_out ranges for proptest speed while still
+/// Helper: reduce pad/tool_out ranges for proptest speed while still
 /// exercising all compaction levels (budget ranges handle the scaling).
 fn arb_pad() -> impl Strategy<Value = usize> {
     10..200usize
@@ -82,6 +83,7 @@ fn arb_tool_out() -> impl Strategy<Value = usize> {
     10..500usize
 }
 
+/// Core invariants that must hold for ANY input: no panic, no orphans.
 /// Core invariants that must hold for ANY input: no panic, no orphans.
 fn assert_core_invariants(
     _messages: &[AgentMessage],
@@ -945,7 +947,7 @@ fn compact_error_tool_result_treated_same() {
             tool_call_id: "tc-1".into(),
             tool_name: "bash".into(),
             content: vec![Content::Text {
-                text: "x".repeat(50_000),
+                text: "error output\n".repeat(200),
             }],
             is_error: true, // error result
             timestamp: 0,

@@ -2,7 +2,17 @@
 
 use std::collections::HashSet;
 
+use crate::context::tokens::message_tokens;
+use crate::context::tokens::total_tokens;
 use crate::types::*;
+
+fn has_content(content: &[Content]) -> bool {
+    content.iter().any(|c| match c {
+        Content::Text { text } => !text.is_empty(),
+        Content::Thinking { thinking, .. } => !thinking.is_empty(),
+        Content::Image { .. } | Content::ToolCall { .. } => true,
+    })
+}
 
 /// Sanitize tool call / tool result pairing in a message list.
 ///
@@ -38,6 +48,7 @@ pub fn sanitize_tool_pairs(messages: Vec<AgentMessage>) -> Vec<AgentMessage> {
         return messages;
     }
 
+    let before_tokens = total_tokens(&messages);
     let filtered: Vec<AgentMessage> = messages
         .into_iter()
         .filter_map(|msg| match msg {
@@ -61,9 +72,7 @@ pub fn sanitize_tool_pairs(messages: Vec<AgentMessage>) -> Vec<AgentMessage> {
                         |c| !matches!(c, Content::ToolCall { id, .. } if orphan_calls.contains(id)),
                     )
                     .collect();
-                if filtered.is_empty() {
-                    None
-                } else {
+                if has_content(&filtered) {
                     Some(AgentMessage::Llm(Message::Assistant {
                         content: filtered,
                         stop_reason,
@@ -74,6 +83,16 @@ pub fn sanitize_tool_pairs(messages: Vec<AgentMessage>) -> Vec<AgentMessage> {
                         error_message,
                         response_id,
                     }))
+                } else {
+                    None
+                }
+            }
+
+            AgentMessage::Llm(Message::User { content, timestamp }) => {
+                if has_content(&content) {
+                    Some(AgentMessage::Llm(Message::User { content, timestamp }))
+                } else {
+                    None
                 }
             }
 
@@ -81,11 +100,15 @@ pub fn sanitize_tool_pairs(messages: Vec<AgentMessage>) -> Vec<AgentMessage> {
         })
         .collect();
 
-    // Never produce empty output from non-empty input. If sanitization would
-    // remove everything (e.g. only orphan tool results remain after eviction),
-    // insert a minimal context marker so the conversation stays valid.
+    // Avoid turning a tiny/empty orphan into a larger synthetic message. When
+    // there was real content, keep a minimal marker so compaction does not
+    // erase a non-empty conversation completely.
     if filtered.is_empty() {
-        return vec![super::marker::build_fallback_marker()];
+        let marker = super::marker::build_fallback_marker();
+        if message_tokens(&marker) <= before_tokens {
+            return vec![marker];
+        }
+        return Vec::new();
     }
 
     filtered

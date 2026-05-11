@@ -1,5 +1,7 @@
 #[path = "context/compaction.rs"]
 mod compaction;
+#[path = "context/compaction_fuzz.rs"]
+mod compaction_fuzz;
 #[path = "context/compaction_property.rs"]
 mod compaction_property;
 #[path = "context/config.rs"]

@@ -11,10 +11,29 @@ const OSC8_START = '\x1b]8;;'
 const OSC8_END = '\x07'
 
 /**
+ * Terminals that advertise themselves via TERM_PROGRAM or LC_TERMINAL and
+ * support OSC 8. LC_TERMINAL is important because tmux overwrites
+ * TERM_PROGRAM to "tmux" but many terminals (e.g. iTerm2) preserve their
+ * identity in LC_TERMINAL. Kept in sync with claudecode's detection list.
+ */
+const ADDITIONAL_HYPERLINK_TERMINALS = new Set([
+  'ghostty',
+  'Hyper',
+  'kitty',
+  'alacritty',
+  'iTerm.app',
+  'iTerm2',
+  'WezTerm',
+  'vscode',
+  'zed',
+])
+
+/**
  * Detect OSC 8 hyperlink support.
- * Most modern terminals (iTerm2, WezTerm, Ghostty, Windows Terminal,
- * GNOME Terminal ≥ 3.26, foot, kitty) support it.
- * We check common env vars; conservative — defaults to false.
+ * Most modern terminals (iTerm2, WezTerm, Ghostty, kitty, alacritty, zed,
+ * Windows Terminal, VTE ≥ 0.50) support it. We mirror claudecode's logic so
+ * behavior matches across the same terminal — including tmux sessions where
+ * TERM_PROGRAM is overwritten but LC_TERMINAL survives.
  */
 export function supportsHyperlinks(): boolean {
   const env = process.env
@@ -23,19 +42,29 @@ export function supportsHyperlinks(): boolean {
   if (env.FORCE_HYPERLINK === '0') return false
   // CI / dumb terminals — no
   if (env.CI || env.TERM === 'dumb') return false
-  // Known supporting terminals
-  if (env.TERM_PROGRAM === 'iTerm.app') return true
-  if (env.TERM_PROGRAM === 'WezTerm') return true
-  if (env.TERM_PROGRAM === 'ghostty') return true
+  // Explicit non-supporters
+  // macOS Terminal.app does NOT support OSC 8
+  if (env.TERM_PROGRAM === 'Apple_Terminal') return false
   // WarpTerminal does NOT support OSC 8 (warpdotdev/Warp#4194)
   // but it auto-detects file paths in plain text — see isWarpTerminal()
   if (env.TERM_PROGRAM === 'WarpTerminal') return false
-  if (env.WT_SESSION) return true // Windows Terminal
-  if (env.TERM_PROGRAM === 'vscode') return true
+  // Windows Terminal
+  if (env.WT_SESSION) return true
+  // Known supporting terminals by TERM_PROGRAM
+  if (env.TERM_PROGRAM && ADDITIONAL_HYPERLINK_TERMINALS.has(env.TERM_PROGRAM)) {
+    return true
+  }
+  // LC_TERMINAL survives tmux where TERM_PROGRAM is overwritten to "tmux"
+  if (env.LC_TERMINAL && ADDITIONAL_HYPERLINK_TERMINALS.has(env.LC_TERMINAL)) {
+    return true
+  }
+  // Kitty sets TERM=xterm-kitty
+  if (env.TERM && env.TERM.includes('kitty')) return true
+  // Alacritty sets TERM=alacritty
+  if (env.TERM === 'alacritty') return true
+  // Legacy env var — some older kitty builds set KITTY_PID without TERM
   if (env.KITTY_PID) return true
-  // macOS Terminal.app does NOT support OSC 8
-  if (env.TERM_PROGRAM === 'Apple_Terminal') return false
-  // VTE-based terminals (GNOME Terminal, Tilix, etc.)
+  // VTE-based terminals (GNOME Terminal, Tilix, etc.) — v0.50+
   if (env.VTE_VERSION) {
     const v = parseInt(env.VTE_VERSION, 10)
     if (!isNaN(v) && v >= 5000) return true

@@ -51,9 +51,15 @@ pub fn run(messages: Vec<AgentMessage>, _ctx: &PhaseContext) -> PhaseResult {
             }) = msg
             {
                 let before_tokens = content_tokens(&content);
-                let replacement = vec![Content::Text {
+                let marker = vec![Content::Text {
                     text: format!("[{tool_name} result cleared after use]"),
                 }];
+                let marker_tokens = content_tokens(&marker);
+                let replacement = if marker_tokens < before_tokens {
+                    marker
+                } else {
+                    Vec::new()
+                };
                 let after_tokens = content_tokens(&replacement);
 
                 actions.push(CompactionAction {

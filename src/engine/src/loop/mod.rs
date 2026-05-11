@@ -5,7 +5,7 @@ mod input_filter;
 
 pub(crate) mod assistant_sanitize;
 pub(crate) mod doom_loop;
-mod llm_call;
+pub(crate) mod llm_call;
 mod tool_exec;
 mod tool_only_guard;
 

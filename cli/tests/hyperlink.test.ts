@@ -14,6 +14,7 @@ describe('supportsHyperlinks', () => {
     delete process.env.WT_SESSION
     delete process.env.KITTY_PID
     delete process.env.VTE_VERSION
+    delete process.env.LC_TERMINAL
   })
 
   afterEach(() => {
@@ -56,6 +57,39 @@ describe('supportsHyperlinks', () => {
 
   test('Apple_Terminal disables', async () => {
     process.env.TERM_PROGRAM = 'Apple_Terminal'
+    const { supportsHyperlinks } = await import('../src/render/hyperlink.js')
+    expect(supportsHyperlinks()).toBe(false)
+  })
+
+  test('WezTerm enables', async () => {
+    process.env.TERM_PROGRAM = 'WezTerm'
+    const { supportsHyperlinks } = await import('../src/render/hyperlink.js')
+    expect(supportsHyperlinks()).toBe(true)
+  })
+
+  test('LC_TERMINAL=iTerm2 enables inside tmux', async () => {
+    // Inside tmux, TERM_PROGRAM is overwritten to "tmux" but iTerm2 keeps
+    // its identity in LC_TERMINAL. Claudecode relies on this fallback.
+    process.env.TERM_PROGRAM = 'tmux'
+    process.env.LC_TERMINAL = 'iTerm2'
+    const { supportsHyperlinks } = await import('../src/render/hyperlink.js')
+    expect(supportsHyperlinks()).toBe(true)
+  })
+
+  test('TERM=xterm-kitty enables', async () => {
+    process.env.TERM = 'xterm-kitty'
+    const { supportsHyperlinks } = await import('../src/render/hyperlink.js')
+    expect(supportsHyperlinks()).toBe(true)
+  })
+
+  test('TERM=alacritty enables', async () => {
+    process.env.TERM = 'alacritty'
+    const { supportsHyperlinks } = await import('../src/render/hyperlink.js')
+    expect(supportsHyperlinks()).toBe(true)
+  })
+
+  test('WarpTerminal disables', async () => {
+    process.env.TERM_PROGRAM = 'WarpTerminal'
     const { supportsHyperlinks } = await import('../src/render/hyperlink.js')
     expect(supportsHyperlinks()).toBe(false)
   })

@@ -51,11 +51,14 @@ fn lifecycle_clears_current_run_after_user_message() {
     assert_eq!(result.stats.current_run_cleared, 1);
 
     if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &result.messages[2] {
-        let text = match &content[0] {
-            Content::Text { text } => text,
-            _ => panic!("expected text"),
-        };
-        assert_eq!(text, "[skill result cleared after use]");
+        let cleared_marker = content.first().and_then(|c| match c {
+            Content::Text { text } => Some(text.as_str()),
+            _ => None,
+        });
+        assert!(
+            content.is_empty() || cleared_marker == Some("[skill result cleared after use]"),
+            "expected empty compacted content or cleared marker, got: {content:?}"
+        );
     } else {
         panic!("expected tool result at index 2");
     }

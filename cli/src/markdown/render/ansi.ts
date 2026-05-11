@@ -404,20 +404,15 @@ export function formatToken(
         .map(t => formatToken(t, 0, null, token, theme))
         .join('')
       const plainText = stripAnsi(linkText)
-      // If the terminal supports OSC 8 hyperlinks, render as clickable link
-      if (supportsHyperlinks()) {
-        if (plainText && plainText !== token.href) {
-          return createHyperlink(token.href, plainText)
-        }
-        return createHyperlink(token.href)
-      }
-      // Fallback (claudecode-style): prefer the display text alone, only
-      // surface the URL when there is no meaningful text. Avoids noisy
-      // `text (url)` when OSC 8 is not available.
+      // Delegate to createHyperlink: when OSC 8 is supported it wraps
+      // `linkText` (or the URL if there's no meaningful text) in a
+      // clickable escape sequence. When unsupported it returns the raw
+      // URL — matching claudecode's behavior so users at least see
+      // something copyable instead of silently dropping the href.
       if (plainText && plainText !== token.href) {
-        return linkText
+        return createHyperlink(token.href, plainText)
       }
-      return theme.link.paint(token.href)
+      return createHyperlink(token.href)
     }
     case 'list':
       return (token as Tokens.List).items

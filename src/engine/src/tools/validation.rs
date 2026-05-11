@@ -271,6 +271,13 @@ pub fn cap_tool_result_content(content: Vec<Content>, max_bytes: usize) -> Vec<C
         return content;
     }
 
+    if max_bytes == 0 {
+        return content
+            .into_iter()
+            .filter(|c| !matches!(c, Content::Text { .. }))
+            .collect();
+    }
+
     // Merge all text, truncate, then splice back at the first text position.
     let mut merged = String::with_capacity(total_bytes);
     let mut first_text_idx: Option<usize> = None;
