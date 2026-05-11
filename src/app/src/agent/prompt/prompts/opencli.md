@@ -16,7 +16,21 @@ Use it when a site/app/service can be operated through an OpenCLI adapter or the
 command -v opencli
 ```
 
-If missing, stop and tell the user OpenCLI is not installed or not on `PATH`; it requires Node.js >= 21 and can be installed with `npm install -g @jackwener/opencli`.
+If missing, check Node.js:
+
+```bash
+node -v
+```
+
+If Node.js is available and major version is >= 21, install OpenCLI automatically:
+
+```bash
+npm install -g @jackwener/opencli
+command -v opencli
+opencli doctor
+```
+
+If Node.js is missing or older than 21, stop and tell the user to install or upgrade Node.js first.
 
 2. Discover live capabilities:
 
@@ -32,14 +46,30 @@ opencli <adapter> <command> -h
 
 ## Browser dependency
 
-Run `opencli doctor` before browser-dependent work:
+Only check/install browser support when the selected path needs it:
 
 - `opencli browser ...`
-- adapters with `COOKIE`, `INTERCEPT`, or `UI` strategy
+- logged-in cookies or session state
+- page UI automation, clicking, forms, extraction from a live tab
+- adapters whose live metadata/help shows `COOKIE`, `INTERCEPT`, or `UI` strategy
 
-If the browser bridge or Chrome extension is unavailable, stop browser-dependent execution and ask the user to enable the OpenCLI Chrome extension, keep Chrome running, and log into the target site if needed. Chrome extension: `https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk`. `PUBLIC` and `LOCAL` adapters may still be used.
+For `PUBLIC` or `LOCAL` adapters, do not require the Chrome extension.
 
-Any task that needs logged-in cookies or session state requires the Chrome extension/browser bridge. Do not ask the user to export cookies; run commands in the bound browser context instead.
+When browser support is needed, run:
+
+```bash
+opencli doctor
+```
+
+If the browser bridge or Chrome extension is unavailable, stop browser-dependent execution and open the extension install page for the user:
+
+```bash
+open "https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk"
+```
+
+Then ask the user to click "Add to Chrome", enable the extension, keep Chrome running, log into the target site if needed, and retry. Do not attempt to install the extension silently.
+
+Do not ask the user to export cookies. For cookie/session tasks, run commands in the bound browser context instead.
 
 ## Common routing hints
 
