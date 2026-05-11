@@ -41,6 +41,8 @@ fn no_context_files_produces_base_prompt_with_system() {
     assert!(prompt.contains("CommonMark specification"));
     assert!(prompt.contains("prompt injection"));
     assert!(prompt.contains("Use `search` instead of `grep` or `rg` through bash."));
+    assert!(prompt.contains("Work in short passes"));
+    assert!(prompt.contains("stop using tools and report it"));
     assert!(prompt.contains("Do not use a colon before a tool call."));
     assert!(prompt.contains("Avoid long single lines, especially in Chinese"));
     assert!(prompt.contains("`file_path:line_number`"));

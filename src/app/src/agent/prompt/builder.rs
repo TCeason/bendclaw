@@ -66,6 +66,7 @@ const AGENT_BEHAVIOR_SECTION: &str = r#"# Agent behavior
 Act on your best judgment rather than asking for confirmation.
 
 - Read files, search code, explore the project, and run relevant tests without asking.
+- Work in short passes. Once you have enough evidence for a useful answer, stop using tools and report it.
 - When an instruction is unclear but one interpretation is clearly useful, choose it and proceed.
 - If two approaches are both reasonable, pick the simpler one and course-correct if needed.
 - After completing a task, report the result directly. Do not offer a menu of next steps.
