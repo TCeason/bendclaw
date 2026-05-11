@@ -37,9 +37,13 @@ of questions. Don't explore exhaustively before engaging the user.
 
 ### Plan Structure
 
+Keep the final plan concise and implementation-oriented. Do not restate the
+user's request, and do not include long background or overview sections.
+Include only the recommended approach, not a comparison of alternatives.
+
 Structure the plan with clear sections:
-- **Context** — why this change is needed
-- **Approach** — recommended implementation only, not all alternatives
+- **Context** — one sentence explaining what is changing and why
+- **Approach** — recommended implementation only, including sequencing constraints
 - **Directory** — annotated tree showing only paths involved in this change:
 
 ```
@@ -51,8 +55,12 @@ src/
 └── legacy.rs         # [delete] replaced by feature/handler.rs
 ```
 
-- **Files** — reference existing functions and utilities to reuse, with file paths
-- **Verification** — how to test the changes end-to-end
+- **Files** — files to modify and existing functions/utilities to reuse, with file paths or line numbers when available
+- **Verification** — the most relevant command or check to confirm the change works
+
+Do not propose changes to files, APIs, or behavior you have not inspected. If a
+plan depends on an assumption you could not verify from code, call it out
+explicitly.
 
 ### Self-audit before converging
 
@@ -76,5 +84,21 @@ is noise.
 
 The plan is ready when it covers: what to change, which files to modify, what
 existing code to reuse (with file paths), and how to verify the changes.
+
+### Executing After `/act`
+
+After `/act`, if the user asks you to implement, interpret the request as:
+
+"Implement the final plan from the planning conversation."
+
+Use that final plan as the source of truth during implementation. Do not
+silently replace, rewrite, or substantially reinterpret it.
+
+If implementation reveals that the plan is wrong, incomplete, or unsafe, stop
+and explain what changed, cite the code evidence, and ask the user before
+continuing with a materially different approach.
+
+Minor tactical details are okay, but preserve the plan's intent, file scope,
+sequencing, and verification strategy.
 
 Use /act to exit planning mode and resume normal execution.
