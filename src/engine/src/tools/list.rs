@@ -1,11 +1,20 @@
 //! List files tool — directory exploration.
 
+use std::collections::BTreeMap;
+use std::path::Path;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::process::Command;
 
 use crate::types::*;
+
+/// Directory file count threshold before switching to compact grouped output.
+const SLIM_THRESHOLD: usize = 80;
+/// Maximum individual file paths to show in compact grouped output.
+const SLIM_MAX_FILES: usize = 80;
+/// Maximum files shown per directory group in compact output.
+const SLIM_MAX_FILES_PER_DIR: usize = 8;
 
 /// List files and directories. Uses `find` or `fd` for efficient traversal.
 pub struct ListFilesTool {
@@ -153,23 +162,72 @@ impl AgentTool for ListFilesTool {
             lines.truncate(self.max_results);
         }
 
-        let text = if lines.is_empty() {
-            format!("No files found in {}", path.display())
-        } else if truncated {
-            format!(
-                "{}\n\n... ({} files, showing first {})",
-                lines.join("\n"),
-                total,
-                self.max_results
+        let (text, slimmed) = if lines.is_empty() {
+            (format!("No files found in {}", path.display()), false)
+        } else if total > SLIM_THRESHOLD || truncated {
+            (
+                format_slim_list(&lines, total, self.max_results, truncated),
+                true,
             )
         } else {
-            format!("{}\n\n({} files)", lines.join("\n"), total)
+            (format!("{}\n\n({} files)", lines.join("\n"), total), false)
         };
 
         Ok(ToolResult {
             content: vec![Content::Text { text }],
-            details: serde_json::json!({ "total": total, "truncated": truncated }),
+            details: serde_json::json!({ "total": total, "truncated": truncated, "slimmed": slimmed }),
             retention: Retention::Normal,
         })
     }
+}
+
+fn format_slim_list(files: &[&str], total: usize, max_results: usize, truncated: bool) -> String {
+    let mut by_dir: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for file in files {
+        let path = Path::new(file);
+        let dir = path.parent().and_then(Path::to_str).unwrap_or(".");
+        by_dir.entry(dir).or_default().push(file);
+    }
+
+    let truncation = if truncated {
+        format!(", showing first {max_results}")
+    } else {
+        String::new()
+    };
+    let mut output = format!("[{total} files{truncation}; compact grouped view]\n");
+
+    let mut shown = 0usize;
+    for (dir, names) in by_dir {
+        if shown >= SLIM_MAX_FILES {
+            break;
+        }
+
+        let remaining = SLIM_MAX_FILES - shown;
+        let take = names.len().min(SLIM_MAX_FILES_PER_DIR).min(remaining);
+        output.push_str(&format!("{dir} ({})\n", names.len()));
+
+        for name in names.iter().take(take) {
+            output.push_str("  ");
+            output.push_str(name);
+            output.push('\n');
+        }
+
+        shown += take;
+        if names.len() > take {
+            output.push_str(&format!("  ... {} more\n", names.len() - take));
+        }
+    }
+
+    let hidden = files.len().saturating_sub(shown);
+    if hidden > 0 {
+        output.push_str(&format!("\n... {hidden} more shown files omitted"));
+    }
+    if truncated {
+        output.push_str(&format!(
+            "\n... {} total files omitted",
+            total.saturating_sub(files.len())
+        ));
+    }
+
+    output
 }
