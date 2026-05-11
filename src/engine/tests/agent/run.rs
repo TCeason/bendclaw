@@ -26,6 +26,56 @@ fn system_reminder_count(messages: &[AgentMessage]) -> usize {
         .count()
 }
 
+fn request_view_bytes(content: &[Content]) -> usize {
+    content
+        .iter()
+        .map(|c| match c {
+            Content::Text { text } => text.len(),
+            Content::Thinking { thinking, .. } => thinking.len(),
+            Content::ToolCall { arguments, .. } => arguments.to_string().len(),
+            Content::Image {
+                source: ImageSource::Base64 { data, .. },
+                ..
+            } => data.len(),
+            Content::Image { .. } => 0,
+        })
+        .sum()
+}
+
+fn tool_result_request_bytes(message: &Message) -> usize {
+    match message {
+        Message::ToolResult { content, .. } => request_view_bytes(content),
+        _ => 0,
+    }
+}
+
+fn prior_tool_result_pair(id: &str, content: Vec<Content>) -> Vec<AgentMessage> {
+    vec![
+        AgentMessage::Llm(Message::Assistant {
+            content: vec![Content::ToolCall {
+                id: id.into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({"command": id}),
+            }],
+            stop_reason: StopReason::ToolUse,
+            model: "test".into(),
+            provider: "test".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+            response_id: None,
+        }),
+        AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: id.into(),
+            tool_name: "bash".into(),
+            content,
+            is_error: false,
+            timestamp: 0,
+            retention: Retention::Normal,
+        }),
+    ]
+}
+
 // ---------------------------------------------------------------------------
 // Tests using TestHarness
 // ---------------------------------------------------------------------------
@@ -2342,6 +2392,66 @@ async fn test_request_view_shrinks_old_tool_results_only() {
 }
 
 #[tokio::test]
+async fn test_request_view_omits_old_inline_non_text_tool_content() {
+    use evotengine::context::ContextConfig;
+
+    let base64 = "a".repeat(8_000);
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("ok".into())])
+        .prior_messages(prior_tool_result_pair("old-image", vec![Content::Image {
+            mime_type: "image/png".into(),
+            source: ImageSource::Base64 {
+                data: base64,
+                path: None,
+            },
+        }]))
+        .context_config(ContextConfig {
+            keep_recent: 1,
+            ..Default::default()
+        })
+        .run("continue")
+        .await;
+
+    let request_messages = output
+        .events
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::LlmCallStart { request, .. } => Some(&request.messages),
+            _ => None,
+        })
+        .expect("expected LlmCallStart");
+
+    let old_content = request_messages
+        .iter()
+        .find_map(|message| match message {
+            Message::ToolResult {
+                tool_call_id,
+                content,
+                ..
+            } if tool_call_id == "old-image" => Some(content),
+            _ => None,
+        })
+        .expect("old tool result should be present");
+    assert!(
+        matches!(old_content.as_slice(), [Content::Text { text }] if text.contains("image omitted"))
+    );
+
+    let stored_content = output
+        .context_messages
+        .iter()
+        .find_map(|message| match message {
+            AgentMessage::Llm(Message::ToolResult {
+                tool_call_id,
+                content,
+                ..
+            }) if tool_call_id == "old-image" => Some(content),
+            _ => None,
+        })
+        .expect("stored old tool result should be present");
+    assert!(matches!(stored_content.as_slice(), [Content::Image { .. }]));
+}
+
+#[tokio::test]
 async fn test_request_view_caps_total_old_tool_results() {
     use evotengine::context::ContextConfig;
 
@@ -2425,46 +2535,35 @@ async fn test_request_view_caps_total_old_tool_results() {
         })
         .expect("expected LlmCallStart");
 
-    let old_tool_text_bytes: usize = request_messages
+    let old_tool_bytes: usize = request_messages
         .iter()
-        .filter_map(|message| match message {
-            Message::ToolResult {
-                tool_call_id,
-                content,
-                ..
-            } if tool_call_id.starts_with("old-tc-") => Some(
-                content
-                    .iter()
-                    .map(|c| match c {
-                        Content::Text { text } => text.len(),
-                        _ => 0,
-                    })
-                    .sum::<usize>(),
-            ),
-            _ => None,
+        .filter(|message| match message {
+            Message::ToolResult { tool_call_id, .. } => tool_call_id.starts_with("old-tc-"),
+            _ => false,
         })
+        .map(tool_result_request_bytes)
         .sum();
     assert!(
-        old_tool_text_bytes <= 64_000,
-        "old tool results should be globally capped, got {old_tool_text_bytes} bytes"
+        old_tool_bytes <= 64_000,
+        "old tool results should be globally capped, got {old_tool_bytes} bytes"
     );
 
-    let cleared_old_results = request_messages
+    let omitted_old_results = request_messages
         .iter()
         .filter(|message| match message {
             Message::ToolResult {
                 tool_call_id,
                 content,
                 ..
-            } if tool_call_id.starts_with("old-tc-") => {
-                content.iter().all(|c| !matches!(c, Content::Text { .. }))
-            }
+            } if tool_call_id.starts_with("old-tc-") => content.iter().any(
+                |c| matches!(c, Content::Text { text } if text.contains("tool result omitted")),
+            ),
             _ => false,
         })
         .count();
     assert!(
-        cleared_old_results > 0,
-        "some older medium-sized tool results should be cleared under aggregate pressure"
+        omitted_old_results > 0,
+        "some older medium-sized tool results should be omitted under aggregate pressure"
     );
 
     let recent_text = request_messages

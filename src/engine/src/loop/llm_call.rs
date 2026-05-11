@@ -65,7 +65,7 @@ pub(super) async fn stream_assistant_response(
         None => default_convert_to_llm(&messages),
     };
     let llm_messages =
-        shrink_old_tool_results_for_request(llm_messages, config.context_config.as_ref());
+        compact_tool_results_for_request_view(llm_messages, config.context_config.as_ref());
 
     // Build tool definitions
     let tool_defs: Vec<ToolDefinition> = context
@@ -415,7 +415,7 @@ pub(super) async fn stream_assistant_response(
     }
 }
 
-pub fn shrink_old_tool_results_for_request(
+fn compact_tool_results_for_request_view(
     messages: Vec<Message>,
     ctx_config: Option<&ContextConfig>,
 ) -> Vec<Message> {
@@ -424,39 +424,7 @@ pub fn shrink_old_tool_results_for_request(
     };
 
     let recent_boundary = messages.len().saturating_sub(ctx_config.keep_recent);
-    let mut candidates: Vec<(usize, usize)> = messages
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, msg)| {
-            if idx >= recent_boundary {
-                return None;
-            }
-            match msg {
-                Message::ToolResult { content, .. } => {
-                    let bytes = tool_result_request_bytes(content);
-                    (bytes > 0).then_some((idx, bytes))
-                }
-                _ => None,
-            }
-        })
-        .collect();
-    let total_old_tool_bytes: usize = candidates.iter().map(|(_, bytes)| *bytes).sum();
-    let compact_all_old_results = total_old_tool_bytes > REQUEST_OLD_TOOL_RESULTS_TOTAL_MAX_BYTES;
-    let mut force_compact = std::collections::HashSet::new();
-
-    if compact_all_old_results {
-        candidates.sort_by_key(|(idx, _)| *idx);
-        let mut kept = 0usize;
-        for (idx, bytes) in candidates.iter().rev() {
-            if kept + *bytes <= REQUEST_OLD_TOOL_RESULTS_TOTAL_MAX_BYTES {
-                kept += *bytes;
-            } else {
-                force_compact.insert(*idx);
-            }
-        }
-    }
-
-    messages
+    let mut compacted: Vec<Message> = messages
         .into_iter()
         .enumerate()
         .map(|(idx, msg)| {
@@ -475,10 +443,7 @@ pub fn shrink_old_tool_results_for_request(
                 } => Message::ToolResult {
                     tool_call_id,
                     tool_name,
-                    content: shrink_tool_result_content_for_request(
-                        content,
-                        force_compact.contains(&idx),
-                    ),
+                    content: shrink_tool_result_content_for_request(content, false),
                     is_error,
                     timestamp,
                     retention,
@@ -486,7 +451,48 @@ pub fn shrink_old_tool_results_for_request(
                 other => other,
             }
         })
-        .collect()
+        .collect();
+
+    let mut old_tool_bytes = old_tool_result_request_bytes(&compacted, recent_boundary);
+    if old_tool_bytes <= REQUEST_OLD_TOOL_RESULTS_TOTAL_MAX_BYTES {
+        return compacted;
+    }
+
+    for idx in (0..recent_boundary).rev() {
+        if old_tool_bytes <= REQUEST_OLD_TOOL_RESULTS_TOTAL_MAX_BYTES {
+            break;
+        }
+
+        let Message::ToolResult { content, .. } = &mut compacted[idx] else {
+            continue;
+        };
+        let before = tool_result_request_bytes(content);
+        if before == 0 {
+            continue;
+        }
+
+        let original = std::mem::take(content);
+        let mut omitted = shrink_tool_result_content_for_request(original, true);
+        let after = tool_result_request_bytes(&omitted);
+        if after >= before {
+            omitted = vec![omitted_tool_result_marker(before)];
+        }
+        *content = omitted;
+        old_tool_bytes = old_tool_result_request_bytes(&compacted, recent_boundary);
+    }
+
+    compacted
+}
+
+fn old_tool_result_request_bytes(messages: &[Message], recent_boundary: usize) -> usize {
+    messages
+        .iter()
+        .take(recent_boundary)
+        .map(|message| match message {
+            Message::ToolResult { content, .. } => tool_result_request_bytes(content),
+            _ => 0,
+        })
+        .sum()
 }
 
 fn tool_result_request_bytes(content: &[Content]) -> usize {
@@ -505,12 +511,25 @@ fn tool_result_request_bytes(content: &[Content]) -> usize {
         .sum()
 }
 
+fn omitted_tool_result_marker(bytes: usize) -> Content {
+    Content::Text {
+        text: format!("[tool result omitted from request view: {bytes} bytes]"),
+    }
+}
+
+fn omitted_content_marker(kind: &str, bytes: usize) -> Content {
+    Content::Text {
+        text: format!("[{kind} omitted from old tool result request view: {bytes} bytes]"),
+    }
+}
+
 fn shrink_tool_result_content_for_request(
     content: Vec<Content>,
     force_compact: bool,
 ) -> Vec<Content> {
     if force_compact {
-        return content
+        let original_bytes = tool_result_request_bytes(&content);
+        let mut kept: Vec<Content> = content
             .into_iter()
             .filter(|c| {
                 matches!(c, Content::Image {
@@ -519,6 +538,8 @@ fn shrink_tool_result_content_for_request(
                 })
             })
             .collect();
+        kept.push(omitted_tool_result_marker(original_bytes));
+        return kept;
     }
 
     content
@@ -527,6 +548,25 @@ fn shrink_tool_result_content_for_request(
             Content::Text { text } => Content::Text {
                 text: shrink_tool_result_text_for_request(&text),
             },
+            Content::Thinking { thinking, .. } => {
+                omitted_content_marker("thinking", thinking.len())
+            }
+            Content::ToolCall { arguments, .. } => {
+                omitted_content_marker("nested tool call", arguments.to_string().len())
+            }
+            Content::Image {
+                mime_type,
+                source: ImageSource::Base64 { data, path },
+            } => {
+                if let Some(path) = path {
+                    Content::Image {
+                        mime_type,
+                        source: ImageSource::Path { path },
+                    }
+                } else {
+                    omitted_content_marker("image", data.len())
+                }
+            }
             other => other,
         })
         .collect()

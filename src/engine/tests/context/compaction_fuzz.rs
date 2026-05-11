@@ -1,12 +1,9 @@
 use evotengine::context::*;
-use evotengine::shrink_old_tool_results_for_request;
 use evotengine::types::*;
 use proptest::prelude::*;
 
 use super::fixtures::compaction_assert::*;
 use super::fixtures::message_dsl::*;
-
-const REQUEST_OLD_TOOL_RESULTS_TOTAL_MAX_BYTES: usize = 64_000;
 
 fn arb_config_extreme() -> impl Strategy<Value = ContextConfig> {
     (
@@ -161,93 +158,6 @@ fn arb_sized_pattern_case() -> impl Strategy<Value = (String, usize, usize, Cont
     )
 }
 
-fn request_bytes(content: &[Content]) -> usize {
-    content
-        .iter()
-        .map(|c| match c {
-            Content::Text { text } => text.len(),
-            Content::Thinking { thinking, .. } => thinking.len(),
-            Content::ToolCall { arguments, .. } => arguments.to_string().len(),
-            Content::Image {
-                source: ImageSource::Base64 { data, .. },
-                ..
-            } => data.len(),
-            Content::Image { .. } => 0,
-        })
-        .sum()
-}
-
-fn llm_tool_request_bytes(messages: &[Message]) -> usize {
-    messages
-        .iter()
-        .map(|message| match message {
-            Message::ToolResult { content, .. } => request_bytes(content),
-            _ => 0,
-        })
-        .sum()
-}
-
-fn arb_request_content(bytes: usize, flavor: usize) -> Vec<Content> {
-    match flavor % 4 {
-        0 => vec![Content::Text {
-            text: "x".repeat(bytes),
-        }],
-        1 => vec![Content::Image {
-            mime_type: "image/png".into(),
-            source: ImageSource::Base64 {
-                data: "a".repeat(bytes),
-                path: None,
-            },
-        }],
-        2 => vec![Content::Thinking {
-            thinking: "t".repeat(bytes),
-            signature: None,
-        }],
-        _ => vec![Content::ToolCall {
-            id: "nested".into(),
-            name: "nested".into(),
-            arguments: serde_json::json!({"payload": "p".repeat(bytes)}),
-        }],
-    }
-}
-
-fn arb_request_tool_messages() -> impl Strategy<Value = (Vec<Message>, usize, usize)> {
-    (
-        0usize..6,
-        0usize..24,
-        0usize..6,
-        prop_oneof![Just(512usize), Just(4_096), Just(8_192), 0..20_000usize],
-        0usize..4,
-    )
-        .prop_map(|(prefix_users, old_count, recent_count, bytes, flavor)| {
-            let mut messages = Vec::new();
-            for i in 0..prefix_users {
-                messages.push(Message::user(format!("prefix {i}")));
-            }
-            for i in 0..old_count {
-                messages.push(Message::ToolResult {
-                    tool_call_id: format!("old-{i}"),
-                    tool_name: "tool".into(),
-                    content: arb_request_content(bytes, flavor),
-                    is_error: false,
-                    timestamp: 0,
-                    retention: Retention::Normal,
-                });
-            }
-            for i in 0..recent_count {
-                messages.push(Message::ToolResult {
-                    tool_call_id: format!("recent-{i}"),
-                    tool_name: "tool".into(),
-                    content: arb_request_content(bytes, flavor),
-                    is_error: false,
-                    timestamp: 0,
-                    retention: Retention::Normal,
-                });
-            }
-            (messages, old_count, recent_count)
-        })
-}
-
 fn assert_compaction_invariants(
     input: &[AgentMessage],
     config: &ContextConfig,
@@ -330,53 +240,5 @@ proptest! {
         let r2 = compact_messages(r1.messages.clone(), &config, &budget_state2);
         assert_no_orphan_tool_pairs(&r2.messages);
         prop_assert!(r2.messages.len() <= r1.messages.len());
-    }
-}
-
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(48))]
-
-    #[test]
-    fn request_view_fuzz_caps_aggregate_old_tool_results(
-        (messages, old_count, recent_count) in arb_request_tool_messages(),
-        keep_recent in 0usize..12,
-    ) {
-        let config = ContextConfig {
-            keep_recent,
-            ..Default::default()
-        };
-        let before = llm_tool_request_bytes(&messages);
-        let result = shrink_old_tool_results_for_request(messages.clone(), Some(&config));
-        let after = llm_tool_request_bytes(&result);
-
-        prop_assert_eq!(result.len(), messages.len());
-        prop_assert!(after <= before, "request view grew tool text bytes: before={before} after={after}");
-
-        let recent_boundary = messages.len().saturating_sub(keep_recent);
-        let old_before: usize = messages
-            .iter()
-            .enumerate()
-            .filter(|(idx, msg)| *idx < recent_boundary && matches!(msg, Message::ToolResult { .. }))
-            .map(|(_, msg)| llm_tool_request_bytes(std::slice::from_ref(msg)))
-            .sum();
-        let old_after: usize = result
-            .iter()
-            .enumerate()
-            .filter(|(idx, msg)| *idx < recent_boundary && matches!(msg, Message::ToolResult { .. }))
-            .map(|(_, msg)| llm_tool_request_bytes(std::slice::from_ref(msg)))
-            .sum();
-
-        if old_before > REQUEST_OLD_TOOL_RESULTS_TOTAL_MAX_BYTES {
-            prop_assert!(
-                old_after <= REQUEST_OLD_TOOL_RESULTS_TOTAL_MAX_BYTES,
-                "old tool result aggregate should be capped: old_before={old_before} old_after={old_after} old_count={old_count} recent_count={recent_count} keep_recent={keep_recent}",
-            );
-        }
-
-        for (idx, (before_msg, after_msg)) in messages.iter().zip(result.iter()).enumerate() {
-            if idx >= recent_boundary {
-                prop_assert_eq!(after_msg, before_msg);
-            }
-        }
     }
 }

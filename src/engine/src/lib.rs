@@ -18,7 +18,6 @@ pub use context::CompactionStrategy;
 pub use context::DefaultCompaction;
 pub use r#loop::agent_loop;
 pub use r#loop::agent_loop_continue;
-pub use r#loop::llm_call::shrink_old_tool_results_for_request;
 pub use r#loop::AfterTurnFn;
 pub use r#loop::AgentLoopConfig;
 pub use r#loop::BeforeTurnFn;
