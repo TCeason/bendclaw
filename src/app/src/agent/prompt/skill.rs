@@ -23,6 +23,10 @@ const BUILTINS: &[BuiltinDef] = &[
         name: "harden",
         content: include_str!("prompts/harden.md"),
     },
+    BuiltinDef {
+        name: "opencli",
+        content: include_str!("prompts/opencli.md"),
+    },
 ];
 
 /// Parse builtin skill definitions into `SkillSpec` values.
