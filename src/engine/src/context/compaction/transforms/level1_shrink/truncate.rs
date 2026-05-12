@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::context::compaction::phases::level1_shrink::outline;
+use crate::context::compaction::transforms::level1_shrink::outline;
 use crate::context::compaction::CompactionMethod;
 use crate::types::*;
 

@@ -23,21 +23,6 @@ pub fn collect_tool_details(messages: &[AgentMessage]) -> Vec<ToolTokenDetail> {
     details
 }
 
-pub fn image_count(messages: &[AgentMessage]) -> usize {
-    messages
-        .iter()
-        .map(|msg| match msg {
-            AgentMessage::Llm(Message::User { content, .. })
-            | AgentMessage::Llm(Message::Assistant { content, .. })
-            | AgentMessage::Llm(Message::ToolResult { content, .. }) => content
-                .iter()
-                .filter(|c| matches!(c, Content::Image { .. }))
-                .count(),
-            AgentMessage::Extension(_) => 0,
-        })
-        .sum()
-}
-
 pub struct StatsInput {
     pub level: u8,
     pub before_message_count: usize,

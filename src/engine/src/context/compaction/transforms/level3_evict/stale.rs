@@ -1,14 +1,10 @@
-//! Evict stale messages by dropping the upper-middle of the conversation.
+//! Message eviction transforms.
 //!
-//! Runs for hard token pressure or when `max_messages` is exceeded. This is the
-//! primary long-session control: keep the beginning and recent tail, then drop
-//! old middle content instead of endlessly summarizing it.
+//! These functions only perform the selected eviction transform. Pressure
+//! classification and mode selection live in `pressure.rs` and `levels.rs`.
 //!
-//! Strategy:
-//!   Keeps `keep_first` messages + `keep_recent` messages.
-//!   Drops the middle, inserting a marker.
-//!   If still over budget, uses tail-first retention:
-//!     Protect `keep_first`, then fill remaining budget from tail.
+//! Token eviction keeps the beginning and recent tail, drops stale middle
+//! content, and falls back to tail-first retention when needed.
 
 use crate::context::compaction::compact::CompactionAction;
 use crate::context::compaction::compact::CompactionMethod;
@@ -18,18 +14,7 @@ use crate::context::tokens::message_tokens;
 use crate::context::tokens::total_tokens;
 use crate::types::*;
 
-pub fn run(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> PhaseResult {
-    if total_tokens(&messages) <= ctx.budget
-        && ctx.max_messages > 0
-        && messages.len() > ctx.max_messages
-    {
-        return drop_to_message_target(messages, ctx);
-    }
-
-    drop_to_token_target(messages, ctx)
-}
-
-fn drop_to_message_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> PhaseResult {
+pub fn drop_to_message_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> PhaseResult {
     let len = messages.len();
     let target_len = message_limit_target(ctx, len);
 
@@ -40,8 +25,9 @@ fn drop_to_message_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> Ph
         };
     }
 
-    let first_end = ctx.keep_first.min(len);
+    let first_end = ctx.bounds.keep_first.min(len);
     let recent_len = ctx
+        .bounds
         .keep_recent
         .min(target_len.saturating_sub(first_end + 1));
     let recent_start = len.saturating_sub(recent_len);
@@ -109,19 +95,25 @@ fn drop_to_message_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> Ph
 }
 
 fn message_limit_target(ctx: &PhaseContext, current_len: usize) -> usize {
-    if ctx.max_messages == 0 {
+    if ctx.bounds.max_messages == 0 {
         return 0;
     }
 
-    let pct = ctx.message_limit_target_pct.clamp(1, 100) as usize;
+    let pct = ctx.bounds.message_limit_target_pct.clamp(1, 100) as usize;
     let minimum = ctx
+        .bounds
         .keep_first
-        .saturating_add(ctx.keep_recent)
+        .saturating_add(ctx.bounds.keep_recent)
         .saturating_add(1);
-    let pct_target = ctx.max_messages.saturating_mul(pct).saturating_add(99) / 100;
+    let pct_target = ctx
+        .bounds
+        .max_messages
+        .saturating_mul(pct)
+        .saturating_add(99)
+        / 100;
     pct_target
         .max(minimum)
-        .min(ctx.max_messages)
+        .min(ctx.bounds.max_messages)
         .min(current_len)
         .max(1)
 }
@@ -280,24 +272,25 @@ fn is_assistant_or_tool(message: &AgentMessage) -> bool {
     )
 }
 
-fn drop_to_token_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> PhaseResult {
+pub fn drop_to_token_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> PhaseResult {
     let len = messages.len();
     let target_messages = ctx
+        .bounds
         .keep_first
-        .saturating_add(ctx.keep_recent)
+        .saturating_add(ctx.bounds.keep_recent)
         .saturating_add(1)
         .max(1);
     let before_tokens = total_tokens(&messages);
-    if len <= target_messages && before_tokens <= ctx.compact_target {
+    if len <= target_messages && before_tokens <= ctx.budget.compact_target {
         return PhaseResult {
             messages,
             actions: Vec::new(),
         };
     }
 
-    let first_end = ctx.keep_first.min(len);
-    let recent_start = len.saturating_sub(ctx.keep_recent);
-    let token_target = ctx.budget;
+    let first_end = ctx.bounds.keep_first.min(len);
+    let recent_start = len.saturating_sub(ctx.bounds.keep_recent);
+    let token_target = ctx.budget.max_tokens;
 
     if first_end >= recent_start {
         let result = keep_within_budget(&messages, first_end, token_target);

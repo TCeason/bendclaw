@@ -1,4 +1,5 @@
 mod outline;
+mod strategy;
 pub mod tool;
 mod truncate;
 mod user;

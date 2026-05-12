@@ -2106,8 +2106,20 @@ fn test_l1_does_not_trigger_below_target() {
     let result = compact_messages(messages.clone(), &config, &budget_state);
 
     assert_eq!(
+        result.stats.tool_outputs_truncated, 0,
+        "L1 should not truncate tool outputs when below trigger"
+    );
+    assert_eq!(
+        result.stats.oversize_capped, 0,
+        "L1 should not cap oversized tool outputs when below trigger"
+    );
+    assert_eq!(
+        result.stats.age_cleared, 0,
+        "L1 should not age-clear tool outputs when below trigger"
+    );
+    assert_eq!(
         result.stats.turns_summarized, 0,
-        "L1 should not trigger when well under budget"
+        "L2 should not trigger when well under budget"
     );
     assert_eq!(
         result.stats.after_message_count, result.stats.before_message_count,
@@ -2912,6 +2924,48 @@ fn test_message_limit_evicts_instead_of_summarizing() {
     assert_eq!(result.stats.turns_summarized, 0);
     assert_eq!(result.stats.messages_dropped, 15);
     assert_eq!(result.stats.level, 3);
+    assert_eq!(result.messages.len(), 6);
+    assert_no_orphan_tool_pairs(&result.messages);
+}
+
+#[test]
+fn test_message_limit_with_provider_overhead_uses_message_limit_evict() {
+    let messages = (0..20)
+        .map(|i| {
+            AgentMessage::Llm(Message::User {
+                content: vec![
+                    Content::Text {
+                        text: format!("short message {}", i),
+                    },
+                    Content::Image {
+                        mime_type: "image/png".into(),
+                        source: ImageSource::Base64 {
+                            data: "tiny".into(),
+                            path: None,
+                        },
+                    },
+                ],
+                timestamp: i,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let config = ContextConfig {
+        max_context_tokens: 2_000,
+        system_prompt_tokens: 0,
+        keep_recent: 4,
+        keep_first: 1,
+        max_messages: 8,
+        message_limit_target_pct: 75,
+        ..Default::default()
+    };
+
+    let result = compact_messages(messages, &config, &CompactionBudgetState {
+        estimated_tokens: 3_000,
+    });
+
+    assert_eq!(result.stats.level, 3);
+    assert_eq!(result.stats.messages_dropped, 15);
     assert_eq!(result.messages.len(), 6);
     assert_no_orphan_tool_pairs(&result.messages);
 }

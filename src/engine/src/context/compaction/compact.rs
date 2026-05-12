@@ -1,7 +1,7 @@
 pub use super::orchestrator::compact_messages;
-pub use super::phases::level1_shrink::truncate_text_head_tail;
 pub use super::strategy::CompactionStrategy;
 pub use super::strategy::DefaultCompaction;
+pub use super::transforms::level1_shrink::truncate_text_head_tail;
 pub use super::types::CompactionAction;
 pub use super::types::CompactionMethod;
 pub use super::types::CompactionResult;

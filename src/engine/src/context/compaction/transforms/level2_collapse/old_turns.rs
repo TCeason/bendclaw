@@ -4,7 +4,7 @@
 //! instead of manufacturing low-value summaries.
 //!
 //! Strategy:
-//!   boundary = messages.len() - ctx.keep_recent
+//!   boundary = messages.len() - ctx.bounds.keep_recent
 //!   For assistant turns before the boundary:
 //!     1. Extract tool names from `Content::ToolCall`, deduplicate
 //!     2. Extract up to 3 short text fragments (<= 200 chars each)
@@ -21,14 +21,14 @@ use crate::types::*;
 
 pub fn run(messages: Vec<AgentMessage>, ctx: &PhaseContext, current_tokens: usize) -> PhaseResult {
     let len = messages.len();
-    if len <= ctx.keep_recent {
+    if len <= ctx.bounds.keep_recent {
         return PhaseResult {
             messages,
             actions: vec![],
         };
     }
 
-    let boundary = len - ctx.keep_recent;
+    let boundary = len - ctx.bounds.keep_recent;
     let mut result = Vec::new();
     let mut actions = Vec::new();
     let mut running_tokens = current_tokens;
@@ -36,7 +36,7 @@ pub fn run(messages: Vec<AgentMessage>, ctx: &PhaseContext, current_tokens: usiz
     let mut i = 0;
     while i < boundary {
         // Already fits within compact target — copy remaining pre-boundary messages as-is
-        if running_tokens <= ctx.compact_target {
+        if running_tokens <= ctx.budget.compact_target {
             while i < boundary {
                 result.push(messages[i].clone());
                 i += 1;

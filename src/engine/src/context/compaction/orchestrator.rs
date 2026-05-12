@@ -1,194 +1,174 @@
-//! Compaction orchestration — pressure-driven phase execution.
+//! Compaction orchestration — strategy-driven level pipeline.
 //!
-//! Phases run in increasing lossiness:
-//!   1. reclaim: recover content whose lifecycle has ended.
-//!   2. shrink: locally reduce oversized/old content.
-//!   3. collapse: summarize old assistant/tool turns under token pressure.
-//!   4. evict: drop stale middle context under hard pressure.
+//! The orchestrator owns only pipeline concerns:
+//!   1. build context snapshots,
+//!   2. classify pressure,
+//!   3. invoke level strategies in order,
+//!   4. maintain accounting,
+//!   5. sanitize and build stats.
+//!
+//! Level-specific decisions live in `levels.rs` and phase transforms.
+
+use std::mem;
 
 use super::accounting::build_stats;
 use super::accounting::collect_tool_details;
-use super::accounting::image_count;
 use super::accounting::StatsInput;
+use super::levels::default_levels;
+use super::levels::LevelInput;
+use super::phase::BudgetTargets;
 use super::phase::PhaseContext;
-use super::phases::level0_reclaim::current_run;
-use super::phases::level0_reclaim::image_path_downgrade;
-use super::phases::level1_shrink;
-use super::phases::level2_collapse::old_turns;
-use super::phases::level3_evict::stale;
+use super::phase::RetentionBounds;
+use super::phase::ShrinkSettings;
 use super::policy::CompactionPolicy;
+use super::pressure::PressureState;
 use super::sanitize::sanitize_tool_pairs;
+use super::snapshot::ContextSnapshot;
 use super::types::CompactionResult;
 use crate::context::tokens::total_tokens;
 use crate::context::tracking::CompactionBudgetState;
 use crate::context::tracking::ContextConfig;
 use crate::types::*;
 
-/// Compaction phases, executed in order.
-#[derive(Clone, Copy)]
-enum Phase {
-    /// Always-on lifecycle reclaim.
-    Reclaim,
-    /// Local truncation/clearing of individual messages and tool results.
-    Shrink,
-    /// Semantic summary of old turns.
-    Collapse,
-    /// Structural stale-context eviction.
-    Evict,
+struct CompactionRuntime {
+    messages: Vec<AgentMessage>,
+    current_tokens: usize,
+    estimated_tokens: usize,
+    original_message_tokens: usize,
+    original_estimated_tokens: usize,
+    original_image_count: usize,
 }
 
-impl Phase {
-    fn level(self) -> u8 {
-        match self {
-            Phase::Reclaim => 0,
-            Phase::Shrink => 1,
-            Phase::Collapse => 2,
-            Phase::Evict => 3,
+impl CompactionRuntime {
+    fn budget_state(&self) -> CompactionBudgetState {
+        CompactionBudgetState {
+            estimated_tokens: self.estimated_tokens,
         }
+    }
+
+    fn observe_result(
+        &mut self,
+        result: super::phase::PhaseResult,
+        snapshot: &ContextSnapshot,
+        config: &ContextConfig,
+    ) -> super::phase::PhaseResult {
+        let saved = result
+            .actions
+            .iter()
+            .map(|action| action.before_tokens.saturating_sub(action.after_tokens))
+            .sum::<usize>();
+        self.current_tokens = self.current_tokens.saturating_sub(saved);
+
+        if self.original_image_count > 0 {
+            let after_snapshot =
+                ContextSnapshot::new(&result.messages, config, &CompactionBudgetState {
+                    estimated_tokens: self.estimated_tokens,
+                });
+            let image_removed = snapshot
+                .image_count
+                .saturating_sub(after_snapshot.image_count);
+            if image_removed > 0 {
+                let provider_extra = self
+                    .original_estimated_tokens
+                    .saturating_sub(snapshot.message_tokens);
+                let image_provider_extra =
+                    provider_extra / self.original_image_count.max(1) * image_removed;
+                self.current_tokens = self.current_tokens.saturating_sub(image_provider_extra);
+            }
+        }
+
+        self.current_tokens = self.current_tokens.max(total_tokens(&result.messages));
+        self.estimated_tokens = self
+            .original_estimated_tokens
+            .saturating_sub(
+                self.original_message_tokens
+                    .saturating_sub(self.current_tokens),
+            )
+            .max(self.current_tokens);
+        self.messages = result.messages.clone();
+
+        result
     }
 }
 
-const PHASES: [Phase; 4] = [Phase::Reclaim, Phase::Shrink, Phase::Collapse, Phase::Evict];
-
-/// Compact messages using a pressure-driven pipeline.
+/// Compact messages using a pressure-driven level pipeline.
 pub fn compact_messages(
     messages: Vec<AgentMessage>,
     config: &ContextConfig,
     budget_state: &CompactionBudgetState,
 ) -> CompactionResult {
-    let budget = config
-        .max_context_tokens
-        .saturating_sub(config.system_prompt_tokens);
-
-    let compact_trigger = budget * (config.compact_trigger_pct.min(100) as usize) / 100;
-    let compact_target_pct = config.compact_target_pct.min(config.compact_trigger_pct);
-    let compact_target = budget * (compact_target_pct as usize) / 100;
-    let message_tokens = total_tokens(&messages);
-
+    let initial_snapshot = ContextSnapshot::new(&messages, config, budget_state);
     let ctx = PhaseContext {
-        budget,
-        compact_trigger,
-        compact_target,
-        keep_recent: config.keep_recent,
-        keep_first: config.keep_first,
-        max_messages: config.max_messages,
-        message_limit_target_pct: config.message_limit_target_pct,
-        tool_output_max_lines: config.tool_output_max_lines,
+        budget: BudgetTargets {
+            max_tokens: initial_snapshot.budget,
+            compact_target: initial_snapshot.compact_target,
+        },
+        bounds: RetentionBounds {
+            keep_recent: config.keep_recent,
+            keep_first: config.keep_first,
+            max_messages: config.max_messages,
+            message_limit_target_pct: config.message_limit_target_pct,
+        },
+        shrink: ShrinkSettings {
+            tool_output_max_lines: config.tool_output_max_lines,
+        },
         policy: CompactionPolicy::default(),
     };
 
-    let before_message_count = messages.len();
-    let before_image_count = image_count(&messages);
+    let before_message_count = initial_snapshot.message_count;
     let before_estimated_tokens = budget_state.estimated_tokens;
     let before_tool_details = collect_tool_details(&messages);
+    let original_message_tokens = initial_snapshot.message_tokens;
 
-    let mut current_tokens = message_tokens;
-    let mut messages = messages;
+    let mut runtime = CompactionRuntime {
+        messages,
+        current_tokens: original_message_tokens,
+        estimated_tokens: before_estimated_tokens,
+        original_message_tokens,
+        original_estimated_tokens: before_estimated_tokens,
+        original_image_count: initial_snapshot.image_count,
+    };
     let mut all_actions = Vec::new();
     let mut level = 0;
 
-    // Use provider-aware estimate for trigger decisions only when images
-    // are present.  total_tokens() estimates ~5k per image, but the real
-    // provider cost can be 30-40k, so message_tokens alone severely
-    // underestimates pressure.  For non-image conversations the char/4
-    // estimate is accurate enough and avoids false triggers from general
-    // provider overhead (system prompt, tool definitions, etc.).
-    let effective_tokens = if before_image_count > 0 {
-        message_tokens.max(
-            budget_state
-                .estimated_tokens
-                .saturating_sub(config.system_prompt_tokens),
-        )
-    } else {
-        message_tokens
-    };
-
-    let max_messages = config.max_messages;
-    let over_message_limit = max_messages > 0 && messages.len() > max_messages;
-    let should_collapse = effective_tokens > ctx.compact_trigger && !over_message_limit;
-
-    for phase in PHASES {
-        let pre_phase_tokens = total_tokens(&messages);
-        let run_phase = match phase {
-            Phase::Reclaim => true,
-            Phase::Shrink => true,
-            Phase::Collapse => should_collapse,
-            Phase::Evict => {
-                let current_image_count = image_count(&messages);
-                let current_effective_tokens = if current_image_count > 0 {
-                    pre_phase_tokens.max(
-                        before_estimated_tokens
-                            .saturating_sub(message_tokens.saturating_sub(pre_phase_tokens))
-                            .saturating_sub(config.system_prompt_tokens),
-                    )
-                } else {
-                    pre_phase_tokens
-                };
-                let over_current_message_limit = max_messages > 0 && messages.len() > max_messages;
-                current_effective_tokens > ctx.budget || over_current_message_limit
-            }
+    for strategy in default_levels() {
+        let snapshot = ContextSnapshot::new(&runtime.messages, config, &runtime.budget_state());
+        let pressure = PressureState::classify(&snapshot, config.system_prompt_tokens);
+        let input = LevelInput {
+            snapshot: &snapshot,
+            pressure: &pressure,
+            phase_context: &ctx,
+            current_tokens: runtime.current_tokens,
         };
 
-        if !run_phase {
+        if !strategy.should_run(&input) {
             continue;
         }
 
-        let result = match phase {
-            Phase::Reclaim => {
-                let first = current_run::run(messages, &ctx);
-                let second = image_path_downgrade::run(first.messages, &ctx);
-                let mut actions = first.actions;
-                actions.extend(second.actions);
-                super::phase::PhaseResult {
-                    messages: second.messages,
-                    actions,
-                }
-            }
-            Phase::Shrink => level1_shrink::run(messages, &ctx, current_tokens),
-            Phase::Collapse => old_turns::run(messages, &ctx, current_tokens),
-            Phase::Evict => stale::run(messages, &ctx),
-        };
-
+        let messages = mem::take(&mut runtime.messages);
+        let result = strategy.run(messages, &input);
         if !result.actions.is_empty() {
-            level = level.max(phase.level());
+            level = level.max(strategy.level());
         }
 
-        let saved: usize = result
-            .actions
-            .iter()
-            .map(|a| a.before_tokens.saturating_sub(a.after_tokens))
-            .sum();
-        current_tokens = current_tokens.saturating_sub(saved);
-
-        if matches!(phase, Phase::Shrink) {
-            let image_removed = before_image_count.saturating_sub(image_count(&result.messages));
-            if image_removed > 0 {
-                let provider_extra = before_estimated_tokens.saturating_sub(pre_phase_tokens);
-                let image_provider_extra =
-                    provider_extra / before_image_count.max(1) * image_removed;
-                current_tokens = current_tokens.saturating_sub(image_provider_extra);
-            }
-        }
-
-        current_tokens = current_tokens.max(total_tokens(&result.messages));
+        let result = runtime.observe_result(result, &snapshot, config);
         all_actions.extend(result.actions);
-        messages = result.messages;
     }
 
-    let pre_sanitize_tokens = total_tokens(&messages);
-    let messages = sanitize_tool_pairs(messages);
+    let pre_sanitize_tokens = total_tokens(&runtime.messages);
+    let messages = sanitize_tool_pairs(runtime.messages);
     let post_sanitize_tokens = total_tokens(&messages);
     let sanitize_removed = pre_sanitize_tokens.saturating_sub(post_sanitize_tokens);
-    current_tokens = current_tokens.saturating_sub(sanitize_removed);
-    current_tokens = current_tokens.max(post_sanitize_tokens);
+    runtime.current_tokens = runtime.current_tokens.saturating_sub(sanitize_removed);
+    runtime.current_tokens = runtime.current_tokens.max(post_sanitize_tokens);
 
     let after_message_count = messages.len();
-    let after_message_tokens = current_tokens;
-    let after_estimated_tokens = if after_message_tokens == message_tokens {
+    let after_message_tokens = runtime.current_tokens;
+    let after_estimated_tokens = if after_message_tokens == original_message_tokens {
         before_estimated_tokens
     } else {
         before_estimated_tokens
-            .saturating_sub(message_tokens.saturating_sub(after_message_tokens))
+            .saturating_sub(original_message_tokens.saturating_sub(after_message_tokens))
             .max(after_message_tokens)
     };
     let after_tool_details = collect_tool_details(&messages);
