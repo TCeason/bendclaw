@@ -46,6 +46,28 @@ fn make_tool_result(tool_call_id: &str, tool_name: &str) -> AgentMessage {
     })
 }
 
+fn message_text_contains(message: &AgentMessage, needle: &str) -> bool {
+    match message {
+        AgentMessage::Llm(Message::User { content, .. })
+        | AgentMessage::Llm(Message::Assistant { content, .. })
+        | AgentMessage::Llm(Message::ToolResult { content, .. }) => content
+            .iter()
+            .any(|content| matches!(content, Content::Text { text } if text.contains(needle))),
+        _ => false,
+    }
+}
+
+fn message_text_starts_with(message: &AgentMessage, prefix: &str) -> bool {
+    match message {
+        AgentMessage::Llm(Message::User { content, .. })
+        | AgentMessage::Llm(Message::Assistant { content, .. })
+        | AgentMessage::Llm(Message::ToolResult { content, .. }) => content
+            .iter()
+            .any(|content| matches!(content, Content::Text { text } if text.starts_with(prefix))),
+        _ => false,
+    }
+}
+
 #[test]
 fn test_provider_overhead_does_not_make_l2_collapse_tiny_turn() {
     let messages = vec![
@@ -2677,6 +2699,194 @@ fn has_tool_result(messages: &[AgentMessage], expected_id: &str) -> bool {
             AgentMessage::Llm(Message::ToolResult { tool_call_id, .. }) if tool_call_id == expected_id
         )
     })
+}
+
+#[test]
+fn test_evict_rechecks_budget_after_shrink() {
+    let big_output = (1..=800)
+        .map(|i| format!("output line {i} with padding that makes the tool result shrinkable"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let messages = vec![
+        AgentMessage::Llm(Message::user("run command")),
+        make_assistant_with_tool_call("tc-1", "bash"),
+        make_tool_result_with_content("tc-1", "bash", &big_output),
+        make_final_assistant("done"),
+        AgentMessage::Llm(Message::user("next task")),
+    ];
+
+    let config = ContextConfig {
+        max_context_tokens: 8_000,
+        system_prompt_tokens: 0,
+        keep_recent: 2,
+        keep_first: 1,
+        max_messages: 0,
+        compact_trigger_pct: 80,
+        compact_target_pct: 75,
+        tool_output_max_lines: 20,
+        ..Default::default()
+    };
+
+    assert!(total_tokens(&messages) > config.max_context_tokens);
+
+    let result = compact_messages(messages, &config, &CompactionBudgetState {
+        estimated_tokens: 20_000,
+    });
+
+    assert!(total_tokens(&result.messages) <= config.max_context_tokens);
+    assert!(
+        !result
+            .stats
+            .actions
+            .iter()
+            .any(|action| action.method == CompactionMethod::MessagesEvicted),
+        "L3 should be skipped once shrink puts messages under budget"
+    );
+}
+
+#[test]
+fn test_evict_token_pressure_uses_budget_not_compact_target() {
+    let messages = vec![
+        AgentMessage::Llm(Message::user("keep first")),
+        AgentMessage::Llm(Message::user("small older ".repeat(2_000))),
+        AgentMessage::Llm(Message::user("oversized middle ".repeat(8_000))),
+        AgentMessage::Llm(Message::user("small recent ".repeat(2_000))),
+    ];
+
+    let first_tokens = message_tokens(&messages[0]);
+    let small_older_tokens = message_tokens(&messages[1]);
+    let small_recent_tokens = message_tokens(&messages[3]);
+    let config = ContextConfig {
+        max_context_tokens: first_tokens + small_older_tokens + small_recent_tokens,
+        system_prompt_tokens: 0,
+        keep_recent: 10,
+        keep_first: 1,
+        max_messages: 0,
+        compact_trigger_pct: 80,
+        compact_target_pct: 75,
+        ..Default::default()
+    };
+
+    let result = compact_messages(messages, &config, &CompactionBudgetState {
+        estimated_tokens: 20_000,
+    });
+
+    let after_tokens = total_tokens(&result.messages);
+    assert!(after_tokens <= config.max_context_tokens);
+    assert!(
+        after_tokens > config.max_context_tokens * config.compact_target_pct as usize / 100,
+        "L3 fallback should keep content up to budget rather than compact_target"
+    );
+    assert!(result
+        .messages
+        .iter()
+        .any(|message| message_text_contains(message, "small older")));
+    assert!(result
+        .messages
+        .iter()
+        .any(|message| message_text_contains(message, "small recent")));
+    assert!(result
+        .stats
+        .actions
+        .iter()
+        .any(|action| action.method == CompactionMethod::MessagesEvicted));
+}
+
+#[test]
+fn test_evict_tail_retention_skips_oversized_message() {
+    let messages = vec![
+        AgentMessage::Llm(Message::user("keep first")),
+        AgentMessage::Llm(Message::user(format!("small older {}", "x ".repeat(2_000)))),
+        AgentMessage::Llm(Message::user(format!("oversized {}", "y ".repeat(8_000)))),
+        AgentMessage::Llm(Message::user(format!(
+            "small recent {}",
+            "z ".repeat(2_000)
+        ))),
+    ];
+
+    let first_tokens = message_tokens(&messages[0]);
+    let small_older_tokens = message_tokens(&messages[1]);
+    let small_recent_tokens = message_tokens(&messages[3]);
+    let config = ContextConfig {
+        max_context_tokens: first_tokens + small_older_tokens + small_recent_tokens,
+        system_prompt_tokens: 0,
+        keep_recent: 10,
+        keep_first: 1,
+        max_messages: 0,
+        compact_trigger_pct: 80,
+        compact_target_pct: 75,
+        ..Default::default()
+    };
+
+    let result = compact_messages(messages, &config, &CompactionBudgetState {
+        estimated_tokens: 10_000,
+    });
+
+    assert!(result
+        .messages
+        .iter()
+        .any(|message| message_text_contains(message, "small older")));
+    assert!(result
+        .messages
+        .iter()
+        .any(|message| message_text_contains(message, "small recent")));
+    assert!(!result
+        .messages
+        .iter()
+        .any(|message| message_text_contains(message, "oversized")));
+    assert!(total_tokens(&result.messages) <= config.max_context_tokens);
+}
+
+#[test]
+fn test_evict_tail_retention_keeps_original_order_with_gaps() {
+    let messages = vec![
+        AgentMessage::Llm(Message::user("keep first")),
+        AgentMessage::Llm(Message::user(format!("small older {}", "x ".repeat(2_000)))),
+        AgentMessage::Llm(Message::user(format!("oversized {}", "y ".repeat(8_000)))),
+        AgentMessage::Llm(Message::user(format!(
+            "small recent {}",
+            "z ".repeat(2_000)
+        ))),
+    ];
+
+    let first_tokens = message_tokens(&messages[0]);
+    let small_older_tokens = message_tokens(&messages[1]);
+    let small_recent_tokens = message_tokens(&messages[3]);
+    let config = ContextConfig {
+        max_context_tokens: first_tokens + small_older_tokens + small_recent_tokens + 200,
+        system_prompt_tokens: 0,
+        keep_recent: 10,
+        keep_first: 1,
+        max_messages: 0,
+        compact_trigger_pct: 80,
+        compact_target_pct: 75,
+        ..Default::default()
+    };
+
+    let result = compact_messages(messages, &config, &CompactionBudgetState {
+        estimated_tokens: 10_000,
+    });
+
+    let small_older_pos = result
+        .messages
+        .iter()
+        .position(|message| message_text_starts_with(message, "small older"));
+    let marker_pos = result.messages.iter().position(|message| {
+        message_text_starts_with(message, "[Context compacted")
+            || message_text_contains(message, "messages removed")
+    });
+    let small_recent_pos = result
+        .messages
+        .iter()
+        .position(|message| message_text_starts_with(message, "small recent"));
+
+    match (small_older_pos, marker_pos, small_recent_pos) {
+        (Some(small_older_pos), Some(marker_pos), Some(small_recent_pos)) => {
+            assert!(small_older_pos < marker_pos);
+            assert!(marker_pos < small_recent_pos);
+        }
+        _ => panic!("expected small older, gap marker, and small recent to be retained"),
+    }
 }
 
 #[test]

@@ -106,21 +106,33 @@ pub fn compact_messages(
     let max_messages = config.max_messages;
     let over_message_limit = max_messages > 0 && messages.len() > max_messages;
     let should_collapse = effective_tokens > ctx.compact_trigger && !over_message_limit;
-    let should_evict = effective_tokens > ctx.budget || over_message_limit;
 
     for phase in PHASES {
+        let pre_phase_tokens = total_tokens(&messages);
         let run_phase = match phase {
             Phase::Reclaim => true,
             Phase::Shrink => true,
             Phase::Collapse => should_collapse,
-            Phase::Evict => should_evict,
+            Phase::Evict => {
+                let current_image_count = image_count(&messages);
+                let current_effective_tokens = if current_image_count > 0 {
+                    pre_phase_tokens.max(
+                        before_estimated_tokens
+                            .saturating_sub(message_tokens.saturating_sub(pre_phase_tokens))
+                            .saturating_sub(config.system_prompt_tokens),
+                    )
+                } else {
+                    pre_phase_tokens
+                };
+                let over_current_message_limit = max_messages > 0 && messages.len() > max_messages;
+                current_effective_tokens > ctx.budget || over_current_message_limit
+            }
         };
 
         if !run_phase {
             continue;
         }
 
-        let pre_phase_tokens = total_tokens(&messages);
         let result = match phase {
             Phase::Reclaim => {
                 let first = current_run::run(messages, &ctx);

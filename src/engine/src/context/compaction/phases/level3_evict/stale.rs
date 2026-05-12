@@ -297,9 +297,10 @@ fn drop_to_token_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> Phas
 
     let first_end = ctx.keep_first.min(len);
     let recent_start = len.saturating_sub(ctx.keep_recent);
+    let token_target = ctx.budget;
 
     if first_end >= recent_start {
-        let result = keep_within_budget(&messages, first_end, ctx.compact_target);
+        let result = keep_within_budget(&messages, first_end, token_target);
         let after_tokens = total_tokens(&result);
         let dropped = len.saturating_sub(result.len());
         let actions = if dropped > 0 && after_tokens <= before_tokens {
@@ -343,7 +344,7 @@ fn drop_to_token_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> Phas
 
     let result_tokens = total_tokens(&result);
     if result_tokens >= before_tokens {
-        let fallback = keep_within_budget(&messages, first_end, ctx.compact_target);
+        let fallback = keep_within_budget(&messages, first_end, token_target);
         let fallback_tokens = total_tokens(&fallback);
         let dropped = len.saturating_sub(fallback.len());
         let actions = if dropped > 0 && fallback_tokens <= before_tokens {
@@ -365,8 +366,8 @@ fn drop_to_token_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> Phas
         };
     }
 
-    if result_tokens > ctx.compact_target {
-        let result = keep_within_budget(&result, first_end, ctx.compact_target);
+    if result_tokens > token_target {
+        let result = keep_within_budget(&result, first_end, token_target);
         let after_tokens = total_tokens(&result);
         let dropped = len.saturating_sub(result.len());
         let actions = if dropped > 0 && after_tokens <= before_tokens {
@@ -442,33 +443,72 @@ fn keep_within_budget(
 
     // Tail-first: most recent messages first. Old summaries naturally
     // fall behind newer messages and are dropped when budget fills.
-    let mut tail: Vec<AgentMessage> = Vec::new();
-    for msg in rest.iter().rev() {
+    let mut tail: Vec<(usize, AgentMessage)> = Vec::new();
+    for (offset, msg) in rest.iter().enumerate().rev() {
         let tokens = message_tokens(msg);
         if tokens > remaining {
-            break;
+            continue;
         }
         remaining -= tokens;
-        tail.push(msg.clone());
+        tail.push((protected_end + offset, msg.clone()));
     }
     tail.reverse();
 
+    let kept_tail_indices: Vec<usize> = tail.iter().map(|(idx, _)| *idx).collect();
+    let kept_tail_tokens: Vec<usize> = tail.iter().map(|(_, msg)| message_tokens(msg)).collect();
+    let mut remaining_tail_tokens = vec![0; kept_tail_tokens.len() + 1];
+    for idx in (0..kept_tail_tokens.len()).rev() {
+        remaining_tail_tokens[idx] = remaining_tail_tokens[idx + 1] + kept_tail_tokens[idx];
+    }
     let kept = protected_end + tail.len();
     let removed = messages.len() - kept;
 
     let mut result: Vec<AgentMessage> = protected.to_vec();
     if removed > 0 {
-        let removed_end = messages.len() - tail.len();
-        debug_assert!(removed_end >= protected_end);
-        let removed_tokens: usize = messages[protected_end..removed_end]
-            .iter()
-            .map(message_tokens)
-            .sum();
-        let marker = super::super::super::marker::build_marker(messages, removed, removed_tokens);
-        if message_tokens(&marker) < removed_tokens {
-            result.push(marker);
+        let mut kept_pos = 0;
+        let mut pending_removed = 0;
+        let mut pending_removed_tokens = 0;
+        let mut used_tokens = protected_tokens;
+        for (idx, msg) in messages.iter().enumerate().skip(protected_end) {
+            let is_kept = kept_pos < kept_tail_indices.len() && kept_tail_indices[kept_pos] == idx;
+            if is_kept {
+                if pending_removed > 0 {
+                    let marker = super::super::super::marker::build_marker(
+                        messages,
+                        pending_removed,
+                        pending_removed_tokens,
+                    );
+                    let marker_tokens = message_tokens(&marker);
+                    if marker_tokens < pending_removed_tokens
+                        && used_tokens + marker_tokens + remaining_tail_tokens[kept_pos] <= budget
+                    {
+                        used_tokens += marker_tokens;
+                        result.push(marker);
+                    }
+                    pending_removed = 0;
+                    pending_removed_tokens = 0;
+                }
+                used_tokens += message_tokens(msg);
+                result.push(msg.clone());
+                kept_pos += 1;
+            } else {
+                pending_removed += 1;
+                pending_removed_tokens += message_tokens(msg);
+            }
         }
+        if pending_removed > 0 {
+            let marker = super::super::super::marker::build_marker(
+                messages,
+                pending_removed,
+                pending_removed_tokens,
+            );
+            let marker_tokens = message_tokens(&marker);
+            if marker_tokens < pending_removed_tokens && used_tokens + marker_tokens <= budget {
+                result.push(marker);
+            }
+        }
+        return result;
     }
-    result.extend(tail);
+    result.extend(tail.into_iter().map(|(_, msg)| msg));
     result
 }
