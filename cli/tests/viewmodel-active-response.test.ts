@@ -71,6 +71,22 @@ describe('buildActiveResponseBlocks', () => {
     expect(stripAnsi(rendered)).not.toContain('click')
   })
 
+  test('keeps a blank separator between revealed tail and spinner', () => {
+    const lines = blocksToLines(buildActiveResponseBlocks(defaultInput({ pendingText: 'hello world', revealCursor: 5 })))
+    expect(stripAnsi(lines[lines.length - 1]!)).toContain('Thinking')
+    expect(stripAnsi(lines[lines.length - 2]!)).toBe('')
+    expect(stripAnsi(lines[lines.length - 3]!)).toContain('hello')
+  })
+
+  test('keeps pending tail height stable when markdown becomes structural', () => {
+    const simple = blocksToLines(buildActiveResponseBlocks(defaultInput({ pendingText: 'hello world', revealCursor: 5 })))
+    const structural = blocksToLines(buildActiveResponseBlocks(defaultInput({ pendingText: '| a | b |\n| - | - |', revealCursor: 0 })))
+    expect(structural.length).toBe(simple.length)
+    expect(stripAnsi(structural[structural.length - 1]!)).toContain('Thinking')
+    expect(stripAnsi(structural[structural.length - 2]!)).toBe('')
+    expect(stripAnsi(structural[structural.length - 3]!)).toBe(' ')
+  })
+
   test('computes rendered pending tail width for timer reveal', () => {
     expect(renderedPendingTailWidth('hello world')).toBe(11)
     expect(renderedPendingTailWidth('| a | b |\n| - | - |')).toBe(0)

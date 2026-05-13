@@ -11,6 +11,7 @@ const STRUCTURAL_PENDING_RE = /(^|\n)[ \t]*(?:#{1,6}\s|[-*+]\s+|\d+\.\s+|>\s?|\|
 
 const MAX_PROGRESS_LINES = 5
 const MAX_PROGRESS_LINE_WIDTH = 120
+const RESERVED_PENDING_LINE = ' '
 
 let lastPendingKey = ''
 let lastPlainTail = ''
@@ -139,6 +140,7 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
       // change that would require rewriting the line. Keep the prompt stable
       // and wait for the completed block to append to the scroll area.
       const spinnerText = formatSpinnerLine(input.spinner, Date.now())
+      blocks.push(block([line(plain(RESERVED_PENDING_LINE))], 1))
       blocks.push(block([line(plain(spinnerText))], 1))
       return blocks
     }
@@ -152,7 +154,7 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
         ? line(colored('⏺ ', 'cyan'), ansi(revealed))
         : line(ansi(`  ${revealed}`)),
     ]
-    blocks.push(block(styledLines, isBlockStart ? 1 : 0))
+    blocks.push(block(styledLines, 1))
     const spinnerText = formatSpinnerLine(input.spinner, Date.now())
     blocks.push(block([line(plain(spinnerText))], 1))
     return blocks
