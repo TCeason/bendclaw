@@ -16,6 +16,7 @@ import {
 import { createHyperlink, isWarpTerminal, supportsHyperlinks, wrapHyperlink } from '../../render/hyperlink.js'
 import { linkifyIssueRefs } from '../../render/linkify.js'
 import { getTheme, type Theme } from '../../render/theme.js'
+import { latexToUnicode } from './math.js'
 
 let highlighter: typeof import('cli-highlight') | null = null
 try {
@@ -801,6 +802,16 @@ export function formatToken(
       const raw = (token as Tokens.HTML).text ?? (token as Tokens.HTML).raw ?? ''
       if (/^\s*<\s*br\s*\/?\s*>\s*$/i.test(raw)) return EOL
       return ''
+    }
+    case 'inlineMath': {
+      const converted = latexToUnicode((token as { text: string }).text)
+      return theme.codeInline.paint(converted)
+    }
+    case 'displayMath': {
+      const converted = latexToUnicode((token as { text: string }).text)
+      const lines = converted.split('\n').filter(l => l.trim())
+      const formatted = lines.map(l => `  ${theme.codeInline.paint(l)}`).join(EOL)
+      return EOL + formatted + EOL + EOL
     }
     default:
       return ''

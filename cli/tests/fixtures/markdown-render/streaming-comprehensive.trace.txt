@@ -554,7 +554,7 @@ Math (if supported)
 Inline: $E = mc^2$
 
 [rendered lines]
-Inline: $E = mc^2$
+Inline: E = mc²
 --- end markdown golden asst-56 ---
 
 --- markdown golden asst-57 ---
@@ -572,9 +572,8 @@ $$
 $$
 
 [rendered lines]
-$$
-\sum_{i=1}^{n} i = \frac{n(n+1)}{2}
-$$
+  ∑ᵢ₌₁ⁿ i = (n(n+1))⁄2
+--- end markdown golden asst-58 ---
 --- end markdown golden asst-58 ---
 
 --- markdown golden asst-61 ---
