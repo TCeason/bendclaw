@@ -55,7 +55,7 @@ pub async fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
         .with_tone_and_style()
         .with_output_format()
         .with_clarifying_questions()
-        .with_text_output()
+        .with_output_efficiency()
         .with_context_management()
         .with_environment_static()
         .with_tools()

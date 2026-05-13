@@ -8,7 +8,7 @@ fn build_prompt(cwd: &str) -> String {
         .with_tone_and_style()
         .with_output_format()
         .with_clarifying_questions()
-        .with_text_output()
+        .with_output_efficiency()
         .with_context_management()
         .with_environment_static()
         .with_tools()
@@ -32,7 +32,7 @@ fn no_context_files_produces_base_prompt_with_system() {
     assert!(prompt.contains("# Clarifying questions"));
     assert!(prompt.contains("read-only investigation"));
     assert!(prompt.contains("denied or blocked, adjust your approach"));
-    assert!(prompt.contains("# Text output"));
+    assert!(prompt.contains("# Communicating with the user"));
     assert!(prompt.contains("# Context management"));
     assert!(prompt.contains("# Environment"));
     assert!(prompt
@@ -45,7 +45,7 @@ fn no_context_files_produces_base_prompt_with_system() {
     assert!(prompt.contains("Do not use a colon before tool calls."));
     assert!(prompt.contains("Avoid long single lines, especially in Chinese"));
     assert!(prompt.contains("`file_path:line_number`"));
-    assert!(prompt.contains("Brief is good — silent is not."));
+    assert!(prompt.contains("you're writing for a person, not logging to a console"));
     assert!(prompt.contains("original tool result may be cleared later"));
     assert!(prompt.contains("Working directory:"));
     assert!(prompt.contains("Today's date:"));
@@ -198,7 +198,9 @@ fn sections_are_ordered_static_then_dynamic() {
     let clarifying_pos = prompt
         .find("# Clarifying questions")
         .expect("missing # Clarifying questions");
-    let text_output_pos = prompt.find("# Text output").expect("missing # Text output");
+    let text_output_pos = prompt
+        .find("# Communicating with the user")
+        .expect("missing # Communicating with the user");
     let context_pos = prompt
         .find("# Context management")
         .expect("missing # Context management");
@@ -227,11 +229,11 @@ fn sections_are_ordered_static_then_dynamic() {
     );
     assert!(
         clarifying_pos < text_output_pos,
-        "# Clarifying questions should come before # Text output"
+        "# Clarifying questions should come before # Communicating with the user"
     );
     assert!(
         text_output_pos < context_pos,
-        "# Text output should come before # Context management"
+        "# Communicating with the user should come before # Context management"
     );
     assert!(
         context_pos < env_pos,
