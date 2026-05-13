@@ -102,6 +102,15 @@ describe('TermRenderer', () => {
       renderer.destroy()
     })
 
+    test('commits trailing blank separator lines before status redraw', () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      stdout.clear()
+      renderer.appendScroll('code line\n')
+      expect(stdout.output).toContain('code line\n\n')
+      renderer.destroy()
+    })
+
     test('empty text does nothing', () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()

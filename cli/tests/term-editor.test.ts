@@ -96,6 +96,34 @@ describe('term input editor', () => {
     expect(getEditorText(next.editor)).toBe('draft')
   })
 
+  test('history prev/next handles multi-line entries', () => {
+    let editor = createEditorState()
+    let history = createHistoryState([])
+    history = pushHistory(history, 'single line')
+    history = pushHistory(history, 'line one\nline two\nline three')
+    editor = insertText(editor, 'current')
+
+    // Navigate to multi-line entry
+    let prev = historyPrev(history, editor)
+    expect(prev.changed).toBe(true)
+    expect(prev.editor.lines).toEqual(['line one', 'line two', 'line three'])
+    expect(prev.editor.cursorLine).toBe(2)
+    expect(prev.editor.cursorCol).toBe(10)
+
+    // Navigate further to single-line entry
+    prev = historyPrev(prev.history, prev.editor)
+    expect(prev.editor.lines).toEqual(['single line'])
+    expect(prev.editor.cursorLine).toBe(0)
+
+    // Navigate forward back to multi-line
+    let next = historyNext(prev.history, prev.editor)
+    expect(next.editor.lines).toEqual(['line one', 'line two', 'line three'])
+
+    // Navigate forward to saved input
+    next = historyNext(next.history, next.editor)
+    expect(getEditorText(next.editor)).toBe('current')
+  })
+
   test('move home/end update cursor', () => {
     let state = createEditorState()
     state = insertText(state, 'hello')

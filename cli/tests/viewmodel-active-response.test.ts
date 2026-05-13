@@ -42,18 +42,20 @@ describe('buildActiveResponseBlocks', () => {
     expect(result).toContain('Thinking')
   })
 
-  test('multi-line pending text falls back to spinner to avoid fixed-area flicker', () => {
+  test('multi-line pending text shows rendered content in status area', () => {
     const longText = Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n')
     const result = renderPlain(defaultInput({ pendingText: longText, termRows: 20 }))
+    // Multi-line content is now shown in the status area for smooth growth
+    expect(result).toContain('line 29')
     expect(result).toContain('Thinking')
-    expect(result).not.toContain('line 29')
   })
 
-  test('structured markdown pending text falls back to spinner', () => {
+  test('structured markdown pending text shows in status area', () => {
     const listText = Array.from({ length: 8 }, (_, i) => `- item ${i}`).join('\n')
     const result = renderPlain(defaultInput({ pendingText: listText, termRows: 24 }))
+    // Lists are safe to show in status area (stable rendering)
+    expect(result).toContain('item 7')
     expect(result).toContain('Thinking')
-    expect(result).not.toContain('item 7')
   })
 
   test('reveals pending text by display width', () => {

@@ -1,6 +1,10 @@
 import type { SessionMeta } from '../../native/index.js'
 import type { OutputLine } from '../../render/output.js'
 
+export function shouldPreloadStartupSessions(opts: { continueLatest?: boolean; resumeSessionId?: string }): boolean {
+  return Boolean(opts.continueLatest || opts.resumeSessionId)
+}
+
 export function findPreviousSession(preloaded: SessionMeta[], cwd: string): SessionMeta | undefined {
   return [...preloaded]
     .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''))

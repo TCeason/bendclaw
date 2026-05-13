@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { findPreviousSession, previousSessionLine } from '../src/term/app/session-view.js'
+import { findPreviousSession, previousSessionLine, shouldPreloadStartupSessions } from '../src/term/app/session-view.js'
 import type { SessionMeta } from '../src/native/index.js'
 
 describe('repl session view helpers', () => {
@@ -7,6 +7,15 @@ describe('repl session view helpers', () => {
     { session_id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', title: 'cwd session', cwd: '/work', source: 'local', updated_at: '2026-01-02T00:00:00Z' } as any,
     { session_id: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb', title: 'other session', cwd: '/other', updated_at: '2026-01-03T00:00:00Z' } as any,
   ]
+
+  test('plain startup does not preload previous sessions', () => {
+    expect(shouldPreloadStartupSessions({})).toBe(false)
+  })
+
+  test('continue and resume startup preload sessions', () => {
+    expect(shouldPreloadStartupSessions({ continueLatest: true })).toBe(true)
+    expect(shouldPreloadStartupSessions({ resumeSessionId: 'aaaaaaaa' })).toBe(true)
+  })
 
   test('findPreviousSession returns latest cwd session', () => {
     const older = { session_id: 'cccccccc-3333-4333-8333-cccccccccccc', title: 'older cwd session', cwd: '/work', updated_at: '2026-01-01T00:00:00Z' } as any

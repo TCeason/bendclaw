@@ -120,8 +120,73 @@ function openPlainTextDiagramFenceStart(text: string): number | null {
   return openStart
 }
 
+export function isInsideOpenMathBlock(text: string): boolean {
+  let inFence = false
+  let fenceMarker = ''
+  let openMath = false
+
+  for (const line of text.split('\n')) {
+    const fenceMatch = CODE_FENCE_RE.exec(line)
+    if (fenceMatch) {
+      const marker = fenceMatch[2]!
+      if (!inFence) {
+        inFence = true
+        fenceMarker = marker
+      } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
+        inFence = false
+        fenceMarker = ''
+      }
+      continue
+    }
+    if (inFence) continue
+
+    if (line.trim() === '$$') openMath = !openMath
+  }
+
+  return openMath
+}
+
+function firstCompleteMathBlockStart(text: string): number | null {
+  let inFence = false
+  let fenceMarker = ''
+  let openMathStart: number | null = null
+  let offset = 0
+
+  for (const line of text.split('\n')) {
+    const fenceMatch = CODE_FENCE_RE.exec(line)
+    if (fenceMatch) {
+      const marker = fenceMatch[2]!
+      if (!inFence) {
+        inFence = true
+        fenceMarker = marker
+      } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
+        inFence = false
+        fenceMarker = ''
+      }
+      offset += line.length + 1
+      continue
+    }
+
+    if (!inFence && line.trim() === '$$') {
+      if (openMathStart === null) {
+        openMathStart = offset
+      } else {
+        return openMathStart
+      }
+    }
+    offset += line.length + 1
+  }
+
+  return null
+}
+
 export function findStreamingCommitPoint(text: string): number {
   if (!text) return 0
+
+  if (isInsideOpenMathBlock(text)) return 0
+
+  const completeMathBlockStart = firstCompleteMathBlockStart(text)
+  if (completeMathBlockStart !== null) return completeMathBlockStart
 
   const openTextDiagramStart = openPlainTextDiagramFenceStart(text)
   if (openTextDiagramStart !== null) return openTextDiagramStart

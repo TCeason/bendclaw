@@ -192,7 +192,7 @@ export function pushHistory(state: HistoryState, entry: string): HistoryState {
 }
 
 export function historyPrev(history: HistoryState, editor: EditorState): { history: HistoryState; editor: EditorState; changed: boolean } {
-  if (editor.lines.length !== 1 || history.index <= 0) {
+  if (history.index <= 0) {
     return { history, editor, changed: false }
   }
 
@@ -202,34 +202,41 @@ export function historyPrev(history: HistoryState, editor: EditorState): { histo
   }
   const nextIndex = nextHistory.index - 1
   const entry = nextHistory.entries[nextIndex]!
+  const lines = entry.split('\n')
+  const lastLine = lines[lines.length - 1]!
   return {
     history: { ...nextHistory, index: nextIndex },
-    editor: withoutGhost({ ...editor, lines: [entry], cursorLine: 0, cursorCol: entry.length, completionCandidates: [] }),
+    editor: withoutGhost({ ...editor, lines, cursorLine: lines.length - 1, cursorCol: lastLine.length, completionCandidates: [] }),
     changed: true,
   }
 }
 
 export function historyNext(history: HistoryState, editor: EditorState): { history: HistoryState; editor: EditorState; changed: boolean } {
-  if (editor.lines.length !== 1 || history.index >= history.entries.length) {
+  if (history.index >= history.entries.length) {
     return { history, editor, changed: false }
   }
 
   const nextIndex = history.index + 1
   if (nextIndex === history.entries.length) {
+    const lines = history.savedInput.split('\n')
+    const lastLine = lines[lines.length - 1]!
     return {
       history: { ...history, index: nextIndex },
-      editor: withoutGhost({ ...editor, lines: [history.savedInput], cursorLine: 0, cursorCol: history.savedInput.length, completionCandidates: [] }),
+      editor: withoutGhost({ ...editor, lines, cursorLine: lines.length - 1, cursorCol: lastLine.length, completionCandidates: [] }),
       changed: true,
     }
   }
 
   const entry = history.entries[nextIndex]!
+  const lines = entry.split('\n')
+  const lastLine = lines[lines.length - 1]!
   return {
     history: { ...history, index: nextIndex },
-    editor: withoutGhost({ ...editor, lines: [entry], cursorLine: 0, cursorCol: entry.length, completionCandidates: [] }),
+    editor: withoutGhost({ ...editor, lines, cursorLine: lines.length - 1, cursorCol: lastLine.length, completionCandidates: [] }),
     changed: true,
   }
 }
+
 
 // ---------------------------------------------------------------------------
 // Ctrl+U — clear line before cursor

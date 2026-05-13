@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import chalk from 'chalk'
 import stringWidth from 'string-width'
 import { createSpinnerState } from '../src/term/spinner.js'
 import { createInitialState } from '../src/term/app/state.js'
@@ -145,6 +146,22 @@ describe('term stream machine', () => {
     expect(committed).not.toContain('plain line 7')
     expect(state.streamingText).toBe('plain line 7\nplain line 8')
     expect(state.assistantCommitted).toBe(true)
+  })
+
+  test('line-by-line fallback keeps open math blocks pending', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+    const text = 'Intro\n\n$$\n' + Array.from({ length: 12 }, (_, i) => `x_${i} = ${i}`).join('\n')
+
+    const update = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { delta: text },
+    }, { termRows: 18 })
+
+    state = update.state
+    expect(update.commitLines.length).toBe(0)
+    expect(state.streamingText).toBe(text)
   })
 
   test('verbose mode: no duplicate commits across llm_call_completed and assistant_completed', () => {
@@ -542,10 +559,30 @@ test('commits code-fenced lines incrementally, not just at close', () => {
   expect(codeLines.length).toBeGreaterThanOrEqual(2)
   expect(codeLines.find(l => l.text.includes('const a = 1'))).toBeTruthy()
   expect(codeLines.find(l => l.text.includes('const b = 2'))).toBeTruthy()
+  expect(new Set(codeLines.map(l => l.codeBlockId)).size).toBe(1)
+  expect(codeLines.every(l => l.codeLanguage === 'js')).toBe(true)
 
   // Should also have assistant lines for the prose before and after
   const proseLines = result1.commitLines.filter(l => l.kind === 'assistant' && l.text !== '')
   expect(proseLines.length).toBeGreaterThanOrEqual(1)
+})
+
+test('streams JSON fenced lines with syntax highlighting', () => {
+  const prevLevel = chalk.level
+  chalk.level = 3
+  try {
+    const prev = createStreamMachineState(createInitialState(), createSpinnerState('responding'))
+    const result = reduceDelta(prev, '```json\n{\n  "name": "evot",\n  "enabled": true\n')
+    const codeLines = result.commitLines.filter(l => l.kind === 'code_line' && l.text)
+
+    expect(codeLines.length).toBeGreaterThanOrEqual(3)
+    expect(codeLines.some(l => l.text.includes('\x1b['))).toBe(true)
+    expect(codeLines.some(l => l.text.includes('"name"'))).toBe(true)
+    expect(codeLines.every(l => l.codeLanguage === 'json')).toBe(true)
+    expect(new Set(codeLines.map(l => l.codeBlockId)).size).toBe(1)
+  } finally {
+    chalk.level = prevLevel
+  }
 })
 
 test('flushStreaming does not re-commit an open fence as a second-time assistant block', () => {

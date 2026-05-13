@@ -80,6 +80,28 @@ describe('renderMarkdown', () => {
     expect(result).toContain('italic')
   })
 
+  test('does not split emphasis after Chinese punctuation into a glued bullet', () => {
+    const result = render('这是普通文本。**这是粗体文本**。*这是斜体文本*。')
+      .replace(/\u200b/g, '')
+
+    expect(result).toContain('这是普通文本。')
+    expect(result).toContain('这是粗体文本')
+    expect(result).toContain('这是斜体文本')
+    expect(result).not.toContain('\n- 这是斜体文本')
+  })
+
+  test('keeps open math blocks pending while streaming', () => {
+    expect(findStreamingCommitPoint('Before\n\n$$\nE = mc^2')).toBe(0)
+    expect(findStreamingCommitPoint('Before\n\n$$\nE = mc^2\n$$\n\nAfter')).toBeGreaterThan(0)
+  })
+
+  test('keeps complete math blocks together while streaming', () => {
+    const md = 'Block:\n\n$$\n\\sum_{i=1}^{n} x_i\n$$\n\nAfter'
+    const splitAt = findStreamingCommitPoint(md)
+
+    expect(splitAt).toBe('Block:\n\n'.length)
+  })
+
   test('renders inline code', () => {
     const result = render('use `foo()` here')
     expect(result).toContain('foo()')
@@ -295,6 +317,19 @@ describe('renderMarkdown', () => {
       expect(result).toMatch(/^ {8}# session_id: 自定义，非 OTel$/m)
     } finally {
       process.stdout.columns = prev
+    }
+  })
+
+  test('JSON fenced code blocks are highlighted', () => {
+    const prevLevel = chalk.level
+    chalk.level = 3
+    try {
+      const result = renderMarkdown('```json\n{\n  "name": "evot",\n  "enabled": true\n}\n```')
+      expect(result).toContain('\x1b[')
+      expect(result).toContain('"name"')
+      expect(result).toContain('true')
+    } finally {
+      chalk.level = prevLevel
     }
   })
 
@@ -904,6 +939,20 @@ describe('renderMarkdown', () => {
     try {
       const result = render('INSERT ' + 'x'.repeat(80))
       expect(result.split('\n').length).toBeGreaterThan(1)
+    } finally {
+      process.stdout.columns = prev
+    }
+  })
+
+  test('keeps wrapped paragraph continuation flush with first line', () => {
+    const prev = process.stdout.columns
+    process.stdout.columns = 84
+    try {
+      const result = render('Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.')
+      const lines = result.split('\n').filter(Boolean)
+
+      expect(lines.length).toBeGreaterThan(1)
+      expect(lines.every(line => !line.startsWith(' '))).toBe(true)
     } finally {
       process.stdout.columns = prev
     }

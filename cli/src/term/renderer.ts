@@ -84,8 +84,11 @@ export class TermRenderer {
     this.clearStatusArea()
     // Write content (it scrolls naturally)
     this.write(text)
-    // Ensure trailing newline
-    if (!text.endsWith('\n')) this.write('\n')
+    // Ensure every logical output line is committed to the scrollback.  When
+    // text already ends with "\n", the cursor is sitting on that final empty
+    // line; moving one more row makes trailing separator lines durable instead
+    // of letting the next status redraw overwrite them.
+    this.write('\n')
     // Do NOT redraw status here — caller is responsible for calling
     // setStatus() after appendScroll to avoid stale content being redrawn.
     if (!outerBatch) this.flushBatch()

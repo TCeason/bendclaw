@@ -480,7 +480,7 @@ const ORDERED_GLUED_AFTER_COLON_RE =
 // e.g. `...秒）- Decode 继续`. Split only after sentence-ish punctuation so
 // hyphenated words and ranges stay intact.
 const BULLET_GLUED_AFTER_SENTENCE_RE =
-  /([。．.!！？?!；;）】」』》])([-*+])(?=[ \t]+\S|[^\s\-*+\x00-\x7f])/g
+  /([。．.!！？?!；;）】」』》])([-+]|\*(?![^*\n]+\*))(?:[ \t]+(?=\S)|(?=[^\s\-*+\x00-\x7f]))/g
 // Ordered marker glued directly after a CJK sentence-ending punctuation, e.g.
 // `…等它完全加载（书签列表出现）。2. 保持这个标签活动`. Requires the digit
 // to be followed by `. ` + a non-digit so we don't break decimals (`见 3.1`),

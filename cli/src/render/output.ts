@@ -22,6 +22,11 @@ export interface OutputLine {
   kind: 'user' | 'assistant' | 'code_line' | 'thinking' | 'tool' | 'tool_result' | 'verbose' | 'error' | 'system' | 'run_summary'
   text: string
   rawMarkdown?: string
+  codeBlockId?: string
+  codeLanguage?: string
+  /** Visual spacer inserted between streamed markdown chunks. It creates a
+   *  blank line but must not start a new assistant message marker. */
+  isContinuationSpacer?: boolean
 }
 
 // ---------------------------------------------------------------------------

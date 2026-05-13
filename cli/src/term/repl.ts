@@ -18,8 +18,10 @@ import {
   buildPromptBlocks,
   buildOverlayBlocks,
   blocksToLines,
+  styledLineToAnsi,
   type OverlayState,
   type PromptVMInput,
+  type ViewBlock,
 } from './viewmodel/index.js'
 import { renderedPendingTailWidth } from './viewmodel/active-response.js'
 import {
@@ -63,6 +65,7 @@ import { handleSlashCommand } from './app/commands.js'
 import { askStateToResponse } from './app/ask-user.js'
 import { syncProvider } from './app/provider.js'
 import chalk from 'chalk'
+import stripAnsi from 'strip-ansi'
 import {
   shouldCollapse,
   cleanPastedText,
@@ -87,7 +90,7 @@ import {
   resolveSessionByPrefix,
   selectSessionPool,
 } from './app/resume.js'
-import { findPreviousSession, previousSessionLine } from './app/session-view.js'
+import { findPreviousSession, shouldPreloadStartupSessions } from './app/session-view.js'
 import { handleSelectorControl } from './app/selector-control.js'
 import { decideReplControl, type ReplControlAction } from './app/repl-control.js'
 
@@ -111,6 +114,16 @@ function getGitVersion(cwd: string): string | null {
     return sha || null
   } catch {
     return null
+  }
+}
+
+function isGitDirty(cwd: string): boolean {
+  try {
+    const result = Bun.spawnSync(['git', 'status', '--porcelain'], { cwd, stdout: 'pipe', stderr: 'pipe' })
+    if (result.exitCode !== 0) return false
+    return result.stdout.toString().length > 0
+  } catch {
+    return false
   }
 }
 
@@ -144,22 +157,98 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let expanded = false
   const compactLines: OutputLine[] = []
   const expandedLines: OutputLine[] = []
+  // Paced commit queue: assistant streaming lines are queued here and
+  // drained gradually (a few lines per spinner tick) to produce a smooth
+  // line-by-line append effect instead of large bursts.
+  const pacedQueue: OutputLine[] = []
+  const PACED_DRAIN_LINES = 2
   let lastProgressLineCount = 0
   const screenLog = new ScreenLog()
   const gitVersion = getGitVersion(agent.cwd)
-  const markdownRendererVersion = `evot-${appVersion}:markdown-trace-v1${gitVersion ? `:git-${gitVersion}` : ''}`
+  const gitDirty = isGitDirty(agent.cwd)
+  const markdownRendererVersion = `evot-${appVersion}:markdown-trace-v2${gitVersion ? `:git-${gitVersion}` : ''}${gitDirty ? ':dirty' : ''}`
   let markdownTraceId = 0
 
-  function logMarkdownTrace(outputLines: OutputLine[], renderedLines: string[]) {
+  function logMarkdownTrace(outputLines: OutputLine[], renderedLines: string[], allLines: OutputLine[] = outputLines) {
     const raw = outputLines.find(line => line.kind === 'assistant' && line.rawMarkdown)?.rawMarkdown
+      ?? codeLinesToFence(expandCodeTraceLines(outputLines, allLines))
     if (!raw) return
     const firstLine = outputLines.find(line => line.kind === 'assistant' && line.rawMarkdown === raw)
+      ?? outputLines.find(line => line.kind === 'code_line')
     screenLog.logMarkdownTrace({
       messageId: firstLine?.id ?? `markdown-${++markdownTraceId}`,
       rendererVersion: markdownRendererVersion,
       rawMarkdown: raw,
       renderedLines,
     })
+  }
+
+  function logMarkdownRenderTrace(outputLines: OutputLine[], blocks: ViewBlock[], renderedLines: string[], statusLines: string[], allLines: OutputLine[] = outputLines) {
+    const traceLines = expandCodeTraceLines(outputLines, allLines)
+    const raw = outputLines.find(line => line.kind === 'assistant' && line.rawMarkdown)?.rawMarkdown
+      ?? codeLinesToFence(traceLines)
+    if (!raw) return
+    const firstLine = outputLines.find(line => line.kind === 'assistant' && line.rawMarkdown === raw)
+      ?? outputLines.find(line => line.kind === 'code_line')
+    const messageId = firstLine?.id ?? `markdown-render-${++markdownTraceId}`
+    const appendText = renderedLines.join('\n') + '\n'
+    screenLog.logMarkdownRenderTrace({
+      messageId,
+      rendererVersion: markdownRendererVersion,
+      columns: renderer.termCols,
+      rows: renderer.termRows,
+      source: {
+        rawMarkdown: raw,
+      },
+      outputLines: traceLines.map(line => ({
+        id: line.id,
+        kind: line.kind,
+        textAnsi: line.text,
+        ...(line.rawMarkdown !== undefined ? { rawMarkdown: line.rawMarkdown } : {}),
+        ...(line.codeBlockId !== undefined ? { codeBlockId: line.codeBlockId } : {}),
+        ...(line.codeLanguage !== undefined ? { codeLanguage: line.codeLanguage } : {}),
+      })),
+      viewBlocks: blocks.map(block => ({
+        marginTop: block.marginTop ?? 0,
+        linesAnsi: block.lines.map(styledLineToAnsi),
+      })),
+      renderedLinesAnsi: renderedLines,
+      appendTextAnsi: appendText,
+      statusLinesAnsi: statusLines,
+    })
+  }
+
+  function expandCodeTraceLines(outputLines: OutputLine[], allLines: OutputLine[]): OutputLine[] {
+    const codeIds = new Set(outputLines
+      .filter(line => line.kind === 'code_line' && line.codeBlockId)
+      .map(line => line.codeBlockId!))
+    if (codeIds.size === 0) return outputLines
+    const expanded = allLines.filter(line => line.kind === 'code_line' && line.codeBlockId && codeIds.has(line.codeBlockId))
+    return expanded.length > 0 ? expanded : outputLines
+  }
+
+  function codeLinesToFence(outputLines: OutputLine[]): string | null {
+    const groups: { lang: string; lines: string[] }[] = []
+    let current: { id: string; lang: string; lines: string[] } | null = null
+    for (const line of outputLines) {
+      if (line.kind !== 'code_line') continue
+      const text = stripAnsi(line.text).replace(/^ {2}/, '')
+      if (!text.trim()) {
+        current = null
+        continue
+      }
+      const id = line.codeBlockId ?? 'legacy-code-block'
+      if (!current || current.id !== id) {
+        current = { id, lang: line.codeLanguage ?? '', lines: [] }
+        groups.push({ lang: current.lang, lines: current.lines })
+      }
+      current.lines.push(text)
+    }
+    if (groups.length === 0) return null
+    return groups.map(group => {
+      const fence = group.lang ? `\`\`\`${group.lang}` : '```'
+      return [fence, ...group.lines, '```'].join('\n')
+    }).join('\n\n')
   }
 
   // Server state
@@ -192,7 +281,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   try { configInfo = agent.configInfo() } catch {}
 
   let preloadedSessions: SessionMeta[] = []
-  try { preloadedSessions = await agent.listSessions(opts.continueLatest ? 0 : 20) } catch {}
+  if (shouldPreloadStartupSessions(opts)) {
+    try { preloadedSessions = await agent.listSessions(opts.continueLatest ? 0 : 20) } catch {}
+  }
 
   // Git info (computed once at startup, refreshed on cwd change)
   let gitRepo: string | null = null
@@ -237,9 +328,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     } else {
       commitLines([{ id: 'sys-resume-err', kind: 'system', text: chalk.red(`Session not found: ${opts.resumeSessionId}`) }])
     }
-  } else {
-    const match = findPreviousSession(preloadedSessions, agent.cwd)
-    if (match) commitLines([previousSessionLine(match)])
   }
 
   renderStatus()
@@ -278,8 +366,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     return renderBanner(agent.model, agent.cwd, configInfo, renderer.termCols, serverState)
   }
 
-  function renderStatus() {
-    if (destroyed) return
+  function renderStatus(): string[] {
+    if (destroyed) return []
     // The pending tail is rendered via renderMarkdownCached + revealCursor
     // so setStatus only ever diffs a single prefix-extending line; completed
     // markdown blocks are committed to the scroll area by the stream machine.
@@ -301,10 +389,23 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       assistantCommitted: streamMachine?.assistantCommitted,
       revealCursor: streamMachine?.revealCursor ?? 0,
     })
+
+    // Show queued lines in the status area so content appears immediately
+    // (smooth growth) before being drained to the scroll zone.
+    // Cap to half the terminal height to prevent pushing the prompt off-screen.
+    const maxQueueDisplay = Math.max(4, Math.floor(renderer.termRows / 2))
+    const queueSlice = pacedQueue.length > maxQueueDisplay
+      ? pacedQueue.slice(pacedQueue.length - maxQueueDisplay)
+      : pacedQueue
+    const queueBlocks = queueSlice.length > 0
+      ? buildOutputBlocks(queueSlice, outputContextFor(compactLines))
+      : []
+
     const overlayBlocks = buildOverlayBlocks(overlay, renderer.termCols)
     const promptBlocks = buildPromptBlocks(getPromptVM())
-    const statusLines = blocksToLines([...activeBlocks, ...overlayBlocks, ...promptBlocks])
+    const statusLines = blocksToLines([...queueBlocks, ...activeBlocks, ...overlayBlocks, ...promptBlocks])
     renderer.setStatus(statusLines)
+    return statusLines
   }
 
   function restoreCurrentViewport() {
@@ -315,30 +416,52 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (text) renderer.appendScroll(text)
   }
 
+  function outputContextFor(lines: OutputLine[]): { prevKind?: string; prevCodeBlockId?: string } {
+    const prev = lines.length > 0 ? lines[lines.length - 1] : undefined
+    return {
+      prevKind: prev?.kind,
+      prevCodeBlockId: prev?.kind === 'code_line' ? prev.codeBlockId : undefined,
+    }
+  }
+
   function commitLines(outputLines: OutputLine[]) {
     if (outputLines.length === 0) return
-    const prevKind = compactLines.length > 0 ? compactLines[compactLines.length - 1]!.kind : undefined
+    const context = outputContextFor(compactLines)
     compactLines.push(...outputLines)
     expandedLines.push(...outputLines)
     const visible = expanded ? expandedLines.slice(-outputLines.length) : outputLines
-    const blocks = buildOutputBlocks(visible, prevKind)
+    const blocks = buildOutputBlocks(visible, context)
     const rendered = blocksToLines(blocks)
     renderer.beginBatch()
     renderer.appendScroll(rendered.join('\n'))
-    renderStatus()
+    const statusLines = renderStatus()
     renderer.flushBatch()
     screenLog.logLines(rendered)
-    logMarkdownTrace(outputLines, rendered)
+    logMarkdownTrace(outputLines, rendered, compactLines)
+    logMarkdownRenderTrace(outputLines, blocks, rendered, statusLines, compactLines)
+  }
+
+  /** Drain a few lines from the paced commit queue to the scroll area. */
+  function drainPacedQueue(): void {
+    if (pacedQueue.length === 0) return
+    const batch = pacedQueue.splice(0, PACED_DRAIN_LINES)
+    commitLines(batch)
+  }
+
+  /** Flush all queued lines immediately (tool start, turn end). */
+  function flushPacedQueue(): void {
+    if (pacedQueue.length === 0) return
+    commitLines(pacedQueue.splice(0))
   }
 
   function commitToolStarted(event: import('../native/index.js').RunEvent): void {
     const compact = buildToolStartedLines(event)
     const exp = buildToolStartedLines(event, true)
-    const prevKind = compactLines.length > 0 ? compactLines[compactLines.length - 1]!.kind : undefined
+    const context = outputContextFor(compactLines)
     compactLines.push(...compact)
     expandedLines.push(...exp)
     const visible = expanded ? exp : compact
-    const blocks = buildOutputBlocks(visible, prevKind)
+    const blocks = buildOutputBlocks(visible, context)
     const rendered = blocksToLines(blocks)
     renderer.beginBatch()
     renderer.appendScroll(rendered.join('\n'))
@@ -350,11 +473,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   function commitToolFinished(event: import('../native/index.js').RunEvent): void {
     const compact = buildToolFinishedLines(event)
     const exp = buildToolFinishedLines(event, true)
-    const prevKind = compactLines.length > 0 ? compactLines[compactLines.length - 1]!.kind : undefined
+    const context = outputContextFor(compactLines)
     compactLines.push(...compact)
     expandedLines.push(...exp)
     const visible = expanded ? exp : compact
-    const blocks = buildOutputBlocks(visible, prevKind)
+    const blocks = buildOutputBlocks(visible, context)
     const rendered = blocksToLines(blocks)
     renderer.beginBatch()
     renderer.appendScroll(rendered.join('\n'))
@@ -420,7 +543,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       spinnerState = advanceSpinner(spinnerState)
       if (streamMachine) {
         streamMachine = { ...streamMachine, spinnerState }
-        renderStatus()
+        const drained = pacedQueue.length > 0
+        drainPacedQueue()
+        // Skip redundant renderStatus when drainPacedQueue already rendered
+        // via commitLines.
+        if (!drained) renderStatus()
       }
       // Terminal title animation — update at ~960ms like Claude Code.
       if (spinnerState.frame % TITLE_INTERVAL_FRAMES === 0) {
@@ -589,6 +716,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         if (!streamMachine) break
 
         if (event.kind === 'ask_user') {
+          flushPacedQueue()
           const payload = (event.payload ?? {}) as { questions?: AskUserRequest['questions'] }
           if (payload.questions && payload.questions.length > 0) {
             const questions: AskQuestion[] = payload.questions.map(q => ({
@@ -614,10 +742,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         spinnerState = update.state.spinnerState
 
         if (!update.suppressToolStarted && event.kind === 'tool_started') {
+          flushPacedQueue()
           commitToolStarted(event)
           lastProgressLineCount = 0
         }
         if (!update.suppressToolFinished && event.kind === 'tool_finished') {
+          flushPacedQueue()
           commitToolFinished(event)
           lastProgressLineCount = 0
         }
@@ -650,11 +780,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             // Dual-commit: compact in compactLines, expanded in expandedLines
             const compact = update.commitLines
             const exp = update.expandedCommitLines
-            const prevKind = compactLines.length > 0 ? compactLines[compactLines.length - 1]!.kind : undefined
+            const context = outputContextFor(compactLines)
             compactLines.push(...compact)
             expandedLines.push(...exp)
             const visible = expanded ? exp : compact
-            const blocks = buildOutputBlocks(visible, prevKind)
+            const blocks = buildOutputBlocks(visible, context)
             const rendered = blocksToLines(blocks)
             renderer.beginBatch()
             renderer.appendScroll(rendered.join('\n'))
@@ -663,7 +793,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             screenLog.logLines(rendered)
             logMarkdownTrace(visible, rendered)
           } else {
-            commitLines(update.commitLines)
+            pacedQueue.push(...update.commitLines)
           }
         }
 
@@ -680,6 +810,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
 
       if (streamMachine) {
+        flushPacedQueue()
         const final = flushStreaming(streamMachine)
         if (final.lines.length > 0) {
           commitLines(final.lines)
@@ -689,6 +820,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
     } catch (err: any) {
       if (streamMachine) {
+        flushPacedQueue()
         const final = flushStreaming(streamMachine)
         if (final.lines.length > 0) commitLines(final.lines)
       }
@@ -831,6 +963,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     commitLines([{ id, kind: 'system', text }])
   }
 
+  function formatLogPaths(logPath: string | null, markdownPath: string | null, markdownJsonlPath: string | null): string | null {
+    if (!logPath) return null
+    const lines = [`  Log: ${logPath}`]
+    if (markdownPath) lines.push(`  Markdown: ${markdownPath}`)
+    if (markdownJsonlPath) lines.push(`  Markdown JSONL: ${markdownJsonlPath}`)
+    return lines.join('\n')
+  }
+
   function handleLoadingEnter() {
     const displayText = getDisplayText()
     const imageResult = buildImageContentBlocks()
@@ -845,8 +985,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const logPath = screenLog.filePath
       const markdownPath = screenLog.markdownTraceFilePath
       if (logPath) {
-        const text = markdownPath ? `  Log: ${logPath}\n  Markdown: ${markdownPath}` : `  Log: ${logPath}`
-        commitLines([{ id: 'sys-log', kind: 'system', text }])
+        const text = formatLogPaths(logPath, screenLog.markdownTraceFilePath, screenLog.markdownRenderTraceFilePath)
+        commitLines([{ id: 'sys-log', kind: 'system', text: text ?? `  Log: ${logPath}` }])
       }
       else commitLines([{ id: 'sys-log', kind: 'system', text: '  No active screen log.' }])
       renderStatus()
@@ -1055,13 +1195,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         renderStatus()
         break
       case 'up': {
-        // Multi-line: move cursor up within editor
-        if (editor.lines.length > 1) {
+        // Multi-line: move cursor up within editor, unless already at first line
+        if (editor.lines.length > 1 && editor.cursorLine > 0) {
           editor = moveUp(editor)
           renderStatus()
           break
         }
-        // Single-line: history navigation
+        // At first line or single-line: history navigation
         const result = historyPrev(historyState, editor)
         if (result.changed) {
           historyState = result.history
@@ -1071,13 +1211,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         break
       }
       case 'down': {
-        // Multi-line: move cursor down within editor
-        if (editor.lines.length > 1) {
+        // Multi-line: move cursor down within editor, unless already at last line
+        if (editor.lines.length > 1 && editor.cursorLine < editor.lines.length - 1) {
           editor = moveDown(editor)
           renderStatus()
           break
         }
-        // Single-line: history navigation
+        // At last line or single-line: history navigation
         const result = historyNext(historyState, editor)
         if (result.changed) {
           historyState = result.history
@@ -1126,8 +1266,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       try { preloadedSessions = await agent.listSessions(20) } catch {}
       const banner = currentBannerText()
       renderer.appendScroll(banner)
-      const match = findPreviousSession(preloadedSessions, agent.cwd)
-      if (match) commitLines([previousSessionLine(match)])
     }
     if (result.newSession) {
       // Abort any in-flight streaming
@@ -1459,11 +1597,19 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     } else if (!query) {
       const logPath = screenLog.filePath
       const markdownPath = screenLog.markdownTraceFilePath
+      const markdownJsonlPath = screenLog.markdownRenderTraceFilePath
       if (logPath) {
-        const text = markdownPath ? `  Log: ${logPath}\n  Markdown: ${markdownPath}` : `  Log: ${logPath}`
-        commitLines([{ id: 'sys-log', kind: 'system', text }])
+        const text = formatLogPaths(logPath, markdownPath, markdownJsonlPath)
+        commitLines([{ id: 'sys-log', kind: 'system', text: text ?? `  Log: ${logPath}` }])
       }
-      else if (sid) commitLines([{ id: 'sys-log', kind: 'system', text: `  Log: ${join(logDir, `${sid}.screen.log`)}\n  Markdown: ${join(logDir, `${sid}.markdown.log`)}` }])
+      else if (sid) {
+        const text = formatLogPaths(
+          join(logDir, `${sid}.screen.log`),
+          join(logDir, `${sid}.markdown.log`),
+          join(logDir, `${sid}.markdown.jsonl`),
+        )
+        commitLines([{ id: 'sys-log', kind: 'system', text: text ?? `  Log: ${join(logDir, `${sid}.screen.log`)}` }])
+      }
       else commitLines([{ id: 'sys-log', kind: 'system', text: `  Log dir: ${logDir} (no active session)` }])
     } else if (!sid) {
       commitLines([{ id: 'sys-log-err', kind: 'system', text: '  No active session to analyze.' }])
@@ -1476,6 +1622,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         '',
         `Screen log file to analyze:\n${logPath}`,
         `Raw markdown trace, if present:\n${join(logDir, `${sid}.markdown.log`)}`,
+        `Markdown render JSONL trace, if present:\n${join(logDir, `${sid}.markdown.jsonl`)}`,
         '',
         'Rules:',
         '- Read relevant log sections before answering; do not guess',

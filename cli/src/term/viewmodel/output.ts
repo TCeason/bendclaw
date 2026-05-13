@@ -1,11 +1,19 @@
 import type { OutputLine } from '../../render/output.js'
 import { line, block, plain, dim, bold, colored, type ViewBlock, type StyledLine } from './types.js'
 
-export function buildOutputBlocks(lines: OutputLine[], initialPrevKind?: string): ViewBlock[] {
+export interface OutputContext {
+  prevKind?: string
+  prevCodeBlockId?: string
+}
+
+export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | string = {}): ViewBlock[] {
   const blocks: ViewBlock[] = []
-  let prevKind: string | undefined = initialPrevKind
+  const initialContext: OutputContext = typeof context === 'string' ? { prevKind: context } : context
+  let prevKind: string | undefined = initialContext.prevKind
+  let prevCodeBlockId: string | undefined = initialContext.prevCodeBlockId
 
   for (const ol of lines) {
+    let nextPrevKind: string | undefined = ol.kind
     switch (ol.kind) {
       case 'user':
         blocks.push(block([
@@ -15,11 +23,13 @@ export function buildOutputBlocks(lines: OutputLine[], initialPrevKind?: string)
 
       case 'assistant': {
         // Empty-text assistant lines are block-spacing separators inserted by
-        // the stream machine.  Don't give them the ⏺ dot and don't let them
-        // flip prevKind so the next non-empty line still counts as block start.
+        // the stream machine. Continuation spacers keep the next rendered
+        // assistant line in the same message, so headings in later streamed
+        // chunks don't get another leading dot.
         if (!ol.text) {
           blocks.push(block([line(plain(''))]))
-          break   // intentionally skip prevKind update
+          nextPrevKind = ol.isContinuationSpacer ? 'assistant' : prevKind
+          break   // intentionally skip normal prevKind update
         }
         const isBlockStart = prevKind !== 'assistant'
         const dot = isBlockStart ? colored('⏺ ', 'cyan') : plain('  ')
@@ -36,10 +46,17 @@ export function buildOutputBlocks(lines: OutputLine[], initialPrevKind?: string)
         // code_line entries are used as block separators around the fence.
         if (!ol.text) {
           blocks.push(block([line(plain(''))]))
+          nextPrevKind = undefined
+          prevCodeBlockId = undefined
           break
         }
-        const marginTop = prevKind !== 'code_line' && prevKind !== 'assistant' ? 1 : 0
+        const hasCodeBlockId = ol.codeBlockId !== undefined
+        const isLegacyContinuation = prevKind === 'code_line' && !hasCodeBlockId && prevCodeBlockId === undefined
+        const isSameCodeBlock = prevKind === 'code_line' && hasCodeBlockId && ol.codeBlockId === prevCodeBlockId
+        const isNewCodeBlock = prevKind === 'code_line' && hasCodeBlockId && prevCodeBlockId !== undefined && ol.codeBlockId !== prevCodeBlockId
+        const marginTop = isLegacyContinuation || isSameCodeBlock || prevKind === 'assistant' ? 0 : isNewCodeBlock ? 2 : 1
         blocks.push(block([line(plain(`  ${ol.text}`))], marginTop))
+        prevCodeBlockId = ol.codeBlockId
         break
       }
 
@@ -79,7 +96,8 @@ export function buildOutputBlocks(lines: OutputLine[], initialPrevKind?: string)
       default:
         break
     }
-    prevKind = ol.kind
+    if (ol.kind !== 'code_line') prevCodeBlockId = undefined
+    prevKind = nextPrevKind
   }
 
   return blocks

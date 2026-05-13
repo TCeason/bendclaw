@@ -7,6 +7,7 @@ import stringWidth from 'string-width'
 
 const TABLE_TAIL_RE = /^[│|├┌└]/
 const FENCE_TAIL_RE = /(^|\n)[ \t]*(```+|~~~+)/
+const PIPE_TABLE_RE = /(?:^|\n)\s*\|.*\|[ \t]*\n\s*\|.*\|/
 const STRUCTURAL_PENDING_RE = /(^|\n)[ \t]*(?:#{1,6}\s|[-*+]\s+|\d+\.\s+|>\s?|\|.*\||[│├└┌]|(?: {4}|\t)\S)/
 
 const MAX_PROGRESS_LINES = 5
@@ -115,6 +116,12 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
   // is a strict prefix extension of the previous one — the renderer's
   // setStatus always hits its append fast-path, producing a true typing
   // effect without flicker.
+  //
+  // For multi-line pending text (lists, headings, blockquotes), show all
+  // rendered lines in the status area so content appears to grow smoothly
+  // rather than accumulating behind a spinner and bursting out at commit.
+  // Tables and box drawings still fall back to spinner because their
+  // column widths depend on unseen future lines.
   if (input.pendingText) {
     const renderedFull = renderMarkdownCached(input.pendingText)
     const renderedLines = renderedFull.split('\n')
@@ -123,22 +130,23 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
     while (lastIdx >= 0 && !renderedLines[lastIdx]!.trim()) lastIdx--
     const renderedTail = lastIdx >= 0 ? renderedLines[lastIdx]! : ''
 
-    // Structural output whose shape depends on unseen future lines (tables,
-    // box drawings, tree diagrams) can't be shown character-by-character
-    // without column-width jitter. Show the spinner until the completed
-    // block is committed by the stream machine.
+    // Tables, box drawings, and open code fences depend on unseen future
+    // lines — their shape can change as more content arrives. Fall back to
+    // spinner for those. Other structural content (lists, headings,
+    // blockquotes) renders stably line-by-line.
     const plainTail = stripAnsi(renderedTail)
     const cursor = Math.min(input.revealCursor, stringWidth(plainTail))
     const pendingKey = input.pendingText
     const isSamePendingRun = pendingKey.startsWith(lastPendingKey)
     const isPrefixExtension = !isSamePendingRun || plainTail.startsWith(lastPlainTail)
-    const isStructuralTail = TABLE_TAIL_RE.test(plainTail) || FENCE_TAIL_RE.test(input.pendingText) || STRUCTURAL_PENDING_RE.test(input.pendingText) || input.pendingText.includes('\n')
-    if (cursor <= 0 || !renderedTail || isStructuralTail || !isPrefixExtension) {
+    const isUnsafeStructural = TABLE_TAIL_RE.test(plainTail) || FENCE_TAIL_RE.test(input.pendingText) || PIPE_TABLE_RE.test(input.pendingText)
+    const isMultiLine = input.pendingText.includes('\n')
+
+    if (isUnsafeStructural || (cursor <= 0 && !isMultiLine) || (!renderedTail && !isMultiLine) || (!isMultiLine && !isPrefixExtension)) {
       lastPendingKey = pendingKey
       lastPlainTail = plainTail
-      // Still in pure-buffer phase, structural markdown, or a render shape
-      // change that would require rewriting the line. Keep the prompt stable
-      // and wait for the completed block to append to the scroll area.
+      // Still in pure-buffer phase or unsafe structural content.
+      // Show spinner and wait for the completed block to append.
       const spinnerText = formatSpinnerLine(input.spinner, Date.now())
       blocks.push(block([line(plain(RESERVED_PENDING_LINE))], 1))
       blocks.push(block([line(plain(spinnerText))], 1))
@@ -147,6 +155,28 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
 
     lastPendingKey = pendingKey
     lastPlainTail = plainTail
+
+    if (isMultiLine) {
+      // Multi-line pending: show all rendered lines in the status area.
+      // This produces a smooth growth effect — new lines appear at the
+      // bottom as they stream in, matching Claude Code's behavior.
+      const isBlockStart = !input.assistantCommitted
+      const styledLines: StyledLine[] = []
+      for (let i = 0; i <= lastIdx; i++) {
+        const rl = renderedLines[i]!
+        if (i === 0 && isBlockStart) {
+          styledLines.push(line(colored('⏺ ', 'cyan'), ansi(rl)))
+        } else {
+          styledLines.push(line(ansi(`  ${rl}`)))
+        }
+      }
+      blocks.push(block(styledLines, 1))
+      const spinnerText = formatSpinnerLine(input.spinner, Date.now())
+      blocks.push(block([line(plain(spinnerText))], 1))
+      return blocks
+    }
+
+    // Single-line pending: typewriter reveal on the last line.
     const revealed = sliceAnsiByWidth(renderedTail, cursor)
     const isBlockStart = !input.assistantCommitted
     const styledLines: StyledLine[] = [

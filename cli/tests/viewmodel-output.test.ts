@@ -127,12 +127,61 @@ describe('buildOutputBlocks', () => {
     expect(result).not.toContain('\x1b[2m')
   })
 
+  test('continuation spacer keeps assistant marker from repeating', () => {
+    const result = renderPlain([
+      { id: 'a1', kind: 'assistant', text: 'Intro' },
+      { id: 'sep', kind: 'assistant', text: '', isContinuationSpacer: true },
+      { id: 'a2', kind: 'assistant', text: 'Long paragraph' },
+    ])
+
+    expect(result).toContain('⏺ Intro\n\n  Long paragraph')
+    expect(result).not.toContain('⏺ Long paragraph')
+  })
+
   test('streamed code lines align with finalized code blocks', () => {
     const result = renderPlain([
       { id: 'c1', kind: 'code_line', text: 'const value = 1' },
       { id: 'c2', kind: 'code_line', text: 'return value' },
     ])
     expect(result).toContain('  const value = 1\n  return value')
+  })
+
+  test('continues streamed code block across incremental appends', () => {
+    const first = blocksToLines(buildOutputBlocks([
+      { id: 'c1', kind: 'code_line', text: 'fn main() {', codeBlockId: 'rust', codeLanguage: 'rust' },
+    ])).join('\n')
+    const second = blocksToLines(buildOutputBlocks([
+      { id: 'c2', kind: 'code_line', text: '}', codeBlockId: 'rust', codeLanguage: 'rust' },
+    ], { prevKind: 'code_line', prevCodeBlockId: 'rust' })).join('\n')
+
+    expect(stripAnsi(`${first}\n${second}`)).toContain('  fn main() {\n  }')
+  })
+
+  test('separates streamed code blocks after blank code separator', () => {
+    const result = renderPlain([
+      { id: 'c1', kind: 'code_line', text: 'fn main() {', codeBlockId: 'rust', codeLanguage: 'rust' },
+      { id: 'c2', kind: 'code_line', text: '}', codeBlockId: 'rust', codeLanguage: 'rust' },
+      { id: 'sep', kind: 'code_line', text: '', codeBlockId: 'rust', codeLanguage: 'rust' },
+      { id: 'c3', kind: 'code_line', text: 'async function run() {', codeBlockId: 'ts', codeLanguage: 'typescript' },
+    ])
+    const lines = result.split('\n')
+    const nextBlockIdx = lines.findIndex(l => l.includes('async function run'))
+
+    expect(lines[nextBlockIdx - 1]).toBe('')
+    expect(lines[nextBlockIdx - 2]).toBe('')
+  })
+
+  test('separates adjacent streamed code blocks by block id', () => {
+    const result = renderPlain([
+      { id: 'c1', kind: 'code_line', text: 'fn main() {', codeBlockId: 'rust', codeLanguage: 'rust' },
+      { id: 'c2', kind: 'code_line', text: '}', codeBlockId: 'rust', codeLanguage: 'rust' },
+      { id: 'c3', kind: 'code_line', text: 'async function run() {', codeBlockId: 'ts', codeLanguage: 'typescript' },
+    ])
+    const lines = result.split('\n')
+    const nextBlockIdx = lines.findIndex(l => l.includes('async function run'))
+
+    expect(lines[nextBlockIdx - 1]).toBe('')
+    expect(lines[nextBlockIdx - 2]).toBe('')
   })
 
   test('system lines are dim', () => {

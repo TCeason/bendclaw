@@ -1,3 +1,4 @@
+import chalk from 'chalk'
 import type { Token, Tokens } from 'marked'
 import stripAnsi from 'strip-ansi'
 import stringWidth from 'string-width'
@@ -96,8 +97,97 @@ function resolveLanguage(lang: string | undefined): string | undefined {
  * reflow when the fence finally closes. Returns the line verbatim if no
  * highlighter is available or highlighting throws.
  */
+function highlightJsonLine(line: string): string {
+  const chars = Array.from(line)
+  let out = ''
+  let i = 0
+  let expectingKey = true
+
+  while (i < chars.length) {
+    const ch = chars[i]!
+
+    if (ch === '"') {
+      let token = ch
+      i += 1
+      let escaped = false
+      while (i < chars.length) {
+        const next = chars[i]!
+        token += next
+        i += 1
+        if (escaped) {
+          escaped = false
+        } else if (next === '\\') {
+          escaped = true
+        } else if (next === '"') {
+          break
+        }
+      }
+
+      let j = i
+      while (j < chars.length && /\s/.test(chars[j]!)) j += 1
+      if (expectingKey && chars[j] === ':') {
+        out += chalk.cyan(token)
+        expectingKey = false
+      } else {
+        out += chalk.green(token)
+      }
+      continue
+    }
+
+    const rest = chars.slice(i).join('')
+    const literal = /^(true|false|null)\b/.exec(rest)
+    if (literal) {
+      out += chalk.magenta(literal[1]!)
+      i += literal[1]!.length
+      continue
+    }
+
+    const number = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(rest)
+    if (number) {
+      out += chalk.yellow(number[0])
+      i += number[0].length
+      continue
+    }
+
+    if (ch === ':') {
+      out += chalk.gray(ch)
+      expectingKey = false
+      i += 1
+      continue
+    }
+    if (ch === ',') {
+      out += chalk.gray(ch)
+      expectingKey = true
+      i += 1
+      continue
+    }
+    if (ch === '{' || ch === '[') {
+      out += chalk.gray(ch)
+      expectingKey = true
+      i += 1
+      continue
+    }
+    if (ch === '}' || ch === ']') {
+      out += chalk.gray(ch)
+      expectingKey = false
+      i += 1
+      continue
+    }
+
+    out += ch
+    i += 1
+  }
+
+  return out
+}
+
+function highlightJsonCode(text: string): string {
+  return text.split(EOL).map(highlightJsonLine).join(EOL)
+}
+
 export function highlightCodeLine(line: string, lang: string | undefined): string {
   const resolved = resolveLanguage(lang)
+  if (resolved === 'json') return highlightJsonLine(line)
   if (!highlighter || !resolved || resolved === 'plaintext') return line
   try {
     if (!highlighter.supportsLanguage(resolved)) return line
@@ -353,6 +443,8 @@ export function formatToken(
       const isPlainDiagram = lang === PLAIN_DIAGRAM_LANGUAGE || (lang === 'plaintext' && (BOX_DRAWING_RE.test(highlighted) || DIAGRAM_ARROW_RE.test(highlighted)))
       if (isPlainDiagram) {
         highlighted = styleDiagramCode(normalizeDiagramIndent(highlighted), theme)
+      } else if (lang === 'json') {
+        highlighted = highlightJsonCode(highlighted)
       } else if (highlighter) {
         try {
           if (highlighter.supportsLanguage(lang)) {
@@ -466,7 +558,13 @@ export function formatToken(
       if (BOX_DRAWING_RE.test(stripAnsi(rendered))) {
         return rendered + EOL
       }
-      return wrapParagraph(rendered) + EOL
+      if (rendered.includes(EOL)) {
+        return wrapParagraph(rendered) + EOL
+      }
+      return wrapParagraph(rendered)
+        .split(EOL)
+        .map(line => line.trimStart())
+        .join(EOL) + EOL
     }
     case 'space':
       return EOL
