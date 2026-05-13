@@ -319,6 +319,13 @@ function styleDiagramCode(text: string, theme: Theme): string {
     .join(EOL)
 }
 
+export function padCodeBlock(code: string): string {
+  return code
+    .split(EOL)
+    .map(line => line.length > 0 ? `  ${line}` : line)
+    .join(EOL)
+}
+
 export function formatToken(
   token: Token,
   listDepth = 0,
@@ -355,11 +362,9 @@ export function formatToken(
           // fallback to plain text
         }
       }
-      // Match claudecode: emit the highlighted code verbatim with no left
-      // gutter or padding. Syntax highlighting alone is enough to make the
-      // block visually distinct from prose, and copying the block yields
-      // clean text with no leading characters to strip.
-      return highlighted + EOL
+      // Keep fenced code aligned with prose/table output while preserving the
+      // highlighted text itself; streamed code_line output uses the same pad.
+      return padCodeBlock(highlighted) + EOL
     }
     case 'codespan': {
       const raw = token.text as string

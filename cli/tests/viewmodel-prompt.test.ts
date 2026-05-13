@@ -115,6 +115,11 @@ describe('buildPromptBlocks', () => {
     expect(result).toContain('/resume')
   })
 
+  test('does not add top margin while loading', () => {
+    const [promptBlock] = buildPromptBlocks(defaultInput({ isLoading: true }))
+    expect(promptBlock?.marginTop).toBe(0)
+  })
+
   test('shows update hint', () => {
     const result = renderPlain(defaultInput({ updateHint: 'v0.2.0 available' }))
     expect(result).toContain('v0.2.0 available')

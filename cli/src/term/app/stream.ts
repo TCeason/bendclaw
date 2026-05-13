@@ -397,18 +397,12 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
       }
 
       // Update pendingText for status area so the dynamic tail shows the
-      // growing current line incrementally. Pace re-renders at
-      // PACE_INTERVAL_MS to avoid re-parsing on every byte.
+      // growing current line incrementally. The actual typewriter reveal is
+      // driven by repl.ts' tail reveal timer, not by token arrival cadence;
+      // this keeps large provider chunks from appearing as whole-line bursts.
       const now = Date.now()
       const shouldPace = now - state.lastPendingRender >= PACE_INTERVAL_MS
-      // Reset reveal cursor when streamingText is emptied (commit reset);
-      // otherwise advance it by a few characters each paced frame to
-      // create a smooth character-by-character reveal of the rendered tail.
-      const revealCursor = state.streamingText.length === 0
-        ? 0
-        : shouldPace
-          ? state.revealCursor + 3
-          : state.revealCursor
+      const revealCursor = state.streamingText.length === 0 ? 0 : state.revealCursor
       state = { ...state, pendingText: state.streamingText, revealCursor }
       if (shouldPace || state.streamingText.length === 0) {
         state = { ...state, lastPendingRender: now }

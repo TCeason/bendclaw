@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { buildActiveResponseBlocks, type ActiveResponseInput } from '../src/term/viewmodel/active-response.js'
+import { buildActiveResponseBlocks, renderedPendingTailWidth, type ActiveResponseInput } from '../src/term/viewmodel/active-response.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
 import { createSpinnerState, setSpinnerPhase } from '../src/term/spinner.js'
 import stripAnsi from 'strip-ansi'
@@ -39,6 +39,7 @@ describe('buildActiveResponseBlocks', () => {
   test('shows pending text when streaming', () => {
     const result = renderPlain(defaultInput({ pendingText: 'hello world' }))
     expect(result).toContain('hello world')
+    expect(result).toContain('Thinking')
   })
 
   test('multi-line pending text falls back to spinner to avoid fixed-area flicker', () => {
@@ -53,6 +54,26 @@ describe('buildActiveResponseBlocks', () => {
     const result = renderPlain(defaultInput({ pendingText: listText, termRows: 24 }))
     expect(result).toContain('Thinking')
     expect(result).not.toContain('item 7')
+  })
+
+  test('reveals pending text by display width', () => {
+    const result = renderPlain(defaultInput({ pendingText: 'hello world', revealCursor: 5 }))
+    expect(result).toContain('hello')
+    expect(result).not.toContain('hello world')
+  })
+
+  test('preserves non-SGR ANSI sequences while revealing pending text', () => {
+    const link = '\x1b]8;;https://example.com\x1b\\click\x1b]8;;\x1b\\'
+    const result = buildActiveResponseBlocks(defaultInput({ pendingText: link, revealCursor: 3 }))
+    const rendered = blocksToLines(result).join('\n')
+    expect(rendered).toContain('\x1b]8;;https://example.com\x1b\\')
+    expect(stripAnsi(rendered)).toContain('cli')
+    expect(stripAnsi(rendered)).not.toContain('click')
+  })
+
+  test('computes rendered pending tail width for timer reveal', () => {
+    expect(renderedPendingTailWidth('hello world')).toBe(11)
+    expect(renderedPendingTailWidth('| a | b |\n| - | - |')).toBe(0)
   })
 
   test('shows tool progress with fixed height', () => {

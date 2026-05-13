@@ -109,8 +109,8 @@ describe('renderMarkdown', () => {
     const result = render(md)
 
     expect(result).toContain('DROP TABLE IF EXISTS decimal_driver_compat;')
-    expect(result).toMatch(/^CREATE TABLE decimal_driver_compat \($/m)
-    expect(result).toMatch(/^ {4}id INT,$/m)
+    expect(result).toMatch(/^  CREATE TABLE decimal_driver_compat \($/m)
+    expect(result).toMatch(/^ {6}id INT,$/m)
     expect(result).toContain('Continue explanation.')
     expect(result).not.toContain('```sql')
   })
@@ -135,8 +135,8 @@ describe('renderMarkdown', () => {
 
     const result = render(md)
 
-    expect(result).toMatch(/^try \(ResultSet rs = stmt\.executeQuery/m)
-    expect(result).toMatch(/^ {4}ResultSetMetaData md = rs\.getMetaData\(\);$/m)
+    expect(result).toMatch(/^  try \(ResultSet rs = stmt\.executeQuery/m)
+    expect(result).toMatch(/^ {6}ResultSetMetaData md = rs\.getMetaData\(\);$/m)
     expect(result).toMatch(/^from decimal import Decimal$/m)
     expect(result).toMatch(/^ {4}print\(type\(row\[0\]\), row\[0\]\)$/m)
     expect(result).not.toContain('```java')
@@ -156,7 +156,7 @@ describe('renderMarkdown', () => {
 
     const result = render(md)
 
-    expect(result).toMatch(/^try \(ResultSet rs = stmt\.executeQuery/m)
+    expect(result).toMatch(/^  try \(ResultSet rs = stmt\.executeQuery/m)
     expect(result).toContain('Driver compatibility summary')
     expect(result).toContain('- Java: OK')
   })
@@ -173,7 +173,7 @@ describe('renderMarkdown', () => {
 
     const result = render(md)
 
-    expect(result).toMatch(/^SELECT d38, d76$/m)
+    expect(result).toMatch(/^  SELECT d38, d76$/m)
     expect(result).toContain('这里重点是：')
     expect(result).toContain('- d38：普通 DECIMAL(38,18)')
   })
@@ -226,14 +226,10 @@ describe('renderMarkdown', () => {
     expect(result).not.toContain('```text')
   })
 
-  test('fenced code blocks render without a gutter or left padding', () => {
-    // Match claudecode: code blocks are rendered verbatim with syntax
-    // highlighting only — no leading gutter character or padding space.
-    // Copying a code block must yield clean text with no leading chars
-    // to strip, so `npm install` starts at column 0.
+  test('fenced code blocks align with prose left padding', () => {
     const md = 'Before:\n```bash\nnpm install\n```\nAfter.'
     const result = render(md)
-    expect(result).toMatch(/^npm install$/m)
+    expect(result).toMatch(/^  npm install$/m)
     // Must not leave literal box-drawing characters.
     expect(result).not.toContain('│')
   })
@@ -246,9 +242,8 @@ describe('renderMarkdown', () => {
       '```',
     ].join('\n')
     const result = render(md)
-    expect(result).toMatch(/^# Run checks in parallel where possible$/m)
-    expect(result).toMatch(/^cargo fmt --check &$/m)
-    expect(result).not.toMatch(/^\s+# Run checks/m)
+    expect(result).toMatch(/^  # Run checks in parallel where possible$/m)
+    expect(result).toMatch(/^  cargo fmt --check &$/m)
     expect(result).not.toContain('│')
   })
 
@@ -296,8 +291,8 @@ describe('renderMarkdown', () => {
       ].join('\n')
       const result = render(md)
 
-      expect(result).toMatch(/^ {6}# span:$/m)
-      expect(result).toMatch(/^ {6}# session_id: 自定义，非 OTel$/m)
+      expect(result).toMatch(/^ {8}# span:$/m)
+      expect(result).toMatch(/^ {8}# session_id: 自定义，非 OTel$/m)
     } finally {
       process.stdout.columns = prev
     }
@@ -354,7 +349,7 @@ describe('renderMarkdown', () => {
     expect(result).not.toContain('```')
     // Prose line must not carry the fence marker or code content.
     expect(result).toMatch(/^Intro$/m)
-    expect(result).toMatch(/^const x: number = 1;$/m)
+    expect(result).toMatch(/^  const x: number = 1;$/m)
   })
 
   test('splits hr marker glued to bold emphasis on next section', () => {
@@ -382,9 +377,9 @@ describe('renderMarkdown', () => {
       '  │  │     └─ tools/',
     ].join('\n')
     const result = render(md)
-    expect(result).toMatch(/^ {2}│  │     ├─ lib\.rs$/m)
-    expect(result).toMatch(/^ {2}│  │     ├─ retry\.rs$/m)
-    expect(result).toMatch(/^ {2}│  │     └─ tools\/$/m)
+    expect(result).toMatch(/^ {4}│  │     ├─ lib\.rs$/m)
+    expect(result).toMatch(/^ {4}│  │     ├─ retry\.rs$/m)
+    expect(result).toMatch(/^ {4}│  │     └─ tools\/$/m)
   })
 
   test('styles plain ascii diagrams without changing their visible text', () => {
@@ -428,12 +423,12 @@ describe('renderMarkdown', () => {
 
     const rendered = render(md).replace(/\u200b/g, '')
 
-    expect(rendered).toMatch(/^物理显存:   ┌────┬────┬────┐$/m)
-    expect(rendered).toMatch(/^            │ B3 │ B0 │ B5 │$/m)
-    expect(rendered).toMatch(/^            └────┴────┴────┘$/m)
-    expect(rendered).toMatch(/^    ├─► 把 prompt 送入模型├─► 逐层计算$/m)
-    expect(rendered).toMatch(/^    ├─► 取上一步生成的 token$/m)
-    expect(rendered).toMatch(/^    └─► 采样下一个 token$/m)
+    expect(rendered).toMatch(/^  物理显存:   ┌────┬────┬────┐$/m)
+    expect(rendered).toMatch(/^              │ B3 │ B0 │ B5 │$/m)
+    expect(rendered).toMatch(/^              └────┴────┴────┘$/m)
+    expect(rendered).toMatch(/^      ├─► 把 prompt 送入模型├─► 逐层计算$/m)
+    expect(rendered).toMatch(/^      ├─► 取上一步生成的 token$/m)
+    expect(rendered).toMatch(/^      └─► 采样下一个 token$/m)
   })
 
   test('preserves flow diagrams with box-drawing characters as plain code', () => {
@@ -453,9 +448,9 @@ describe('renderMarkdown', () => {
       '      daemon.send("navigate", ...)',
     ].join('\n')
     const result = render(md)
-    expect(result).toMatch(/^ {2}Agent → Tool\.call\(args\) {16}│$/m)
-    expect(result).toMatch(/^ {4}│ {4}├─ Stopped→ ToolError\("daemon not running"\) {2}│ ├─ NoExtension$/m)
-    expect(result).toMatch(/^ {6}daemon\.send\("navigate", \.\.\.\)$/m)
+    expect(result).toMatch(/^ {4}Agent → Tool\.call\(args\) {16}│$/m)
+    expect(result).toMatch(/^ {6}│ {4}├─ Stopped→ ToolError\("daemon not running"\) {2}│ ├─ NoExtension$/m)
+    expect(result).toMatch(/^ {8}daemon\.send\("navigate", \.\.\.\)$/m)
     expect(result).not.toMatch(/^ │ /m)
   })
 
@@ -469,9 +464,9 @@ describe('renderMarkdown', () => {
       '  └─ child',
     ].join('\n')
     const result = render(md)
-    expect(result).toMatch(/^ {2}root │$/m)
-    expect(result).toMatch(/^ {2}---$/m)
-    expect(result).toMatch(/^ {2}└─ child$/m)
+    expect(result).toMatch(/^ {4}root │$/m)
+    expect(result).toMatch(/^ {4}---$/m)
+    expect(result).toMatch(/^ {4}└─ child$/m)
   })
 
   test('does not normalize hr markers inside authored code fences', () => {
@@ -483,9 +478,9 @@ describe('renderMarkdown', () => {
       '```',
     ].join('\n')
     const result = render(md)
-    expect(result).toMatch(/^alpha$/m)
-    expect(result).toMatch(/^---$/m)
-    expect(result).toMatch(/^omega$/m)
+    expect(result).toMatch(/^  alpha$/m)
+    expect(result).toMatch(/^  ---$/m)
+    expect(result).toMatch(/^  omega$/m)
   })
 
   test('splits ordered list item glued after CJK sentence terminator', () => {
@@ -820,11 +815,11 @@ describe('renderMarkdown', () => {
 
     const result = render(md)
 
-    expect(result).toMatch(/^cd cli && bun test tests\/term-commands\.test\.ts/m)
+    expect(result).toMatch(/^  cd cli && bun test tests\/term-commands\.test\.ts/m)
     expect(result).toContain('重点：')
     expect(result).toContain('Verbose 模式（ctrl+o 切换）')
-    expect(result).toMatch(/^❯ 帮我列一下目录$/m)
-    expect(result).toMatch(/^ {2}⋮ llm · claude-sonnet-4 · turn 1 · 3 msgs$/m)
+    expect(result).toMatch(/^  ❯ 帮我列一下目录$/m)
+    expect(result).toMatch(/^ {4}⋮ llm · claude-sonnet-4 · turn 1 · 3 msgs$/m)
     expect(result).not.toContain('```text')
   })
 

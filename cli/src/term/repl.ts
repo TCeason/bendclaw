@@ -21,6 +21,7 @@ import {
   type OverlayState,
   type PromptVMInput,
 } from './viewmodel/index.js'
+import { renderedPendingTailWidth } from './viewmodel/active-response.js'
 import {
   createEditorState,
   getEditorText,
@@ -91,6 +92,7 @@ import { handleSelectorControl } from './app/selector-control.js'
 import { decideReplControl, type ReplControlAction } from './app/repl-control.js'
 
 const SPINNER_INTERVAL_MS = 100
+const TAIL_REVEAL_INTERVAL_MS = 24
 
 export interface ReplOptions {
   agent: Agent
@@ -129,6 +131,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let isLoading = false
   let streamRef: QueryStream | null = null
   let spinnerTimer: ReturnType<typeof setInterval> | null = null
+  let tailRevealTimer: ReturnType<typeof setInterval> | null = null
   let titleFrozen = false
   let destroyed = false
   let sessionId: string | null = null
@@ -412,15 +415,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   function startSpinner() {
     if (spinnerTimer) return
     titleFrame = 0
+    startTailReveal()
     spinnerTimer = setInterval(() => {
       spinnerState = advanceSpinner(spinnerState)
       if (streamMachine) {
         streamMachine = { ...streamMachine, spinnerState }
+        renderStatus()
       }
-      // Terminal title animation — update at ~960ms, not every spinner frame.
-      // Do not redraw the status area just for spinner animation: even a
-      // first-line-only redraw still moves the cursor around the prompt, which
-      // reads as input-box jitter during long markdown/table buffering.
+      // Terminal title animation — update at ~960ms like Claude Code.
       if (spinnerState.frame % TITLE_INTERVAL_FRAMES === 0) {
         const glyphs = ['⠂', '⠐']
         const idx = titleFrame % glyphs.length
@@ -430,11 +432,30 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }, SPINNER_INTERVAL_MS)
   }
 
+  function startTailReveal() {
+    if (tailRevealTimer) return
+    tailRevealTimer = setInterval(() => {
+      if (destroyed || !isLoading || !streamMachine?.pendingText) return
+      const width = renderedPendingTailWidth(streamMachine.pendingText)
+      if (width <= 0 || streamMachine.revealCursor >= width) return
+      streamMachine = { ...streamMachine, revealCursor: streamMachine.revealCursor + 1 }
+      renderStatus()
+    }, TAIL_REVEAL_INTERVAL_MS)
+  }
+
+  function stopTailReveal() {
+    if (tailRevealTimer) {
+      clearInterval(tailRevealTimer)
+      tailRevealTimer = null
+    }
+  }
+
   function stopSpinner() {
     if (spinnerTimer) {
       clearInterval(spinnerTimer)
       spinnerTimer = null
     }
+    stopTailReveal()
     setTerminalTitle('✳')
   }
 

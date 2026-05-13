@@ -127,6 +127,14 @@ describe('buildOutputBlocks', () => {
     expect(result).not.toContain('\x1b[2m')
   })
 
+  test('streamed code lines align with finalized code blocks', () => {
+    const result = renderPlain([
+      { id: 'c1', kind: 'code_line', text: 'const value = 1' },
+      { id: 'c2', kind: 'code_line', text: 'return value' },
+    ])
+    expect(result).toContain('  const value = 1\n  return value')
+  })
+
   test('system lines are dim', () => {
     const result = render([{ id: 's1', kind: 'system', text: '  some info' }])
     expect(result).toContain('\x1b[2m')

@@ -2,15 +2,56 @@ import { formatSpinnerLine, type SpinnerState } from '../spinner.js'
 import { line, block, plain, dim, colored, ansi, type ViewBlock, type StyledLine } from './types.js'
 import { renderMarkdownCached } from '../../render/markdown.js'
 import stripAnsi from 'strip-ansi'
+import ansiRegex from 'ansi-regex'
+import stringWidth from 'string-width'
 
 const TABLE_TAIL_RE = /^[│|├┌└]/
 const FENCE_TAIL_RE = /(^|\n)[ \t]*(```+|~~~+)/
+const STRUCTURAL_PENDING_RE = /(^|\n)[ \t]*(?:#{1,6}\s|[-*+]\s+|\d+\.\s+|>\s?|\|.*\||[│├└┌]|(?: {4}|\t)\S)/
 
 const MAX_PROGRESS_LINES = 5
 const MAX_PROGRESS_LINE_WIDTH = 120
 
 let lastPendingKey = ''
 let lastPlainTail = ''
+
+export function renderedPendingTailWidth(pendingText: string): number {
+  if (!pendingText) return 0
+  const renderedFull = renderMarkdownCached(pendingText)
+  const renderedLines = renderedFull.split('\n')
+  let lastIdx = renderedLines.length - 1
+  while (lastIdx >= 0 && !renderedLines[lastIdx]!.trim()) lastIdx--
+  if (lastIdx < 0) return 0
+  const renderedTail = renderedLines[lastIdx]!
+  const plainTail = stripAnsi(renderedTail)
+  if (TABLE_TAIL_RE.test(plainTail) || FENCE_TAIL_RE.test(pendingText) || STRUCTURAL_PENDING_RE.test(pendingText) || pendingText.includes('\n')) return 0
+  return stringWidth(plainTail)
+}
+
+function sliceAnsiByWidth(input: string, maxWidth: number): string {
+  if (maxWidth <= 0) return ''
+  let width = 0
+  let out = ''
+  for (let i = 0; i < input.length;) {
+    if (input[i] === '\x1b') {
+      const match = ansiRegex().exec(input.slice(i))
+      if (match?.index === 0) {
+        out += match[0]
+        i += match[0].length
+        continue
+      }
+    }
+    const code = input.codePointAt(i)
+    if (code === undefined) break
+    const ch = String.fromCodePoint(code)
+    const w = stringWidth(ch)
+    if (width + w > maxWidth) break
+    out += ch
+    width += w
+    i += ch.length
+  }
+  return out
+}
 
 export interface ActiveResponseInput {
   isLoading: boolean
@@ -21,9 +62,9 @@ export interface ActiveResponseInput {
   termRows: number
   expanded?: boolean
   assistantCommitted?: boolean
-  /** Current character-index position into the *rendered* markdown tail.
-   *  Incremented by the reducer each paced frame; capped in this function
-   *  at the actual rendered length so tests can pass a large value for
+  /** Current display-cell position into the *rendered* markdown tail.
+   *  Incremented by the reducer/reveal timer; capped in this function at
+   *  the actual rendered width so tests can pass a large value for
    *  "fully revealed". */
   revealCursor: number
 }
@@ -43,7 +84,7 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
         : line(dim(`     ${l}`))
     )
     if (styledLines.length > 0) {
-      blocks.push(block(styledLines, 1))
+      blocks.push(block(styledLines, 0))
     }
   }
 
@@ -81,15 +122,16 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
     while (lastIdx >= 0 && !renderedLines[lastIdx]!.trim()) lastIdx--
     const renderedTail = lastIdx >= 0 ? renderedLines[lastIdx]! : ''
 
-    const cursor = Math.min(input.revealCursor, renderedTail.length)
     // Structural output whose shape depends on unseen future lines (tables,
     // box drawings, tree diagrams) can't be shown character-by-character
     // without column-width jitter. Show the spinner until the completed
     // block is committed by the stream machine.
     const plainTail = stripAnsi(renderedTail)
+    const cursor = Math.min(input.revealCursor, stringWidth(plainTail))
     const pendingKey = input.pendingText
-    const isPrefixExtension = pendingKey.startsWith(lastPendingKey) && plainTail.startsWith(lastPlainTail)
-    const isStructuralTail = TABLE_TAIL_RE.test(plainTail) || FENCE_TAIL_RE.test(input.pendingText)
+    const isSamePendingRun = pendingKey.startsWith(lastPendingKey)
+    const isPrefixExtension = !isSamePendingRun || plainTail.startsWith(lastPlainTail)
+    const isStructuralTail = TABLE_TAIL_RE.test(plainTail) || FENCE_TAIL_RE.test(input.pendingText) || STRUCTURAL_PENDING_RE.test(input.pendingText) || input.pendingText.includes('\n')
     if (cursor <= 0 || !renderedTail || isStructuralTail || !isPrefixExtension) {
       lastPendingKey = pendingKey
       lastPlainTail = plainTail
@@ -103,7 +145,7 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
 
     lastPendingKey = pendingKey
     lastPlainTail = plainTail
-    const revealed = renderedTail.slice(0, cursor)
+    const revealed = sliceAnsiByWidth(renderedTail, cursor)
     const isBlockStart = !input.assistantCommitted
     const styledLines: StyledLine[] = [
       isBlockStart
@@ -111,6 +153,8 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
         : line(ansi(`  ${revealed}`)),
     ]
     blocks.push(block(styledLines, isBlockStart ? 1 : 0))
+    const spinnerText = formatSpinnerLine(input.spinner, Date.now())
+    blocks.push(block([line(plain(spinnerText))], 1))
     return blocks
   }
 
