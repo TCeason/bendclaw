@@ -18,7 +18,7 @@ export const COMMANDS: SlashCommand[] = [
   { name: '/history', description: 'Show recent messages with seq numbers', usage: '/history [count]', handler: 'builtin' },
   { name: '/model', description: 'Show or change model', usage: '/model [name]', handler: 'builtin' },
   { name: '/plan', description: 'Enter planning mode', handler: 'builtin' },
-  { name: '/harden', description: 'Stress-test the previous plan or current changes', usage: '/harden [plan | changes | subject]', handler: 'builtin' },
+  { name: '/harden', description: 'Stress-test the previous plan or current changes', usage: '/harden [plan | changes | arch | subject]', handler: 'builtin' },
   { name: '/skill', description: 'Manage skills', usage: '/skill [list | install <source> | remove <name>]', handler: 'builtin' },
   { name: '/clear', description: 'Clear session context', handler: 'builtin' },
 ]
@@ -52,6 +52,13 @@ export function buildHardenPrompt(args: string): string {
   }
   if (subject === 'changes') {
     return 'harden current git changes'
+  }
+  if (subject === 'arch') {
+    return [
+      'harden the architecture of the current git changes or the immediately preceding plan.',
+      'Evaluate: simplicity, decoupling, clarity of responsibility, and cohesion.',
+      'In the final output, include an annotated file tree showing the proposed directory structure with short comments explaining each module\'s role.',
+    ].join(' ')
   }
   return `harden this strategy: ${subject}`
 }

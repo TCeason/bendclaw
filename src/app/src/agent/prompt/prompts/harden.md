@@ -36,6 +36,10 @@ The subject of hardening is one of:
   (for example, `harden changes` or `/harden changes`). Inspect staged and
   unstaged diffs, summarize the inferred strategy, then harden that strategy
   rather than reviewing every changed line;
+- the architecture, when the user asks to harden architecture (for example,
+  `harden arch` or `/harden arch`). Evaluate the structural design of the
+  changes or plan — focus on simplicity, decoupling, clarity of responsibility,
+  and cohesion. The output must include an annotated file tree (see Output);
 - when a plan/strategy/conclusion is available and local git changes also exist,
   use the diff only as supporting context. Combine relevant findings from the
   diff with the hardening pass, but do not switch the primary subject from the
@@ -57,6 +61,9 @@ Repeat until convergence:
    - Integration: conventions in the codebase the plan bypasses or duplicates.
    - Verification: tests or checks that would not actually catch a regression.
    - Reversibility: what's hard to undo if this ships and is wrong.
+   - Structure (when subject is architecture): module boundary violations,
+     responsibility overlap between modules, naming/directory confusion,
+     unnecessary coupling.
 2. **Fix or accept.** For each loophole, either:
    - update the plan or strategy with a specific change;
    - if hardening current git changes, identify the specific implementation
@@ -98,11 +105,33 @@ When you converge, present:
   implementation, not another round of planning. When the subject is current
   git changes rather than a forward-looking plan, replace this with
   **Implementation adjustments** — the specific file-level edits still needed
-  to close the loopholes.
+  to close the loopholes. When the subject is architecture, replace this with
+  **Architecture** — include the following:
+  - A brief assessment of simplicity, decoupling, and clarity of responsibility.
+  - An annotated file tree showing the proposed directory structure with change
+    markers. Each entry uses `[Add]`, `[Modify]`, or `[Delete]` to indicate the
+    structural change, followed by a short comment explaining the role or reason.
+    Example format:
+    ```
+    src/
+      engine/
+        src/
+          provider/    # [Add] LLM provider trait, decoupled from agent loop
+          tools/       # [Modify] extract tool registry into standalone module
+          old_exec/    # [Delete] merged into provider/
+      app/
+        src/
+          agent/       # [Modify] prompt assembly now delegates to skill dispatch
+          storage/     # [Add] persistence layer (SQLite, file-based)
+    ```
+    Unchanged directories may be listed without markers for context, but keep
+    them minimal. The tree must reflect the state after all loophole fixes are
+    applied.
 - **Iterations** — a short count (e.g. "converged after 2 passes").
 
-Put **Final plan** (or **Implementation adjustments**) last so the reader ends
-on the actionable output and does not need to ask "now give me the revised plan".
+Put **Final plan** (or **Implementation adjustments** or **Architecture**) last
+so the reader ends on the actionable output and does not need to ask "now give
+me the revised plan".
 
 Keep it compact. One page is usually enough, but do not shrink the final plan
 to the point it loses the detail needed to execute.

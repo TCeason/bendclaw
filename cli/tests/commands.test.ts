@@ -101,6 +101,13 @@ describe('buildHardenPrompt', () => {
     expect(buildHardenPrompt('plan')).toContain('immediately preceding conversation context')
   })
 
+  test('keeps explicit arch subject focused on architecture', () => {
+    const prompt = buildHardenPrompt('arch')
+    expect(prompt).toContain('architecture')
+    expect(prompt).toContain('simplicity')
+    expect(prompt).toContain('annotated file tree')
+  })
+
   test('passes custom subject through as strategy', () => {
     expect(buildHardenPrompt('retry rollout')).toBe('harden this strategy: retry rollout')
   })
