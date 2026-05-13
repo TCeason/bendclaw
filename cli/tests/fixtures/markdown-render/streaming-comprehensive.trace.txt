@@ -51,7 +51,7 @@ This is **bold text**, this is *italic text*, this is ***bold italic***, and thi
 
 [rendered lines]
 This is bold text, this is italic text, this is bold italic, and this is inline code. Here's 
-~~strikethrough~~ text. And a hyperlink.
+~~strikethrough~~ text. And a hyperlink (https://example.com).
 --- end markdown golden asst-15 ---
 
 --- markdown golden asst-17 ---

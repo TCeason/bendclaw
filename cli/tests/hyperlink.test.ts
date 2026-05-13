@@ -96,11 +96,11 @@ describe('supportsHyperlinks', () => {
 })
 
 describe('createHyperlink', () => {
-  test('with hyperlinks unsupported, returns blue link text', async () => {
+  test('with hyperlinks unsupported, returns link text and URL', async () => {
     process.env.FORCE_HYPERLINK = '0'
     const { createHyperlink } = await import('../src/render/hyperlink.js')
     const result = createHyperlink('https://example.com', 'click me')
-    expect(stripAnsi(result)).toBe('click me')
+    expect(stripAnsi(result)).toBe('click me (https://example.com)')
   })
 
   test('with hyperlinks supported, returns OSC 8 sequence', async () => {

@@ -83,19 +83,21 @@ export function isWarpTerminal(): boolean {
 
 /**
  * Create a clickable hyperlink using OSC 8 escape sequences.
- * Falls back to showing the display text (blue) when the terminal doesn't
- * support hyperlinks. If no display text is provided, shows the URL in blue.
+ * Falls back to showing link text + URL when the terminal doesn't support
+ * hyperlinks, so the URL is never lost.
  *
  * @param url - The URL to link to
  * @param text - Display text (shown as clickable link when supported).
- *               When not supported, shows this text in blue (or the URL if absent).
+ *               When not supported, shows "text (url)" or just the URL.
  */
 export function createHyperlink(url: string, text?: string): string {
   if (!supportsHyperlinks()) {
-    // Show link text (or URL) in blue. Using color helps terminals avoid
-    // auto-detecting the text as a URL and accidentally grabbing trailing
-    // punctuation (especially CJK characters like 。，）).
-    return chalk.blue(text ?? url)
+    // Show both link text and URL so nothing is lost.
+    // Format: "text (url)" when text differs from url, otherwise just the url.
+    if (text && text !== url) {
+      return `${text} (${chalk.blue(url)})`
+    }
+    return chalk.blue(url)
   }
   const display = text ?? url
   const colored = chalk.blue(display)
