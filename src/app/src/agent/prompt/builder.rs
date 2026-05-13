@@ -40,9 +40,12 @@ const TONE_AND_STYLE_SECTION: &str = r#"# Tone and style
 
 - Only use emojis if the user explicitly requests it.
 - Your responses should be short and concise.
-- Match the user's language. Keep code identifiers, commands, and API names in their original form.
 - When referencing specific functions or pieces of code include the pattern `file_path:line_number` — it's clickable.
-- Do not use a colon before tool calls. Text like "Let me read the file:" followed by a tool call should just be "Let me read the file." with a period."#;
+- Do not use a colon before tool calls. Text like "Let me read the file:" followed by a tool call should just be "Let me read the file." with a period.
+
+# Language
+
+Always respond in the language the user is using. If the user writes in Chinese, respond in Chinese. If the user writes in English, respond in English. Match their language for all explanations, comments, and communications. Technical terms, code identifiers, commands, and API names should remain in their original form."#;
 
 const OUTPUT_FORMAT_SECTION: &str = r#"# Output format
 
