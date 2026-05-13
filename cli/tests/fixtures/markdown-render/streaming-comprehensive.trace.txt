@@ -1,0 +1,809 @@
+# Source: 019e205a-3cb5-7d11-beee-2d457ff28b0b.markdown.log
+# Rendered lines are normalized through renderMarkdown(raw), not copied from the trace status area.
+
+--- markdown golden asst-8 ---
+[raw markdown]
+# Heading 1
+
+## Heading 2
+
+[rendered lines]
+Heading 1
+
+Heading 2
+--- end markdown golden asst-8 ---
+
+--- markdown golden asst-11 ---
+[raw markdown]
+### Heading 3
+
+[rendered lines]
+Heading 3
+--- end markdown golden asst-11 ---
+
+--- markdown golden asst-12 ---
+[raw markdown]
+#### Heading 4
+
+[rendered lines]
+Heading 4
+--- end markdown golden asst-12 ---
+
+--- markdown golden asst-13 ---
+[raw markdown]
+---
+
+[rendered lines]
+---
+--- end markdown golden asst-13 ---
+
+--- markdown golden asst-14 ---
+[raw markdown]
+## Inline styles
+
+[rendered lines]
+Inline styles
+--- end markdown golden asst-14 ---
+
+--- markdown golden asst-15 ---
+[raw markdown]
+This is **bold text**, this is *italic text*, this is ***bold italic***, and this is `inline code`. Here's ~~strikethrough~~ text. And a [hyperlink](https://example.com).
+
+[rendered lines]
+This is bold text, this is italic text, this is bold italic, and this is inline code. Here's 
+~~strikethrough~~ text. And a hyperlink.
+--- end markdown golden asst-15 ---
+
+--- markdown golden asst-17 ---
+[raw markdown]
+## Lists
+
+### Unordered
+
+[rendered lines]
+Lists
+
+Unordered
+--- end markdown golden asst-17 ---
+
+--- markdown golden asst-20 ---
+[raw markdown]
+- Item one
+- Item two
+  - Nested item A
+  - Nested item B
+    - Deep nested
+- Item three
+
+[rendered lines]
+- Item one
+- Item two
+    - Nested item A
+    - Nested item B
+          - Deep nested
+- Item three
+--- end markdown golden asst-20 ---
+
+--- markdown golden asst-26 ---
+[raw markdown]
+### Ordered
+
+[rendered lines]
+Ordered
+--- end markdown golden asst-26 ---
+
+--- markdown golden asst-27 ---
+[raw markdown]
+1. First step
+2. Second step
+3. Third step
+   1. Sub-step A
+   2. Sub-step B
+
+[rendered lines]
+1. First step
+2. Second step
+3. Third step
+    a. Sub-step A
+    b. Sub-step B
+--- end markdown golden asst-27 ---
+
+--- markdown golden asst-32 ---
+[raw markdown]
+### Task list
+
+[rendered lines]
+Task list
+--- end markdown golden asst-32 ---
+
+--- markdown golden asst-33 ---
+[raw markdown]
+- [x] Completed task
+- [ ] Pending task
+- [ ] Another pending task
+
+[rendered lines]
+- Completed task
+- Pending task
+- Another pending task
+--- end markdown golden asst-33 ---
+
+--- markdown golden asst-36 ---
+[raw markdown]
+## Blockquote
+
+[rendered lines]
+Blockquote
+--- end markdown golden asst-36 ---
+
+--- markdown golden asst-37 ---
+[raw markdown]
+> This is a blockquote.
+> It can span multiple lines.
+>
+> > Nested blockquote inside.
+
+[rendered lines]
+▎ This is a blockquote.
+▎ It can span multiple lines.
+
+▎ ▎ Nested blockquote inside.
+--- end markdown golden asst-37 ---
+
+--- markdown golden asst-41 ---
+[raw markdown]
+## Code blocks
+
+[rendered lines]
+Code blocks
+--- end markdown golden asst-41 ---
+
+--- markdown golden markdown-1 ---
+[raw markdown]
+```
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+```
+
+[rendered lines]
+  fn main() -> Result<(), Box<dyn std::error::Error>> {
+--- end markdown golden markdown-1 ---
+
+--- markdown golden markdown-2 ---
+[raw markdown]
+```
+  let config = Config::load("config.toml")?;
+```
+
+[rendered lines]
+    let config = Config::load("config.toml")?;
+--- end markdown golden markdown-2 ---
+
+--- markdown golden markdown-3 ---
+[raw markdown]
+```
+  let server = Server::new(config);
+```
+
+[rendered lines]
+    let server = Server::new(config);
+--- end markdown golden markdown-3 ---
+
+--- markdown golden markdown-4 ---
+[raw markdown]
+```
+  server.run().await?;
+```
+
+[rendered lines]
+    server.run().await?;
+--- end markdown golden markdown-4 ---
+
+--- markdown golden markdown-5 ---
+[raw markdown]
+```
+  Ok(())
+}
+```
+
+[rendered lines]
+    Ok(())
+  }
+--- end markdown golden markdown-5 ---
+
+--- markdown golden markdown-6 ---
+[raw markdown]
+```
+async function fetchData(url: string): Promise<Response> {
+```
+
+[rendered lines]
+  async function fetchData(url: string): Promise<Response> {
+--- end markdown golden markdown-6 ---
+
+--- markdown golden markdown-7 ---
+[raw markdown]
+```
+const res = await fetch(url, {
+```
+
+[rendered lines]
+  const res = await fetch(url, {
+--- end markdown golden markdown-7 ---
+
+--- markdown golden markdown-8 ---
+[raw markdown]
+```
+  headers: { "Content-Type": "application/json" },
+});
+```
+
+[rendered lines]
+    headers: { "Content-Type": "application/json" },
+  });
+--- end markdown golden markdown-8 ---
+
+--- markdown golden markdown-9 ---
+[raw markdown]
+```
+if (!res.ok) throw new Error(`HTTP ${res.status}`);
+```
+
+[rendered lines]
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+--- end markdown golden markdown-9 ---
+
+--- markdown golden markdown-10 ---
+[raw markdown]
+```
+return res.json();
+}
+```
+
+[rendered lines]
+  return res.json();
+  }
+--- end markdown golden markdown-10 ---
+
+--- markdown golden markdown-11 ---
+[raw markdown]
+```
+{
+```
+
+[rendered lines]
+  {
+--- end markdown golden markdown-11 ---
+
+--- markdown golden markdown-12 ---
+[raw markdown]
+```
+"name": "evot",
+```
+
+[rendered lines]
+  "name": "evot",
+--- end markdown golden markdown-12 ---
+
+--- markdown golden markdown-13 ---
+[raw markdown]
+```
+"version": "0.1.0",
+```
+
+[rendered lines]
+  "version": "0.1.0",
+--- end markdown golden markdown-13 ---
+
+--- markdown golden markdown-14 ---
+[raw markdown]
+```
+"dependencies": {
+```
+
+[rendered lines]
+  "dependencies": {
+--- end markdown golden markdown-14 ---
+
+--- markdown golden markdown-15 ---
+[raw markdown]
+```
+  "ink": "^4.0.0",
+```
+
+[rendered lines]
+    "ink": "^4.0.0",
+--- end markdown golden markdown-15 ---
+
+--- markdown golden markdown-16 ---
+[raw markdown]
+```
+  "react": "^18.2.0"
+}
+}
+```
+
+[rendered lines]
+    "react": "^18.2.0"
+  }
+  }
+--- end markdown golden markdown-16 ---
+
+--- markdown golden markdown-17 ---
+[raw markdown]
+```
+server:
+```
+
+[rendered lines]
+  server:
+--- end markdown golden markdown-17 ---
+
+--- markdown golden markdown-18 ---
+[raw markdown]
+```
+host: 0.0.0.0
+port: 8080
+```
+
+[rendered lines]
+  host: 0.0.0.0
+  port: 8080
+--- end markdown golden markdown-18 ---
+
+--- markdown golden markdown-19 ---
+[raw markdown]
+```
+workers: 4
+```
+
+[rendered lines]
+  workers: 4
+--- end markdown golden markdown-19 ---
+
+--- markdown golden markdown-20 ---
+[raw markdown]
+```
+tls:
+```
+
+[rendered lines]
+  tls:
+--- end markdown golden markdown-20 ---
+
+--- markdown golden markdown-21 ---
+[raw markdown]
+```
+  cert: /etc/ssl/cert.pem
+```
+
+[rendered lines]
+    cert: /etc/ssl/cert.pem
+--- end markdown golden markdown-21 ---
+
+--- markdown golden markdown-22 ---
+[raw markdown]
+```
+  key: /etc/ssl/key.pem
+```
+
+[rendered lines]
+    key: /etc/ssl/key.pem
+--- end markdown golden markdown-22 ---
+
+--- markdown golden markdown-23 ---
+[raw markdown]
+```
+#!/bin/bash
+```
+
+[rendered lines]
+  #!/bin/bash
+--- end markdown golden markdown-23 ---
+
+--- markdown golden markdown-24 ---
+[raw markdown]
+```
+for file in *.rs; do
+```
+
+[rendered lines]
+  for file in *.rs; do
+--- end markdown golden markdown-24 ---
+
+--- markdown golden markdown-25 ---
+[raw markdown]
+```
+echo "Processing $file"
+```
+
+[rendered lines]
+  echo "Processing $file"
+--- end markdown golden markdown-25 ---
+
+--- markdown golden markdown-26 ---
+[raw markdown]
+```
+rustfmt "$file"
+```
+
+[rendered lines]
+  rustfmt "$file"
+--- end markdown golden markdown-26 ---
+
+--- markdown golden markdown-27 ---
+[raw markdown]
+```
+done
+```
+
+[rendered lines]
+  done
+--- end markdown golden markdown-27 ---
+
+--- markdown golden asst-42 ---
+[raw markdown]
+## Table
+
+[rendered lines]
+Table
+--- end markdown golden asst-42 ---
+
+--- markdown golden asst-43 ---
+[raw markdown]
+| Feature       | Status | Priority |
+|---------------|--------|----------|
+| Auth          | Done   | High     |
+| Search        | WIP    | Medium   |
+| Notifications | Todo   | Low      |
+| Export        | Done   | High     |
+
+[rendered lines]
+┌───────────────┬────────┬──────────┐
+│    Feature    │ Status │ Priority │
+├───────────────┼────────┼──────────┤
+│ Auth          │ Done   │ High     │
+├───────────────┼────────┼──────────┤
+│ Search        │ WIP    │ Medium   │
+├───────────────┼────────┼──────────┤
+│ Notifications │ Todo   │ Low      │
+├───────────────┼────────┼──────────┤
+│ Export        │ Done   │ High     │
+└───────────────┴────────┴──────────┘
+--- end markdown golden asst-43 ---
+
+--- markdown golden asst-54 ---
+[raw markdown]
+## Diff
+
+[rendered lines]
+Diff
+--- end markdown golden asst-54 ---
+
+--- markdown golden markdown-28 ---
+[raw markdown]
+```
+- fn old_function() {
+```
+
+[rendered lines]
+- fn old_function() {
+--- end markdown golden markdown-28 ---
+
+--- markdown golden markdown-29 ---
+[raw markdown]
+```
+-     println!("removed");
+- }
+```
+
+[rendered lines]
+  println!("removed");
+- }
+--- end markdown golden markdown-29 ---
+
+--- markdown golden markdown-30 ---
+[raw markdown]
+```
++ fn new_function() -> Result<()> {
+```
+
+[rendered lines]
+- fn new_function() -> Result<()> {
+--- end markdown golden markdown-30 ---
+
+--- markdown golden markdown-31 ---
+[raw markdown]
+```
++     log::info!("added");
+```
+
+[rendered lines]
+  log::info!("added");
+--- end markdown golden markdown-31 ---
+
+--- markdown golden markdown-32 ---
+[raw markdown]
+```
++     Ok(())
+```
+
+[rendered lines]
+  Ok(())
+--- end markdown golden markdown-32 ---
+
+--- markdown golden markdown-33 ---
+[raw markdown]
+```
++ }
+```
+
+[rendered lines]
+- }
+--- end markdown golden markdown-33 ---
+
+--- markdown golden asst-55 ---
+[raw markdown]
+## Math (if supported)
+
+[rendered lines]
+Math (if supported)
+--- end markdown golden asst-55 ---
+
+--- markdown golden asst-56 ---
+[raw markdown]
+Inline: $E = mc^2$
+
+[rendered lines]
+Inline: $E = mc^2$
+--- end markdown golden asst-56 ---
+
+--- markdown golden asst-57 ---
+[raw markdown]
+Block:
+
+[rendered lines]
+Block:
+--- end markdown golden asst-57 ---
+
+--- markdown golden asst-58 ---
+[raw markdown]
+$$
+\sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+$$
+
+[rendered lines]
+$$
+\sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+$$
+--- end markdown golden asst-58 ---
+
+--- markdown golden asst-61 ---
+[raw markdown]
+## Horizontal rules
+
+---
+
+[rendered lines]
+Horizontal rules
+
+---
+--- end markdown golden asst-61 ---
+
+--- markdown golden asst-64 ---
+[raw markdown]
+***
+
+[rendered lines]
+---
+--- end markdown golden asst-64 ---
+
+--- markdown golden asst-65 ---
+[raw markdown]
+## Images (reference)
+
+[rendered lines]
+Images (reference)
+--- end markdown golden asst-65 ---
+
+--- markdown golden asst-66 ---
+[raw markdown]
+![Alt text](https://via.placeholder.com/150 "Placeholder image")
+
+[rendered lines]
+https://via.placeholder.com/150
+--- end markdown golden asst-66 ---
+
+--- markdown golden asst-67 ---
+[raw markdown]
+## Footnotes
+
+[rendered lines]
+Footnotes
+--- end markdown golden asst-67 ---
+
+--- markdown golden asst-68 ---
+[raw markdown]
+Here's a sentence with a footnote[^1].
+
+[rendered lines]
+Here's a sentence with a footnote[^1].
+--- end markdown golden asst-68 ---
+
+--- markdown golden asst-69 ---
+[raw markdown]
+[^1]: This is the footnote content.
+
+[rendered lines]
+[^1]: This is the footnote content.
+--- end markdown golden asst-69 ---
+
+--- markdown golden asst-70 ---
+[raw markdown]
+## Definition list style
+
+[rendered lines]
+Definition list style
+--- end markdown golden asst-70 ---
+
+--- markdown golden asst-71 ---
+[raw markdown]
+**Term 1**
+
+[rendered lines]
+Term 1
+--- end markdown golden asst-71 ---
+
+--- markdown golden asst-72 ---
+[raw markdown]
+: Definition of term 1.
+
+[rendered lines]
+: Definition of term 1.
+--- end markdown golden asst-72 ---
+
+--- markdown golden asst-73 ---
+[raw markdown]
+**Term 2**
+: Definition of term 2.
+
+[rendered lines]
+Term 2
+: Definition of term 2.
+--- end markdown golden asst-73 ---
+
+--- markdown golden asst-75 ---
+[raw markdown]
+## Alerts / Admonitions (GitHub style)
+
+[rendered lines]
+Alerts / Admonitions (GitHub style)
+--- end markdown golden asst-75 ---
+
+--- markdown golden asst-76 ---
+[raw markdown]
+> [!NOTE]
+> This is a note with useful information.
+
+[rendered lines]
+▎ [!NOTE]
+▎ This is a note with useful information.
+--- end markdown golden asst-76 ---
+
+--- markdown golden asst-78 ---
+[raw markdown]
+> [!WARNING]
+> This is a warning about potential issues.
+
+[rendered lines]
+▎ [!WARNING]
+▎ This is a warning about potential issues.
+--- end markdown golden asst-78 ---
+
+--- markdown golden asst-80 ---
+[raw markdown]
+> [!TIP]
+> This is a helpful tip for the reader.
+
+[rendered lines]
+▎ [!TIP]
+▎ This is a helpful tip for the reader.
+--- end markdown golden asst-80 ---
+
+--- markdown golden asst-82 ---
+[raw markdown]
+> [!IMPORTANT]
+> Critical information that requires attention.
+
+[rendered lines]
+▎ [!IMPORTANT]
+▎ Critical information that requires attention.
+--- end markdown golden asst-82 ---
+
+--- markdown golden asst-84 ---
+[raw markdown]
+> [!CAUTION]
+> Negative potential consequences of an action.
+
+[rendered lines]
+▎ [!CAUTION]
+▎ Negative potential consequences of an action.
+--- end markdown golden asst-84 ---
+
+--- markdown golden asst-86 ---
+[raw markdown]
+## Long paragraph
+
+[rendered lines]
+Long paragraph
+--- end markdown golden asst-86 ---
+
+--- markdown golden asst-87 ---
+[raw markdown]
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.
+
+[rendered lines]
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut 
+labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco 
+laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in 
+voluptate velit esse cillum dolore eu fugiat nulla pariatur.
+--- end markdown golden asst-87 ---
+
+--- markdown golden asst-90 ---
+[raw markdown]
+## Emoji
+
+[rendered lines]
+Emoji
+--- end markdown golden asst-90 ---
+
+--- markdown golden asst-91 ---
+[raw markdown]
+:rocket: :white_check_mark: :warning: :bug: :sparkles:
+
+[rendered lines]
+:rocket: :white_check_mark: :warning: :bug: :sparkles:
+--- end markdown golden asst-91 ---
+
+--- markdown golden asst-92 ---
+[raw markdown]
+## HTML (inline)
+
+[rendered lines]
+HTML (inline)
+--- end markdown golden asst-92 ---
+
+--- markdown golden asst-93 ---
+[raw markdown]
+Hidden content inside a collapsible section.
+
+[rendered lines]
+Hidden content inside a collapsible section.
+--- end markdown golden asst-93 ---
+
+--- markdown golden markdown-34 ---
+[raw markdown]
+```
+Some code here
+```
+
+[rendered lines]
+Some code here
+--- end markdown golden markdown-34 ---
+
+--- markdown golden asst-94 ---
+[raw markdown]
+---
+
+[rendered lines]
+---
+--- end markdown golden asst-94 ---
+
+--- markdown golden asst-95 ---
+[raw markdown]
+以上覆盖了标题、加粗/斜体/删除线、行内代码、链接、有序/无序/任务列表、引用、多语言代码块、表格、diff、数学公式、分隔线、图片、脚注、定义列表、GitHub admonitions、长段落、emoji、以及 HTML 折叠块。
+
+[rendered lines]
+以上覆盖了标题、加粗/斜体/删除线、行内代码、链接、有序/无序/任务列表、引用、多语言代码块、表格、
+diff、数学公式、分隔线、图片、脚注、定义列表、GitHub admonitions、长段落、emoji、以及 HTML 
+折叠块。
+--- end markdown golden asst-95 ---

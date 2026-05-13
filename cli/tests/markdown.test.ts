@@ -1067,8 +1067,8 @@ describe('renderMarkdown', () => {
     process.env.FORCE_HYPERLINK = '0'
     try {
       const result = render('[click](https://example.com)')
-      expect(result).toContain('https://example.com')
-      expect(result).not.toContain('click')
+      expect(result).toContain('click')
+      expect(result).not.toContain('https://example.com')
     } finally {
       if (prev === undefined) delete process.env.FORCE_HYPERLINK
       else process.env.FORCE_HYPERLINK = prev
