@@ -277,11 +277,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function renderStatus() {
     if (destroyed) return
-    // Always expose streamingText as pendingText so the active-response
-    // viewmodel can render the growing markdown block (trees, long paragraphs)
-    // into the dynamic zone. It was previously suppressed while streaming,
-    // which made long single-paragraph content (e.g. tree listings) appear
-    // "all at once" at commit time instead of incrementally.
+    // The pending tail is rendered via renderMarkdownCached + revealCursor
+    // so setStatus only ever diffs a single prefix-extending line; completed
+    // markdown blocks are committed to the scroll area by the stream machine.
     const pendingText = streamMachine?.pendingText ?? ''
     const pendingThinkingText = streamMachine?.pendingThinkingText ?? ''
     const toolProgress = currentToolProgress()
@@ -298,6 +296,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       termRows: renderer.termRows,
       expanded,
       assistantCommitted: streamMachine?.assistantCommitted,
+      revealCursor: streamMachine?.revealCursor ?? 0,
     })
     const overlayBlocks = buildOverlayBlocks(overlay, renderer.termCols)
     const promptBlocks = buildPromptBlocks(getPromptVM())
@@ -418,14 +417,16 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       if (streamMachine) {
         streamMachine = { ...streamMachine, spinnerState }
       }
-      // Terminal title animation — update at ~960ms, not every spinner frame
+      // Terminal title animation — update at ~960ms, not every spinner frame.
+      // Do not redraw the status area just for spinner animation: even a
+      // first-line-only redraw still moves the cursor around the prompt, which
+      // reads as input-box jitter during long markdown/table buffering.
       if (spinnerState.frame % TITLE_INTERVAL_FRAMES === 0) {
         const glyphs = ['⠂', '⠐']
         const idx = titleFrame % glyphs.length
         titleFrame++
         setTerminalTitle(glyphs[idx])
       }
-      renderStatus()
     }, SPINNER_INTERVAL_MS)
   }
 

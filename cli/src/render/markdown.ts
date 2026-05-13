@@ -17,7 +17,7 @@ import { lexMarkdownTokens } from '../markdown/parse/marked.js'
 import { renderMarkdownNodes } from '../markdown/render/ansi.js'
 
 export { configureMarked } from '../markdown/parse/marked.js'
-export { formatToken } from '../markdown/render/ansi.js'
+export { formatToken, highlightCodeLine } from '../markdown/render/ansi.js'
 export { findStreamingCommitPoint, findNaturalPlainTextCommitPoint, splitMarkdownBlocks, type MarkdownSplit } from '../markdown/streaming/commit.js'
 
 /**

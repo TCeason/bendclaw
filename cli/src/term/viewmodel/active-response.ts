@@ -1,10 +1,16 @@
 import { formatSpinnerLine, type SpinnerState } from '../spinner.js'
-import { line, block, plain, dim, colored, type ViewBlock, type StyledLine } from './types.js'
-import { renderMarkdown } from '../../render/markdown.js'
+import { line, block, plain, dim, colored, ansi, type ViewBlock, type StyledLine } from './types.js'
+import { renderMarkdownCached } from '../../render/markdown.js'
+import stripAnsi from 'strip-ansi'
+
+const TABLE_TAIL_RE = /^[│|├┌└]/
+const FENCE_TAIL_RE = /(^|\n)[ \t]*(```+|~~~+)/
 
 const MAX_PROGRESS_LINES = 5
 const MAX_PROGRESS_LINE_WIDTH = 120
-const MAX_PROSE_PENDING_LINES = 3
+
+let lastPendingKey = ''
+let lastPlainTail = ''
 
 export interface ActiveResponseInput {
   isLoading: boolean
@@ -15,23 +21,11 @@ export interface ActiveResponseInput {
   termRows: number
   expanded?: boolean
   assistantCommitted?: boolean
-}
-
-function isPlainProsePending(text: string): boolean {
-  for (const line of text.split('\n')) {
-    const trimmed = line.trimStart()
-    if (!trimmed) continue
-    if (/^(```|~~~)/.test(trimmed)) return false
-    if (/^⏺\s+\S/.test(trimmed)) return false
-    if (/^(?: {4}|\t)\S/.test(line)) return false
-    if (/^#{1,6}(?:\s|$)/.test(trimmed)) return false
-    if (/^[-*+]\s+/.test(trimmed)) return false
-    if (/^\d+\.\s+/.test(trimmed)) return false
-    if (/^>\s?/.test(trimmed)) return false
-    if (/^\|.*\|\s*$/.test(trimmed)) return false
-    if (/^[│├└]/.test(trimmed)) return false
-  }
-  return true
+  /** Current character-index position into the *rendered* markdown tail.
+   *  Incremented by the reducer each paced frame; capped in this function
+   *  at the actual rendered length so tests can pass a large value for
+   *  "fully revealed". */
+  revealCursor: number
 }
 
 export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock[] {
@@ -40,7 +34,6 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
   const blocks: ViewBlock[] = []
 
   if (input.pendingThinkingText) {
-    // Show the trailing fragment of in-progress thinking text.
     const lines = input.pendingThinkingText.split('\n')
     const maxLines = Math.max(1, input.termRows - 10)
     const visible = lines.slice(-maxLines)
@@ -51,38 +44,6 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
     )
     if (styledLines.length > 0) {
       blocks.push(block(styledLines, 1))
-    }
-  }
-
-  if (input.pendingText) {
-    // Show the trailing fragment of in-progress streaming text.
-    // Completed markdown blocks are committed to scroll area by the stream machine;
-    // this shows the current incomplete block being streamed.
-    // Match scroll area style: first line gets ⏺ dot + margin if this is the
-    // start of an assistant block (nothing committed yet).
-    const rendered = renderMarkdown(input.pendingText)
-    const lines = (rendered || input.pendingText).split('\n')
-    // Reserve space for spinner + prompt. Plain prose should feel like a
-    // typing tail, not a separate scrolling pane; structured markdown keeps
-    // more context because it may need to be re-rendered as a unit.
-    const maxLines = Math.max(1, input.termRows - 10)
-    const visibleLineCount = isPlainProsePending(input.pendingText)
-      ? Math.min(MAX_PROSE_PENDING_LINES, maxLines)
-      : maxLines
-    const visible = lines.slice(-visibleLineCount)
-    const isBlockStart = !input.assistantCommitted
-    // The ⏺ dot marks the start of an assistant block. It should only appear
-    // on the block's first line (lines[0]). If the block has grown beyond the
-    // visible window, the first line is no longer visible — don't put ⏺ on
-    // visible[0] because that would make a middle line suddenly gain a dot.
-    const blockStartVisible = isBlockStart && lines.length <= visibleLineCount
-    const styledLines: StyledLine[] = visible.map((l, i) =>
-      i === 0 && blockStartVisible
-        ? line(colored('⏺ ', 'cyan'), plain(l))
-        : line(plain(`  ${l}`))
-    )
-    if (styledLines.length > 0) {
-      blocks.push(block(styledLines, blockStartVisible ? 1 : 0))
     }
   }
 
@@ -103,6 +64,54 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
 
   if (input.expanded) {
     blocks.push(block([line(dim('  ctrl+o to collapse'))], 1))
+  }
+
+  // Assistant text streaming: render the FULL pending text through the
+  // real markdown pipeline, then reveal its last line character by
+  // character using the reducer-supplied revealCursor. The cursor only
+  // advances (the reducer guarantees monotonic increase), so every frame
+  // is a strict prefix extension of the previous one — the renderer's
+  // setStatus always hits its append fast-path, producing a true typing
+  // effect without flicker.
+  if (input.pendingText) {
+    const renderedFull = renderMarkdownCached(input.pendingText)
+    const renderedLines = renderedFull.split('\n')
+    // Find the last non-empty line
+    let lastIdx = renderedLines.length - 1
+    while (lastIdx >= 0 && !renderedLines[lastIdx]!.trim()) lastIdx--
+    const renderedTail = lastIdx >= 0 ? renderedLines[lastIdx]! : ''
+
+    const cursor = Math.min(input.revealCursor, renderedTail.length)
+    // Structural output whose shape depends on unseen future lines (tables,
+    // box drawings, tree diagrams) can't be shown character-by-character
+    // without column-width jitter. Show the spinner until the completed
+    // block is committed by the stream machine.
+    const plainTail = stripAnsi(renderedTail)
+    const pendingKey = input.pendingText
+    const isPrefixExtension = pendingKey.startsWith(lastPendingKey) && plainTail.startsWith(lastPlainTail)
+    const isStructuralTail = TABLE_TAIL_RE.test(plainTail) || FENCE_TAIL_RE.test(input.pendingText)
+    if (cursor <= 0 || !renderedTail || isStructuralTail || !isPrefixExtension) {
+      lastPendingKey = pendingKey
+      lastPlainTail = plainTail
+      // Still in pure-buffer phase, structural markdown, or a render shape
+      // change that would require rewriting the line. Keep the prompt stable
+      // and wait for the completed block to append to the scroll area.
+      const spinnerText = formatSpinnerLine(input.spinner, Date.now())
+      blocks.push(block([line(plain(spinnerText))], 1))
+      return blocks
+    }
+
+    lastPendingKey = pendingKey
+    lastPlainTail = plainTail
+    const revealed = renderedTail.slice(0, cursor)
+    const isBlockStart = !input.assistantCommitted
+    const styledLines: StyledLine[] = [
+      isBlockStart
+        ? line(colored('⏺ ', 'cyan'), ansi(revealed))
+        : line(ansi(`  ${revealed}`)),
+    ]
+    blocks.push(block(styledLines, isBlockStart ? 1 : 0))
+    return blocks
   }
 
   const spinnerText = formatSpinnerLine(input.spinner, Date.now())

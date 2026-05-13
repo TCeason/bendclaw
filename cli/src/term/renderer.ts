@@ -12,6 +12,7 @@ import {
   cursorUp,
   cursorDown,
   eraseDown,
+  eraseLine,
   eraseToEndOfLine,
   hideCursor,
   showCursor,
@@ -19,6 +20,7 @@ import {
   cursorTo,
 } from './ansi.js'
 import stringWidth from 'string-width'
+import stripAnsi from 'strip-ansi'
 
 export interface TermRendererOptions {
   /** Stream to write to (default: process.stdout) */
@@ -134,6 +136,27 @@ export class TermRenderer {
       }
     }
 
+    // Single-line change at index 0 with all following lines identical:
+    // only erase that one line instead of eraseDown() which would clear
+    // through the prompt area and cause visible jumping.
+    if (firstChanged === 0
+        && prev.length === next.length
+        && prev.length > 1
+        && prev.slice(1).every((line, idx) => line === next[1 + idx])) {
+      const rowsAbove = this.screenRows(prev)
+      const rowsBelow = this.screenRows(prev.slice(1))
+      this.write(cursorUp(rowsAbove) + eraseLine())
+      this.write(this.truncateLine(next[0]!))
+      if (rowsBelow > 0) {
+        this.write(cursorDown(rowsBelow))
+      }
+      this.write(cursorToColumn(1))
+      this.prevStatusLines = [...next]
+      this.statusHeight = next.length
+      if (!outerBatch) this.flushBatch()
+      return
+    }
+
     const rowsToReplace = this.screenRows(prev.slice(firstChanged))
     this.write(cursorUp(rowsToReplace) + cursorToColumn(1) + eraseDown())
 
@@ -165,15 +188,15 @@ export class TermRenderer {
   private screenRows(lines: string[]): number {
     let total = 0
     for (const line of lines) {
-      const width = stringWidth(line)
+      const width = stringWidth(stripAnsi(line))
       total += width === 0 ? 1 : Math.ceil(width / this.cols)
     }
     return total
   }
 
   private appendColumn(prevLine: string, nextLine: string): number | null {
-    const prevWidth = stringWidth(prevLine)
-    const nextWidth = stringWidth(nextLine)
+    const prevWidth = stringWidth(stripAnsi(prevLine))
+    const nextWidth = stringWidth(stripAnsi(nextLine))
     if (prevWidth >= this.cols || nextWidth >= this.cols) return null
     return prevWidth + 1
   }

@@ -60,6 +60,14 @@ export function plain(text: string): StyledSpan {
   return { text }
 }
 
+// Raw passthrough — used when `text` already contains ANSI escape sequences
+// that must be preserved as-is. Identical to `plain` structurally, but
+// named distinctly so call sites document the intent and don't accidentally
+// wrap already-styled content in chalk (which would nest reset codes).
+export function ansi(text: string): StyledSpan {
+  return { text }
+}
+
 export function dim(text: string): StyledSpan {
   return { text, dim: true }
 }

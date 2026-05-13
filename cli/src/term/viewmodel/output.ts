@@ -29,6 +29,21 @@ export function buildOutputBlocks(lines: OutputLine[], initialPrevKind?: string)
         break
       }
 
+      case 'code_line': {
+        // Streamed code-fence line. Preserve any ANSI from syntax highlighting
+        // verbatim (no ⏺ dot, no gutter) so the on-screen form matches how a
+        // finalized fenced code block renders — tokens don't reflow when the
+        // closing fence eventually arrives. Empty code_line entries are used
+        // as block separators around the fence.
+        if (!ol.text) {
+          blocks.push(block([line(plain(''))]))
+          break
+        }
+        const marginTop = prevKind !== 'code_line' && prevKind !== 'assistant' ? 1 : 0
+        blocks.push(block([line(plain(ol.text))], marginTop))
+        break
+      }
+
       case 'thinking': {
         const isBlockStart = prevKind !== 'thinking'
         const prefix = isBlockStart ? '  🤔 ' : '     '

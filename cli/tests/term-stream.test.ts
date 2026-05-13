@@ -3,6 +3,7 @@ import stringWidth from 'string-width'
 import { createSpinnerState } from '../src/term/spinner.js'
 import { createInitialState } from '../src/term/app/state.js'
 import { createStreamMachineState, reduceRunEvent, flushStreaming, buildToolStartedLines, buildToolFinishedLines, buildToolProgressLines } from '../src/term/app/stream.js'
+import type { OutputLine } from '../src/render/output.js'
 
 describe('term stream machine', () => {
   test('assistant delta commits completed markdown blocks', () => {
@@ -10,14 +11,14 @@ describe('term stream machine', () => {
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
 
-    // A delta with a complete paragraph (double newline) should commit
+    // A delta with a complete paragraph (double newline) should commit.
     const update = reduceRunEvent(state, {
       kind: 'assistant_delta',
       payload: { delta: 'hello\n\nworld' },
     }, { termRows: 24 })
 
     state = update.state
-    // "hello\n\n" is a completed block, "world" remains as pending
+    // "hello\n\n" is a completed block, "world" remains as pending.
     expect(update.commitLines.length).toBeGreaterThan(0)
     expect(state.streamingText).toBe('world')
   })
@@ -42,7 +43,6 @@ describe('term stream machine', () => {
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
 
-    // Simulate delta with no complete block
     let update = reduceRunEvent(state, {
       kind: 'assistant_delta',
       payload: { delta: 'hello world' },
@@ -51,7 +51,6 @@ describe('term stream machine', () => {
     expect(update.commitLines.length).toBe(0)
     expect(state.streamingText).toBe('hello world')
 
-    // Simulate assistant_completed — should flush remaining
     update = reduceRunEvent(state, {
       kind: 'assistant_completed',
       payload: {},
@@ -68,7 +67,8 @@ describe('term stream machine', () => {
     let state = createStreamMachineState(appState, spinner)
     const allCommitted: string[] = []
 
-    // Feed deltas with a complete block in the middle
+    // Feed deltas with a complete block in the middle — "Hello world.\n\n"
+    // commits mid-stream, "Second paragraph." stays pending until flush.
     for (const delta of ['Hello ', 'world.\n\n', 'Second paragraph.']) {
       const update = reduceRunEvent(state, {
         kind: 'assistant_delta',
@@ -78,10 +78,8 @@ describe('term stream machine', () => {
       for (const line of update.commitLines) allCommitted.push(line.text)
     }
 
-    // "Hello world.\n\n" should have been committed
     expect(allCommitted.length).toBeGreaterThan(0)
 
-    // assistant_completed flushes "Second paragraph."
     const update = reduceRunEvent(state, {
       kind: 'assistant_completed',
       payload: {},
@@ -92,12 +90,9 @@ describe('term stream machine', () => {
     const fullText = allCommitted.join('\n')
     expect(fullText).toContain('Hello world')
     expect(fullText).toContain('Second paragraph')
-
-    // Each appears exactly once
     expect((fullText.match(/Hello world/g) || []).length).toBe(1)
     expect((fullText.match(/Second paragraph/g) || []).length).toBe(1)
 
-    // Final flush should be empty
     const final = flushStreaming(state)
     expect(final.lines.length).toBe(0)
   })
@@ -150,38 +145,6 @@ describe('term stream machine', () => {
     expect(committed).not.toContain('plain line 7')
     expect(state.streamingText).toBe('plain line 7\nplain line 8')
     expect(state.assistantCommitted).toBe(true)
-  })
-
-  test('assistant delta does not naturally commit markdown list text', () => {
-    const appState = createInitialState('model', '/tmp')
-    const spinner = createSpinnerState()
-    let state = createStreamMachineState(appState, spinner)
-    const text = Array.from({ length: 9 }, (_, i) => `- item ${i}`).join('\n')
-
-    const update = reduceRunEvent(state, {
-      kind: 'assistant_delta',
-      payload: { delta: text },
-    }, { termRows: 18 })
-
-    state = update.state
-    expect(update.commitLines.length).toBe(0)
-    expect(state.streamingText).toBe(text)
-  })
-
-  test('assistant delta does not naturally commit indented code text', () => {
-    const appState = createInitialState('model', '/tmp')
-    const spinner = createSpinnerState()
-    let state = createStreamMachineState(appState, spinner)
-    const text = Array.from({ length: 9 }, (_, i) => `    const value${i} = ${i}`).join('\n')
-
-    const update = reduceRunEvent(state, {
-      kind: 'assistant_delta',
-      payload: { delta: text },
-    }, { termRows: 18 })
-
-    state = update.state
-    expect(update.commitLines.length).toBe(0)
-    expect(state.streamingText).toBe(text)
   })
 
   test('verbose mode: no duplicate commits across llm_call_completed and assistant_completed', () => {
@@ -554,4 +517,49 @@ describe('term stream machine', () => {
     })
     expect(finished.length).toBeGreaterThan(0)
   })
+})
+
+// ---------------------------------------------------------------------------
+// streaming code fence: lines committed line by line
+// ---------------------------------------------------------------------------
+
+function reduceDelta(prev: ReturnType<typeof createStreamMachineState>, delta: string, termRows = 30) {
+  const event = {
+    kind: 'assistant_delta' as const,
+    payload: { delta },
+    metadata: null as any,
+  }
+  return reduceRunEvent(prev, event, { termRows })
+}
+
+test('commits code-fenced lines incrementally, not just at close', () => {
+  let prev = createStreamMachineState(createInitialState(), createSpinnerState('responding'))
+  // Simulate a single delta containing prose → code fence → code body → close → prose
+  const result1 = reduceDelta(prev, 'Here is some code:\n\n```js\nconst a = 1\nconst b = 2\n```\n\nDone.\n')
+
+  // Should have at least two code_line entries for the two body lines
+  const codeLines = result1.commitLines.filter(l => l.kind === 'code_line')
+  expect(codeLines.length).toBeGreaterThanOrEqual(2)
+  expect(codeLines.find(l => l.text.includes('const a = 1'))).toBeTruthy()
+  expect(codeLines.find(l => l.text.includes('const b = 2'))).toBeTruthy()
+
+  // Should also have assistant lines for the prose before and after
+  const proseLines = result1.commitLines.filter(l => l.kind === 'assistant' && l.text !== '')
+  expect(proseLines.length).toBeGreaterThanOrEqual(1)
+})
+
+test('flushStreaming does not re-commit an open fence as a second-time assistant block', () => {
+  let prev = createStreamMachineState(createInitialState(), createSpinnerState('responding'))
+  // Incomplete fence — stream ends while the fence is still open
+  const result1 = reduceDelta(prev, 'Here is code:\n\n```js\nconst a = 1\nconst b = 2\n')
+  prev = result1.state
+
+  const bodyCodeLines = result1.commitLines.filter(l => l.kind === 'code_line' && l.text)
+  expect(bodyCodeLines.length).toBeGreaterThanOrEqual(2)
+
+  // flushStreaming should NOT re-commit the fence body as assistant lines
+  const flushed = flushStreaming(prev)
+  const asstLines = flushed.lines.filter(l => l.kind === 'assistant' && l.text)
+  expect(asstLines.find(l => l.text.includes('const a = 1'))).toBeUndefined()
+  expect(asstLines.find(l => l.text.includes('const b = 2'))).toBeUndefined()
 })

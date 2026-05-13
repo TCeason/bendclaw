@@ -1,13 +1,160 @@
 import { buildError, buildRunSummary, buildToolCall, buildToolProgress, buildToolResult, buildVerboseEvent, buildAssistantLines, buildThinkingLines, type OutputLine } from '../../render/output.js'
 import { formatDuration } from '../../render/format.js'
-import { findStreamingCommitPoint, findNaturalPlainTextCommitPoint } from '../../render/markdown.js'
+import { findStreamingCommitPoint, findNaturalPlainTextCommitPoint, highlightCodeLine } from '../../render/markdown.js'
 import { setSpinnerPhase, type SpinnerState } from '../spinner.js'
 import { applyEvent } from './reducer.js'
 import type { AppState } from './state.js'
 import type { RunEvent } from '../../native/index.js'
 
-const PACE_INTERVAL_MS = 30
+const PACE_INTERVAL_MS = 90
 let sepId = 0
+
+// Commit at the last safe newline so the pending tail is always a single
+// growing line (enables the renderer's setStatus append fast-path, which
+// produces a true character-by-character typing effect on the last line).
+//
+// Narrow path: only kicks in when the head above the last newline is plain
+// prose. Anything that changes shape with more context (lists, tables,
+// headings, blockquotes, tree diagrams, indented code, open code fences)
+// stays in the pending buffer so a later complete-block commit can render
+// it with correct widths and alignment.
+//
+// Also: only commit when at least one character already sits after the
+// trailing newline. Committing a line the moment `\n` arrives (before the
+// next token's first glyph lands) leaves the status tail momentarily empty,
+// which forces a cursorUp + eraseDown cycle that reads as "bottom flashes"
+// on every newline. Holding the commit until the next line has content
+// keeps the tail transition to a single-character diff → fast-path hit.
+function findLineByLineCommitPoint(text: string): number {
+  const idx = text.lastIndexOf('\n')
+  if (idx < 0) return 0
+  if (idx === text.length - 1) return 0
+  const head = text.slice(0, idx + 1)
+  if (!isPlainProseHead(head)) return 0
+  return idx + 1
+}
+
+function isPlainProseHead(head: string): boolean {
+  for (const rawLine of head.split('\n')) {
+    const line = rawLine
+    const trimmed = line.trimStart()
+    if (!trimmed) continue
+    if (/^(```|~~~)/.test(trimmed)) return false
+    if (/^#{1,6}(?:\s|$)/.test(trimmed)) return false
+    if (/^[-*+]\s+/.test(trimmed)) return false
+    if (/^\d+\.\s+/.test(trimmed)) return false
+    if (/^>\s?/.test(trimmed)) return false
+    if (/^\|.*\|\s*$/.test(trimmed)) return false
+    if (/^[│├└─]/.test(trimmed)) return false
+    if (/^(?: {4}|\t)\S/.test(line)) return false
+  }
+  return true
+}
+
+const FENCE_LINE_RE = /^([ \t]*)(```+|~~~+)([^\n]*)$/
+
+/**
+ * One step of the streaming code-fence state machine.
+ *
+ * - Before a fence: detect an opening ``` line, commit any text before it
+ *   as ordinary prose, then switch into fence mode.
+ * - Inside a fence: commit each complete body line directly to the scroll
+ *   area as a `code_line` (syntax-highlighted when a language is known),
+ *   so the user sees code flow in line by line rather than all at once
+ *   when the fence finally closes.
+ * - At the closing ``` line: emit a trailing separator and leave fence mode.
+ *
+ * Returns `null` when no more progress is possible in the current
+ * `streamingText`; callers loop until null so a single delta can process
+ * "prose → open → body → close → prose" in one pass.
+ */
+function advanceCodeFence(state: StreamMachineState, commitLines: OutputLine[]): StreamMachineState | null {
+  if (!state.codeFence) {
+    // Find an opening ``` or ~~~ line somewhere in the streaming buffer.
+    // Scanning line by line lets us commit any prose that precedes the
+    // fence before switching into fence mode.
+    const text = state.streamingText
+    let cursor = 0
+    while (cursor < text.length) {
+      const nl = text.indexOf('\n', cursor)
+      if (nl < 0) return null
+      const line = text.slice(cursor, nl)
+      const match = FENCE_LINE_RE.exec(line)
+      if (match) {
+        // Commit any prose ahead of the fence as a separate assistant
+        // paragraph so it doesn't get swallowed by the unclosed-fence
+        // repair logic in findStreamingCommitPoint.
+        if (cursor > 0) {
+          const prose = text.slice(0, cursor)
+          const built = buildAssistantLines(prose)
+          if (built.length > 0) {
+            if (state.assistantCommitted) {
+              commitLines.push({ id: `sep-${sepId++}`, kind: 'assistant', text: '' })
+            }
+            commitLines.push(...built)
+          }
+        }
+        const lang = (match[3] ?? '').trim() || null
+        let next: StreamMachineState = {
+          ...state,
+          streamingText: text.slice(nl + 1),
+          codeFence: { lang, linesCommitted: 0 },
+          assistantCommitted: true,
+        }
+        // Blank separator so the fence starts on its own row.
+        if (state.assistantCommitted || cursor > 0) {
+          commitLines.push({ id: `sep-${sepId++}`, kind: 'assistant', text: '' })
+        }
+        return next
+      }
+      cursor = nl + 1
+    }
+    return null
+  }
+
+  // Inside an open fence. Commit each fully-terminated body line, stopping
+  // at the closing ``` line (if present).
+  const { lang } = state.codeFence
+  const text = state.streamingText
+  let cursor = 0
+  let linesCommitted = state.codeFence.linesCommitted
+  let closed = false
+  let closedAt = -1
+  while (cursor < text.length) {
+    const nl = text.indexOf('\n', cursor)
+    if (nl < 0) break
+    const line = text.slice(cursor, nl)
+    if (FENCE_LINE_RE.test(line)) {
+      closed = true
+      closedAt = nl + 1
+      break
+    }
+    const highlighted = highlightCodeLine(line, lang ?? undefined)
+    commitLines.push({
+      id: `code-${sepId++}`,
+      kind: 'code_line',
+      text: highlighted,
+    })
+    linesCommitted += 1
+    cursor = nl + 1
+  }
+
+  if (cursor === 0 && !closed) return null
+
+  if (closed) {
+    commitLines.push({ id: `code-${sepId++}`, kind: 'code_line', text: '' })
+    return {
+      ...state,
+      streamingText: text.slice(closedAt),
+      codeFence: null,
+    }
+  }
+  return {
+    ...state,
+    streamingText: text.slice(cursor),
+    codeFence: { lang, linesCommitted },
+  }
+}
 
 export interface StreamMachineState {
   appState: AppState
@@ -22,6 +169,17 @@ export interface StreamMachineState {
   prefixEmitted: boolean
   assistantCommitted: boolean
   lastPendingRender: number
+  /** Reveal cursor into the *rendered* last line of streaming text. Only
+   *  advances — never rewinds — so consecutive reveal prefixes are always
+   *  extensions of each other. Resets when streamingText is cleared. */
+  revealCursor: number
+  /** When inside an open ``` fence, `lang` is the resolved language (or null
+   *  for "no language tag") and `lineCount` tracks how many content lines
+   *  have already been committed to the scroll area so flushStreaming knows
+   *  to skip them if the stream ends mid-fence. While active, streamingText
+   *  only holds the *partial last line* of the fence body (or the empty
+   *  string between newlines). */
+  codeFence: { lang: string | null; linesCommitted: number } | null
 }
 
 export interface StreamContext {
@@ -90,6 +248,8 @@ export function createStreamMachineState(appState: AppState, spinnerState: Spinn
     prefixEmitted: false,
     assistantCommitted: false,
     lastPendingRender: 0,
+    revealCursor: 0,
+    codeFence: null,
   }
 }
 
@@ -169,57 +329,87 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
         },
       }
 
-      // Commit completed markdown blocks directly to scroll area. If markdown
-      // has no safe block boundary yet, allow long plain-text prose to flow by
-      // committing complete leading lines while keeping the active tail dynamic.
-      const markdownCommitPoint = findStreamingCommitPoint(state.streamingText)
-      const naturalCommitPoint = markdownCommitPoint > 0 ? 0 : findNaturalPlainTextCommitPoint(state.streamingText, ctx.termRows)
-      const commitPoint = markdownCommitPoint || naturalCommitPoint
-      if (commitPoint > 0) {
-        const completed = state.streamingText.slice(0, commitPoint)
-        const pending = state.streamingText.slice(commitPoint)
-        const builtLines = buildAssistantLines(completed)
-        // Insert blank line between consecutive committed markdown chunks so
-        // block spacing matches the full-document render (trim strips it
-        // otherwise). Natural plain-text continuation stays visually connected.
-        if (markdownCommitPoint > 0 && state.assistantCommitted && builtLines.length > 0) {
-          const sep: OutputLine = { id: `sep-${sepId++}`, kind: 'assistant', text: '' }
-          commitLines.push(sep)
-        }
-        commitLines.push(...builtLines)
-        state = { ...state, streamingText: pending, assistantCommitted: true }
+      // Code fence streaming: commit each completed line inside an open
+      // ``` fence directly to the scroll area so the user sees code flow
+      // line by line, not a single burst at close time. Runs repeatedly
+      // because a single delta can contain "prose → open fence → lines →
+      // close fence → more prose". Anything unhandled falls through to the
+      // markdown commit logic below.
+      for (;;) {
+        const advanced = advanceCodeFence(state, commitLines)
+        if (!advanced) break
+        state = advanced
       }
 
-      // Force-split when pending text exceeds a fraction of the visible area
-      // so content flows into the scroll zone (append) instead of staying in
-      // the status area (re-render in place). Prefer markdown-safe boundaries,
-      // then fall back to plain prose line boundaries.
-      const pendingLineCount = state.streamingText.split('\n').length
-      const forceThreshold = Math.max(4, Math.floor(ctx.termRows / 3))
-      if (pendingLineCount > forceThreshold) {
-        const markdownSplitAt = findStreamingCommitPoint(state.streamingText)
-        const naturalSplitAt = markdownSplitAt > 0 ? 0 : findNaturalPlainTextCommitPoint(state.streamingText, ctx.termRows)
-        const splitAt = markdownSplitAt || naturalSplitAt
-        if (splitAt > 0 && splitAt < state.streamingText.length) {
-          const chunk = state.streamingText.slice(0, splitAt)
-          const rest = state.streamingText.slice(splitAt)
-          const builtLines = buildAssistantLines(chunk)
-          if (markdownSplitAt > 0 && state.assistantCommitted && builtLines.length > 0) {
+      // While inside an open code fence, skip normal markdown block
+      // commits — the body lines are being committed incrementally by
+      // advanceCodeFence.  The markdown commit-point logic would otherwise
+      // try to re-commit the whole fence as a single rendered block,
+      // producing duplicate output.
+      if (!state.codeFence) {
+        // Commit completed markdown blocks directly to scroll area. If markdown
+        // has no safe block boundary yet, allow long plain-text prose to flow by
+        // committing complete leading lines while keeping the active tail dynamic.
+        const markdownCommitPoint = findStreamingCommitPoint(state.streamingText)
+        const naturalCommitPoint = markdownCommitPoint > 0 ? 0 : findNaturalPlainTextCommitPoint(state.streamingText, ctx.termRows)
+        // Fall back to committing at the last safe newline so the pending tail
+        // is a single growing line — this is what enables the renderer's
+        // setStatus append fast-path (character-by-character typing on the
+        // last status line, no full-area repaint).
+        const lineCommitPoint = (markdownCommitPoint > 0 || naturalCommitPoint > 0)
+          ? 0
+          : findLineByLineCommitPoint(state.streamingText)
+        const commitPoint = markdownCommitPoint || naturalCommitPoint || lineCommitPoint
+        if (commitPoint > 0) {
+          const completed = state.streamingText.slice(0, commitPoint)
+          const pending = state.streamingText.slice(commitPoint)
+          const builtLines = buildAssistantLines(completed)
+          if (markdownCommitPoint > 0 && state.assistantCommitted && builtLines.length > 0) {
             const sep: OutputLine = { id: `sep-${sepId++}`, kind: 'assistant', text: '' }
             commitLines.push(sep)
           }
           commitLines.push(...builtLines)
-          state = { ...state, streamingText: rest, assistantCommitted: true }
+          state = { ...state, streamingText: pending, assistantCommitted: true }
+        }
+
+        // Force-split when pending text exceeds a fraction of the visible area
+        // so content flows into the scroll zone (append) instead of staying in
+        // the status area (re-render in place). Prefer markdown-safe boundaries,
+        // then fall back to plain prose line boundaries.
+        const pendingLineCount = state.streamingText.split('\n').length
+        const forceThreshold = Math.max(4, Math.floor(ctx.termRows / 3))
+        if (pendingLineCount > forceThreshold) {
+          const markdownSplitAt = findStreamingCommitPoint(state.streamingText)
+          const naturalSplitAt = markdownSplitAt > 0 ? 0 : findNaturalPlainTextCommitPoint(state.streamingText, ctx.termRows)
+          const splitAt = markdownSplitAt || naturalSplitAt
+          if (splitAt > 0 && splitAt < state.streamingText.length) {
+            const chunk = state.streamingText.slice(0, splitAt)
+            const rest = state.streamingText.slice(splitAt)
+            const builtLines = buildAssistantLines(chunk)
+            if (markdownSplitAt > 0 && state.assistantCommitted && builtLines.length > 0) {
+              const sep: OutputLine = { id: `sep-${sepId++}`, kind: 'assistant', text: '' }
+              commitLines.push(sep)
+            }
+            commitLines.push(...builtLines)
+            state = { ...state, streamingText: rest, assistantCommitted: true }
+          }
         }
       }
 
-      // Update pendingText for status area so the dynamic zone shows the
-      // growing markdown block (trees, long paragraphs) incrementally. Pace
-      // re-renders at PACE_INTERVAL_MS to avoid re-parsing and re-drawing on
-      // every byte — matches the refresh rate of claudecode's Ink re-render.
+      // Update pendingText for status area so the dynamic tail shows the
+      // growing current line incrementally. Pace re-renders at
+      // PACE_INTERVAL_MS to avoid re-parsing on every byte.
       const now = Date.now()
       const shouldPace = now - state.lastPendingRender >= PACE_INTERVAL_MS
-      state = { ...state, pendingText: state.streamingText }
+      // Reset reveal cursor when streamingText is emptied (commit reset);
+      // otherwise advance it by a few characters each paced frame to
+      // create a smooth character-by-character reveal of the rendered tail.
+      const revealCursor = state.streamingText.length === 0
+        ? 0
+        : shouldPace
+          ? state.revealCursor + 3
+          : state.revealCursor
+      state = { ...state, pendingText: state.streamingText, revealCursor }
       if (shouldPace || state.streamingText.length === 0) {
         state = { ...state, lastPendingRender: now }
         rerenderStatus = true
@@ -383,6 +573,41 @@ export function flushStreaming(state: StreamMachineState): { state: StreamMachin
     lines.push(...buildThinkingLines(state.streamingThinkingText))
   }
 
+  if (state.codeFence) {
+    // Stream ended inside an open fence — commit whatever body lines are
+    // still buffered as code_line output (syntax-highlighted to match what
+    // was streamed earlier), then drop the fence state. Don't re-run
+    // buildAssistantLines on the same text or it would emit the body a
+    // second time as a full markdown code block.
+    const text = state.streamingText
+    const { lang } = state.codeFence
+    let cursor = 0
+    while (cursor < text.length) {
+      const nl = text.indexOf('\n', cursor)
+      const end = nl < 0 ? text.length : nl
+      const line = text.slice(cursor, end)
+      if (FENCE_LINE_RE.test(line)) {
+        // Treat a stray closing ``` as the fence close and stop.
+        cursor = nl < 0 ? text.length : nl + 1
+        break
+      }
+      if (line.length > 0 || nl >= 0) {
+        const highlighted = highlightCodeLine(line, lang ?? undefined)
+        lines.push({ id: `code-${sepId++}`, kind: 'code_line', text: highlighted })
+      }
+      if (nl < 0) { cursor = text.length; break }
+      cursor = nl + 1
+    }
+    lines.push({ id: `code-${sepId++}`, kind: 'code_line', text: '' })
+    const rest = text.slice(cursor)
+    return {
+      state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false, codeFence: null },
+      lines: rest.trim()
+        ? lines.concat(buildAssistantLines(rest))
+        : lines,
+    }
+  }
+
   if (state.streamingText.trim()) {
     const assistantLines = buildAssistantLines(state.streamingText)
     if (state.assistantCommitted && assistantLines.length > 0) {
@@ -393,13 +618,13 @@ export function flushStreaming(state: StreamMachineState): { state: StreamMachin
 
   if (lines.length === 0) {
     return {
-      state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false },
+      state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false, codeFence: null },
       lines: [],
     }
   }
 
   return {
-    state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false },
+    state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false, codeFence: null },
     lines,
   }
 }

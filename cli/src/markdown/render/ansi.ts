@@ -90,6 +90,23 @@ function resolveLanguage(lang: string | undefined): string | undefined {
   return LANG_ALIASES[normalized] ?? normalized
 }
 
+/**
+ * Highlight a single code line for streaming display. Matches the look of
+ * the finalized code block so tokens committed while a fence is open don't
+ * reflow when the fence finally closes. Returns the line verbatim if no
+ * highlighter is available or highlighting throws.
+ */
+export function highlightCodeLine(line: string, lang: string | undefined): string {
+  const resolved = resolveLanguage(lang)
+  if (!highlighter || !resolved || resolved === 'plaintext') return line
+  try {
+    if (!highlighter.supportsLanguage(resolved)) return line
+    return highlighter.highlight(line, { language: resolved })
+  } catch {
+    return line
+  }
+}
+
 type LineCommentMarker = '--' | '//' | '#'
 
 interface TrailingCodeComment {

@@ -12,6 +12,7 @@ function defaultInput(overrides?: Partial<ActiveResponseInput>): ActiveResponseI
     pendingThinkingText: '',
     spinner: createSpinnerState(),
     termRows: 24,
+    revealCursor: 999,
     ...overrides,
   }
 }
@@ -40,30 +41,18 @@ describe('buildActiveResponseBlocks', () => {
     expect(result).toContain('hello world')
   })
 
-  test('truncates pending text to maxHeight', () => {
+  test('multi-line pending text falls back to spinner to avoid fixed-area flicker', () => {
     const longText = Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n')
     const result = renderPlain(defaultInput({ pendingText: longText, termRows: 20 }))
-    const lines = result.split('\n')
-    const contentLines = lines.filter(l => l.includes('line '))
-    expect(contentLines.length).toBeLessThanOrEqual(14) // termRows - RESERVED_LINES
+    expect(result).toContain('Thinking')
+    expect(result).not.toContain('line 29')
   })
 
-  test('shows only prose tail while streaming long plain text', () => {
-    const longText = Array.from({ length: 10 }, (_, i) => `plain line ${i}`).join('\n')
-    const result = renderPlain(defaultInput({ pendingText: longText, termRows: 24 }))
-    const contentLines = result.split('\n').filter(l => l.includes('plain line '))
-    expect(contentLines).toEqual([
-      '  plain line 7',
-      '  plain line 8',
-      '  plain line 9',
-    ])
-  })
-
-  test('keeps structured pending context while streaming markdown', () => {
+  test('structured markdown pending text falls back to spinner', () => {
     const listText = Array.from({ length: 8 }, (_, i) => `- item ${i}`).join('\n')
     const result = renderPlain(defaultInput({ pendingText: listText, termRows: 24 }))
-    const contentLines = result.split('\n').filter(l => l.includes('item '))
-    expect(contentLines.length).toBeGreaterThan(3)
+    expect(result).toContain('Thinking')
+    expect(result).not.toContain('item 7')
   })
 
   test('shows tool progress with fixed height', () => {
