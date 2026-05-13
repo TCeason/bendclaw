@@ -40,10 +40,10 @@ fn no_context_files_produces_base_prompt_with_system() {
     assert!(prompt.contains("GitHub-flavored markdown"));
     assert!(prompt.contains("prompt injection"));
     assert!(prompt.contains("Use `search` instead of `grep` or `rg` through bash."));
-    assert!(prompt.contains("Work in short passes"));
-    assert!(prompt.contains("stop using tools and report it"));
+    assert!(prompt.contains("Act on your best judgment rather than asking for confirmation"));
+    assert!(prompt.contains("Be concise"));
     assert!(prompt.contains("Do not use a colon before tool calls."));
-    assert!(prompt.contains("Avoid long single lines, especially in Chinese"));
+    assert!(prompt.contains("Keep your text output brief and high-level"));
     assert!(prompt.contains("`file_path:line_number`"));
     assert!(prompt.contains("you're writing for a person, not logging to a console"));
     assert!(prompt.contains("original tool result may be cleared later"));

@@ -289,7 +289,7 @@ pub(super) async fn stream_assistant_response(
         match &result {
             Err(e)
                 if crate::retry::should_retry(e)
-                    && attempt < retry.max_retries()
+                    && attempt < retry.max_retries_for(e)
                     && !cancel.is_cancelled() =>
             {
                 // Abort forwarder to prevent forwarding events from failed attempt

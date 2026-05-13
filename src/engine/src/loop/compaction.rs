@@ -107,10 +107,15 @@ pub(super) fn compact_for_recovery(
 
     let pre_stats = crate::context::compute_call_stats_from_agent_messages(&context.messages);
 
+    // Force Collapse to run regardless of the normal trigger threshold.
+    // Recovery means the current context is causing failures — we must reduce it.
+    let mut recovery_config = ctx_config.clone();
+    recovery_config.compact_trigger_pct = 0;
+
     let budget_state = CompactionBudgetState::from_tracker(context_tracker, &context.messages);
     let compact_result = strategy.compact(
         std::mem::take(&mut context.messages),
-        ctx_config,
+        &recovery_config,
         &budget_state,
     );
     context.messages = compact_result.messages;

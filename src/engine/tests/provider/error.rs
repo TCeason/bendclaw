@@ -118,14 +118,14 @@ fn classify_400_not_retryable() {
 #[test]
 fn classify_529_overloaded() {
     let err = ProviderError::classify(529, "overloaded", None);
-    assert!(matches!(err, ProviderError::Api(_)));
+    assert!(matches!(err, ProviderError::Overloaded(_)));
     assert!(evotengine::retry::should_retry(&err));
 }
 
 #[test]
 fn classify_sse_overloaded_error() {
     let err = classify_sse_error_event(r#"{"type":"overloaded_error","message":"Overloaded"}"#);
-    assert!(matches!(err, ProviderError::Api(_)));
+    assert!(matches!(err, ProviderError::Overloaded(_)));
     assert!(evotengine::retry::should_retry(&err));
 }
 

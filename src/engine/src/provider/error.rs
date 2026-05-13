@@ -6,6 +6,8 @@ use std::time::Duration;
 pub enum ProviderError {
     #[error("API error: {0}")]
     Api(String),
+    #[error("Overloaded: {0}")]
+    Overloaded(String),
     #[error("Network error: {0}")]
     Network(String),
     #[error("Auth error: {0}")]
@@ -37,7 +39,7 @@ impl ProviderError {
         } else if status == 429 {
             Self::RateLimited { retry_after_ms }
         } else if status == 529 || is_overloaded_message(message) {
-            Self::Api(message.to_string())
+            Self::Overloaded(message.to_string())
         } else if status == 401 || status == 403 {
             Self::Auth(message.to_string())
         } else if status == 400 || status == 404 || status == 405 || status == 422 {
@@ -70,6 +72,8 @@ pub fn classify_sse_error_event(message: &str) -> ProviderError {
         ProviderError::ContextOverflow {
             message: message.to_string(),
         }
+    } else if is_overloaded_message(message) {
+        ProviderError::Overloaded(message.to_string())
     } else {
         ProviderError::Api(message.to_string())
     }
