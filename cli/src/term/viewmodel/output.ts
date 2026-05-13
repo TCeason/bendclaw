@@ -54,7 +54,7 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
         const isLegacyContinuation = prevKind === 'code_line' && !hasCodeBlockId && prevCodeBlockId === undefined
         const isSameCodeBlock = prevKind === 'code_line' && hasCodeBlockId && ol.codeBlockId === prevCodeBlockId
         const isNewCodeBlock = prevKind === 'code_line' && hasCodeBlockId && prevCodeBlockId !== undefined && ol.codeBlockId !== prevCodeBlockId
-        const marginTop = isLegacyContinuation || isSameCodeBlock || prevKind === 'assistant' ? 0 : isNewCodeBlock ? 2 : 1
+        const marginTop = isLegacyContinuation || isSameCodeBlock ? 0 : isNewCodeBlock ? 2 : 1
         blocks.push(block([line(plain(`  ${ol.text}`))], marginTop))
         prevCodeBlockId = ol.codeBlockId
         break
