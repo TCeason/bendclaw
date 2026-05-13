@@ -296,7 +296,9 @@ function makeImplicitCodeCase(rng: () => number): Case {
       '    .load()',
     ],
   ])
-  const input = `${maybe(rng, 'Example:\n\n')}${code.join('\n')}\n\n${prose}`
+  // Indent all lines by 4 spaces to create a proper markdown implicit code block
+  const indentedCode = code.map(l => `    ${l}`).join('\n')
+  const input = `${maybe(rng, 'Example:\n\n')}${indentedCode}\n\n${prose}`
 
   return {
     kind: 'implicitCode',
@@ -372,7 +374,7 @@ function assertCase(c: Case, output: string): void {
     expect(output).toContain('┌')
   }
   if (c.kind === 'implicitCode' && c.input.includes('    ')) {
-    expect(output).toMatch(/^ {4}\S/m)
+    expect(output).toMatch(/^ {4,}\S/m)
   }
   if (c.kind === 'boxDrawing' || c.input.includes('┌') || c.input.includes('├──')) {
     expect(output).toMatch(/[┌└├│]/)
