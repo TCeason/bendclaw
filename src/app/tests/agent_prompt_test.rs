@@ -32,7 +32,7 @@ fn no_context_files_produces_base_prompt_with_system() {
     assert!(prompt.contains("# Clarifying questions"));
     assert!(prompt.contains("read-only investigation"));
     assert!(prompt.contains("denied or blocked, adjust your approach"));
-    assert!(prompt.contains("# Communicating with the user"));
+    assert!(prompt.contains("# Output efficiency"));
     assert!(prompt.contains("# Context management"));
     assert!(prompt.contains("# Environment"));
     assert!(prompt
@@ -45,7 +45,7 @@ fn no_context_files_produces_base_prompt_with_system() {
     assert!(prompt.contains("Do not use a colon before tool calls."));
     assert!(prompt.contains("Keep your text output brief and high-level"));
     assert!(prompt.contains("`file_path:line_number`"));
-    assert!(prompt.contains("you're writing for a person, not logging to a console"));
+    assert!(prompt.contains("Go straight to the point"));
     assert!(prompt.contains("original tool result may be cleared later"));
     assert!(prompt.contains("Working directory:"));
     assert!(prompt.contains("Today's date:"));
@@ -199,8 +199,8 @@ fn sections_are_ordered_static_then_dynamic() {
         .find("# Clarifying questions")
         .expect("missing # Clarifying questions");
     let text_output_pos = prompt
-        .find("# Communicating with the user")
-        .expect("missing # Communicating with the user");
+        .find("# Output efficiency")
+        .expect("missing # Output efficiency");
     let context_pos = prompt
         .find("# Context management")
         .expect("missing # Context management");
@@ -229,11 +229,11 @@ fn sections_are_ordered_static_then_dynamic() {
     );
     assert!(
         clarifying_pos < text_output_pos,
-        "# Clarifying questions should come before # Communicating with the user"
+        "# Clarifying questions should come before # Output efficiency"
     );
     assert!(
         text_output_pos < context_pos,
-        "# Communicating with the user should come before # Context management"
+        "# Output efficiency should come before # Context management"
     );
     assert!(
         context_pos < env_pos,
