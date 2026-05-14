@@ -4,7 +4,7 @@ import { installBracketedPaste } from './bracketed-paste.js'
 import { createSpinnerState, advanceSpinner } from './spinner.js'
 import { createSelectorState, selectorExpandItems, selectorClearQuery } from './selector.js'
 import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
-import { buildUserMessage, buildAssistantLines, type OutputLine } from '../render/output.js'
+import { buildUserMessage, buildAssistantLines, buildThinkingLines, type OutputLine } from '../render/output.js'
 import { Agent, QueryStream, fastExit, type SessionMeta, type ConfigInfo } from '../native/index.js'
 import { createInitialState, type AppState } from './app/state.js'
 import type { AskUserRequest } from './app/types.js'
@@ -163,6 +163,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const pacedQueue: OutputLine[] = []
   const PACED_DRAIN_LINES = 2
   let lastProgressLineCount = 0
+  let lastThinkingLineCount = 0
   const screenLog = new ScreenLog()
   const gitVersion = getGitVersion(agent.cwd)
   const gitDirty = isGitDirty(agent.cwd)
@@ -439,6 +440,26 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     screenLog.logLines(rendered)
     logMarkdownTrace(outputLines, rendered, compactLines)
     logMarkdownRenderTrace(outputLines, blocks, rendered, statusLines, compactLines)
+  }
+
+  /** Commit flush result with optional dual-commit (compact summary vs expanded full). */
+  function commitFlushResult(flushed: { lines: OutputLine[]; expandedLines?: OutputLine[] }) {
+    if (flushed.lines.length === 0) return
+    if (flushed.expandedLines) {
+      const context = outputContextFor(compactLines)
+      compactLines.push(...flushed.lines)
+      expandedLines.push(...flushed.expandedLines)
+      const visible = expanded ? flushed.expandedLines : flushed.lines
+      const blocks = buildOutputBlocks(visible, context)
+      const rendered = blocksToLines(blocks)
+      renderer.beginBatch()
+      renderer.appendScroll(rendered.join('\n'))
+      renderStatus()
+      renderer.flushBatch()
+      screenLog.logLines(rendered)
+    } else {
+      commitLines(flushed.lines)
+    }
   }
 
   /** Drain a few lines from the paced commit queue to the scroll area. */
@@ -775,6 +796,34 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           }
         }
 
+        // In expanded mode, stream thinking lines to scroll area
+        if (expanded && event.kind === 'assistant_delta') {
+          const thinkingDelta = ((event.payload ?? {}) as Record<string, any>).thinking_delta as string | undefined
+          if (thinkingDelta && streamMachine?.pendingThinkingText) {
+            const allLines = streamMachine.pendingThinkingText.split('\n')
+            const newLines = allLines.slice(lastThinkingLineCount)
+            // Only commit complete lines (exclude the last partial line)
+            const completeNewLines = newLines.length > 1 ? newLines.slice(0, -1) : []
+            lastThinkingLineCount = allLines.length - 1
+            if (completeNewLines.length > 0) {
+              const thinkingOutputLines = buildThinkingLines(completeNewLines.join('\n'))
+              expandedLines.push(...thinkingOutputLines)
+              const blocks = buildOutputBlocks(thinkingOutputLines)
+              const rendered = blocksToLines(blocks)
+              renderer.beginBatch()
+              renderer.appendScroll(rendered.join('\n'))
+              renderStatus()
+              renderer.flushBatch()
+              screenLog.logLines(rendered)
+            }
+          }
+          // Reset when thinking ends (first text delta after thinking)
+          const textDelta = ((event.payload ?? {}) as Record<string, any>).delta as string | undefined
+          if (textDelta && lastThinkingLineCount > 0) {
+            lastThinkingLineCount = 0
+          }
+        }
+
         if (update.commitLines.length > 0) {
           if (update.expandedCommitLines) {
             // Dual-commit: compact in compactLines, expanded in expandedLines
@@ -812,9 +861,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       if (streamMachine) {
         flushPacedQueue()
         const final = flushStreaming(streamMachine)
-        if (final.lines.length > 0) {
-          commitLines(final.lines)
-        }
+        commitFlushResult(final)
         streamMachine = final.state
         appState = final.state.appState
       }
@@ -822,7 +869,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       if (streamMachine) {
         flushPacedQueue()
         const final = flushStreaming(streamMachine)
-        if (final.lines.length > 0) commitLines(final.lines)
+        commitFlushResult(final)
       }
       commitLines([{ id: 'sys-err', kind: 'error', text: err?.message ?? String(err) }])
     } finally {
@@ -938,7 +985,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   function flushStreamContent() {
     if (!streamMachine) return
     const flushed = flushStreaming(streamMachine)
-    if (flushed.lines.length > 0) commitLines(flushed.lines)
+    commitFlushResult(flushed)
     // Preserve tool progress that was only shown in the status area
     const progress = streamMachine.lastToolProgress
     if (progress) {

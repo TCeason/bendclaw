@@ -1,4 +1,4 @@
-import { buildError, buildRunSummary, buildToolCall, buildToolProgress, buildToolResult, buildVerboseEvent, buildAssistantLines, buildThinkingLines, type OutputLine } from '../../render/output.js'
+import { buildError, buildRunSummary, buildToolCall, buildToolProgress, buildToolResult, buildVerboseEvent, buildAssistantLines, buildThinkingLines, buildThinkingSummary, type OutputLine } from '../../render/output.js'
 import { formatDuration } from '../../render/format.js'
 import { findStreamingCommitPoint, findNaturalPlainTextCommitPoint, highlightCodeLine, isInsideOpenMathBlock } from '../../render/markdown.js'
 import { setSpinnerPhase, type SpinnerState } from '../spinner.js'
@@ -300,9 +300,17 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
   let state = event.kind === 'ask_user' ? prev : { ...prev, appState: applyEvent(prev.appState, event) }
   const commitLines: OutputLine[] = []
   const writeLines: OutputLine[] = []
+  let expandedCommitLines: OutputLine[] | undefined
   let rerenderStatus = false
   let suppressToolStarted = false
   let suppressToolFinished = false
+
+  function mergeFlushExpanded(flushed: { expandedLines?: OutputLine[] }) {
+    if (flushed.expandedLines) {
+      if (!expandedCommitLines) expandedCommitLines = []
+      expandedCommitLines.push(...flushed.expandedLines)
+    }
+  }
 
   // Verbose events (LLM / COMPACT / SPILL) are always produced; the `verbose`
   // flag only controls whether they land in the TUI or only in screen.log.
@@ -318,6 +326,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     const flushed = flushStreaming(state)
     state = { ...flushed.state, toolProgress: '', lastToolProgress: '' }
     commitLines.push(...flushed.lines)
+    mergeFlushExpanded(flushed)
     const newEvents = state.appState.verboseEvents.slice(prev.appState.verboseEvents.length)
     for (const evt of newEvents) {
       const verboseLines = buildVerboseEvent(evt.text)
@@ -348,8 +357,12 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     if (delta) {
       // When first text delta arrives after thinking, flush thinking content
       if (state.streamingThinkingText) {
-        const thinkingLines = buildThinkingLines(state.streamingThinkingText)
-        commitLines.push(...thinkingLines)
+        const thinkingDurationMs = Date.now() - state.spinnerState.phaseStartedAt
+        const compactLines = buildThinkingSummary(state.streamingThinkingText, thinkingDurationMs)
+        const expLines = buildThinkingSummary(state.streamingThinkingText, thinkingDurationMs, true)
+        commitLines.push(...compactLines)
+        if (!expandedCommitLines) expandedCommitLines = []
+        expandedCommitLines.push(...expLines)
         state = { ...state, streamingThinkingText: '', pendingThinkingText: '' }
       }
 
@@ -471,15 +484,15 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
       spinnerState: { ...flushed.state.spinnerState, streaming: false },
     }
     commitLines.push(...flushed.lines)
+    mergeFlushExpanded(flushed)
     rerenderStatus = true
   }
-
-  let expandedCommitLines: OutputLine[] | undefined
 
   if (event.kind === 'llm_call_completed' || event.kind === 'context_compaction_completed') {
     const flushed = flushStreaming(state)
     state = flushed.state
     commitLines.push(...flushed.lines)
+    mergeFlushExpanded(flushed)
     const newEvents = state.appState.verboseEvents.slice(prev.appState.verboseEvents.length)
     // Error / retry flows must always surface, regardless of verbose flag.
     const hasForceVisible = newEvents.some(evt =>
@@ -494,7 +507,10 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
       if (evt.expandedText) hasExpanded = true
     }
     if (hasExpanded && (verboseOn || hasForceVisible)) {
-      expandedCommitLines = [...flushed.lines]
+      const baseExpanded = flushed.expandedLines ?? flushed.lines
+      if (!expandedCommitLines) expandedCommitLines = []
+      // Replace any thinking summary already merged with full thinking lines
+      expandedCommitLines = [...baseExpanded]
       for (const evt of newEvents) {
         const expLines = buildVerboseEvent(evt.expandedText ?? evt.text)
         expandedCommitLines.push(...expLines)
@@ -506,6 +522,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     const flushed = flushStreaming(state)
     state = flushed.state
     commitLines.push(...flushed.lines)
+    mergeFlushExpanded(flushed)
     const toolName = (p.tool_name as string) ?? 'unknown'
     // ask_user is waiting for user input, not "executing" — keep thinking phase
     const spinnerPhase = toolName === 'ask_user' ? 'thinking' : 'executing'
@@ -527,6 +544,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
         const flushed = flushStreaming(state)
         state = { ...flushed.state, toolProgress: '', lastToolProgress: '' }
         commitLines.push(...flushed.lines)
+        mergeFlushExpanded(flushed)
         const spillLines = buildSpillEventLines(spill, p.tool_name as string | undefined)
         commitLines.push(...spillLines)
       } else {
@@ -554,6 +572,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     const flushed = flushStreaming(state)
     state = flushed.state
     commitLines.push(...flushed.lines)
+    mergeFlushExpanded(flushed)
     writeLines.push(...flushed.lines)
     commitLines.push(...buildError((p.message as string) ?? 'Unknown error'))
   }
@@ -562,6 +581,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     const flushed = flushStreaming(state)
     state = flushed.state
     commitLines.push(...flushed.lines)
+    mergeFlushExpanded(flushed)
     commitLines.push(...buildRunSummary(state.appState.currentRunStats))
   }
 
@@ -610,12 +630,17 @@ export function buildToolProgressLines(event: RunEvent, expanded?: boolean): Out
   return text ? buildToolProgress(toolName, text, expanded) : []
 }
 
-export function flushStreaming(state: StreamMachineState): { state: StreamMachineState; lines: OutputLine[] } {
+export function flushStreaming(state: StreamMachineState): { state: StreamMachineState; lines: OutputLine[]; expandedLines?: OutputLine[] } {
   const lines: OutputLine[] = []
+  let expandedLines: OutputLine[] | undefined
 
   // Flush any remaining thinking content first
   if (state.streamingThinkingText.trim()) {
-    lines.push(...buildThinkingLines(state.streamingThinkingText))
+    const thinkingDurationMs = Date.now() - state.spinnerState.phaseStartedAt
+    const compactLines = buildThinkingSummary(state.streamingThinkingText, thinkingDurationMs)
+    const expLines = buildThinkingSummary(state.streamingThinkingText, thinkingDurationMs, true)
+    lines.push(...compactLines)
+    expandedLines = [...expLines]
   }
 
   if (state.codeFence) {
@@ -650,6 +675,9 @@ export function flushStreaming(state: StreamMachineState): { state: StreamMachin
       lines: rest.trim()
         ? lines.concat(buildAssistantLines(rest))
         : lines,
+      expandedLines: expandedLines
+        ? (rest.trim() ? expandedLines.concat(buildAssistantLines(rest)) : expandedLines)
+        : undefined,
     }
   }
 
@@ -657,8 +685,10 @@ export function flushStreaming(state: StreamMachineState): { state: StreamMachin
     const assistantLines = buildAssistantLines(state.streamingText)
     if (state.assistantCommitted && assistantLines.length > 0) {
       lines.unshift({ id: `sep-${sepId++}`, kind: 'assistant', text: '' })
+      if (expandedLines) expandedLines.unshift({ id: `sep-${sepId++}`, kind: 'assistant', text: '' })
     }
     lines.push(...assistantLines)
+    if (expandedLines) expandedLines.push(...assistantLines)
   }
 
   if (lines.length === 0) {
@@ -671,5 +701,6 @@ export function flushStreaming(state: StreamMachineState): { state: StreamMachin
   return {
     state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false, codeFence: null },
     lines,
+    expandedLines,
   }
 }

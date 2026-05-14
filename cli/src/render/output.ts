@@ -19,7 +19,7 @@ import type { RunStats, SlimStats, UIMessage } from '../term/app/types.js'
 
 export interface OutputLine {
   id: string
-  kind: 'user' | 'assistant' | 'code_line' | 'thinking' | 'tool' | 'tool_result' | 'verbose' | 'error' | 'system' | 'run_summary'
+  kind: 'user' | 'assistant' | 'code_line' | 'thinking' | 'thinking_summary' | 'tool' | 'tool_result' | 'verbose' | 'error' | 'system' | 'run_summary'
   text: string
   rawMarkdown?: string
   codeBlockId?: string
@@ -74,6 +74,47 @@ export function buildThinkingLines(text: string): OutputLine[] {
     kind: 'thinking' as const,
     text: line,
   }))
+}
+
+export function buildThinkingSummary(text: string, durationMs: number, expanded?: boolean): OutputLine[] {
+  if (!text.trim()) return []
+  const cleaned = text.replace(/^\n+/, '').replace(/\n+$/, '')
+  const allLines = cleaned.split('\n')
+  const lineCount = allLines.length
+  const duration = formatDuration(durationMs)
+  const TAIL_LINES = 5
+  const MAX_LINE_WIDTH = 256
+
+  const lines: OutputLine[] = []
+  lines.push({
+    id: genId('think-summary'),
+    kind: 'thinking_summary' as const,
+    text: `${lineCount} lines · ${duration}`,
+  })
+
+  const capLine = (l: string) => l.length <= MAX_LINE_WIDTH ? l.slice(0, MAX_LINE_WIDTH) : l.slice(0, MAX_LINE_WIDTH - 1) + '…'
+
+  if (expanded) {
+    for (const l of allLines) {
+      lines.push({ id: genId('think'), kind: 'thinking' as const, text: `  ${capLine(l)}` })
+    }
+    lines.push({ id: genId('think-hint'), kind: 'thinking' as const, text: '  \x1b[2m(ctrl+o to collapse)\x1b[0m' })
+  } else {
+    if (allLines.length > TAIL_LINES) {
+      const tail = allLines.slice(0, TAIL_LINES)
+      for (const l of tail) {
+        lines.push({ id: genId('think'), kind: 'thinking' as const, text: `  ${capLine(l)}` })
+      }
+      const omitted = allLines.length - TAIL_LINES
+      lines.push({ id: genId('think-hint'), kind: 'thinking' as const, text: `  ... (+${omitted} lines, ctrl+o to expand)` })
+    } else {
+      for (const l of allLines) {
+        lines.push({ id: genId('think'), kind: 'thinking' as const, text: `  ${capLine(l)}` })
+      }
+    }
+  }
+
+  return lines
 }
 
 export function buildToolCall(

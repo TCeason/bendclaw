@@ -61,11 +61,16 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
       }
 
       case 'thinking': {
-        const isBlockStart = prevKind !== 'thinking'
-        const prefix = isBlockStart ? '  🤔 ' : '     '
         blocks.push(block([
-          line(dim(`${prefix}${ol.text}`)),
-        ], isBlockStart ? 1 : 0))
+          line(dim(`${ol.text}`)),
+        ], 0))
+        break
+      }
+
+      case 'thinking_summary': {
+        blocks.push(block([
+          line(colored('[REASONING]', 'cyan', { bold: true }), colored(' ✓', 'cyan', { bold: true }), dim(` ${ol.text}`)),
+        ], 1))
         break
       }
 

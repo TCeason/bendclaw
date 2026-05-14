@@ -78,16 +78,21 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
 
   if (input.pendingThinkingText) {
     const lines = input.pendingThinkingText.split('\n')
-    const maxLines = Math.max(1, input.termRows - 10)
-    const visible = lines.slice(-maxLines)
-    const styledLines: StyledLine[] = visible.map((l, i) =>
-      i === 0
-        ? line(colored('  🤔 ', 'cyan'), dim(l))
-        : line(dim(`     ${l}`))
-    )
-    if (styledLines.length > 0) {
-      blocks.push(block(styledLines, 0))
+    const totalLines = lines.length
+    const MAX_THINKING_PREVIEW = 4
+    const visible = lines.slice(-MAX_THINKING_PREVIEW)
+    const extraLines = Math.max(0, totalLines - MAX_THINKING_PREVIEW)
+    const styledLines: StyledLine[] = [
+      line(colored('[REASONING]', 'cyan', { bold: true }), dim(` ${totalLines} lines...`)),
+    ]
+    for (const l of visible) {
+      const truncated = l.length > MAX_PROGRESS_LINE_WIDTH ? l.slice(0, MAX_PROGRESS_LINE_WIDTH - 1) + '…' : l
+      styledLines.push(line(dim(`  ${truncated}`)))
     }
+    if (extraLines > 0) {
+      styledLines.push(line(dim(`  +${extraLines} lines  (ctrl+o to expand)`)))
+    }
+    blocks.push(block(styledLines, 1))
   }
 
   if (input.toolProgress && !input.expanded) {
