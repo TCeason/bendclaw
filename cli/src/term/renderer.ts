@@ -150,9 +150,10 @@ export class TermRenderer {
       const rowsBelow = this.screenRows(prev.slice(1))
       this.write(cursorUp(rowsAbove) + eraseLine())
       this.write(this.truncateLine(next[0]!))
-      if (rowsBelow > 0) {
-        this.write(cursorDown(rowsBelow))
-      }
+      // +1 accounts for the \n after line 0 that drawStatus originally wrote;
+      // without it the cursor ends up one row too high, causing subsequent
+      // setStatus calls to miscalculate and erase scroll-area content.
+      this.write(cursorDown(rowsBelow + 1))
       this.write(cursorToColumn(1))
       this.prevStatusLines = [...next]
       this.statusHeight = next.length
