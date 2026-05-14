@@ -14,6 +14,7 @@ use super::config::AgentLoopConfig;
 use super::doom_loop::DoomLoopDetector;
 use super::input_filter::apply_input_filters;
 use super::llm_call::stream_assistant_response;
+use super::thinking_only_guard::ThinkingOnlyGuard;
 use super::tool_exec::execute_tool_calls;
 use super::tool_exec::skip_tool_call_doom_loop;
 use super::tool_only_guard::ToolOnlyGuard;
@@ -136,6 +137,7 @@ async fn run_loop(
         .map(|limits| ExecutionTracker::new(limits.clone()));
     let mut doom_detector = DoomLoopDetector::new(3);
     let mut tool_only_guard = ToolOnlyGuard::new(10);
+    let mut thinking_only_guard = ThinkingOnlyGuard::new();
     let mut context_tracker = ContextTracker::new();
     let mut consecutive_errors: usize = 0;
     let mut compacted_after_error = false;
@@ -506,6 +508,12 @@ async fn run_loop(
 
             // Exit inner loop if no more tool calls and no pending messages
             if !has_tool_calls && pending.is_empty() {
+                // Check for thinking-only response (model produced thinking but
+                // no visible text or tool calls). Nudge it to produce output.
+                if let Some(nudge) = thinking_only_guard.check(&message, has_tool_calls) {
+                    pending = vec![nudge];
+                    continue;
+                }
                 break;
             }
         }

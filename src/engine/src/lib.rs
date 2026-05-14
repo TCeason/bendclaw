@@ -24,6 +24,7 @@ pub use r#loop::BeforeTurnFn;
 pub use r#loop::ConvertToLlmFn;
 pub use r#loop::DoomLoopDetector;
 pub use r#loop::GetMessagesFn;
+pub use r#loop::ThinkingOnlyGuard;
 pub use r#loop::ToolOnlyGuard;
 pub use r#loop::TransformContextFn;
 pub use retry::RetryPolicy;

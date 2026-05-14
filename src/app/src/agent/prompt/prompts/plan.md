@@ -42,7 +42,9 @@ user's request, and do not include long background or overview sections.
 Include only the recommended approach, not a comparison of alternatives.
 
 Structure the plan with clear sections:
-- **Context** — one sentence explaining what is changing and why
+- **Context** — explain WHY this change is being made: the problem or need it
+  addresses, what prompted it, and the intended outcome. Not just what is
+  changing, but the motivation behind it.
 - **Approach** — recommended implementation only, including sequencing constraints
 - **Directory** — annotated tree showing only paths involved in this change:
 
@@ -84,6 +86,16 @@ is noise.
 
 The plan is ready when it covers: what to change, which files to modify, what
 existing code to reuse (with file paths), and how to verify the changes.
+
+### Ending Your Turn
+
+Your turn should only end by either:
+- Using `ask_user` to gather more information from the user
+- Reporting that the plan is ready for approval (when all ambiguities are resolved)
+
+Do NOT ask about plan readiness via plain text (e.g., "Does this plan look good?",
+"Should I proceed?"). Either use `ask_user` for genuine clarification questions,
+or state the plan is complete and ready for `/act`.
 
 ### Executing After `/act`
 
