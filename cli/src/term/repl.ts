@@ -389,6 +389,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       toolProgress: isAskUserActive ? '' : toolProgress,
       spinner: spinnerState,
       termRows: renderer.termRows,
+      termColumns: renderer.termCols,
       expanded,
       assistantCommitted: streamMachine?.assistantCommitted,
       revealCursor: streamMachine?.revealCursor ?? 0,

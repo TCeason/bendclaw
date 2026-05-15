@@ -62,6 +62,7 @@ export interface ActiveResponseInput {
   toolProgress: string
   spinner: SpinnerState
   termRows: number
+  termColumns?: number
   expanded?: boolean
   assistantCommitted?: boolean
   /** Current display-cell position into the *rendered* markdown tail.
@@ -146,7 +147,11 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
     const isSamePendingRun = pendingKey.startsWith(lastPendingKey)
     const isPrefixExtension = !isSamePendingRun || plainTail.startsWith(lastPlainTail)
     const isUnsafeStructural = TABLE_TAIL_RE.test(plainTail) || FENCE_TAIL_RE.test(input.pendingText) || PIPE_TABLE_RE.test(input.pendingText)
-    const isMultiLine = input.pendingText.includes('\n')
+    const textColumns = input.assistantCommitted ? 2 : 2
+    const visibleColumns = Math.max(20, (input.termColumns ?? 80) - textColumns)
+    const fullPendingWidth = input.pendingText.includes('\n') ? 0 : stringWidth(stripAnsi(renderMarkdownCached(input.pendingText)))
+    const wrapsInStatus = fullPendingWidth > visibleColumns
+    const isMultiLine = input.pendingText.includes('\n') || wrapsInStatus
 
     if (isUnsafeStructural || (cursor <= 0 && !isMultiLine) || (!renderedTail && !isMultiLine) || (!isMultiLine && !isPrefixExtension)) {
       lastPendingKey = pendingKey

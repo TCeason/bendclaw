@@ -104,6 +104,19 @@ describe('buildActiveResponseBlocks', () => {
     expect(stripAnsi(spinnerOnly[spinnerOnly.length - 1]!)).toContain('Thinking')
   })
 
+  test('renders wrapped single-line pending text as full markdown instead of clipped tail', () => {
+    const text = 'This is a long single-line answer that will wrap in a narrow terminal and should remain visible as a full pending block.'
+    const lines = blocksToLines(buildActiveResponseBlocks(defaultInput({ pendingText: text, revealCursor: 12, termColumns: 48 })))
+    expect(stripAnsi(lines.join('\n'))).toContain('This is a long single-line answer')
+    expect(stripAnsi(lines.join('\n'))).toContain('full pending block')
+  })
+
+  test('keeps short single-line pending text on reveal cursor', () => {
+    const lines = blocksToLines(buildActiveResponseBlocks(defaultInput({ pendingText: 'hello world', revealCursor: 5, termColumns: 120 })))
+    expect(stripAnsi(lines.join('\n'))).toContain('hello')
+    expect(stripAnsi(lines.join('\n'))).not.toContain('hello world')
+  })
+
   test('computes rendered pending tail width for timer reveal', () => {
     expect(renderedPendingTailWidth('hello world')).toBe(11)
     expect(renderedPendingTailWidth('| a | b |\n| - | - |')).toBe(0)
