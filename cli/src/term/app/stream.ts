@@ -684,8 +684,8 @@ export function flushStreaming(state: StreamMachineState): { state: StreamMachin
   if (state.streamingText.trim()) {
     const assistantLines = buildAssistantLines(state.streamingText)
     if (state.assistantCommitted && assistantLines.length > 0) {
-      lines.unshift({ id: `sep-${sepId++}`, kind: 'assistant', text: '' })
-      if (expandedLines) expandedLines.unshift({ id: `sep-${sepId++}`, kind: 'assistant', text: '' })
+      lines.unshift(assistantContinuationSpacer())
+      if (expandedLines) expandedLines.unshift(assistantContinuationSpacer())
     }
     lines.push(...assistantLines)
     if (expandedLines) expandedLines.push(...assistantLines)

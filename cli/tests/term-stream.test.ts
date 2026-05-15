@@ -148,6 +148,25 @@ describe('term stream machine', () => {
     expect(state.assistantCommitted).toBe(true)
   })
 
+  test('flushStreaming marks pending tail as continuation after prior assistant commit', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+    const text = Array.from({ length: 9 }, (_, i) => `plain line ${i}`).join('\n')
+
+    const update = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { delta: text },
+    }, { termRows: 18 })
+
+    state = update.state
+    expect(state.assistantCommitted).toBe(true)
+
+    const flushed = flushStreaming(state)
+    expect(flushed.lines[0]?.isContinuationSpacer).toBe(true)
+    expect(flushed.lines[1]?.text).toContain('plain line 7')
+  })
+
   test('line-by-line fallback keeps open math blocks pending', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
