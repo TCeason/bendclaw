@@ -59,18 +59,24 @@ describe('buildActiveResponseBlocks', () => {
   })
 
   test('reveals pending text by display width', () => {
-    const result = renderPlain(defaultInput({ pendingText: 'hello world', revealCursor: 5 }))
-    expect(result).toContain('hello')
-    expect(result).not.toContain('hello world')
+    // Use text between 61-76 chars: won't wrap but exceeds SHORT_THRESHOLD (60)
+    const longText = 'This sentence is exactly long enough to exceed the short threshold ok'
+    const result = renderPlain(defaultInput({ pendingText: longText, revealCursor: 10 }))
+    expect(result).toContain('This sente')
+    expect(result).not.toContain('exactly')
   })
 
+
   test('preserves non-SGR ANSI sequences while revealing pending text', () => {
-    const link = '\x1b]8;;https://example.com\x1b\\click\x1b]8;;\x1b\\'
+    // Link with visible text > 60 chars to exceed SHORT_THRESHOLD
+    const longUrl = 'https://example.com/path'
+    const linkText = 'click here to visit this very long hyperlink text that exceeds threshold'
+    const link = `\x1b]8;;${longUrl}\x1b\\${linkText}\x1b]8;;\x1b\\`
     const result = buildActiveResponseBlocks(defaultInput({ pendingText: link, revealCursor: 3 }))
     const rendered = blocksToLines(result).join('\n')
-    expect(rendered).toContain('\x1b]8;;https://example.com\x1b\\')
+    expect(rendered).toContain(`\x1b]8;;${longUrl}\x1b\\`)
     expect(stripAnsi(rendered)).toContain('cli')
-    expect(stripAnsi(rendered)).not.toContain('click')
+    expect(stripAnsi(rendered)).not.toContain('click here to visit')
   })
 
   test('keeps a blank separator between revealed tail and spinner', () => {

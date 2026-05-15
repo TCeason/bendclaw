@@ -140,7 +140,8 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
     // spinner for those. Other structural content (lists, headings,
     // blockquotes) renders stably line-by-line.
     const plainTail = stripAnsi(renderedTail)
-    const cursor = Math.min(input.revealCursor, stringWidth(plainTail))
+    const tailWidth = stringWidth(plainTail)
+    const cursor = Math.min(input.revealCursor, tailWidth)
     const pendingKey = input.pendingText
     const isSamePendingRun = pendingKey.startsWith(lastPendingKey)
     const isPrefixExtension = !isSamePendingRun || plainTail.startsWith(lastPlainTail)

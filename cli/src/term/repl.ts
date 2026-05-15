@@ -593,11 +593,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         return
       }
       if (streamMachine.revealCursor >= width) return
-      // Dynamic step: when content arrives in bursts, advance faster to catch up.
-      // At minimum advance 1; scale up proportionally to the gap so short content
-      // is revealed almost instantly instead of lagging behind.
+      // For short content (≤ 60 display chars), jump to full width immediately
+      // on the first tick. This prevents the "partial → jump" flash that occurs
+      // when assistant_completed arrives before the reveal timer catches up.
+      const SHORT_THRESHOLD = 60
       const gap = width - streamMachine.revealCursor
-      const step = Math.max(1, Math.ceil(gap / 3))
+      const step = width <= SHORT_THRESHOLD
+        ? gap  // instant reveal for short content
+        : Math.max(1, Math.ceil(gap / 3))
       const next = Math.min(width, streamMachine.revealCursor + step)
       streamMachine = { ...streamMachine, revealCursor: next }
       renderStatus()
