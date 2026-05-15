@@ -585,8 +585,21 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     tailRevealTimer = setInterval(() => {
       if (destroyed || !isLoading || !streamMachine?.pendingText) return
       const width = renderedPendingTailWidth(streamMachine.pendingText)
-      if (width <= 0 || streamMachine.revealCursor >= width) return
-      streamMachine = { ...streamMachine, revealCursor: streamMachine.revealCursor + 1 }
+      if (width <= 0) {
+        // Multi-line pending text: can't advance cursor but still need to
+        // refresh the status area so new lines appear smoothly instead of
+        // waiting for the 100ms spinner tick.
+        renderStatus()
+        return
+      }
+      if (streamMachine.revealCursor >= width) return
+      // Dynamic step: when content arrives in bursts, advance faster to catch up.
+      // At minimum advance 1; scale up proportionally to the gap so short content
+      // is revealed almost instantly instead of lagging behind.
+      const gap = width - streamMachine.revealCursor
+      const step = Math.max(1, Math.ceil(gap / 3))
+      const next = Math.min(width, streamMachine.revealCursor + step)
+      streamMachine = { ...streamMachine, revealCursor: next }
       renderStatus()
     }, TAIL_REVEAL_INTERVAL_MS)
   }

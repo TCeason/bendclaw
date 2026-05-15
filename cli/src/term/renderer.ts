@@ -40,16 +40,16 @@ export class TermRenderer {
 
   constructor(opts?: TermRendererOptions) {
     this.stdout = opts?.stdout ?? process.stdout
-    this.rows = this.stdout.rows ?? 24
-    this.cols = this.stdout.columns ?? 80
+    this.rows = this.stdout.rows || 24
+    this.cols = this.stdout.columns || 80
   }
 
   /** Initialize renderer: hide cursor, listen for resize. */
   init(): void {
     this.write(hideCursor())
     this.resizeHandler = () => {
-      this.rows = this.stdout.rows ?? 24
-      this.cols = this.stdout.columns ?? 80
+      this.rows = this.stdout.rows || 24
+      this.cols = this.stdout.columns || 80
       this.redrawStatus()
     }
     this.stdout.on('resize', this.resizeHandler)
@@ -191,9 +191,10 @@ export class TermRenderer {
   /** Calculate actual screen rows a set of lines occupies (accounting for wrapping). */
   private screenRows(lines: string[]): number {
     let total = 0
+    const cols = this.cols || 80
     for (const line of lines) {
       const width = stringWidth(stripAnsi(line))
-      total += width === 0 ? 1 : Math.ceil(width / this.cols)
+      total += width === 0 ? 1 : Math.ceil(width / cols)
     }
     return total
   }
