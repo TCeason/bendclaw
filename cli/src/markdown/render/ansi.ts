@@ -687,7 +687,7 @@ export function formatToken(
       // structure the author wrote the table for.
       function renderVerticalFormat(): string {
         const headers = tableToken.header.map(h => plainText(h.tokens))
-        const separatorWidth = Math.min(termWidth - 1, 40)
+        const separatorWidth = Math.max(0, Math.min(termWidth - 1, 40))
         const separator = '─'.repeat(separatorWidth)
         const wrapIndent = '  '
         const vLines: string[] = []
@@ -829,7 +829,7 @@ function padAligned(
   targetWidth: number,
   align: string | null | undefined,
 ): string {
-  const padding = Math.max(0, targetWidth - displayWidth)
+  const padding = Math.max(0, Number.isFinite(targetWidth - displayWidth) ? Math.floor(targetWidth - displayWidth) : 0)
   if (align === 'center') {
     const left = Math.floor(padding / 2)
     return ' '.repeat(left) + content + ' '.repeat(padding - left)

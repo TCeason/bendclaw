@@ -197,6 +197,7 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
   }
 
   const spinnerText = formatSpinnerLine(input.spinner, Date.now())
+  blocks.push(block([line(plain(RESERVED_PENDING_LINE))], 1))
   blocks.push(block(
     [line(plain(spinnerText))],
     1,

@@ -5,25 +5,34 @@
 
 const ESC = '\x1b['
 
+function safeCount(n: number): number {
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
+}
+
 /** Move cursor to absolute position (1-indexed). */
 export function cursorTo(row: number, col: number): string {
+  row = safeCount(row) || 1
+  col = safeCount(col) || 1
   return `${ESC}${row};${col}H`
 }
 
 /** Move cursor up N lines. */
 export function cursorUp(n: number): string {
+  n = safeCount(n)
   if (n <= 0) return ''
   return `${ESC}${n}A`
 }
 
 /** Move cursor down N lines. */
 export function cursorDown(n: number): string {
+  n = safeCount(n)
   if (n <= 0) return ''
   return `${ESC}${n}B`
 }
 
 /** Move cursor to beginning of line. */
 export function cursorToColumn(col: number): string {
+  col = safeCount(col) || 1
   return `${ESC}${col}G`
 }
 

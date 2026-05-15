@@ -96,6 +96,9 @@ import { decideReplControl, type ReplControlAction } from './app/repl-control.js
 
 const SPINNER_INTERVAL_MS = 100
 const TAIL_REVEAL_INTERVAL_MS = 24
+const TAIL_REVEAL_CHARS_PER_TICK = 1
+const TAIL_REVEAL_MAX_CATCHUP = 6
+const TAIL_REVEAL_FINAL_MAX_WIDTH = 80
 
 export interface ReplOptions {
   agent: Agent
@@ -580,6 +583,28 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }, SPINNER_INTERVAL_MS)
   }
 
+  function advanceTailReveal(): boolean {
+    if (!streamMachine?.pendingText) return false
+    const width = renderedPendingTailWidth(streamMachine.pendingText)
+    if (width <= 0 || streamMachine.revealCursor >= width) return false
+    const gap = width - streamMachine.revealCursor
+    const step = gap > 24 ? TAIL_REVEAL_MAX_CATCHUP : TAIL_REVEAL_CHARS_PER_TICK
+    const next = Math.min(width, streamMachine.revealCursor + step)
+    streamMachine = { ...streamMachine, revealCursor: next }
+    renderStatus()
+    return true
+  }
+
+  async function finishSingleLineRevealIfNeeded() {
+    if (!streamMachine?.pendingText) return
+    const width = renderedPendingTailWidth(streamMachine.pendingText)
+    if (width <= 0 || width > TAIL_REVEAL_FINAL_MAX_WIDTH) return
+    while (!destroyed && isLoading && streamMachine?.pendingText && streamMachine.revealCursor < width) {
+      advanceTailReveal()
+      await Bun.sleep(TAIL_REVEAL_INTERVAL_MS)
+    }
+  }
+
   function startTailReveal() {
     if (tailRevealTimer) return
     tailRevealTimer = setInterval(() => {
@@ -592,18 +617,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         renderStatus()
         return
       }
-      if (streamMachine.revealCursor >= width) return
-      // For short content (≤ 60 display chars), jump to full width immediately
-      // on the first tick. This prevents the "partial → jump" flash that occurs
-      // when assistant_completed arrives before the reveal timer catches up.
-      const SHORT_THRESHOLD = 60
-      const gap = width - streamMachine.revealCursor
-      const step = width <= SHORT_THRESHOLD
-        ? gap  // instant reveal for short content
-        : Math.max(1, Math.ceil(gap / 3))
-      const next = Math.min(width, streamMachine.revealCursor + step)
-      streamMachine = { ...streamMachine, revealCursor: next }
-      renderStatus()
+      advanceTailReveal()
     }, TAIL_REVEAL_INTERVAL_MS)
   }
 
@@ -876,15 +890,21 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
       if (streamMachine) {
         flushPacedQueue()
+        await finishSingleLineRevealIfNeeded()
         const final = flushStreaming(streamMachine)
-        commitFlushResult(final)
+        // Update streamMachine BEFORE commitFlushResult so that renderStatus()
+        // inside commitLines sees empty pendingText — otherwise the just-flushed
+        // content appears in both the scroll area AND the status area for one
+        // frame, causing the "partial then full" flash.
         streamMachine = final.state
         appState = final.state.appState
+        commitFlushResult(final)
       }
     } catch (err: any) {
       if (streamMachine) {
         flushPacedQueue()
         const final = flushStreaming(streamMachine)
+        streamMachine = final.state
         commitFlushResult(final)
       }
       commitLines([{ id: 'sys-err', kind: 'error', text: err?.message ?? String(err) }])
@@ -1001,6 +1021,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   function flushStreamContent() {
     if (!streamMachine) return
     const flushed = flushStreaming(streamMachine)
+    streamMachine = flushed.state
     commitFlushResult(flushed)
     // Preserve tool progress that was only shown in the status area
     const progress = streamMachine.lastToolProgress

@@ -26,7 +26,8 @@ export interface PromptVMInput {
 
 export function buildPromptBlocks(input: PromptVMInput): ViewBlock[] {
   const blocks: ViewBlock[] = []
-  const border = '─'.repeat(input.columns)
+  const columns = Number.isFinite(input.columns) ? Math.max(1, Math.floor(input.columns)) : 80
+  const border = '─'.repeat(columns)
 
   blocks.push(block([line(dim(border))], input.isLoading ? 0 : 1))
 
@@ -71,13 +72,13 @@ export function buildPromptBlocks(input: PromptVMInput): ViewBlock[] {
     blocks.push(block(qLines))
   }
 
-  const footerBlocks = buildFooter(input)
+  const footerBlocks = buildFooter(input, columns)
   blocks.push(footerBlocks)
 
   return blocks
 }
 
-function buildFooter(input: PromptVMInput): ViewBlock {
+function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
   const leftSpans: StyledSpan[] = []
 
   // model
@@ -124,7 +125,7 @@ function buildFooter(input: PromptVMInput): ViewBlock {
 
   const leftText = leftSpans.map(s => s.text).join('')
   const rightText = rightSpans.map(s => s.text).join('')
-  const gap = Math.max(1, input.columns - leftText.length - rightText.length)
+  const gap = Math.max(1, columns - leftText.length - rightText.length)
 
   const spans: StyledSpan[] = [...leftSpans, plain(' '.repeat(gap)), ...rightSpans]
   return block([line(...spans)])

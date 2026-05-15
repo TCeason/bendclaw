@@ -95,6 +95,15 @@ describe('buildActiveResponseBlocks', () => {
     expect(stripAnsi(structural[structural.length - 3]!)).toBe(' ')
   })
 
+  test('keeps spinner-only height aligned with pending states', () => {
+    const spinnerOnly = blocksToLines(buildActiveResponseBlocks(defaultInput()))
+    const pending = blocksToLines(buildActiveResponseBlocks(defaultInput({ pendingText: 'hello world', revealCursor: 5 })))
+    expect(spinnerOnly.length).toBe(pending.length)
+    expect(stripAnsi(spinnerOnly[spinnerOnly.length - 3]!)).toBe(' ')
+    expect(stripAnsi(spinnerOnly[spinnerOnly.length - 2]!)).toBe('')
+    expect(stripAnsi(spinnerOnly[spinnerOnly.length - 1]!)).toContain('Thinking')
+  })
+
   test('computes rendered pending tail width for timer reveal', () => {
     expect(renderedPendingTailWidth('hello world')).toBe(11)
     expect(renderedPendingTailWidth('| a | b |\n| - | - |')).toBe(0)

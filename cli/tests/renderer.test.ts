@@ -193,11 +193,25 @@ describe('TermRenderer', () => {
       renderer.setStatus(['line1', 'line2', 'line3'])
       stdout.clear()
       renderer.setStatus(['line1', 'CHANGED', 'line3'])
-      // Should contain the changed line and unchanged suffix.
+      // Should contain only the changed line; unchanged suffix stays in place.
       expect(stdout.output).toContain('CHANGED')
       expect(stdout.output).toContain('\x1b[2A')
       expect(stdout.output).not.toContain('line1')
-      expect(stdout.output).toContain('line3')
+      expect(stdout.output).not.toContain('line3')
+      renderer.destroy()
+    })
+
+    test('single-line spinner update does not erase following prompt lines', () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      renderer.setStatus(['pending', '', '⠋ Thinking', '╭─', '│ >'])
+      stdout.clear()
+      renderer.setStatus(['pending', '', '⠙ Thinking', '╭─', '│ >'])
+
+      expect(stdout.output).toContain('⠙ Thinking')
+      expect(stdout.output).not.toContain('\x1b[J')
+      expect(stdout.output).not.toContain('╭─')
+      expect(stdout.output).not.toContain('│ >')
       renderer.destroy()
     })
 
@@ -349,6 +363,18 @@ describe('TermRenderer', () => {
       stdout.emit('resize')
       expect(renderer.termRows).toBe(40)
       expect(renderer.termCols).toBe(120)
+      renderer.destroy()
+    })
+
+    test('falls back when resize dimensions are non-finite', () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      stdout.rows = Infinity
+      stdout.columns = NaN
+      stdout.emit('resize')
+      expect(renderer.termRows).toBe(24)
+      expect(renderer.termCols).toBe(80)
+      expect(() => renderer.restoreViewport()).not.toThrow()
       renderer.destroy()
     })
   })

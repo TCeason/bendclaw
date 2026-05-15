@@ -22,6 +22,14 @@ import {
 import stringWidth from 'string-width'
 import stripAnsi from 'strip-ansi'
 
+function safeDimension(n: number | undefined, fallback: number): number {
+  return n != null && Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
+}
+
+function safeCount(n: number): number {
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
+}
+
 export interface TermRendererOptions {
   /** Stream to write to (default: process.stdout) */
   stdout?: NodeJS.WriteStream
@@ -40,16 +48,16 @@ export class TermRenderer {
 
   constructor(opts?: TermRendererOptions) {
     this.stdout = opts?.stdout ?? process.stdout
-    this.rows = this.stdout.rows || 24
-    this.cols = this.stdout.columns || 80
+    this.rows = safeDimension(this.stdout.rows, 24)
+    this.cols = safeDimension(this.stdout.columns, 80)
   }
 
   /** Initialize renderer: hide cursor, listen for resize. */
   init(): void {
     this.write(hideCursor())
     this.resizeHandler = () => {
-      this.rows = this.stdout.rows || 24
-      this.cols = this.stdout.columns || 80
+      this.rows = safeDimension(this.stdout.rows, 24)
+      this.cols = safeDimension(this.stdout.columns, 80)
       this.redrawStatus()
     }
     this.stdout.on('resize', this.resizeHandler)
@@ -139,21 +147,22 @@ export class TermRenderer {
       }
     }
 
-    // Single-line change at index 0 with all following lines identical:
-    // only erase that one line instead of eraseDown() which would clear
-    // through the prompt area and cause visible jumping.
-    if (firstChanged === 0
+    // Single-line change with all following lines identical: only redraw that
+    // one physical line instead of eraseDown(), which would clear through the
+    // prompt area and cause visible jumping when spinner frames update.
+    if (firstChanged < prev.length
+        && firstChanged < next.length
         && prev.length === next.length
         && prev.length > 1
-        && prev.slice(1).every((line, idx) => line === next[1 + idx])) {
-      const rowsAbove = this.screenRows(prev)
-      const rowsBelow = this.screenRows(prev.slice(1))
-      this.write(cursorUp(rowsAbove) + eraseLine())
-      this.write(this.truncateLine(next[0]!))
-      // +1 accounts for the \n after line 0 that drawStatus originally wrote;
-      // without it the cursor ends up one row too high, causing subsequent
-      // setStatus calls to miscalculate and erase scroll-area content.
-      this.write(cursorDown(rowsBelow + 1))
+        && this.screenRows([prev[firstChanged] ?? '']) === 1
+        && this.screenRows([next[firstChanged] ?? '']) === 1
+        && prev.slice(firstChanged + 1).every((line, idx) => line === next[firstChanged + 1 + idx])) {
+      const rowsAfter = this.screenRows(prev.slice(firstChanged + 1))
+      this.write(cursorUp(rowsAfter + 1) + eraseLine())
+      this.write(this.truncateLine(next[firstChanged]!))
+      // +1 accounts for the newline after the changed line from the original
+      // drawStatus() call, keeping the cursor below the status area.
+      this.write(cursorDown(rowsAfter + 1))
       this.write(cursorToColumn(1))
       this.prevStatusLines = [...next]
       this.statusHeight = next.length
@@ -256,7 +265,7 @@ export class TermRenderer {
       if (!text.endsWith('\n')) this.write('\n')
     }
     const usedRows = text ? this.screenRows(lines) : 0
-    const remainingRows = Math.max(0, this.rows - usedRows)
+    const remainingRows = safeCount(this.rows - usedRows)
     if (remainingRows > 0) this.write('\n'.repeat(remainingRows))
     if (!outerBatch) this.flushBatch()
   }
@@ -286,7 +295,7 @@ export class TermRenderer {
     this.statusHeight = 0
     this.prevStatusLines = []
     this.write(cursorTo(1, 1) + eraseDown() + '\x1b[0m')
-    this.write('\n'.repeat(this.rows))
+    this.write('\n'.repeat(safeCount(this.rows)))
     if (!outerBatch) this.flushBatch()
   }
 
@@ -303,7 +312,7 @@ export class TermRenderer {
     // Push old content into scrollback with blank lines instead of erasing
     // the viewport. This feels more natural — the user can still scroll up
     // to see previous output, and the prompt lands at the bottom.
-    this.write('\n'.repeat(this.rows))
+    this.write('\n'.repeat(safeCount(this.rows)))
     if (!outerBatch) this.flushBatch()
   }
 

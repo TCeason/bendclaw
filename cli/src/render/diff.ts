@@ -37,6 +37,14 @@ function getStyle() {
 const DEFAULT_WIDTH = 80
 const WORD_DIFF_THRESHOLD = 0.4
 
+function safeCount(n: number): number {
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
+}
+
+function safeWidth(n: number | undefined): number {
+  return n != null && Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_WIDTH
+}
+
 // ---------------------------------------------------------------------------
 // Core types
 // ---------------------------------------------------------------------------
@@ -57,7 +65,7 @@ interface DiffLine {
  */
 export function formatDiff(oldText: string, newText: string, filename = ''): DiffResult {
   const patch = structuredPatch(filename, filename, oldText, newText, '', '', { context: 3 })
-  const width = process.stdout.columns || DEFAULT_WIDTH
+  const width = safeWidth(process.stdout.columns)
   const style = getStyle()
   let linesAdded = 0
   let linesRemoved = 0
@@ -84,7 +92,7 @@ export function formatDiff(oldText: string, newText: string, filename = ''): Dif
 export function colorizeUnifiedDiff(diff: string): string {
   const raw = diff.split('\n')
   const body = raw.filter(l => !l.startsWith('---') && !l.startsWith('+++'))
-  const width = process.stdout.columns || DEFAULT_WIDTH
+  const width = safeWidth(process.stdout.columns)
   const style = getStyle()
   const output: string[] = []
 
@@ -213,7 +221,7 @@ function renderLine(line: DiffLine, numWidth: number, termWidth: number, style: 
 
   const bg = line.type === 'add' ? style.addedBg : style.removedBg
   const contentLen = gutterLen + line.code.length
-  const padding = Math.max(0, termWidth - contentLen)
+  const padding = safeCount(termWidth - contentLen)
 
   // Try word-level diff — changed words get brighter bg, rest gets line bg
   if (line.paired) {

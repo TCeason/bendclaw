@@ -4,7 +4,12 @@
 
 import stringWidth from 'string-width'
 
+function repeatCount(n: number): number {
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
+}
+
 export function padRight(s: string, n: number): string {
+  n = repeatCount(n)
   const w = stringWidth(s)
   if (w > n) {
     let truncated = ''
@@ -49,8 +54,10 @@ export function formatDuration(ms: number): string {
 }
 
 export function renderBar(value: number, max: number, width: number): string {
-  if (max <= 0) return '░'.repeat(width)
-  const filled = Math.round((value / max) * width)
+  width = repeatCount(width)
+  if (width === 0) return ''
+  if (max <= 0 || !Number.isFinite(max) || !Number.isFinite(value)) return '░'.repeat(width)
+  const filled = repeatCount(Math.round((value / max) * width))
   return '█'.repeat(Math.min(filled, width)) + '░'.repeat(Math.max(0, width - filled))
 }
 

@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { padRight, relativeTime, renderPositionBar } from '../src/render/format.js'
+import { padRight, relativeTime, renderBar, renderPositionBar } from '../src/render/format.js'
 
 describe('padRight', () => {
   test('pads short string with spaces', () => {
@@ -24,6 +24,19 @@ describe('padRight', () => {
 
   test('handles n=1 with long string', () => {
     expect(padRight('hello', 1)).toBe('…')
+  })
+
+  test('handles non-finite width', () => {
+    expect(padRight('hi', Infinity)).toBe('…')
+    expect(padRight('hi', NaN)).toBe('…')
+  })
+})
+
+describe('renderBar', () => {
+  test('handles non-finite inputs without throwing', () => {
+    expect(renderBar(5, 10, Infinity)).toBe('')
+    expect(renderBar(Infinity, 10, 4)).toBe('░░░░')
+    expect(renderBar(5, NaN, 4)).toBe('░░░░')
   })
 })
 

@@ -29,6 +29,10 @@ describe('cursorTo', () => {
   test('large values', () => {
     expect(cursorTo(100, 200)).toBe('\x1b[100;200H')
   })
+
+  test('sanitizes non-finite values', () => {
+    expect(cursorTo(Infinity, NaN)).toBe('\x1b[1;1H')
+  })
 })
 
 describe('cursorUp', () => {

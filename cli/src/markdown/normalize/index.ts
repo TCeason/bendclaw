@@ -23,15 +23,20 @@ function terminalDisplayWidth(text: string): number {
   return stringWidth(stripAnsi(text))
 }
 
+function safeTerminalColumns(): number {
+  const columns = process.stdout.columns
+  return Number.isFinite(columns) && columns > 0 ? Math.floor(columns) : 80
+}
+
 function terminalContentWidth(): number {
-  const columns = process.stdout.columns ?? 80
+  const columns = safeTerminalColumns()
   return Math.max(20, Math.min(columns - SAFETY_MARGIN, MAX_RENDER_WIDTH))
 }
 
 /** Terminal width for tables — no MAX_RENDER_WIDTH cap so wide tables
  *  can use the full terminal on large screens. */
 function terminalTableWidth(): number {
-  const columns = process.stdout.columns ?? 80
+  const columns = safeTerminalColumns()
   return Math.max(20, columns - SAFETY_MARGIN)
 }
 

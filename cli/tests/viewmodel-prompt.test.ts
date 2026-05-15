@@ -141,4 +141,10 @@ describe('buildPromptBlocks', () => {
     // ghost hint depends on getGhostHint — just verify no crash
     expect(result).toBeTruthy()
   })
+
+  test('handles non-finite columns', () => {
+    const result = renderPlain(defaultInput({ columns: Infinity }))
+    const lines = result.split('\n')
+    expect(lines.some(l => l === '─'.repeat(80))).toBe(true)
+  })
 })

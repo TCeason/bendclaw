@@ -68,6 +68,16 @@ describe('colorizeUnifiedDiff', () => {
     expect(plain).toMatch(/1\s/)
     expect(plain).toMatch(/2\s*[-+]/)
   })
+
+  test('handles non-finite terminal width', () => {
+    const original = process.stdout.columns
+    Object.defineProperty(process.stdout, 'columns', { value: Infinity, configurable: true })
+    try {
+      expect(() => colorizeUnifiedDiff('@@ -1 +1 @@\n-old\n+new')).not.toThrow()
+    } finally {
+      Object.defineProperty(process.stdout, 'columns', { value: original, configurable: true })
+    }
+  })
 })
 
 describe('word-level diff', () => {
