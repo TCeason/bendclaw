@@ -87,19 +87,24 @@ impl ContextTracker {
         self.system_tool_overhead_tokens = 0;
     }
 
-    /// Estimate current context size: baseline + chars/4 for trailing messages.
+    /// Estimate current context size: baseline + tiktoken for trailing messages.
     ///
-    /// `total_tokens(messages)` is used as a floor — when the provider baseline
-    /// is stale (e.g. models that report `usage.input = 0`), the cheap chars/4
-    /// estimate prevents the tracker from drifting to zero and skipping compaction.
+    /// When a valid provider baseline exists, trust it — it reflects the real
+    /// token count from the model's own tokenizer. The tiktoken `o200k_base`
+    /// estimate is only used as a fallback when no baseline is available (e.g.
+    /// models that report `usage.input = 0` or the very first turn).
+    ///
+    /// Previously, `total_tokens(messages)` was used as a floor even when a
+    /// baseline existed. This caused overestimation for Claude models (whose
+    /// tokenizer produces ~40% fewer tokens than o200k_base), preventing
+    /// compaction from triggering when it should.
     pub fn estimate_context_tokens(&self, messages: &[AgentMessage]) -> usize {
-        let chars_floor = total_tokens(messages);
         match (self.last_baseline_tokens, self.last_baseline_index) {
-            (Some(baseline_tokens), Some(idx)) if idx < messages.len() => {
+            (Some(baseline_tokens), Some(idx)) if baseline_tokens > 0 && idx < messages.len() => {
                 let trailing: usize = messages[idx + 1..].iter().map(message_tokens).sum();
-                (baseline_tokens + trailing).max(chars_floor)
+                baseline_tokens + trailing
             }
-            _ => chars_floor,
+            _ => total_tokens(messages),
         }
     }
 
@@ -237,8 +242,8 @@ impl Default for ContextConfig {
             tool_output_max_lines: 50,
             compact_trigger_pct: 80,
             compact_target_pct: 75,
-            max_messages: 300,
-            message_limit_target_pct: 90,
+            max_messages: 150,
+            message_limit_target_pct: 75,
         }
     }
 }

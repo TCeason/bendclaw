@@ -67,6 +67,13 @@ pub(super) async fn stream_assistant_response(
     let llm_messages =
         compact_tool_results_for_request_view(llm_messages, config.context_config.as_ref());
 
+    // Strip thinking blocks from all but the last assistant message.
+    // Thinking is the model's internal reasoning — it has negligible value for
+    // future turns but consumes significant tokens. This mirrors Claude Code's
+    // `clear_thinking_20251015` context management and prevents issues with
+    // proxies (e.g. Kiro) that don't natively support thinking blocks.
+    let llm_messages = strip_old_thinking(llm_messages);
+
     // Build tool definitions
     let tool_defs: Vec<ToolDefinition> = context
         .tools
@@ -482,6 +489,72 @@ fn compact_tool_results_for_request_view(
     }
 
     compacted
+}
+
+/// Strip thinking blocks from all but the last assistant message.
+///
+/// Thinking is the model's internal reasoning — it has negligible value for
+/// future turns but consumes significant tokens. Keeping only the most recent
+/// thinking preserves continuity while freeing context budget.
+fn strip_old_thinking(messages: Vec<Message>) -> Vec<Message> {
+    let last_assistant_idx = messages
+        .iter()
+        .rposition(|m| matches!(m, Message::Assistant { .. }));
+
+    messages
+        .into_iter()
+        .enumerate()
+        .map(|(idx, msg)| {
+            if Some(idx) == last_assistant_idx {
+                return msg;
+            }
+            match msg {
+                Message::Assistant {
+                    content,
+                    stop_reason,
+                    model,
+                    provider,
+                    usage,
+                    timestamp,
+                    error_message,
+                    response_id,
+                } => {
+                    let filtered: Vec<Content> = content
+                        .into_iter()
+                        .filter(|c| !matches!(c, Content::Thinking { .. }))
+                        .collect();
+                    // Keep original content if filtering would leave it empty —
+                    // some providers reject empty content arrays.
+                    if filtered.is_empty() {
+                        Message::Assistant {
+                            content: vec![Content::Text {
+                                text: "(thinking only)".to_string(),
+                            }],
+                            stop_reason,
+                            model,
+                            provider,
+                            usage,
+                            timestamp,
+                            error_message,
+                            response_id,
+                        }
+                    } else {
+                        Message::Assistant {
+                            content: filtered,
+                            stop_reason,
+                            model,
+                            provider,
+                            usage,
+                            timestamp,
+                            error_message,
+                            response_id,
+                        }
+                    }
+                }
+                other => other,
+            }
+        })
+        .collect()
 }
 
 fn old_tool_result_request_bytes(messages: &[Message], recent_boundary: usize) -> usize {
