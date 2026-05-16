@@ -172,6 +172,24 @@ pub struct LlmMessageStats {
     pub tool_details: Vec<(String, usize)>,
 }
 
+impl From<evot_engine::LlmCallStats> for LlmMessageStats {
+    fn from(s: evot_engine::LlmCallStats) -> Self {
+        Self {
+            user_count: s.user_count,
+            assistant_count: s.assistant_count,
+            tool_result_count: s.tool_result_count,
+            image_count: s.image_count,
+            image_path_count: s.image_path_count,
+            image_base64_count: s.image_base64_count,
+            user_tokens: s.user_tokens,
+            assistant_tokens: s.assistant_tokens,
+            tool_result_tokens: s.tool_result_tokens,
+            image_tokens: s.image_tokens,
+            tool_details: s.tool_details,
+        }
+    }
+}
+
 impl RunEventPayload {
     pub fn kind_str(&self) -> &'static str {
         match self {

@@ -580,20 +580,7 @@ fn map_agent_event(
                 .map(|msg| serialize_or_placeholder(msg, "message").to_string().len())
                 .sum();
 
-            // Convert engine LlmCallStats → app LlmMessageStats
-            let message_stats = Some(LlmMessageStats {
-                user_count: stats.user_count,
-                assistant_count: stats.assistant_count,
-                tool_result_count: stats.tool_result_count,
-                image_count: stats.image_count,
-                image_path_count: stats.image_path_count,
-                image_base64_count: stats.image_base64_count,
-                user_tokens: stats.user_tokens,
-                assistant_tokens: stats.assistant_tokens,
-                tool_result_tokens: stats.tool_result_tokens,
-                image_tokens: stats.image_tokens,
-                tool_details: stats.tool_details.clone(),
-            });
+            let message_stats = Some(LlmMessageStats::from(stats.clone()));
 
             vec![
                 RuntimeEvent::Transcript(
@@ -732,19 +719,7 @@ fn map_agent_event(
             budget,
             message_stats,
         } => {
-            let stats = Some(LlmMessageStats {
-                user_count: message_stats.user_count,
-                assistant_count: message_stats.assistant_count,
-                tool_result_count: message_stats.tool_result_count,
-                image_count: message_stats.image_count,
-                image_path_count: message_stats.image_path_count,
-                image_base64_count: message_stats.image_base64_count,
-                user_tokens: message_stats.user_tokens,
-                assistant_tokens: message_stats.assistant_tokens,
-                tool_result_tokens: message_stats.tool_result_tokens,
-                image_tokens: message_stats.image_tokens,
-                tool_details: message_stats.tool_details.clone(),
-            });
+            let stats = Some(LlmMessageStats::from(message_stats.clone()));
             vec![
                 RuntimeEvent::Transcript(
                     TranscriptStats::ContextCompactionStarted(ContextCompactionStartedStats {
@@ -788,19 +763,7 @@ fn map_agent_event(
                     messages_dropped: stats.messages_dropped,
                     oversize_capped: stats.oversize_capped,
                     age_cleared: stats.age_cleared,
-                    actions: stats
-                        .actions
-                        .iter()
-                        .map(|a| crate::types::CompactionAction {
-                            index: a.index,
-                            tool_name: a.tool_name.clone(),
-                            method: format!("{:?}", a.method),
-                            before_tokens: a.before_tokens,
-                            after_tokens: a.after_tokens,
-                            end_index: a.end_index,
-                            related_count: a.related_count,
-                        })
-                        .collect(),
+                    actions: crate::types::convert_compaction_actions(&stats.actions),
                 }
             } else if stats.current_run_cleared > 0 {
                 crate::types::CompactionResult::RunOnceCleared {
@@ -811,19 +774,7 @@ fn map_agent_event(
                     saved_tokens: stats
                         .before_estimated_tokens
                         .saturating_sub(stats.after_estimated_tokens),
-                    actions: stats
-                        .actions
-                        .iter()
-                        .map(|a| crate::types::CompactionAction {
-                            index: a.index,
-                            tool_name: a.tool_name.clone(),
-                            method: format!("{:?}", a.method),
-                            before_tokens: a.before_tokens,
-                            after_tokens: a.after_tokens,
-                            end_index: a.end_index,
-                            related_count: a.related_count,
-                        })
-                        .collect(),
+                    actions: crate::types::convert_compaction_actions(&stats.actions),
                 }
             } else {
                 crate::types::CompactionResult::NoOp

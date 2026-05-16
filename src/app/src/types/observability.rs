@@ -85,6 +85,26 @@ pub struct CompactionAction {
     pub related_count: Option<usize>,
 }
 
+impl From<&evot_engine::context::CompactionAction> for CompactionAction {
+    fn from(a: &evot_engine::context::CompactionAction) -> Self {
+        Self {
+            index: a.index,
+            tool_name: a.tool_name.clone(),
+            method: format!("{:?}", a.method),
+            before_tokens: a.before_tokens,
+            after_tokens: a.after_tokens,
+            end_index: a.end_index,
+            related_count: a.related_count,
+        }
+    }
+}
+
+pub fn convert_compaction_actions(
+    actions: &[evot_engine::context::CompactionAction],
+) -> Vec<CompactionAction> {
+    actions.iter().map(CompactionAction::from).collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CompactionResult {
