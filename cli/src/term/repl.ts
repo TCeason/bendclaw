@@ -98,7 +98,11 @@ const SPINNER_INTERVAL_MS = 100
 const TAIL_REVEAL_INTERVAL_MS = 24
 const TAIL_REVEAL_CHARS_PER_TICK = 1
 const TAIL_REVEAL_MAX_CATCHUP = 6
-const TAIL_REVEAL_FINAL_MAX_WIDTH = 80
+const TAIL_REVEAL_FAST_CATCHUP = 12
+// Cap matches the markdown renderer's MAX_RENDER_WIDTH (140) so wide single-line
+// tails on large terminals also wait for the typewriter to catch up before
+// commit, instead of flashing as a half-revealed status → full scroll line.
+const TAIL_REVEAL_FINAL_MAX_WIDTH = 140
 
 export interface ReplOptions {
   agent: Agent
@@ -589,7 +593,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const width = renderedPendingTailWidth(streamMachine.pendingText)
     if (width <= 0 || streamMachine.revealCursor >= width) return false
     const gap = width - streamMachine.revealCursor
-    const step = gap > 24 ? TAIL_REVEAL_MAX_CATCHUP : TAIL_REVEAL_CHARS_PER_TICK
+    const step = gap > 60
+      ? TAIL_REVEAL_FAST_CATCHUP
+      : gap > 24
+        ? TAIL_REVEAL_MAX_CATCHUP
+        : TAIL_REVEAL_CHARS_PER_TICK
     const next = Math.min(width, streamMachine.revealCursor + step)
     streamMachine = { ...streamMachine, revealCursor: next }
     renderStatus()

@@ -117,6 +117,24 @@ describe('buildActiveResponseBlocks', () => {
     expect(stripAnsi(lines.join('\n'))).not.toContain('hello world')
   })
 
+  test('reveals wide single-line pending text by cursor on wide terminals', () => {
+    // 110-cell single-line tail on a 200-column terminal: must not be
+    // mistaken for multi-line and must respect revealCursor so the typewriter
+    // can catch up before commit (paired with TAIL_REVEAL_FINAL_MAX_WIDTH=140).
+    const prev = process.stdout.columns
+    process.stdout.columns = 200
+    try {
+      const text = 'a'.repeat(110)
+      const lines = blocksToLines(buildActiveResponseBlocks(defaultInput({ pendingText: text, revealCursor: 30, termColumns: 200 })))
+      const plain = stripAnsi(lines.join('\n'))
+      expect(plain).toContain('a'.repeat(30))
+      expect(plain).not.toContain('a'.repeat(110))
+      expect(renderedPendingTailWidth(text)).toBe(110)
+    } finally {
+      process.stdout.columns = prev
+    }
+  })
+
   test('computes rendered pending tail width for timer reveal', () => {
     expect(renderedPendingTailWidth('hello world')).toBe(11)
     expect(renderedPendingTailWidth('| a | b |\n| - | - |')).toBe(0)
