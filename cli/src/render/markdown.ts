@@ -4,19 +4,16 @@
  * Pipeline:
  *   raw markdown
  *   → prompt stripping + LLM glue normalizers
- *   → marked parser adapter
- *   → Evot Markdown AST
- *   → ANSI renderer
+ *   → marked lexer
+ *   → ANSI token renderer
  *
  * Streaming commit planning lives in ../markdown/streaming/commit.js.
  */
 
-import { markedTokensToNodes } from '../markdown/ast.js'
 import { prepareMarkdownForLex, stripPromptXMLTags } from '../markdown/normalize/index.js'
 import { lexMarkdownTokens } from '../markdown/parse/marked.js'
-import { renderMarkdownNodes } from '../markdown/render/ansi.js'
+import { formatTokens } from '../markdown/render/ansi.js'
 
-export { configureMarked } from '../markdown/parse/marked.js'
 export { formatToken, highlightCodeLine } from '../markdown/render/ansi.js'
 export { findStreamingCommitPoint, findNaturalPlainTextCommitPoint, isInsideOpenMathBlock, splitMarkdownBlocks, type MarkdownSplit } from '../markdown/streaming/commit.js'
 
@@ -32,7 +29,7 @@ export function renderMarkdown(text: string): string {
     const stripped = stripPromptXMLTags(text)
     const lexText = prepareMarkdownForLex(stripped)
     const tokens = lexMarkdownTokens(lexText, stripped)
-    return renderMarkdownNodes(markedTokensToNodes(tokens))
+    return formatTokens(tokens)
   } catch {
     return text
   }

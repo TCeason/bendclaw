@@ -3,7 +3,6 @@ import type { Token, Tokens } from 'marked'
 import stripAnsi from 'strip-ansi'
 import stringWidth from 'string-width'
 import wrapAnsi from 'wrap-ansi'
-import type { MarkdownNode } from '../ast.js'
 import {
   EOL,
   SAFETY_MARGIN,
@@ -913,6 +912,3 @@ export function formatTokens(tokens: Token[]): string {
 }
 
 
-export function renderMarkdownNodes(nodes: MarkdownNode[]): string {
-  return formatTokens(nodes.map(node => node.token))
-}

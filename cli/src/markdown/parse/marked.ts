@@ -2,7 +2,7 @@ import { marked, type Token, type Tokens } from 'marked'
 
 let markedConfigured = false
 
-export function configureMarked(): void {
+function configureMarked(): void {
   if (markedConfigured) return
   markedConfigured = true
 
