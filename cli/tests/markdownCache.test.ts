@@ -30,6 +30,29 @@ describe('renderMarkdownCached', () => {
     expect(getRenderCacheSize()).toBe(2)
   })
 
+  test('hash-collision strings do not share cached output', () => {
+    expect(stripAnsi(renderMarkdownCached('FB'))).toBe('FB')
+    expect(stripAnsi(renderMarkdownCached('Ea'))).toBe('Ea')
+  })
+
+  test('terminal width is part of the cache key', () => {
+    const prev = process.stdout.columns
+    const text = 'word '.repeat(20)
+    try {
+      process.stdout.columns = 40
+      const narrow = stripAnsi(renderMarkdownCached(text))
+      process.stdout.columns = 120
+      const wide = stripAnsi(renderMarkdownCached(text))
+      clearRenderCache()
+      const freshWide = stripAnsi(renderMarkdownCached(text))
+
+      expect(narrow.split('\n').length).toBeGreaterThan(wide.split('\n').length)
+      expect(wide).toBe(freshWide)
+    } finally {
+      process.stdout.columns = prev
+    }
+  })
+
   test('empty input is not cached', () => {
     const result = renderMarkdownCached('')
     expect(result).toBe('')

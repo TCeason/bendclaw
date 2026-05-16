@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import chalk from 'chalk'
 import stringWidth from 'string-width'
+import stripAnsi from 'strip-ansi'
 import { createSpinnerState } from '../src/term/spinner.js'
 import { createInitialState } from '../src/term/app/state.js'
 import { createStreamMachineState, reduceRunEvent, flushStreaming, buildToolStartedLines, buildToolFinishedLines, buildToolProgressLines } from '../src/term/app/stream.js'
@@ -618,4 +619,41 @@ test('flushStreaming does not re-commit an open fence as a second-time assistant
   const asstLines = flushed.lines.filter(l => l.kind === 'assistant' && l.text)
   expect(asstLines.find(l => l.text.includes('const a = 1'))).toBeUndefined()
   expect(asstLines.find(l => l.text.includes('const b = 2'))).toBeUndefined()
+})
+
+test('streaming fence close must match opener marker', () => {
+  const prev = createStreamMachineState(createInitialState(), createSpinnerState('responding'))
+  const result = reduceDelta(prev, '```md\nline1\n~~~\nline2\n```\n')
+  const flushed = flushStreaming(result.state)
+  const text = [...result.commitLines, ...flushed.lines]
+    .map(l => stripAnsi(l.text))
+    .join('\n')
+
+  expect(text).toContain('line1')
+  expect(text).toContain('~~~')
+  expect(text).toContain('line2')
+})
+
+test('streaming fence close glued to prose preserves the prose', () => {
+  const prev = createStreamMachineState(createInitialState(), createSpinnerState('responding'))
+  const result = reduceDelta(prev, '```json\n{"x":1}\n```After\n')
+  const flushed = flushStreaming(result.state)
+  const lines = [...result.commitLines, ...flushed.lines]
+  const text = lines.map(l => stripAnsi(l.text)).join('\n')
+
+  expect(text).toContain('{"x":1}')
+  expect(text).toContain('After')
+  expect(lines.some(l => l.kind === 'assistant' && stripAnsi(l.text).includes('After'))).toBe(true)
+})
+
+test('streaming trailing fence close glued to code line does not leak backticks', () => {
+  const prev = createStreamMachineState(createInitialState(), createSpinnerState('responding'))
+  const result = reduceDelta(prev, '```js\nconst a = 1```After')
+  const flushed = flushStreaming(result.state)
+  const lines = [...result.commitLines, ...flushed.lines]
+  const text = lines.map(l => stripAnsi(l.text)).join('\n')
+
+  expect(text).toContain('const a = 1')
+  expect(text).toContain('After')
+  expect(text).not.toContain('1```After')
 })

@@ -32,6 +32,8 @@ function assistantContinuationSpacer(): OutputLine {
 interface CodeFenceState {
   id: string
   lang: string | null
+  marker: '`' | '~'
+  length: number
   linesCommitted: number
 }
 
@@ -97,6 +99,33 @@ function isPlainProseHead(head: string): boolean {
 }
 
 const FENCE_LINE_RE = /^([ \t]*)(```+|~~~+)([^\n]*)$/
+const TRAILING_FENCE_RE = /(```+|~~~+)/
+
+function isMatchingFenceRun(run: string, fence: CodeFenceState): boolean {
+  return run[0] === fence.marker && run.length >= fence.length
+}
+
+function splitFenceCloseLine(line: string, fence: CodeFenceState): { rest: string } | null {
+  const match = FENCE_LINE_RE.exec(line)
+  if (!match) return null
+  const run = match[2]!
+  if (!isMatchingFenceRun(run, fence)) return null
+  return { rest: (match[3] ?? '').trimStart() }
+}
+
+function splitTrailingFenceClose(line: string, fence: CodeFenceState): { code: string; rest: string } | null {
+  let match: RegExpExecArray | null
+  const re = new RegExp(TRAILING_FENCE_RE.source, 'g')
+  while ((match = re.exec(line)) !== null) {
+    const run = match[1]!
+    if (!isMatchingFenceRun(run, fence)) continue
+    const before = line.slice(0, match.index).trimEnd()
+    if (!before) continue
+    const rest = line.slice(match.index + run.length).trimStart()
+    return { code: before, rest }
+  }
+  return null
+}
 
 /**
  * One step of the streaming code-fence state machine.
@@ -139,8 +168,15 @@ function advanceCodeFence(state: StreamMachineState, commitLines: OutputLine[]):
             commitLines.push(...built)
           }
         }
+        const run = match[2]!
         const lang = (match[3] ?? '').trim() || null
-        const codeFence: CodeFenceState = { id: nextCodeBlockId(), lang, linesCommitted: 0 }
+        const codeFence: CodeFenceState = {
+          id: nextCodeBlockId(),
+          lang,
+          marker: run[0] as '`' | '~',
+          length: run.length,
+          linesCommitted: 0,
+        }
         let next: StreamMachineState = {
           ...state,
           streamingText: text.slice(nl + 1),
@@ -171,9 +207,19 @@ function advanceCodeFence(state: StreamMachineState, commitLines: OutputLine[]):
     const nl = text.indexOf('\n', cursor)
     if (nl < 0) break
     const line = text.slice(cursor, nl)
-    if (FENCE_LINE_RE.test(line)) {
+    const closedLine = splitFenceCloseLine(line, fence)
+    if (closedLine) {
       closed = true
       closedAt = nl + 1
+      const rest = closedLine.rest
+      if (rest) {
+        const after = text.slice(closedAt)
+        return {
+          ...state,
+          streamingText: `${rest}${after ? `\n${after}` : ''}`,
+          codeFence: null,
+        }
+      }
       break
     }
     const highlighted = highlightCodeLine(line, lang ?? undefined)
@@ -194,7 +240,7 @@ function advanceCodeFence(state: StreamMachineState, commitLines: OutputLine[]):
   return {
     ...state,
     streamingText: text.slice(cursor),
-    codeFence: { id: fence.id, lang, linesCommitted },
+      codeFence: { ...fence, linesCommitted },
   }
 }
 
@@ -657,10 +703,40 @@ export function flushStreaming(state: StreamMachineState): { state: StreamMachin
       const nl = text.indexOf('\n', cursor)
       const end = nl < 0 ? text.length : nl
       const line = text.slice(cursor, end)
-      if (FENCE_LINE_RE.test(line)) {
+      const closeLine = splitFenceCloseLine(line, fence)
+      if (closeLine) {
         // Treat a stray closing ``` as the fence close and stop.
         cursor = nl < 0 ? text.length : nl + 1
+        if (closeLine.rest) {
+          cursor = nl < 0 ? text.length : nl + 1
+          const after = text.slice(cursor)
+          const restText = `${closeLine.rest}${after ? `\n${after}` : ''}`
+          return {
+            state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false, codeFence: null },
+            lines: lines.concat(buildAssistantLines(restText)),
+            expandedLines: expandedLines
+              ? expandedLines.concat(buildAssistantLines(restText))
+              : undefined,
+          }
+        }
         break
+      }
+      const trailingClose = splitTrailingFenceClose(line, fence)
+      if (trailingClose) {
+        const highlighted = highlightCodeLine(trailingClose.code, lang ?? undefined)
+        lines.push(buildCodeLine(highlighted, fence))
+        cursor = nl < 0 ? text.length : nl + 1
+        const after = text.slice(cursor)
+        const restText = `${trailingClose.rest}${after ? `\n${after}` : ''}`
+        return {
+          state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false, codeFence: null },
+          lines: restText.trim()
+            ? lines.concat(buildAssistantLines(restText))
+            : lines,
+          expandedLines: expandedLines
+            ? (restText.trim() ? expandedLines.concat(buildAssistantLines(restText)) : expandedLines)
+            : undefined,
+        }
       }
       if (line.length > 0 || nl >= 0) {
         const highlighted = highlightCodeLine(line, lang ?? undefined)

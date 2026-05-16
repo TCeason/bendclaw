@@ -47,7 +47,16 @@ describe('buildActiveResponseBlocks', () => {
     const result = renderPlain(defaultInput({ pendingText: longText, termRows: 20 }))
     // Multi-line content is now shown in the status area for smooth growth
     expect(result).toContain('line 29')
+    expect(result).toContain('... (+')
     expect(result).toContain('Thinking')
+  })
+
+  test('multi-line pending text is capped to avoid pushing prompt off-screen', () => {
+    const longText = Array.from({ length: 80 }, (_, i) => `line ${i}`).join('\n')
+    const lines = blocksToLines(buildActiveResponseBlocks(defaultInput({ pendingText: longText, termRows: 24 })))
+    expect(lines.length).toBeLessThanOrEqual(16)
+    expect(stripAnsi(lines.join('\n'))).toContain('line 79')
+    expect(stripAnsi(lines.join('\n'))).toContain('... (+')
   })
 
   test('structured markdown pending text shows in status area', () => {
@@ -75,8 +84,18 @@ describe('buildActiveResponseBlocks', () => {
     const result = buildActiveResponseBlocks(defaultInput({ pendingText: link, revealCursor: 3 }))
     const rendered = blocksToLines(result).join('\n')
     expect(rendered).toContain(`\x1b]8;;${longUrl}\x1b\\`)
+    expect(rendered).toContain('\x1b]8;;\x1b\\')
     expect(stripAnsi(rendered)).toContain('cli')
     expect(stripAnsi(rendered)).not.toContain('click here to visit')
+  })
+
+  test('does not split grapheme clusters while revealing pending text', () => {
+    for (const cursor of [1, 2, 3]) {
+      const result = renderPlain(defaultInput({ pendingText: '👨‍👩‍👧‍👦 family', revealCursor: cursor, termColumns: 120 }))
+      const assistantLine = result.split('\n').find(l => l.startsWith('⏺ ')) ?? ''
+      expect(assistantLine).not.toBe('⏺ 👨‍')
+      expect(assistantLine).not.toBe('⏺ 👨‍👩‍')
+    }
   })
 
   test('keeps a blank separator between revealed tail and spinner', () => {

@@ -50,25 +50,32 @@ function simpleHash(s: string): string {
   return h.toString(36)
 }
 
+function cacheKey(text: string): string {
+  const columns = process.stdout.columns
+  const safeColumns = Number.isFinite(columns) && columns > 0 ? Math.floor(columns) : 80
+  if (text.length > 4096) return `${safeColumns}\0#${simpleHash(text)}`
+  return `${safeColumns}\0${text}`
+}
+
 /**
  * Render markdown with LRU caching.
- * Same as renderMarkdown but caches results by content hash.
+ * Same as renderMarkdown but caches results by content and terminal width.
  */
 export function renderMarkdownCached(text: string): string {
   if (!text || text.trim().length === 0) return text
 
-  const hash = simpleHash(text)
-  const cached = renderCache.get(hash)
+  const key = cacheKey(text)
+  const cached = renderCache.get(key)
   if (cached !== undefined) {
     // Move to end (LRU touch)
-    renderCache.delete(hash)
-    renderCache.set(hash, cached)
+    renderCache.delete(key)
+    renderCache.set(key, cached)
     return cached
   }
 
   const result = renderMarkdown(text)
 
-  renderCache.set(hash, result)
+  renderCache.set(key, result)
   if (renderCache.size > CACHE_MAX) {
     // Evict oldest entry
     const first = renderCache.keys().next().value
@@ -87,4 +94,3 @@ export function clearRenderCache(): void {
 export function getRenderCacheSize(): number {
   return renderCache.size
 }
-

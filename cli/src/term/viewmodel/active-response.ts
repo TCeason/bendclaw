@@ -13,45 +13,99 @@ const STRUCTURAL_PENDING_RE = /(^|\n)[ \t]*(?:#{1,6}\s|[-*+]\s+|\d+\.\s+|>\s?|\|
 const MAX_PROGRESS_LINES = 5
 const MAX_PROGRESS_LINE_WIDTH = 120
 const RESERVED_PENDING_LINE = ' '
+const OSC8_CLOSE = '\x1b]8;;\x1b\\'
+const graphemeSegmenter = typeof Intl !== 'undefined' && 'Segmenter' in Intl
+  ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+  : null
 
 let lastPendingKey = ''
 let lastPlainTail = ''
+let lastAnalysisKey = ''
+let lastAnalysis: PendingAnalysis | null = null
 
-export function renderedPendingTailWidth(pendingText: string): number {
-  if (!pendingText) return 0
+interface PendingAnalysis {
+  renderedLines: string[]
+  lastIdx: number
+  renderedTail: string
+  plainTail: string
+  tailWidth: number
+  isUnsafeForReveal: boolean
+  revealWidth: number
+}
+
+function pendingAnalysisKey(pendingText: string): string {
+  const columns = process.stdout.columns
+  const safeColumns = Number.isFinite(columns) && columns > 0 ? Math.floor(columns) : 80
+  return `${safeColumns}\0${pendingText}`
+}
+
+function analyzePendingText(pendingText: string): PendingAnalysis {
+  const key = pendingAnalysisKey(pendingText)
+  if (lastAnalysis && lastAnalysisKey === key) return lastAnalysis
+
   const renderedFull = renderMarkdownCached(pendingText)
   const renderedLines = renderedFull.split('\n')
   let lastIdx = renderedLines.length - 1
   while (lastIdx >= 0 && !renderedLines[lastIdx]!.trim()) lastIdx--
-  if (lastIdx < 0) return 0
-  const renderedTail = renderedLines[lastIdx]!
+  const renderedTail = lastIdx >= 0 ? renderedLines[lastIdx]! : ''
   const plainTail = stripAnsi(renderedTail)
-  if (TABLE_TAIL_RE.test(plainTail) || FENCE_TAIL_RE.test(pendingText) || STRUCTURAL_PENDING_RE.test(pendingText) || pendingText.includes('\n')) return 0
-  return stringWidth(plainTail)
+  const tailWidth = stringWidth(plainTail)
+  const isUnsafeForReveal = TABLE_TAIL_RE.test(plainTail)
+    || FENCE_TAIL_RE.test(pendingText)
+    || STRUCTURAL_PENDING_RE.test(pendingText)
+    || pendingText.includes('\n')
+  lastAnalysisKey = key
+  lastAnalysis = {
+    renderedLines,
+    lastIdx,
+    renderedTail,
+    plainTail,
+    tailWidth,
+    isUnsafeForReveal,
+    revealWidth: isUnsafeForReveal ? 0 : tailWidth,
+  }
+  return lastAnalysis
+}
+
+export function renderedPendingTailWidth(pendingText: string): number {
+  if (!pendingText) return 0
+  return analyzePendingText(pendingText).revealWidth
 }
 
 function sliceAnsiByWidth(input: string, maxWidth: number): string {
   if (maxWidth <= 0) return ''
   let width = 0
   let out = ''
+  let openHyperlink = false
+  const segmenter = graphemeSegmenter
   for (let i = 0; i < input.length;) {
     if (input[i] === '\x1b') {
       const match = ansiRegex().exec(input.slice(i))
       if (match?.index === 0) {
-        out += match[0]
-        i += match[0].length
+        const seq = match[0]
+        out += seq
+        if (seq.startsWith('\x1b]8;;')) openHyperlink = seq !== OSC8_CLOSE
+        i += seq.length
         continue
       }
     }
-    const code = input.codePointAt(i)
-    if (code === undefined) break
-    const ch = String.fromCodePoint(code)
-    const w = stringWidth(ch)
-    if (width + w > maxWidth) break
-    out += ch
-    width += w
-    i += ch.length
+    const plainStart = i
+    while (i < input.length && input[i] !== '\x1b') i++
+    const plainChunk = input.slice(plainStart, i)
+    const segments = segmenter
+      ? Array.from(segmenter.segment(plainChunk), part => part.segment)
+      : Array.from(plainChunk)
+    for (const ch of segments) {
+      const w = stringWidth(ch)
+      if (width + w > maxWidth) {
+        if (openHyperlink) out += OSC8_CLOSE
+        return out
+      }
+      out += ch
+      width += w
+    }
   }
+  if (openHyperlink) out += OSC8_CLOSE
   return out
 }
 
@@ -129,19 +183,13 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
   // Tables and box drawings still fall back to spinner because their
   // column widths depend on unseen future lines.
   if (input.pendingText) {
-    const renderedFull = renderMarkdownCached(input.pendingText)
-    const renderedLines = renderedFull.split('\n')
-    // Find the last non-empty line
-    let lastIdx = renderedLines.length - 1
-    while (lastIdx >= 0 && !renderedLines[lastIdx]!.trim()) lastIdx--
-    const renderedTail = lastIdx >= 0 ? renderedLines[lastIdx]! : ''
+    const analysis = analyzePendingText(input.pendingText)
+    const { renderedLines, lastIdx, renderedTail, plainTail, tailWidth } = analysis
 
     // Tables, box drawings, and open code fences depend on unseen future
     // lines — their shape can change as more content arrives. Fall back to
     // spinner for those. Other structural content (lists, headings,
     // blockquotes) renders stably line-by-line.
-    const plainTail = stripAnsi(renderedTail)
-    const tailWidth = stringWidth(plainTail)
     const cursor = Math.min(input.revealCursor, tailWidth)
     const pendingKey = input.pendingText
     const isSamePendingRun = pendingKey.startsWith(lastPendingKey)
@@ -173,7 +221,12 @@ export function buildActiveResponseBlocks(input: ActiveResponseInput): ViewBlock
       // bottom as they stream in, matching Claude Code's behavior.
       const isBlockStart = !input.assistantCommitted
       const styledLines: StyledLine[] = []
-      for (let i = 0; i <= lastIdx; i++) {
+      const maxPendingLines = Math.max(3, Math.floor(input.termRows / 2) - 2)
+      const firstVisible = Math.max(0, lastIdx - maxPendingLines + 1)
+      if (firstVisible > 0) {
+        styledLines.push(line(dim(`  ... (+${firstVisible} lines)`)))
+      }
+      for (let i = firstVisible; i <= lastIdx; i++) {
         const rl = renderedLines[i]!
         if (i === 0 && isBlockStart) {
           styledLines.push(line(colored('⏺ ', 'cyan'), ansi(rl)))

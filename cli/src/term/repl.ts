@@ -168,7 +168,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   // drained gradually (a few lines per spinner tick) to produce a smooth
   // line-by-line append effect instead of large bursts.
   const pacedQueue: OutputLine[] = []
-  const PACED_DRAIN_LINES = 2
+  const PACED_DRAIN_BASE_LINES = 2
   let lastProgressLineCount = 0
   let lastThinkingLineCount = 0
   const screenLog = new ScreenLog()
@@ -473,7 +473,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   /** Drain a few lines from the paced commit queue to the scroll area. */
   function drainPacedQueue(): void {
     if (pacedQueue.length === 0) return
-    const batch = pacedQueue.splice(0, PACED_DRAIN_LINES)
+    const backlogBoost = Math.floor(pacedQueue.length / Math.max(4, Math.floor(renderer.termRows / 2)))
+    const drainLines = Math.min(
+      Math.max(PACED_DRAIN_BASE_LINES, PACED_DRAIN_BASE_LINES + backlogBoost * 2),
+      Math.max(PACED_DRAIN_BASE_LINES, Math.floor(renderer.termRows / 2)),
+    )
+    const batch = pacedQueue.splice(0, drainLines)
     commitLines(batch)
   }
 
