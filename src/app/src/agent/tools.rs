@@ -46,55 +46,44 @@ pub(crate) fn build_tools(
     allow_bash: bool,
     sandbox_dirs: Option<Vec<PathBuf>>,
 ) -> Vec<Box<dyn evot_engine::AgentTool>> {
-    match mode {
-        ToolMode::Interactive { ask_fn } => {
-            let mut t: Vec<Box<dyn evot_engine::AgentTool>> = Vec::new();
-            if allow_bash {
-                t.push(build_bash_tool(envs, sandbox_dirs));
-            }
-            t.push(Box::new(ReadFileTool::default()));
-            t.push(Box::new(WriteFileTool::new()));
-            t.push(Box::new(EditFileTool::new()));
-            t.push(Box::new(ListFilesTool::default()));
-            t.push(Box::new(SearchTool::default()));
-            t.push(Box::new(WebFetchTool::new()));
-            t.push(Box::new(AskUserTool::new(ask_fn.clone())));
-            t
-        }
-        ToolMode::Headless => {
-            let mut t: Vec<Box<dyn evot_engine::AgentTool>> = Vec::new();
-            if allow_bash {
-                t.push(build_bash_tool(envs, sandbox_dirs));
-            }
-            t.push(Box::new(ReadFileTool::default()));
-            t.push(Box::new(WriteFileTool::new()));
-            t.push(Box::new(EditFileTool::new()));
-            t.push(Box::new(ListFilesTool::default()));
-            t.push(Box::new(SearchTool::default()));
-            t.push(Box::new(WebFetchTool::new()));
-            t
-        }
-        ToolMode::Planning { ask_fn } => {
-            let msg = "Not allowed in planning mode. Use /act to switch.";
-            let mut t: Vec<Box<dyn evot_engine::AgentTool>> = Vec::new();
-            if allow_bash {
-                t.push(build_bash_tool(envs, sandbox_dirs));
-            }
-            t.push(Box::new(ReadFileTool::default()));
-            t.push(Box::new(WriteFileTool::new().disallow(msg)));
-            t.push(Box::new(EditFileTool::new().disallow(msg)));
-            t.push(Box::new(ListFilesTool::default()));
-            t.push(Box::new(SearchTool::default()));
-            t.push(Box::new(WebFetchTool::new()));
-            if let Some(f) = ask_fn {
-                t.push(Box::new(AskUserTool::new(f.clone())));
-            }
-            t
-        }
-        ToolMode::Readonly => vec![
+    if matches!(mode, ToolMode::Readonly) {
+        return vec![
             Box::new(ReadFileTool::default()),
             Box::new(ListFilesTool::default()),
             Box::new(SearchTool::default()),
-        ],
+        ];
     }
+
+    let mut t: Vec<Box<dyn evot_engine::AgentTool>> = Vec::new();
+
+    if allow_bash {
+        t.push(build_bash_tool(envs, sandbox_dirs));
+    }
+
+    t.push(Box::new(ReadFileTool::default()));
+
+    if let ToolMode::Planning { .. } = mode {
+        let msg = "Not allowed in planning mode. Use /act to switch.";
+        t.push(Box::new(WriteFileTool::new().disallow(msg)));
+        t.push(Box::new(EditFileTool::new().disallow(msg)));
+    } else {
+        t.push(Box::new(WriteFileTool::new()));
+        t.push(Box::new(EditFileTool::new()));
+    }
+
+    t.push(Box::new(ListFilesTool::default()));
+    t.push(Box::new(SearchTool::default()));
+    t.push(Box::new(WebFetchTool::new()));
+
+    match mode {
+        ToolMode::Interactive { ask_fn } => {
+            t.push(Box::new(AskUserTool::new(ask_fn.clone())));
+        }
+        ToolMode::Planning { ask_fn: Some(f) } => {
+            t.push(Box::new(AskUserTool::new(f.clone())));
+        }
+        _ => {}
+    }
+
+    t
 }

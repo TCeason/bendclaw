@@ -245,16 +245,7 @@ impl Agent {
     /// Resolves provider+model from config. Falls back to just updating the model name.
     pub fn set_model_by_spec(&self, config: &Config, spec: &str) {
         if let Ok((provider_name, model_override)) = config.resolve_model_spec(spec) {
-            if let Some(profile) = config.providers.get(&provider_name) {
-                let llm = LlmConfig {
-                    provider: provider_name,
-                    protocol: profile.protocol.clone(),
-                    api_key: profile.api_key.clone(),
-                    base_url: profile.base_url.clone(),
-                    model: model_override.unwrap_or_else(|| profile.model().to_string()),
-                    thinking_level: config.llm.thinking_level,
-                    compat_caps: profile.compat_caps,
-                };
+            if let Ok(llm) = config.build_llm(&provider_name, model_override) {
                 self.set_llm(llm);
                 return;
             }
@@ -266,19 +257,7 @@ impl Agent {
     /// cannot be resolved to a known provider.
     pub fn set_provider_by_spec(&self, config: &Config, spec: &str) -> Result<()> {
         let (provider_name, model_override) = config.resolve_model_spec(spec)?;
-        let profile = config
-            .providers
-            .get(&provider_name)
-            .ok_or_else(|| EvotError::Conf(format!("provider '{}' not found", provider_name)))?;
-        let llm = LlmConfig {
-            provider: provider_name,
-            protocol: profile.protocol.clone(),
-            api_key: profile.api_key.clone(),
-            base_url: profile.base_url.clone(),
-            model: model_override.unwrap_or_else(|| profile.model().to_string()),
-            thinking_level: config.llm.thinking_level,
-            compat_caps: profile.compat_caps,
-        };
+        let llm = config.build_llm(&provider_name, model_override)?;
         self.set_llm(llm);
         Ok(())
     }
@@ -785,7 +764,7 @@ impl ForkedAgent {
                 }
                 Ok(run)
             }
-            SubmitOutcome::Command(_) => Err(crate::error::EvotError::Run(
+            SubmitOutcome::Command(_) => Err(EvotError::Run(
                 "commands not supported in forked agent".into(),
             )),
         }

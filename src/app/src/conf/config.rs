@@ -146,10 +146,19 @@ impl Config {
 
     /// Resolve the active provider into a runtime LlmConfig.
     pub fn active_llm(&self) -> Result<LlmConfig> {
-        let profile = self.providers.get(&self.llm.provider).ok_or_else(|| {
+        self.build_llm(&self.llm.provider, self.llm.model_override.clone())
+    }
+
+    /// Build an LlmConfig for a given provider name and optional model override.
+    pub fn build_llm(
+        &self,
+        provider_name: &str,
+        model_override: Option<String>,
+    ) -> Result<LlmConfig> {
+        let profile = self.providers.get(provider_name).ok_or_else(|| {
             EvotError::Conf(format!(
                 "provider '{}' not found, available: {}",
-                self.llm.provider,
+                provider_name,
                 self.providers
                     .keys()
                     .cloned()
@@ -158,15 +167,11 @@ impl Config {
             ))
         })?;
         Ok(LlmConfig {
-            provider: self.llm.provider.clone(),
+            provider: provider_name.to_string(),
             protocol: profile.protocol.clone(),
             api_key: profile.api_key.clone(),
             base_url: profile.base_url.clone(),
-            model: self
-                .llm
-                .model_override
-                .clone()
-                .unwrap_or_else(|| profile.model().to_string()),
+            model: model_override.unwrap_or_else(|| profile.model().to_string()),
             thinking_level: self.llm.thinking_level,
             compat_caps: profile.compat_caps,
         })
