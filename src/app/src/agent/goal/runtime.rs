@@ -67,6 +67,12 @@ pub async fn after_turn(
 
     GoalCoordinator::record_verification_reason(session, Some(verdict.reason())).await?;
 
+    if response_awaits_user(report.transcript) {
+        GoalCoordinator::pause(session).await?;
+        tracing::info!("goal paused because the assistant is waiting for user input");
+        return Ok(AfterTurn::Stop);
+    }
+
     match verdict {
         GoalVerdict::Met { reason } => {
             GoalCoordinator::mark_met(session, &reason).await?;
@@ -76,5 +82,65 @@ pub async fn after_turn(
         GoalVerdict::NotMet { .. } => Ok(AfterTurn::Continue(vec![Content::Text {
             text: prompt::continuation_prompt(&goal),
         }])),
+    }
+}
+
+pub(crate) fn response_awaits_user(transcript: &[TranscriptItem]) -> bool {
+    let Some(TranscriptItem::Assistant {
+        text, tool_calls, ..
+    }) = transcript
+        .iter()
+        .rev()
+        .find(|item| matches!(item, TranscriptItem::Assistant { .. }))
+    else {
+        return false;
+    };
+
+    if tool_calls.iter().any(|call| call.name == "ask_user") {
+        return true;
+    }
+
+    let trimmed = text.trim();
+    if trimmed.is_empty() || !trimmed.ends_with(['?', '？']) {
+        return false;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    lower.contains("should i")
+        || lower.contains("do you want")
+        || lower.contains("would you like")
+        || trimmed.contains("要我")
+        || trimmed.contains("是否")
+        || trimmed.contains("还是")
+        || trimmed.contains("吗？")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_assistant_waiting_for_user_decision() {
+        let transcript = vec![TranscriptItem::Assistant {
+            text: "I found two viable approaches. Do you want me to continue with the simpler one?"
+                .into(),
+            thinking: None,
+            tool_calls: Vec::new(),
+            stop_reason: "stop".into(),
+        }];
+
+        assert!(response_awaits_user(&transcript));
+    }
+
+    #[test]
+    fn ignores_non_question_assistant_progress() {
+        let transcript = vec![TranscriptItem::Assistant {
+            text: "I will continue with the simpler implementation.".into(),
+            thinking: None,
+            tool_calls: Vec::new(),
+            stop_reason: "stop".into(),
+        }];
+
+        assert!(!response_awaits_user(&transcript));
     }
 }
