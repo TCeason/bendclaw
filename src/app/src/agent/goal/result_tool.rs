@@ -1,6 +1,6 @@
-//! GoalResultTool — structured output tool for the goal evaluator agent.
+//! GoalResultTool — structured output tool for the goal verifier agent.
 //!
-//! The evaluator sub-agent calls this tool to report whether the goal
+//! The verifier sub-agent calls this tool to report whether the goal
 //! condition is met.
 
 use std::sync::Arc;
@@ -11,18 +11,10 @@ use evot_engine::ToolError;
 use evot_engine::ToolResult;
 use tokio::sync::Mutex;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum GoalResultStatus {
-    Met,
-    #[default]
-    Continue,
-}
-
-/// Shared state for capturing the structured output from the evaluator agent.
 #[derive(Debug, Clone, Default)]
 pub struct GoalResultCapture {
-    pub status: GoalResultStatus,
-    pub reason: Option<String>,
+    pub ok: Option<bool>,
+    pub reason: String,
 }
 
 pub struct GoalResultTool {
@@ -46,7 +38,7 @@ impl evot_engine::AgentTool for GoalResultTool {
     }
 
     fn description(&self) -> &str {
-        "Report whether the goal condition has been met. Call this tool exactly once when done evaluating."
+        "Report whether the goal condition has been met. Call this tool exactly once when done verifying."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -82,12 +74,8 @@ impl evot_engine::AgentTool for GoalResultTool {
 
         {
             let mut cap = self.capture.lock().await;
-            cap.status = if ok {
-                GoalResultStatus::Met
-            } else {
-                GoalResultStatus::Continue
-            };
-            cap.reason = Some(reason.clone());
+            cap.ok = Some(ok);
+            cap.reason = reason.clone();
         }
 
         let msg = if ok {

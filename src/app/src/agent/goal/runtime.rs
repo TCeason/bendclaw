@@ -1,18 +1,17 @@
 //! Goal runtime orchestration.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use evot_engine::Content;
 
-use super::policy;
-use super::policy::Decision;
-use super::EvalVerdict;
+use super::prompt;
 use super::GoalCoordinator;
-use crate::agent::run::runtime::EvalFn;
+use super::GoalVerdict;
+use crate::agent::run::runtime::VerifyFn;
 use crate::agent::session::Session;
 use crate::error::Result;
 use crate::types::GoalStatus;
+use crate::types::TranscriptItem;
 use crate::types::UsageSummary;
 
 pub enum AfterTurn {
@@ -21,15 +20,14 @@ pub enum AfterTurn {
 }
 
 pub struct GoalTurnReport<'a> {
-    pub last_text: &'a str,
-    pub tool_summary: &'a str,
+    pub transcript: &'a [TranscriptItem],
     pub usage: &'a UsageSummary,
-    pub elapsed: Duration,
+    pub elapsed_seconds: u64,
 }
 
 pub async fn after_turn(
     session: &Arc<Session>,
-    eval_fn: Option<&EvalFn>,
+    verify_fn: Option<&VerifyFn>,
     report: GoalTurnReport<'_>,
 ) -> Result<AfterTurn> {
     if !matches!(
@@ -42,75 +40,41 @@ pub async fn after_turn(
     GoalCoordinator::account_turn(
         session,
         report.usage.input.saturating_add(report.usage.output),
-        report.elapsed.as_secs(),
+        report.elapsed_seconds,
     )
     .await?;
 
     let goal = match session.read_goal().await {
-        Some(g) => g,
-        None => return Ok(AfterTurn::Stop),
+        Some(g) if g.status == GoalStatus::Active => g,
+        _ => return Ok(AfterTurn::Stop),
     };
 
-    let verdict = evaluate(&goal.condition, eval_fn, &report).await;
-    if let Some(ref v) = verdict {
-        GoalCoordinator::record_eval_reason(session, v.reason()).await?;
+    if goal.is_budget_exhausted() {
+        GoalCoordinator::mark_exhausted(session).await?;
+        tracing::info!("goal budget exhausted");
+        return Ok(AfterTurn::Stop);
     }
 
-    match policy::decide(&goal, verdict.as_ref()) {
-        Decision::Met { .. } => {
-            let reasoning = verdict
-                .as_ref()
-                .and_then(EvalVerdict::reason)
-                .unwrap_or_default();
-            GoalCoordinator::mark_met(session, reasoning).await?;
-            tracing::info!(reasoning = %reasoning, "goal met");
-            Ok(AfterTurn::Stop)
-        }
-        Decision::Impossible { .. } => {
-            let reasoning = verdict
-                .as_ref()
-                .and_then(EvalVerdict::reason)
-                .unwrap_or_default();
-            GoalCoordinator::mark_impossible(session, reasoning).await?;
-            tracing::info!(reasoning = %reasoning, "goal impossible");
-            Ok(AfterTurn::Stop)
-        }
-        Decision::Exhausted { .. } => {
-            GoalCoordinator::mark_exhausted(session).await?;
-            tracing::info!("goal budget exhausted");
-            Ok(AfterTurn::Stop)
-        }
-        Decision::Continue { prompt } => {
-            Ok(AfterTurn::Continue(vec![Content::Text { text: prompt }]))
-        }
-        Decision::Stop => Ok(AfterTurn::Stop),
-    }
-}
+    let Some(verify_fn) = verify_fn else {
+        return Ok(AfterTurn::Stop);
+    };
 
-async fn evaluate(
-    condition: &str,
-    eval_fn: Option<&EvalFn>,
-    report: &GoalTurnReport<'_>,
-) -> Option<EvalVerdict> {
-    let ef = eval_fn?;
-    let summary = transcript_summary(report);
-    let ef = ef.clone();
-    match super::evaluate_goal(condition, &summary, |prompt| ef(prompt)).await {
-        Ok(v) => Some(v),
-        Err(e) => {
-            tracing::warn!(error = %e, "goal eval failed, continuing");
-            None
-        }
-    }
-}
+    let verdict = super::verify_goal(&goal.condition, report.transcript, |prompt| {
+        let verify_fn = verify_fn.clone();
+        async move { verify_fn(prompt).await }
+    })
+    .await?;
 
-fn transcript_summary(report: &GoalTurnReport<'_>) -> String {
-    if report.tool_summary.is_empty() {
-        report.last_text.to_string()
-    } else {
-        format!(
-            "Tools used: {}\n\nAssistant output:\n{}",
-            report.tool_summary, report.last_text
-        )
+    GoalCoordinator::record_verification_reason(session, Some(verdict.reason())).await?;
+
+    match verdict {
+        GoalVerdict::Met { reason } => {
+            GoalCoordinator::mark_met(session, &reason).await?;
+            tracing::info!(reason = %reason, "goal met");
+            Ok(AfterTurn::Stop)
+        }
+        GoalVerdict::NotMet { .. } => Ok(AfterTurn::Continue(vec![Content::Text {
+            text: prompt::continuation_prompt(&goal),
+        }])),
     }
 }

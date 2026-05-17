@@ -1,36 +1,50 @@
-//! Goal display — formatting for `/goal show` and system prompt injection.
+//! Goal display — formatting for `/goal show`.
 
 use crate::types::GoalStatus;
 use crate::types::SessionGoal;
 
 /// Format the goal for `/goal show` output.
-/// Matches Claude Code's format: "Goal active: {condition} ({turns})\nLast check: {reason}"
 pub fn format_show(goal: &SessionGoal) -> String {
+    let last_reason = goal
+        .progress
+        .last_reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| !r.is_empty());
+
     match goal.status {
         GoalStatus::Active => {
-            let turns = if goal.progress.iterations == 0 {
-                "not yet evaluated".to_string()
-            } else {
-                let n = goal.progress.iterations;
-                if n == 1 {
-                    "1 turn".to_string()
-                } else {
-                    format!("{n} turns")
-                }
-            };
-            let last_check = goal
-                .progress
-                .last_reason
-                .as_deref()
-                .filter(|r| !r.is_empty())
-                .map(|r| format!("\nLast check: {}", r.trim()))
-                .unwrap_or_default();
-            format!("Goal active: {} ({turns}){last_check}", goal.condition)
+            let turns = turns_label(goal.progress.iterations);
+            let last_check = last_reason
+                .map(|r| format!("\nLast verification: not complete — {r}"))
+                .unwrap_or_else(|| "\nLast verification: pending".to_string());
+            format!(
+                "Goal active (not complete yet): {} ({turns}){last_check}",
+                goal.condition
+            )
         }
-        GoalStatus::Paused => format!("Goal paused: {}", goal.condition),
-        GoalStatus::Met => "Goal achieved".to_string(),
-        GoalStatus::Impossible => "Goal could not be achieved".to_string(),
-        GoalStatus::Exhausted => "Goal could not be achieved".to_string(),
+        GoalStatus::Paused => format!("Goal paused (not complete yet): {}", goal.condition),
+        GoalStatus::Met => {
+            let reason = last_reason
+                .map(|r| format!("\nCompletion reason: {r}"))
+                .unwrap_or_default();
+            format!("Goal complete: {}{reason}", goal.condition)
+        }
+        GoalStatus::Impossible => {
+            let reason = last_reason
+                .map(|r| format!("\nLast verification: {r}"))
+                .unwrap_or_default();
+            format!("Goal could not be achieved: {}{reason}", goal.condition)
+        }
+        GoalStatus::Exhausted => format!("Goal exhausted before completion: {}", goal.condition),
+    }
+}
+
+fn turns_label(iterations: u32) -> String {
+    match iterations {
+        0 => "not yet verified".to_string(),
+        1 => "1 turn".to_string(),
+        n => format!("{n} turns"),
     }
 }
 
@@ -47,16 +61,4 @@ pub fn format_summary(goal: &SessionGoal) -> String {
         parts.push(format!("{m}s"));
     }
     parts.join(" | ")
-}
-
-/// Build the system prompt block for an active goal.
-/// Claude Code does not inject a persistent system block — it uses meta messages.
-/// Returns `None` always.
-pub fn system_prompt_block(_goal: &SessionGoal) -> Option<String> {
-    None
-}
-
-/// Alias kept for backward compatibility with existing call sites.
-pub fn format_system_prompt_block(goal: &SessionGoal) -> Option<String> {
-    system_prompt_block(goal)
 }

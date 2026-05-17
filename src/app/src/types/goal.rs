@@ -1,7 +1,7 @@
 //! SessionGoal — autonomous task execution bound to a session.
 //!
-//! A goal is evaluated after each engine turn. The evaluator (model call)
-//! determines whether the condition is met, impossible, or still in progress.
+//! A goal is verified after each engine turn. The verifier determines whether
+//! the condition is met or should continue.
 
 use chrono::Utc;
 use serde::Deserialize;
@@ -18,9 +18,9 @@ pub enum GoalStatus {
     Active,
     /// User-paused; auto-continuation suppressed until resumed.
     Paused,
-    /// Evaluator determined the condition is satisfied.
+    /// Verifier determined the condition is satisfied.
     Met,
-    /// Evaluator determined the condition cannot be achieved.
+    /// Historical terminal status from older goal verifiers.
     Impossible,
     /// Budget exhausted (token, iteration, or time limit reached).
     Exhausted,
@@ -78,7 +78,7 @@ pub struct GoalProgress {
     pub tokens_used: u64,
     pub iterations: u32,
     pub seconds_used: u64,
-    /// Last reason reported by goal evaluation.
+    /// Last reason reported by goal verification.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_reason: Option<String>,
 }
@@ -89,7 +89,7 @@ pub struct GoalProgress {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionGoal {
-    /// The goal condition to evaluate.
+    /// The goal condition to verify.
     pub condition: String,
     pub status: GoalStatus,
     pub budget: GoalBudget,

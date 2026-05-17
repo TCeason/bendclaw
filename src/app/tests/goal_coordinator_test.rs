@@ -57,9 +57,24 @@ async fn pause_and_resume_cycle() -> TestResult {
     assert_eq!(goal.status, GoalStatus::Paused);
 
     let resumed = GoalCoordinator::resume(&session).await?;
-    assert!(resumed);
+    let goal = resumed.expect("resumed goal");
+    assert_eq!(goal.status, GoalStatus::Active);
     let goal = session.read_goal().await.expect("goal present");
     assert_eq!(goal.status, GoalStatus::Active);
+    Ok(())
+}
+
+#[tokio::test]
+async fn resume_active_goal_returns_goal_for_continuation() -> TestResult {
+    let dir = TempDir::new()?;
+    let session = fresh_session(&dir).await;
+    let condition = validate_condition("do work")?;
+    GoalCoordinator::set(&session, condition, GoalBudget::default()).await?;
+
+    let resumed = GoalCoordinator::resume(&session).await?;
+    let goal = resumed.expect("active goal");
+    assert_eq!(goal.status, GoalStatus::Active);
+    assert_eq!(goal.condition, "do work");
     Ok(())
 }
 

@@ -2,7 +2,6 @@
 
 use evot::agent::goal::display::format_show;
 use evot::agent::goal::display::format_summary;
-use evot::agent::goal::display::format_system_prompt_block;
 use evot::types::GoalBudget;
 use evot::types::GoalStatus;
 use evot::types::SessionGoal;
@@ -37,19 +36,29 @@ fn format_show_includes_condition_and_status() {
     let out = format_show(&goal);
     assert!(out.contains("refactor storage"));
     assert!(out.contains("active"));
+    assert!(out.contains("not complete yet"));
+    assert!(out.contains("pending"));
 }
 
 #[test]
-fn system_prompt_block_none_for_terminal() {
-    let mut goal = SessionGoal::new("ship".into(), GoalBudget::default());
+fn format_show_active_includes_last_verification() {
+    let mut goal = SessionGoal::new("refactor storage".into(), GoalBudget::default());
+    goal.progress.iterations = 1;
+    goal.progress.last_reason = Some("tests still fail".into());
+
+    let out = format_show(&goal);
+    assert!(out.contains("not complete"));
+    assert!(out.contains("Last verification: not complete"));
+    assert!(out.contains("tests still fail"));
+}
+
+#[test]
+fn format_show_met_is_explicitly_complete() {
+    let mut goal = SessionGoal::new("refactor storage".into(), GoalBudget::default());
     goal.status = GoalStatus::Met;
-    assert!(format_system_prompt_block(&goal).is_none());
-    goal.status = GoalStatus::Paused;
-    assert!(format_system_prompt_block(&goal).is_none());
-}
+    goal.progress.last_reason = Some("all checks passed".into());
 
-#[test]
-fn system_prompt_block_none_for_active() {
-    let goal = SessionGoal::new("ship the refactor".into(), GoalBudget::default());
-    assert!(format_system_prompt_block(&goal).is_none());
+    let out = format_show(&goal);
+    assert!(out.contains("Goal complete"));
+    assert!(out.contains("all checks passed"));
 }

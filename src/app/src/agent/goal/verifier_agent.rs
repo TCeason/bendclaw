@@ -1,16 +1,17 @@
-//! Goal evaluator agent wiring.
+//! Goal verifier agent wiring.
 
 use std::sync::Arc;
 
 use crate::agent::goal::result_tool::GoalResultCapture;
-use crate::agent::goal::result_tool::GoalResultStatus;
 use crate::agent::goal::result_tool::GoalResultTool;
+use crate::agent::goal::GoalVerdict;
 use crate::agent::run::runtime::build_agent;
 use crate::agent::run::runtime::EngineOptions;
-use crate::agent::run::runtime::EvalFn;
+use crate::agent::run::runtime::VerifyFn;
 use crate::conf::LlmConfig;
+use crate::error::EvotError;
 
-pub fn build_eval_fn(llm: &LlmConfig, cwd: &str) -> EvalFn {
+pub fn build_verify_fn(llm: &LlmConfig, cwd: &str) -> VerifyFn {
     let llm = llm.clone();
     let cwd = cwd.to_string();
     Arc::new(move |prompt: String| {
@@ -20,13 +21,11 @@ pub fn build_eval_fn(llm: &LlmConfig, cwd: &str) -> EvalFn {
             let capture = Arc::new(tokio::sync::Mutex::new(GoalResultCapture::default()));
 
             let system_prompt = format!(
-                "You are evaluating whether a goal condition has been met.\n\n\
-                 <evaluation_request>\n{prompt}\n</evaluation_request>\n\n\
-                 Use the available tools to inspect the codebase and verify the request.\n\
-                 Use as few steps as possible - be efficient and direct.\n\
-                 When done, return your result using the goal_result tool with:\n\
-                 - ok: true if the condition is met\n\
-                 - ok: false with reason if the condition is not met"
+                "You are a goal stop verifier.\n\n\
+                 <verification_request>\n{prompt}\n</verification_request>\n\n\
+                 Be strict and concise. Verify completion, do not continue the task yourself.\n\
+                 Use read-only tools only when the transcript is insufficient.\n\
+                 Finish by calling goal_result exactly once."
             );
 
             let tools: Vec<Box<dyn evot_engine::AgentTool>> = vec![
@@ -38,17 +37,17 @@ pub fn build_eval_fn(llm: &LlmConfig, cwd: &str) -> EvalFn {
 
             let options = EngineOptions {
                 provider: llm.provider.clone(),
-                protocol: llm.protocol.clone(),
+                protocol: llm.protocol,
                 model: llm.model.clone(),
                 api_key: llm.api_key.clone(),
                 base_url: Some(llm.base_url.clone()),
                 system_prompt,
                 limits: crate::agent::ExecutionLimits {
-                    max_turns: 50,
-                    max_total_tokens: 10_000_000,
-                    max_duration_secs: 300,
+                    max_turns: 6,
+                    max_total_tokens: 20_000,
+                    max_duration_secs: 120,
                 },
-                skills_dirs: vec![],
+                skills_dirs: Vec::new(),
                 tools,
                 thinking_level: evot_engine::ThinkingLevel::Off,
                 compat_caps: llm.compat_caps,
@@ -59,15 +58,18 @@ pub fn build_eval_fn(llm: &LlmConfig, cwd: &str) -> EvalFn {
             };
 
             let mut engine = build_agent(options, vec![]);
-            let user_msg = evot_engine::AgentMessage::Llm(evot_engine::Message::user(
-                "Evaluate the goal condition now.",
-            ));
+            let user_msg = evot_engine::AgentMessage::Llm(evot_engine::Message::User {
+                content: vec![evot_engine::Content::Text {
+                    text: "Verify whether the goal should stop now.".to_string(),
+                }],
+                timestamp: evot_engine::now_ms(),
+            });
             let (handle, mut rx) = engine.submit(vec![user_msg]).await;
 
             while let Some(event) = rx.recv().await {
                 if matches!(event, evot_engine::AgentEvent::ToolExecutionEnd { .. }) {
                     let cap = capture.lock().await;
-                    if cap.reason.is_some() {
+                    if cap.ok.is_some() {
                         handle.abort();
                         break;
                     }
@@ -75,20 +77,19 @@ pub fn build_eval_fn(llm: &LlmConfig, cwd: &str) -> EvalFn {
             }
 
             let cap = capture.lock().await;
-            let text = match cap.status {
-                GoalResultStatus::Met => serde_json::json!({
-                    "status": "met",
-                    "reason": cap.reason.as_deref().unwrap_or("condition met"),
-                })
-                .to_string(),
-                GoalResultStatus::Continue => serde_json::json!({
-                    "status": "continue",
-                    "reason": cap.reason.as_deref().unwrap_or("evaluator did not return a result"),
-                })
-                .to_string(),
+            let reason = if cap.reason.trim().is_empty() {
+                "verifier did not provide a reason".to_string()
+            } else {
+                cap.reason.clone()
             };
 
-            Ok(text)
+            match cap.ok {
+                Some(true) => Ok(GoalVerdict::Met { reason }),
+                Some(false) => Ok(GoalVerdict::NotMet { reason }),
+                None => Err(EvotError::Agent(
+                    "goal verifier did not return a structured result".into(),
+                )),
+            }
         })
     })
 }

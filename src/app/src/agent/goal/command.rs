@@ -14,7 +14,7 @@ use crate::types::SessionGoal;
 pub type StartRun<'a> = Box<dyn Fn(QueryRequest) -> RunFuture<'a> + Send + Sync + 'a>;
 
 pub struct GoalCommandContext<'a> {
-    pub goal_evaluation_enabled: bool,
+    pub goal_verification_enabled: bool,
     pub start_run: StartRun<'a>,
 }
 
@@ -50,13 +50,10 @@ pub async fn handle(
             false => Ok(SubmitOutcome::Command("No goal to pause.".into())),
         },
         GoalCommand::Resume => match GoalCoordinator::resume(session).await? {
-            true => {
-                let goal = session.read_goal().await.ok_or_else(|| {
-                    crate::error::EvotError::Agent("goal not found after resume".into())
-                })?;
+            Some(goal) => {
                 kickoff_goal_run(session, request, &goal, "Goal resumed.".into(), false, ctx).await
             }
-            false => Ok(SubmitOutcome::Command("No goal to resume.".into())),
+            None => Ok(SubmitOutcome::Command("No goal to resume.".into())),
         },
         GoalCommand::Clear => {
             let prior = GoalCoordinator::clear(session).await?;
@@ -87,9 +84,9 @@ async fn set(
     ctx: GoalCommandContext<'_>,
 ) -> Result<SubmitOutcome> {
     let condition = crate::agent::goal::validate::validate_condition(&condition)?;
-    if !ctx.goal_evaluation_enabled {
+    if !ctx.goal_verification_enabled {
         return Ok(SubmitOutcome::Command(
-            "/goal can't run while goal evaluation is disabled by policy.".into(),
+            "/goal can't run while goal verification is disabled by policy.".into(),
         ));
     }
 

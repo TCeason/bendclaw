@@ -55,6 +55,7 @@ export function complete(line: string, cursorCol: number): CompletionResult | nu
  * - Bare `/` → compact list of all visible commands
  * - `/he` → `lp — Show help` (single match: completion + description)
  * - `/skill ` → `[install  list  remove]` (sub-command hints)
+ * - `/goal ` → `[show  pause  resume  clear  <objective>  --budget=<tokens>  --max-iter=<n>  --timeout=<secs>]`
  */
 export function getGhostHint(line: string, cursorCol: number): string {
   const beforeCursor = line.slice(0, cursorCol)
@@ -125,6 +126,16 @@ function getSubCommandHint(cmd: string, partial: string): string {
 
 const SUB_COMMANDS: Record<string, string[]> = {
   '/help': COMMANDS.map(c => c.name.slice(1)),
+  '/goal': [
+    'show',
+    'pause',
+    'resume',
+    'clear',
+    '<objective>',
+    '--budget=<tokens>',
+    '--max-iter=<n>',
+    '--timeout=<secs>',
+  ],
   '/skill': ['install', 'list', 'remove'],
   '/env': ['set', 'del', 'load'],
   '/log': ['up', 'dl', 'query'],

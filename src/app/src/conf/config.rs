@@ -386,7 +386,7 @@ pub struct ChannelsConfig {
 pub struct SandboxConfig {
     pub enabled: bool,
     pub allowed_dirs: Vec<PathBuf>,
-    /// When false, goal evaluation is disabled by policy.
+    /// When false, goal verification is disabled by policy.
     pub hooks_enabled: bool,
 }
 

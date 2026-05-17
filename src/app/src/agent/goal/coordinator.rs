@@ -15,7 +15,7 @@ impl GoalCoordinator {
         Ok(())
     }
 
-    /// Pause the active goal. Runtime policy stops continuing while paused.
+    /// Pause the active goal. Runtime verifier stops continuing while paused.
     pub async fn pause(session: &Session) -> Result<bool> {
         let goal = session.read_goal().await;
         match goal {
@@ -29,17 +29,18 @@ impl GoalCoordinator {
         }
     }
 
-    /// Resume a paused goal.
-    pub async fn resume(session: &Session) -> Result<bool> {
+    /// Resume a paused goal, or continue an already active incomplete goal.
+    pub async fn resume(session: &Session) -> Result<Option<SessionGoal>> {
         let goal = session.read_goal().await;
         match goal {
             Some(mut g) if g.status == GoalStatus::Paused => {
                 g.status = GoalStatus::Active;
                 g.touch();
-                session.write_goal(Some(g)).await?;
-                Ok(true)
+                session.write_goal(Some(g.clone())).await?;
+                Ok(Some(g))
             }
-            _ => Ok(false),
+            Some(g) if g.status == GoalStatus::Active => Ok(Some(g)),
+            _ => Ok(None),
         }
     }
 
@@ -50,8 +51,8 @@ impl GoalCoordinator {
         Ok(prior)
     }
 
-    /// Store the last evaluation reason for display.
-    pub async fn record_eval_reason(session: &Session, reason: Option<&str>) -> Result<()> {
+    /// Store the last verification reason for display.
+    pub async fn record_verification_reason(session: &Session, reason: Option<&str>) -> Result<()> {
         let Some(reason) = reason else {
             return Ok(());
         };
@@ -63,27 +64,16 @@ impl GoalCoordinator {
         Ok(())
     }
 
-    /// Mark the goal as met. Called by the runtime when the evaluator determines
+    /// Mark the goal as met. Called by the runtime when the verifier determines
     /// the condition is satisfied.
-    pub async fn mark_met(session: &Session, reasoning: &str) -> Result<()> {
+    pub async fn mark_met(session: &Session, reason: &str) -> Result<()> {
         if let Some(mut g) = session.read_goal().await {
             g.status = GoalStatus::Met;
+            g.progress.last_reason = Some(reason.to_string());
             g.touch();
             session.write_goal(Some(g)).await?;
         }
-        tracing::info!(reasoning = %reasoning, "goal marked as met");
-        Ok(())
-    }
-
-    /// Mark the goal as impossible. Called by the runtime when the evaluator
-    /// determines the condition cannot be achieved.
-    pub async fn mark_impossible(session: &Session, reasoning: &str) -> Result<()> {
-        if let Some(mut g) = session.read_goal().await {
-            g.status = GoalStatus::Impossible;
-            g.touch();
-            session.write_goal(Some(g)).await?;
-        }
-        tracing::info!(reasoning = %reasoning, "goal marked as impossible");
+        tracing::info!(reason = %reason, "goal marked as met");
         Ok(())
     }
 

@@ -5,7 +5,7 @@
 //!
 //! A single `Run` may comprise multiple internal engine turns when the
 //! session has an active goal: `execute_run` drives an outer loop that
-//! consults `goal::policy` between turns and rebuilds the engine via the
+//! verifies the stop condition between turns and rebuilds the engine via the
 //! `TurnFactory`. Consumers see one `RunStarted` and one aggregated
 //! `RunFinished`.
 
@@ -36,9 +36,12 @@ use crate::error::Result;
 pub type RunFuture<'a> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<Run>> + Send + 'a>>;
 
-/// Closure type for goal evaluation: sends a prompt to the model, returns raw text.
-pub(in crate::agent) type EvalFn =
-    Arc<dyn Fn(String) -> futures::future::BoxFuture<'static, Result<String>> + Send + Sync>;
+/// Closure type for goal verification: sends a prompt to the verifier model and returns a verdict.
+pub(in crate::agent) type VerifyFn = Arc<
+    dyn Fn(String) -> futures::future::BoxFuture<'static, Result<crate::agent::goal::GoalVerdict>>
+        + Send
+        + Sync,
+>;
 use crate::types::CompactRecord;
 use crate::types::ContextCompactionCompletedStats;
 use crate::types::ContextCompactionStartedStats;
@@ -112,9 +115,8 @@ pub(in crate::agent) struct ExecuteRunArgs {
     pub factory: Arc<dyn TurnFactory>,
     pub on_complete: Option<Arc<dyn Fn() + Send + Sync>>,
     pub telemetry: Option<crate::telemetry::config::TelemetryConfig>,
-    /// Closure that sends an eval prompt to the model and returns the raw text.
-    /// Used by the goal evaluator.
-    pub eval_fn: Option<EvalFn>,
+    /// Closure that verifies whether an active goal should stop.
+    pub verify_fn: Option<VerifyFn>,
 }
 
 pub(in crate::agent) fn execute_run(args: ExecuteRunArgs) -> Run {
@@ -151,7 +153,7 @@ enum RuntimeEvent {
 }
 
 // ---------------------------------------------------------------------------
-// run_loop — outer loop: drive engine turns and consult goal policy between
+// run_loop — outer loop: drive engine turns and consult goal verifier between
 // ---------------------------------------------------------------------------
 
 async fn run_loop(args: ExecuteRunArgs, tx: mpsc::UnboundedSender<RunEvent>, control: RunControl) {
@@ -163,7 +165,7 @@ async fn run_loop(args: ExecuteRunArgs, tx: mpsc::UnboundedSender<RunEvent>, con
         factory,
         on_complete,
         telemetry,
-        eval_fn,
+        verify_fn,
     } = args;
 
     let started_at = Instant::now();
@@ -212,7 +214,7 @@ async fn run_loop(args: ExecuteRunArgs, tx: mpsc::UnboundedSender<RunEvent>, con
             last_text: turn_last_text,
             compact_records: turn_compacts,
             engine_completed,
-            tool_summary,
+            transcript,
         } = outcome;
 
         total_turns = total_turns.saturating_add(turn_count);
@@ -230,12 +232,15 @@ async fn run_loop(args: ExecuteRunArgs, tx: mpsc::UnboundedSender<RunEvent>, con
             break;
         }
 
-        match crate::agent::goal::runtime::after_turn(&session, eval_fn.as_ref(), GoalTurnReport {
-            last_text: &last_text,
-            tool_summary: &tool_summary,
-            usage: &usage,
-            elapsed: started_at.elapsed(),
-        })
+        match crate::agent::goal::runtime::after_turn(
+            &session,
+            verify_fn.as_ref(),
+            GoalTurnReport {
+                transcript: &transcript,
+                usage: &usage,
+                elapsed_seconds: started_at.elapsed().as_secs(),
+            },
+        )
         .await
         {
             Ok(AfterTurn::Continue(input)) => next_input = Some(input),
@@ -305,8 +310,8 @@ struct TurnOutcome {
     compact_records: Vec<CompactRecord>,
     /// True if the engine reached `AgentEnd`; false on abort or channel close.
     engine_completed: bool,
-    /// Summarized tool calls from this turn (non-empty means tools were used).
-    tool_summary: String,
+    /// Transcript items produced during this engine turn.
+    transcript: Vec<TranscriptItem>,
 }
 
 async fn drive_one_turn(
@@ -346,7 +351,6 @@ async fn drive_one_turn(
     let mut turn_transcripts: Vec<TranscriptItem> = vec![TranscriptItem::user_from_content(&input)];
     let mut saved_count: usize = 0;
     let mut turn_count: u32 = 0;
-    let mut tool_calls: Vec<String> = Vec::new();
     let mut outcome = TurnOutcome {
         turn_count: 0,
         usage: UsageSummary::default(),
@@ -354,7 +358,7 @@ async fn drive_one_turn(
         last_text: String::new(),
         compact_records: Vec::new(),
         engine_completed: false,
-        tool_summary: String::new(),
+        transcript: Vec::new(),
     };
 
     let flush = |session: &Arc<Session>, items: &[TranscriptItem], saved: &mut usize| {
@@ -377,10 +381,6 @@ async fn drive_one_turn(
                 session.increment_turn().await;
             }
             RuntimeEvent::Transcript(item) => {
-                // Track tool usage for goal completion detection.
-                if let TranscriptItem::ToolResult { tool_name, .. } = &item {
-                    tool_calls.push(tool_name.clone());
-                }
                 turn_transcripts.push(item);
             }
             RuntimeEvent::Compacted { level, transcripts } => {
@@ -417,7 +417,6 @@ async fn drive_one_turn(
                 outcome.transcript_count = transcript_count;
                 outcome.last_text = last_text;
                 outcome.engine_completed = true;
-                outcome.tool_summary = tool_calls.join("\n");
                 break;
             }
             RuntimeEvent::Public(payload) => {
@@ -445,6 +444,7 @@ async fn drive_one_turn(
     if outcome.turn_count == 0 {
         outcome.turn_count = turn_count;
     }
+    outcome.transcript = turn_transcripts;
     outcome
 }
 

@@ -427,7 +427,7 @@ impl Agent {
                 let run_session = session.clone();
                 let agent = Arc::clone(self);
                 let ctx = crate::agent::goal::command::GoalCommandContext {
-                    goal_evaluation_enabled: self.sandbox.goal_evaluation_enabled(),
+                    goal_verification_enabled: self.sandbox.goal_verification_enabled(),
                     start_run: Box::new(move |request| {
                         let session = run_session.clone();
                         let agent = Arc::clone(&agent);
@@ -499,8 +499,8 @@ impl Agent {
             session_id: session_id.clone(),
         });
 
-        let eval_fn =
-            crate::agent::goal::evaluator_agent::build_eval_fn(&self.llm.read(), &self.cwd);
+        let verify_fn =
+            crate::agent::goal::verifier_agent::build_verify_fn(&self.llm.read(), &self.cwd);
 
         let run = runtime::execute_run(runtime::ExecuteRunArgs {
             run_id: run_id.clone(),
@@ -510,7 +510,7 @@ impl Agent {
             factory,
             on_complete: Some(on_complete),
             telemetry: Some(self.telemetry.clone()),
-            eval_fn: Some(eval_fn),
+            verify_fn: Some(verify_fn),
         });
 
         // Register active run — skip if on_complete already fired
@@ -556,7 +556,7 @@ impl Agent {
             sandbox: super::sandbox::SandboxPolicy {
                 enabled: sandbox.enabled,
                 extra_dirs: sandbox.extra_dirs.clone(),
-                goal_evaluation_enabled: sandbox.goal_evaluation_enabled,
+                goal_verification_enabled: sandbox.goal_verification_enabled,
             },
             active_runs: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             telemetry: TelemetryConfig::default(),
@@ -623,20 +623,13 @@ impl Agent {
     fn build_system_prompt(
         &self,
         mode: &ToolMode,
-        goal: Option<&crate::types::SessionGoal>,
+        _goal: Option<&crate::types::SessionGoal>,
     ) -> String {
         let base = self.system_prompt.read().clone();
         let mut prompt = match mode {
             ToolMode::Planning { .. } => format!("{base}\n\n{PLANNING_MODE_PROMPT}"),
             _ => base,
         };
-
-        if let Some(g) = goal {
-            if let Some(block) = crate::agent::goal::display::format_system_prompt_block(g) {
-                prompt.push_str("\n\n");
-                prompt.push_str(&block);
-            }
-        }
 
         if let Some(vars) = self.variables.read().as_ref() {
             let names = vars.variable_names();
