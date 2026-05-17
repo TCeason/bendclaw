@@ -55,6 +55,7 @@ pub async fn handle(
             }
             None => Ok(SubmitOutcome::Command("No goal to resume.".into())),
         },
+        GoalCommand::Done { reason } => done(session, reason).await,
         GoalCommand::Clear => {
             let prior = GoalCoordinator::clear(session).await?;
             match prior {
@@ -104,6 +105,20 @@ async fn set(
         ctx,
     )
     .await
+}
+
+async fn done(session: &Session, reason: Option<String>) -> Result<SubmitOutcome> {
+    let message = reason.unwrap_or_else(|| "Marked done by user.".into());
+    match session.read_goal().await {
+        Some(goal) if goal.status == GoalStatus::Met => Ok(SubmitOutcome::Command(
+            "Goal is already marked done.".into(),
+        )),
+        Some(_) => {
+            GoalCoordinator::mark_met(session, &message).await?;
+            Ok(SubmitOutcome::Command(format!("Goal done: {message}")))
+        }
+        None => Ok(SubmitOutcome::Command("No goal set".into())),
+    }
 }
 
 async fn kickoff_goal_run(

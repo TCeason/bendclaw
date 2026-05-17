@@ -131,7 +131,7 @@ fn parse_goal_implicit_set_preserves_case() {
 }
 
 #[test]
-fn parse_goal_pause_resume_clear() {
+fn parse_goal_pause_resume_done_clear() {
     assert!(matches!(
         parse_command("/goal pause"),
         Some(Command::Goal(GoalCommand::Pause))
@@ -139,6 +139,14 @@ fn parse_goal_pause_resume_clear() {
     assert!(matches!(
         parse_command("/goal resume"),
         Some(Command::Goal(GoalCommand::Resume))
+    ));
+    assert!(matches!(
+        parse_command("/goal done"),
+        Some(Command::Goal(GoalCommand::Done { reason: None }))
+    ));
+    assert!(matches!(
+        parse_command("/goal done tests passed"),
+        Some(Command::Goal(GoalCommand::Done { reason: Some(reason) })) if reason == "tests passed"
     ));
     assert!(matches!(
         parse_command("/goal clear"),
@@ -177,6 +185,7 @@ fn debug(cmd: &Option<Command>) -> &'static str {
         Some(Command::Goal(GoalCommand::Set { .. })) => "Goal::Set",
         Some(Command::Goal(GoalCommand::Pause)) => "Goal::Pause",
         Some(Command::Goal(GoalCommand::Resume)) => "Goal::Resume",
+        Some(Command::Goal(GoalCommand::Done { .. })) => "Goal::Done",
         Some(Command::Goal(GoalCommand::Clear)) => "Goal::Clear",
         Some(Command::UsageError(_)) => "UsageError",
     }

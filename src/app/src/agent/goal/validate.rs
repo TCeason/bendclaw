@@ -21,7 +21,7 @@ const FORBIDDEN_SUBSTRINGS: &[&str] = &[
 ///
 /// - Trims surrounding whitespace.
 /// - Rejects empty input.
-/// - Rejects > [`MAX_CONDITION_BYTES`] bytes.
+/// - Rejects > [`MAX_CONDITION_LEN`] characters.
 /// - Rejects ASCII control chars (0x00..=0x1F) except `\t` and `\n`.
 /// - Collapses runs of `\n\n+` to a single `\n`.
 /// - Rejects forbidden tag substrings.

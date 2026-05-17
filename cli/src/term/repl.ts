@@ -1443,7 +1443,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       handleEnvCommand(args)
     } else if (name === '/goal') {
       try {
-        const outcome = await agent.submit(`/goal${args ? ' ' + args : ''}`, sessionId ?? undefined)
+        const outcome = await agent.submit(
+          `/goal${args ? ' ' + args : ''}`,
+          sessionId ?? undefined,
+          planning ? 'planning_interactive' : 'interactive',
+        )
         if (outcome.kind === 'command' || outcome.kind === 'commandThenRun') {
           const lines = (outcome.message ?? '').split('\n').map((line, i) => ({
             id: `sys-goal-${i}`,

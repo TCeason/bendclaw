@@ -27,6 +27,8 @@ pub enum GoalCommand {
     Pause,
     /// `/goal resume`.
     Resume,
+    /// `/goal done [reason]`.
+    Done { reason: Option<String> },
     /// `/goal clear`.
     Clear,
 }
@@ -69,7 +71,7 @@ pub fn parse_command(text: &str) -> Option<Command> {
 // ---------------------------------------------------------------------------
 
 const GOAL_USAGE: &str =
-    "Usage: /goal <condition> [--budget=<tokens>] [--max-iter=<n>] [--timeout=<secs>]\n       /goal [show|pause|resume|clear]";
+    "Usage: /goal <condition> [--budget=<tokens>] [--max-iter=<n>] [--timeout=<secs>]\n       /goal [show|pause|resume|done [reason]|clear]";
 
 fn parse_goal(trimmed: &str) -> Command {
     let rest = trimmed
@@ -92,6 +94,9 @@ fn parse_goal(trimmed: &str) -> Command {
         "show" if tail.is_empty() => Command::Goal(GoalCommand::Show),
         "pause" if tail.is_empty() => Command::Goal(GoalCommand::Pause),
         "resume" if tail.is_empty() => Command::Goal(GoalCommand::Resume),
+        "done" | "complete" | "met" => Command::Goal(GoalCommand::Done {
+            reason: non_empty_tail(tail),
+        }),
         "clear" | "stop" | "off" | "reset" | "none" | "cancel" if tail.is_empty() => {
             Command::Goal(GoalCommand::Clear)
         }
@@ -99,6 +104,11 @@ fn parse_goal(trimmed: &str) -> Command {
         _ if !head.starts_with("--") => parse_goal_set(rest),
         _ => Command::UsageError(GOAL_USAGE.into()),
     }
+}
+
+fn non_empty_tail(tail: &str) -> Option<String> {
+    let trimmed = tail.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 fn parse_goal_set(args: &str) -> Command {
