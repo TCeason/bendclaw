@@ -1,4 +1,5 @@
 mod agent;
+pub mod goal;
 pub mod prompt;
 pub mod run;
 pub mod run_manager;
@@ -15,7 +16,9 @@ pub use agent::ForkRequest;
 pub use agent::ForkedAgent;
 pub use agent::QueryRequest;
 pub use agent::SubmitOutcome;
+pub use goal::GoalCoordinator;
 pub use run::Run;
+pub use run::RunControl;
 pub use run::RunEvent;
 pub use run::RunEventContext;
 pub use run::RunEventPayload;

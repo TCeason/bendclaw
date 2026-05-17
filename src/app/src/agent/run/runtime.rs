@@ -2,12 +2,20 @@
 //!
 //! This module owns the boundary between `evot_engine::AgentEvent` and the
 //! app-layer `RunEvent`. No engine types leak beyond this module.
+//!
+//! A single `Run` may comprise multiple internal engine turns when the
+//! session has an active goal: `execute_run` drives an outer loop that
+//! consults `goal::policy` between turns and rebuilds the engine via the
+//! `TurnFactory`. Consumers see one `RunStarted` and one aggregated
+//! `RunFinished`.
 
 use std::sync::Arc;
 use std::time::Instant;
 
+use async_trait::async_trait;
 use tokio::sync::mpsc;
 
+use super::control::RunControl;
 use super::convert::assistant_blocks_from_content;
 use super::convert::extract_content_text;
 use super::convert::from_agent_messages;
@@ -19,9 +27,18 @@ use super::event::RunEvent;
 use super::event::RunEventContext;
 use super::event::RunEventPayload;
 use super::run::Run;
+use crate::agent::goal::runtime::AfterTurn;
+use crate::agent::goal::runtime::GoalTurnReport;
 use crate::agent::session::Session;
 use crate::conf::Protocol;
 use crate::error::Result;
+
+pub type RunFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<Run>> + Send + 'a>>;
+
+/// Closure type for goal evaluation: sends a prompt to the model, returns raw text.
+pub(in crate::agent) type EvalFn =
+    Arc<dyn Fn(String) -> futures::future::BoxFuture<'static, Result<String>> + Send + Sync>;
 use crate::types::CompactRecord;
 use crate::types::ContextCompactionCompletedStats;
 use crate::types::ContextCompactionStartedStats;
@@ -66,49 +83,51 @@ pub(in crate::agent) struct TurnInput {
     pub history: Vec<evot_engine::AgentMessage>,
     pub input: Vec<evot_engine::Content>,
     pub session: Arc<Session>,
-    pub run_id: String,
-    pub session_id: String,
 }
 
 // ---------------------------------------------------------------------------
-// execute_turn — build engine, submit, forward events, persist transcript
+// TurnFactory — caller-provided builder of per-turn engine state
 // ---------------------------------------------------------------------------
 
-pub(in crate::agent) async fn execute_turn(
-    turn: TurnInput,
-    on_complete: Option<Arc<dyn Fn() + Send + Sync>>,
-    telemetry_config: Option<&crate::telemetry::config::TelemetryConfig>,
-) -> Result<Run> {
-    let mut engine = build_agent(turn.options, turn.history);
-    let user_msg = evot_engine::AgentMessage::Llm(evot_engine::Message::User {
-        content: turn.input.clone(),
-        timestamp: evot_engine::now_ms(),
-    });
-    let (run_handle, engine_rx) = engine.submit(vec![user_msg]).await;
+/// Rebuilds the engine input for the next internal turn.
+///
+/// The runtime calls this once per turn. The factory captures whatever
+/// the agent layer needs (config, sandbox, tools, system prompt) and
+/// resolves the latest history + goal state at call time.
+#[async_trait]
+pub(in crate::agent) trait TurnFactory: Send + Sync + 'static {
+    /// Build the engine options + history + initial user input for this turn.
+    async fn build(&self, input: Vec<evot_engine::Content>) -> Result<TurnInput>;
+}
 
-    let (runtime_tx, runtime_rx) = mpsc::unbounded_channel();
+// ---------------------------------------------------------------------------
+// execute_run — public entry point: schedule a Run on a background task
+// ---------------------------------------------------------------------------
 
-    let rid = turn.run_id.clone();
-    let sid = turn.session_id.clone();
-    let otel_sub = telemetry_config
-        .and_then(|cfg| crate::telemetry::subscriber::TelemetrySubscriber::new(cfg, &sid));
-    tokio::spawn(async move {
-        forward_events(engine_rx, runtime_tx, &rid, &sid, otel_sub).await;
-    });
+pub(in crate::agent) struct ExecuteRunArgs {
+    pub run_id: String,
+    pub session_id: String,
+    pub session: Arc<Session>,
+    pub initial_input: Vec<evot_engine::Content>,
+    pub factory: Arc<dyn TurnFactory>,
+    pub on_complete: Option<Arc<dyn Fn() + Send + Sync>>,
+    pub telemetry: Option<crate::telemetry::config::TelemetryConfig>,
+    /// Closure that sends an eval prompt to the model and returns the raw text.
+    /// Used by the goal evaluator.
+    pub eval_fn: Option<EvalFn>,
+}
 
+pub(in crate::agent) fn execute_run(args: ExecuteRunArgs) -> Run {
     let (tx, rx) = mpsc::unbounded_channel();
-
-    tokio::spawn(run_loop(
-        runtime_rx,
-        tx,
-        turn.session,
-        turn.input,
-        turn.run_id.clone(),
-        turn.session_id.clone(),
-        on_complete,
-    ));
-
-    Ok(Run::new(turn.run_id, turn.session_id, rx, run_handle))
+    let control = RunControl::new();
+    let run = Run::new(
+        args.run_id.clone(),
+        args.session_id.clone(),
+        rx,
+        control.clone(),
+    );
+    tokio::spawn(run_loop(args, tx, control));
+    run
 }
 
 // ---------------------------------------------------------------------------
@@ -120,7 +139,7 @@ enum RuntimeEvent {
     Transcript(TranscriptItem),
     TurnStarted,
     TurnEnded,
-    RunCompleted {
+    EngineCompleted {
         last_text: String,
         usage: UsageSummary,
         transcript_count: usize,
@@ -132,34 +151,216 @@ enum RuntimeEvent {
 }
 
 // ---------------------------------------------------------------------------
-// run_loop — orchestrate a single run (transcript persistence + event relay)
+// run_loop — outer loop: drive engine turns and consult goal policy between
 // ---------------------------------------------------------------------------
 
-async fn run_loop(
-    mut rx: mpsc::UnboundedReceiver<RuntimeEvent>,
-    tx: mpsc::UnboundedSender<RunEvent>,
-    session: Arc<Session>,
-    input: Vec<evot_engine::Content>,
-    run_id: String,
-    session_id: String,
-    on_complete: Option<Arc<dyn Fn() + Send + Sync>>,
-) {
+async fn run_loop(args: ExecuteRunArgs, tx: mpsc::UnboundedSender<RunEvent>, control: RunControl) {
+    let ExecuteRunArgs {
+        run_id,
+        session_id,
+        session,
+        initial_input,
+        factory,
+        on_complete,
+        telemetry,
+        eval_fn,
+    } = args;
+
     let started_at = Instant::now();
-    let ctx = RunEventContext::new(&run_id, &session_id, 0);
+    let _ = tx.send(RunEventContext::new(&run_id, &session_id, 0).started());
 
-    // Send RunStarted
-    let _ = tx.send(ctx.started());
+    let mut total_usage = UsageSummary::default();
+    let mut total_turns: u32 = 0;
+    let mut total_transcripts: usize = 0;
+    let mut last_text = String::new();
+    let mut compact_records: Vec<CompactRecord> = Vec::new();
+    let mut next_input = Some(initial_input);
+    while let Some(input) = next_input.take() {
+        if control.is_cancelled() {
+            break;
+        }
 
-    let mut run_transcripts: Vec<TranscriptItem> = vec![TranscriptItem::user_from_content(&input)];
+        let outcome = match factory.build(input).await {
+            Ok(turn) => {
+                drive_one_turn(
+                    turn,
+                    &tx,
+                    &control,
+                    &run_id,
+                    &session_id,
+                    started_at,
+                    telemetry.as_ref(),
+                )
+                .await
+            }
+            Err(e) => {
+                tracing::error!(
+                    stage = "run",
+                    status = "build_turn_failed",
+                    run_id = %run_id,
+                    session_id = %session_id,
+                    error = %e,
+                );
+                break;
+            }
+        };
+
+        let TurnOutcome {
+            turn_count,
+            usage,
+            transcript_count,
+            last_text: turn_last_text,
+            compact_records: turn_compacts,
+            engine_completed,
+            tool_summary,
+        } = outcome;
+
+        total_turns = total_turns.saturating_add(turn_count);
+        total_usage.input = total_usage.input.saturating_add(usage.input);
+        total_usage.output = total_usage.output.saturating_add(usage.output);
+        total_usage.cache_read = total_usage.cache_read.saturating_add(usage.cache_read);
+        total_usage.cache_write = total_usage.cache_write.saturating_add(usage.cache_write);
+        total_transcripts = total_transcripts.saturating_add(transcript_count);
+        if !turn_last_text.is_empty() {
+            last_text = turn_last_text;
+        }
+        compact_records.extend(turn_compacts);
+
+        if !engine_completed || control.is_cancelled() {
+            break;
+        }
+
+        match crate::agent::goal::runtime::after_turn(&session, eval_fn.as_ref(), GoalTurnReport {
+            last_text: &last_text,
+            tool_summary: &tool_summary,
+            usage: &usage,
+            elapsed: started_at.elapsed(),
+        })
+        .await
+        {
+            Ok(AfterTurn::Continue(input)) => next_input = Some(input),
+            Ok(AfterTurn::Stop) => break,
+            Err(e) => {
+                tracing::warn!(error = %e, "goal step failed");
+                break;
+            }
+        }
+    }
+
+    // Emit the aggregated run-finished event and a single transcript stats
+    // record so consumers see one Run, not N internal turns.
+    let duration_ms = started_at.elapsed().as_millis() as u64;
+    let stats = TranscriptStats::RunFinished(RunFinishedStats {
+        usage: total_usage.clone(),
+        turn_count: total_turns,
+        duration_ms,
+        transcript_count: total_transcripts,
+    });
+    if let Err(e) = session.write_items(vec![stats.to_item()]).await {
+        tracing::warn!(
+            stage = "run",
+            status = "stats_persist_failed",
+            run_id = %run_id,
+            session_id = %session_id,
+            error = %e,
+        );
+    }
+    let _ = session.save().await;
+
+    let finished = RunEventContext::new(&run_id, &session_id, total_turns).finished(
+        last_text,
+        total_usage,
+        total_turns,
+        duration_ms,
+        total_transcripts,
+        compact_records,
+    );
+    let _ = tx.send(finished);
+    drop(tx);
+
+    tracing::info!(
+        stage = "run",
+        status = "finished",
+        run_id = %run_id,
+        session_id = %session_id,
+        elapsed_ms = duration_ms,
+        turn = total_turns,
+    );
+
+    if let Some(f) = on_complete {
+        f();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// drive_one_turn — single engine submit: forward events, persist transcripts
+// ---------------------------------------------------------------------------
+
+struct TurnOutcome {
+    turn_count: u32,
+    usage: UsageSummary,
+    transcript_count: usize,
+    last_text: String,
+    /// Compact records produced during this engine turn, in order.
+    compact_records: Vec<CompactRecord>,
+    /// True if the engine reached `AgentEnd`; false on abort or channel close.
+    engine_completed: bool,
+    /// Summarized tool calls from this turn (non-empty means tools were used).
+    tool_summary: String,
+}
+
+async fn drive_one_turn(
+    turn: TurnInput,
+    tx: &mpsc::UnboundedSender<RunEvent>,
+    control: &RunControl,
+    run_id: &str,
+    session_id: &str,
+    _started_at: Instant,
+    telemetry: Option<&crate::telemetry::config::TelemetryConfig>,
+) -> TurnOutcome {
+    let TurnInput {
+        options,
+        history,
+        input,
+        session,
+    } = turn;
+
+    let mut engine = build_agent(options, history);
+    let user_msg = evot_engine::AgentMessage::Llm(evot_engine::Message::User {
+        content: input.clone(),
+        timestamp: evot_engine::now_ms(),
+    });
+    let (engine_handle, engine_rx) = engine.submit(vec![user_msg]).await;
+    control.install_engine(engine_handle);
+
+    let (runtime_tx, mut runtime_rx) = mpsc::unbounded_channel();
+    let rid = run_id.to_string();
+    let sid = session_id.to_string();
+    let otel_sub =
+        telemetry.and_then(|cfg| crate::telemetry::subscriber::TelemetrySubscriber::new(cfg, &sid));
+    tokio::spawn(async move {
+        forward_events(engine_rx, runtime_tx, &rid, &sid, otel_sub).await;
+    });
+
+    // First user content is part of this turn's transcript record.
+    let mut turn_transcripts: Vec<TranscriptItem> = vec![TranscriptItem::user_from_content(&input)];
     let mut saved_count: usize = 0;
-    let mut turn = 0_u32;
-    let mut got_run_completed = false;
+    let mut turn_count: u32 = 0;
+    let mut tool_calls: Vec<String> = Vec::new();
+    let mut outcome = TurnOutcome {
+        turn_count: 0,
+        usage: UsageSummary::default(),
+        transcript_count: 0,
+        last_text: String::new(),
+        compact_records: Vec::new(),
+        engine_completed: false,
+        tool_summary: String::new(),
+    };
 
-    // Flush unsaved transcript items to storage.
-    let flush = |session: &Arc<Session>, transcripts: &[TranscriptItem], saved: &mut usize| {
-        let new_items = transcripts[*saved..].to_vec();
+    let flush = |session: &Arc<Session>, items: &[TranscriptItem], saved: &mut usize| {
+        let new_items = items[*saved..].to_vec();
         let session = Arc::clone(session);
-        *saved = transcripts.len();
+        *saved = items.len();
         async move {
             if !new_items.is_empty() {
                 session.write_items(new_items).await
@@ -169,26 +370,34 @@ async fn run_loop(
         }
     };
 
-    while let Some(event) = rx.recv().await {
+    while let Some(event) = runtime_rx.recv().await {
         match event {
             RuntimeEvent::TurnStarted => {
-                turn += 1;
+                turn_count = turn_count.saturating_add(1);
                 session.increment_turn().await;
             }
             RuntimeEvent::Transcript(item) => {
-                run_transcripts.push(item);
+                // Track tool usage for goal completion detection.
+                if let TranscriptItem::ToolResult { tool_name, .. } = &item {
+                    tool_calls.push(tool_name.clone());
+                }
+                turn_transcripts.push(item);
             }
             RuntimeEvent::Compacted { level, transcripts } => {
                 if level > 0 {
-                    run_transcripts.push(TranscriptItem::Marker {
+                    let item = TranscriptItem::Marker {
                         kind: crate::types::MarkerKind::Compact,
                         target_seq: None,
                         messages: transcripts,
-                    });
+                    };
+                    if let Some(record) = compact_record_from_marker(&item) {
+                        outcome.compact_records.push(record);
+                    }
+                    turn_transcripts.push(item);
                 }
             }
             RuntimeEvent::TurnEnded => {
-                if let Err(e) = flush(&session, &run_transcripts, &mut saved_count).await {
+                if let Err(e) = flush(&session, &turn_transcripts, &mut saved_count).await {
                     tracing::error!(
                         stage = "run",
                         status = "incremental_save_failed",
@@ -198,67 +407,45 @@ async fn run_loop(
                     );
                 }
             }
-            RuntimeEvent::RunCompleted {
+            RuntimeEvent::EngineCompleted {
                 last_text,
                 usage,
                 transcript_count,
             } => {
-                got_run_completed = true;
-
-                let duration_ms = started_at.elapsed().as_millis() as u64;
-                let stats = TranscriptStats::RunFinished(RunFinishedStats {
-                    usage: usage.clone(),
-                    turn_count: turn,
-                    duration_ms,
-                    transcript_count,
-                });
-                run_transcripts.push(stats.to_item());
-
-                // Extract compact history from transcripts
-                let compact_history = extract_compact_history(&run_transcripts);
-
-                let finished_event = RunEventContext::new(&run_id, &session_id, turn).finished(
-                    last_text,
-                    usage,
-                    turn,
-                    duration_ms,
-                    transcript_count,
-                    compact_history,
-                );
-                let _ = tx.send(finished_event);
-                // Drop tx immediately so the consumer stream closes without
-                // waiting for transcript persistence.
-                drop(tx);
+                outcome.turn_count = turn_count;
+                outcome.usage = usage;
+                outcome.transcript_count = transcript_count;
+                outcome.last_text = last_text;
+                outcome.engine_completed = true;
+                outcome.tool_summary = tool_calls.join("\n");
                 break;
             }
             RuntimeEvent::Public(payload) => {
-                let event = RunEventContext::new(&run_id, &session_id, turn).event(payload);
+                let event = RunEventContext::new(run_id, session_id, turn_count).event(payload);
                 if tx.send(event).is_err() {
+                    // Consumer dropped — bail out; outer loop will stop.
                     break;
                 }
             }
         }
     }
 
-    // Fallback save
-    if !got_run_completed {
-        let _ = flush(&session, &run_transcripts, &mut saved_count).await;
+    // Final flush in case engine ended without a TurnEnded event.
+    if let Err(e) = flush(&session, &turn_transcripts, &mut saved_count).await {
+        tracing::warn!(
+            stage = "run",
+            status = "final_flush_failed",
+            run_id = %run_id,
+            session_id = %session_id,
+            error = %e,
+        );
     }
 
-    let _ = session.save().await;
-
-    tracing::info!(
-        stage = "run",
-        status = "finished",
-        run_id = %run_id,
-        session_id = %session_id,
-        elapsed_ms = started_at.elapsed().as_millis() as u64,
-        turn,
-    );
-
-    if let Some(f) = on_complete {
-        f();
+    control.detach_engine();
+    if outcome.turn_count == 0 {
+        outcome.turn_count = turn_count;
     }
+    outcome
 }
 
 // ---------------------------------------------------------------------------
@@ -406,7 +593,7 @@ fn map_agent_event(
                 })
                 .unwrap_or_default();
 
-            vec![RuntimeEvent::RunCompleted {
+            vec![RuntimeEvent::EngineCompleted {
                 last_text,
                 usage,
                 transcript_count,
@@ -819,21 +1006,15 @@ fn serialize_or_placeholder<T: serde::Serialize>(value: &T, kind: &str) -> serde
     }
 }
 
-fn extract_compact_history(transcripts: &[TranscriptItem]) -> Vec<CompactRecord> {
+/// Extract a compact record from a single transcript item.
+fn compact_record_from_marker(item: &TranscriptItem) -> Option<CompactRecord> {
     use crate::agent::run::observability::compact_record_from_result;
 
-    transcripts
-        .iter()
-        .filter_map(|item| {
-            let stats = TranscriptStats::try_from_item(item)?;
-            match stats {
-                TranscriptStats::ContextCompactionCompleted(s) => {
-                    compact_record_from_result(&s.result)
-                }
-                _ => None,
-            }
-        })
-        .collect()
+    let stats = TranscriptStats::try_from_item(item)?;
+    match stats {
+        TranscriptStats::ContextCompactionCompleted(s) => compact_record_from_result(&s.result),
+        _ => None,
+    }
 }
 
 pub(crate) fn build_agent(

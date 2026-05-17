@@ -6,9 +6,11 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
+use super::run::control::RunControl;
 use super::run::convert;
 use super::run::run::Run;
 use super::run::runtime;
+use super::run::runtime::TurnFactory;
 use super::session::Session;
 use super::tools::build_tools;
 use super::tools::ToolMode;
@@ -108,6 +110,10 @@ pub enum SubmitOutcome {
     Run(Run),
     /// A gateway command was handled; carry this text back to the caller.
     Command(String),
+    /// A command was handled AND a follow-up run was kicked off
+    /// (e.g. `/goal set` injects the continuation prompt). The caller
+    /// should display `msg` and then stream `run`.
+    CommandThenRun { msg: String, run: Run },
 }
 
 // ---------------------------------------------------------------------------
@@ -118,7 +124,7 @@ const PLANNING_MODE_PROMPT: &str = include_str!("prompt/prompts/plan.md");
 
 struct ActiveRun {
     run_id: String,
-    handle: evot_engine::RunHandle,
+    handle: RunControl,
     done: Arc<AtomicBool>,
 }
 
@@ -321,7 +327,7 @@ impl Agent {
 
     // -- query ---------------------------------------------------------------
 
-    pub async fn submit(&self, request: QueryRequest) -> Result<SubmitOutcome> {
+    pub async fn submit(self: &Arc<Self>, request: QueryRequest) -> Result<SubmitOutcome> {
         let session = self
             .resolve_session(request.session_id.as_deref(), &request.source)
             .await?;
@@ -331,13 +337,13 @@ impl Agent {
     /// Channel path: session is already resolved by the caller (RunManager).
     /// Intercepts gateway commands before starting a run.
     pub async fn submit_to_session(
-        &self,
+        self: &Arc<Self>,
         request: QueryRequest,
         session: Arc<Session>,
     ) -> Result<SubmitOutcome> {
         // Intercept gateway commands (/clear, /goto, ...)
-        if let Some(msg) = self.maybe_handle_command(&request, &session).await? {
-            return Ok(SubmitOutcome::Command(msg));
+        if let Some(outcome) = self.maybe_handle_command(&request, &session).await? {
+            return Ok(outcome);
         }
 
         let run = self.start_run(request, session).await?;
@@ -347,10 +353,10 @@ impl Agent {
     // -- command handling (private) -------------------------------------------
 
     async fn maybe_handle_command(
-        &self,
+        self: &Arc<Self>,
         request: &QueryRequest,
         session: &Arc<Session>,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<SubmitOutcome>> {
         use crate::gateway::command::parse_command;
         use crate::gateway::command::Command;
 
@@ -360,20 +366,20 @@ impl Agent {
         };
 
         match cmd {
-            Command::UsageError(msg) => Ok(Some(msg)),
+            Command::UsageError(msg) => Ok(Some(SubmitOutcome::Command(msg))),
             Command::Clear => {
                 let session_id = session.session_id().await;
                 self.abort_run(&session_id);
                 session.write_clear_marker().await?;
                 session.save().await?;
-                Ok(Some("Session cleared.".into()))
+                Ok(Some(SubmitOutcome::Command("Session cleared.".into())))
             }
             Command::Goto(seq) => {
                 if !session.is_valid_context_seq(seq).await? {
                     let max = session.max_seq().await;
-                    return Ok(Some(format!(
+                    return Ok(Some(SubmitOutcome::Command(format!(
                         "Invalid message number. Only user messages (1-{max}) are valid goto targets."
-                    )));
+                    ))));
                 }
                 let session_id = session.session_id().await;
                 self.abort_run(&session_id);
@@ -394,7 +400,7 @@ impl Agent {
                         lines.push(format!("  target: {} ←", format_history_entry(seq, &item)));
                     }
                 }
-                Ok(Some(lines.join("\n")))
+                Ok(Some(SubmitOutcome::Command(lines.join("\n"))))
             }
             Command::History(limit) => {
                 let entries = session.recent_context_entries(usize::MAX).await?;
@@ -405,21 +411,49 @@ impl Agent {
                     })
                     .collect();
                 if user_entries.is_empty() {
-                    return Ok(Some("No messages in session.".into()));
+                    return Ok(Some(SubmitOutcome::Command(
+                        "No messages in session.".into(),
+                    )));
                 }
                 let start = user_entries.len().saturating_sub(limit);
                 let mut lines = Vec::new();
                 for (seq, item) in &user_entries[start..] {
                     lines.push(format!("  {}", format_history_entry(*seq, item)));
                 }
-                Ok(Some(lines.join("\n")))
+                Ok(Some(SubmitOutcome::Command(lines.join("\n"))))
+            }
+            Command::Goal(sub) => {
+                let command_session = session.clone();
+                let run_session = session.clone();
+                let agent = Arc::clone(self);
+                let ctx = crate::agent::goal::command::GoalCommandContext {
+                    goal_evaluation_enabled: self.sandbox.goal_evaluation_enabled(),
+                    start_run: Box::new(move |request| {
+                        let session = run_session.clone();
+                        let agent = Arc::clone(&agent);
+                        Box::pin(async move { agent.start_run(request, session).await })
+                    }),
+                };
+                Ok(Some(
+                    crate::agent::goal::command::handle(
+                        command_session.as_ref(),
+                        request,
+                        sub,
+                        ctx,
+                    )
+                    .await?,
+                ))
             }
         }
     }
 
     // -- run execution (private) ----------------------------------------------
 
-    async fn start_run(&self, request: QueryRequest, session: Arc<Session>) -> Result<Run> {
+    async fn start_run(
+        self: &Arc<Self>,
+        request: QueryRequest,
+        session: Arc<Session>,
+    ) -> Result<Run> {
         let session_id = session.meta().await.session_id.clone();
         let run_id = crate::types::new_id();
 
@@ -440,10 +474,6 @@ impl Agent {
             model = %self.llm.read().model,
         );
 
-        let turn = self
-            .build_turn(&request, session, &session_id, &run_id)
-            .await?;
-
         // Shared done flag — set by on_complete, checked at registration
         let done = Arc::new(AtomicBool::new(false));
 
@@ -462,7 +492,26 @@ impl Agent {
             }
         });
 
-        let run = runtime::execute_turn(turn, Some(on_complete), Some(&self.telemetry)).await?;
+        let factory: Arc<dyn TurnFactory> = Arc::new(AgentTurnFactory {
+            agent: Arc::clone(self),
+            session: Arc::clone(&session),
+            mode: request.mode.clone(),
+            session_id: session_id.clone(),
+        });
+
+        let eval_fn =
+            crate::agent::goal::evaluator_agent::build_eval_fn(&self.llm.read(), &self.cwd);
+
+        let run = runtime::execute_run(runtime::ExecuteRunArgs {
+            run_id: run_id.clone(),
+            session_id: session_id.clone(),
+            session,
+            initial_input: request.input,
+            factory,
+            on_complete: Some(on_complete),
+            telemetry: Some(self.telemetry.clone()),
+            eval_fn: Some(eval_fn),
+        });
 
         // Register active run — skip if on_complete already fired
         if !done.load(Ordering::Acquire) {
@@ -507,6 +556,7 @@ impl Agent {
             sandbox: super::sandbox::SandboxPolicy {
                 enabled: sandbox.enabled,
                 extra_dirs: sandbox.extra_dirs.clone(),
+                goal_evaluation_enabled: sandbox.goal_evaluation_enabled,
             },
             active_runs: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             telemetry: TelemetryConfig::default(),
@@ -570,12 +620,23 @@ impl Agent {
 
     // -- private -------------------------------------------------------------
 
-    fn build_system_prompt(&self, mode: &ToolMode) -> String {
+    fn build_system_prompt(
+        &self,
+        mode: &ToolMode,
+        goal: Option<&crate::types::SessionGoal>,
+    ) -> String {
         let base = self.system_prompt.read().clone();
         let mut prompt = match mode {
             ToolMode::Planning { .. } => format!("{base}\n\n{PLANNING_MODE_PROMPT}"),
             _ => base,
         };
+
+        if let Some(g) = goal {
+            if let Some(block) = crate::agent::goal::display::format_system_prompt_block(g) {
+                prompt.push_str("\n\n");
+                prompt.push_str(&block);
+            }
+        }
 
         if let Some(vars) = self.variables.read().as_ref() {
             let names = vars.variable_names();
@@ -614,11 +675,11 @@ impl Agent {
     ) -> Result<Arc<Session>> {
         let model = self.llm.read().model.clone();
         let storage = self.storage.read().clone();
-        match session_id {
+        let session = match session_id {
             Some(id) => match Session::open(id, storage.clone()).await? {
                 Some(session) => {
                     session.set_model(model).await;
-                    Ok(session)
+                    session
                 }
                 None => {
                     Session::new_with_source(
@@ -628,25 +689,35 @@ impl Agent {
                         source,
                         storage,
                     )
-                    .await
+                    .await?
                 }
             },
             None => {
                 let id = crate::types::new_id();
-                Session::new_with_source(id, self.cwd.clone(), model, source, storage).await
+                Session::new_with_source(id, self.cwd.clone(), model, source, storage).await?
             }
+        };
+
+        if let Some(goal) = session.read_goal().await {
+            tracing::info!(
+                condition = %goal.condition,
+                "goal restored on resume"
+            );
         }
+
+        Ok(session)
     }
 
     async fn build_turn(
         &self,
-        request: &QueryRequest,
+        mode: &ToolMode,
         session: Arc<Session>,
         session_id: &str,
-        run_id: &str,
+        input: Vec<evot_engine::Content>,
     ) -> Result<runtime::TurnInput> {
         let llm = self.llm.read().clone();
-        let system_prompt = self.build_system_prompt(&request.mode);
+        let active_goal = session.read_goal().await;
+        let system_prompt = self.build_system_prompt(mode, active_goal.as_ref());
         let envs = self
             .variables()
             .map(|v| v.all_env_pairs())
@@ -660,15 +731,15 @@ impl Agent {
             .build_runtime(cwd_path, &memory_dirs, &skill_dirs)?;
 
         let mut tools = build_tools(
-            &request.mode,
+            mode,
             envs,
             sandbox_rt.allow_bash,
             sandbox_rt.bash_sandbox_dirs,
         );
 
-        if !request.mode.is_readonly() {
+        if !mode.is_readonly() {
             if let Some(mt) = super::prompt::memory::load_memory_tool(&self.cwd) {
-                if request.mode.is_planning() {
+                if mode.is_planning() {
                     tools.push(Box::new(mt.disallow_writes(
                         "Not allowed in planning mode. Use /act to switch.",
                     )));
@@ -704,14 +775,38 @@ impl Agent {
                 prompt_cache_key: Some(session_id.to_string()),
             },
             history: prior_messages,
-            input: request.input.clone(),
+            input,
             session,
-            run_id: run_id.to_string(),
-            session_id: session_id.to_string(),
         })
     }
 }
 
+// ---------------------------------------------------------------------------
+// AgentTurnFactory — bridges Agent's per-turn build to the runtime
+// ---------------------------------------------------------------------------
+
+struct AgentTurnFactory {
+    agent: Arc<Agent>,
+    session: Arc<Session>,
+    mode: ToolMode,
+    session_id: String,
+}
+
+#[async_trait::async_trait]
+impl TurnFactory for AgentTurnFactory {
+    async fn build(&self, input: Vec<evot_engine::Content>) -> Result<runtime::TurnInput> {
+        self.agent
+            .build_turn(
+                &self.mode,
+                Arc::clone(&self.session),
+                &self.session_id,
+                input,
+            )
+            .await
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -764,9 +859,9 @@ impl ForkedAgent {
                 }
                 Ok(run)
             }
-            SubmitOutcome::Command(_) => Err(EvotError::Run(
-                "commands not supported in forked agent".into(),
-            )),
+            SubmitOutcome::Command(_) | SubmitOutcome::CommandThenRun { .. } => Err(
+                EvotError::Run("commands not supported in forked agent".into()),
+            ),
         }
     }
 }

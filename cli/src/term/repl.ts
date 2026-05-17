@@ -762,7 +762,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     return { blocks, resolvedIds: new Set(resolved.map(r => r.id)) }
   }
 
-  async function runQuery(text: string, contentJson?: string) {
+  async function runQuery(text: string, contentJson?: string, prebuiltStream?: QueryStream) {
     isLoading = true
     spinnerState = createSpinnerState()
     streamMachine = createStreamMachineState(appState, spinnerState)
@@ -770,7 +770,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     renderStatus()
 
     try {
-      const stream = await agent.query(text, sessionId ?? undefined, planning ? 'planning_interactive' : 'interactive', contentJson)
+      const stream = prebuiltStream
+        ?? await agent.query(text, sessionId ?? undefined, planning ? 'planning_interactive' : 'interactive', contentJson)
       streamRef = stream
       sessionId = stream.sessionId ?? sessionId
       appState = { ...appState, sessionId: sessionId }
@@ -1440,6 +1441,24 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
     } else if (name === '/env') {
       handleEnvCommand(args)
+    } else if (name === '/goal') {
+      try {
+        const outcome = await agent.submit(`/goal${args ? ' ' + args : ''}`, sessionId ?? undefined)
+        if (outcome.kind === 'command' || outcome.kind === 'commandThenRun') {
+          const lines = (outcome.message ?? '').split('\n').map((line, i) => ({
+            id: `sys-goal-${i}`,
+            kind: 'system' as const,
+            text: `  ${line}`,
+          }))
+          commitLines(lines.length > 0 ? lines : [{ id: 'sys-goal', kind: 'system', text: '  (no goal output)' }])
+        }
+        if (outcome.kind === 'commandThenRun') {
+          // Engine kicked off a continuation run — stream it like a normal turn.
+          await runQuery('', undefined, outcome.stream)
+        }
+      } catch (err: any) {
+        commitLines([{ id: 'sys-goal-err', kind: 'system', text: chalk.red(`  /goal failed: ${err?.message ?? err}`) }])
+      }
     } else if (name === '/harden') {
       const subject = buildHardenPrompt(args)
       commitLines(buildUserMessage(text.trim()))

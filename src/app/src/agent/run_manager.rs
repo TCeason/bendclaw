@@ -22,6 +22,11 @@ pub enum SendOutcome {
     Steered,
     /// A gateway command was handled; carry this text back to the user.
     Command(String),
+    /// A command was handled AND a follow-up run was kicked off.
+    CommandThenStarted {
+        msg: String,
+        run: Run,
+    },
 }
 
 pub struct RunManager {
@@ -80,6 +85,9 @@ impl RunManager {
         match self.agent.submit_to_session(request, session).await? {
             SubmitOutcome::Run(run) => Ok(SendOutcome::Started(run)),
             SubmitOutcome::Command(msg) => Ok(SendOutcome::Command(msg)),
+            SubmitOutcome::CommandThenRun { msg, run } => {
+                Ok(SendOutcome::CommandThenStarted { msg, run })
+            }
         }
     }
 }

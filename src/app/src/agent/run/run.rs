@@ -2,20 +2,25 @@
 //!
 //! `Run` is a one-shot consumer: call `next()` to read events.
 //! For control (steer / follow_up / abort), use `handle()` to get
-//! a cloneable `RunHandle`.
+//! a cloneable `RunControl`.
+//!
+//! Internally a Run may span multiple engine turns (auto-continuation
+//! while a session goal is Active). `RunControl` survives engine swaps
+//! between turns; consumers see a single stable handle.
 
 use tokio::sync::mpsc;
 
+use super::control::RunControl;
 use super::event::RunEvent;
 
 /// A single agent run. Owns the event stream and a control handle.
 ///
-/// Not cloneable — use `handle()` to obtain a shareable `RunHandle`.
+/// Not cloneable — use `handle()` to obtain a shareable `RunControl`.
 pub struct Run {
     pub id: String,
     pub session_id: String,
     rx: mpsc::UnboundedReceiver<RunEvent>,
-    handle: evot_engine::RunHandle,
+    control: RunControl,
 }
 
 impl Run {
@@ -23,13 +28,13 @@ impl Run {
         id: String,
         session_id: String,
         rx: mpsc::UnboundedReceiver<RunEvent>,
-        handle: evot_engine::RunHandle,
+        control: RunControl,
     ) -> Self {
         Self {
             id,
             session_id,
             rx,
-            handle,
+            control,
         }
     }
 
@@ -39,13 +44,13 @@ impl Run {
     }
 
     /// Get a cloneable control handle for this run.
-    pub fn handle(&self) -> evot_engine::RunHandle {
-        self.handle.clone()
+    pub fn handle(&self) -> RunControl {
+        self.control.clone()
     }
 
     /// Abort this run.
     pub fn abort(&self) {
-        self.handle.abort();
+        self.control.abort();
     }
 
     /// Test-only constructor: create a Run from a raw receiver.
@@ -55,6 +60,6 @@ impl Run {
         session_id: String,
         run_id: String,
     ) -> Self {
-        Self::new(run_id, session_id, rx, evot_engine::RunHandle::noop())
+        Self::new(run_id, session_id, rx, RunControl::new())
     }
 }

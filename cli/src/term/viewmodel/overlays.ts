@@ -42,6 +42,7 @@ function buildHelpBlocks(columns: number): ViewBlock[] {
     ['/new', 'Start new session'],
     ['/goto <n>', 'Go to message'],
     ['/history [n]', 'Show recent messages'],
+    ['/goal [...]', 'Manage long-task goal'],
     ['/plan', 'Toggle planning mode'],
     ['/env', 'Manage variables'],
     ['/skill', 'Manage skills'],

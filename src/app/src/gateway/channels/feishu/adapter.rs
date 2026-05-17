@@ -402,6 +402,34 @@ impl FeishuChannel {
                         tracing::error!(channel = "feishu", error = %e, "delivery failed");
                     }
                 }
+                Ok(SendOutcome::CommandThenStarted {
+                    msg: cmd_msg,
+                    mut run,
+                }) => {
+                    let sink = FeishuMessageSink::new(
+                        this.client.clone(),
+                        this.token_cache.clone(),
+                        this.config.app_id.clone(),
+                        this.config.app_secret.clone(),
+                    );
+                    let sink = if msg.chat_type == "group" {
+                        sink.with_reply_to(msg.message_id.clone())
+                    } else {
+                        sink
+                    };
+                    let _ = crate::gateway::delivery::MessageSink::send_text(
+                        &sink,
+                        &msg.chat_id,
+                        &cmd_msg,
+                    )
+                    .await;
+                    let config = StreamDeliveryConfig::default();
+                    if let Err(e) =
+                        stream_delivery::deliver(&sink, &msg.chat_id, &mut run, &config).await
+                    {
+                        tracing::error!(channel = "feishu", error = %e, "delivery failed");
+                    }
+                }
                 Ok(SendOutcome::Steered) => {
                     // Message routed to active run — nothing to deliver
                 }

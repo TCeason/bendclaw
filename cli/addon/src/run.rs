@@ -77,7 +77,7 @@ impl NapiSubmitOutcome {
 #[napi]
 pub struct NapiRun {
     pub(crate) inner: Mutex<evot::agent::Run>,
-    pub(crate) handle: evot_engine::RunHandle,
+    pub(crate) handle: evot::agent::RunControl,
     pub(crate) cached_session_id: String,
     pub(crate) aborted: Arc<AtomicBool>,
     pub(crate) abort_notify: Arc<Notify>,

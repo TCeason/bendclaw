@@ -96,18 +96,26 @@ impl Server {
                 .session_id(session_id)
                 .source("http");
 
-            match self.agent.submit(request).await {
-                Ok(SubmitOutcome::Run(mut query_run)) => {
-                    while let Some(event) = query_run.next().await {
-                        for sse in stream::map_run_event(&event) {
-                            if tx.send(sse).await.is_err() {
-                                break;
-                            }
+            let drain_run = |mut query_run: crate::agent::Run, tx: tokio::sync::mpsc::Sender<_>| async move {
+                while let Some(event) = query_run.next().await {
+                    for sse in stream::map_run_event(&event) {
+                        if tx.send(sse).await.is_err() {
+                            break;
                         }
                     }
                 }
+            };
+
+            match self.agent.submit(request).await {
+                Ok(SubmitOutcome::Run(query_run)) => {
+                    drain_run(query_run, tx.clone()).await;
+                }
                 Ok(SubmitOutcome::Command(text)) => {
                     let _ = tx.send(stream::text_event(&text)).await;
+                }
+                Ok(SubmitOutcome::CommandThenRun { msg, run }) => {
+                    let _ = tx.send(stream::text_event(&msg)).await;
+                    drain_run(run, tx.clone()).await;
                 }
                 Err(e) => {
                     let _ = tx.send(stream::error_event(e.to_string())).await;

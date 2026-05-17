@@ -16,6 +16,7 @@ export const COMMANDS: SlashCommand[] = [
   { name: '/new', description: 'Start a new session', handler: 'builtin' },
   { name: '/goto', description: 'Go to a message', usage: '/goto <message_number>', handler: 'builtin' },
   { name: '/history', description: 'Show recent messages with seq numbers', usage: '/history [count]', handler: 'builtin' },
+  { name: '/goal', description: 'Manage long-task goal', usage: '/goal [show | set <objective> [--budget=<tokens>] | pause | resume | clear]', handler: 'builtin' },
   { name: '/model', description: 'Show or change model', usage: '/model [name]', handler: 'builtin' },
   { name: '/plan', description: 'Enter planning mode', handler: 'builtin' },
   { name: '/harden', description: 'Stress-test the previous plan or current changes', usage: '/harden [plan | changes | arch | subject]', handler: 'builtin' },

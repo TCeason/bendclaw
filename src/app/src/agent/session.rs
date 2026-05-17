@@ -156,6 +156,33 @@ impl Session {
         self.meta.read().await.clone()
     }
 
+    /// Atomically mutate `SessionMeta`, persist, and return a result.
+    ///
+    /// The closure runs against a clone; on success the new value is
+    /// written through storage **before** swapping into the in-memory
+    /// `RwLock`. If the write fails the in-memory value is left
+    /// untouched, so callers see consistent state across restarts.
+    pub async fn update_meta<T, F>(&self, mutate: F) -> Result<T>
+    where F: FnOnce(&mut SessionMeta) -> Result<T> {
+        let mut guard = self.meta.write().await;
+        let mut working = guard.clone();
+        let value = mutate(&mut working)?;
+        working.updated_at = Utc::now().to_rfc3339();
+        self.storage.save_session(working.clone()).await?;
+        *guard = working;
+        Ok(value)
+    }
+
+    /// Snapshot the current goal state, if any.
+    pub async fn read_goal(&self) -> Option<crate::types::SessionGoal> {
+        self.meta.read().await.goal.clone()
+    }
+
+    pub async fn write_goal(&self, goal: Option<crate::types::SessionGoal>) -> Result<()> {
+        self.meta.write().await.goal = goal;
+        self.save().await
+    }
+
     pub async fn transcript(&self) -> Vec<TranscriptItem> {
         self.transcript.read().await.clone()
     }

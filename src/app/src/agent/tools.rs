@@ -8,6 +8,7 @@ use evot_engine::tools::*;
 // ToolMode — determines which tools are registered for a query
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub enum ToolMode {
     /// REPL interactive: full tools + ask_user
     Interactive { ask_fn: AskUserFn },

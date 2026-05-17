@@ -142,6 +142,24 @@ impl NapiAgent {
                     message: None,
                 })
             }
+            evot::agent::SubmitOutcome::CommandThenRun { msg, run } => {
+                let sid = run.session_id.clone();
+                let handle = run.handle();
+
+                Ok(NapiSubmitOutcome {
+                    kind: "commandThenRun".into(),
+                    run: std::sync::Mutex::new(Some(NapiRun {
+                        inner: Mutex::new(run),
+                        handle,
+                        cached_session_id: sid,
+                        aborted: Arc::new(AtomicBool::new(false)),
+                        abort_notify: Arc::new(Notify::new()),
+                        ask_event_rx: Mutex::new(Some(ask_event_rx)),
+                        ask_responder,
+                    })),
+                    message: Some(msg),
+                })
+            }
         }
     }
 

@@ -169,6 +169,20 @@ fn builtin_harden_skill_loaded() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn builtin_humanize_skill_loaded() -> Result<(), Box<dyn std::error::Error>> {
+    let empty: Vec<std::path::PathBuf> = vec![];
+    let specs = load_skills(&empty)?;
+    let humanize = match specs.iter().find(|s| s.name == "humanize") {
+        Some(skill) => skill,
+        None => return Err("builtin humanize skill should be present".into()),
+    };
+    assert!(!humanize.description.is_empty());
+    assert!(humanize.instructions.contains("# Humanize"));
+    assert!(humanize.base_dir.as_os_str().is_empty());
+    Ok(())
+}
+
+#[test]
 fn fs_skill_overrides_builtin() {
     let tmp = TempDir::new().unwrap();
     create_skill(tmp.path(), "review", "Custom review");
