@@ -23,6 +23,7 @@ use crate::storage::open_storage;
 use crate::storage::MemoryStorage;
 use crate::storage::Storage;
 use crate::telemetry::config::TelemetryConfig;
+use crate::types::GoalStatus;
 use crate::types::ListSessions;
 use crate::types::SessionMeta;
 use crate::types::TranscriptItem;
@@ -729,6 +730,17 @@ impl Agent {
             sandbox_rt.allow_bash,
             sandbox_rt.bash_sandbox_dirs,
         );
+
+        if !mode.is_readonly()
+            && !mode.is_planning()
+            && active_goal
+                .as_ref()
+                .is_some_and(|goal| goal.status == GoalStatus::Active)
+        {
+            tools.push(Box::new(
+                super::goal::update_tasks_tool::UpdateGoalTasksTool::new(Arc::clone(&session)),
+            ));
+        }
 
         if !mode.is_readonly() {
             if let Some(mt) = super::prompt::memory::load_memory_tool(&self.cwd) {

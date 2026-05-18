@@ -1,12 +1,39 @@
 //! GoalCoordinator — manages goal lifecycle.
 
+use chrono::Utc;
+
 use crate::agent::session::Session;
+use crate::error::EvotError;
 use crate::error::Result;
 use crate::types::GoalBudget;
 use crate::types::GoalStatus;
+use crate::types::GoalTask;
+use crate::types::GoalTaskStatus;
 use crate::types::SessionGoal;
 
 pub struct GoalCoordinator;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoalTaskSummary {
+    pub completed: usize,
+    pub total: usize,
+    pub current: Option<GoalTask>,
+    pub tasks: Vec<GoalTask>,
+}
+
+impl GoalTaskSummary {
+    pub fn headline(&self) -> String {
+        let current = self
+            .current
+            .as_ref()
+            .map(|task| format!("current #{} {}", task.id, task.title))
+            .unwrap_or_else(|| "no current task".to_string());
+        format!(
+            "✓ · {}/{} completed · {current}",
+            self.completed, self.total
+        )
+    }
+}
 
 impl GoalCoordinator {
     pub async fn set(session: &Session, condition: String, budget: GoalBudget) -> Result<()> {
@@ -88,6 +115,34 @@ impl GoalCoordinator {
         Ok(())
     }
 
+    /// Replace the active goal's task list.
+    pub async fn update_tasks(session: &Session, tasks: Vec<GoalTask>) -> Result<GoalTaskSummary> {
+        validate_tasks(&tasks)?;
+        session
+            .update_meta(|meta| {
+                let goal = meta
+                    .goal
+                    .as_mut()
+                    .ok_or_else(|| EvotError::Session("No active goal to update tasks.".into()))?;
+                if goal.status != GoalStatus::Active {
+                    return Err(EvotError::Session("No active goal to update tasks.".into()));
+                }
+                goal.tasks = stamp_task_times(&goal.tasks, tasks);
+                goal.touch();
+                Ok(Self::task_summary(goal))
+            })
+            .await
+    }
+
+    pub fn task_summary(goal: &SessionGoal) -> GoalTaskSummary {
+        GoalTaskSummary {
+            completed: goal.completed_task_count(),
+            total: goal.tasks.len(),
+            current: goal.current_task().cloned(),
+            tasks: goal.tasks.clone(),
+        }
+    }
+
     /// Account for a completed turn: increment iteration count and accumulate
     /// token/time usage.
     pub async fn account_turn(session: &Session, tokens: u64, elapsed_seconds: u64) -> Result<()> {
@@ -100,4 +155,83 @@ impl GoalCoordinator {
         }
         Ok(())
     }
+}
+
+fn stamp_task_times(previous: &[GoalTask], tasks: Vec<GoalTask>) -> Vec<GoalTask> {
+    let now = Utc::now().to_rfc3339();
+    tasks
+        .into_iter()
+        .map(|mut task| {
+            let previous_task = previous.iter().find(|prior| prior.id == task.id);
+            if let Some(prior) = previous_task.filter(|prior| prior.title == task.title) {
+                if task.status == prior.status {
+                    task.started_at = prior.started_at.clone();
+                    task.completed_at = prior.completed_at.clone();
+                    return task;
+                }
+
+                task.started_at = match task.status {
+                    GoalTaskStatus::Pending => None,
+                    GoalTaskStatus::InProgress | GoalTaskStatus::Completed => {
+                        prior.started_at.clone().or_else(|| Some(now.clone()))
+                    }
+                };
+                task.completed_at = if task.status == GoalTaskStatus::Completed {
+                    Some(now.clone())
+                } else {
+                    None
+                };
+                return task;
+            }
+
+            if task.status == GoalTaskStatus::Pending {
+                task.started_at = None;
+                task.completed_at = None;
+                return task;
+            }
+
+            task.started_at = Some(now.clone());
+            task.completed_at = if task.status == GoalTaskStatus::Completed {
+                Some(now.clone())
+            } else {
+                None
+            };
+            task
+        })
+        .collect()
+}
+
+fn validate_tasks(tasks: &[GoalTask]) -> Result<()> {
+    use std::collections::HashSet;
+
+    if tasks.is_empty() {
+        return Err(EvotError::Session("Goal tasks cannot be empty.".into()));
+    }
+
+    let mut ids = HashSet::new();
+    let mut in_progress = 0;
+    for task in tasks {
+        if task.title.trim().is_empty() {
+            return Err(EvotError::Session(
+                "Goal task title cannot be empty.".into(),
+            ));
+        }
+        if !ids.insert(task.id) {
+            return Err(EvotError::Session(format!(
+                "Duplicate goal task id: {}.",
+                task.id
+            )));
+        }
+        if task.status == GoalTaskStatus::InProgress {
+            in_progress += 1;
+        }
+    }
+
+    if in_progress > 1 {
+        return Err(EvotError::Session(
+            "Goal tasks can have at most one in_progress task.".into(),
+        ));
+    }
+
+    Ok(())
 }

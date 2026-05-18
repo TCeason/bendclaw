@@ -55,6 +55,17 @@ pub async fn after_turn(
         return Ok(AfterTurn::Stop);
     }
 
+    if should_continue_goal_work(&goal) {
+        if response_awaits_user(report.transcript) {
+            GoalCoordinator::pause(session).await?;
+            tracing::info!("goal paused because the assistant is waiting for user input");
+            return Ok(AfterTurn::Stop);
+        }
+        return Ok(AfterTurn::Continue(vec![Content::Text {
+            text: prompt::continuation_prompt(&goal),
+        }]));
+    }
+
     let Some(verify_fn) = verify_fn else {
         return Ok(AfterTurn::Stop);
     };
@@ -65,13 +76,13 @@ pub async fn after_turn(
     })
     .await?;
 
-    GoalCoordinator::record_verification_reason(session, Some(verdict.reason())).await?;
-
     if response_awaits_user(report.transcript) {
         GoalCoordinator::pause(session).await?;
         tracing::info!("goal paused because the assistant is waiting for user input");
         return Ok(AfterTurn::Stop);
     }
+
+    GoalCoordinator::record_verification_reason(session, Some(verdict.reason())).await?;
 
     match verdict {
         GoalVerdict::Met { reason } => {
@@ -85,7 +96,11 @@ pub async fn after_turn(
     }
 }
 
-pub(crate) fn response_awaits_user(transcript: &[TranscriptItem]) -> bool {
+pub(crate) fn should_continue_goal_work(goal: &crate::types::SessionGoal) -> bool {
+    goal.tasks.is_empty() || goal.has_open_tasks()
+}
+
+fn response_awaits_user(transcript: &[TranscriptItem]) -> bool {
     let Some(TranscriptItem::Assistant {
         text, tool_calls, ..
     }) = transcript

@@ -4,6 +4,8 @@ use evot::agent::goal::display::format_show;
 use evot::agent::goal::display::format_summary;
 use evot::types::GoalBudget;
 use evot::types::GoalStatus;
+use evot::types::GoalTask;
+use evot::types::GoalTaskStatus;
 use evot::types::SessionGoal;
 
 #[test]
@@ -50,6 +52,21 @@ fn format_show_active_includes_last_verification() {
     assert!(out.contains("not complete"));
     assert!(out.contains("Last verification: not complete"));
     assert!(out.contains("tests still fail"));
+}
+
+#[test]
+fn format_show_includes_task_progress() {
+    let mut goal = SessionGoal::new("refactor storage".into(), GoalBudget::default());
+    goal.tasks = vec![
+        GoalTask::new(1, "Audit current code".into(), GoalTaskStatus::Completed),
+        GoalTask::new(2, "Simplify coordinator".into(), GoalTaskStatus::InProgress),
+    ];
+
+    let out = format_show(&goal);
+    assert!(out.contains("1/2 completed"));
+    assert!(out.contains("current #2 Simplify coordinator"));
+    assert!(out.contains("✓ #1 Audit current code"));
+    assert!(out.contains("→ #2 Simplify coordinator"));
 }
 
 #[test]

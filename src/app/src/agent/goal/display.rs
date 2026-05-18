@@ -1,6 +1,7 @@
 //! Goal display — formatting for `/goal show`.
 
 use crate::types::GoalStatus;
+use crate::types::GoalTaskStatus;
 use crate::types::SessionGoal;
 
 /// Format the goal for `/goal show` output.
@@ -19,24 +20,41 @@ pub fn format_show(goal: &SessionGoal) -> String {
                 .map(|r| format!("\nLast verification: not complete — {r}"))
                 .unwrap_or_else(|| "\nLast verification: pending".to_string());
             format!(
-                "Goal active (not complete yet): {} ({turns}){last_check}",
-                goal.condition
+                "Goal active (not complete yet): {} ({turns}){last_check}\n{}",
+                goal.condition,
+                format_tasks(goal)
             )
         }
-        GoalStatus::Paused => format!("Goal paused (not complete yet): {}", goal.condition),
+        GoalStatus::Paused => format!(
+            "Goal paused (not complete yet): {}\n{}",
+            goal.condition,
+            format_tasks(goal)
+        ),
         GoalStatus::Met => {
             let reason = last_reason
                 .map(|r| format!("\nCompletion reason: {r}"))
                 .unwrap_or_default();
-            format!("Goal complete: {}{reason}", goal.condition)
+            format!(
+                "Goal complete: {}{reason}\n{}",
+                goal.condition,
+                format_tasks(goal)
+            )
         }
         GoalStatus::Impossible => {
             let reason = last_reason
                 .map(|r| format!("\nLast verification: {r}"))
                 .unwrap_or_default();
-            format!("Goal could not be achieved: {}{reason}", goal.condition)
+            format!(
+                "Goal could not be achieved: {}{reason}\n{}",
+                goal.condition,
+                format_tasks(goal)
+            )
         }
-        GoalStatus::Exhausted => format!("Goal exhausted before completion: {}", goal.condition),
+        GoalStatus::Exhausted => format!(
+            "Goal exhausted before completion: {}\n{}",
+            goal.condition,
+            format_tasks(goal)
+        ),
     }
 }
 
@@ -46,6 +64,37 @@ fn turns_label(iterations: u32) -> String {
         1 => "1 turn".to_string(),
         n => format!("{n} turns"),
     }
+}
+
+fn format_tasks(goal: &SessionGoal) -> String {
+    if goal.tasks.is_empty() {
+        return "Tasks: not planned yet".into();
+    }
+
+    let current = goal
+        .current_task()
+        .map(|task| format!("#{} {}", task.id, task.title))
+        .unwrap_or_else(|| "none".into());
+    let mut lines = vec![
+        format!(
+            "Progress: {}/{} completed · current {current}",
+            goal.completed_task_count(),
+            goal.tasks.len()
+        ),
+        "".into(),
+        "Tasks:".into(),
+    ];
+
+    for task in &goal.tasks {
+        let marker = match task.status {
+            GoalTaskStatus::Completed => "✓",
+            GoalTaskStatus::InProgress => "→",
+            GoalTaskStatus::Pending => "·",
+        };
+        lines.push(format!("  {marker} #{} {}", task.id, task.title));
+    }
+
+    lines.join("\n")
 }
 
 /// Short one-line summary for command feedback (e.g. after `/goal set`).

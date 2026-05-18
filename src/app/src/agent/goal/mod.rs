@@ -6,6 +6,7 @@ pub mod display;
 pub mod prompt;
 pub mod result_tool;
 pub mod runtime;
+pub mod update_tasks_tool;
 pub mod validate;
 pub mod verifier;
 pub mod verifier_agent;

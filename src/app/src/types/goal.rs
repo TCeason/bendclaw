@@ -84,6 +84,47 @@ pub struct GoalProgress {
 }
 
 // ---------------------------------------------------------------------------
+// GoalTask — planned execution steps
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalTaskStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+impl GoalTaskStatus {
+    pub fn is_open(self) -> bool {
+        matches!(self, Self::Pending | Self::InProgress)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoalTask {
+    pub id: u32,
+    pub title: String,
+    pub status: GoalTaskStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+}
+
+impl GoalTask {
+    pub fn new(id: u32, title: String, status: GoalTaskStatus) -> Self {
+        Self {
+            id,
+            title,
+            status,
+            started_at: None,
+            completed_at: None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SessionGoal — persisted on SessionMeta
 // ---------------------------------------------------------------------------
 
@@ -94,6 +135,8 @@ pub struct SessionGoal {
     pub status: GoalStatus,
     pub budget: GoalBudget,
     pub progress: GoalProgress,
+    #[serde(default)]
+    pub tasks: Vec<GoalTask>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -106,6 +149,7 @@ impl SessionGoal {
             status: GoalStatus::Active,
             budget,
             progress: GoalProgress::default(),
+            tasks: Vec::new(),
             created_at: now.clone(),
             updated_at: now,
         }
@@ -113,6 +157,28 @@ impl SessionGoal {
 
     pub fn touch(&mut self) {
         self.updated_at = Utc::now().to_rfc3339();
+    }
+
+    pub fn completed_task_count(&self) -> usize {
+        self.tasks
+            .iter()
+            .filter(|task| task.status == GoalTaskStatus::Completed)
+            .count()
+    }
+
+    pub fn current_task(&self) -> Option<&GoalTask> {
+        self.tasks
+            .iter()
+            .find(|task| task.status == GoalTaskStatus::InProgress)
+            .or_else(|| {
+                self.tasks
+                    .iter()
+                    .find(|task| task.status == GoalTaskStatus::Pending)
+            })
+    }
+
+    pub fn has_open_tasks(&self) -> bool {
+        self.tasks.iter().any(|task| task.status.is_open())
     }
 
     /// Check if any budget dimension is exhausted.

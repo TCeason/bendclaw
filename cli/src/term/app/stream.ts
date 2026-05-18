@@ -647,7 +647,11 @@ export function buildToolFinishedLines(event: RunEvent, expanded?: boolean): Out
   const toolName = (p.tool_name as string) ?? 'unknown'
   const args = (p.args as Record<string, unknown>) ?? {}
   const details = p.details as Record<string, any> | undefined
-  const mergedArgs = details?.diff ? { ...args, diff: details.diff } : args
+  const mergedArgs = details?.diff
+    ? { ...args, diff: details.diff }
+    : toolName === 'update_goal_tasks' && Array.isArray(details?.goal?.tasks)
+      ? { ...args, tasks: details.goal.tasks }
+      : args
   const status = p.is_error ? 'error' as const : 'done' as const
   const rawSlim = details?.slim as Record<string, any> | undefined
   const slim = rawSlim && typeof rawSlim.filter === 'string'

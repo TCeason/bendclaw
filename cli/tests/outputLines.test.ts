@@ -84,6 +84,27 @@ describe('buildToolCall', () => {
     expect(all).toContain('... (+2 lines, ctrl+o to expand)')
   })
 
+  test('renders goal task updates as a compact goal block', () => {
+    const args = {
+      tasks: [
+        { id: 1, title: 'Audit current code', status: 'completed', started_at: '2026-05-17T10:00:00Z', completed_at: '2026-05-17T10:02:30Z' },
+        { id: 2, title: 'Simplify coordinator', status: 'in_progress', started_at: new Date(Date.now() - 5000).toISOString() },
+        { id: 3, title: 'Add tests', status: 'pending' },
+      ],
+    }
+
+    const started = buildToolCall('update_goal_tasks', args)
+    expect(started.map(l => l.text).join('\n')).toBe('[GOAL] ● · 1/3 completed · current #2 Simplify coordinator')
+
+    const finished = buildToolResult('update_goal_tasks', args, 'done', 'ignored')
+    const all = finished.map(l => l.text).join('\n')
+    expect(all).toContain('[GOAL] ✓ · 1/3 completed · current #2 Simplify coordinator')
+    expect(all).toContain('  ✓ #1 Audit current code · done in 150.0s')
+    expect(all).toContain('  → #2 Simplify coordinator · running')
+    expect(all).toContain('  · #3 Add tests')
+    expect(all).not.toContain('UPDATE_GOAL_TASKS')
+  })
+
   test('expanded bash preview shows full command', () => {
     const preview = ['python3 << EOF', 'import json', 'print(1)', 'print(2)', 'EOF'].join('\n')
     const lines = buildToolCall('bash', {}, preview, true)

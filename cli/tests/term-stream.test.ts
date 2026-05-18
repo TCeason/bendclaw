@@ -541,6 +541,32 @@ describe('term stream machine', () => {
     expect(flushed.state.streamingText).toBe('')
   })
 
+  test('build tool finish lines uses goal details for complete task progress', () => {
+    const finished = buildToolFinishedLines({
+      kind: 'tool_finished',
+      payload: {
+        tool_name: 'update_goal_tasks',
+        args: {},
+        is_error: false,
+        content: '✓ · 1/3 completed · current #2 Simplify coordinator',
+        details: {
+          goal: {
+            tasks: [
+              { id: 1, title: 'Audit current code', status: 'completed', started_at: '2026-05-17T10:00:00Z', completed_at: '2026-05-17T10:02:30Z' },
+              { id: 2, title: 'Simplify coordinator', status: 'in_progress' },
+              { id: 3, title: 'Add tests', status: 'pending' },
+            ],
+          },
+        },
+      },
+    })
+    const text = finished.map(l => l.text).join('\n')
+    expect(text).toContain('[GOAL] ✓ · 1/3 completed · current #2 Simplify coordinator')
+    expect(text).toContain('  ✓ #1 Audit current code · done in 150.0s')
+    expect(text).toContain('  → #2 Simplify coordinator')
+    expect(text).toContain('  · #3 Add tests')
+  })
+
   test('build tool start/finish lines', () => {
     const started = buildToolStartedLines({
       kind: 'tool_started',
