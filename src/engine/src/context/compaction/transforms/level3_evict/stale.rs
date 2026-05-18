@@ -14,6 +14,9 @@ use crate::context::tokens::message_tokens;
 use crate::context::tokens::total_tokens;
 use crate::types::*;
 
+/// Maximum number of evicted user texts to include in the marker.
+const MAX_EVICTED_USER_TEXTS: usize = 5;
+
 pub fn drop_to_message_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> PhaseResult {
     let len = messages.len();
     let target_len = message_limit_target(ctx, len);
@@ -63,9 +66,48 @@ pub fn drop_to_message_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -
         .iter()
         .map(|&idx| message_tokens(&messages[idx]))
         .sum();
-    let marker =
-        super::super::super::marker::build_marker(&messages, drop_indices.len(), dropped_tokens);
+
+    // Collect user message texts from evicted messages so the marker can
+    // list them as "completed tasks" — prevents the model from re-orienting
+    // to old retained user messages whose responses were evicted.
+    // Filter out internal messages and cap at 5 to avoid bloating the marker.
+    let evicted_user_texts: Vec<String> = drop_indices
+        .iter()
+        .filter_map(|&idx| {
+            if let AgentMessage::Llm(Message::User { content, .. }) = &messages[idx] {
+                content.iter().find_map(|c| {
+                    if let Content::Text { text } = c {
+                        let t = text.trim();
+                        if !t.is_empty() && !is_internal_user_text(t) {
+                            return Some(t.to_string());
+                        }
+                    }
+                    None
+                })
+            } else {
+                None
+            }
+        })
+        .take(MAX_EVICTED_USER_TEXTS)
+        .collect();
+
+    let marker = super::super::super::marker::build_marker_with_evicted(
+        &messages,
+        drop_indices.len(),
+        dropped_tokens,
+        &evicted_user_texts,
+    );
     let marker_tokens = message_tokens(&marker);
+
+    // Always insert at least a minimal marker so the model knows messages
+    // were removed. Use the full marker when it fits within the freed budget;
+    // fall back to a minimal one-liner otherwise.
+    let effective_marker = if marker_tokens < dropped_tokens {
+        marker
+    } else {
+        super::super::super::marker::build_minimal_marker(drop_indices.len())
+    };
+    let effective_marker_tokens = message_tokens(&effective_marker);
 
     let mut result = Vec::with_capacity(target_len);
     let mut inserted_marker = false;
@@ -74,7 +116,7 @@ pub fn drop_to_message_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -
         let should_drop = drop_pos < drop_indices.len() && drop_indices[drop_pos] == idx;
         if should_drop {
             if !inserted_marker {
-                result.push(marker.clone());
+                result.push(effective_marker.clone());
                 inserted_marker = true;
             }
             drop_pos += 1;
@@ -89,8 +131,8 @@ pub fn drop_to_message_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -
         index: first_dropped,
         tool_name: "messages".into(),
         method: CompactionMethod::MessagesEvicted,
-        before_tokens: dropped_tokens.max(marker_tokens),
-        after_tokens: marker_tokens,
+        before_tokens: dropped_tokens.max(effective_marker_tokens),
+        after_tokens: effective_marker_tokens,
         end_index: Some(last_dropped),
         related_count: Some(drop_indices.len()),
     };
@@ -358,10 +400,32 @@ pub fn drop_to_token_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> 
         .map(message_tokens)
         .sum();
 
-    let marker = super::super::super::marker::build_marker_with_note(
+    // Collect user message texts from evicted range for the marker.
+    let evicted_user_texts: Vec<String> = messages[first_end..recent_start]
+        .iter()
+        .filter_map(|msg| {
+            if let AgentMessage::Llm(Message::User { content, .. }) = msg {
+                content.iter().find_map(|c| {
+                    if let Content::Text { text } = c {
+                        let t = text.trim();
+                        if !t.is_empty() && !is_internal_user_text(t) {
+                            return Some(t.to_string());
+                        }
+                    }
+                    None
+                })
+            } else {
+                None
+            }
+        })
+        .take(MAX_EVICTED_USER_TEXTS)
+        .collect();
+
+    let marker = super::super::super::marker::build_marker_with_evicted(
         &messages,
-        &format!("{} messages removed to fit context window", removed),
+        removed,
         dropped_tokens,
+        &evicted_user_texts,
     );
     let marker_tokens = message_tokens(&marker);
 
@@ -538,4 +602,11 @@ fn keep_within_budget(
     }
     result.extend(tail.into_iter().map(|(_, msg)| msg));
     result
+}
+
+/// Returns true for user messages that are internal bookkeeping (system
+/// reminders, prior compaction markers) — these should not appear in the
+/// "completed tasks" list.
+fn is_internal_user_text(text: &str) -> bool {
+    text.starts_with("<system-reminder>") || text.starts_with("[Context compacted")
 }

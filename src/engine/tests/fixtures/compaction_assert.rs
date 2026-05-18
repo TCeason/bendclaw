@@ -43,8 +43,8 @@ pub fn assert_actions_match_level(level: u8, actions: &[CompactionAction]) {
     let allowed_at_level = |method: &CompactionMethod, lvl: u8| -> bool {
         match method {
             CompactionMethod::LifecycleReclaimed => true, // always allowed
+            CompactionMethod::ImageStripped => true,      // level0 reclaim
             CompactionMethod::AgeCleared
-            | CompactionMethod::ImageStripped
             | CompactionMethod::OversizeCapped
             | CompactionMethod::Outline
             | CompactionMethod::HeadTail => lvl >= 1,

@@ -43,25 +43,56 @@ pub(crate) fn build_marker(
     removed: usize,
     dropped_tokens_hint: usize,
 ) -> AgentMessage {
-    build_marker_with_note(
+    build_marker_inner(
         pre_drop_messages,
         &format!("{} messages removed", removed),
         dropped_tokens_hint,
+        &[],
+    )
+}
+
+/// Variant that also records which user messages were evicted, so the model
+/// knows those tasks are completed and won't re-orient to them.
+pub(crate) fn build_marker_with_evicted(
+    pre_drop_messages: &[AgentMessage],
+    removed: usize,
+    dropped_tokens_hint: usize,
+    evicted_user_texts: &[String],
+) -> AgentMessage {
+    build_marker_inner(
+        pre_drop_messages,
+        &format!("{} messages removed", removed),
+        dropped_tokens_hint,
+        evicted_user_texts,
     )
 }
 
 /// Variant for cases that already have a custom count phrase (e.g.
 /// "N messages removed to fit context window").
+#[allow(dead_code)]
 pub(crate) fn build_marker_with_note(
     pre_drop_messages: &[AgentMessage],
     count_note: &str,
     dropped_tokens_hint: usize,
 ) -> AgentMessage {
+    build_marker_inner(pre_drop_messages, count_note, dropped_tokens_hint, &[])
+}
+
+fn build_marker_inner(
+    pre_drop_messages: &[AgentMessage],
+    count_note: &str,
+    dropped_tokens_hint: usize,
+    evicted_user_texts: &[String],
+) -> AgentMessage {
     if dropped_tokens_hint < FULL_MARKER_MIN_DROPPED_TOKENS {
         return build_minimal(count_note);
     }
     let anchor = latest_user_text_verbatim(pre_drop_messages);
-    let full = text_message(&format_full_marker(count_note, anchor.as_deref()));
+    let full = text_message(&format_full_marker(
+        count_note,
+        anchor.as_deref(),
+        evicted_user_texts,
+    ));
     // Belt-and-braces: if the full marker turns out to cost more than what
     // was dropped (small messages but many of them), degrade to minimal.
     if message_tokens(&full) > dropped_tokens_hint {
@@ -74,6 +105,12 @@ pub(crate) fn build_marker_with_note(
 /// "filtered everything to empty" branch).
 pub(crate) fn build_fallback_marker() -> AgentMessage {
     build_minimal("messages removed")
+}
+
+/// Minimal marker with just a count — used when the full marker would exceed
+/// the freed token budget.
+pub(crate) fn build_minimal_marker(removed: usize) -> AgentMessage {
+    build_minimal(&format!("{} messages removed", removed))
 }
 
 fn build_minimal(count_note: &str) -> AgentMessage {
@@ -89,8 +126,19 @@ fn text_message(text: &str) -> AgentMessage {
     })
 }
 
-fn format_full_marker(count_note: &str, anchor: Option<&str>) -> String {
+fn format_full_marker(
+    count_note: &str,
+    anchor: Option<&str>,
+    evicted_user_texts: &[String],
+) -> String {
     let mut out = format!("[Context compacted: {}]", count_note);
+    if !evicted_user_texts.is_empty() {
+        out.push_str("\n\nCompleted tasks (already handled, do not revisit):");
+        for text in evicted_user_texts {
+            out.push_str("\n- ");
+            out.push_str(&truncate_anchor(text));
+        }
+    }
     if let Some(text) = anchor {
         out.push_str("\n\nMost recent user request (verbatim):\n");
         out.push_str(text);
