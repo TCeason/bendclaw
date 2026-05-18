@@ -142,6 +142,20 @@ describe('buildPromptBlocks', () => {
     expect(result).toBeTruthy()
   })
 
+  test('highlights known slash command in theme color', () => {
+    const plainResult = renderPlain(defaultInput({ lines: ['/goal remove unwraps'], cursorCol: 5, placeholder: false }))
+    const ansiResult = render(defaultInput({ lines: ['/goal remove unwraps'], cursorCol: 5, placeholder: false }))
+
+    expect(plainResult).toContain('/goal remove unwraps')
+    expect(plainResult).not.toContain('command matched:')
+    expect(ansiResult).toContain('\x1b[36m')
+  })
+
+  test('does not highlight unknown slash text as command', () => {
+    const ansiResult = render(defaultInput({ lines: ['/unknown text'], cursorCol: 8, placeholder: false }))
+    expect(ansiResult).not.toContain('\x1b[36m/unknown')
+  })
+
   test('handles non-finite columns', () => {
     const result = renderPlain(defaultInput({ columns: Infinity }))
     const lines = result.split('\n')

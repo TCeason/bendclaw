@@ -5,13 +5,25 @@ use crate::types::SessionGoal;
 pub fn goal_set_prompt(condition: &str) -> String {
     format!(
         "An active session goal is now set: \"{condition}\". \
-         Briefly acknowledge the goal, then immediately start working toward it. \
-         First decompose the goal into explicit ordered tasks by calling update_goal_tasks. \
-         After planning, execute the first task without waiting for the user. \
+         Before any exploration, shell command, file read, or implementation work, call \
+         update_goal_tasks exactly once with an explicit ordered plan. The first task should \
+         be in_progress and the remaining tasks pending. Do not call any other tool first. \
+         After planning, immediately execute the first task without waiting for the user. \
          Keep calling update_goal_tasks after meaningful progress. The runtime will keep \
          continuing until the condition holds. It auto-clears once the condition is met — \
          do not tell the user to run `/goal clear` after success; that's only for clearing \
          a goal early."
+    )
+}
+
+pub fn missing_initial_plan_prompt(goal: &SessionGoal) -> String {
+    format!(
+        "The active goal still has no task plan. Stop other work and call \
+         update_goal_tasks now before using any other tool. Create an explicit ordered \
+         plan for this goal, with exactly one in_progress task and the remaining tasks \
+         pending. Do not use bash, file tools, or implementation tools before \
+         update_goal_tasks.\n\n<goal>\n{condition}\n</goal>",
+        condition = goal.condition,
     )
 }
 

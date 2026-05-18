@@ -53,7 +53,9 @@ async fn set_persists_goal_and_starts_run() -> std::result::Result<(), Box<dyn s
                 Box::pin(async move {
                     assert!(matches!(
                         request.input.first(),
-                        Some(evot_engine::Content::Text { text }) if text.contains("write release notes")
+                        Some(evot_engine::Content::Text { text })
+                            if text.contains("write release notes")
+                                && text.contains("Do not call any other tool first")
                     ));
                     let (_tx, rx) = mpsc::unbounded_channel();
                     Ok(Run::from_receiver(

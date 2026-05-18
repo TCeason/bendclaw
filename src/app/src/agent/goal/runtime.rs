@@ -55,6 +55,22 @@ pub async fn after_turn(
         return Ok(AfterTurn::Stop);
     }
 
+    if goal.tasks.is_empty() && !turn_called_update_goal_tasks(report.transcript) {
+        if response_awaits_user(report.transcript) {
+            GoalCoordinator::pause(session).await?;
+            tracing::info!("goal paused because the assistant is waiting for user input");
+            return Ok(AfterTurn::Stop);
+        }
+        if goal.progress.iterations > 1 {
+            GoalCoordinator::pause(session).await?;
+            tracing::info!("goal paused because the assistant did not create an initial task plan");
+            return Ok(AfterTurn::Stop);
+        }
+        return Ok(AfterTurn::Continue(vec![Content::Text {
+            text: prompt::missing_initial_plan_prompt(&goal),
+        }]));
+    }
+
     if should_continue_goal_work(&goal) {
         if response_awaits_user(report.transcript) {
             GoalCoordinator::pause(session).await?;
@@ -96,8 +112,18 @@ pub async fn after_turn(
     }
 }
 
-pub(crate) fn should_continue_goal_work(goal: &crate::types::SessionGoal) -> bool {
+pub fn should_continue_goal_work(goal: &crate::types::SessionGoal) -> bool {
     goal.tasks.is_empty() || goal.has_open_tasks()
+}
+
+pub fn turn_called_update_goal_tasks(transcript: &[TranscriptItem]) -> bool {
+    transcript.iter().any(|item| match item {
+        TranscriptItem::Assistant { tool_calls, .. } => tool_calls
+            .iter()
+            .any(|call| call.name == "update_goal_tasks"),
+        TranscriptItem::ToolResult { tool_name, .. } => tool_name == "update_goal_tasks",
+        _ => false,
+    })
 }
 
 fn response_awaits_user(transcript: &[TranscriptItem]) -> bool {

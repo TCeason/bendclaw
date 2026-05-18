@@ -1,4 +1,5 @@
-import { line, block, plain, dim, bold, colored, inverse, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
+import { COMMANDS, HIDDEN_COMMANDS } from '../../commands/index.js'
+import { line, block, plain, dim, colored, inverse, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
 
 export interface PromptVMInput {
   lines: string[]
@@ -24,6 +25,18 @@ export interface PromptVMInput {
   gitBranch: string | null
 }
 
+const KNOWN_COMMANDS = new Set(
+  [...COMMANDS, ...HIDDEN_COMMANDS].flatMap(command => [command.name, ...(command.aliases ?? [])])
+)
+
+function styleInputText(text: string): StyledSpan[] {
+  const match = /^(\/[a-z]+)(\s.*)?$/.exec(text)
+  if (!match || !KNOWN_COMMANDS.has(match[1]!)) return [plain(text)]
+  return [
+    colored(match[1]!, 'cyan', { bold: true }),
+    ...(match[2] ? [plain(match[2])] : []),
+  ]
+}
 export function buildPromptBlocks(input: PromptVMInput): ViewBlock[] {
   const blocks: ViewBlock[] = []
   const columns = Number.isFinite(input.columns) ? Math.max(1, Math.floor(input.columns)) : 80
@@ -45,12 +58,12 @@ export function buildPromptBlocks(input: PromptVMInput): ViewBlock[] {
         const before = text.slice(0, input.cursorCol)
         const cursorChar = text[input.cursorCol] ?? ' '
         const after = text.slice(input.cursorCol + 1)
-        const spans: StyledSpan[] = [prefix, plain(before), inverse(cursorChar), plain(after)]
+        const spans: StyledSpan[] = [prefix, ...styleInputText(before), inverse(cursorChar), ...styleInputText(after)]
         if (input.ghostHint) spans.push(dim(input.ghostHint))
         inputLines.push(line(...spans))
       }
     } else {
-      inputLines.push(line(prefix, plain(text || ' ')))
+      inputLines.push(line(prefix, ...(text ? styleInputText(text) : [plain(' ')])))
     }
   }
   blocks.push(block(inputLines))
