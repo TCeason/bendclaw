@@ -2922,9 +2922,36 @@ fn test_message_limit_evicts_instead_of_summarizing() {
     });
 
     assert_eq!(result.stats.turns_summarized, 0);
-    assert_eq!(result.stats.messages_dropped, 15);
+    assert_eq!(result.stats.messages_dropped, 14);
     assert_eq!(result.stats.level, 3);
-    assert_eq!(result.messages.len(), 6);
+    assert_eq!(result.messages.len(), 7);
+    assert_no_orphan_tool_pairs(&result.messages);
+}
+
+#[test]
+fn test_message_limit_does_not_trigger_level2_summary_under_low_token_pressure() {
+    let messages = (0..20)
+        .map(|i| AgentMessage::Llm(Message::user(format!("old message {}", i))))
+        .collect::<Vec<_>>();
+
+    let config = ContextConfig {
+        max_context_tokens: 100_000,
+        system_prompt_tokens: 0,
+        keep_recent: 4,
+        keep_first: 1,
+        max_messages: 8,
+        message_limit_target_pct: 75,
+        compact_trigger_pct: 50,
+        ..Default::default()
+    };
+
+    let result = compact_messages(messages, &config, &CompactionBudgetState {
+        estimated_tokens: 1,
+    });
+
+    assert_eq!(result.stats.level, 3);
+    assert_eq!(result.stats.turns_summarized, 0);
+    assert!(result.stats.messages_dropped > 0);
     assert_no_orphan_tool_pairs(&result.messages);
 }
 
@@ -2965,8 +2992,8 @@ fn test_message_limit_with_provider_overhead_uses_message_limit_evict() {
     });
 
     assert_eq!(result.stats.level, 3);
-    assert_eq!(result.stats.messages_dropped, 15);
-    assert_eq!(result.messages.len(), 6);
+    assert_eq!(result.stats.messages_dropped, 14);
+    assert_eq!(result.messages.len(), 7);
     assert_no_orphan_tool_pairs(&result.messages);
 }
 
@@ -3014,8 +3041,8 @@ fn test_message_limit_evicts_to_percentage_target_not_minimum_tail() {
     });
 
     assert_eq!(result.stats.level, 3);
-    assert_eq!(result.stats.messages_dropped, 18);
-    assert_eq!(result.messages.len(), 85);
+    assert_eq!(result.stats.messages_dropped, 12);
+    assert_eq!(result.messages.len(), 91);
     assert_no_orphan_tool_pairs(&result.messages);
 }
 
@@ -3172,6 +3199,70 @@ fn test_message_limit_does_not_drop_user_when_final_assistant_is_recent() {
     ));
     assert!(!has_user_text(&result.messages, "drop user"));
     assert!(!has_assistant_text(&result.messages, "drop response"));
+    assert_no_orphan_tool_pairs(&result.messages);
+}
+
+#[test]
+fn test_message_limit_skips_oversized_span_under_low_token_pressure() {
+    let mut messages = vec![AgentMessage::Llm(Message::user("initial task"))];
+    for i in 0..61 {
+        messages.push(make_final_assistant(&format!("old response {i}")));
+    }
+    for i in 0..90 {
+        messages.push(AgentMessage::Llm(Message::user(format!(
+            "recent message {i}"
+        ))));
+    }
+
+    let config = ContextConfig {
+        max_context_tokens: 160_000,
+        system_prompt_tokens: 0,
+        keep_recent: 90,
+        keep_first: 1,
+        max_messages: 150,
+        message_limit_target_pct: 90,
+        ..Default::default()
+    };
+
+    let result = compact_messages(messages, &config, &CompactionBudgetState {
+        estimated_tokens: 36_000,
+    });
+
+    assert_eq!(result.stats.level, 0);
+    assert_eq!(result.stats.messages_dropped, 0);
+    assert_eq!(result.messages.len(), 152);
+    assert!(has_user_text(&result.messages, "initial task"));
+    assert!(has_assistant_text(&result.messages, "old response 0"));
+    assert!(has_user_text(&result.messages, "recent message 89"));
+    assert_no_orphan_tool_pairs(&result.messages);
+}
+
+#[test]
+fn test_message_limit_gentle_cleanup_caps_drop_count() {
+    let messages = (0..152)
+        .map(|i| AgentMessage::Llm(Message::user(format!("message {i}"))))
+        .collect::<Vec<_>>();
+
+    let config = ContextConfig {
+        max_context_tokens: 160_000,
+        system_prompt_tokens: 0,
+        keep_recent: 10,
+        keep_first: 2,
+        max_messages: 150,
+        message_limit_target_pct: 90,
+        ..Default::default()
+    };
+
+    let result = compact_messages(messages, &config, &CompactionBudgetState {
+        estimated_tokens: 36_000,
+    });
+
+    assert_eq!(result.stats.level, 3);
+    assert_eq!(result.stats.messages_dropped, 17);
+    assert_eq!(result.messages.len(), 136);
+    assert!(has_user_text(&result.messages, "message 0"));
+    assert!(has_user_text(&result.messages, "message 1"));
+    assert!(has_user_text(&result.messages, "message 151"));
     assert_no_orphan_tool_pairs(&result.messages);
 }
 

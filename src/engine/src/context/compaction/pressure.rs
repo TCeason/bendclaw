@@ -30,7 +30,7 @@ impl PressureState {
     }
 
     pub fn needs_collapse(self, snapshot: &ContextSnapshot) -> bool {
-        self.effective_tokens > snapshot.compact_trigger && !self.over_message_limit
+        self.effective_tokens > snapshot.compact_trigger
     }
 
     pub fn evict_mode(self) -> Option<EvictMode> {

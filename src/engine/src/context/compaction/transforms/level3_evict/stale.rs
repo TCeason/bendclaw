@@ -32,10 +32,7 @@ pub fn drop_to_message_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -
         .min(target_len.saturating_sub(first_end + 1));
     let recent_start = len.saturating_sub(recent_len);
     let removable = recent_start.saturating_sub(first_end);
-    let remove_count = len
-        .saturating_sub(target_len)
-        .saturating_add(1)
-        .min(removable);
+    let remove_count = len.saturating_sub(target_len).min(removable);
 
     if remove_count == 0 {
         return PhaseResult {
@@ -44,7 +41,17 @@ pub fn drop_to_message_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -
         };
     }
 
-    let drop_indices = choose_message_limit_drops(&messages, first_end, recent_start, remove_count);
+    let drop_indices = choose_message_limit_drops(
+        &messages,
+        first_end,
+        recent_start,
+        remove_count,
+        message_limit_remove_cap(
+            len,
+            ctx.bounds.max_messages,
+            ctx.bounds.message_limit_target_pct.clamp(1, 100) as usize,
+        ),
+    );
     if drop_indices.is_empty() {
         return PhaseResult {
             messages,
@@ -111,11 +118,34 @@ fn message_limit_target(ctx: &PhaseContext, current_len: usize) -> usize {
         .saturating_mul(pct)
         .saturating_add(99)
         / 100;
+
     pct_target
         .max(minimum)
         .min(ctx.bounds.max_messages)
         .min(current_len)
-        .max(1)
+}
+
+fn message_limit_remove_cap(current_len: usize, max_messages: usize, target_pct: usize) -> usize {
+    if max_messages == 0 || current_len <= max_messages {
+        return 0;
+    }
+
+    let target_len = max_messages
+        .saturating_mul(target_pct.clamp(1, 100))
+        .saturating_add(99)
+        / 100;
+    let requested = current_len.saturating_sub(target_len);
+
+    if max_messages < 100 || target_pct >= 100 {
+        return usize::MAX;
+    }
+
+    let soft_cap = max_messages.saturating_add(9) / 10;
+    requested.min(
+        current_len
+            .saturating_sub(max_messages)
+            .saturating_add(soft_cap),
+    )
 }
 
 /// Choose which messages to drop from the middle section.
@@ -131,12 +161,13 @@ fn message_limit_target(ctx: &PhaseContext, current_len: usize) -> usize {
 ///   2. Drop orphan assistant/tool runs that are fully in the stale range.
 ///
 /// Drops are always in complete spans — never truncates a turn midway.
-/// May exceed `remove_count` to avoid leaving orphaned messages.
+/// Oversized spans are skipped so message-count cleanup cannot erase most of a session.
 fn choose_message_limit_drops(
     messages: &[AgentMessage],
     start: usize,
     end: usize,
     remove_count: usize,
+    remove_cap: usize,
 ) -> Vec<usize> {
     // Identify turns in the full message list, then only emit spans fully contained in
     // the droppable range. This avoids keep_first/keep_recent slicing through a turn.
@@ -215,7 +246,10 @@ fn choose_message_limit_drops(
             .filter(|&&idx| !dropped[idx])
             .copied()
             .collect();
-        if new_indices.is_empty() {
+        if new_indices.is_empty() || total_dropped >= remove_count {
+            continue;
+        }
+        if total_dropped + new_indices.len() > remove_cap {
             continue;
         }
         for &idx in &new_indices {
