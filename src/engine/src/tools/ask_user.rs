@@ -87,30 +87,17 @@ impl AgentTool for AskUserTool {
     }
 
     fn description(&self) -> &str {
-        "Ask the user multiple-choice questions to gather information, clarify ambiguity, \
-         understand preferences, or make decisions.\n\
-         \n\
-         Use this tool when you need user input during planning:\n\
+        "Use this tool when you need to ask the user questions during execution. This allows you to:\n\
          1. Gather user preferences or requirements\n\
          2. Clarify ambiguous instructions\n\
-         3. Get decisions on implementation choices\n\
-         4. Offer choices about what direction to take\n\
-         \n\
-         Before asking, form your own best hypotheses from the code and task context. \
-         Your options should reflect those hypotheses so the user can confirm or correct you, \
-         rather than doing the thinking from scratch.\n\
+         3. Get decisions on implementation choices as you work\n\
+         4. Offer choices to the user about what direction to take.\n\
          \n\
          Usage notes:\n\
          - You can ask 1-4 questions in a single call; batch related questions together\n\
-         - Users can always select \"None of the above\" to provide custom text input\n\
+         - Users will always be able to select \"None of the above\" to provide custom text input\n\
          - If you recommend a specific option, make it the first option and add \"(Recommended)\" \
            at the end of the label\n\
-         - Each option should have a concise label and a brief description explaining the tradeoff\n\
-         - Provide 2-4 distinct options per question; do not include an \"Other\" option, \
-           it is provided automatically\n\
-         - Only ask when you genuinely need user input — do not ask what you can discover \
-           by reading code\n\
-         - Ask sparingly: prefer one well-structured call over multiple separate calls\n\
          \n\
          Plan mode note: Use this tool to clarify requirements or choose between approaches \
          BEFORE finalizing your plan. Do NOT use this tool to ask \"Is my plan ready?\" or \
