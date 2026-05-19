@@ -204,23 +204,19 @@ impl Agent {
         self
     }
 
-    /// Load skills and register the skill tool.
+    /// Register the skill tool so the LLM can activate skills by name.
     ///
-    /// Appends the skills index to the system prompt (XML per the
-    /// [AgentSkills standard](https://agentskills.io)) and registers a
-    /// `SkillTool` so the LLM can activate skills by name.
+    /// **Does not** modify `self.system_prompt`. Callers are responsible for
+    /// including [`SkillSet::format_for_prompt`] (or equivalent) in the
+    /// system prompt they pass to `with_system_prompt`. This keeps the engine
+    /// honest: the system prompt it sends is exactly what the caller built,
+    /// which is what `/_dump`-style tooling relies on.
     ///
     /// **Must be called after `with_tools()`** — `with_tools()` replaces the
     /// tool list, so calling it afterwards would remove the SkillTool.
     pub fn with_skills(mut self, skills: crate::tools::skill::SkillSet) -> Self {
         if skills.is_empty() {
             return self;
-        }
-        let prompt_fragment = skills.format_for_prompt();
-        if self.system_prompt.is_empty() {
-            self.system_prompt = prompt_fragment;
-        } else {
-            self.system_prompt = format!("{}\n\n{}", self.system_prompt, prompt_fragment);
         }
         self.tools
             .push(Box::new(crate::tools::skill::SkillTool::new(

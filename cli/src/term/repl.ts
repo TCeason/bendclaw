@@ -1479,6 +1479,24 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         planning = false
         commitLines([{ id: 'sys-act', kind: 'system', text: '  planning: off' }])
       }
+    } else if (name === '/_dump') {
+      try {
+        const outcome = await agent.submit(
+          `/_dump${args ? ' ' + args : ''}`,
+          sessionId ?? undefined,
+          planning ? 'planning_interactive' : 'interactive',
+        )
+        if (outcome.kind === 'command') {
+          const lines = (outcome.message ?? '').split('\n').map((line, i) => ({
+            id: `sys-dump-${i}`,
+            kind: 'system' as const,
+            text: `  ${line}`,
+          }))
+          commitLines(lines.length > 0 ? lines : [{ id: 'sys-dump', kind: 'system', text: '  (no dump output)' }])
+        }
+      } catch (err: any) {
+        commitLines([{ id: 'sys-dump-err', kind: 'system', text: chalk.red(`  /_dump failed: ${err?.message ?? err}`) }])
+      }
     } else if (name === '/log') {
       await handleLogCommand(args)
     } else if (name === '/resume') {

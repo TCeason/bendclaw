@@ -66,6 +66,9 @@ pub struct EngineOptions {
     pub api_key: String,
     pub base_url: Option<String>,
     pub system_prompt: String,
+    /// Per-section breakdown matching `system_prompt`. Guaranteed:
+    /// `system_prompt == sections.iter().map(|s| s.text).join("\n\n")`.
+    pub system_prompt_sections: Vec<crate::agent::prompt::Section>,
     pub limits: crate::agent::ExecutionLimits,
     pub skills_dirs: Vec<std::path::PathBuf>,
     pub tools: Vec<Box<dyn evot_engine::AgentTool>>,

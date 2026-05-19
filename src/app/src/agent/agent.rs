@@ -15,6 +15,7 @@ use super::session::Session;
 use super::tools::build_tools;
 use super::tools::ToolMode;
 use super::variables::Variables;
+use crate::agent::prompt::Section;
 use crate::conf::Config;
 use crate::conf::LlmConfig;
 use crate::error::EvotError;
@@ -25,7 +26,13 @@ use crate::storage::Storage;
 use crate::telemetry::config::TelemetryConfig;
 use crate::types::GoalStatus;
 use crate::types::ListSessions;
+use crate::types::PromptDump;
+use crate::types::SectionDump;
 use crate::types::SessionMeta;
+use crate::types::SkillInstructionDump;
+use crate::types::SystemPromptDump;
+use crate::types::TokenTotals;
+use crate::types::ToolDump;
 use crate::types::TranscriptItem;
 
 // ---------------------------------------------------------------------------
@@ -132,6 +139,11 @@ struct ActiveRun {
 pub struct Agent {
     llm: RwLock<LlmConfig>,
     system_prompt: RwLock<String>,
+    /// Per-section breakdown matching `system_prompt`. Used by `/_dump`.
+    /// Empty when `with_system_prompt` was called with a raw string and no
+    /// sections; the dump path then treats the whole prompt as a single
+    /// "system_prompt" section.
+    system_prompt_sections: RwLock<Vec<Section>>,
     limits: RwLock<ExecutionLimits>,
     skills_dirs: RwLock<Vec<PathBuf>>,
     cwd: String,
@@ -158,6 +170,7 @@ impl Agent {
         Ok(Arc::new(Self {
             llm: RwLock::new(config.active_llm()?),
             system_prompt: RwLock::new(system_prompt),
+            system_prompt_sections: RwLock::new(Vec::new()),
             limits: RwLock::new(ExecutionLimits::default()),
             skills_dirs: RwLock::new(Vec::new()),
             cwd,
@@ -178,6 +191,20 @@ impl Agent {
 
     pub fn with_system_prompt(self: &Arc<Self>, prompt: impl Into<String>) -> Arc<Self> {
         *self.system_prompt.write() = prompt.into();
+        self.system_prompt_sections.write().clear();
+        Arc::clone(self)
+    }
+
+    /// Set the system prompt along with its per-section breakdown. The joined
+    /// `text` must equal `sections` joined by `"\n\n"` — same invariant as
+    /// `SystemPrompt::build_with_sections`.
+    pub fn with_system_prompt_sections(
+        self: &Arc<Self>,
+        text: String,
+        sections: Vec<Section>,
+    ) -> Arc<Self> {
+        *self.system_prompt.write() = text;
+        *self.system_prompt_sections.write() = sections;
         Arc::clone(self)
     }
 
@@ -186,6 +213,11 @@ impl Agent {
         sp.push('\n');
         sp.push_str(extra);
         drop(sp);
+        // Track the appended chunk so /_dump still shows where it came from.
+        self.system_prompt_sections.write().push(Section {
+            name: "append",
+            text: extra.to_string(),
+        });
         Arc::clone(self)
     }
 
@@ -445,6 +477,12 @@ impl Agent {
                     .await?,
                 ))
             }
+            Command::Dump { target } => {
+                let msg = self
+                    .handle_dump_command(&request.mode, &session, target.as_deref())
+                    .await?;
+                Ok(Some(SubmitOutcome::Command(msg)))
+            }
         }
     }
 
@@ -533,6 +571,7 @@ impl Agent {
         let Self {
             llm,
             system_prompt: _,
+            system_prompt_sections: _,
             limits,
             skills_dirs: _,
             cwd,
@@ -548,6 +587,7 @@ impl Agent {
         let forked = Arc::new(Self {
             llm: RwLock::new(llm.read().clone()),
             system_prompt: RwLock::new(request.system_prompt),
+            system_prompt_sections: RwLock::new(Vec::new()),
             limits: RwLock::new(limits.read().clone()),
             skills_dirs: RwLock::new(vec![]),
             cwd: cwd.clone(),
@@ -625,41 +665,101 @@ impl Agent {
         &self,
         mode: &ToolMode,
         _goal: Option<&crate::types::SessionGoal>,
-    ) -> String {
-        let base = self.system_prompt.read().clone();
-        let mut prompt = match mode {
-            ToolMode::Planning { .. } => format!("{base}\n\n{PLANNING_MODE_PROMPT}"),
-            _ => base,
-        };
+    ) -> (String, Vec<Section>) {
+        let mut sections = self.system_prompt_sections.read().clone();
+
+        if matches!(mode, ToolMode::Planning { .. }) {
+            sections.push(Section {
+                name: "planning_mode",
+                text: PLANNING_MODE_PROMPT.to_string(),
+            });
+        }
 
         if let Some(vars) = self.variables.read().as_ref() {
             let names = vars.variable_names();
             if !names.is_empty() {
-                prompt.push_str("\n\nAvailable variables: ");
-                prompt.push_str(&names.join(", "));
-                prompt.push_str(
-                    "\n\nThese variables are automatically available in all bash commands \
+                let text = format!(
+                    "Available variables: {}\n\n\
+                     These variables are automatically available in all bash commands \
                      as environment variables. Use $VAR_NAME to reference them.\n\
                      Do not print, echo, or expose variable values.",
+                    names.join(", ")
                 );
+                sections.push(Section {
+                    name: "variables",
+                    text,
+                });
             }
         }
 
         if self.sandbox.enabled {
-            prompt.push_str(
-                "\n\n# Sandbox Mode\n\
-                 You are running in a sandboxed environment with OS-level filesystem restrictions.\n\
-                 - File access is restricted to the project workspace and explicitly allowed directories.\n\
-                 - The user's home directory ($HOME) is NOT accessible except for allowed paths.\n\
-                 - Do NOT attempt to install packages (pip install, brew install, curl | sh, etc.) — \
-                 they will fail with \"Operation not permitted\".\n\
-                 - Do NOT retry commands that fail with permission errors — the restriction is \
-                 enforced by the kernel and cannot be bypassed.\n\
-                 - Use only tools and binaries already available on PATH.",
-            );
+            sections.push(Section {
+                name: "sandbox",
+                text: "# Sandbox Mode\n\
+                       You are running in a sandboxed environment with OS-level filesystem restrictions.\n\
+                       - File access is restricted to the project workspace and explicitly allowed directories.\n\
+                       - The user's home directory ($HOME) is NOT accessible except for allowed paths.\n\
+                       - Do NOT attempt to install packages (pip install, brew install, curl | sh, etc.) — \
+                       they will fail with \"Operation not permitted\".\n\
+                       - Do NOT retry commands that fail with permission errors — the restriction is \
+                       enforced by the kernel and cannot be bypassed.\n\
+                       - Use only tools and binaries already available on PATH."
+                    .to_string(),
+            });
         }
 
-        prompt
+        let text = sections
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        (text, sections)
+    }
+
+    /// Build a structured snapshot of what evot would send to the LLM right
+    /// now (system prompt + tool definitions + skill instructions). Persists
+    /// to JSON and returns a human-readable status string.
+    async fn handle_dump_command(
+        self: &Arc<Self>,
+        mode: &ToolMode,
+        session: &Arc<Session>,
+        target: Option<&str>,
+    ) -> Result<String> {
+        let session_id = session.session_id().await;
+        // build_turn runs the full per-turn assembly (tools, skills_dirs,
+        // memory tool, goal tools). Reuse it so the dump matches reality.
+        let turn = self
+            .build_turn(mode, Arc::clone(session), &session_id, Vec::new())
+            .await?;
+
+        let dump = build_prompt_dump(self, mode, &turn);
+
+        let path = resolve_dump_path(target)?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| {
+                EvotError::Agent(format!(
+                    "failed to create dump dir {}: {err}",
+                    parent.display()
+                ))
+            })?;
+        }
+        let json = serde_json::to_string_pretty(&dump)
+            .map_err(|err| EvotError::Agent(format!("failed to serialize prompt dump: {err}")))?;
+        std::fs::write(&path, json).map_err(|err| {
+            EvotError::Agent(format!("failed to write dump to {}: {err}", path.display()))
+        })?;
+
+        Ok(format!(
+            "Prompt dump saved to {}\n  system_prompt: {} tokens ({} sections)\n  tools: {} entries, {} tokens\n  skills: {} entries, {} tokens\n  total: {} tokens",
+            path.display(),
+            dump.totals.system_prompt_tokens,
+            dump.system_prompt.sections.len(),
+            dump.tools.len(),
+            dump.totals.tool_definition_tokens,
+            dump.skill_instructions.len(),
+            dump.totals.skill_instructions_tokens,
+            dump.totals.grand_total,
+        ))
     }
 
     async fn resolve_session(
@@ -711,7 +811,8 @@ impl Agent {
     ) -> Result<runtime::TurnInput> {
         let llm = self.llm.read().clone();
         let active_goal = session.read_goal().await;
-        let system_prompt = self.build_system_prompt(mode, active_goal.as_ref());
+        let (mut system_prompt, mut sections) =
+            self.build_system_prompt(mode, active_goal.as_ref());
         let envs = self
             .variables()
             .map(|v| v.all_env_pairs())
@@ -754,6 +855,23 @@ impl Agent {
             }
         }
 
+        // Append skills fragment to system prompt so the engine receives it
+        // as part of the prompt text (engine no longer mutates system_prompt).
+        if let Ok(specs) = crate::agent::prompt::skill::load_skills(&skill_dirs) {
+            if !specs.is_empty() {
+                let skill_set = evot_engine::SkillSet::new(specs);
+                let fragment = skill_set.format_for_prompt();
+                if !fragment.is_empty() {
+                    system_prompt.push_str("\n\n");
+                    system_prompt.push_str(&fragment);
+                    sections.push(Section {
+                        name: "skills",
+                        text: fragment,
+                    });
+                }
+            }
+        }
+
         let prior_transcripts = session.transcript().await;
         let prior_messages = convert::into_agent_messages(&prior_transcripts);
         let prior_messages = evot_engine::sanitize_tool_pairs(prior_messages);
@@ -766,6 +884,7 @@ impl Agent {
                 api_key: llm.api_key,
                 base_url: Some(llm.base_url),
                 system_prompt,
+                system_prompt_sections: sections,
                 limits: self.limits.read().clone(),
                 skills_dirs: skill_dirs,
                 tools,
@@ -832,6 +951,142 @@ fn format_history_entry(seq: u64, item: &crate::types::TranscriptItem) -> String
     } else {
         format!("#{:<4} {:<10} {}", seq, role, preview)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Prompt dump helpers
+// ---------------------------------------------------------------------------
+
+/// Conservative whitespace-based proxy for token count. Avoids a tokenizer
+/// dependency in the dump path — for prompt-budget sanity checks it's fine,
+/// and replay tooling can re-tokenize the text directly. Roughly
+/// `len / 4` is the rule of thumb.
+fn rough_tokens(s: &str) -> usize {
+    let chars = s.chars().count();
+    (chars + 3) / 4
+}
+
+fn mode_label(mode: &ToolMode) -> &'static str {
+    match mode {
+        ToolMode::Interactive { .. } => "Interactive",
+        ToolMode::Headless => "Headless",
+        ToolMode::Planning { .. } => "Planning",
+        ToolMode::Readonly => "Readonly",
+    }
+}
+
+fn thinking_label(level: evot_engine::ThinkingLevel) -> &'static str {
+    match level {
+        evot_engine::ThinkingLevel::Off => "off",
+        evot_engine::ThinkingLevel::Minimal => "minimal",
+        evot_engine::ThinkingLevel::Low => "low",
+        evot_engine::ThinkingLevel::Medium => "medium",
+        evot_engine::ThinkingLevel::High => "high",
+        evot_engine::ThinkingLevel::Adaptive => "adaptive",
+    }
+}
+
+fn build_prompt_dump(_agent: &Agent, mode: &ToolMode, turn: &runtime::TurnInput) -> PromptDump {
+    let opts = &turn.options;
+
+    // System prompt sections — sourced from the turn (includes planning,
+    // variables, sandbox, skills). Falls back to a single section if empty.
+    let section_dumps = if opts.system_prompt_sections.is_empty() {
+        vec![SectionDump {
+            name: "system_prompt".into(),
+            text: opts.system_prompt.clone(),
+            tokens: rough_tokens(&opts.system_prompt),
+        }]
+    } else {
+        opts.system_prompt_sections
+            .iter()
+            .map(|s| SectionDump {
+                name: s.name.to_string(),
+                text: s.text.clone(),
+                tokens: rough_tokens(&s.text),
+            })
+            .collect()
+    };
+
+    let system_tokens = rough_tokens(&opts.system_prompt);
+    let system_prompt = SystemPromptDump {
+        text: opts.system_prompt.clone(),
+        tokens: system_tokens,
+        sections: section_dumps,
+    };
+
+    // Tool definitions
+    let mut tool_dumps: Vec<ToolDump> = opts
+        .tools
+        .iter()
+        .map(|t| {
+            let name = t.name().to_string();
+            let description = t.description().to_string();
+            let parameters = t.parameters_schema();
+            let serialized = format!("{name}\n{description}\n{parameters}");
+            ToolDump {
+                name,
+                description,
+                parameters,
+                tokens: rough_tokens(&serialized),
+            }
+        })
+        .collect();
+    tool_dumps.sort_by(|a, b| a.name.cmp(&b.name));
+    let tool_tokens: usize = tool_dumps.iter().map(|t| t.tokens).sum();
+
+    // Skill instructions — loaded the same way the runtime would.
+    let mut skill_instructions = std::collections::BTreeMap::new();
+    if !opts.skills_dirs.is_empty() {
+        match crate::agent::prompt::skill::load_skills(&opts.skills_dirs) {
+            Ok(specs) => {
+                for spec in specs {
+                    let combined =
+                        format!("{}\n{}\n{}", spec.name, spec.description, spec.instructions);
+                    skill_instructions.insert(spec.name.clone(), SkillInstructionDump {
+                        description: spec.description,
+                        instructions: spec.instructions,
+                        tokens: rough_tokens(&combined),
+                    });
+                }
+            }
+            Err(err) => {
+                tracing::warn!("dump: failed to load skills: {err}");
+            }
+        }
+    }
+    let skill_tokens: usize = skill_instructions.values().map(|s| s.tokens).sum();
+
+    PromptDump {
+        evot_version: env!("CARGO_PKG_VERSION").to_string(),
+        cwd: opts.cwd.display().to_string(),
+        mode: mode_label(mode).into(),
+        model: opts.model.clone(),
+        thinking_level: thinking_label(opts.thinking_level).into(),
+        system_prompt,
+        tools: tool_dumps,
+        skill_instructions,
+        totals: TokenTotals {
+            system_prompt_tokens: system_tokens,
+            tool_definition_tokens: tool_tokens,
+            skill_instructions_tokens: skill_tokens,
+            grand_total: system_tokens + tool_tokens + skill_tokens,
+        },
+    }
+}
+
+fn resolve_dump_path(target: Option<&str>) -> Result<PathBuf> {
+    if let Some(t) = target {
+        return Ok(PathBuf::from(t));
+    }
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| EvotError::Agent("HOME not set; cannot pick default dump path".into()))?;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    Ok(PathBuf::from(home)
+        .join(".evotai")
+        .join("dumps")
+        .join(format!("prompt-{stamp}.json")))
 }
 
 // ---------------------------------------------------------------------------

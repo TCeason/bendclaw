@@ -42,6 +42,7 @@ pub fn build_verify_fn(llm: &LlmConfig, cwd: &str) -> VerifyFn {
                 api_key: llm.api_key.clone(),
                 base_url: Some(llm.base_url.clone()),
                 system_prompt,
+                system_prompt_sections: Vec::new(),
                 limits: crate::agent::ExecutionLimits {
                     max_turns: 6,
                     max_total_tokens: 20_000,

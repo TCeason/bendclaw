@@ -48,7 +48,7 @@ pub async fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
         .map(|p| p.to_string_lossy().to_string())
         .map_err(|e| EvotError::Run(format!("failed to get cwd: {e}")))?;
 
-    let system_prompt = SystemPrompt::new(&cwd)
+    let (system_prompt_text, system_prompt_sections) = SystemPrompt::new(&cwd)
         .with_system_guidance()
         .with_agent_behavior()
         .with_tool_guidance()
@@ -65,7 +65,7 @@ pub async fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
         .with_git()
         .with_memory()
         .with_claude_memory()
-        .build();
+        .build_with_sections();
 
     let mut skills_dirs = Vec::new();
     if let Ok(global) = crate::conf::paths::skills_dir() {
@@ -76,7 +76,7 @@ pub async fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
     tracing::info!(skills_dirs = ?skills_dirs, "agent skills directories");
 
     let agent = Agent::new(conf, &cwd)?
-        .with_system_prompt(system_prompt)
+        .with_system_prompt_sections(system_prompt_text, system_prompt_sections)
         .with_skills_dirs(skills_dirs);
 
     // Load persisted variables

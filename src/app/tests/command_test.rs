@@ -175,6 +175,22 @@ fn parse_goal_set_without_objective_is_usage_error() {
     ));
 }
 
+#[test]
+fn parse_dump_bare_has_no_target() {
+    match parse_command("/_dump") {
+        Some(Command::Dump { target: None }) => {}
+        other => panic!("expected Dump{{ target: None }}, got {:?}", debug(&other)),
+    }
+}
+
+#[test]
+fn parse_dump_with_path() {
+    match parse_command("/_dump /tmp/p.json") {
+        Some(Command::Dump { target: Some(t) }) => assert_eq!(t, "/tmp/p.json"),
+        other => panic!("expected Dump with path, got {:?}", debug(&other)),
+    }
+}
+
 fn debug(cmd: &Option<Command>) -> &'static str {
     match cmd {
         None => "None",
@@ -187,6 +203,7 @@ fn debug(cmd: &Option<Command>) -> &'static str {
         Some(Command::Goal(GoalCommand::Resume)) => "Goal::Resume",
         Some(Command::Goal(GoalCommand::Done { .. })) => "Goal::Done",
         Some(Command::Goal(GoalCommand::Clear)) => "Goal::Clear",
+        Some(Command::Dump { .. }) => "Dump",
         Some(Command::UsageError(_)) => "UsageError",
     }
 }

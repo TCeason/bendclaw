@@ -33,6 +33,7 @@ export const HIDDEN_COMMANDS: SlashCommand[] = [
   { name: '/env', description: 'Manage variables', usage: '/env [set K=V | del K | load FILE]', handler: 'builtin' },
   { name: '/log', description: 'Analyze session log / share sessions', usage: '/log [up [id] | dl <url> | query]', handler: 'builtin' },
   { name: '/update', description: 'Update evot to latest version', handler: 'builtin' },
+  { name: '/_dump', description: 'Dump system prompt + tools + skills as JSON', usage: '/_dump [path]', handler: 'builtin' },
 ]
 
 /** All commands (visible + hidden) for resolution */
@@ -103,7 +104,8 @@ function isSlashPrefix(text: string): boolean {
   if (!text.startsWith('/')) return false
   const rest = text.slice(1)
   const cmdPart = rest.split(/\s/)[0] ?? ''
-  return /^[a-z]*$/.test(cmdPart)
+  // Allow lowercase letters plus `_` so hidden commands like `/_dump` work.
+  return /^[a-z_]*$/.test(cmdPart)
 }
 
 /**

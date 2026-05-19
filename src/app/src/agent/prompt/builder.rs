@@ -118,76 +118,116 @@ Do not narrate each step, list every file you read, or explain routine actions. 
 ///     .with_append("Be concise.")
 ///     .build();
 /// ```
+/// A named section of the system prompt.
+///
+/// Preserved through the builder so callers (including prompt-dump tooling) can
+/// see which logical chunk each piece of text came from rather than diffing one
+/// big string. The final prompt is just `sections.join("\n\n")`.
+#[derive(Debug, Clone)]
+pub struct Section {
+    pub name: &'static str,
+    pub text: String,
+}
+
 pub struct SystemPrompt {
     cwd: String,
-    sections: Vec<String>,
+    sections: Vec<Section>,
 }
 
 impl SystemPrompt {
     pub fn new(cwd: &str) -> Self {
         Self {
             cwd: cwd.to_string(),
-            sections: vec![
-                "You are an interactive agent that helps users with software engineering tasks. \
-                 Use the instructions below and the tools available to you to assist the user."
+            sections: vec![Section {
+                name: "identity",
+                text: "You are an interactive agent that helps users with software engineering \
+                       tasks. Use the instructions below and the tools available to you to \
+                       assist the user."
                     .into(),
-            ],
+            }],
         }
     }
 
     /// Append system/runtime guidance: user-visible text, permission mode,
     /// system tags, prompt injection, and context compression.
     pub fn with_system_guidance(mut self) -> Self {
-        self.sections.push(SYSTEM_SECTION.into());
+        self.sections.push(Section {
+            name: "system",
+            text: SYSTEM_SECTION.into(),
+        });
         self
     }
 
     /// Append agent behavior guidelines: task execution, code style, and action bias.
     pub fn with_agent_behavior(mut self) -> Self {
-        self.sections.push(AGENT_BEHAVIOR_SECTION.into());
+        self.sections.push(Section {
+            name: "agent_behavior",
+            text: AGENT_BEHAVIOR_SECTION.into(),
+        });
         self
     }
 
     /// Append tool-use guidance: prefer dedicated tools, choose shell when useful,
     /// and run independent tool calls in parallel.
     pub fn with_tool_guidance(mut self) -> Self {
-        self.sections.push(USING_TOOLS_SECTION.into());
+        self.sections.push(Section {
+            name: "using_tools",
+            text: USING_TOOLS_SECTION.into(),
+        });
         self
     }
 
     /// Append tone guidance: concise, direct, no tool narration.
     pub fn with_tone_and_style(mut self) -> Self {
-        self.sections.push(TONE_AND_STYLE_SECTION.into());
+        self.sections.push(Section {
+            name: "tone_and_style",
+            text: TONE_AND_STYLE_SECTION.into(),
+        });
         self
     }
 
     /// Append output formatting guidance for terminal markdown rendering.
     pub fn with_output_format(mut self) -> Self {
-        self.sections.push(OUTPUT_FORMAT_SECTION.into());
+        self.sections.push(Section {
+            name: "output_format",
+            text: OUTPUT_FORMAT_SECTION.into(),
+        });
         self
     }
 
     /// Append the static/dynamic prompt boundary marker used by prompt-cache aware providers.
     pub fn with_dynamic_boundary(mut self) -> Self {
-        self.sections.push(DYNAMIC_BOUNDARY.into());
+        self.sections.push(Section {
+            name: "dynamic_boundary",
+            text: DYNAMIC_BOUNDARY.into(),
+        });
         self
     }
 
     /// Append output efficiency constraints: concise, no filler, lead with the answer.
     pub fn with_output_efficiency(mut self) -> Self {
-        self.sections.push(OUTPUT_EFFICIENCY_SECTION.into());
+        self.sections.push(Section {
+            name: "output_efficiency",
+            text: OUTPUT_EFFICIENCY_SECTION.into(),
+        });
         self
     }
 
     /// Append clarifying-question guidance.
     pub fn with_clarifying_questions(mut self) -> Self {
-        self.sections.push(CLARIFYING_QUESTIONS_SECTION.into());
+        self.sections.push(Section {
+            name: "clarifying_questions",
+            text: CLARIFYING_QUESTIONS_SECTION.into(),
+        });
         self
     }
 
     /// Append context management guidance for compacted tool results.
     pub fn with_context_management(mut self) -> Self {
-        self.sections.push(CONTEXT_MANAGEMENT_SECTION.into());
+        self.sections.push(Section {
+            name: "context_management",
+            text: CONTEXT_MANAGEMENT_SECTION.into(),
+        });
         self
     }
 
@@ -207,16 +247,20 @@ impl SystemPrompt {
             lines.push(format!("OS version: {ver}"));
         }
 
-        self.sections
-            .push(format!("# Environment\n\n{}", lines.join("\n")));
+        self.sections.push(Section {
+            name: "environment",
+            text: format!("# Environment\n\n{}", lines.join("\n")),
+        });
         self
     }
 
     /// Append dynamic date info.
     pub fn with_today_date(mut self) -> Self {
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-        self.sections
-            .push(format!("# Date\n\nToday's date: {today}"));
+        self.sections.push(Section {
+            name: "date",
+            text: format!("# Date\n\nToday's date: {today}"),
+        });
         self
     }
 
@@ -254,7 +298,10 @@ impl SystemPrompt {
             }
         }
 
-        self.sections.push(format!("# Git\n\n{}", lines.join("\n")));
+        self.sections.push(Section {
+            name: "git",
+            text: format!("# Git\n\n{}", lines.join("\n")),
+        });
         self
     }
 
@@ -271,8 +318,10 @@ impl SystemPrompt {
         }
 
         if !lines.is_empty() {
-            self.sections
-                .push(format!("# Tools\n\n{}", lines.join("\n")));
+            self.sections.push(Section {
+                name: "tools_detection",
+                text: format!("# Tools\n\n{}", lines.join("\n")),
+            });
         }
         self
     }
@@ -293,8 +342,10 @@ impl SystemPrompt {
             }
         }
         if !context.is_empty() {
-            self.sections
-                .push(format!("# Project Instructions\n\n{context}"));
+            self.sections.push(Section {
+                name: "project_instructions",
+                text: format!("# Project Instructions\n\n{context}"),
+            });
         }
         self
     }
@@ -305,8 +356,11 @@ impl SystemPrompt {
         let home = std::env::var("HOME")
             .or_else(|_| std::env::var("USERPROFILE"))
             .ok();
-        if let Some(section) = super::memory::build_section(&self.cwd, home.as_deref()) {
-            self.sections.push(section);
+        if let Some(text) = super::memory::build_section(&self.cwd, home.as_deref()) {
+            self.sections.push(Section {
+                name: "memory",
+                text,
+            });
         }
         self
     }
@@ -314,8 +368,11 @@ impl SystemPrompt {
     /// Load memory with an explicit home directory override.
     #[doc(hidden)]
     pub fn with_memory_home(mut self, home: &str) -> Self {
-        if let Some(section) = super::memory::build_section(&self.cwd, Some(home)) {
-            self.sections.push(section);
+        if let Some(text) = super::memory::build_section(&self.cwd, Some(home)) {
+            self.sections.push(Section {
+                name: "memory",
+                text,
+            });
         }
         self
     }
@@ -335,21 +392,44 @@ impl SystemPrompt {
     /// Temporary compatibility: append Claude Code memory with explicit home override.
     #[doc(hidden)]
     pub fn with_claude_memory_home(mut self, home: &str) -> Self {
-        if let Some(section) = super::memory::build_claude_section(&self.cwd, home) {
-            self.sections.push(section);
+        if let Some(text) = super::memory::build_claude_section(&self.cwd, home) {
+            self.sections.push(Section {
+                name: "claude_memory",
+                text,
+            });
         }
         self
     }
 
     /// Append arbitrary text (e.g. user-supplied `--append-system-prompt`).
     pub fn with_append(mut self, text: &str) -> Self {
-        self.sections.push(text.to_string());
+        self.sections.push(Section {
+            name: "append",
+            text: text.to_string(),
+        });
         self
     }
 
     /// Consume the builder and produce the final prompt string.
     pub fn build(self) -> String {
-        self.sections.join("\n\n")
+        self.sections
+            .into_iter()
+            .map(|s| s.text)
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    /// Consume the builder and return both the joined prompt string and the
+    /// per-section breakdown. Useful for prompt-dump tooling and observability
+    /// — the joined string is identical to `build()`.
+    pub fn build_with_sections(self) -> (String, Vec<Section>) {
+        let text = self
+            .sections
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        (text, self.sections)
     }
 }
 
