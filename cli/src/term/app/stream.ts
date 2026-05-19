@@ -105,12 +105,12 @@ function isMatchingFenceRun(run: string, fence: CodeFenceState): boolean {
   return run[0] === fence.marker && run.length >= fence.length
 }
 
-function splitFenceCloseLine(line: string, fence: CodeFenceState): { rest: string } | null {
+function splitFenceCloseLine(line: string, fence: CodeFenceState): { rest: string; runLength: number } | null {
   const match = FENCE_LINE_RE.exec(line)
   if (!match) return null
   const run = match[2]!
   if (!isMatchingFenceRun(run, fence)) return null
-  return { rest: (match[3] ?? '').trimStart() }
+  return { rest: (match[3] ?? '').trimStart(), runLength: run.length }
 }
 
 function splitTrailingFenceClose(line: string, fence: CodeFenceState): { code: string; rest: string } | null {
@@ -214,9 +214,15 @@ function advanceCodeFence(state: StreamMachineState, commitLines: OutputLine[]):
       const rest = closedLine.rest
       if (rest) {
         const after = text.slice(closedAt)
+        // When the backtick run is longer than the opening fence and rest
+        // looks like a language tag, the model wrote close+open glued together
+        // (e.g. ``````json when fence was ```). Reconstruct as a fence open.
+        const isGluedOpen = closedLine.runLength > fence.length
+          && /^[A-Za-z0-9_+.#-]+$/.test(rest)
+        const prefix = isGluedOpen ? `${fence.marker.repeat(fence.length)}` : ''
         return {
           ...state,
-          streamingText: `${rest}${after ? `\n${after}` : ''}`,
+          streamingText: `${prefix}${rest}${after ? `\n${after}` : ''}`,
           codeFence: null,
         }
       }

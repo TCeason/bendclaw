@@ -1017,10 +1017,24 @@ function splitGluedFenceOpens(text: string): string {
       continue
     }
     if (inFence) {
+      // Detect a closing fence glued to the end of a content line, e.g.
+      // `content here``` ` — the model forgot the newline before the closing
+      // fence. Split it so the lexer sees a proper close.
+      const escChar = fenceMarker[0]!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const closeGlued = new RegExp(
+        `^(.+[^\\s${escChar}])(${escChar}{${fenceMarker.length},})[ \\t]*$`
+      )
+      const cm = closeGlued.exec(line)
+      if (cm) {
+        out.push(cm[1]!)
+        out.push(cm[2]!)
+        inFence = false
+        fenceMarker = ''
+        continue
+      }
       out.push(line)
       continue
     }
-    FENCE_OPEN_GLUED_RE.lastIndex = 0
     const m = FENCE_OPEN_GLUED_RE.exec(line)
     if (m) {
       const [, lead, marker, info] = m

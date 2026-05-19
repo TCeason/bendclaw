@@ -36,7 +36,7 @@ fn no_context_files_produces_base_prompt_with_system() {
     assert!(prompt.contains("# Context management"));
     assert!(prompt.contains("# Environment"));
     assert!(prompt
-        .contains("displayed to the user as GitHub-flavored markdown in a monospace terminal"));
+        .contains("displayed to the user as GitHub-flavored markdown rendered with the CommonMark specification in a monospace terminal"));
     assert!(prompt.contains("GitHub-flavored markdown"));
     assert!(prompt.contains("prompt injection"));
     assert!(prompt.contains("Use `search` instead of `grep` or `rg` through bash."));

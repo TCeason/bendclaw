@@ -672,6 +672,20 @@ test('streaming fence close glued to prose preserves the prose', () => {
   expect(lines.some(l => l.kind === 'assistant' && stripAnsi(l.text).includes('After'))).toBe(true)
 })
 
+test('streaming fence close glued to new fence open does not emit bare language tag as prose', () => {
+  const prev = createStreamMachineState(createInitialState(), createSpinnerState('responding'))
+  // ``````json means close(3) + open(3) with language "json"
+  const result = reduceDelta(prev, '```plaintext\nsome text\n``````json\n{"x":1}\n```\n')
+  const flushed = flushStreaming(result.state)
+  const lines = [...result.commitLines, ...flushed.lines]
+  const assistantTexts = lines.filter(l => l.kind === 'assistant').map(l => stripAnsi(l.text))
+  // "json" must not appear as a standalone assistant prose line
+  expect(assistantTexts.some(t => t.trim() === 'json')).toBe(false)
+  // The JSON content should be rendered as code
+  const codeTexts = lines.filter(l => l.kind === 'code_line').map(l => stripAnsi(l.text))
+  expect(codeTexts.some(t => t.includes('"x":1'))).toBe(true)
+})
+
 test('streaming trailing fence close glued to code line does not leak backticks', () => {
   const prev = createStreamMachineState(createInitialState(), createSpinnerState('responding'))
   const result = reduceDelta(prev, '```js\nconst a = 1```After')
