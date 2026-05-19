@@ -479,7 +479,7 @@ impl Agent {
             }
             Command::Dump { target } => {
                 let msg = self
-                    .handle_dump_command(&request.mode, &session, target.as_deref())
+                    .handle_dump_command(&request.mode, session, target.as_deref())
                     .await?;
                 Ok(Some(SubmitOutcome::Command(msg)))
             }
@@ -963,7 +963,7 @@ fn format_history_entry(seq: u64, item: &crate::types::TranscriptItem) -> String
 /// `len / 4` is the rule of thumb.
 fn rough_tokens(s: &str) -> usize {
     let chars = s.chars().count();
-    (chars + 3) / 4
+    chars.div_ceil(4)
 }
 
 fn mode_label(mode: &ToolMode) -> &'static str {
