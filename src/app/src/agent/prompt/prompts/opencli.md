@@ -1,6 +1,6 @@
 ---
 name: opencli
-description: "Use OpenCLI for websites, browser sessions, logged-in web apps, Twitter/X, Feishu/Lark, Hacker News, Databend Cloud at app.databend.com, search, page interaction, extraction, and registered external CLIs. Trigger on: browser, browse, open page, click, fill form, extract page, twitter, x/twitter, feishu, lark, hackernews, databend cloud, app.databend.com, search."
+description: "Use OpenCLI for websites, browser sessions, logged-in web apps, Twitter/X, Feishu/Lark, Hacker News, search, page interaction, extraction, and registered external CLIs. Trigger on: browser, browse, open page, click, fill form, extract page, twitter, x/twitter, feishu, lark, hackernews, search."
 ---
 
 # OpenCLI
@@ -81,7 +81,6 @@ Confirm names with `opencli list -f json` before use.
 - `hackernews`: stories and discussion search.
 - `github`: repositories, issues, PRs, code lookup.
 - `google` or search adapters: broad web lookup.
-- `app.databend.com`: Databend Cloud; use browser auth plus Cloud APIs, not local Databend config.
 
 ## Browser workflow
 
@@ -101,75 +100,6 @@ opencli browser --workspace bound:default state
 ```
 
 Use `state`, `find`, `click`, `type`, `keys`, `get`, and `extract`. Refresh state after navigation or major DOM changes. Do not reuse stale refs.
-
-## Databend Cloud
-
-For Databend Cloud at `https://app.databend.com/`, the browser tab is only an auth carrier. It requires the Chrome extension/browser bridge because the SQL/API calls need the user's logged-in cookies. Use `opencli browser eval` so browser cookies are sent with `credentials: "include"`.
-
-Do not use DOM, URL, localStorage, side menus, visible worksheet UI, or metadata endpoints as the answer source for database/table/SQL tasks.
-
-For database/table/SQL tasks, use worksheet SQL API:
-
-- Discover orgs: `GET /api/v1/my/orgs`
-- Discover warehouses: `GET /api/v1/admin/orgs/<orgSlug>/warehouses`
-- Warehouse fallback: `GET /api/v1/orgs/<orgSlug>/tenant/warehouses`
-- Execute SQL: `POST /v1/query`
-- Follow results: returned `next_uri`, `stats_uri`, `final_uri`, or `GET /v1/query/<id>/page/<n>`
-
-Required SQL headers:
-
-- `X-DATABENDCLOUD-ORG: <orgSlug>`
-- `X-DATABENDCLOUD-WAREHOUSE: <warehouseName>`
-
-SQL mapping:
-
-- "show/list databases" -> `SHOW DATABASES` through `POST /v1/query`
-- "list tables" -> `SHOW TABLES` or `SHOW FULL TABLES FROM <database>` through `POST /v1/query`
-- "describe table" -> `DESCRIBE <database>.<table>` through `POST /v1/query`
-
-Do not answer database lists from `/api/v1/orgs/<orgSlug>/tenant/databases`. If `/v1/query` fails, report/debug the SQL API failure instead of silently switching endpoints.
-
-Minimal Databend Cloud pattern:
-
-```bash
-opencli browser bind --domain app.databend.com
-opencli browser --workspace bound:default eval '(async () => {
-  const sql = "SHOW DATABASES";
-  async function json(url, init = {}) {
-    const res = await fetch(url, { credentials: "include", ...init });
-    let body;
-    try { body = await res.json(); } catch { body = await res.text(); }
-    return { ok: res.ok, status: res.status, url, body };
-  }
-
-  const orgsResp = await json("/api/v1/my/orgs");
-  const orgs = Array.isArray(orgsResp.body?.data) ? orgsResp.body.data : orgsResp.body;
-  const org = Array.isArray(orgs) ? orgs.find(o => o.default || o.isDefault) || orgs[0] : undefined;
-  const orgSlug = org?.orgSlug || org?.slug || org?.name;
-  if (!orgSlug) return { step: "choose-org", orgsResp };
-
-  const whResp = await json(`/api/v1/admin/orgs/${orgSlug}/warehouses`);
-  const whFallback = whResp.ok ? undefined : await json(`/api/v1/orgs/${orgSlug}/tenant/warehouses`);
-  const whBody = whResp.ok ? whResp.body : whFallback.body;
-  const warehouses = Array.isArray(whBody?.data) ? whBody.data : whBody;
-  const warehouse = Array.isArray(warehouses) ? warehouses[0] : undefined;
-  const warehouseName = warehouse?.name || warehouse?.warehouseName;
-  if (!warehouseName) return { step: "choose-warehouse", orgSlug, whResp, whFallback };
-
-  const query = await json("/v1/query", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "X-DATABENDCLOUD-ORG": orgSlug,
-      "X-DATABENDCLOUD-WAREHOUSE": warehouseName
-    },
-    body: JSON.stringify({ sql, string_fields: true })
-  });
-  return { orgSlug, warehouseName, query };
-})()'
-```
-
-For mutating SQL (`CREATE`, `DROP`, `ALTER`, `INSERT`, `UPDATE`, `DELETE`, grants, settings changes), proceed only when the user explicitly asks and the target is unambiguous.
 
 ## Safety and failures
 
