@@ -91,11 +91,34 @@ pub fn drop_to_message_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -
         .take(MAX_EVICTED_USER_TEXTS)
         .collect();
 
+    // Collect user texts from the keep_first region so the marker can
+    // explicitly label them as completed — prevents the model from
+    // re-orienting to old tasks that remain at the top of context.
+    let retained_early_user_texts: Vec<String> = messages[..first_end]
+        .iter()
+        .filter_map(|msg| {
+            if let AgentMessage::Llm(Message::User { content, .. }) = msg {
+                content.iter().find_map(|c| {
+                    if let Content::Text { text } = c {
+                        let t = text.trim();
+                        if !t.is_empty() && !is_internal_user_text(t) {
+                            return Some(t.to_string());
+                        }
+                    }
+                    None
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
     let marker = super::super::super::marker::build_marker_with_evicted(
         &messages,
         drop_indices.len(),
         dropped_tokens,
         &evicted_user_texts,
+        &retained_early_user_texts,
     );
     let marker_tokens = message_tokens(&marker);
 
@@ -421,11 +444,33 @@ pub fn drop_to_token_target(messages: Vec<AgentMessage>, ctx: &PhaseContext) -> 
         .take(MAX_EVICTED_USER_TEXTS)
         .collect();
 
+    // Collect user texts from the keep_first region so the marker can
+    // explicitly label them as completed.
+    let retained_early_user_texts: Vec<String> = messages[..first_end]
+        .iter()
+        .filter_map(|msg| {
+            if let AgentMessage::Llm(Message::User { content, .. }) = msg {
+                content.iter().find_map(|c| {
+                    if let Content::Text { text } = c {
+                        let t = text.trim();
+                        if !t.is_empty() && !is_internal_user_text(t) {
+                            return Some(t.to_string());
+                        }
+                    }
+                    None
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
     let marker = super::super::super::marker::build_marker_with_evicted(
         &messages,
         removed,
         dropped_tokens,
         &evicted_user_texts,
+        &retained_early_user_texts,
     );
     let marker_tokens = message_tokens(&marker);
 

@@ -48,6 +48,7 @@ pub(crate) fn build_marker(
         &format!("{} messages removed", removed),
         dropped_tokens_hint,
         &[],
+        &[],
     )
 }
 
@@ -58,12 +59,14 @@ pub(crate) fn build_marker_with_evicted(
     removed: usize,
     dropped_tokens_hint: usize,
     evicted_user_texts: &[String],
+    retained_early_user_texts: &[String],
 ) -> AgentMessage {
     build_marker_inner(
         pre_drop_messages,
         &format!("{} messages removed", removed),
         dropped_tokens_hint,
         evicted_user_texts,
+        retained_early_user_texts,
     )
 }
 
@@ -75,7 +78,7 @@ pub(crate) fn build_marker_with_note(
     count_note: &str,
     dropped_tokens_hint: usize,
 ) -> AgentMessage {
-    build_marker_inner(pre_drop_messages, count_note, dropped_tokens_hint, &[])
+    build_marker_inner(pre_drop_messages, count_note, dropped_tokens_hint, &[], &[])
 }
 
 fn build_marker_inner(
@@ -83,6 +86,7 @@ fn build_marker_inner(
     count_note: &str,
     dropped_tokens_hint: usize,
     evicted_user_texts: &[String],
+    retained_early_user_texts: &[String],
 ) -> AgentMessage {
     if dropped_tokens_hint < FULL_MARKER_MIN_DROPPED_TOKENS {
         return build_minimal(count_note);
@@ -92,6 +96,7 @@ fn build_marker_inner(
         count_note,
         anchor.as_deref(),
         evicted_user_texts,
+        retained_early_user_texts,
     ));
     // Belt-and-braces: if the full marker turns out to cost more than what
     // was dropped (small messages but many of them), degrade to minimal.
@@ -130,8 +135,31 @@ fn format_full_marker(
     count_note: &str,
     anchor: Option<&str>,
     evicted_user_texts: &[String],
+    retained_early_user_texts: &[String],
 ) -> String {
     let mut out = format!("[Context compacted: {}]", count_note);
+
+    // Neutralize retained early user messages that are NOT the current task.
+    // These sit at the top of context (keep_first) and can mislead the model
+    // into re-orienting to an old task.
+    let early_texts: Vec<&String> = retained_early_user_texts
+        .iter()
+        .filter(|t| {
+            // Don't list if it's the same as the current anchor
+            anchor.is_none_or(|a| !t.starts_with(&a[..a.len().min(60)]))
+        })
+        .collect();
+    if !early_texts.is_empty() {
+        out.push_str(
+            "\n\nRetained early context contains these COMPLETED tasks \
+             (already handled, do not revisit):",
+        );
+        for text in &early_texts {
+            out.push_str("\n- ");
+            out.push_str(&truncate_anchor(text));
+        }
+    }
+
     if !evicted_user_texts.is_empty() {
         out.push_str("\n\nCompleted tasks (already handled, do not revisit):");
         for text in evicted_user_texts {

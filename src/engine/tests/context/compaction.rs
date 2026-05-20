@@ -3624,9 +3624,11 @@ fn compaction_marker_embeds_recent_user_request_and_continuation() {
         marker.contains("strip the triple backticks"),
         "marker must quote the most recent user request verbatim, got: {marker}"
     );
+    // The old task now appears in the "COMPLETED tasks" section (retained early
+    // context), NOT as the anchor. Verify it's labeled as completed.
     assert!(
-        !marker.contains("old task: look at EverOn"),
-        "marker must not promote the oldest user prompt as the anchor"
+        marker.contains("COMPLETED") && marker.contains("old task: look at EverOn"),
+        "marker must list retained early user messages as COMPLETED, got: {marker}"
     );
     assert!(
         marker.to_lowercase().contains("do not re-orient"),
