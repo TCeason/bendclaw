@@ -479,7 +479,8 @@ fn build_doom_loop_preview(tool_name: &str, args: &serde_json::Value) -> String 
             let val = match v {
                 serde_json::Value::String(s) => {
                     if s.len() > 80 {
-                        format!("{}…", &s[..80])
+                        let end = s.floor_char_boundary(80);
+                        format!("{}…", &s[..end])
                     } else {
                         s.clone()
                     }
@@ -487,7 +488,8 @@ fn build_doom_loop_preview(tool_name: &str, args: &serde_json::Value) -> String 
                 other => {
                     let s = other.to_string();
                     if s.len() > 80 {
-                        format!("{}…", &s[..80])
+                        let end = s.floor_char_boundary(80);
+                        format!("{}…", &s[..end])
                     } else {
                         s
                     }

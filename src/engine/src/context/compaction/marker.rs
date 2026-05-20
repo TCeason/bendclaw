@@ -146,7 +146,10 @@ fn format_full_marker(
         .iter()
         .filter(|t| {
             // Don't list if it's the same as the current anchor
-            anchor.is_none_or(|a| !t.starts_with(&a[..a.len().min(60)]))
+            anchor.is_none_or(|a| {
+                let end = a.floor_char_boundary(a.len().min(60));
+                !t.starts_with(&a[..end])
+            })
         })
         .collect();
     if !early_texts.is_empty() {
