@@ -44,6 +44,7 @@ fn test_adaptive_thinking_sent_for_anthropic() {
 
     let body = build_request_body(&config, false);
     assert_eq!(body["thinking"]["type"], "adaptive");
+    assert_eq!(body["thinking"]["display"], "summarized");
     assert!(body["thinking"].get("budget_tokens").is_none());
 }
 
@@ -55,6 +56,7 @@ fn test_non_off_thinking_sent_as_adaptive_for_anthropic() {
 
     let body = build_request_body(&config, false);
     assert_eq!(body["thinking"]["type"], "adaptive");
+    assert_eq!(body["thinking"]["display"], "summarized");
     assert!(body["thinking"].get("budget_tokens").is_none());
 }
 

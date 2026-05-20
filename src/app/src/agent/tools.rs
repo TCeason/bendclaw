@@ -50,7 +50,7 @@ pub(crate) fn build_tools(
     if matches!(mode, ToolMode::Readonly) {
         return vec![
             Box::new(ReadFileTool::default()),
-            Box::new(ListFilesTool::default()),
+            Box::new(GlobFileTool::default()),
             Box::new(SearchTool::default()),
         ];
     }
@@ -72,9 +72,12 @@ pub(crate) fn build_tools(
         t.push(Box::new(EditFileTool::new()));
     }
 
-    t.push(Box::new(ListFilesTool::default()));
+    t.push(Box::new(GlobFileTool::default()));
     t.push(Box::new(SearchTool::default()));
-    t.push(Box::new(WebFetchTool::new()));
+
+    if !matches!(mode, ToolMode::Headless) {
+        t.push(Box::new(WebFetchTool::new()));
+    }
 
     match mode {
         ToolMode::Interactive { ask_fn } => {

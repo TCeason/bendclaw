@@ -87,6 +87,10 @@ impl AgentTool for EditFileTool {
                 "replace_all": {
                     "type": "boolean",
                     "description": "Replace all exact occurrences of old_text (default false)"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why this edit is being made (optional)"
                 }
             },
             "required": ["path", "old_text", "new_text"]
@@ -126,6 +130,7 @@ impl AgentTool for EditFileTool {
             .as_str()
             .ok_or_else(|| ToolError::InvalidArgs("missing 'new_text' parameter".into()))?;
         let replace_all = params["replace_all"].as_bool().unwrap_or(false);
+        let reason = params["reason"].as_str();
 
         let path = ctx.path_guard.resolve_path(&ctx.cwd, path_str)?;
 
@@ -242,6 +247,7 @@ impl AgentTool for EditFileTool {
                 "first_changed_line": diff_result.first_changed_line,
                 "added_lines": diff_result.added_lines,
                 "removed_lines": diff_result.removed_lines,
+                "reason": reason,
             }),
             retention: Retention::Normal,
         })

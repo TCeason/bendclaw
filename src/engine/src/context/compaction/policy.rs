@@ -51,7 +51,7 @@ pub fn tool_policy(tool_name: &str) -> ToolPolicy {
             normal_max_lines: 30,
             prefer_outline: false,
         },
-        "bash" | "search" | "list_files" => ToolPolicy {
+        "bash" | "grep" | "glob_file" => ToolPolicy {
             age_clear_threshold: Some(4000),
             oversize_max_lines: 25,
             normal_max_lines: 40,

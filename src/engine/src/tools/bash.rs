@@ -160,8 +160,8 @@ impl AgentTool for BashTool {
          commands, unless explicitly instructed or after you have verified that a dedicated tool \
          cannot accomplish your task. Instead, use the appropriate dedicated tool:\n\
          \n\
-         - Content search: Use search (NOT shell grep or rg)\n\
-         - Directory listing: Use list_files (NOT ls or find)\n\
+         - Content search: Use grep (NOT shell grep or rg)\n\
+         - Directory listing: Use glob_file (NOT ls or find)\n\
          - Read files: Use read_file (NOT cat/head/tail)\n\
          - Edit files: Use edit_file (NOT sed/awk)\n\
          - Write files: Use write_file (NOT echo/cat redirection)\n\
@@ -188,6 +188,10 @@ impl AgentTool for BashTool {
                 "command": {
                     "type": "string",
                     "description": "The bash command to execute"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why this command is being run (optional)"
                 }
             },
             "required": ["command"]
@@ -211,6 +215,7 @@ impl AgentTool for BashTool {
         let command = params["command"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidArgs("missing 'command' parameter".into()))?;
+        let reason = params["reason"].as_str();
 
         // Check deny patterns
         for pattern in &self.deny_patterns {
@@ -481,6 +486,7 @@ impl AgentTool for BashTool {
                 "exit_code": exit_code,
                 "success": exit_code == 0,
                 "slim": slim_stats,
+                "reason": reason,
             }),
             retention: Retention::Normal,
         })

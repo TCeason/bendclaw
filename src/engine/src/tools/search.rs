@@ -1,4 +1,4 @@
-//! Search tool — grep/ripgrep-style search across files.
+//! Grep tool — content search across local files.
 
 use std::time::Duration;
 
@@ -7,7 +7,7 @@ use tokio::process::Command;
 
 use crate::types::*;
 
-/// Search files using grep (or ripgrep if available).
+/// Search file contents using grep (or ripgrep if available).
 pub struct SearchTool {
     /// Root directory to search in
     pub root: Option<String>,
@@ -41,23 +41,21 @@ impl SearchTool {
 #[async_trait]
 impl AgentTool for SearchTool {
     fn name(&self) -> &str {
-        "search"
+        "grep"
     }
 
     fn label(&self) -> &str {
-        "Search Files"
+        "Grep Files"
     }
 
     fn description(&self) -> &str {
-        "A powerful search tool built on grep/ripgrep.\n\
+        "Search local file contents with grep/ripgrep.\n\
          \n\
          Usage:\n\
-         - ALWAYS use this tool for content search. NEVER invoke grep or rg as a shell command. \
-         This tool has been optimized for correct permissions and access.\n\
+         - Use this tool for local content search. Do not use it to discover files by path; use glob_file for that.\n\
          - Supports full regex syntax (e.g., \"log.*Error\", \"function\\s+\\w+\").\n\
          - Filter files with the include parameter (e.g., \"*.rs\", \"*.py\").\n\
-         - Respects .gitignore. Returns matching lines with file paths and line numbers.\n\
-         - For open-ended searches requiring multiple rounds, break the search into smaller queries."
+         - Respects .gitignore when ripgrep is available. Returns matching lines with file paths and line numbers."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -66,7 +64,7 @@ impl AgentTool for SearchTool {
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "Search pattern (regex supported)"
+                    "description": "Content search pattern (regex supported)"
                 },
                 "path": {
                     "type": "string",
@@ -79,6 +77,10 @@ impl AgentTool for SearchTool {
                 "case_sensitive": {
                     "type": "boolean",
                     "description": "Case sensitive search (default: false)"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why this content search is being performed (optional)"
                 }
             },
             "required": ["pattern"]
@@ -134,6 +136,7 @@ impl AgentTool for SearchTool {
 
         let include = params["include"].as_str();
         let case_sensitive = params["case_sensitive"].as_bool().unwrap_or(false);
+        let reason = params["reason"].as_str();
 
         let search_path = ctx
             .path_guard
@@ -197,7 +200,12 @@ impl AgentTool for SearchTool {
                 content: vec![Content::Text {
                     text: format!("No matches found for '{}'", pattern),
                 }],
-                details: serde_json::json!({ "matches": 0 }),
+                details: serde_json::json!({
+                    "matches": 0,
+                    "pattern": pattern,
+                    "path": search_path_str,
+                    "reason": reason,
+                }),
                 retention: Retention::Normal,
             });
         }
@@ -215,7 +223,12 @@ impl AgentTool for SearchTool {
 
         Ok(ToolResult {
             content: vec![Content::Text { text }],
-            details: serde_json::json!({ "matches": match_count }),
+            details: serde_json::json!({
+                "matches": match_count,
+                "pattern": pattern,
+                "path": search_path_str,
+                "reason": reason,
+            }),
             retention: Retention::Normal,
         })
     }

@@ -30,7 +30,7 @@ pub fn build_verify_fn(llm: &LlmConfig, cwd: &str) -> VerifyFn {
 
             let tools: Vec<Box<dyn evot_engine::AgentTool>> = vec![
                 Box::new(evot_engine::tools::ReadFileTool::default()),
-                Box::new(evot_engine::tools::ListFilesTool::default()),
+                Box::new(evot_engine::tools::GlobFileTool::default()),
                 Box::new(evot_engine::tools::SearchTool::default()),
                 Box::new(GoalResultTool::new(capture.clone())),
             ];

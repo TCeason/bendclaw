@@ -74,7 +74,7 @@ impl AgentTool for ReadFileTool {
          - Use this tool instead of shell cat/head/tail for reading files.\n\
          - Supports optional offset/limit for partial reads of large files.\n\
          - This tool can only read text files and images (jpg, png, webp, gif, bmp), not directories or binary files.\n\
-         To list a directory, use list_files.\n\
+         To discover files, use glob_file.\n\
          - If you read a file that exists but has empty contents you will receive a warning \
          in place of file contents."
     }
@@ -94,6 +94,10 @@ impl AgentTool for ReadFileTool {
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of lines to return (optional)"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why this file is being read (optional)"
                 }
             },
             "required": ["path"]
@@ -123,6 +127,7 @@ impl AgentTool for ReadFileTool {
         let path_str = params["path"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidArgs("missing 'path' parameter".into()))?;
+        let reason = params["reason"].as_str();
 
         let path = ctx.path_guard.resolve_path(&ctx.cwd, path_str)?;
 
@@ -155,7 +160,11 @@ impl AgentTool for ReadFileTool {
                         path: path.to_string_lossy().to_string(),
                     },
                 }],
-                details: serde_json::json!({ "path": path_str, "bytes": meta.len() }),
+                details: serde_json::json!({
+                    "path": path_str,
+                    "bytes": meta.len(),
+                    "reason": reason,
+                }),
                 retention: Retention::Normal,
             });
         }
@@ -233,7 +242,10 @@ impl AgentTool for ReadFileTool {
 
         Ok(ToolResult {
             content: vec![Content::Text { text: output }],
-            details: serde_json::json!({ "path": path_str }),
+            details: serde_json::json!({
+                "path": path_str,
+                "reason": reason,
+            }),
             retention: Retention::Normal,
         })
     }
@@ -348,6 +360,10 @@ impl AgentTool for WriteFileTool {
                 "content": {
                     "type": "string",
                     "description": "Content to write to the file"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why this file is being written (optional)"
                 }
             },
             "required": ["path", "content"]
@@ -378,6 +394,7 @@ impl AgentTool for WriteFileTool {
         let content = params["content"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidArgs("missing 'content' parameter".into()))?;
+        let reason = params["reason"].as_str();
 
         let path = ctx.path_guard.resolve_path(&ctx.cwd, path_str)?;
 
@@ -414,6 +431,7 @@ impl AgentTool for WriteFileTool {
                 "bytes": bytes,
                 "created": !existed,
                 "diff": diff_result.unified,
+                "reason": reason,
             }),
             retention: Retention::Normal,
         })

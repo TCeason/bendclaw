@@ -165,6 +165,7 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
     if config.thinking_level != ThinkingLevel::Off {
         body["thinking"] = serde_json::json!({
             "type": "adaptive",
+            "display": "summarized",
         });
     }
 
