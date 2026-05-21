@@ -236,24 +236,16 @@ async fn test_incomplete_tool_use_recovery_does_not_execute_tool() {
     assert!(!events
         .iter()
         .any(|e| matches!(e, AgentEvent::ToolExecutionStart { .. })));
-    assert_eq!(messages.len(), 4);
+    assert_eq!(messages.len(), 2);
     match &messages[1] {
-        AgentMessage::Llm(Message::Assistant { stop_reason, .. }) => {
-            assert_eq!(*stop_reason, StopReason::ToolUse);
+        AgentMessage::Llm(Message::Assistant { content, .. }) => {
+            assert!(matches!(&content[0], Content::Text { text } if text == "recovered"));
         }
-        other => panic!("Expected recovery assistant tool call, got {other:?}"),
+        other => panic!("Expected retried assistant response, got {other:?}"),
     }
-    match &messages[2] {
-        AgentMessage::Llm(Message::ToolResult {
-            is_error, content, ..
-        }) => {
-            assert!(*is_error);
-            assert!(
-                matches!(&content[0], Content::Text { text } if text.contains("interrupted before the full input"))
-            );
-        }
-        other => panic!("Expected recovery tool result, got {other:?}"),
-    }
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::LlmCallRetry { .. })));
 }
 
 #[tokio::test]

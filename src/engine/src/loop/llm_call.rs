@@ -294,6 +294,45 @@ pub(super) async fn stream_assistant_response(
         };
 
         match &result {
+            Ok(StreamOutcome::IncompleteToolUse { error, .. })
+                if crate::retry::should_retry(error)
+                    && attempt < retry.max_retries_for(error)
+                    && !cancel.is_cancelled() =>
+            {
+                forward_handle.abort();
+                let mut error_metrics =
+                    shared_metrics.lock().map(|m| m.clone()).unwrap_or_default();
+                if error_metrics.duration_ms == 0 {
+                    error_metrics.duration_ms = call_start.elapsed().as_millis() as u64;
+                }
+                tx.send(AgentEvent::LlmCallEnd {
+                    turn,
+                    attempt,
+                    usage: Usage::default(),
+                    error: Some(error.to_string()),
+                    metrics: error_metrics,
+                    context_window: budget.context_window,
+                    stop_reason: StopReason::Error,
+                    content: vec![],
+                    response_model: None,
+                    response_id: None,
+                })
+                .ok();
+                attempt += 1;
+                let delay = error
+                    .retry_after()
+                    .unwrap_or_else(|| retry.delay_for_attempt(attempt));
+                tx.send(AgentEvent::LlmCallRetry {
+                    turn,
+                    attempt,
+                    max_retries: retry.max_retries(),
+                    delay_ms: delay.as_millis() as u64,
+                    error: error.to_string(),
+                })
+                .ok();
+                tokio::time::sleep(delay).await;
+                continue;
+            }
             Err(e)
                 if crate::retry::should_retry(e)
                     && attempt < retry.max_retries_for(e)

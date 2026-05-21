@@ -77,10 +77,24 @@ Confirm names with `opencli list -f json` before use.
 
 - `browser`: ordinary websites, logged-in pages, clicking, forms, extraction.
 - `twitter`: Twitter/X timelines, search, posts, profiles, notifications.
-- `feishu` / `lark` / `lark-cli`: chats, messages, search, sending.
+- `feishu` / `lark` / `lark-cli`: chats, messages, docs, search, sending.
 - `hackernews`: stories and discussion search.
 - `github`: repositories, issues, PRs, code lookup.
 - `google` or search adapters: broad web lookup.
+
+## Feishu / Lark priority
+
+For any Feishu or Lark task (messages, groups, docs, calendar, contacts, etc.), always prefer `opencli lark-cli` over browser-based access. The `lark-cli` adapter provides structured API access that is faster, more reliable, and does not require browser/extension setup.
+
+Try this first:
+
+```bash
+opencli lark-cli --help
+opencli lark-cli <subcommand> --help
+```
+
+Key subcommands: `im` (messages/groups), `docs` (documents), `calendar`, `contacts`, `drive`.
+Only fall back to `opencli browser` for Feishu if `lark-cli` is unavailable or the specific operation is not supported.
 
 ## Browser workflow
 

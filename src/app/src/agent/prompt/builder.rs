@@ -16,6 +16,9 @@ const USING_TOOLS_SECTION: &str = r#"# Using your tools
 
 - Prefer dedicated tools over shell equivalents when available.
 - Use `grep` instead of shell `grep` or `rg`.
+- For simple, directed codebase searches, use `glob_file` or `grep` directly.
+- Start broad investigations with batched `grep` queries, then read only the most relevant files.
+- Avoid repeatedly reading the same file; use offsets/limits to read the specific ranges you need.
 - Use `read_slim_file` to understand large source files cheaply.
 - Use `read_file` instead of `cat`, `head`, `tail`, or `sed -n` when exact text matters.
 - Use `read_file` with offset/limit before `edit_file`; never copy `old_text` from `read_slim_file` output.
@@ -23,7 +26,7 @@ const USING_TOOLS_SECTION: &str = r#"# Using your tools
 - Use `edit_file` instead of `sed`, `awk`, or ad-hoc rewrite scripts.
 - Use `write_file` instead of `cat` with heredoc or `echo` redirection when creating files.
 - Use bash for builds, tests, package managers, git, project CLIs, and commands that genuinely need a shell.
-- Run independent tool calls in parallel when possible. Run dependent calls sequentially."#;
+- Run independent tool calls in parallel when possible; batch independent searches and reads together. Run dependent calls sequentially."#;
 
 const TONE_AND_STYLE_SECTION: &str = r#"# Tone and style
 
