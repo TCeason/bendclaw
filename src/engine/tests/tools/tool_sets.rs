@@ -7,6 +7,7 @@ async fn test_full_tools_complete() {
     let tools: Vec<Box<dyn evotengine::AgentTool>> = vec![
         Box::new(BashTool::default()),
         Box::new(ReadFileTool::default()),
+        Box::new(ReadSlimFileTool::default()),
         Box::new(WriteFileTool::new()),
         Box::new(EditFileTool::new()),
         Box::new(GlobFileTool::default()),
@@ -14,8 +15,9 @@ async fn test_full_tools_complete() {
         Box::new(WebFetchTool::new()),
     ];
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert_eq!(names.len(), 7);
-    assert!(names.contains(&"bash"));
+    assert_eq!(names.len(), 8);
+    assert!(names.contains(&"read_file"));
+    assert!(names.contains(&"read_slim_file"));
     assert!(names.contains(&"edit_file"));
     assert!(names.contains(&"glob_file"));
     assert!(names.contains(&"web_fetch"));
@@ -25,12 +27,14 @@ async fn test_full_tools_complete() {
 async fn test_readonly_tools_contains_only_safe_tools() {
     let tools: Vec<Box<dyn evotengine::AgentTool>> = vec![
         Box::new(ReadFileTool::default()),
+        Box::new(ReadSlimFileTool::default()),
         Box::new(GlobFileTool::default()),
         Box::new(SearchTool::default()),
     ];
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert_eq!(names.len(), 3);
+    assert_eq!(names.len(), 4);
     assert!(names.contains(&"read_file"));
+    assert!(names.contains(&"read_slim_file"));
     assert!(names.contains(&"glob_file"));
     assert!(names.contains(&"grep"));
     // Must not contain mutating or execution tools

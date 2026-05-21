@@ -39,7 +39,7 @@ impl Default for CompactionPolicy {
 /// Return the truncation policy for a given tool name.
 pub fn tool_policy(tool_name: &str) -> ToolPolicy {
     match tool_name {
-        "read_file" => ToolPolicy {
+        "read_file" | "read_slim_file" => ToolPolicy {
             age_clear_threshold: None,
             oversize_max_lines: 30,
             normal_max_lines: 50,

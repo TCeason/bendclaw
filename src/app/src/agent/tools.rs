@@ -50,6 +50,7 @@ pub(crate) fn build_tools(
     if matches!(mode, ToolMode::Readonly) {
         return vec![
             Box::new(ReadFileTool::default()),
+            Box::new(ReadSlimFileTool::default()),
             Box::new(GlobFileTool::default()),
             Box::new(SearchTool::default()),
         ];
@@ -62,6 +63,7 @@ pub(crate) fn build_tools(
     }
 
     t.push(Box::new(ReadFileTool::default()));
+    t.push(Box::new(ReadSlimFileTool::default()));
 
     if let ToolMode::Planning { .. } = mode {
         let msg = "Not allowed in planning mode. Use /act to switch.";

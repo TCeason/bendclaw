@@ -53,6 +53,8 @@ impl AgentTool for EditFileTool {
          Usage:\n\
          - You must use read_file at least once in the conversation before editing. \
          This tool will error if you attempt an edit without reading the file first.\n\
+         - read_slim_file output is not exact and must never be copied into old_text. \
+         Use read_file with offset/limit around the target code before editing.\n\
          - When editing text from read_file output, ensure you preserve the exact indentation \
          (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: \
          line number + pipe. Everything after that is the actual file content to match. \
@@ -188,16 +190,18 @@ impl AgentTool for EditFileTool {
                     MatchError::EmptyOldText => {
                         ToolError::Failed("old_text must not be empty.".into())
                     }
-                    MatchError::NotFound => {
+                     MatchError::NotFound => {
                         let hint = matching::find_similar_text(&content_lf, &old_text_lf);
                         let suffix = match hint {
                             Some(similar) => format!(
                                 "\n\nDid you mean:\n```\n{similar}\n```\n\
                                  Make sure old_text matches the current file content, \
-                                 including indentation."
+                                 including indentation. If you copied old_text from read_slim_file, \
+                                 use read_file with offset/limit for exact text first."
                             ),
                             None => "\n\nTip: Use read_file to see the current file contents, \
-                                 then copy the exact text you want to replace."
+                                 then copy the exact text you want to replace. Do not copy old_text \
+                                 from read_slim_file output because it is not exact."
                                 .into(),
                         };
                         ToolError::Failed(format!("old_text not found in {path_str}.{suffix}"))

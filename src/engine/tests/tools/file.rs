@@ -1,4 +1,4 @@
-//! Tests for ReadFileTool and WriteFileTool.
+//! Tests for ReadFileTool, ReadSlimFileTool, and WriteFileTool.
 
 use base64::Engine;
 use evotengine::tools::*;
@@ -198,6 +198,30 @@ async fn test_read_jpeg_file() {
         }
         _ => panic!("expected Content::Image for .jpg"),
     }
+
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn test_read_slim_file_marks_output_not_exact() {
+    let tmp = std::env::temp_dir().join("yoagent-test-slim.txt");
+    let path = tmp.to_str().unwrap();
+    std::fs::write(&tmp, "fn main() {\n        println!(\"hi\");\n\n\n}\n").unwrap();
+
+    let tool = ReadSlimFileTool::new();
+    let result = tool
+        .execute(serde_json::json!({"path": path}), ctx("read_slim_file"))
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("read_slim_file"));
+    assert!(text.contains("output is not exact"));
+    assert!(text.contains("Do not use it as old_text"));
+    assert!(text.contains("println!"));
 
     let _ = std::fs::remove_file(tmp);
 }
