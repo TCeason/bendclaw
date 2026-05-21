@@ -87,6 +87,19 @@ pub(crate) async fn decode_sse_stream(
 
     finalize_tool_call_inputs(&mut content);
 
+    // Detect tool calls with empty arguments — model sent content_block_start
+    // but no input_json_delta (stall that ended without an error event).
+    // Treat as a provider error so the retry logic can recover.
+    let has_empty_tool_call = content.iter().any(|c| {
+        matches!(c, Content::ToolCall { arguments, .. }
+            if arguments.as_object().map(|o| o.is_empty()).unwrap_or(false))
+    });
+    if has_empty_tool_call {
+        return Err(ProviderError::Overloaded(
+            "Tool call has empty arguments (stream stalled without error event)".into(),
+        ));
+    }
+
     let has_tool_calls = content
         .iter()
         .any(|c| matches!(c, Content::ToolCall { .. }));
