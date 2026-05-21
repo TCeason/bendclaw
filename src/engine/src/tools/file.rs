@@ -629,7 +629,9 @@ impl AgentTool for WriteFileTool {
          This tool will fail if you did not read the file first.\n\
          - Prefer edit_file for modifying existing files — it only sends the diff. \
          Only use this tool to create new files or for complete rewrites.\n\
-         - Creates parent directories automatically if they don't exist."
+         - Creates parent directories automatically if they don't exist.\n\
+         - For large files (over 100 lines), write an initial version first, then use edit_file to append remaining sections. \
+         This avoids timeouts from generating too much content in a single tool call."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
