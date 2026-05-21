@@ -124,6 +124,7 @@ pub(crate) async fn decode_sse_stream(
 /// Process a single SSE event. Returns `true` when the stream should stop
 /// because Anthropic sent `message_stop` or a recoverable incomplete tool_use
 /// error was converted into [`StreamOutcome::IncompleteToolUse`].
+#[allow(clippy::too_many_arguments)]
 fn process_sse_event(
     sse: &SseEvent,
     tx: &mpsc::UnboundedSender<StreamEvent>,
