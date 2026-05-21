@@ -40,6 +40,7 @@ pub(crate) async fn decode_sse_stream(
     let mut usage = Usage::default();
     let mut stop_reason = StopReason::Stop;
     let mut response_id: Option<String> = None;
+    let mut saw_message_delta_stop = false;
     let mut incomplete_tool_use_error: Option<ProviderError> = None;
 
     let _ = tx.send(StreamEvent::Start);
@@ -60,6 +61,7 @@ pub(crate) async fn decode_sse_stream(
                             &mut usage,
                             &mut stop_reason,
                             &mut response_id,
+                            &mut saw_message_delta_stop,
                             &mut incomplete_tool_use_error,
                         )? {
                             break;
@@ -129,6 +131,7 @@ fn process_sse_event(
     usage: &mut Usage,
     stop_reason: &mut StopReason,
     response_id: &mut Option<String>,
+    saw_message_delta_stop: &mut bool,
     incomplete_tool_use_error: &mut Option<ProviderError>,
 ) -> Result<bool, ProviderError> {
     match sse.event.as_str() {
@@ -251,11 +254,13 @@ fn process_sse_event(
         }
         "message_delta" => {
             if let Ok(data) = serde_json::from_str::<AnthropicMessageDelta>(&sse.data) {
-                *stop_reason = match data.delta.stop_reason.as_deref() {
+                let stop_reason_value = data.delta.stop_reason.as_deref();
+                *stop_reason = match stop_reason_value {
                     Some("tool_use") => StopReason::ToolUse,
                     Some("max_tokens") => StopReason::Length,
                     _ => StopReason::Stop,
                 };
+                *saw_message_delta_stop = stop_reason_value.is_some();
                 usage.output = data.usage.output_tokens;
                 // Only override cache fields when the delta actually carries
                 // them — Anthropic's SSE spec only guarantees `output_tokens`
@@ -275,6 +280,10 @@ fn process_sse_event(
         "ping" | "message" => {}
         "error" => {
             let provider_err = classify_sse_error_event(&sse.data);
+            if *saw_message_delta_stop && matches!(*stop_reason, StopReason::Stop) {
+                debug!("Anthropic SSE error after completed message_delta; using completed message: {provider_err}");
+                return Ok(true);
+            }
             if has_partial_tool_use_input(content) {
                 debug!("Anthropic SSE error after partial tool_use input; returning incomplete tool_use outcome for conversation recovery: {provider_err}");
                 *incomplete_tool_use_error = Some(provider_err);

@@ -70,6 +70,14 @@ fn test_off_thinking_omits_anthropic_thinking() {
     assert!(body.get("thinking").is_none());
 }
 
+#[test]
+fn test_anthropic_default_max_tokens_matches_claude_code() {
+    let config = StreamConfigBuilder::anthropic().no_max_tokens().build();
+
+    let body = build_request_body(&config, false);
+    assert_eq!(body["max_tokens"], 32768);
+}
+
 // ---------------------------------------------------------------------------
 // Cache breakpoint tests
 // ---------------------------------------------------------------------------
