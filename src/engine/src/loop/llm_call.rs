@@ -8,6 +8,7 @@ use crate::context::ContextConfig;
 use crate::provider::ProviderError;
 use crate::provider::StreamConfig;
 use crate::provider::StreamEvent;
+use crate::provider::ThinkingPassbackPolicy;
 use crate::provider::ToolDefinition;
 use crate::types::*;
 
@@ -51,12 +52,15 @@ pub(super) async fn stream_assistant_response(
     let llm_messages =
         compact_tool_results_for_request_view(llm_messages, config.context_config.as_ref());
 
-    // Strip thinking blocks from all but the last assistant message.
-    // Thinking is the model's internal reasoning — it has negligible value for
-    // future turns but consumes significant tokens. This mirrors Claude Code's
-    // `clear_thinking_20251015` context management and prevents issues with
-    // proxies (e.g. Kiro) that don't natively support thinking blocks.
-    let llm_messages = strip_old_thinking(llm_messages);
+    // Strip thinking blocks before sending history back to the provider.
+    // Most providers do not require thinking passback, and keeping it bloats
+    // context/cache keys. DeepSeek-compatible Anthropic endpoints require
+    // thinking on retained assistant tool-use messages.
+    let preserve_tool_use_thinking = matches!(
+        thinking_passback_policy(config),
+        ThinkingPassbackPolicy::ToolUseMessages
+    );
+    let llm_messages = strip_thinking(llm_messages, preserve_tool_use_thinking);
 
     // Build tool definitions
     let tool_defs: Vec<ToolDefinition> = context
@@ -470,26 +474,63 @@ fn compact_tool_results_for_request_view(
     compacted
 }
 
-/// Strip thinking blocks from all but the last assistant message.
+/// Strip thinking blocks from request history.
 ///
-/// Thinking is the model's internal reasoning — it has negligible value for
-/// future turns but consumes significant tokens. Keeping only the most recent
-/// thinking preserves continuity while freeing context budget.
-fn strip_old_thinking(messages: Vec<Message>) -> Vec<Message> {
-    let last_assistant_idx = messages
-        .iter()
-        .rposition(|m| matches!(m, Message::Assistant { .. }));
-
+/// Thinking is the model's internal reasoning. It is expensive to replay and
+/// usually not part of the provider protocol. DeepSeek-compatible Anthropic
+/// endpoints are the exception: assistant tool-use messages retained in history
+/// must keep their original thinking blocks.
+fn strip_thinking(messages: Vec<Message>, preserve_tool_use_thinking: bool) -> Vec<Message> {
     messages
         .into_iter()
-        .enumerate()
-        .map(|(idx, msg)| {
-            if Some(idx) == last_assistant_idx {
+        .map(|msg| {
+            if preserve_tool_use_thinking && is_assistant_tool_use_message(&msg) {
                 return msg;
             }
-            match msg {
+            strip_message_thinking(msg)
+        })
+        .collect()
+}
+
+fn thinking_passback_policy(config: &AgentLoopConfig) -> ThinkingPassbackPolicy {
+    config
+        .model_config
+        .as_ref()
+        .map(|model_config| model_config.thinking_passback)
+        .unwrap_or_default()
+}
+
+fn is_assistant_tool_use_message(message: &Message) -> bool {
+    matches!(
+        message,
+        Message::Assistant { content, .. }
+            if content.iter().any(|c| matches!(c, Content::ToolCall { .. }))
+    )
+}
+
+fn strip_message_thinking(msg: Message) -> Message {
+    match msg {
+        Message::Assistant {
+            content,
+            stop_reason,
+            model,
+            provider,
+            usage,
+            timestamp,
+            error_message,
+            response_id,
+        } => {
+            let filtered: Vec<Content> = content
+                .into_iter()
+                .filter(|c| !matches!(c, Content::Thinking { .. }))
+                .collect();
+            // Keep original content if filtering would leave it empty — some
+            // providers reject empty content arrays.
+            if filtered.is_empty() {
                 Message::Assistant {
-                    content,
+                    content: vec![Content::Text {
+                        text: "(thinking only)".to_string(),
+                    }],
                     stop_reason,
                     model,
                     provider,
@@ -497,43 +538,22 @@ fn strip_old_thinking(messages: Vec<Message>) -> Vec<Message> {
                     timestamp,
                     error_message,
                     response_id,
-                } => {
-                    let filtered: Vec<Content> = content
-                        .into_iter()
-                        .filter(|c| !matches!(c, Content::Thinking { .. }))
-                        .collect();
-                    // Keep original content if filtering would leave it empty —
-                    // some providers reject empty content arrays.
-                    if filtered.is_empty() {
-                        Message::Assistant {
-                            content: vec![Content::Text {
-                                text: "(thinking only)".to_string(),
-                            }],
-                            stop_reason,
-                            model,
-                            provider,
-                            usage,
-                            timestamp,
-                            error_message,
-                            response_id,
-                        }
-                    } else {
-                        Message::Assistant {
-                            content: filtered,
-                            stop_reason,
-                            model,
-                            provider,
-                            usage,
-                            timestamp,
-                            error_message,
-                            response_id,
-                        }
-                    }
                 }
-                other => other,
+            } else {
+                Message::Assistant {
+                    content: filtered,
+                    stop_reason,
+                    model,
+                    provider,
+                    usage,
+                    timestamp,
+                    error_message,
+                    response_id,
+                }
             }
-        })
-        .collect()
+        }
+        other => other,
+    }
 }
 
 fn old_tool_result_request_bytes(messages: &[Message], recent_boundary: usize) -> usize {

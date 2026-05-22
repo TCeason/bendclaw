@@ -1052,6 +1052,8 @@ pub(crate) fn build_agent(
         model_config.base_url = base_url.clone();
     }
 
+    model_config.apply_inferred_capabilities();
+
     if options.protocol == Protocol::OpenAi {
         if let Some(compat) = &mut model_config.compat {
             compat.caps |= options.compat_caps;

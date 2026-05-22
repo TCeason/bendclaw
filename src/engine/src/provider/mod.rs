@@ -19,6 +19,7 @@ pub use model::CompatCaps;
 pub use model::CostConfig;
 pub use model::ModelConfig;
 pub use model::OpenAiCompat;
+pub use model::ThinkingPassbackPolicy;
 pub use openai_compat::OpenAiCompatProvider;
 pub use registry::ProviderRegistry;
 pub use traits::*;

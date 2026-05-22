@@ -20,6 +20,7 @@ use evotengine::context::ContextConfig;
 use evotengine::context::ExecutionLimits;
 use evotengine::provider::mock::*;
 use evotengine::provider::MockProvider;
+use evotengine::provider::ModelConfig;
 use evotengine::AgentLoopConfig;
 use evotengine::*;
 use tokio::sync::mpsc;
@@ -132,6 +133,7 @@ pub struct TestHarness {
     cache_config: CacheConfig,
     tool_execution: ToolExecutionStrategy,
     input_filters: Vec<Arc<dyn InputFilter>>,
+    model_config: Option<ModelConfig>,
 }
 
 impl TestHarness {
@@ -148,6 +150,7 @@ impl TestHarness {
             cache_config: CacheConfig::default(),
             tool_execution: ToolExecutionStrategy::default(),
             input_filters: vec![],
+            model_config: None,
         }
     }
 
@@ -211,6 +214,12 @@ impl TestHarness {
         self
     }
 
+    /// Set model config.
+    pub fn model_config(mut self, model_config: ModelConfig) -> Self {
+        self.model_config = Some(model_config);
+        self
+    }
+
     /// Set steering messages to be injected during the run.
     pub fn steering(mut self, messages: Vec<AgentMessage>) -> Self {
         self.steering_messages = messages;
@@ -232,7 +241,7 @@ impl TestHarness {
             thinking_level: ThinkingLevel::Off,
             max_tokens: None,
             temperature: None,
-            model_config: None,
+            model_config: self.model_config,
             convert_to_llm: None,
             transform_context: None,
             get_steering_messages: get_steering,
@@ -282,7 +291,7 @@ impl TestHarness {
             thinking_level: ThinkingLevel::Off,
             max_tokens: None,
             temperature: None,
-            model_config: None,
+            model_config: self.model_config,
             convert_to_llm: None,
             transform_context: None,
             get_steering_messages: None,

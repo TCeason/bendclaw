@@ -24,6 +24,17 @@ impl std::fmt::Display for ApiProtocol {
     }
 }
 
+/// Provider/model-level thinking passback policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingPassbackPolicy {
+    /// Never send prior thinking blocks back to the provider.
+    #[default]
+    Disabled,
+    /// Preserve thinking on assistant tool-use messages retained in history.
+    ToolUseMessages,
+}
+
 /// Cost per million tokens (input/output).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CostConfig {
@@ -283,9 +294,25 @@ pub struct ModelConfig {
     /// OpenAI-compat quirk flags (only for OpenAiCompletions protocol).
     #[serde(default)]
     pub compat: Option<OpenAiCompat>,
+    /// Whether prior thinking blocks must be passed back to the provider.
+    #[serde(default)]
+    pub thinking_passback: ThinkingPassbackPolicy,
 }
 
 impl ModelConfig {
+    pub fn apply_inferred_capabilities(&mut self) {
+        if self.api == ApiProtocol::AnthropicMessages && self.is_deepseek_model() {
+            self.thinking_passback = ThinkingPassbackPolicy::ToolUseMessages;
+        }
+    }
+
+    fn is_deepseek_model(&self) -> bool {
+        self.id
+            .trim_start()
+            .to_ascii_lowercase()
+            .starts_with("deepseek")
+    }
+
     /// Create a new Anthropic model config.
     pub fn anthropic(id: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
@@ -300,6 +327,7 @@ impl ModelConfig {
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: None,
+            thinking_passback: ThinkingPassbackPolicy::default(),
         }
     }
 
@@ -317,6 +345,7 @@ impl ModelConfig {
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::openai()),
+            thinking_passback: ThinkingPassbackPolicy::default(),
         }
     }
 
@@ -335,6 +364,7 @@ impl ModelConfig {
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::default()),
+            thinking_passback: ThinkingPassbackPolicy::default(),
         }
     }
 
@@ -354,6 +384,7 @@ impl ModelConfig {
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::zai()),
+            thinking_passback: ThinkingPassbackPolicy::default(),
         }
     }
 
@@ -373,6 +404,7 @@ impl ModelConfig {
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::minimax()),
+            thinking_passback: ThinkingPassbackPolicy::default(),
         }
     }
 
@@ -392,6 +424,7 @@ impl ModelConfig {
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::xai()),
+            thinking_passback: ThinkingPassbackPolicy::default(),
         }
     }
 
@@ -411,6 +444,7 @@ impl ModelConfig {
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::groq()),
+            thinking_passback: ThinkingPassbackPolicy::default(),
         }
     }
 
@@ -430,6 +464,7 @@ impl ModelConfig {
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::deepseek()),
+            thinking_passback: ThinkingPassbackPolicy::default(),
         }
     }
 
@@ -449,6 +484,7 @@ impl ModelConfig {
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::mistral()),
+            thinking_passback: ThinkingPassbackPolicy::default(),
         }
     }
 }

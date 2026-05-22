@@ -2121,6 +2121,107 @@ async fn test_llm_call_start_carries_budget_and_window() {
 }
 
 #[tokio::test]
+async fn test_model_capability_preserves_tool_use_message_thinking() {
+    use evotengine::provider::ModelConfig;
+    use evotengine::provider::ThinkingPassbackPolicy;
+
+    let mut model_config = ModelConfig::anthropic("deepseek-reasoner", "deepseek-reasoner");
+    model_config.apply_inferred_capabilities();
+    assert_eq!(
+        model_config.thinking_passback,
+        ThinkingPassbackPolicy::ToolUseMessages
+    );
+
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("ok".into())])
+        .model_config(model_config)
+        .prior_messages(vec![
+            AgentMessage::Llm(Message::user("do something")),
+            AgentMessage::Llm(Message::Assistant {
+                content: vec![
+                    Content::Thinking {
+                        thinking: "old tool thinking".into(),
+                        signature: Some("old-sig".into()),
+                    },
+                    Content::ToolCall {
+                        id: "tc-old".into(),
+                        name: "Bash".into(),
+                        arguments: serde_json::json!({"command": "pwd"}),
+                    },
+                ],
+                stop_reason: StopReason::ToolUse,
+                model: "test".into(),
+                provider: "test".into(),
+                usage: Usage::default(),
+                timestamp: 0,
+                error_message: None,
+                response_id: None,
+            }),
+            AgentMessage::Llm(Message::ToolResult {
+                tool_call_id: "tc-old".into(),
+                tool_name: "Bash".into(),
+                content: vec![Content::Text {
+                    text: "old result".into(),
+                }],
+                is_error: false,
+                timestamp: 0,
+                retention: Retention::Normal,
+            }),
+            AgentMessage::Llm(Message::Assistant {
+                content: vec![
+                    Content::Thinking {
+                        thinking: "new tool thinking".into(),
+                        signature: Some("new-sig".into()),
+                    },
+                    Content::ToolCall {
+                        id: "tc-new".into(),
+                        name: "Bash".into(),
+                        arguments: serde_json::json!({"command": "date"}),
+                    },
+                ],
+                stop_reason: StopReason::ToolUse,
+                model: "test".into(),
+                provider: "test".into(),
+                usage: Usage::default(),
+                timestamp: 0,
+                error_message: None,
+                response_id: None,
+            }),
+            AgentMessage::Llm(Message::ToolResult {
+                tool_call_id: "tc-new".into(),
+                tool_name: "Bash".into(),
+                content: vec![Content::Text {
+                    text: "new result".into(),
+                }],
+                is_error: false,
+                timestamp: 0,
+                retention: Retention::Normal,
+            }),
+        ])
+        .run_continue()
+        .await;
+
+    let request_messages = output
+        .events
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::LlmCallStart { request, .. } => Some(&request.messages),
+            _ => None,
+        })
+        .expect("expected LlmCallStart");
+    for expected in ["old tool thinking", "new tool thinking"] {
+        assert!(request_messages.iter().any(|message| matches!(
+            message,
+            Message::Assistant { content, .. }
+                if content.iter().any(|content| matches!(
+                    content,
+                    Content::Thinking { thinking, .. } if thinking == expected
+                ))
+        )));
+    }
+}
+
+#[tokio::test]
 async fn test_request_view_shrinks_old_tool_results_only() {
     use evotengine::context::ContextConfig;
 
