@@ -33,10 +33,6 @@ const INITIAL_DELAY_MS: f64 = 2000.0;
 const BACKOFF_MULTIPLIER: f64 = 2.0;
 const MAX_DELAY_MS: f64 = 30_000.0;
 
-/// Max retries for overloaded/stall errors — these are structural, not transient.
-/// Retrying more won't help; let the driver compact context and retry the turn.
-const MAX_OVERLOAD_RETRIES: usize = 3;
-
 impl RetryPolicy {
     /// No retries — fail immediately on any error.
     pub fn disabled() -> Self {
@@ -53,18 +49,6 @@ impl RetryPolicy {
         self.max_retries
     }
 
-    /// Effective max retries for a specific error.
-    ///
-    /// Overloaded/stall errors get a lower cap — they indicate a structural
-    /// problem (context too large) that retrying alone won't fix.
-    pub fn max_retries_for(&self, error: &ProviderError) -> usize {
-        if matches!(error, ProviderError::Overloaded(_)) {
-            self.max_retries.min(MAX_OVERLOAD_RETRIES)
-        } else {
-            self.max_retries
-        }
-    }
-
     /// Calculate the delay for a given attempt (1-indexed).
     /// Uses exponential backoff with ±20 % jitter.
     pub fn delay_for_attempt(&self, attempt: usize) -> Duration {
@@ -79,8 +63,8 @@ impl RetryPolicy {
 
 /// Whether this provider error is safe to retry.
 ///
-/// Retryable: rate limits (429), network/transient errors, overloaded (529/stall),
-/// API errors (5xx).
+/// Retryable: rate limits (429), network/transient errors, overloaded (529),
+/// and explicit transient API messages.
 /// Not retryable: auth (401/403), context overflow, cancellation,
 /// client errors (400 etc.), not found (404).
 pub fn should_retry(error: &ProviderError) -> bool {
@@ -95,28 +79,17 @@ pub fn should_retry(error: &ProviderError) -> bool {
 
 fn is_retryable_api_message(message: &str) -> bool {
     let lower = message.to_lowercase();
-
-    if lower.contains("rate limit")
+    lower.contains("rate limit")
         || lower.contains("temporarily unavailable")
         || lower.contains("timeout")
-    {
-        return true;
-    }
-
-    if lower.contains("400")
-        || lower.contains("401")
-        || lower.contains("403")
-        || lower.contains("404")
-        || lower.contains("405")
-        || lower.contains("422")
-        || lower.contains("bad request")
-        || lower.contains("invalid request")
-        || lower.contains("not found")
-        || lower.contains("method not allowed")
-        || lower.contains("unprocessable")
-    {
-        return false;
-    }
-
-    true
+        || lower.contains("timed out")
+        || lower.contains("internal server error")
+        || lower.contains("server error")
+        || lower.contains("bad gateway")
+        || lower.contains("service unavailable")
+        || lower.contains("gateway timeout")
+        || lower.contains("http 500")
+        || lower.contains("http 502")
+        || lower.contains("http 503")
+        || lower.contains("http 504")
 }

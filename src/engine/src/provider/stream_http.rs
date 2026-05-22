@@ -162,12 +162,15 @@ pub fn extract_json_error_message(value: &serde_json::Value) -> Option<String> {
 /// Classify a JSON error body into a [`ProviderError`].
 ///
 /// - Context overflow messages → [`ProviderError::ContextOverflow`]
-/// - Everything else → [`ProviderError::Api`] (retryable)
+/// - Overloaded messages → [`ProviderError::Overloaded`]
+/// - Everything else → [`ProviderError::Api`] (retry depends on explicit transient wording)
 pub fn classify_json_error(value: &serde_json::Value) -> ProviderError {
     let message = extract_json_error_message(value).unwrap_or_else(|| value.to_string());
 
     if is_context_overflow_message(&message) {
         ProviderError::ContextOverflow { message }
+    } else if crate::provider::error::is_overloaded_message(&message) {
+        ProviderError::Overloaded(message)
     } else {
         ProviderError::Api(message)
     }

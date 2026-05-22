@@ -19,11 +19,11 @@ fn anthropic_error_overloaded() {
         "type": "error",
         "error": {
             "type": "overloaded_error",
-            "message": "Overloaded"
+            "message": "service is overloaded"
         }
     });
     let err = classify_json_error(&value);
-    assert!(matches!(err, ProviderError::Api(_)));
+    assert!(matches!(err, ProviderError::Overloaded(_)));
     assert!(evotengine::retry::should_retry(&err));
 }
 

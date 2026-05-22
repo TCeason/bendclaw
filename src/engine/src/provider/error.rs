@@ -156,7 +156,7 @@ fn is_context_overflow(status: u16, message: &str) -> bool {
     is_context_overflow_message(message)
 }
 
-fn is_overloaded_message(message: &str) -> bool {
+pub(crate) fn is_overloaded_message(message: &str) -> bool {
     let lower = message.to_lowercase();
     lower.contains("overloaded_error") || lower.contains("service is overloaded")
 }

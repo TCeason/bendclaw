@@ -9,7 +9,6 @@ use tokio::sync::mpsc;
 
 use super::assistant_sanitize::sanitize_assistant_text;
 use super::compaction::compact_context;
-use super::compaction::compact_for_recovery;
 use super::config::AgentLoopConfig;
 use super::doom_loop::DoomLoopDetector;
 use super::input_filter::apply_input_filters;
@@ -139,8 +138,6 @@ async fn run_loop(
     let mut tool_only_guard = ToolOnlyGuard::new(10);
     let mut thinking_only_guard = ThinkingOnlyGuard::new();
     let mut context_tracker = ContextTracker::new();
-    let mut consecutive_errors: usize = 0;
-    let mut compacted_after_error = false;
 
     // Check for steering messages at start
     let mut pending: Vec<AgentMessage> = config
@@ -245,7 +242,6 @@ async fn run_loop(
                 budget_snapshot,
             )
             .await;
-            let recovery = assistant_result.recovery;
             let message = assistant_result.message;
 
             // Strip any `<system-reminder>` / `<system>` tags or status-template
@@ -273,27 +269,6 @@ async fn run_loop(
             } = message
             {
                 if *stop_reason == StopReason::Error || *stop_reason == StopReason::Aborted {
-                    consecutive_errors += 1;
-
-                    // Compact-and-retry: if we've failed ≥2 times consecutively,
-                    // context is over 50% of budget, and we haven't already
-                    // compacted for this error streak — force compact and retry.
-                    if *stop_reason == StopReason::Error
-                        && !cancel.is_cancelled()
-                        && consecutive_errors >= 2
-                        && !compacted_after_error
-                        && compact_for_recovery(
-                            context,
-                            new_messages,
-                            config,
-                            &mut context_tracker,
-                            tx,
-                        )
-                    {
-                        compacted_after_error = true;
-                        continue;
-                    }
-
                     // Emit unified Error event for provider errors (but not cancellations)
                     if *stop_reason == StopReason::Error && !cancel.is_cancelled() {
                         let err_str = error_message
@@ -321,10 +296,6 @@ async fn run_loop(
                 }
             }
 
-            // Successful turn — reset error tracking
-            consecutive_errors = 0;
-            compacted_after_error = false;
-
             // Extract tool calls
             let tool_calls: Vec<_> = match &message {
                 Message::Assistant { content, .. } => content
@@ -342,47 +313,6 @@ async fn run_loop(
             };
 
             let has_tool_calls = !tool_calls.is_empty();
-
-            if let Some(recovery) = recovery {
-                let tool_results = incomplete_tool_use_recovery_results(&message, &recovery.error);
-                for result in &tool_results {
-                    let am: AgentMessage = result.clone().into();
-                    tx.send(AgentEvent::MessageStart {
-                        message: am.clone(),
-                    })
-                    .ok();
-                    tx.send(AgentEvent::MessageEnd {
-                        message: am.clone(),
-                    })
-                    .ok();
-                    context.messages.push(am.clone());
-                    new_messages.push(am);
-                }
-
-                if let Some(ref mut tracker) = tracker {
-                    let turn_tokens = match &message {
-                        Message::Assistant { usage, .. } => (usage.input + usage.output) as usize,
-                        _ => context::message_tokens(&agent_msg),
-                    };
-                    tracker.record_turn(turn_tokens);
-                }
-                if let Some(ref after_turn) = config.after_turn {
-                    // A recovered mid-stream provider error may have only the
-                    // input usage from message_start; output usage is available
-                    // only if Anthropic emitted message_delta before failing.
-                    let usage = match &message {
-                        Message::Assistant { usage, .. } => usage.clone(),
-                        _ => Usage::default(),
-                    };
-                    after_turn(&context.messages, &usage);
-                }
-                tx.send(AgentEvent::TurnEnd {
-                    message: agent_msg,
-                    tool_results,
-                })
-                .ok();
-                continue;
-            }
 
             if let Some(intervention) = tool_only_guard.check(&message, has_tool_calls) {
                 pending.push(intervention.steering_message);
@@ -572,49 +502,5 @@ fn sanitize_message(message: Message) -> Message {
             }
         }
         other => other,
-    }
-}
-
-fn incomplete_tool_use_recovery_results(
-    message: &Message,
-    error: &crate::provider::ProviderError,
-) -> Vec<Message> {
-    let Message::Assistant { content, .. } = message else {
-        return Vec::new();
-    };
-
-    content
-        .iter()
-        .filter_map(|block| {
-            let Content::ToolCall { id, name, .. } = block else {
-                return None;
-            };
-            Some(Message::ToolResult {
-                tool_call_id: id.clone(),
-                tool_name: name.clone(),
-                content: vec![Content::Text {
-                    text: format!(
-                        "The generated tool use was interrupted before the full input was received due to a {}. Try again, and if the tool input is large, split the work between multiple smaller tool uses.",
-                        provider_error_category(error)
-                    ),
-                }],
-                is_error: true,
-                timestamp: now_ms(),
-                retention: Retention::Normal,
-            })
-        })
-        .collect()
-}
-
-fn provider_error_category(error: &crate::provider::ProviderError) -> &'static str {
-    match error {
-        crate::provider::ProviderError::RateLimited { .. } => "rate limit",
-        crate::provider::ProviderError::Network(_) => "transient network error",
-        crate::provider::ProviderError::Api(message)
-            if message.to_lowercase().contains("overloaded") =>
-        {
-            "transient upstream overload"
-        }
-        _ => "transient upstream error",
     }
 }

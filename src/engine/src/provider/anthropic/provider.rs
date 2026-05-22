@@ -30,7 +30,7 @@ impl StreamProvider for AnthropicProvider {
             .model_config
             .as_ref()
             .map(|mc| mc.base_url.trim_end_matches('/').to_string())
-            .filter(|url| !url.is_empty())
+            .filter(|url: &String| !url.is_empty())
             .unwrap_or_else(|| "https://api.anthropic.com".into());
 
         let is_custom = base_url != "https://api.anthropic.com";
@@ -52,10 +52,7 @@ impl StreamProvider for AnthropicProvider {
             // Official endpoint, OAuth token
             builder = builder
                 .header("authorization", format!("Bearer {}", config.api_key))
-                .header(
-                    "anthropic-beta",
-                    "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14",
-                )
+                .header("anthropic-beta", "claude-code-20250219,oauth-2025-04-20")
                 .header("anthropic-dangerous-direct-browser-access", "true")
                 .header("user-agent", "claude-cli/2.1.2 (external, cli)")
                 .header("x-app", "cli");

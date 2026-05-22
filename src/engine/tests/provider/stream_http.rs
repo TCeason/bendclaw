@@ -76,7 +76,7 @@ fn classify_overflow_json() {
 }
 
 #[test]
-fn classify_generic_json_error_is_retryable() {
+fn classify_internal_server_error_json_is_retryable() {
     let value = serde_json::json!({
         "error": {
             "type": "api_error",
@@ -94,11 +94,11 @@ fn classify_overloaded_json_is_retryable() {
         "type": "error",
         "error": {
             "type": "overloaded_error",
-            "message": "Overloaded"
+            "message": "service is overloaded"
         }
     });
     let err = classify_json_error(&value);
-    assert!(matches!(err, ProviderError::Api(_)));
+    assert!(matches!(err, ProviderError::Overloaded(_)));
     assert!(evotengine::retry::should_retry(&err));
 }
 
@@ -107,7 +107,7 @@ fn classify_no_message_uses_full_json() {
     let value = serde_json::json!({"foo": "bar"});
     let err = classify_json_error(&value);
     assert!(matches!(err, ProviderError::Api(_)));
-    assert!(evotengine::retry::should_retry(&err));
+    assert!(!evotengine::retry::should_retry(&err));
 }
 
 #[test]

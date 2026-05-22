@@ -8,7 +8,6 @@ use crate::context::ContextConfig;
 use crate::provider::ProviderError;
 use crate::provider::StreamConfig;
 use crate::provider::StreamEvent;
-use crate::provider::StreamOutcome;
 use crate::provider::ToolDefinition;
 use crate::types::*;
 
@@ -18,26 +17,11 @@ const REQUEST_OLD_TOOL_RESULTS_TOTAL_MAX_BYTES: usize = 64_000;
 
 pub(super) struct AssistantStreamResult {
     pub message: Message,
-    pub recovery: Option<AssistantRecovery>,
-}
-
-pub(super) struct AssistantRecovery {
-    pub error: ProviderError,
 }
 
 impl AssistantStreamResult {
     fn complete(message: Message) -> Self {
-        Self {
-            message,
-            recovery: None,
-        }
-    }
-
-    fn incomplete_tool_use(message: Message, error: ProviderError) -> Self {
-        Self {
-            message,
-            recovery: Some(AssistantRecovery { error }),
-        }
+        Self { message }
     }
 }
 
@@ -278,12 +262,12 @@ pub(super) async fn stream_assistant_response(
                         content.is_empty()
                             && usage.input == 0
                             && usage.output == 0
-                            && *stop_reason != StopReason::Error
+                            && stop_reason != &StopReason::Error
                     }
                     _ => false,
                 };
                 if is_empty {
-                    Err(ProviderError::Api(
+                    Err(ProviderError::Network(
                         "Empty response from provider (no content, no usage)".into(),
                     ))
                 } else {
@@ -294,48 +278,9 @@ pub(super) async fn stream_assistant_response(
         };
 
         match &result {
-            Ok(StreamOutcome::IncompleteToolUse { error, .. })
-                if crate::retry::should_retry(error)
-                    && attempt < retry.max_retries_for(error)
-                    && !cancel.is_cancelled() =>
-            {
-                forward_handle.abort();
-                let mut error_metrics =
-                    shared_metrics.lock().map(|m| m.clone()).unwrap_or_default();
-                if error_metrics.duration_ms == 0 {
-                    error_metrics.duration_ms = call_start.elapsed().as_millis() as u64;
-                }
-                tx.send(AgentEvent::LlmCallEnd {
-                    turn,
-                    attempt,
-                    usage: Usage::default(),
-                    error: Some(error.to_string()),
-                    metrics: error_metrics,
-                    context_window: budget.context_window,
-                    stop_reason: StopReason::Error,
-                    content: vec![],
-                    response_model: None,
-                    response_id: None,
-                })
-                .ok();
-                attempt += 1;
-                let delay = error
-                    .retry_after()
-                    .unwrap_or_else(|| retry.delay_for_attempt(attempt));
-                tx.send(AgentEvent::LlmCallRetry {
-                    turn,
-                    attempt,
-                    max_retries: retry.max_retries(),
-                    delay_ms: delay.as_millis() as u64,
-                    error: error.to_string(),
-                })
-                .ok();
-                tokio::time::sleep(delay).await;
-                continue;
-            }
             Err(e)
                 if crate::retry::should_retry(e)
-                    && attempt < retry.max_retries_for(e)
+                    && attempt < retry.max_retries()
                     && !cancel.is_cancelled() =>
             {
                 // Abort forwarder to prevent forwarding events from failed attempt
@@ -424,12 +369,7 @@ pub(super) async fn stream_assistant_response(
                 response_id,
             })
             .ok();
-            match outcome {
-                StreamOutcome::Complete(msg) => AssistantStreamResult::complete(msg),
-                StreamOutcome::IncompleteToolUse { assistant, error } => {
-                    AssistantStreamResult::incomplete_tool_use(assistant, error)
-                }
-            }
+            AssistantStreamResult::complete(outcome.into_message())
         }
         Err(e) => {
             tx.send(AgentEvent::LlmCallEnd {
