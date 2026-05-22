@@ -73,6 +73,16 @@ fn inferred_capabilities_enable_deepseek_thinking_passback_for_anthropic_api() {
 }
 
 #[test]
+fn inferred_capabilities_enable_kimi_thinking_passback_for_anthropic_api() {
+    let mut config = ModelConfig::anthropic("kimi-for-coding", "Kimi for Coding");
+    config.apply_inferred_capabilities();
+    assert_eq!(
+        config.thinking_passback,
+        ThinkingPassbackPolicy::ToolUseMessages
+    );
+}
+
+#[test]
 fn inferred_capabilities_do_not_enable_deepseek_thinking_passback_for_openai_api() {
     let mut config = ModelConfig::openai("deepseek-reasoner", "DeepSeek Reasoner");
     config.apply_inferred_capabilities();

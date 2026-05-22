@@ -301,16 +301,15 @@ pub struct ModelConfig {
 
 impl ModelConfig {
     pub fn apply_inferred_capabilities(&mut self) {
-        if self.api == ApiProtocol::AnthropicMessages && self.is_deepseek_model() {
+        if self.api == ApiProtocol::AnthropicMessages && self.requires_tool_use_thinking_passback()
+        {
             self.thinking_passback = ThinkingPassbackPolicy::ToolUseMessages;
         }
     }
 
-    fn is_deepseek_model(&self) -> bool {
-        self.id
-            .trim_start()
-            .to_ascii_lowercase()
-            .starts_with("deepseek")
+    fn requires_tool_use_thinking_passback(&self) -> bool {
+        let id = self.id.trim_start().to_ascii_lowercase();
+        id.starts_with("deepseek") || id.starts_with("kimi")
     }
 
     /// Create a new Anthropic model config.
