@@ -56,11 +56,7 @@ pub(super) async fn stream_assistant_response(
     // Most providers do not require thinking passback, and keeping it bloats
     // context/cache keys. DeepSeek-compatible Anthropic endpoints require
     // thinking on retained assistant tool-use messages.
-    let preserve_tool_use_thinking = matches!(
-        thinking_passback_policy(config),
-        ThinkingPassbackPolicy::ToolUseMessages
-    );
-    let llm_messages = strip_thinking(llm_messages, preserve_tool_use_thinking);
+    let llm_messages = strip_thinking(llm_messages, thinking_passback_policy(config));
 
     // Build tool definitions
     let tool_defs: Vec<ToolDefinition> = context
@@ -480,14 +476,13 @@ fn compact_tool_results_for_request_view(
 /// usually not part of the provider protocol. DeepSeek-compatible Anthropic
 /// endpoints are the exception: assistant tool-use messages retained in history
 /// must keep their original thinking blocks.
-fn strip_thinking(messages: Vec<Message>, preserve_tool_use_thinking: bool) -> Vec<Message> {
+fn strip_thinking(messages: Vec<Message>, policy: ThinkingPassbackPolicy) -> Vec<Message> {
     messages
         .into_iter()
-        .map(|msg| {
-            if preserve_tool_use_thinking && is_assistant_tool_use_message(&msg) {
-                return msg;
-            }
-            strip_message_thinking(msg)
+        .map(|msg| match policy {
+            ThinkingPassbackPolicy::Disabled => strip_message_thinking(msg),
+            ThinkingPassbackPolicy::ToolUseMessages if is_assistant_tool_use_message(&msg) => msg,
+            ThinkingPassbackPolicy::ToolUseMessages => strip_message_thinking(msg),
         })
         .collect()
 }

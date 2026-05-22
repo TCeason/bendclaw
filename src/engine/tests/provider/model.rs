@@ -63,6 +63,23 @@ fn model_config_minimax() {
 }
 
 #[test]
+fn inferred_capabilities_enable_deepseek_thinking_passback_for_anthropic_api() {
+    let mut config = ModelConfig::anthropic("deepseek-reasoner", "DeepSeek Reasoner");
+    config.apply_inferred_capabilities();
+    assert_eq!(
+        config.thinking_passback,
+        ThinkingPassbackPolicy::ToolUseMessages
+    );
+}
+
+#[test]
+fn inferred_capabilities_do_not_enable_deepseek_thinking_passback_for_openai_api() {
+    let mut config = ModelConfig::openai("deepseek-reasoner", "DeepSeek Reasoner");
+    config.apply_inferred_capabilities();
+    assert_eq!(config.thinking_passback, ThinkingPassbackPolicy::Disabled);
+}
+
+#[test]
 fn api_protocol_display() {
     assert_eq!(
         ApiProtocol::AnthropicMessages.to_string(),

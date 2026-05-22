@@ -2123,15 +2123,9 @@ async fn test_llm_call_start_carries_budget_and_window() {
 #[tokio::test]
 async fn test_model_capability_preserves_tool_use_message_thinking() {
     use evotengine::provider::ModelConfig;
-    use evotengine::provider::ThinkingPassbackPolicy;
 
     let mut model_config = ModelConfig::anthropic("deepseek-reasoner", "deepseek-reasoner");
     model_config.apply_inferred_capabilities();
-    assert_eq!(
-        model_config.thinking_passback,
-        ThinkingPassbackPolicy::ToolUseMessages
-    );
-
     let output = TestHarness::new()
         .responses(vec![MockResponse::Text("ok".into())])
         .model_config(model_config)
