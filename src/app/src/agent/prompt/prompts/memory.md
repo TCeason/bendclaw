@@ -1,5 +1,5 @@
-Use the `memory` tool to save, update, and remove memories.
-Do not write memory files with write_file or edit_file.
+Use the `Memory` tool to save, update, and remove memories.
+Do not write memory files with Write or Edit.
 
 ## Scope
 

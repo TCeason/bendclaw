@@ -28,7 +28,7 @@ async fn write_file_disallowed_returns_error() {
     let result = tool
         .execute(
             serde_json::json!({"path": "/tmp/should-not-exist.txt", "content": "x"}),
-            ctx("write_file"),
+            ctx("Write"),
         )
         .await;
 
@@ -46,7 +46,7 @@ async fn write_file_disallowed_does_not_write() {
     let _ = tool
         .execute(
             serde_json::json!({"path": path.to_str().unwrap(), "content": "should not appear"}),
-            ctx("write_file"),
+            ctx("Write"),
         )
         .await;
 
@@ -62,7 +62,7 @@ async fn write_file_normal_still_works() {
     let result = tool
         .execute(
             serde_json::json!({"path": path.to_str().unwrap(), "content": "hello"}),
-            ctx("write_file"),
+            ctx("Write"),
         )
         .await;
 
@@ -81,7 +81,7 @@ async fn edit_file_disallowed_returns_error() {
     let result = tool
         .execute(
             serde_json::json!({"path": "/tmp/x.txt", "old_text": "a", "new_text": "b"}),
-            ctx("edit_file"),
+            ctx("Edit"),
         )
         .await;
 
@@ -103,7 +103,7 @@ async fn edit_file_disallowed_does_not_modify() {
                 "old_text": "original",
                 "new_text": "modified"
             }),
-            ctx("edit_file"),
+            ctx("Edit"),
         )
         .await;
 
@@ -125,7 +125,7 @@ async fn edit_file_normal_still_works() {
                 "old_text": "bbb",
                 "new_text": "zzz"
             }),
-            ctx("edit_file"),
+            ctx("Edit"),
         )
         .await;
 
@@ -143,8 +143,8 @@ async fn edit_file_normal_still_works() {
 fn disallowed_tools_still_have_names() {
     let write = WriteFileTool::new().disallow("blocked");
     let edit = EditFileTool::new().disallow("blocked");
-    assert_eq!(write.name(), "write_file");
-    assert_eq!(edit.name(), "edit_file");
+    assert_eq!(write.name(), "Write");
+    assert_eq!(edit.name(), "Edit");
 }
 
 #[tokio::test]
@@ -153,7 +153,7 @@ async fn disallowed_write_returns_message() {
     let result = tool
         .execute(
             serde_json::json!({"path": "/tmp/x.txt", "content": "x"}),
-            ctx("write_file"),
+            ctx("Write"),
         )
         .await;
 
@@ -167,7 +167,7 @@ async fn disallowed_edit_returns_message() {
     let result = tool
         .execute(
             serde_json::json!({"path": "/tmp/x.txt", "old_text": "a", "new_text": "b"}),
-            ctx("edit_file"),
+            ctx("Edit"),
         )
         .await;
 
@@ -184,7 +184,7 @@ async fn read_file_still_works_alongside_disallowed() {
     let result = tool
         .execute(
             serde_json::json!({"path": path.to_str().unwrap()}),
-            ctx("read_file"),
+            ctx("Read"),
         )
         .await;
 

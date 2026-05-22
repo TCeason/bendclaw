@@ -94,7 +94,7 @@ fn stats_llm_call_completed_round_trip() {
 fn stats_tool_finished_round_trip() {
     let stats = TranscriptStats::ToolFinished(ToolFinishedStats {
         tool_call_id: "tc1".into(),
-        tool_name: "read_file".into(),
+        tool_name: "Read".into(),
         result_tokens: 150,
         duration_ms: 80,
         is_error: false,
@@ -102,7 +102,7 @@ fn stats_tool_finished_round_trip() {
     let item = stats.to_item();
     let decoded = TranscriptStats::try_from_item(&item);
     if let Some(TranscriptStats::ToolFinished(s)) = decoded {
-        assert_eq!(s.tool_name, "read_file");
+        assert_eq!(s.tool_name, "Read");
         assert_eq!(s.result_tokens, 150);
         assert!(!s.is_error);
     } else {
@@ -268,7 +268,7 @@ fn compact_item_is_not_context() {
 fn stats_item_serializes_to_flat_jsonl() {
     let stats = TranscriptStats::ToolFinished(ToolFinishedStats {
         tool_call_id: "tc1".into(),
-        tool_name: "bash".into(),
+        tool_name: "Bash".into(),
         result_tokens: 42,
         duration_ms: 100,
         is_error: false,
@@ -279,7 +279,7 @@ fn stats_item_serializes_to_flat_jsonl() {
     assert!(json.contains(r#""type":"stats""#));
     assert!(json.contains(r#""kind":"tool_finished""#));
     // data should contain the tool fields
-    assert!(json.contains(r#""tool_name":"bash""#));
+    assert!(json.contains(r#""tool_name":"Bash""#));
 }
 
 #[test]

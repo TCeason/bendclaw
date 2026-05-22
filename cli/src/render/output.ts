@@ -192,7 +192,7 @@ export function buildToolResult(
 
   // Tool result content (head/tail truncated)
   if (result) {
-    if (name === 'read_file' || name === 'read_code') {
+    if (name === 'Read' || name === 'read_code') {
       if (isError) {
         // Show error content for failed reads
         const resultLines = toolResultLines(result, isError, name, expanded)

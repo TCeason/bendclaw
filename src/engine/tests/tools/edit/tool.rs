@@ -19,7 +19,7 @@ async fn test_edit_file() {
                 "old_text": "println!(\"hello\")",
                 "new_text": "println!(\"goodbye\")"
             }),
-            ctx("edit_file"),
+            ctx("Edit"),
         )
         .await
         .unwrap();
@@ -67,7 +67,7 @@ async fn test_edit_file_no_match() {
     let result = tool
         .execute(
             serde_json::json!({"path": path, "old_text": "nonexistent", "new_text": "bar"}),
-            ctx("edit_file"),
+            ctx("Edit"),
         )
         .await;
     assert!(result.is_err());
@@ -93,7 +93,7 @@ async fn test_replace_all_multiple_occurrences() {
                 "new_text": "qux",
                 "replace_all": true
             }),
-            ctx("edit_file"),
+            ctx("Edit"),
         )
         .await
         .unwrap();
@@ -120,7 +120,7 @@ async fn test_replace_all_single_occurrence() {
                 "new_text": "earth",
                 "replace_all": true
             }),
-            ctx("edit_file"),
+            ctx("Edit"),
         )
         .await
         .unwrap();
@@ -146,7 +146,7 @@ async fn test_replace_all_not_found() {
                 "new_text": "bar",
                 "replace_all": true
             }),
-            ctx("edit_file"),
+            ctx("Edit"),
         )
         .await;
 
@@ -171,7 +171,7 @@ async fn test_replace_all_empty_old_text() {
                 "new_text": "bar",
                 "replace_all": true
             }),
-            ctx("edit_file"),
+            ctx("Edit"),
         )
         .await;
 
@@ -194,7 +194,7 @@ async fn test_not_unique_error_mentions_replace_all() {
                 "old_text": "aaa",
                 "new_text": "ccc"
             }),
-            ctx("edit_file"),
+            ctx("Edit"),
         )
         .await;
 
@@ -220,7 +220,7 @@ async fn test_replace_all_overlapping_pattern() {
                 "new_text": "b",
                 "replace_all": true
             }),
-            ctx("edit_file"),
+            ctx("Edit"),
         )
         .await
         .unwrap();
@@ -280,7 +280,7 @@ async fn test_details_contains_replace_all_and_count() {
                 "old_text": "println!(\"hello\")",
                 "new_text": "println!(\"bye\")"
             }),
-            ctx("edit_file"),
+            ctx("Edit"),
         )
         .await
         .unwrap();

@@ -12,7 +12,7 @@ fn lifecycle_clears_current_run_after_user_message() {
         AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: "c1".into(),
-                name: "skill".into(),
+                name: "Skill".into(),
                 arguments: serde_json::json!({"skill_name": "db"}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -25,7 +25,7 @@ fn lifecycle_clears_current_run_after_user_message() {
         }),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "c1".into(),
-            tool_name: "skill".into(),
+            tool_name: "Skill".into(),
             content: vec![Content::Text {
                 text: "Long skill instructions here...".into(),
             }],
@@ -71,7 +71,7 @@ fn lifecycle_preserves_current_run_without_user_after() {
         AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: "c1".into(),
-                name: "skill".into(),
+                name: "Skill".into(),
                 arguments: serde_json::json!({}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -84,7 +84,7 @@ fn lifecycle_preserves_current_run_without_user_after() {
         }),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "c1".into(),
-            tool_name: "skill".into(),
+            tool_name: "Skill".into(),
             content: vec![Content::Text {
                 text: "Skill instructions".into(),
             }],
@@ -125,7 +125,7 @@ fn lifecycle_does_not_affect_normal_retention() {
         AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: "c1".into(),
-                name: "read_file".into(),
+                name: "Read".into(),
                 arguments: serde_json::json!({}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -138,7 +138,7 @@ fn lifecycle_does_not_affect_normal_retention() {
         }),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "c1".into(),
-            tool_name: "read_file".into(),
+            tool_name: "Read".into(),
             content: vec![Content::Text {
                 text: "file content here".into(),
             }],
@@ -180,7 +180,7 @@ fn lifecycle_clears_multiple_current_run_results() {
         AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: "c1".into(),
-                name: "skill".into(),
+                name: "Skill".into(),
                 arguments: serde_json::json!({}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -193,7 +193,7 @@ fn lifecycle_clears_multiple_current_run_results() {
         }),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "c1".into(),
-            tool_name: "skill".into(),
+            tool_name: "Skill".into(),
             content: vec![Content::Text {
                 text: "skill 1".into(),
             }],
@@ -205,7 +205,7 @@ fn lifecycle_clears_multiple_current_run_results() {
         AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: "c2".into(),
-                name: "skill".into(),
+                name: "Skill".into(),
                 arguments: serde_json::json!({}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -218,7 +218,7 @@ fn lifecycle_clears_multiple_current_run_results() {
         }),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "c2".into(),
-            tool_name: "skill".into(),
+            tool_name: "Skill".into(),
             content: vec![Content::Text {
                 text: "skill 2".into(),
             }],

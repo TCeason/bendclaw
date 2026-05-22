@@ -13,7 +13,7 @@ use super::ctx_with_cancel;
 async fn test_bash_echo() {
     let tool = BashTool::new();
     let result = tool
-        .execute(serde_json::json!({"command": "echo hello"}), ctx("bash"))
+        .execute(serde_json::json!({"command": "echo hello"}), ctx("Bash"))
         .await
         .unwrap();
 
@@ -30,7 +30,7 @@ async fn test_bash_failure() {
     // Non-zero exit codes return Ok with exit code in output (for LLM self-correction)
     let tool = BashTool::new();
     let result = tool
-        .execute(serde_json::json!({"command": "false"}), ctx("bash"))
+        .execute(serde_json::json!({"command": "false"}), ctx("Bash"))
         .await
         .unwrap();
 
@@ -45,7 +45,7 @@ async fn test_bash_failure() {
 async fn test_bash_deny_pattern() {
     let tool = BashTool::new();
     let result = tool
-        .execute(serde_json::json!({"command": "rm -rf /"}), ctx("bash"))
+        .execute(serde_json::json!({"command": "rm -rf /"}), ctx("Bash"))
         .await;
 
     assert!(result.is_err());
@@ -56,7 +56,7 @@ async fn test_bash_deny_pattern() {
 async fn test_bash_timeout() {
     let tool = BashTool::new().with_timeout(std::time::Duration::from_millis(100));
     let result = tool
-        .execute(serde_json::json!({"command": "sleep 10"}), ctx("bash"))
+        .execute(serde_json::json!({"command": "sleep 10"}), ctx("Bash"))
         .await;
 
     assert!(result.is_err());
@@ -73,7 +73,7 @@ async fn test_bash_cancel() {
     let result = tool
         .execute(
             serde_json::json!({"command": "echo should not run"}),
-            ctx_with_cancel("bash", cancel),
+            ctx_with_cancel("Bash", cancel),
         )
         .await;
 
@@ -84,7 +84,7 @@ async fn test_bash_cancel() {
 async fn test_bash_blocked_command() {
     let tool = BashTool::new();
     let result = tool
-        .execute(serde_json::json!({"command": "rm -rf /"}), ctx("bash"))
+        .execute(serde_json::json!({"command": "rm -rf /"}), ctx("Bash"))
         .await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("blocked"));
@@ -98,7 +98,7 @@ async fn test_bash_timeout_includes_partial_output() {
     let result = tool
         .execute(
             serde_json::json!({"command": "echo before_timeout; sleep 10"}),
-            ctx("bash"),
+            ctx("Bash"),
         )
         .await;
 
@@ -120,7 +120,7 @@ async fn test_bash_progress_emitted() {
     let cancel = CancellationToken::new();
     let tool_ctx = ToolContext {
         tool_call_id: "t1".into(),
-        tool_name: "bash".into(),
+        tool_name: "Bash".into(),
         cancel,
         on_update: None,
         on_progress,
@@ -159,7 +159,7 @@ async fn test_bash_update_emitted() {
     let cancel = CancellationToken::new();
     let tool_ctx = ToolContext {
         tool_call_id: "t1".into(),
-        tool_name: "bash".into(),
+        tool_name: "Bash".into(),
         cancel,
         on_update,
         on_progress: None,
@@ -201,7 +201,7 @@ async fn test_bash_timeout_no_hang() {
     let start = std::time::Instant::now();
     let tool = BashTool::new().with_timeout(std::time::Duration::from_millis(200));
     let result = tool
-        .execute(serde_json::json!({"command": "sleep 999"}), ctx("bash"))
+        .execute(serde_json::json!({"command": "sleep 999"}), ctx("Bash"))
         .await;
 
     assert!(result.is_err());
@@ -222,7 +222,7 @@ async fn test_bash_long_line_truncated() {
     let long = "x".repeat(8000);
     let cmd = format!("printf '{long}'");
     let result = tool
-        .execute(serde_json::json!({"command": cmd}), ctx("bash"))
+        .execute(serde_json::json!({"command": cmd}), ctx("Bash"))
         .await
         .unwrap();
 
@@ -244,7 +244,7 @@ async fn test_bash_short_line_not_truncated() {
     let short = "y".repeat(100);
     let cmd = format!("printf '{short}'");
     let result = tool
-        .execute(serde_json::json!({"command": cmd}), ctx("bash"))
+        .execute(serde_json::json!({"command": cmd}), ctx("Bash"))
         .await
         .unwrap();
 
@@ -263,7 +263,7 @@ async fn test_bash_multiline_only_long_lines_truncated() {
     let long = "z".repeat(8000);
     let cmd = format!("echo short_line; printf '{long}'; echo; echo another_short");
     let result = tool
-        .execute(serde_json::json!({"command": cmd}), ctx("bash"))
+        .execute(serde_json::json!({"command": cmd}), ctx("Bash"))
         .await
         .unwrap();
 
@@ -285,7 +285,7 @@ async fn test_bash_with_envs_injects_variables() {
     let result = tool
         .execute(
             serde_json::json!({"command": "printf '%s %s' \"$MY_VAR\" \"$OTHER_VAR\""}),
-            ctx("bash"),
+            ctx("Bash"),
         )
         .await
         .unwrap();
@@ -301,7 +301,7 @@ async fn test_bash_with_envs_injects_variables() {
 async fn test_bash_empty_envs_works() {
     let tool = BashTool::new().with_envs(Vec::<(String, String)>::new());
     let result = tool
-        .execute(serde_json::json!({"command": "echo ok"}), ctx("bash"))
+        .execute(serde_json::json!({"command": "echo ok"}), ctx("Bash"))
         .await
         .unwrap();
 
@@ -325,7 +325,7 @@ async fn test_bash_timeout_multibyte_no_panic() {
             serde_json::json!({
                 "command": "python3 -c \"print('🚀' * 2000)\"; sleep 10"
             }),
-            ctx("bash"),
+            ctx("Bash"),
         )
         .await;
 
@@ -341,7 +341,7 @@ async fn test_bash_without_envs_variable_is_empty() {
     let result = tool
         .execute(
             serde_json::json!({"command": "printf '%s' \"$NONEXISTENT_VAR_12345\""}),
-            ctx("bash"),
+            ctx("Bash"),
         )
         .await
         .unwrap();

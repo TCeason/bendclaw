@@ -65,7 +65,7 @@ async fn anthropic_sse_text_response() {
 async fn anthropic_sse_tool_call() {
     let sse = anthropic_sse::body(vec![
         anthropic_sse::message_start(50, 0),
-        anthropic_sse::tool_block_start(0, "toolu_123", "bash"),
+        anthropic_sse::tool_block_start(0, "toolu_123", "Bash"),
         anthropic_sse::tool_input_delta(0, r#"{"command": "ls -la"}"#),
         anthropic_sse::block_stop(0),
         anthropic_sse::message_delta("tool_use", 5),
@@ -86,7 +86,7 @@ async fn anthropic_sse_tool_call() {
             assert_eq!(content.len(), 1);
             assert!(
                 matches!(&content[0], Content::ToolCall { id, name, arguments }
-                    if id == "toolu_123" && name == "bash" && arguments["command"] == "ls -la")
+                    if id == "toolu_123" && name == "Bash" && arguments["command"] == "ls -la")
             );
             assert_eq!(*stop_reason, StopReason::ToolUse);
         }
@@ -95,7 +95,7 @@ async fn anthropic_sse_tool_call() {
 
     assert!(events
         .iter()
-        .any(|e| matches!(e, StreamEvent::ToolCallStart { name, .. } if name == "bash")));
+        .any(|e| matches!(e, StreamEvent::ToolCallStart { name, .. } if name == "Bash")));
     assert!(events
         .iter()
         .any(|e| matches!(e, StreamEvent::ToolCallEnd { .. })));
@@ -105,7 +105,7 @@ async fn anthropic_sse_tool_call() {
 async fn anthropic_sse_tool_use_error_becomes_recovery_tool_call() {
     let sse = anthropic_sse::body(vec![
         anthropic_sse::message_start(50, 0),
-        anthropic_sse::tool_block_start(0, "toolu_123", "write_file"),
+        anthropic_sse::tool_block_start(0, "toolu_123", "Write"),
         anthropic_sse::tool_input_delta(0, r#"{"path":"/tmp/a.txt""#),
         anthropic_sse::block_stop(0),
         anthropic_sse::error("overloaded_error", "Overloaded"),
@@ -136,7 +136,7 @@ async fn anthropic_sse_tool_use_error_becomes_recovery_tool_call() {
                     arguments,
                 } => {
                     assert_eq!(id, "toolu_123");
-                    assert_eq!(name, "write_file");
+                    assert_eq!(name, "Write");
                     assert_eq!(arguments["path"], "/tmp/a.txt");
                     assert!(arguments.get("__evot_tool_use_truncated").is_none());
                 }
@@ -153,7 +153,7 @@ async fn anthropic_sse_tool_use_error_becomes_recovery_tool_call() {
 async fn anthropic_sse_tool_use_error_without_block_stop_finalizes_partial_json() {
     let sse = anthropic_sse::body(vec![
         anthropic_sse::message_start(50, 0),
-        anthropic_sse::tool_block_start(0, "toolu_123", "write_file"),
+        anthropic_sse::tool_block_start(0, "toolu_123", "Write"),
         anthropic_sse::tool_input_delta(0, r#"{"path":"/tmp/a.txt""#),
         anthropic_sse::error("overloaded_error", "Overloaded"),
     ]);
@@ -184,7 +184,7 @@ async fn anthropic_sse_tool_use_error_without_block_stop_finalizes_partial_json(
 async fn anthropic_sse_error_before_tool_input_still_errors() {
     let sse = anthropic_sse::body(vec![
         anthropic_sse::message_start(50, 0),
-        anthropic_sse::tool_block_start(0, "toolu_123", "write_file"),
+        anthropic_sse::tool_block_start(0, "toolu_123", "Write"),
         anthropic_sse::error("overloaded_error", "Overloaded"),
     ]);
 
@@ -199,7 +199,7 @@ async fn anthropic_sse_error_before_tool_input_still_errors() {
 async fn anthropic_sse_complete_tool_use_error_before_message_stop_recovers() {
     let sse = anthropic_sse::body(vec![
         anthropic_sse::message_start(50, 0),
-        anthropic_sse::tool_block_start(0, "toolu_123", "bash"),
+        anthropic_sse::tool_block_start(0, "toolu_123", "Bash"),
         anthropic_sse::tool_input_delta(0, r#"{"command":"ls -la"}"#),
         anthropic_sse::block_stop(0),
         anthropic_sse::message_delta("tool_use", 5),
@@ -228,7 +228,7 @@ async fn anthropic_sse_complete_tool_use_error_before_message_stop_recovers() {
             assert_eq!(usage.output, 5);
             assert!(
                 matches!(&content[0], Content::ToolCall { id, name, arguments }
-                if id == "toolu_123" && name == "bash" && arguments["command"] == "ls -la")
+                if id == "toolu_123" && name == "Bash" && arguments["command"] == "ls -la")
             );
         }
         _ => panic!("Expected Assistant message"),
@@ -243,10 +243,10 @@ async fn anthropic_sse_complete_tool_use_error_before_message_stop_recovers() {
 async fn anthropic_sse_multiple_tool_use_error_keeps_all_tool_calls() {
     let sse = anthropic_sse::body(vec![
         anthropic_sse::message_start(50, 0),
-        anthropic_sse::tool_block_start(0, "toolu_1", "read_file"),
+        anthropic_sse::tool_block_start(0, "toolu_1", "Read"),
         anthropic_sse::tool_input_delta(0, r#"{"path":"/tmp/a.txt"}"#),
         anthropic_sse::block_stop(0),
-        anthropic_sse::tool_block_start(1, "toolu_2", "write_file"),
+        anthropic_sse::tool_block_start(1, "toolu_2", "Write"),
         anthropic_sse::tool_input_delta(1, r#"{"path":"/tmp/b.txt""#),
         anthropic_sse::error("overloaded_error", "Overloaded"),
     ]);

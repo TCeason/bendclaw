@@ -283,7 +283,7 @@ fn write_evot_memory(home: &std::path::Path, cwd: &str, content: &str) {
         .join(".evotai")
         .join("projects")
         .join(&slug)
-        .join("memory");
+        .join("Memory");
     std::fs::create_dir_all(&mem_dir).expect("create dir");
     std::fs::write(mem_dir.join("MEMORY.md"), content).expect("write");
 }
@@ -295,7 +295,7 @@ fn write_claude_memory(home: &std::path::Path, cwd: &str, content: &str) {
         .join(".claude")
         .join("projects")
         .join(&slug)
-        .join("memory");
+        .join("Memory");
     std::fs::create_dir_all(&mem_dir).expect("create dir");
     std::fs::write(mem_dir.join("MEMORY.md"), content).expect("write");
 }

@@ -36,7 +36,7 @@ fn detects_update_goal_tasks_result() {
 fn ignores_other_tool_calls_for_goal_task_plan() {
     let transcript = vec![TranscriptItem::ToolResult {
         tool_call_id: "call-1".into(),
-        tool_name: "bash".into(),
+        tool_name: "Bash".into(),
         content: "done".into(),
         is_error: false,
     }];

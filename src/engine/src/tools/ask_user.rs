@@ -79,7 +79,7 @@ impl AskUserTool {
 #[async_trait]
 impl AgentTool for AskUserTool {
     fn name(&self) -> &str {
-        "ask_user"
+        "AskUser"
     }
 
     fn label(&self) -> &str {

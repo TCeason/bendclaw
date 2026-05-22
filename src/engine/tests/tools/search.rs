@@ -14,7 +14,7 @@ async fn test_search_pattern() {
 
     let tool = SearchTool::new().with_root(tmp_dir.to_str().unwrap());
     let result = tool
-        .execute(serde_json::json!({"pattern": "hello"}), ctx("grep"))
+        .execute(serde_json::json!({"pattern": "hello"}), ctx("Grep"))
         .await
         .unwrap();
 
@@ -36,7 +36,7 @@ async fn test_search_no_matches() {
 
     let tool = SearchTool::new().with_root(tmp_dir.to_str().unwrap());
     let result = tool
-        .execute(serde_json::json!({"pattern": "zzzznotfound"}), ctx("grep"))
+        .execute(serde_json::json!({"pattern": "zzzznotfound"}), ctx("Grep"))
         .await
         .unwrap();
 

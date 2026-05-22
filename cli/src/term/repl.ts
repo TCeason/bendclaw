@@ -1041,7 +1041,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // Preserve tool progress that was only shown in the status area
     const progress = streamMachine.lastToolProgress
     if (progress) {
-      const toolName = streamMachine.spinnerState.toolName ?? 'bash'
+      const toolName = streamMachine.spinnerState.toolName ?? 'Bash'
       commitLines(buildToolProgressLines(
         { kind: 'tool_progress', payload: { tool_name: toolName, text: progress } } as any,
         expanded,

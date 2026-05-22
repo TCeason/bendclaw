@@ -54,7 +54,7 @@ fn prior_tool_result_pair(id: &str, content: Vec<Content>) -> Vec<AgentMessage> 
         AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: id.into(),
-                name: "bash".into(),
+                name: "Bash".into(),
                 arguments: serde_json::json!({"command": id}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -67,7 +67,7 @@ fn prior_tool_result_pair(id: &str, content: Vec<Content>) -> Vec<AgentMessage> 
         }),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: id.into(),
-            tool_name: "bash".into(),
+            tool_name: "Bash".into(),
             content,
             is_error: false,
             timestamp: 0,
@@ -103,12 +103,12 @@ async fn test_tool_call_and_response() {
     let output = TestHarness::new()
         .responses(vec![
             MockResponse::ToolCalls(vec![MockToolCall {
-                name: "read_file".into(),
+                name: "Read".into(),
                 arguments: serde_json::json!({"path": "test.txt"}),
             }]),
             MockResponse::Text("The file contains: hello".into()),
         ])
-        .tool(MockTool::ok("read_file", "hello"))
+        .tool(MockTool::ok("Read", "hello"))
         .run("Read test.txt")
         .await;
 
@@ -166,7 +166,7 @@ async fn test_incomplete_tool_use_recovery_does_not_execute_tool() {
             let message = Message::Assistant {
                 content: vec![Content::ToolCall {
                     id: "toolu_interrupted".into(),
-                    name: "read_file".into(),
+                    name: "Read".into(),
                     arguments: serde_json::json!({"path": "test.txt"}),
                 }],
                 stop_reason: StopReason::ToolUse,
@@ -216,7 +216,7 @@ async fn test_incomplete_tool_use_recovery_does_not_execute_tool() {
     let mut context = AgentContext {
         system_prompt: "test".into(),
         messages: Vec::new(),
-        tools: vec![Box::new(MockTool::ok("read_file", "should not run"))],
+        tools: vec![Box::new(MockTool::ok("Read", "should not run"))],
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
@@ -341,16 +341,16 @@ async fn test_no_convergence_reminder_injected() {
     let output = TestHarness::new()
         .responses(vec![
             MockResponse::ToolCalls(vec![MockToolCall {
-                name: "read_file".into(),
+                name: "Read".into(),
                 arguments: serde_json::json!({"path": "a.txt"}),
             }]),
             MockResponse::ToolCalls(vec![MockToolCall {
-                name: "read_file".into(),
+                name: "Read".into(),
                 arguments: serde_json::json!({"path": "b.txt"}),
             }]),
             MockResponse::Text("Done.".into()),
         ])
-        .tool(MockTool::ok("read_file", "hello"))
+        .tool(MockTool::ok("Read", "hello"))
         .run("Read files")
         .await;
 
@@ -2259,7 +2259,7 @@ async fn test_request_view_shrinks_old_tool_results_only() {
             AgentMessage::Llm(Message::Assistant {
                 content: vec![Content::ToolCall {
                     id: "old-tc".into(),
-                    name: "bash".into(),
+                    name: "Bash".into(),
                     arguments: serde_json::json!({"command": "old"}),
                 }],
                 stop_reason: StopReason::ToolUse,
@@ -2272,7 +2272,7 @@ async fn test_request_view_shrinks_old_tool_results_only() {
             }),
             AgentMessage::Llm(Message::ToolResult {
                 tool_call_id: "old-tc".into(),
-                tool_name: "bash".into(),
+                tool_name: "Bash".into(),
                 content: vec![Content::Text {
                     text: old_big.clone(),
                 }],
@@ -2283,7 +2283,7 @@ async fn test_request_view_shrinks_old_tool_results_only() {
             AgentMessage::Llm(Message::Assistant {
                 content: vec![Content::ToolCall {
                     id: "recent-tc".into(),
-                    name: "bash".into(),
+                    name: "Bash".into(),
                     arguments: serde_json::json!({"command": "recent"}),
                 }],
                 stop_reason: StopReason::ToolUse,
@@ -2296,7 +2296,7 @@ async fn test_request_view_shrinks_old_tool_results_only() {
             }),
             AgentMessage::Llm(Message::ToolResult {
                 tool_call_id: "recent-tc".into(),
-                tool_name: "bash".into(),
+                tool_name: "Bash".into(),
                 content: vec![Content::Text {
                     text: recent_big.clone(),
                 }],
@@ -2461,7 +2461,7 @@ async fn test_request_view_caps_total_old_tool_results() {
         prior.push(AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: format!("old-tc-{i}"),
-                name: "bash".into(),
+                name: "Bash".into(),
                 arguments: serde_json::json!({"command": format!("old-{i}")}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -2474,7 +2474,7 @@ async fn test_request_view_caps_total_old_tool_results() {
         }));
         prior.push(AgentMessage::Llm(Message::ToolResult {
             tool_call_id: format!("old-tc-{i}"),
-            tool_name: "bash".into(),
+            tool_name: "Bash".into(),
             content: vec![Content::Text {
                 text: old_medium.clone(),
             }],
@@ -2486,7 +2486,7 @@ async fn test_request_view_caps_total_old_tool_results() {
     prior.push(AgentMessage::Llm(Message::Assistant {
         content: vec![Content::ToolCall {
             id: "recent-tc".into(),
-            name: "bash".into(),
+            name: "Bash".into(),
             arguments: serde_json::json!({"command": "recent"}),
         }],
         stop_reason: StopReason::ToolUse,
@@ -2499,7 +2499,7 @@ async fn test_request_view_caps_total_old_tool_results() {
     }));
     prior.push(AgentMessage::Llm(Message::ToolResult {
         tool_call_id: "recent-tc".into(),
-        tool_name: "bash".into(),
+        tool_name: "Bash".into(),
         content: vec![Content::Text {
             text: recent_big.clone(),
         }],

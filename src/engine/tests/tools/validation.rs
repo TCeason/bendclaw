@@ -40,7 +40,7 @@ fn memory_schema() -> serde_json::Value {
 #[test]
 fn missing_required_param() {
     let input = json!({});
-    let err = validate_and_coerce("read_file", &read_file_schema(), &input).unwrap_err();
+    let err = validate_and_coerce("Read", &read_file_schema(), &input).unwrap_err();
     assert!(
         err.contains("The required parameter `path` is missing"),
         "got: {err}"
@@ -52,7 +52,7 @@ fn missing_required_param() {
 #[test]
 fn missing_multiple_required_params() {
     let input = json!({ "name": "foo" });
-    let err = validate_and_coerce("memory", &memory_schema(), &input).unwrap_err();
+    let err = validate_and_coerce("Memory", &memory_schema(), &input).unwrap_err();
     assert!(err.contains("`action` is missing"), "got: {err}");
     assert!(err.contains("`scope` is missing"), "got: {err}");
     assert!(err.contains("issues"), "should say 'issues' (plural)");
@@ -63,7 +63,7 @@ fn missing_multiple_required_params() {
 #[test]
 fn coerce_string_to_integer() {
     let input = json!({ "path": "foo.rs", "offset": "10", "limit": "20" });
-    let result = validate_and_coerce("read_file", &read_file_schema(), &input).unwrap();
+    let result = validate_and_coerce("Read", &read_file_schema(), &input).unwrap();
     assert_eq!(result["offset"], json!(10));
     assert_eq!(result["limit"], json!(20));
     assert_eq!(result["path"], json!("foo.rs"));
@@ -79,7 +79,7 @@ fn coerce_string_to_boolean() {
         "required": ["replace_all"]
     });
     let input = json!({ "replace_all": "true" });
-    let result = validate_and_coerce("edit_file", &schema, &input).unwrap();
+    let result = validate_and_coerce("Edit", &schema, &input).unwrap();
     assert_eq!(result["replace_all"], json!(true));
 }
 
@@ -128,7 +128,7 @@ fn coerce_string_to_number() {
 #[test]
 fn type_mismatch_object_for_string() {
     let input = json!({ "path": { "nested": true } });
-    let err = validate_and_coerce("read_file", &read_file_schema(), &input).unwrap_err();
+    let err = validate_and_coerce("Read", &read_file_schema(), &input).unwrap_err();
     assert!(
         err.contains("expected as `string` but provided as `object`"),
         "got: {err}"
@@ -138,7 +138,7 @@ fn type_mismatch_object_for_string() {
 #[test]
 fn type_mismatch_string_cannot_parse_as_integer() {
     let input = json!({ "path": "foo.rs", "offset": "not_a_number" });
-    let err = validate_and_coerce("read_file", &read_file_schema(), &input).unwrap_err();
+    let err = validate_and_coerce("Read", &read_file_schema(), &input).unwrap_err();
     assert!(
         err.contains("expected as `integer` but provided as `string`"),
         "got: {err}"
@@ -150,14 +150,14 @@ fn type_mismatch_string_cannot_parse_as_integer() {
 #[test]
 fn enum_valid_value() {
     let input = json!({ "action": "add", "scope": "global" });
-    let result = validate_and_coerce("memory", &memory_schema(), &input).unwrap();
+    let result = validate_and_coerce("Memory", &memory_schema(), &input).unwrap();
     assert_eq!(result["action"], json!("add"));
 }
 
 #[test]
 fn enum_invalid_value() {
     let input = json!({ "action": "append", "scope": "global" });
-    let err = validate_and_coerce("memory", &memory_schema(), &input).unwrap_err();
+    let err = validate_and_coerce("Memory", &memory_schema(), &input).unwrap_err();
     assert!(err.contains("not one of the allowed values"), "got: {err}");
     assert!(err.contains("append"), "got: {err}");
 }
@@ -182,21 +182,21 @@ fn enum_checked_after_coercion() {
 #[test]
 fn root_input_is_string() {
     let input = json!("just a string");
-    let err = validate_and_coerce("read_file", &read_file_schema(), &input).unwrap_err();
+    let err = validate_and_coerce("Read", &read_file_schema(), &input).unwrap_err();
     assert!(err.contains("must be a JSON object"), "got: {err}");
 }
 
 #[test]
 fn root_input_is_array() {
     let input = json!([1, 2, 3]);
-    let err = validate_and_coerce("read_file", &read_file_schema(), &input).unwrap_err();
+    let err = validate_and_coerce("Read", &read_file_schema(), &input).unwrap_err();
     assert!(err.contains("must be a JSON object"), "got: {err}");
 }
 
 #[test]
 fn root_input_is_null() {
     let input = json!(null);
-    let err = validate_and_coerce("read_file", &read_file_schema(), &input).unwrap_err();
+    let err = validate_and_coerce("Read", &read_file_schema(), &input).unwrap_err();
     assert!(err.contains("must be a JSON object"), "got: {err}");
 }
 
@@ -205,14 +205,14 @@ fn root_input_is_null() {
 #[test]
 fn valid_input_passes() {
     let input = json!({ "path": "/tmp/foo.rs", "offset": 10, "limit": 50 });
-    let result = validate_and_coerce("read_file", &read_file_schema(), &input).unwrap();
+    let result = validate_and_coerce("Read", &read_file_schema(), &input).unwrap();
     assert_eq!(result, input);
 }
 
 #[test]
 fn valid_input_optional_fields_omitted() {
     let input = json!({ "path": "/tmp/foo.rs" });
-    let result = validate_and_coerce("read_file", &read_file_schema(), &input).unwrap();
+    let result = validate_and_coerce("Read", &read_file_schema(), &input).unwrap();
     assert_eq!(result, input);
 }
 
@@ -262,7 +262,7 @@ fn truncate_utf8_safe() {
 #[test]
 fn extra_fields_preserved() {
     let input = json!({ "path": "foo.rs", "unknown_field": 42 });
-    let result = validate_and_coerce("read_file", &read_file_schema(), &input).unwrap();
+    let result = validate_and_coerce("Read", &read_file_schema(), &input).unwrap();
     assert_eq!(result["unknown_field"], json!(42));
 }
 

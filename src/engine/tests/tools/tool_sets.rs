@@ -16,11 +16,11 @@ async fn test_full_tools_complete() {
     ];
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     assert_eq!(names.len(), 8);
-    assert!(names.contains(&"read_file"));
-    assert!(names.contains(&"read_slim_file"));
-    assert!(names.contains(&"edit_file"));
-    assert!(names.contains(&"glob_file"));
-    assert!(names.contains(&"web_fetch"));
+    assert!(names.contains(&"Read"));
+    assert!(names.contains(&"ReadSlim"));
+    assert!(names.contains(&"Edit"));
+    assert!(names.contains(&"Glob"));
+    assert!(names.contains(&"WebFetch"));
 }
 
 #[tokio::test]
@@ -33,13 +33,13 @@ async fn test_readonly_tools_contains_only_safe_tools() {
     ];
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     assert_eq!(names.len(), 4);
-    assert!(names.contains(&"read_file"));
-    assert!(names.contains(&"read_slim_file"));
-    assert!(names.contains(&"glob_file"));
-    assert!(names.contains(&"grep"));
+    assert!(names.contains(&"Read"));
+    assert!(names.contains(&"ReadSlim"));
+    assert!(names.contains(&"Glob"));
+    assert!(names.contains(&"Grep"));
     // Must not contain mutating or execution tools
-    assert!(!names.contains(&"bash"));
-    assert!(!names.contains(&"edit_file"));
-    assert!(!names.contains(&"write_file"));
-    assert!(!names.contains(&"web_fetch"));
+    assert!(!names.contains(&"Bash"));
+    assert!(!names.contains(&"Edit"));
+    assert!(!names.contains(&"Write"));
+    assert!(!names.contains(&"WebFetch"));
 }

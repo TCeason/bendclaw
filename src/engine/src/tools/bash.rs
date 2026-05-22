@@ -144,7 +144,7 @@ const IO_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 #[async_trait]
 impl AgentTool for BashTool {
     fn name(&self) -> &str {
-        "bash"
+        "Bash"
     }
 
     fn label(&self) -> &str {

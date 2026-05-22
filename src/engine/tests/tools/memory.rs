@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 fn ctx() -> ToolContext {
     ToolContext {
         tool_call_id: "t1".into(),
-        tool_name: "memory".into(),
+        tool_name: "Memory".into(),
         cancel: CancellationToken::new(),
         on_update: None,
         on_progress: None,

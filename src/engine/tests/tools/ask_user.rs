@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 fn ctx() -> ToolContext {
     ToolContext {
         tool_call_id: "t1".into(),
-        tool_name: "ask_user".into(),
+        tool_name: "AskUser".into(),
         cancel: CancellationToken::new(),
         on_update: None,
         on_progress: None,
@@ -388,7 +388,7 @@ async fn invalid_json_rejected() {
 #[tokio::test]
 async fn tool_metadata() {
     let tool = make_tool(AskUserResponse::Skipped);
-    assert_eq!(tool.name(), "ask_user");
+    assert_eq!(tool.name(), "AskUser");
     assert_eq!(tool.label(), "Ask User");
     assert!(!tool.description().is_empty());
 

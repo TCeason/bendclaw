@@ -9,7 +9,7 @@ use super::ctx_with_cancel;
 #[tokio::test]
 async fn test_web_fetch_missing_url() {
     let tool = evotengine::tools::web_fetch::WebFetchTool::new();
-    let result = tool.execute(serde_json::json!({}), ctx("web_fetch")).await;
+    let result = tool.execute(serde_json::json!({}), ctx("WebFetch")).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("url"));
 }
@@ -32,7 +32,7 @@ async fn test_web_fetch_success() {
     let tool = evotengine::tools::web_fetch::WebFetchTool::new();
     let url = format!("{}/hello", server.uri());
     let result = tool
-        .execute(serde_json::json!({"url": url}), ctx("web_fetch"))
+        .execute(serde_json::json!({"url": url}), ctx("WebFetch"))
         .await
         .unwrap();
 
@@ -68,7 +68,7 @@ async fn test_web_fetch_with_headers() {
                 "url": url,
                 "headers": { "Authorization": "Bearer test-token" }
             }),
-            ctx("web_fetch"),
+            ctx("WebFetch"),
         )
         .await
         .unwrap();
@@ -98,7 +98,7 @@ async fn test_web_fetch_http_error() {
     let tool = evotengine::tools::web_fetch::WebFetchTool::new();
     let url = format!("{}/notfound", server.uri());
     let result = tool
-        .execute(serde_json::json!({"url": url}), ctx("web_fetch"))
+        .execute(serde_json::json!({"url": url}), ctx("WebFetch"))
         .await
         .unwrap();
 
@@ -136,7 +136,7 @@ async fn test_web_fetch_cancel() {
     let result = tool
         .execute(
             serde_json::json!({"url": url}),
-            ctx_with_cancel("web_fetch", cancel),
+            ctx_with_cancel("WebFetch", cancel),
         )
         .await;
 
@@ -169,7 +169,7 @@ async fn test_web_fetch_html_to_text() {
     let tool = evotengine::tools::web_fetch::WebFetchTool::new();
     let url = format!("{}/page", server.uri());
     let result = tool
-        .execute(serde_json::json!({"url": url}), ctx("web_fetch"))
+        .execute(serde_json::json!({"url": url}), ctx("WebFetch"))
         .await
         .unwrap();
 
@@ -227,7 +227,7 @@ async fn test_web_fetch_json_no_browser_fallback() {
     let tool = evotengine::tools::web_fetch::WebFetchTool::new();
     let url = format!("{}/api/data", server.uri());
     let result = tool
-        .execute(serde_json::json!({"url": url}), ctx("web_fetch"))
+        .execute(serde_json::json!({"url": url}), ctx("WebFetch"))
         .await
         .unwrap();
 
@@ -271,7 +271,7 @@ async fn test_web_fetch_html_good_content_no_fallback() {
     let tool = evotengine::tools::web_fetch::WebFetchTool::new();
     let url = format!("{}/good-page", server.uri());
     let result = tool
-        .execute(serde_json::json!({"url": url}), ctx("web_fetch"))
+        .execute(serde_json::json!({"url": url}), ctx("WebFetch"))
         .await
         .unwrap();
 
@@ -311,7 +311,7 @@ async fn test_web_fetch_headers_skip_browser_fallback() {
                 "url": url,
                 "headers": { "Authorization": "Bearer token" }
             }),
-            ctx("web_fetch"),
+            ctx("WebFetch"),
         )
         .await
         .unwrap();

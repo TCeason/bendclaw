@@ -41,7 +41,7 @@ impl SearchTool {
 #[async_trait]
 impl AgentTool for SearchTool {
     fn name(&self) -> &str {
-        "grep"
+        "Grep"
     }
 
     fn label(&self) -> &str {
@@ -289,7 +289,7 @@ fn build_grep_args(
     args.push(pattern.into());
     args.push(path.into());
 
-    ("grep".into(), args)
+    ("Grep".into(), args)
 }
 
 /// Join args into a shell-safe display string.

@@ -38,7 +38,7 @@ fn normalize_name(name: &str) -> &str {
 #[async_trait::async_trait]
 impl AgentTool for SkillTool {
     fn name(&self) -> &str {
-        "skill"
+        "Skill"
     }
 
     fn label(&self) -> &str {

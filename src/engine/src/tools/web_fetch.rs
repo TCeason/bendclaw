@@ -39,7 +39,7 @@ impl Default for WebFetchTool {
 #[async_trait]
 impl AgentTool for WebFetchTool {
     fn name(&self) -> &str {
-        "web_fetch"
+        "WebFetch"
     }
 
     fn label(&self) -> &str {

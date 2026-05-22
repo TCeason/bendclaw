@@ -39,19 +39,19 @@ impl Default for CompactionPolicy {
 /// Return the truncation policy for a given tool name.
 pub fn tool_policy(tool_name: &str) -> ToolPolicy {
     match tool_name {
-        "read_file" | "read_slim_file" => ToolPolicy {
+        "Read" | "ReadSlim" => ToolPolicy {
             age_clear_threshold: None,
             oversize_max_lines: 30,
             normal_max_lines: 50,
             prefer_outline: true,
         },
-        "web_fetch" => ToolPolicy {
+        "WebFetch" => ToolPolicy {
             age_clear_threshold: Some(2000),
             oversize_max_lines: 20,
             normal_max_lines: 30,
             prefer_outline: false,
         },
-        "bash" | "grep" | "glob_file" => ToolPolicy {
+        "Bash" | "Grep" | "Glob" => ToolPolicy {
             age_clear_threshold: Some(4000),
             oversize_max_lines: 25,
             normal_max_lines: 40,

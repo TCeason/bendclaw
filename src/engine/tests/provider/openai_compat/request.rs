@@ -109,14 +109,14 @@ fn test_build_request_body_with_tools() {
     let compat = OpenAiCompat::openai();
     let config = StreamConfigBuilder::openai()
         .messages(vec![Message::user("List files")])
-        .tools(vec![tool_def("bash", "Run a command")])
+        .tools(vec![tool_def("Bash", "Run a command")])
         .max_tokens(1024)
         .temperature(0.5)
         .build();
 
     let body = build_request_body(&config, &model_config, &compat);
     assert!(body["tools"].is_array());
-    assert_eq!(body["tools"][0]["function"]["name"], "bash");
+    assert_eq!(body["tools"][0]["function"]["name"], "Bash");
     assert_eq!(body["temperature"], 0.5);
 }
 
@@ -181,7 +181,7 @@ fn test_tool_result_with_image() {
             Message::Assistant {
                 content: vec![Content::ToolCall {
                     id: "call-1".into(),
-                    name: "read_file".into(),
+                    name: "Read".into(),
                     arguments: serde_json::json!({"path": "img.png"}),
                 }],
                 stop_reason: StopReason::ToolUse,
@@ -194,7 +194,7 @@ fn test_tool_result_with_image() {
             },
             Message::ToolResult {
                 tool_call_id: "call-1".into(),
-                tool_name: "read_file".into(),
+                tool_name: "Read".into(),
                 content: vec![Content::Image {
                     mime_type: "image/png".into(),
                     source: ImageSource::Base64 {
@@ -239,7 +239,7 @@ fn test_tool_result_text_only_uses_string() {
             Message::Assistant {
                 content: vec![Content::ToolCall {
                     id: "call-1".into(),
-                    name: "bash".into(),
+                    name: "Bash".into(),
                     arguments: serde_json::json!({"command": "echo hi"}),
                 }],
                 stop_reason: StopReason::ToolUse,
@@ -252,7 +252,7 @@ fn test_tool_result_text_only_uses_string() {
             },
             Message::ToolResult {
                 tool_call_id: "call-1".into(),
-                tool_name: "bash".into(),
+                tool_name: "Bash".into(),
                 content: vec![Content::Text {
                     text: "hello".into(),
                 }],
@@ -403,7 +403,7 @@ fn test_tool_call_assistant_includes_empty_reasoning_content() {
         .messages(vec![Message::user("test"), Message::Assistant {
             content: vec![Content::ToolCall {
                 id: "call_1".into(),
-                name: "read_file".into(),
+                name: "Read".into(),
                 arguments: serde_json::json!({"path": "/tmp/a"}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -431,7 +431,7 @@ fn test_tool_call_assistant_omits_empty_reasoning_content_without_cap() {
         .messages(vec![Message::user("test"), Message::Assistant {
             content: vec![Content::ToolCall {
                 id: "call_1".into(),
-                name: "read_file".into(),
+                name: "Read".into(),
                 arguments: serde_json::json!({"path": "/tmp/a"}),
             }],
             stop_reason: StopReason::ToolUse,

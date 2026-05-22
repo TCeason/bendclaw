@@ -22,7 +22,7 @@ fn assistant(content: Vec<Content>) -> Message {
 fn tool_call() -> Content {
     Content::ToolCall {
         id: "toolu_1".into(),
-        name: "read_file".into(),
+        name: "Read".into(),
         arguments: json!({"path": "/tmp/a.rs"}),
     }
 }

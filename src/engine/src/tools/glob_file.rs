@@ -32,7 +32,7 @@ impl GlobFileTool {
 #[async_trait]
 impl AgentTool for GlobFileTool {
     fn name(&self) -> &str {
-        "glob_file"
+        "Glob"
     }
 
     fn label(&self) -> &str {

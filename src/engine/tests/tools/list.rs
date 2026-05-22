@@ -21,7 +21,7 @@ async fn test_glob_file_tool() -> Result<(), ToolError> {
     let result = tool
         .execute(
             serde_json::json!({"pattern": "**/*.rs", "path": path}),
-            ctx("glob_file"),
+            ctx("Glob"),
         )
         .await?;
 

@@ -892,7 +892,7 @@ fn compact_tool_result_with_empty_content() {
         AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: "tc-1".into(),
-                name: "bash".into(),
+                name: "Bash".into(),
                 arguments: serde_json::json!({}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -905,7 +905,7 @@ fn compact_tool_result_with_empty_content() {
         }),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "tc-1".into(),
-            tool_name: "bash".into(),
+            tool_name: "Bash".into(),
             content: vec![], // empty content
             is_error: false,
             timestamp: 0,
@@ -932,7 +932,7 @@ fn compact_error_tool_result_treated_same() {
         AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: "tc-1".into(),
-                name: "bash".into(),
+                name: "Bash".into(),
                 arguments: serde_json::json!({}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -945,7 +945,7 @@ fn compact_error_tool_result_treated_same() {
         }),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "tc-1".into(),
-            tool_name: "bash".into(),
+            tool_name: "Bash".into(),
             content: vec![Content::Text {
                 text: "error output\n".repeat(200),
             }],
@@ -1099,7 +1099,7 @@ fn compact_retention_current_run_reclaimed() {
         AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: "tc-1".into(),
-                name: "bash".into(),
+                name: "Bash".into(),
                 arguments: serde_json::json!({}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -1112,7 +1112,7 @@ fn compact_retention_current_run_reclaimed() {
         }),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "tc-1".into(),
-            tool_name: "bash".into(),
+            tool_name: "Bash".into(),
             content: vec![Content::Text {
                 text: "x".repeat(10_000),
             }],

@@ -292,7 +292,7 @@ export function summarizeInline(value: string, maxChars: number): string {
 
 export function toolResultLines(content: string, isError: boolean, toolName?: string, expanded?: boolean): string[] {
   const DEFAULT_LINES = 3
-  const COMPACT_TOOLS = new Set(['grep', 'glob_file', 'web_fetch', 'bash'])
+  const COMPACT_TOOLS = new Set(['Grep', 'Glob', 'WebFetch', 'Bash'])
   const TAIL_LINES = toolName && COMPACT_TOOLS.has(toolName) ? DEFAULT_LINES : 5
   const MAX_LINE_WIDTH = 256
 

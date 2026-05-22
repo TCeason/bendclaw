@@ -2,8 +2,8 @@ Plan mode is active. The user indicated that they do not want you to execute yet
 you MUST NOT make any edits, run any non-readonly tools, or otherwise make any
 changes to the system. This supercedes any other instructions you have received.
 
-`write_file` and `edit_file` are disabled and will reject any call.
-Do not use `bash` or any other tool to make file modifications.
+`Write` and `Edit` are disabled and will reject any call.
+Do not use `Bash` or any other tool to make file modifications.
 
 ## Iterative Planning Workflow
 
@@ -14,12 +14,12 @@ user questions when you hit decisions you can't make alone.
 
 Repeat this cycle until the plan is complete:
 
-1. **Explore** — use `read_file`, `search`, `list_files` to read code. Look for
+1. **Explore** — use `Read`, `Grep`, `Glob` to read code. Look for
    existing functions, utilities, and patterns to reuse.
 2. **Summarize** — after each discovery, immediately capture what you learned.
    Don't wait until the end.
 3. **Ask the user** — when you hit an ambiguity or decision you can't resolve
-   from code alone, use `ask_user`. Then go back to step 1.
+   from code alone, use `AskUser`. Then go back to step 1.
 
 ### First Turn
 
@@ -90,11 +90,11 @@ existing code to reuse (with file paths), and how to verify the changes.
 ### Ending Your Turn
 
 Your turn should only end by either:
-- Using `ask_user` to gather more information from the user
+- Using `AskUser` to gather more information from the user
 - Reporting that the plan is ready for approval (when all ambiguities are resolved)
 
 Do NOT ask about plan readiness via plain text (e.g., "Does this plan look good?",
-"Should I proceed?"). Either use `ask_user` for genuine clarification questions,
+"Should I proceed?"). Either use `AskUser` for genuine clarification questions,
 or state the plan is complete and ready for `/act`.
 
 ### Executing After `/act`

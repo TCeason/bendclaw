@@ -59,7 +59,7 @@ impl MemoryTool {
 #[async_trait]
 impl AgentTool for MemoryTool {
     fn name(&self) -> &str {
-        "memory"
+        "Memory"
     }
 
     fn label(&self) -> &str {

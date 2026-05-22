@@ -137,7 +137,7 @@ fn response_awaits_user(transcript: &[TranscriptItem]) -> bool {
         return false;
     };
 
-    if tool_calls.iter().any(|call| call.name == "ask_user") {
+    if tool_calls.iter().any(|call| call.name == "AskUser") {
         return true;
     }
 

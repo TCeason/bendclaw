@@ -140,7 +140,7 @@ async fn test_spill_file_readable_by_read_file_tool() -> TestResult {
                 "offset": 10,
                 "limit": 5,
             }),
-            ctx("read_file"),
+            ctx("Read"),
         )
         .await?;
 
@@ -165,7 +165,7 @@ async fn test_read_file_large_file_without_limit_rejected() -> TestResult {
     let path_str = large_file.to_str().ok_or("non-utf8 path")?.to_string();
     let read_tool = ReadFileTool::new();
     let result = read_tool
-        .execute(serde_json::json!({"path": path_str}), ctx("read_file"))
+        .execute(serde_json::json!({"path": path_str}), ctx("Read"))
         .await;
 
     assert!(result.is_err());
@@ -195,7 +195,7 @@ async fn test_read_file_large_file_with_limit_streams() -> TestResult {
                 "offset": 100,
                 "limit": 10,
             }),
-            ctx("read_file"),
+            ctx("Read"),
         )
         .await?;
 

@@ -120,7 +120,7 @@ fn truncate_str_utf8_safe() {
 fn make_ctx() -> ToolContext {
     ToolContext {
         tool_call_id: "test".into(),
-        tool_name: "skill".into(),
+        tool_name: "Skill".into(),
         cancel: CancellationToken::new(),
         on_update: None,
         on_progress: None,

@@ -40,12 +40,12 @@ fn test_content_to_bedrock() {
         },
         Content::ToolCall {
             id: "tc-1".into(),
-            name: "bash".into(),
+            name: "Bash".into(),
             arguments: serde_json::json!({"command": "ls"}),
         },
     ];
     let blocks = content_to_bedrock(&content);
     assert_eq!(blocks.len(), 2);
     assert_eq!(blocks[0]["text"], "hello");
-    assert_eq!(blocks[1]["toolUse"]["name"], "bash");
+    assert_eq!(blocks[1]["toolUse"]["name"], "Bash");
 }

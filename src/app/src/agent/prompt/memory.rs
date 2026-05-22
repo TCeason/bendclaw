@@ -67,7 +67,7 @@ pub fn build_section(cwd: &str, home: Option<&str>) -> Option<String> {
          You have a two-layer persistent memory system.\n\
          - Global: `{global_display}`\n\
          - Project: `{project_display}`\n\n\
-         Use the `memory` tool to manage it — do not write memory files directly.\n\n\
+         Use the `Memory` tool to manage it — do not write memory files directly.\n\n\
          {MEMORY_PROMPT}\n\n\
          ## Global MEMORY.md\n\n"
     );

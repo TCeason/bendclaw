@@ -147,7 +147,7 @@ impl ReadSlimFileTool {
 #[async_trait]
 impl AgentTool for ReadFileTool {
     fn name(&self) -> &str {
-        "read_file"
+        "Read"
     }
 
     fn label(&self) -> &str {
@@ -344,7 +344,7 @@ impl AgentTool for ReadFileTool {
 #[async_trait]
 impl AgentTool for ReadSlimFileTool {
     fn name(&self) -> &str {
-        "read_slim_file"
+        "ReadSlim"
     }
 
     fn label(&self) -> &str {
@@ -613,7 +613,7 @@ impl WriteFileTool {
 #[async_trait]
 impl AgentTool for WriteFileTool {
     fn name(&self) -> &str {
-        "write_file"
+        "Write"
     }
 
     fn label(&self) -> &str {

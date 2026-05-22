@@ -43,7 +43,7 @@ fn fallback_emitter_tool_call() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
 
     let mut emitter = FallbackEmitter::new(tx);
-    emitter.emit_tool_call("tc-1", "bash", serde_json::json!({"command": "ls"}));
+    emitter.emit_tool_call("tc-1", "Bash", serde_json::json!({"command": "ls"}));
     emitter.set_stop_reason(StopReason::ToolUse);
     let msg = emitter.finalize("model", "provider");
 
@@ -55,7 +55,7 @@ fn fallback_emitter_tool_call() {
         } => {
             assert_eq!(content.len(), 1);
             assert!(
-                matches!(&content[0], Content::ToolCall { id, name, .. } if id == "tc-1" && name == "bash")
+                matches!(&content[0], Content::ToolCall { id, name, .. } if id == "tc-1" && name == "Bash")
             );
             assert_eq!(*stop_reason, StopReason::ToolUse);
         }
@@ -65,7 +65,7 @@ fn fallback_emitter_tool_call() {
     let events = collect_stream_events(&mut rx);
     assert!(matches!(events[0], StreamEvent::Start));
     assert!(
-        matches!(&events[1], StreamEvent::ToolCallStart { id, name, .. } if id == "tc-1" && name == "bash")
+        matches!(&events[1], StreamEvent::ToolCallStart { id, name, .. } if id == "tc-1" && name == "Bash")
     );
     assert!(matches!(&events[2], StreamEvent::ToolCallEnd { .. }));
     assert!(matches!(&events[3], StreamEvent::Done { .. }));

@@ -34,7 +34,7 @@ fn test_message_assistant_roundtrip() {
             },
             Content::ToolCall {
                 id: "tc-1".into(),
-                name: "read_file".into(),
+                name: "Read".into(),
                 arguments: serde_json::json!({"path": "foo.rs"}),
             },
         ],
@@ -60,7 +60,7 @@ fn test_message_assistant_roundtrip() {
 fn test_message_tool_result_roundtrip() {
     let msg = Message::ToolResult {
         tool_call_id: "tc-1".into(),
-        tool_name: "bash".into(),
+        tool_name: "Bash".into(),
         content: vec![Content::Text {
             text: "exit code 0".into(),
         }],
@@ -112,7 +112,7 @@ fn test_content_variants_roundtrip() {
     });
     roundtrip(&Content::ToolCall {
         id: "tc-1".into(),
-        name: "bash".into(),
+        name: "Bash".into(),
         arguments: serde_json::json!({"command": "ls"}),
     });
 }
@@ -128,7 +128,7 @@ fn test_full_conversation_roundtrip() {
         AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: "tc-1".into(),
-                name: "read_file".into(),
+                name: "Read".into(),
                 arguments: serde_json::json!({"path": "main.rs"}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -141,7 +141,7 @@ fn test_full_conversation_roundtrip() {
         }),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "tc-1".into(),
-            tool_name: "read_file".into(),
+            tool_name: "Read".into(),
             content: vec![Content::Text {
                 text: "fn main() {}".into(),
             }],
