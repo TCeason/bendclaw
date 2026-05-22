@@ -153,7 +153,7 @@ describe('buildToolResult', () => {
     expect(all).toContain('  {')
     expect(all).toContain('  ... (+')
     expect(all).toContain('ctrl+o to expand')
-    expect(lines.filter(l => l.kind === 'tool_result' && !l.text.includes('ctrl+o'))).toHaveLength(3)
+    expect(lines.filter(l => l.kind === 'tool_result' && !l.text.includes('ctrl+o'))).toHaveLength(5)
   })
 
   test('compact search result shows fewer lines by default', () => {
@@ -161,9 +161,9 @@ describe('buildToolResult', () => {
     const lines = buildToolResult('search', {}, 'done', result)
     const all = lines.map(l => l.text).join('\n')
     expect(all).toContain('match 0')
-    expect(all).toContain('match 2')
-    expect(all).not.toContain('match 3')
-    expect(all).toContain('... (+5 lines, ctrl+o to expand)')
+    expect(all).toContain('match 4')
+    expect(all).not.toContain('match 5')
+    expect(all).toContain('... (+3 lines, ctrl+o to expand)')
   })
 
   test('expanded multiline result shows collapse hint', () => {

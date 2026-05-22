@@ -130,6 +130,15 @@ fn classify_sse_overloaded_error() {
 }
 
 #[test]
+fn stream_interrupted_api_error_is_retryable() {
+    let err = ProviderError::Api(
+        r#"{"type":"error","error":{"type":"api_error","message":"Stream interrupted. Please retry."}}"#
+            .into(),
+    );
+    assert!(evotengine::retry::should_retry(&err));
+}
+
+#[test]
 fn overflow_message_case_insensitive() {
     assert!(is_context_overflow_message("PROMPT IS TOO LONG"));
     assert!(is_context_overflow_message("Too Many Tokens in request"));

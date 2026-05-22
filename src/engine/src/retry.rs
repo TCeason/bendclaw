@@ -88,6 +88,8 @@ fn is_retryable_api_message(message: &str) -> bool {
         || lower.contains("bad gateway")
         || lower.contains("service unavailable")
         || lower.contains("gateway timeout")
+        || lower.contains("stream interrupted")
+        || lower.contains("please retry")
         || lower.contains("http 500")
         || lower.contains("http 502")
         || lower.contains("http 503")

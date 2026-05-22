@@ -576,15 +576,16 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     commitLines.push(...flushed.lines)
     mergeFlushExpanded(flushed)
     const toolName = (p.tool_name as string) ?? 'unknown'
+    const isAskUser = toolName === 'AskUser' || toolName === 'ask_user'
     // AskUser is waiting for user input, not "executing" — keep thinking phase
-    const spinnerPhase = toolName === 'AskUser' ? 'thinking' : 'executing'
+    const spinnerPhase = isAskUser ? 'thinking' : 'executing'
     state = {
       ...state,
       toolProgress: '',
       lastToolProgress: '',
       spinnerState: setSpinnerPhase(state.spinnerState, spinnerPhase, toolName),
     }
-    suppressToolStarted = toolName === 'AskUser'
+    suppressToolStarted = isAskUser
     rerenderStatus = true
   }
 
@@ -610,13 +611,14 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
 
   if (event.kind === 'tool_finished') {
     const toolName = (p.tool_name as string) ?? 'unknown'
+    const isAskUser = toolName === 'AskUser' || toolName === 'ask_user'
     state = {
       ...state,
       toolProgress: '',
       lastToolProgress: '',
       spinnerState: setSpinnerPhase(state.spinnerState, 'thinking'),
     }
-    suppressToolFinished = toolName === 'AskUser'
+    suppressToolFinished = isAskUser
     rerenderStatus = true
   }
 
