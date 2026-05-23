@@ -174,10 +174,6 @@ fn format_full_marker(
         out.push_str("\n\nMost recent user request (verbatim):\n");
         out.push_str(text);
     }
-    out.push_str(
-        "\n\nContinue with the most recent user request. \
-         Do not re-orient to older tasks that appear earlier in the retained context.",
-    );
     out
 }
 

@@ -123,7 +123,7 @@ export function buildToolCall(
   previewCommand?: string,
   expanded?: boolean,
 ): OutputLine[] {
-  if (name === 'update_goal_tasks') return buildGoalTaskCall(args)
+  if (name === 'update_goal_tasks' || name === 'TodoWrite') return buildGoalTaskCall(args)
 
   const lines: OutputLine[] = []
   const inputInfo = formatToolInputInfo(args, previewCommand)
@@ -163,7 +163,7 @@ export function buildToolResult(
   const lines: OutputLine[] = []
   const isError = status === 'error'
 
-  if (name === 'update_goal_tasks' && !isError) {
+  if ((name === 'update_goal_tasks' || name === 'TodoWrite') && !isError) {
     return buildGoalTaskResult(args, result)
   }
 
@@ -634,7 +634,8 @@ function readGoalTasks(args: Record<string, unknown>): GoalTaskView[] {
     if (!task || typeof task !== 'object') return []
     const input = task as Record<string, unknown>
     const id = typeof input.id === 'number' ? input.id : Number(input.id)
-    const title = typeof input.title === 'string' ? input.title.trim() : ''
+    const title = typeof input.title === 'string' ? input.title.trim()
+      : typeof input.content === 'string' ? input.content.trim() : ''
     const status = typeof input.status === 'string' ? input.status : ''
     const startedAt = typeof input.started_at === 'string' ? input.started_at : undefined
     const completedAt = typeof input.completed_at === 'string' ? input.completed_at : undefined

@@ -3587,7 +3587,7 @@ fn marker_text(messages: &[AgentMessage]) -> Option<String> {
 }
 
 #[test]
-fn compaction_marker_embeds_recent_user_request_and_continuation() {
+fn compaction_marker_embeds_recent_user_request() {
     // Build: many tiny user/assistant turns exceeding max_messages. This
     // forces stale eviction (level 3) which is what inserts the marker
     // carrying the task anchor.
@@ -3630,10 +3630,6 @@ fn compaction_marker_embeds_recent_user_request_and_continuation() {
         marker.contains("COMPLETED") && marker.contains("old task: look at EverOn"),
         "marker must list retained early user messages as COMPLETED, got: {marker}"
     );
-    assert!(
-        marker.to_lowercase().contains("do not re-orient"),
-        "marker must carry a continuation instruction, got: {marker}"
-    );
 }
 
 #[test]
@@ -3667,10 +3663,10 @@ fn compaction_marker_falls_back_to_minimal_when_drop_is_tiny() {
     });
 
     if let Some(marker) = marker_text(&result.messages) {
-        // Tiny drops never attach the continuation block — only the single
+        // Tiny drops never attach the full marker — only the single
         // bookkeeping line.
         assert!(
-            !marker.to_lowercase().contains("do not re-orient"),
+            !marker.contains("Most recent user request"),
             "tiny drops must emit the minimal marker, got: {marker}"
         );
     }

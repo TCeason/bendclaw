@@ -96,6 +96,10 @@ Match responses to the task: a simple question gets a direct answer, not headers
 - Prefer editing existing files. Do not create files unless necessary.
 - Be careful not to introduce security vulnerabilities such as command injection, XSS, SQL injection, and other OWASP top 10 vulnerabilities. If you notice that you wrote insecure code, immediately fix it. Prioritize writing safe, secure, and correct code.
 
+## Task management
+
+Break down and manage your work with the TodoWrite tool. These are helpful for planning your work and helping the user track your progress. Mark each task as completed as soon as you are done with the task. Do not batch up multiple tasks before marking them as completed.
+
 ## Code style
 
 - Avoid over-engineering. Only make changes that are explicitly requested or clearly required. Keep solutions simple and targeted.
@@ -418,6 +422,27 @@ impl SystemPrompt {
         self.sections.push(Section {
             name: "append",
             text: text.to_string(),
+        });
+        self
+    }
+
+    /// Append current task list from TodoWrite state.
+    pub fn with_tasks(mut self, tasks: &[crate::types::GoalTask]) -> Self {
+        if tasks.is_empty() {
+            return self;
+        }
+        let mut lines = String::from("# Current tasks\n");
+        for t in tasks {
+            let status = match t.status {
+                crate::types::GoalTaskStatus::Pending => "pending",
+                crate::types::GoalTaskStatus::InProgress => "in_progress",
+                crate::types::GoalTaskStatus::Completed => "completed",
+            };
+            lines.push_str(&format!("\n- [{}] {}", status, t.title));
+        }
+        self.sections.push(Section {
+            name: "tasks",
+            text: lines,
         });
         self
     }
