@@ -289,7 +289,7 @@ fn build_grep_args(
     args.push(pattern.into());
     args.push(path.into());
 
-    ("Grep".into(), args)
+    ("grep".into(), args)
 }
 
 /// Join args into a shell-safe display string.
