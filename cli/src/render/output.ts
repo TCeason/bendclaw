@@ -123,7 +123,7 @@ export function buildToolCall(
   previewCommand?: string,
   expanded?: boolean,
 ): OutputLine[] {
-  if (name === 'update_goal_tasks' || name === 'TodoWrite') return buildGoalTaskCall(args)
+  if (name === 'update_goal_tasks' || name === 'TodoWrite') return buildGoalTaskCall(name, args)
 
   const lines: OutputLine[] = []
   const inputInfo = formatToolInputInfo(args, previewCommand)
@@ -164,7 +164,7 @@ export function buildToolResult(
   const isError = status === 'error'
 
   if ((name === 'update_goal_tasks' || name === 'TodoWrite') && !isError) {
-    return buildGoalTaskResult(args, result)
+    return buildGoalTaskResult(name, args, result)
   }
 
   const dur = durationMs !== undefined ? ` · ${formatDuration(durationMs)}` : ''
@@ -604,15 +604,17 @@ export class AssistantStreamBuffer {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function buildGoalTaskCall(args: Record<string, unknown>): OutputLine[] {
+function buildGoalTaskCall(name: string, args: Record<string, unknown>): OutputLine[] {
+  const badge = name === 'TodoWrite' ? 'TODOWRITE' : 'GOAL'
   const summary = summarizeGoalTasks(readGoalTasks(args))
-  return [{ id: genId('tool'), kind: 'tool', text: `[GOAL] ● · ${summary}` }]
+  return [{ id: genId('tool'), kind: 'tool', text: `[${badge}] ● · ${summary}` }]
 }
 
-function buildGoalTaskResult(args: Record<string, unknown>, result?: string): OutputLine[] {
+function buildGoalTaskResult(name: string, args: Record<string, unknown>, result?: string): OutputLine[] {
+  const badge = name === 'TodoWrite' ? 'TODOWRITE' : 'GOAL'
   const tasks = readGoalTasks(args)
   const summary = summarizeGoalTasks(tasks, result)
-  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `[GOAL] ✓ · ${summary}` }]
+  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `[${badge}] ✓ · ${summary}` }]
   for (const task of tasks) {
     lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${goalTaskSymbol(task.status)} #${task.id} ${task.title}${goalTaskDuration(task)}` })
   }

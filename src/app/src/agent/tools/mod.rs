@@ -1,5 +1,7 @@
 //! Tool mode and tool-set construction.
 
+pub mod todo_write;
+
 use std::path::PathBuf;
 
 use evot_engine::tools::*;

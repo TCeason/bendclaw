@@ -159,7 +159,7 @@ pub struct Agent {
     /// Holds the OTel exporter alive for the agent's lifetime.
     _telemetry_exporter: Option<crate::telemetry::exporter::TelemetryExporter>,
     /// Session-level task tracking state (TodoWrite).
-    todo_meta: super::goal::TodoMeta,
+    todo_meta: super::tools::todo_write::TodoMeta,
 }
 
 impl Agent {
@@ -186,7 +186,7 @@ impl Agent {
             active_runs: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             telemetry: config.telemetry.clone(),
             _telemetry_exporter: telemetry_exporter,
-            todo_meta: super::goal::TodoMeta::new(),
+            todo_meta: super::tools::todo_write::TodoMeta::new(),
         }))
     }
 
@@ -606,7 +606,7 @@ impl Agent {
             active_runs: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             telemetry: TelemetryConfig::default(),
             _telemetry_exporter: None,
-            todo_meta: super::goal::TodoMeta::new(),
+            todo_meta: super::tools::todo_write::TodoMeta::new(),
         });
         Ok(ForkedAgent {
             agent: forked,
@@ -849,7 +849,7 @@ impl Agent {
         }
 
         if !mode.is_readonly() && !mode.is_planning() {
-            tools.push(Box::new(super::goal::TodoWriteTool::new(
+            tools.push(Box::new(super::tools::todo_write::TodoWriteTool::new(
                 Arc::clone(&session),
                 self.todo_meta.clone(),
             )));

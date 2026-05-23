@@ -66,6 +66,17 @@ const CONTEXT_MANAGEMENT_SECTION: &str = r#"# Context management
 
 When working with tool results, write down any important information you might need later in your response, as the original tool result may be cleared later."#;
 
+const EXECUTING_ACTIONS_SECTION: &str = r#"# Executing actions with care
+
+Carefully consider the reversibility and blast radius of actions. You can freely take local, reversible actions like editing files or running tests. But for actions that are hard to reverse, affect shared systems, or could be destructive, check with the user before proceeding.
+
+Examples of risky actions that warrant confirmation:
+- Destructive operations: deleting files/branches, dropping database tables, rm -rf, overwriting uncommitted changes
+- Hard-to-reverse operations: force-pushing, git reset --hard, amending published commits
+- Actions visible to others: pushing code, creating/closing/commenting on PRs or issues, sending messages to external services
+
+When you encounter an obstacle, do not use destructive actions as a shortcut. Investigate root causes rather than bypassing safety checks. If you discover unexpected state like unfamiliar files or branches, investigate before deleting or overwriting."#;
+
 const AGENT_BEHAVIOR_SECTION: &str = r#"# Agent behavior
 
 ## Bias toward action
@@ -110,7 +121,15 @@ Break down and manage your work with the TodoWrite tool. These are helpful for p
 - When your changes make imports, variables, or functions unused, remove them. Don't remove pre-existing dead code unless asked.
 - In code, match the surrounding code's comment density, naming, and idiom. Default to writing no comments. Never write multi-paragraph docstrings or multi-line comment blocks — one short line max.
 - Before reporting completion, verify the change works when practical. If you cannot verify, say so.
-- Report outcomes faithfully. Never claim success when tests or commands failed. A user approving an action once does NOT mean they approve it in all contexts — re-confirm for each new scope."#;
+- Report outcomes faithfully. Never claim success when tests or commands failed. A user approving an action once does NOT mean they approve it in all contexts — re-confirm for each new scope.
+
+## Version control safety
+
+- Prefer to create a new commit rather than amending an existing commit.
+- Never skip hooks (--no-verify) or bypass signing unless the user has explicitly asked for it. If a hook fails, investigate and fix the underlying issue.
+- Avoid destructive git operations (force push, reset --hard, clean -f, branch -D) unless the user explicitly requests them.
+- When creating commits, stage specific files rather than using `git add .` to avoid accidentally committing unrelated changes.
+- When creating PRs or MRs, use the appropriate CLI tool (gh, glab, etc.) and keep titles concise."#;
 
 /// Builder for assembling the system prompt.
 ///
@@ -247,6 +266,15 @@ impl SystemPrompt {
         self
     }
 
+    /// Append guidance on executing actions with care.
+    pub fn with_executing_actions(mut self) -> Self {
+        self.sections.push(Section {
+            name: "executing_actions",
+            text: EXECUTING_ACTIONS_SECTION.into(),
+        });
+        self
+    }
+
     /// Append stable environment info: working dir, platform, shell, OS version.
     pub fn with_environment_static(mut self) -> Self {
         let platform = std::env::consts::OS;
@@ -296,6 +324,7 @@ impl SystemPrompt {
             .with_output_efficiency()
             .with_clarifying_questions()
             .with_context_management()
+            .with_executing_actions()
             .with_environment()
     }
 
