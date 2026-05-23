@@ -39,8 +39,8 @@ fn no_context_files_produces_base_prompt_with_system() {
         .contains("displayed to the user as GitHub-flavored markdown rendered with the CommonMark specification in a monospace terminal"));
     assert!(prompt.contains("GitHub-flavored markdown"));
     assert!(prompt.contains("prompt injection"));
-    assert!(prompt.contains("Use `grep` instead of shell `grep` or `rg`."));
-    assert!(prompt.contains("Start broad investigations with batched `grep` queries"));
+    assert!(prompt.contains("Use `Grep` instead of shell `grep` or `rg`."));
+    assert!(prompt.contains("Start broad investigations with batched `Grep` queries"));
     assert!(prompt.contains("Avoid repeatedly reading the same file"));
     assert!(prompt.contains("batch independent searches and reads together"));
     assert!(prompt.contains("Act on your best judgment rather than asking for confirmation"));

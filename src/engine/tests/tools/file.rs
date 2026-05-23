@@ -218,9 +218,9 @@ async fn test_read_slim_file_marks_output_not_exact() {
         Content::Text { text } => text,
         _ => panic!("expected text"),
     };
-    assert!(text.contains("ReadSlim"));
+    assert!(text.contains("read_slim_file"));
     assert!(text.contains("output is not exact"));
-    assert!(text.contains("Do not use it as old_text"));
+    assert!(text.contains("Use Read with offset/limit"));
     assert!(text.contains("println!"));
 
     let _ = std::fs::remove_file(tmp);

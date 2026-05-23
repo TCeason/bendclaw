@@ -255,8 +255,13 @@ impl ContextConfig {
     /// as the compaction budget. All other settings use defaults.
     pub fn from_context_window(context_window: u32) -> Self {
         let max_context_tokens = (context_window as usize) * 80 / 100;
+        // Scale max_messages with context window. Assume ~250 tokens per
+        // message on average; allow enough messages to fill ~60% of the
+        // token budget before message-count eviction kicks in.
+        let max_messages = (max_context_tokens * 60 / 100 / 250).max(150);
         Self {
             max_context_tokens,
+            max_messages,
             ..Default::default()
         }
     }

@@ -222,7 +222,7 @@ fn test_tool_result_with_image() {
     assert_eq!(image_msg["role"], "user");
     let content = image_msg["content"].as_array().unwrap();
     assert_eq!(content[0]["type"], "text");
-    assert_eq!(content[0]["text"], "Image output from tool `read_file`:");
+    assert_eq!(content[0]["text"], "Image output from tool `Read`:");
     assert_eq!(content[1]["type"], "image_url");
     assert_eq!(
         content[1]["image_url"]["url"],

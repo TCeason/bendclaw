@@ -159,12 +159,12 @@ impl AgentTool for BashTool {
          IMPORTANT: Do not use this tool to run grep, find, ls, cat, head, tail, sed, awk, or echo \
          commands when a relevant dedicated tool is available. Instead, use the appropriate dedicated tool:\n\
          \n\
-         - Content search: Use grep (NOT shell grep or rg)\n\
-         - Directory listing: Use glob_file (NOT ls or find)\n\
-         - Understand large source files: Use read_slim_file\n\
-         - Exact file reads: Use read_file (NOT cat/head/tail/sed -n)\n\
-         - Edit files: Use edit_file (NOT sed/awk)\n\
-         - Write files: Use write_file (NOT echo/cat redirection)\n\
+         - Content search: Use Grep (NOT shell grep or rg)\n\
+         - Directory listing: Use Glob (NOT ls or find)\n\
+         - Understand large source files: Use ReadSlim\n\
+         - Exact file reads: Use Read (NOT cat/head/tail/sed -n)\n\
+         - Edit files: Use Edit (NOT sed/awk)\n\
+         - Write files: Use Write (NOT echo/cat redirection)\n\
          \n\
          Use Bash for builds, tests, package managers, git, Docker, project CLIs, and commands that genuinely need a shell.\n\
          \n\

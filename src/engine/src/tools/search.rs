@@ -52,7 +52,7 @@ impl AgentTool for SearchTool {
         "Search local file contents with grep/ripgrep.\n\
          \n\
          Usage:\n\
-         - Use this tool for local content search. Do not use it to discover files by path; use glob_file for that.\n\
+         - Use this tool for local content search. Do not use it to discover files by path; use Glob for that.\n\
          - Supports full regex syntax (e.g., \"log.*Error\", \"function\\s+\\w+\").\n\
          - Filter files with the include parameter (e.g., \"*.rs\", \"*.py\").\n\
          - Respects .gitignore when ripgrep is available. Returns matching lines with file paths and line numbers."

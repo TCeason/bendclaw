@@ -51,11 +51,10 @@ impl AgentTool for EditFileTool {
         "Perform exact string replacements in files.\n\
          \n\
          Usage:\n\
-         - You must use read_file at least once in the conversation before editing. \
+         - You must use Read at least once in the conversation before editing. \
          This tool will error if you attempt an edit without reading the file first.\n\
-         - read_slim_file output is not exact and must never be copied into old_text. \
-         Use read_file with offset/limit around the target code before editing.\n\
-         - When editing text from read_file output, ensure you preserve the exact indentation \
+         - ReadSlim output is not exact — do not copy it into old_text.\n\
+         - When editing text from Read output, ensure you preserve the exact indentation \
          (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: \
          line number + pipe. Everything after that is the actual file content to match. \
          Never include any part of the line number prefix in old_text or new_text.\n\
@@ -143,7 +142,7 @@ impl AgentTool for EditFileTool {
         // Read file bytes and validate UTF-8
         let bytes = tokio::fs::read(&path).await.map_err(|e| {
             ToolError::Failed(format!(
-                "Cannot read {path_str}: {e}. Use write_file to create new files."
+                "Cannot read {path_str}: {e}. Use Write to create new files."
             ))
         })?;
         let raw = String::from_utf8(bytes).map_err(|_| {
@@ -175,7 +174,7 @@ impl AgentTool for EditFileTool {
                          replace_all requires an exact match."
                     ),
                     None => "\n\nreplace_all requires an exact match. \
-                         Use read_file to see the current file contents."
+                         Use Read to see the current file contents."
                         .into(),
                 };
                 return Err(ToolError::Failed(format!(
@@ -196,12 +195,12 @@ impl AgentTool for EditFileTool {
                             Some(similar) => format!(
                                 "\n\nDid you mean:\n```\n{similar}\n```\n\
                                  Make sure old_text matches the current file content, \
-                                 including indentation. If you copied old_text from read_slim_file, \
-                                 use read_file with offset/limit for exact text first."
+                                 including indentation. If you copied old_text from ReadSlim, \
+                                 use Read with offset/limit for exact text first."
                             ),
-                            None => "\n\nTip: Use read_file to see the current file contents, \
+                            None => "\n\nTip: Use Read to see the current file contents, \
                                  then copy the exact text you want to replace. Do not copy old_text \
-                                 from read_slim_file output because it is not exact."
+                                 from ReadSlim output because it is not exact."
                                 .into(),
                         };
                         ToolError::Failed(format!("old_text not found in {path_str}.{suffix}"))

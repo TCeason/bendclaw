@@ -581,7 +581,7 @@ fn build_spilled_result(
 
     let msg = format!(
         "Tool output was too large ({} bytes) and was saved to:\n{}\n\n\
-         Only a preview is shown below. Use read_file with offset/limit to read the full output.\n\n\
+         Only a preview is shown below. Use Read with offset/limit to read the full output.\n\n\
          Preview:\n{}",
         spill_ref.size_bytes,
         spill_ref.path.display(),

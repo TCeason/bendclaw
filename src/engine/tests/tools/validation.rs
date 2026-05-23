@@ -46,7 +46,7 @@ fn missing_required_param() {
         "got: {err}"
     );
     assert!(err.contains("InputValidationError:"));
-    assert!(err.contains("read_file failed"));
+    assert!(err.contains("Read failed"));
 }
 
 #[test]
