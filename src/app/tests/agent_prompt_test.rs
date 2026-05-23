@@ -42,7 +42,7 @@ fn no_context_files_produces_base_prompt_with_system() {
     assert!(prompt.contains("Use `Grep` instead of shell `grep` or `rg`."));
     assert!(prompt.contains("Start broad investigations with batched `Grep` queries"));
     assert!(prompt.contains("Avoid repeatedly reading the same file"));
-    assert!(prompt.contains("batch independent searches and reads together"));
+    assert!(prompt.contains("Maximize use of parallel tool calls where possible"));
     assert!(prompt.contains("Act on your best judgment rather than asking for confirmation"));
     assert!(prompt.contains("inspect the relevant existing code before choosing one"));
     assert!(prompt.contains("understand the existing code before suggesting any changes"));

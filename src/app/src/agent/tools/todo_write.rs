@@ -175,7 +175,11 @@ Did not use the todo list because this is a single, straightforward task confine
      - content: \"Fix authentication bug\"
      - activeForm: \"Fixing authentication bug\"
 
-When in doubt, use this tool. Being proactive with task management demonstrates attentiveness and ensures you complete all requirements successfully.";
+When in doubt, use this tool. Being proactive with task management demonstrates attentiveness and ensures you complete all requirements successfully.
+
+## Efficiency
+
+IMPORTANT: Always combine TodoWrite with other tool calls in the same response. When starting a task, call TodoWrite to mark it in_progress AND call Read/Grep/Bash to begin the work — all in one response. Do not use a separate turn just to update task status.";
 
 /// Tracks TodoWrite usage for reminder injection.
 #[derive(Clone, Default)]
