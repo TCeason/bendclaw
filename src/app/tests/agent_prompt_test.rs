@@ -47,9 +47,9 @@ fn no_context_files_produces_base_prompt_with_system() {
     assert!(prompt.contains("inspect the relevant existing code before choosing one"));
     assert!(prompt.contains("understand the existing code before suggesting any changes"));
     assert!(prompt.contains("Keep solutions simple and targeted"));
-    assert!(prompt.contains("Be concise"));
+    assert!(prompt.contains("Communication style"));
     assert!(prompt.contains("Do not use a colon before tool calls."));
-    assert!(prompt.contains("Keep your text output brief and high-level"));
+    assert!(prompt.contains("Keep your text output brief and direct"));
     assert!(prompt.contains("`file_path:line_number`"));
     assert!(prompt.contains("Go straight to the point"));
     assert!(prompt.contains("original tool result may be cleared later"));

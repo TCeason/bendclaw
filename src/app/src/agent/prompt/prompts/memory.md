@@ -36,4 +36,4 @@ If you notice a pattern across multiple turns, save it without being asked.
 
 - When memories seem relevant, or the user references prior-conversation work.
 - You MUST access memory when the user explicitly asks you to recall or remember.
-- Memory records can become stale. Use read to verify before acting on them.
+- Memory records can become stale over time. Before answering the user or building assumptions based solely on information in memory records, verify that the memory is still correct and up-to-date by reading the current state of the files or resources. If a recalled memory conflicts with current information, trust what you observe now and delete the stale memory.
