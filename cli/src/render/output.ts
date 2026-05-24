@@ -608,7 +608,7 @@ function buildGoalTaskCall(name: string, args: Record<string, unknown>): OutputL
   const badge = name === 'TodoWrite' ? 'TODOWRITE' : 'GOAL'
   const tasks = readGoalTasks(args)
   const summary = summarizeGoalTasks(tasks)
-  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `[${badge}] ● · ${summary}` }]
+  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `[${badge}] ▷ · ${summary}` }]
   for (const task of tasks) {
     lines.push({ id: genId('tool'), kind: 'tool', text: `  ${goalTaskSymbol(task.status)} #${task.id} ${task.title}` })
   }
@@ -619,7 +619,7 @@ function buildGoalTaskResult(name: string, args: Record<string, unknown>, result
   const badge = name === 'TodoWrite' ? 'TODOWRITE' : 'GOAL'
   const tasks = readGoalTasks(args)
   const summary = summarizeGoalTasks(tasks, result)
-  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `[${badge}] ✓ · ${summary}` }]
+  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `[${badge}] ☑ · ${summary}` }]
   for (const task of tasks) {
     lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${goalTaskSymbol(task.status)} #${task.id} ${task.title}${goalTaskDuration(task)}` })
   }
@@ -679,8 +679,8 @@ function parseGoalTaskTime(value?: string): number | undefined {
 }
 
 function goalTaskSymbol(status: string): string {
-  if (status === 'completed') return '✓'
-  if (status === 'in_progress') return '→'
+  if (status === 'completed') return '☑'
+  if (status === 'in_progress') return '▷'
   return '·'
 }
 
