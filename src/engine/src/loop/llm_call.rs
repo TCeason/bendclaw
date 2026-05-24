@@ -409,12 +409,12 @@ fn compact_tool_results_for_request_view(
         return messages;
     };
 
-    let recent_boundary = messages.len().saturating_sub(ctx_config.keep_recent);
+    let protected_suffix_start = messages.len().saturating_sub(ctx_config.keep_recent);
     let mut compacted: Vec<Message> = messages
         .into_iter()
         .enumerate()
         .map(|(idx, msg)| {
-            if idx >= recent_boundary {
+            if idx >= protected_suffix_start {
                 return msg;
             }
 
@@ -439,12 +439,12 @@ fn compact_tool_results_for_request_view(
         })
         .collect();
 
-    let mut old_tool_bytes = old_tool_result_request_bytes(&compacted, recent_boundary);
+    let mut old_tool_bytes = old_tool_result_request_bytes(&compacted, protected_suffix_start);
     if old_tool_bytes <= REQUEST_OLD_TOOL_RESULTS_TOTAL_MAX_BYTES {
         return compacted;
     }
 
-    for idx in (0..recent_boundary).rev() {
+    for idx in (0..protected_suffix_start).rev() {
         if old_tool_bytes <= REQUEST_OLD_TOOL_RESULTS_TOTAL_MAX_BYTES {
             break;
         }
@@ -464,7 +464,7 @@ fn compact_tool_results_for_request_view(
             omitted = vec![omitted_tool_result_marker(before)];
         }
         *content = omitted;
-        old_tool_bytes = old_tool_result_request_bytes(&compacted, recent_boundary);
+        old_tool_bytes = old_tool_result_request_bytes(&compacted, protected_suffix_start);
     }
 
     compacted
@@ -551,10 +551,10 @@ fn strip_message_thinking(msg: Message) -> Message {
     }
 }
 
-fn old_tool_result_request_bytes(messages: &[Message], recent_boundary: usize) -> usize {
+fn old_tool_result_request_bytes(messages: &[Message], protected_suffix_start: usize) -> usize {
     messages
         .iter()
-        .take(recent_boundary)
+        .take(protected_suffix_start)
         .map(|message| match message {
             Message::ToolResult { content, .. } => tool_result_request_bytes(content),
             _ => 0,

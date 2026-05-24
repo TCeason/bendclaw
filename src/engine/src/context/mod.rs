@@ -20,8 +20,6 @@ pub use compaction::CompactionAction;
 pub use compaction::CompactionMethod;
 pub use compaction::CompactionResult;
 pub use compaction::CompactionStats;
-pub use compaction::CompactionStrategy;
-pub use compaction::DefaultCompaction;
 pub use compaction::ToolTokenDetail;
 pub use image_resize::resize_image;
 pub use tokens::compute_call_stats;

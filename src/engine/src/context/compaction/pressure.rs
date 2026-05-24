@@ -1,52 +1,75 @@
-use super::snapshot::ContextSnapshot;
+use super::config::CompactionConfig;
+use super::policy::tool_policy::is_compactable_tool_result;
+use crate::context::tokens::content_tokens;
+use crate::context::tokens::total_tokens;
+use crate::types::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EvictMode {
-    MessageLimit,
-    TokenBudget,
+#[derive(Clone, Copy, Debug)]
+pub struct Pressure {
+    pub message_tokens: usize,
+    pub compactable_tool_result_count: usize,
+    pub max_tool_result_tokens: usize,
+    pub max_user_tokens: usize,
+    pub message_count: usize,
+    pub estimate_pressure: bool,
+    pub image_pressure: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct PressureState {
-    pub effective_tokens: usize,
-    pub over_budget_tokens: usize,
-    pub over_message_tokens: usize,
-    pub over_message_limit: bool,
-}
-
-impl PressureState {
-    pub fn classify(snapshot: &ContextSnapshot, system_prompt_tokens: usize) -> Self {
-        let effective_tokens = snapshot.effective_tokens(system_prompt_tokens);
-        let over_budget_tokens = effective_tokens.saturating_sub(snapshot.budget);
-        let over_message_tokens = snapshot.message_tokens.saturating_sub(snapshot.budget);
-        let over_message_limit = snapshot.over_message_limit();
+impl Pressure {
+    pub fn from_messages(
+        messages: &[AgentMessage],
+        config: &CompactionConfig,
+        estimated_tokens: usize,
+    ) -> Self {
+        let message_tokens = total_tokens(messages);
+        let (compactable_tool_result_count, max_tool_result_tokens, max_user_tokens) =
+            compute_message_stats(messages);
+        let estimate_pressure =
+            estimated_tokens > message_tokens.saturating_add(config.budget_tokens / 2);
+        let image_pressure = estimated_tokens > config.budget_tokens.saturating_mul(2)
+            && estimated_tokens > message_tokens.saturating_add(config.budget_tokens);
 
         Self {
-            effective_tokens,
-            over_budget_tokens,
-            over_message_tokens,
-            over_message_limit,
+            message_tokens,
+            compactable_tool_result_count,
+            max_tool_result_tokens,
+            max_user_tokens,
+            message_count: messages.len(),
+            estimate_pressure,
+            image_pressure,
+        }
+    }
+}
+
+fn compute_message_stats(messages: &[AgentMessage]) -> (usize, usize, usize) {
+    let mut compactable_count = 0usize;
+    let mut max_tool_tokens = 0usize;
+    let mut max_user_tokens = 0usize;
+
+    for msg in messages {
+        match msg {
+            AgentMessage::Llm(Message::ToolResult {
+                tool_name, content, ..
+            }) => {
+                let tokens = content_tokens(content);
+                max_tool_tokens = max_tool_tokens.max(tokens);
+                let text_len: usize = content
+                    .iter()
+                    .map(|c| match c {
+                        Content::Text { text } => text.len(),
+                        _ => 0,
+                    })
+                    .sum();
+                if is_compactable_tool_result(tool_name, text_len) {
+                    compactable_count += 1;
+                }
+            }
+            AgentMessage::Llm(Message::User { content, .. }) => {
+                max_user_tokens = max_user_tokens.max(content_tokens(content));
+            }
+            _ => {}
         }
     }
 
-    pub fn needs_collapse(self, snapshot: &ContextSnapshot) -> bool {
-        self.effective_tokens > snapshot.compact_trigger
-    }
-
-    pub fn evict_mode(self) -> Option<EvictMode> {
-        if self.over_message_tokens > 0 {
-            return Some(EvictMode::TokenBudget);
-        }
-        if self.over_message_limit {
-            return Some(EvictMode::MessageLimit);
-        }
-        if self.over_budget_tokens > 0 {
-            return Some(EvictMode::TokenBudget);
-        }
-        None
-    }
-
-    pub fn needs_evict(self) -> bool {
-        self.evict_mode().is_some()
-    }
+    (compactable_count, max_tool_tokens, max_user_tokens)
 }

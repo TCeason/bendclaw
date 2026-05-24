@@ -1,12 +1,20 @@
-//! Compaction strategy definitions.
-//!
-//! All tunable parameters live here. Passes read from this module
-//! to decide *what* to do — they never hard-code tool names or thresholds.
+//! Per-tool truncation strategy.
 
-/// Per-tool truncation strategy.
+pub const ALREADY_COMPACTED_THRESHOLD: usize = 200;
+
+const COMPACTABLE_TOOLS: &[&str] = &[
+    "Read", "ReadSlim", "Bash", "Grep", "Glob", "WebFetch", "Edit", "Write",
+];
+
+/// Return whether a tool result should count toward microcompaction pressure.
+pub fn is_compactable_tool_result(tool_name: &str, text_len: usize) -> bool {
+    COMPACTABLE_TOOLS.contains(&tool_name) && text_len >= ALREADY_COMPACTED_THRESHOLD
+}
+
+/// Per-tool truncation policy used by the shrink pass.
 pub struct ToolPolicy {
     /// Tokens threshold for age-based clearing of old results.
-    /// `None` means this tool is never age-cleared (e.g. `read_file`).
+    /// `None` means this tool is never age-cleared (e.g. `Read`).
     pub age_clear_threshold: Option<usize>,
     /// Max lines when truncating an oversized result.
     pub oversize_max_lines: usize,
@@ -16,29 +24,10 @@ pub struct ToolPolicy {
     pub prefer_outline: bool,
 }
 
-/// Global compaction thresholds.
-///
-/// These control *when* a tool result is considered oversized.
-/// Per-tool `ToolPolicy` controls *how* it is handled once identified.
-pub struct CompactionPolicy {
-    /// Absolute token threshold — a single result above this is oversized.
-    pub oversize_abs_tokens: usize,
-    /// Ratio threshold — a single result above `budget * ratio` is oversized.
-    pub oversize_budget_ratio: f64,
-}
-
-impl Default for CompactionPolicy {
-    fn default() -> Self {
-        Self {
-            oversize_abs_tokens: 6000,
-            oversize_budget_ratio: 0.20,
-        }
-    }
-}
-
 /// Return the truncation policy for a given tool name.
-pub fn tool_policy(tool_name: &str) -> ToolPolicy {
-    match tool_name {
+pub fn tool_policy(tool_name: &str, max_lines: usize) -> ToolPolicy {
+    let configured_max_lines = max_lines.max(1);
+    let mut policy = match tool_name {
         "Read" | "ReadSlim" => ToolPolicy {
             age_clear_threshold: None,
             oversize_max_lines: 30,
@@ -63,5 +52,8 @@ pub fn tool_policy(tool_name: &str) -> ToolPolicy {
             normal_max_lines: 50,
             prefer_outline: false,
         },
-    }
+    };
+    policy.oversize_max_lines = policy.oversize_max_lines.min(configured_max_lines);
+    policy.normal_max_lines = policy.normal_max_lines.min(configured_max_lines);
+    policy
 }

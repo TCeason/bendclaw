@@ -10,7 +10,6 @@ use tokio_util::sync::CancellationToken;
 
 use super::handle::QueueMode;
 use super::handle::RunHandle;
-use crate::context::CompactionStrategy;
 use crate::context::ContextConfig;
 use crate::context::ExecutionLimits;
 use crate::provider::ModelConfig;
@@ -61,9 +60,6 @@ pub struct Agent {
     // Input filters
     pub(super) input_filters: Vec<Arc<dyn InputFilter>>,
 
-    // Custom compaction strategy
-    pub(super) compaction_strategy: Option<Arc<dyn CompactionStrategy>>,
-
     // Spill: large tool results written to disk
     pub(super) spill: Option<Arc<FsSpill>>,
 
@@ -108,7 +104,6 @@ impl Agent {
             before_turn: None,
             after_turn: None,
             input_filters: Vec::new(),
-            compaction_strategy: None,
             spill: None,
             cancel: None,
             is_streaming: false,
@@ -254,13 +249,6 @@ impl Agent {
     /// Add an input filter. Filters run in order on user messages before the LLM call.
     pub fn with_input_filter(mut self, filter: impl InputFilter + 'static) -> Self {
         self.input_filters.push(Arc::new(filter));
-        self
-    }
-
-    /// Set a custom compaction strategy. When set, replaces the default
-    /// `compact_messages()` call during context compaction.
-    pub fn with_compaction_strategy(mut self, strategy: impl CompactionStrategy + 'static) -> Self {
-        self.compaction_strategy = Some(Arc::new(strategy));
         self
     }
 

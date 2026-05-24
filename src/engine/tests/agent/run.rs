@@ -758,7 +758,6 @@ async fn test_retry_on_rate_limit_succeeds() {
         get_steering_messages: None,
         get_follow_up_messages: None,
         context_config: None,
-        compaction_strategy: None,
         execution_limits: None,
         cache_config: CacheConfig::default(),
         tool_execution: ToolExecutionStrategy::default(),
@@ -845,7 +844,6 @@ async fn test_retry_exhausted_returns_error() {
         get_steering_messages: None,
         get_follow_up_messages: None,
         context_config: None,
-        compaction_strategy: None,
         execution_limits: None,
         cache_config: CacheConfig::default(),
         tool_execution: ToolExecutionStrategy::default(),
@@ -917,7 +915,6 @@ async fn test_auth_error_not_retried() {
         get_steering_messages: None,
         get_follow_up_messages: None,
         context_config: None,
-        compaction_strategy: None,
         execution_limits: None,
         cache_config: CacheConfig::default(),
         tool_execution: ToolExecutionStrategy::default(),
@@ -977,7 +974,6 @@ async fn test_retry_none_disables_retries() {
         get_steering_messages: None,
         get_follow_up_messages: None,
         context_config: None,
-        compaction_strategy: None,
         execution_limits: None,
         cache_config: CacheConfig::default(),
         tool_execution: ToolExecutionStrategy::default(),
@@ -1755,15 +1751,12 @@ async fn test_filter_non_text_content_only_text_extracted() {
 }
 
 // ---------------------------------------------------------------------------
-// CompactionStrategy tests
+// Context compaction direct-entry tests
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_default_compaction_matches_compact_messages() {
-    use evotengine::context::compact_messages;
+async fn test_compact_messages_reduces_over_budget_context() {
     use evotengine::context::ContextConfig;
-    use evotengine::context::DefaultCompaction;
-    use evotengine::CompactionStrategy;
 
     let mut messages = Vec::new();
     for i in 0..100 {
@@ -1784,181 +1777,15 @@ async fn test_default_compaction_matches_compact_messages() {
     };
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
-    let result_direct = compact_messages(messages.clone(), &config, &budget_state);
-    let result_trait = DefaultCompaction.compact(messages, &config, &budget_state);
+    let result = evotengine::context::compact_messages(messages, &config, &budget_state);
 
-    assert_eq!(result_direct.messages.len(), result_trait.messages.len());
     assert!(
-        result_direct.messages.len() < 100,
+        result.messages.len() < 100,
         "compaction should have reduced messages"
     );
     assert!(
-        result_direct.messages.len() >= 2,
+        result.messages.len() >= 2,
         "should keep at least keep_first messages"
-    );
-}
-
-#[tokio::test]
-async fn test_custom_compaction_strategy_is_called() {
-    use evotengine::context::ContextConfig;
-    use evotengine::CompactionBudgetState;
-    use evotengine::CompactionResult;
-    use evotengine::CompactionStats;
-    use evotengine::CompactionStrategy;
-
-    struct MarkerCompaction;
-
-    impl CompactionStrategy for MarkerCompaction {
-        fn compact(
-            &self,
-            messages: Vec<AgentMessage>,
-            _config: &ContextConfig,
-            _budget_state: &CompactionBudgetState,
-        ) -> CompactionResult {
-            let mut result = vec![AgentMessage::Llm(Message::user("[compacted]"))];
-            if let Some(last) = messages.last() {
-                result.push(last.clone());
-            }
-            CompactionResult {
-                messages: result,
-                stats: CompactionStats::default(),
-            }
-        }
-    }
-
-    // Provider returns a simple text response
-    let provider = MockProvider::text("Got it.");
-
-    let config = AgentLoopConfig {
-        provider: std::sync::Arc::new(provider),
-        model: "test".into(),
-        api_key: "test".into(),
-        thinking_level: ThinkingLevel::Off,
-        max_tokens: None,
-        temperature: None,
-        model_config: None,
-        convert_to_llm: None,
-        transform_context: None,
-        get_steering_messages: None,
-        get_follow_up_messages: None,
-        context_config: Some(ContextConfig {
-            max_context_tokens: 10, // Tiny budget to force compaction
-            system_prompt_tokens: 0,
-            keep_recent: 1,
-            keep_first: 1,
-            tool_output_max_lines: 10,
-            ..Default::default()
-        }),
-        compaction_strategy: Some(std::sync::Arc::new(MarkerCompaction)),
-        execution_limits: None,
-        cache_config: CacheConfig::default(),
-        tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: evotengine::RetryPolicy::disabled(),
-        before_turn: None,
-        after_turn: None,
-        input_filters: vec![],
-        spill: None,
-    };
-
-    let prompt = AgentMessage::Llm(Message::user("Hello"));
-    let mut context = AgentContext {
-        system_prompt: String::new(),
-        messages: vec![],
-        tools: vec![],
-        cwd: std::path::PathBuf::new(),
-        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
-        prompt_cache_key: None,
-    };
-
-    let (tx, _rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-
-    // The custom strategy should have inserted "[compacted]" as the first message
-    assert!(
-        context.messages.iter().any(|m| {
-            if let AgentMessage::Llm(Message::User { content, .. }) = m {
-                content
-                    .iter()
-                    .any(|c| matches!(c, Content::Text { text } if text == "[compacted]"))
-            } else {
-                false
-            }
-        }),
-        "Custom compaction marker not found in context: {:?}",
-        context
-            .messages
-            .iter()
-            .filter_map(|m| {
-                if let AgentMessage::Llm(Message::User { content, .. }) = m {
-                    Some(content)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-    );
-}
-
-#[tokio::test]
-async fn test_none_compaction_strategy_uses_default() {
-    use evotengine::context::ContextConfig;
-
-    // Provider returns a simple text response
-    let provider = MockProvider::text("Got it.");
-
-    let config = AgentLoopConfig {
-        provider: std::sync::Arc::new(provider),
-        model: "test".into(),
-        api_key: "test".into(),
-        thinking_level: ThinkingLevel::Off,
-        max_tokens: None,
-        temperature: None,
-        model_config: None,
-        convert_to_llm: None,
-        transform_context: None,
-        get_steering_messages: None,
-        get_follow_up_messages: None,
-        context_config: Some(ContextConfig {
-            max_context_tokens: 10, // Tiny budget to force compaction
-            system_prompt_tokens: 0,
-            keep_recent: 1,
-            keep_first: 1,
-            tool_output_max_lines: 10,
-            ..Default::default()
-        }),
-        compaction_strategy: None, // Should fall back to DefaultCompaction
-        execution_limits: None,
-        cache_config: CacheConfig::default(),
-        tool_execution: ToolExecutionStrategy::default(),
-        retry_policy: evotengine::RetryPolicy::disabled(),
-        before_turn: None,
-        after_turn: None,
-        input_filters: vec![],
-        spill: None,
-    };
-
-    let prompt = AgentMessage::Llm(Message::user("Hello"));
-    let mut context = AgentContext {
-        system_prompt: String::new(),
-        messages: vec![],
-        tools: vec![],
-        cwd: std::path::PathBuf::new(),
-        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
-        prompt_cache_key: None,
-    };
-
-    let (tx, _rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    // Should not panic — DefaultCompaction handles everything
-    let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-
-    // Agent should have produced at least the user message + assistant response
-    assert!(
-        !new_messages.is_empty(),
-        "Agent should have produced messages"
     );
 }
 
@@ -2338,7 +2165,8 @@ async fn test_request_view_shrinks_old_tool_results_only() {
             _ => None,
         })
         .expect("recent tool result should be present");
-    assert_eq!(recent_text, &recent_big);
+    assert!(recent_text.len() < recent_big.len());
+    assert!(recent_text.contains("truncated"));
 
     let stored_old_text = output
         .context_messages
@@ -2547,7 +2375,8 @@ async fn test_request_view_caps_total_old_tool_results() {
             _ => None,
         })
         .expect("recent tool result should be present");
-    assert_eq!(recent_text, &recent_big);
+    assert!(recent_text.len() < recent_big.len());
+    assert!(recent_text.contains("truncated"));
 
     let stored_old_count = output
         .context_messages
@@ -2718,7 +2547,6 @@ async fn test_empty_response_retried_then_succeeds() {
         get_steering_messages: None,
         get_follow_up_messages: None,
         context_config: None,
-        compaction_strategy: None,
         execution_limits: None,
         cache_config: CacheConfig::default(),
         tool_execution: ToolExecutionStrategy::default(),
@@ -2794,7 +2622,6 @@ async fn test_empty_response_exhausts_retries() {
         get_steering_messages: None,
         get_follow_up_messages: None,
         context_config: None,
-        compaction_strategy: None,
         execution_limits: None,
         cache_config: CacheConfig::default(),
         tool_execution: ToolExecutionStrategy::default(),

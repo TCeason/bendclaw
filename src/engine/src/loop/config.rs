@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use crate::context::CompactionStrategy;
 use crate::context::ContextConfig;
 use crate::context::ExecutionLimits;
 use crate::provider::ModelConfig;
@@ -50,10 +49,6 @@ pub struct AgentLoopConfig {
 
     /// Context window configuration (auto-compaction).
     pub context_config: Option<ContextConfig>,
-
-    /// Custom compaction strategy. When set, replaces the default
-    /// `compact_messages()` call. Invoked when `context_config` is `Some`.
-    pub compaction_strategy: Option<Arc<dyn CompactionStrategy>>,
 
     /// Execution limits (max turns, tokens, duration).
     pub execution_limits: Option<ExecutionLimits>,

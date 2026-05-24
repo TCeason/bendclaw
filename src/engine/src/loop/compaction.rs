@@ -3,10 +3,9 @@
 use tokio::sync::mpsc;
 
 use super::config::AgentLoopConfig;
+use crate::context::compact_messages;
 use crate::context::CompactionBudgetState;
-use crate::context::CompactionStrategy;
 use crate::context::ContextTracker;
-use crate::context::DefaultCompaction;
 use crate::types::*;
 
 /// Run context compaction if configured.
@@ -16,11 +15,6 @@ pub(super) fn compact_context(
     context_tracker: &mut ContextTracker,
     tx: &mpsc::UnboundedSender<AgentEvent>,
 ) {
-    let strategy: &dyn CompactionStrategy = config
-        .compaction_strategy
-        .as_deref()
-        .unwrap_or(&DefaultCompaction);
-
     let ctx_config = match config.context_config {
         Some(ref c) => c,
         None => return,
@@ -38,7 +32,7 @@ pub(super) fn compact_context(
         tool_definition_tokens: budget.tool_definition_tokens,
         context_window: budget.context_window,
     };
-    let result = strategy.compact(
+    let result = compact_messages(
         std::mem::take(&mut context.messages),
         ctx_config,
         &budget_state,

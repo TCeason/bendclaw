@@ -14,8 +14,6 @@ pub use context::sanitize_tool_pairs;
 pub use context::CompactionBudgetState;
 pub use context::CompactionResult;
 pub use context::CompactionStats;
-pub use context::CompactionStrategy;
-pub use context::DefaultCompaction;
 pub use r#loop::agent_loop;
 pub use r#loop::agent_loop_continue;
 pub use r#loop::AfterTurnFn;

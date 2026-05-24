@@ -232,7 +232,6 @@ impl Agent {
                         .unwrap_or_default()
                 }))
             },
-            compaction_strategy: self.compaction_strategy.clone(),
             execution_limits: self.execution_limits.clone(),
             cache_config: self.cache_config.clone(),
             tool_execution: self.tool_execution.clone(),

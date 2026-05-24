@@ -44,8 +44,8 @@ pub fn assert_actions_match_level(level: u8, actions: &[CompactionAction]) {
         match method {
             CompactionMethod::LifecycleReclaimed => true, // always allowed
             CompactionMethod::ImageStripped => true,      // level0 reclaim
-            CompactionMethod::AgeCleared
-            | CompactionMethod::OversizeCapped
+            CompactionMethod::AgeCleared => true,         // level0 cleanup
+            CompactionMethod::OversizeCapped
             | CompactionMethod::Outline
             | CompactionMethod::HeadTail => lvl >= 1,
             CompactionMethod::TurnCollapsed => lvl >= 2,

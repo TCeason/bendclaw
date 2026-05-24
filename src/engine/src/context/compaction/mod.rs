@@ -1,15 +1,13 @@
 pub(crate) mod accounting;
 pub(crate) mod compact;
-pub(crate) mod levels;
+pub mod config;
 pub(crate) mod marker;
-pub(crate) mod orchestrator;
-pub(crate) mod phase;
+pub(crate) mod pass;
+pub(crate) mod passes;
+pub mod pipeline;
 pub mod policy;
 pub(crate) mod pressure;
 mod sanitize;
-pub(crate) mod snapshot;
-pub(crate) mod strategy;
-mod transforms;
 pub(crate) mod types;
 
 pub use compact::compact_messages;
@@ -18,7 +16,5 @@ pub use compact::CompactionAction;
 pub use compact::CompactionMethod;
 pub use compact::CompactionResult;
 pub use compact::CompactionStats;
-pub use compact::CompactionStrategy;
-pub use compact::DefaultCompaction;
 pub use compact::ToolTokenDetail;
 pub use sanitize::sanitize_tool_pairs;

@@ -174,13 +174,7 @@ proptest! {
         let budget_state = CompactionBudgetState::from_messages(&messages);
         let result = compact_messages(messages, &config, &budget_state);
         let level = result.stats.level;
-        if level == 0 {
-            for action in &result.stats.actions {
-                prop_assert_eq!(action.method.clone(), CompactionMethod::LifecycleReclaimed);
-            }
-        } else {
-            assert_actions_match_level(level, &result.stats.actions);
-        }
+        assert_actions_match_level(level, &result.stats.actions);
     }
 }
 

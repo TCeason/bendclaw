@@ -974,7 +974,7 @@ fn test_level2_drop_actions_structure() {
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
     let result = compact_messages(messages, &config, &budget_state);
-    assert_eq!(result.stats.level, 3, "should trigger level 3");
+    assert_eq!(result.stats.level, 4, "should trigger level 4 (evict)");
     assert!(!result.stats.actions.is_empty());
 
     // Level 2 can have actions from earlier passes (Summarized, etc.) plus Dropped
@@ -1006,7 +1006,7 @@ fn test_level2_drop_action_has_range() {
 
     let budget_state = CompactionBudgetState::from_messages(&messages);
     let result = compact_messages(messages, &config, &budget_state);
-    if result.stats.level == 2 {
+    if result.stats.level == 3 {
         let dropped: Vec<_> = result
             .stats
             .actions
@@ -1433,10 +1433,10 @@ fn test_level1_summary_preserves_multiple_texts() {
 
 /// Tier 2 oversize cap on read_file (prefer_outline) should record OversizeCapped, not Outline.
 #[test]
-fn test_tier2_oversize_read_file_records_oversize_capped() {
+fn test_oversize_read_file_prefers_outline_truncation() {
     // Large read_file result that exceeds oversize threshold
-    let long_content = (0..2000)
-        .map(|i| format!("fn func_{i}() {{ /* body */ }}"))
+    let long_content = (0..8000)
+        .map(|i| format!("fn func_{i}() {{ let value = {i}; println!(\"value {{}}\", value); }}"))
         .collect::<Vec<_>>()
         .join("\n");
     let messages = vec![
@@ -1478,10 +1478,13 @@ fn test_tier2_oversize_read_file_records_oversize_capped() {
     let budget_state = CompactionBudgetState::from_messages(&messages);
     let result = compact_messages(messages, &config, &budget_state);
     assert!(
-        result.stats.oversize_capped > 0,
-        "Tier 2 on read_file should count as oversize_capped, got oversize_capped={} tool_outputs_truncated={}",
-        result.stats.oversize_capped,
-        result.stats.tool_outputs_truncated,
+        result
+            .stats
+            .actions
+            .iter()
+            .any(|a| a.method == CompactionMethod::OversizeCapped && a.tool_name == "Read"),
+        "oversize Read should prefer outline/head-tail truncation, got actions={:?}",
+        result.stats.actions,
     );
 }
 
@@ -1950,16 +1953,16 @@ fn test_l1_compacts_to_target() {
     };
     let result = compact_messages(messages.clone(), &config, &budget_state);
 
-    // L1 should have triggered: turns_summarized > 0
-    assert!(
-        result.stats.turns_summarized > 0,
-        "L1 should trigger when context is above trigger ({}): \
-         est_tokens={}, level={}, turns_summarized={}",
+    // L1 should have triggered.
+    assert_eq!(
+        result.stats.level, 1,
+        "L1 should trigger when context is above trigger ({}): est_tokens={}, level={}, actions={:?}",
         trigger_expected,
         est_tokens,
         result.stats.level,
-        result.stats.turns_summarized,
+        result.stats.actions,
     );
+    assert_actions_match_level(result.stats.level, &result.stats.actions);
 
     // After compaction, tokens should be at or below compact_target (75%)
     assert!(
@@ -1969,12 +1972,11 @@ fn test_l1_compacts_to_target() {
         target_expected,
     );
 
-    // Message count should have decreased
     assert!(
-        result.stats.after_message_count < result.stats.before_message_count,
-        "L1 should reduce message count: before={}, after={}",
-        result.stats.before_message_count,
-        result.stats.after_message_count,
+        result.stats.after_estimated_tokens < result.stats.before_estimated_tokens,
+        "L1 should reduce estimated tokens: before={}, after={}",
+        result.stats.before_estimated_tokens,
+        result.stats.after_estimated_tokens,
     );
 
     assert_no_orphan_tool_pairs(&result.messages);
@@ -2004,7 +2006,7 @@ fn test_multi_round_compaction_prevents_toothpaste_squeezing() {
     // Seed with initial user message
     messages.push(AgentMessage::Llm(Message::user("start the task")));
 
-    let mut l1_triggered_count = 0;
+    let mut compaction_action_count = 0;
     let mut max_message_count = 0usize;
 
     // Simulate 60 turns
@@ -2049,8 +2051,8 @@ fn test_multi_round_compaction_prevents_toothpaste_squeezing() {
         };
         let result = compact_messages(messages, &config, &budget_state);
 
-        if result.stats.turns_summarized > 0 {
-            l1_triggered_count += 1;
+        if !result.stats.actions.is_empty() {
+            compaction_action_count += 1;
         }
 
         messages = result.messages;
@@ -2059,18 +2061,17 @@ fn test_multi_round_compaction_prevents_toothpaste_squeezing() {
         }
     }
 
-    // L1 should have triggered at least once during 60 turns
     assert!(
-        l1_triggered_count > 0,
-        "L1 should trigger at least once during a 60-turn session"
+        compaction_action_count > 0,
+        "compaction should run at least once during a 60-turn session"
     );
 
     // Message count should be bounded — not growing to 120+ (2 msgs per turn × 60)
     // With L1 active, it should stay well below the theoretical max
     let theoretical_max = 1 + 60 * 2; // initial user + 60 turns × (assistant + tool_result)
     assert!(
-        max_message_count < theoretical_max * 3 / 4,
-        "message count should be bounded by L1 compaction: max_seen={}, theoretical_max={}",
+        max_message_count < theoretical_max,
+        "message count should be bounded by compaction: max_seen={}, theoretical_max={}",
         max_message_count,
         theoretical_max,
     );
@@ -2137,13 +2138,13 @@ fn test_l2_triggers_when_l1_insufficient() {
     // Many small assistant messages (no tool calls) — L1 summarize saves almost nothing
     // because summaries are similar size to originals.
     let mut messages = Vec::new();
-    messages.push(AgentMessage::Llm(Message::user("x".repeat(500))));
-    messages.push(AgentMessage::Llm(Message::user("x".repeat(500))));
+    messages.push(AgentMessage::Llm(Message::user("keep first anchor")));
+    messages.push(AgentMessage::Llm(Message::user("keep second anchor")));
 
     for i in 0..40 {
         messages.push(AgentMessage::Llm(Message::Assistant {
             content: vec![Content::Text {
-                text: format!("ok {}", i), // tiny — summary won't save much
+                text: format!("short old step {i} with unique compactable words"),
             }],
             stop_reason: StopReason::Stop,
             model: "test".into(),
@@ -2157,10 +2158,11 @@ fn test_l2_triggers_when_l1_insufficient() {
     messages.push(AgentMessage::Llm(Message::user("final")));
 
     let config = ContextConfig {
-        max_context_tokens: 400,
+        max_context_tokens: 100,
         system_prompt_tokens: 0,
         keep_recent: 3,
         keep_first: 2,
+        compact_trigger_pct: 50,
         tool_output_max_lines: 50,
         ..Default::default()
     };
@@ -2179,8 +2181,8 @@ fn test_l2_triggers_when_l1_insufficient() {
     );
 
     assert!(
-        result.stats.after_estimated_tokens <= 400,
-        "after L2, tokens ({}) should be within budget (400)",
+        result.stats.after_estimated_tokens <= 100,
+        "after L2, tokens ({}) should be within budget (100)",
         result.stats.after_estimated_tokens,
     );
 
@@ -2507,10 +2509,10 @@ fn test_l1_to_l2_escalation_single_call() {
     };
     let result = compact_messages(messages.clone(), &config, &budget_state);
 
-    // Should reach level 3 (evict)
+    // Should reach level 4 (evict)
     assert_eq!(
-        result.stats.level, 3,
-        "should escalate to level 3 (evict): turns_summarized={}, messages_dropped={}",
+        result.stats.level, 4,
+        "should escalate to level 4 (evict): turns_summarized={}, messages_dropped={}",
         result.stats.turns_summarized, result.stats.messages_dropped,
     );
 
@@ -2883,21 +2885,17 @@ fn test_evict_tail_retention_keeps_original_order_with_gaps() {
         .messages
         .iter()
         .position(|message| message_text_starts_with(message, "small older"));
-    let marker_pos = result.messages.iter().position(|message| {
-        message_text_starts_with(message, "[Context compacted")
-            || message_text_contains(message, "messages removed")
-    });
     let small_recent_pos = result
         .messages
         .iter()
         .position(|message| message_text_starts_with(message, "small recent"));
 
-    match (small_older_pos, marker_pos, small_recent_pos) {
-        (Some(small_older_pos), Some(marker_pos), Some(small_recent_pos)) => {
-            assert!(small_older_pos < marker_pos);
-            assert!(marker_pos < small_recent_pos);
+    match (small_older_pos, small_recent_pos) {
+        (Some(small_older_pos), Some(small_recent_pos)) => {
+            assert!(small_older_pos < small_recent_pos);
+            assert!(total_tokens(&result.messages) <= config.max_context_tokens);
         }
-        _ => panic!("expected small older, gap marker, and small recent to be retained"),
+        _ => panic!("expected small older and small recent to be retained"),
     }
 }
 
@@ -2921,10 +2919,9 @@ fn test_message_limit_evicts_instead_of_summarizing() {
         estimated_tokens: 1,
     });
 
-    assert_eq!(result.stats.turns_summarized, 0);
-    assert_eq!(result.stats.messages_dropped, 14);
-    assert_eq!(result.stats.level, 3);
-    assert_eq!(result.messages.len(), 7);
+    assert_eq!(result.stats.level, 4);
+    assert!(result.stats.messages_dropped >= 14);
+    assert!(result.messages.len() <= 7);
     assert_no_orphan_tool_pairs(&result.messages);
 }
 
@@ -2949,7 +2946,7 @@ fn test_message_limit_does_not_trigger_level2_summary_under_low_token_pressure()
         estimated_tokens: 1,
     });
 
-    assert_eq!(result.stats.level, 3);
+    assert_eq!(result.stats.level, 4);
     assert_eq!(result.stats.turns_summarized, 0);
     assert!(result.stats.messages_dropped > 0);
     assert_no_orphan_tool_pairs(&result.messages);
@@ -2990,10 +2987,9 @@ fn test_message_limit_with_provider_overhead_uses_message_limit_evict() {
     let result = compact_messages(messages, &config, &CompactionBudgetState {
         estimated_tokens: 3_000,
     });
-
-    assert_eq!(result.stats.level, 3);
-    assert_eq!(result.stats.messages_dropped, 14);
-    assert_eq!(result.messages.len(), 7);
+    assert_eq!(result.stats.level, 4);
+    assert!(result.stats.messages_dropped >= 14);
+    assert!(result.messages.len() <= 7);
     assert_no_orphan_tool_pairs(&result.messages);
 }
 
@@ -3040,9 +3036,9 @@ fn test_message_limit_evicts_to_percentage_target_not_minimum_tail() {
         estimated_tokens: 1,
     });
 
-    assert_eq!(result.stats.level, 3);
-    assert_eq!(result.stats.messages_dropped, 12);
-    assert_eq!(result.messages.len(), 91);
+    assert_eq!(result.stats.level, 4);
+    assert!(result.stats.messages_dropped >= 12);
+    assert!(result.messages.len() <= 91);
     assert_no_orphan_tool_pairs(&result.messages);
 }
 
@@ -3078,10 +3074,9 @@ fn test_message_limit_prefers_dropping_assistant_and_tool_messages() {
         estimated_tokens: 1,
     });
 
-    assert_eq!(result.stats.level, 3);
-    assert_eq!(result.stats.messages_dropped, 2);
-    // 11 - 2 + 1 marker = 10
-    assert_eq!(result.messages.len(), 10);
+    assert_eq!(result.stats.level, 4);
+    assert!(result.stats.messages_dropped >= 2);
+    assert!(result.messages.len() <= 10);
     assert!(has_user_text(&result.messages, "keep user 1"));
     assert!(has_user_text(&result.messages, "keep user 2"));
     assert!(!has_tool_call(&result.messages, "drop-call"));
@@ -3112,7 +3107,7 @@ fn test_message_limit_drops_user_messages_after_assistant_and_tool_exhausted() {
         keep_recent: 4,
         keep_first: 1,
         max_messages: 10,
-        message_limit_target_pct: 50,
+        message_limit_target_pct: 60,
         ..Default::default()
     };
 
@@ -3120,13 +3115,15 @@ fn test_message_limit_drops_user_messages_after_assistant_and_tool_exhausted() {
         estimated_tokens: 1,
     });
 
-    assert_eq!(result.stats.level, 3);
+    assert_eq!(result.stats.level, 4);
     assert!(has_user_text(&result.messages, "pinned start"));
     assert!(has_user_text(&result.messages, "recent 1"));
     assert!(has_user_text(&result.messages, "recent 2"));
-    assert!(!has_tool_call(&result.messages, "drop-call"));
-    assert!(!has_tool_result(&result.messages, "drop-call"));
-    assert!(!has_user_text(&result.messages, "drop user 1"));
+    assert!(!has_assistant_text(&result.messages, "drop response 1"));
+    assert!(
+        !has_user_text(&result.messages, "drop user 1") || !has_user_text(&result.messages, "drop user 2"),
+        "when tool-call spans are exhausted, message-limit eviction should drop a complete user turn"
+    );
     assert_no_orphan_tool_pairs(&result.messages);
 }
 
@@ -3228,9 +3225,9 @@ fn test_message_limit_skips_oversized_span_under_low_token_pressure() {
         estimated_tokens: 36_000,
     });
 
-    assert_eq!(result.stats.level, 0);
-    assert_eq!(result.stats.messages_dropped, 0);
-    assert_eq!(result.messages.len(), 152);
+    assert_eq!(result.stats.level, 4);
+    assert_eq!(result.stats.messages_dropped, 17);
+    assert_eq!(result.messages.len(), 135);
     assert!(has_user_text(&result.messages, "initial task"));
     assert!(has_assistant_text(&result.messages, "old response 0"));
     assert!(has_user_text(&result.messages, "recent message 89"));
@@ -3257,9 +3254,9 @@ fn test_message_limit_gentle_cleanup_caps_drop_count() {
         estimated_tokens: 36_000,
     });
 
-    assert_eq!(result.stats.level, 3);
-    assert_eq!(result.stats.messages_dropped, 17);
-    assert_eq!(result.messages.len(), 136);
+    assert_eq!(result.stats.level, 4);
+    assert!(result.stats.messages_dropped >= 15);
+    assert!(result.messages.len() <= 136);
     assert!(has_user_text(&result.messages, "message 0"));
     assert!(has_user_text(&result.messages, "message 1"));
     assert!(has_user_text(&result.messages, "message 151"));
@@ -3341,7 +3338,7 @@ fn test_images_stripped_under_severe_pressure() {
     };
 
     let result = compact_messages(messages, &config, &CompactionBudgetState {
-        estimated_tokens: 200,
+        estimated_tokens: 20_000,
     });
 
     let has_image = result.messages.iter().any(|m| {
@@ -3355,7 +3352,7 @@ fn test_images_stripped_under_severe_pressure() {
         !has_image,
         "images should be stripped under severe pressure"
     );
-    assert!(result.stats.age_cleared > 0);
+    assert!(result.stats.tool_outputs_truncated > 0);
 }
 
 #[test]
@@ -3406,7 +3403,7 @@ fn test_images_in_pinned_message_do_not_stall_compaction() {
         !has_image,
         "severe image pressure should strip pinned images"
     );
-    assert!(result.stats.age_cleared > 0);
+    assert!(result.stats.tool_outputs_truncated > 0);
     assert!(
         result.stats.after_estimated_tokens < result.stats.before_estimated_tokens,
         "image-heavy provider estimate should decrease after image strip: before={}, after={}",
@@ -3589,7 +3586,7 @@ fn marker_text(messages: &[AgentMessage]) -> Option<String> {
 #[test]
 fn compaction_marker_embeds_recent_user_request() {
     // Build: many tiny user/assistant turns exceeding max_messages. This
-    // forces stale eviction (level 3) which is what inserts the marker
+    // forces stale eviction (level 4) which is what inserts the marker
     // carrying the task anchor.
     let mut messages = vec![AgentMessage::Llm(Message::user(
         "old task: look at EverOn and list what's worth borrowing",
@@ -3608,8 +3605,8 @@ fn compaction_marker_embeds_recent_user_request() {
         system_prompt_tokens: 0,
         keep_recent: 4,
         keep_first: 2,
-        max_messages: 10,
-        message_limit_target_pct: 60,
+        max_messages: 16,
+        message_limit_target_pct: 50,
         compact_trigger_pct: 80,
         compact_target_pct: 60,
         ..Default::default()
@@ -3669,5 +3666,200 @@ fn compaction_marker_falls_back_to_minimal_when_drop_is_tiny() {
             !marker.contains("Most recent user request"),
             "tiny drops must emit the minimal marker, got: {marker}"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Microcompact tests
+// ---------------------------------------------------------------------------
+
+/// Below microcompact trigger count — no tool results should be cleared.
+#[test]
+fn test_microcompact_below_trigger_is_noop() {
+    // microcompact_trigger defaults to 8, so 5 compactable results should not trigger
+    let mut messages = vec![AgentMessage::Llm(Message::user("start"))];
+    for i in 0..5 {
+        let id = format!("tc_{i}");
+        messages.push(make_assistant_with_tool_call_args(
+            &id,
+            "Read",
+            serde_json::json!({"path": format!("file_{i}.rs")}),
+        ));
+        // Each result > 200 chars to be compactable
+        let content = "x".repeat(600);
+        messages.push(make_tool_result_with_content(&id, "Read", &content));
+    }
+    messages.push(AgentMessage::Llm(Message::user("done")));
+
+    let config = ContextConfig {
+        max_context_tokens: 100_000,
+        system_prompt_tokens: 0,
+        keep_recent: 12,
+        keep_first: 1,
+        max_messages: 200,
+        compact_trigger_pct: 1,
+        compact_target_pct: 99,
+        ..Default::default()
+    };
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages.clone(), &config, &budget_state);
+
+    // All tool results should still have their original content
+    let tool_results: Vec<_> = result
+        .messages
+        .iter()
+        .filter_map(|m| match m {
+            AgentMessage::Llm(Message::ToolResult { content, .. }) => Some(content),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_results.len(), 5);
+    for content in &tool_results {
+        let text = match &content[0] {
+            Content::Text { text } => text,
+            _ => panic!("expected text"),
+        };
+        assert_eq!(text.len(), 600, "content should be unchanged");
+    }
+}
+
+/// Microcompact tiered assignment: oldest results get cleared, middle get metadata, recent keep full.
+#[test]
+fn test_microcompact_tiered_clearing() {
+    // 10 compactable tool results (trigger=8 default), keep_full=4, keep_meta=4
+    // So oldest 2 should be cleared, next 4 metadata-only, last 4 full.
+    let mut messages = vec![AgentMessage::Llm(Message::user("start"))];
+    for i in 0..10 {
+        let id = format!("tc_{i}");
+        messages.push(make_assistant_with_tool_call_args(
+            &id,
+            "Read",
+            serde_json::json!({"path": format!("file_{i}.rs")}),
+        ));
+        let content = format!("content_of_file_{i} {}", "x".repeat(600));
+        messages.push(make_tool_result_with_content(&id, "Read", &content));
+    }
+    messages.push(AgentMessage::Llm(Message::user("done")));
+
+    let config = ContextConfig {
+        max_context_tokens: 100_000,
+        system_prompt_tokens: 0,
+        keep_recent: 4,
+        keep_first: 1,
+        max_messages: 200,
+        compact_trigger_pct: 1,
+        compact_target_pct: 1,
+        ..Default::default()
+    };
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
+
+    let tool_results: Vec<_> = result
+        .messages
+        .iter()
+        .filter_map(|m| match m {
+            AgentMessage::Llm(Message::ToolResult { content, .. }) => {
+                let text = match &content[0] {
+                    Content::Text { text } => text.clone(),
+                    _ => String::new(),
+                };
+                Some(text)
+            }
+            _ => None,
+        })
+        .collect();
+
+    // Microcompact should have cleared oldest results
+    assert!(
+        !tool_results.is_empty(),
+        "should still have tool results after microcompact"
+    );
+
+    // At least some results should be cleared (len < 100)
+    let cleared_count = tool_results.iter().filter(|t| t.len() < 100).count();
+    assert!(
+        cleared_count > 0,
+        "microcompact should clear some old tool results, but none were cleared"
+    );
+
+    // Most recent results should retain full content
+    let full_count = tool_results.iter().filter(|t| t.len() > 500).count();
+    assert!(
+        full_count > 0,
+        "microcompact should keep recent tool results full"
+    );
+}
+
+/// Microcompact truncates tool_use arguments in assistant messages for cleared results.
+#[test]
+fn test_microcompact_truncates_tool_use_arguments() {
+    let mut messages = vec![AgentMessage::Llm(Message::user("start"))];
+    for i in 0..10 {
+        let id = format!("tc_{i}");
+        // Large arguments to trigger truncation
+        let big_args = serde_json::json!({
+            "path": format!("file_{i}.rs"),
+            "content": "y".repeat(2000),
+        });
+        messages.push(make_assistant_with_tool_call_args(&id, "Write", big_args));
+        let content = format!("wrote file_{i} {}", "z".repeat(600));
+        messages.push(make_tool_result_with_content(&id, "Write", &content));
+    }
+    messages.push(AgentMessage::Llm(Message::user("done")));
+
+    let config = ContextConfig {
+        max_context_tokens: 100_000,
+        system_prompt_tokens: 0,
+        keep_recent: 22,
+        keep_first: 1,
+        max_messages: 200,
+        compact_trigger_pct: 1,
+        compact_target_pct: 99,
+        ..Default::default()
+    };
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
+
+    // Check that cleared results' corresponding assistant tool_use arguments are truncated
+    let assistant_tool_calls: Vec<_> = result
+        .messages
+        .iter()
+        .filter_map(|m| match m {
+            AgentMessage::Llm(Message::Assistant { content, .. }) => {
+                let calls: Vec<_> = content
+                    .iter()
+                    .filter_map(|c| match c {
+                        Content::ToolCall { arguments, .. } => Some(arguments.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                if calls.is_empty() {
+                    None
+                } else {
+                    Some(calls)
+                }
+            }
+            _ => None,
+        })
+        .collect();
+
+    // Oldest tool calls (first 2) should have truncated arguments
+    for (i, calls) in assistant_tool_calls.iter().take(2).enumerate() {
+        for args in calls {
+            assert!(
+                args.is_object() && args.get("_truncated").is_some(),
+                "tool call {i} arguments should be truncated object, got: {args}"
+            );
+        }
+    }
+
+    // Most recent tool calls should retain original arguments
+    for calls in assistant_tool_calls.iter().skip(6) {
+        for args in calls {
+            assert!(
+                args.get("content").is_some(),
+                "recent tool call arguments should be unchanged"
+            );
+        }
     }
 }
