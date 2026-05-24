@@ -606,8 +606,13 @@ export class AssistantStreamBuffer {
 
 function buildGoalTaskCall(name: string, args: Record<string, unknown>): OutputLine[] {
   const badge = name === 'TodoWrite' ? 'TODOWRITE' : 'GOAL'
-  const summary = summarizeGoalTasks(readGoalTasks(args))
-  return [{ id: genId('tool'), kind: 'tool', text: `[${badge}] ● · ${summary}` }]
+  const tasks = readGoalTasks(args)
+  const summary = summarizeGoalTasks(tasks)
+  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `[${badge}] ● · ${summary}` }]
+  for (const task of tasks) {
+    lines.push({ id: genId('tool'), kind: 'tool', text: `  ${goalTaskSymbol(task.status)} #${task.id} ${task.title}` })
+  }
+  return lines
 }
 
 function buildGoalTaskResult(name: string, args: Record<string, unknown>, result?: string): OutputLine[] {
@@ -649,9 +654,7 @@ function readGoalTasks(args: Record<string, unknown>): GoalTaskView[] {
 function summarizeGoalTasks(tasks: GoalTaskView[], fallback?: string): string {
   if (tasks.length === 0) return fallback?.trim() || 'tasks updated'
   const completed = tasks.filter(task => task.status === 'completed').length
-  const current = tasks.find(task => task.status === 'in_progress') ?? tasks.find(task => task.status === 'pending')
-  const currentText = current ? `current #${current.id} ${current.title}` : 'no current task'
-  return `${completed}/${tasks.length} completed · ${currentText}`
+  return `${completed}/${tasks.length} completed`
 }
 
 function goalTaskDuration(task: GoalTaskView): string {
