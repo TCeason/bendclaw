@@ -23,8 +23,10 @@ impl Pass for Microcompact {
     }
 
     fn should_run(&self, ctx: &PassContext<'_>) -> bool {
-        ctx.pressure.message_tokens > ctx.config.compact_trigger()
-            && ctx.pressure.compactable_tool_result_count >= ctx.config.microcompact_trigger
+        // Purely count-driven — fire whenever enough compactable tool results
+        // accumulate, regardless of token pressure. This matches Claude Code's
+        // behavior where microcompact is independent of the autocompact threshold.
+        ctx.pressure.compactable_tool_result_count >= ctx.config.microcompact_trigger
     }
 
     fn run(&self, messages: Vec<AgentMessage>, ctx: &PassContext<'_>) -> PassResult {
