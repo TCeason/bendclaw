@@ -179,7 +179,7 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
 
 ## Efficiency
 
-IMPORTANT: Always combine TodoWrite with other tool calls in the same response. When starting a task, call TodoWrite to mark it in_progress AND call Read/Grep/Bash to begin the work — all in one response. Do not use a separate turn just to update task status.";
+Combine TodoWrite with other tool calls in the same response when possible. Do not use a separate turn just to update task status.";
 
 /// Tracks TodoWrite usage for reminder injection.
 #[derive(Clone, Default)]

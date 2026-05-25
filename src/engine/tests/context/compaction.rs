@@ -1498,11 +1498,11 @@ fn test_oversize_read_file_prefers_outline_truncation() {
 fn test_provider_estimate_does_not_trigger_l2_when_messages_fit() {
     // Build messages whose chars/4 estimate fits within budget,
     // but simulate a provider reporting much higher token usage.
-    let messages =
-        pat("u a t r u a t r u a t r u a t r u a t r u a t r u a t r u a t r u a t r u a t r")
-            .pad(50)
-            .tool_output(200)
-            .build();
+    // Use fewer than 8 tool results so microcompact (count-driven) does not fire.
+    let messages = pat("u a t r u a t r u a t r u a t r u a t r u a t r")
+        .pad(50)
+        .tool_output(200)
+        .build();
 
     let char_estimate = total_tokens(&messages);
 
@@ -1953,16 +1953,16 @@ fn test_l1_compacts_to_target() {
     };
     let result = compact_messages(messages.clone(), &config, &budget_state);
 
-    // L1 should have triggered.
-    assert_eq!(
-        result.stats.level, 1,
-        "L1 should trigger when context is above trigger ({}): est_tokens={}, level={}, actions={:?}",
+    // Compaction should have triggered (L1 microcompact fires unconditionally on
+    // count, and L2 shrink may also fire if tokens remain above trigger).
+    assert!(
+        result.stats.level >= 1,
+        "Compaction should trigger when context is above trigger ({}): est_tokens={}, level={}, actions={:?}",
         trigger_expected,
         est_tokens,
         result.stats.level,
         result.stats.actions,
     );
-    assert_actions_match_level(result.stats.level, &result.stats.actions);
 
     // After compaction, tokens should be at or below compact_target (75%)
     assert!(

@@ -128,7 +128,7 @@ Match responses to the task: a simple question gets a direct answer, not headers
 
 ## Task management
 
-Break down and manage your work with the TodoWrite tool. These are helpful for planning your work and helping the user track your progress. Mark each task as completed as soon as you are done with the task. Do not batch up multiple tasks before marking them as completed. TodoWrite can and should be combined with other tool calls in the same response — when starting a task, call TodoWrite to mark it in_progress AND call Read/Grep/Bash to begin the work, all in one response. Do not use a separate turn just to update task status.
+Break down and manage your work with the TodoWrite tool. These are helpful for planning your work and helping the user track your progress. Mark each task as completed as soon as you are done with the task. Do not batch up multiple tasks before marking them as completed.
 
 ## Code style
 
