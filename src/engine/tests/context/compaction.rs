@@ -3749,6 +3749,7 @@ fn test_microcompact_tiered_clearing() {
         max_messages: 200,
         compact_trigger_pct: 1,
         compact_target_pct: 1,
+        microcompact_keep_full: 4,
         ..Default::default()
     };
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -3815,6 +3816,7 @@ fn test_microcompact_truncates_tool_use_arguments() {
         max_messages: 200,
         compact_trigger_pct: 1,
         compact_target_pct: 99,
+        microcompact_keep_full: 4,
         ..Default::default()
     };
     let budget_state = CompactionBudgetState::from_messages(&messages);

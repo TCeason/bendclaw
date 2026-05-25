@@ -884,43 +884,11 @@ impl Agent {
             }
         }
 
-        // Append current TodoWrite tasks to system prompt.
+        // TodoWrite turn tracking (for stale reminders).
         {
             self.todo_meta.increment_turn();
             let tasks = self.todo_meta.state.lock().await;
-            if !tasks.is_empty() {
-                let mut fragment = String::from("# Current tasks\n\nThese tasks are already tracked. Only call TodoWrite to change status (e.g. mark completed), not to recreate this list.\n");
-                for t in tasks.iter() {
-                    let status = match t.status {
-                        crate::types::GoalTaskStatus::Pending => "pending",
-                        crate::types::GoalTaskStatus::InProgress => "in_progress",
-                        crate::types::GoalTaskStatus::Completed => "completed",
-                    };
-                    fragment.push_str(&format!("\n- [{}] {}", status, t.title));
-                }
-                system_prompt.push_str("\n\n");
-                system_prompt.push_str(&fragment);
-                sections.push(Section {
-                    name: "tasks",
-                    text: fragment,
-                });
-            } else if self.todo_meta.should_remind_never_used(10) {
-                let reminder = "The TodoWrite tool hasn't been used recently. \
-                    If you're working on tasks that would benefit from tracking progress, \
-                    consider using the TodoWrite tool to track progress. \
-                    Only use it if it's relevant to the current work. \
-                    This is just a gentle reminder - ignore if not applicable.";
-                system_prompt.push_str("\n\n");
-                system_prompt.push_str(reminder);
-                sections.push(Section {
-                    name: "todo_reminder",
-                    text: reminder.into(),
-                });
-            }
-            // Stale reminder: used before but not updated recently.
-            // Only fire when tasks are empty in system prompt (otherwise the model
-            // already sees them and doesn't need a nudge to call TodoWrite).
-            if tasks.is_empty() && self.todo_meta.should_remind_stale(25) {
+            if tasks.is_empty() && self.todo_meta.should_remind_never_used(10) {
                 let reminder = "The TodoWrite tool hasn't been used recently. \
                     If you're working on tasks that would benefit from tracking progress, \
                     consider using the TodoWrite tool to track progress. \

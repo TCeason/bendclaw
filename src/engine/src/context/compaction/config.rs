@@ -86,7 +86,7 @@ impl CompactionConfig {
             max_messages: ctx.max_messages,
             message_limit_target_pct: ctx.message_limit_target_pct,
             microcompact_trigger: defaults.microcompact_trigger,
-            microcompact_keep_full: defaults.microcompact_keep_full,
+            microcompact_keep_full: ctx.microcompact_keep_full,
             microcompact_keep_meta: defaults.microcompact_keep_meta,
             microcompact_keep_images: defaults.microcompact_keep_images,
             tool_output_max_lines: ctx.tool_output_max_lines,
