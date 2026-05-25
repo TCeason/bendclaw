@@ -561,9 +561,9 @@ describe('term stream machine', () => {
       },
     })
     const text = finished.map(l => l.text).join('\n')
-    expect(text).toContain('[GOAL] ✓ · 1/3 completed · current #2 Simplify coordinator')
-    expect(text).toContain('  ✓ #1 Audit current code · done in 150.0s')
-    expect(text).toContain('  → #2 Simplify coordinator')
+    expect(text).toContain('[GOAL] ☑ · 1/3 completed')
+    expect(text).toContain('  ☑ #1 Audit current code · done in 150.0s')
+    expect(text).toContain('  ▷ #2 Simplify coordinator')
     expect(text).toContain('  · #3 Add tests')
   })
 
