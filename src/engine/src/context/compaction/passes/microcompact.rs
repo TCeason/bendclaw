@@ -64,19 +64,15 @@ impl Pass for Microcompact {
 
         let mut result = messages;
         let mut actions = Vec::new();
-        let mut running_tokens = ctx.pressure.message_tokens;
-        let target = config.compact_target();
 
         // Process from newest to oldest: assign tiers
+        // Microcompact is purely count-driven — always apply tier-based clearing
+        // regardless of token budget. This prevents unbounded context growth in
+        // sessions that stay below the autocompact threshold.
         for (rank, &idx) in compactable.iter().rev().enumerate() {
             if rank < keep_full {
                 // Tier 0: keep full content
                 continue;
-            }
-
-            // Stop once we're under target
-            if running_tokens <= target {
-                break;
             }
 
             if let AgentMessage::Llm(Message::ToolResult {
@@ -104,8 +100,6 @@ impl Pass for Microcompact {
                 if after_tokens >= before_tokens {
                     continue;
                 }
-
-                running_tokens -= before_tokens - after_tokens;
 
                 actions.push(CompactionAction {
                     index: idx,

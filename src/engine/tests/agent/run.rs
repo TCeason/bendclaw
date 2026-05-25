@@ -2343,7 +2343,7 @@ async fn test_request_view_caps_total_old_tool_results() {
         "old tool results should be globally capped, got {old_tool_bytes} bytes"
     );
 
-    let omitted_old_results = request_messages
+    let omitted_or_cleared_old_results = request_messages
         .iter()
         .filter(|message| match message {
             Message::ToolResult {
@@ -2351,14 +2351,14 @@ async fn test_request_view_caps_total_old_tool_results() {
                 content,
                 ..
             } if tool_call_id.starts_with("old-tc-") => content.iter().any(
-                |c| matches!(c, Content::Text { text } if text.contains("tool result omitted")),
+                |c| matches!(c, Content::Text { text } if text.contains("tool result omitted") || text.contains("[cleared]")),
             ),
             _ => false,
         })
         .count();
     assert!(
-        omitted_old_results > 0,
-        "some older medium-sized tool results should be omitted under aggregate pressure"
+        omitted_or_cleared_old_results > 0,
+        "some older medium-sized tool results should be omitted or cleared under aggregate pressure"
     );
 
     let recent_text = request_messages
