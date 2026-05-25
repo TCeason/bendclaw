@@ -3,10 +3,6 @@
 </p>
 
 <p align="center">
-  Building software just got 10× faster and token-efficient.
-</p>
-
-<p align="center">
   A self-evolving agent engine — fully observable, built for long-running complex work.
 </p>
 
@@ -15,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="#-news">News</a> &middot;
+  <a href="#benchmark">Benchmark</a> &middot;
   <a href="#-why-evot">Why</a> &middot;
   <a href="#installation">Install</a> &middot;
   <a href="#quickstart">Quickstart</a> &middot;
@@ -27,16 +23,51 @@
   <video src="https://github.com/user-attachments/assets/0c089005-51db-48da-977e-6339b5fb9093"></video>
 </p>
 
+## Benchmark
+
+Same model (Claude Opus 4.6), same task, same eval environment. evot completes the work with fewer tokens, less time, and lower cost.
+
+<p align="center">
+  <img src="docs/eval-comparison.png" alt="evot vs claude-code benchmark comparison" width="800" />
+</p>
+
+> Task: Fix a real bug in serde_json ([issue #979](https://github.com/serde-rs/json/issues/979)) — investigate root cause, apply fix, write regression test, verify all tests pass.
+
+| Metric | evot | claude-code | Difference |
+|--------|------|-------------|------------|
+| Cost | $2.94 | $6.60 | **55% cheaper** |
+| Time | 3m 35s | 5m 32s | **35% faster** |
+| Input tokens | 579K | 1.29M | **55% fewer** |
+| Requests | 36 | 39 | **8% fewer** |
+
+Both agents produce correct, passing code. The difference is in how they manage context.
+
+### Why is evot faster and cheaper?
+
+Most coding agents accumulate full conversation history — every tool call, every file read, every intermediate result stays in context forever. By the time the agent finishes a complex task, it's paying for hundreds of thousands of stale tokens on every request.
+
+Evot takes a fundamentally different approach:
+
+**Tiered context compaction.** Old tool results are progressively compressed: recent results stay full, older ones keep only metadata (file path, line count), and the oldest are cleared entirely. The model retains enough signal to avoid re-doing work, without paying for content it no longer needs.
+
+**Microcompact between turns.** Rather than waiting for context to hit a hard limit, evot proactively clears low-value content every turn. This keeps each request small and focused — 579K total input tokens across 36 requests vs. 1.29M across 39 for claude-code.
+
+**Progress-aware system prompt.** A lightweight task state is injected into the system prompt each turn, giving the model cross-compaction memory of what it already accomplished. This prevents the "start over" loops that plague agents after context eviction.
+
+**Structured markers in compacted history.** When older turns are summarized, evot preserves structured metadata — which files were modified, what environment was discovered, what conclusions were reached. The model can pick up where it left off without re-reading files.
+
+The result: evot's context stays lean throughout the session while claude-code's grows monotonically. Fewer tokens per request means faster API responses, lower cost, and less noise for the model to reason through.
+
 ## 📢 News
 
-- **2026-05-17** 🎯 [REPL] `/goal` — autonomous objectives, e.g. `/goal remove unwraps in Rust context compaction`.
-- **2026-05-11** 🖐️ [Skills] Built-in `opencli` — control the browser, use logged-in cookies, read Feishu/Lark messages, Twitter/X timelines, and more.
-- **2026-05-11** 🪶 [Slim] Tool outputs now auto-compact, with token savings shown inline.
-- **2026-05-08** 🛡️ [REPL] `/harden` — stress-test plans and git changes before shipping. Inspired by [@cjzafir](https://x.com/cjzafir/status/2052110266566107321).
-- **2026-05-02** 🧩 [Skills] Builtin skill support — `review` ships built-in, no install needed.
-- **2026-04-28** 🖼️ [Image] Resize, preserve through compaction, persist to disk.
-- **2026-04-23** 🔍 [Search] Full-text session search — `/resume <query>` to find any past conversation.
-- **2026-04-18** 📜 [REPL] `/history` + `/goto` — time-travel through conversation context.
+- **2026-05-17** [REPL] `/goal` — autonomous objectives, e.g. `/goal remove unwraps in Rust context compaction`.
+- **2026-05-11** [Skills] Built-in `opencli` — control the browser, use logged-in cookies, read Feishu/Lark messages, Twitter/X timelines, and more.
+- **2026-05-11** [Slim] Tool outputs now auto-compact, with token savings shown inline.
+- **2026-05-08** [REPL] `/harden` — stress-test plans and git changes before shipping. Inspired by [@cjzafir](https://x.com/cjzafir/status/2052110266566107321).
+- **2026-05-02** [Skills] Builtin skill support — `review` ships built-in, no install needed.
+- **2026-04-28** [Image] Resize, preserve through compaction, persist to disk.
+- **2026-04-23** [Search] Full-text session search — `/resume <query>` to find any past conversation.
+- **2026-04-18** [REPL] `/history` + `/goto` — time-travel through conversation context.
 
 ---
 
