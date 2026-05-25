@@ -247,7 +247,7 @@ impl Default for ContextConfig {
             compact_target_pct: 75,
             max_messages: 150,
             message_limit_target_pct: 90,
-            microcompact_keep_full: 8,
+            microcompact_keep_full: 6,
         }
     }
 }
