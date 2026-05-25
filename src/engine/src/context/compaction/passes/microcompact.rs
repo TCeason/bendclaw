@@ -125,6 +125,75 @@ impl Pass for Microcompact {
         // Truncate large tool_use inputs for cleared results
         truncate_cleared_tool_use_inputs(&mut result, &compactable, keep_full);
 
+        // --- Image age clearing ---
+        // Strip old images beyond recent boundary, keeping the most recent ones.
+        let keep_images = config.microcompact_keep_images;
+        let image_indices: Vec<usize> = result
+            .iter()
+            .enumerate()
+            .take(recent_boundary)
+            .filter_map(|(i, msg)| {
+                if let AgentMessage::Llm(Message::User { content, .. }) = msg {
+                    if content.iter().any(|c| matches!(c, Content::Image { .. })) {
+                        return Some(i);
+                    }
+                }
+                None
+            })
+            .collect();
+
+        for (rank, &idx) in image_indices.iter().rev().enumerate() {
+            if rank < keep_images {
+                continue;
+            }
+            if let AgentMessage::Llm(Message::User {
+                content, timestamp, ..
+            }) = &result[idx]
+            {
+                let before_tokens = content_tokens(content);
+                let stripped: Vec<Content> = content
+                    .iter()
+                    .map(|c| match c {
+                        Content::Image { source, .. } => {
+                            let path_hint = match source {
+                                ImageSource::Path { path } => path.clone(),
+                                ImageSource::Base64 { path, .. } => {
+                                    path.clone().unwrap_or_default()
+                                }
+                            };
+                            if path_hint.is_empty() {
+                                Content::Text {
+                                    text: "[image]".into(),
+                                }
+                            } else {
+                                Content::Text {
+                                    text: format!("[image: {path_hint}]"),
+                                }
+                            }
+                        }
+                        other => other.clone(),
+                    })
+                    .collect();
+                let after_tokens = content_tokens(&stripped);
+                if after_tokens >= before_tokens {
+                    continue;
+                }
+                actions.push(CompactionAction {
+                    index: idx,
+                    tool_name: "user".into(),
+                    method: CompactionMethod::ImageStripped,
+                    before_tokens,
+                    after_tokens,
+                    end_index: None,
+                    related_count: None,
+                });
+                result[idx] = AgentMessage::Llm(Message::User {
+                    content: stripped,
+                    timestamp: *timestamp,
+                });
+            }
+        }
+
         PassResult {
             messages: result,
             actions,

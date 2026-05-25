@@ -41,7 +41,7 @@ pub(super) fn compact_context(
 
     tx.send(AgentEvent::ContextCompactionStart {
         message_count: original_count,
-        budget: compact_budget,
+        budget: compact_budget.clone(),
         message_stats: pre_stats,
     })
     .ok();
@@ -58,8 +58,14 @@ pub(super) fn compact_context(
         context_tracker.record_compaction_savings(saved, context.messages.len());
     }
 
+    // Re-estimate tokens using the tracker so the ✓ line is consistent with
+    // the ● line (both use tracker-based estimates that include images).
+    let mut stats = result.stats;
+    stats.before_estimated_tokens = compact_budget.estimated_tokens;
+    stats.after_estimated_tokens = context_tracker.estimate_context_tokens(&context.messages);
+
     tx.send(AgentEvent::ContextCompactionEnd {
-        stats: result.stats,
+        stats,
         messages: context.messages.clone(),
         context_window: budget.context_window,
     })

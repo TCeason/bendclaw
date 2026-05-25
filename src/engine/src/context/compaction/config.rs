@@ -33,6 +33,8 @@ pub struct CompactionConfig {
     pub microcompact_keep_full: usize,
     /// Keep this many next-oldest tool results as metadata only.
     pub microcompact_keep_meta: usize,
+    /// Keep this many most-recent images (before recent boundary) at full content.
+    pub microcompact_keep_images: usize,
 
     // -- Shrink --
     /// Max lines per tool output in shrink pass.
@@ -58,6 +60,7 @@ impl Default for CompactionConfig {
             microcompact_trigger: 8,
             microcompact_keep_full: 4,
             microcompact_keep_meta: 4,
+            microcompact_keep_images: 1,
 
             tool_output_max_lines: 50,
             oversize_abs_tokens: 6000,
@@ -85,6 +88,7 @@ impl CompactionConfig {
             microcompact_trigger: defaults.microcompact_trigger,
             microcompact_keep_full: defaults.microcompact_keep_full,
             microcompact_keep_meta: defaults.microcompact_keep_meta,
+            microcompact_keep_images: defaults.microcompact_keep_images,
             tool_output_max_lines: ctx.tool_output_max_lines,
             oversize_abs_tokens: defaults.oversize_abs_tokens,
             oversize_budget_ratio: defaults.oversize_budget_ratio,

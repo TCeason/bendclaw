@@ -3863,3 +3863,241 @@ fn test_microcompact_truncates_tool_use_arguments() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Microcompact image age clearing tests
+// ---------------------------------------------------------------------------
+
+/// Old images beyond recent boundary are stripped to text placeholders.
+#[test]
+fn test_microcompact_strips_old_images() {
+    // Build: 10 tool call/result pairs (to trigger microcompact) + 3 user messages with images
+    // Images at positions: early (idx 1), middle (idx 11), late (idx 21 — in recent boundary)
+    let mut messages = vec![];
+
+    // User message with image (old — will be stripped)
+    messages.push(AgentMessage::Llm(Message::User {
+        content: vec![
+            Content::Text {
+                text: "look at this".into(),
+            },
+            Content::Image {
+                mime_type: "image/png".into(),
+                source: ImageSource::Path {
+                    path: "/tmp/old_screenshot.png".into(),
+                },
+            },
+        ],
+        timestamp: 0,
+    }));
+
+    // 10 tool call/result pairs to trigger microcompact
+    for i in 0..10 {
+        let id = format!("tc_{i}");
+        messages.push(AgentMessage::Llm(Message::Assistant {
+            content: vec![Content::ToolCall {
+                id: id.clone(),
+                name: "Read".into(),
+                arguments: serde_json::json!({"path": format!("file_{i}.rs")}),
+            }],
+            stop_reason: StopReason::ToolUse,
+            model: "test".into(),
+            provider: "test".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+            response_id: None,
+        }));
+        messages.push(AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: id,
+            tool_name: "Read".into(),
+            content: vec![Content::Text {
+                text: "x".repeat(600),
+            }],
+            is_error: false,
+            timestamp: 0,
+            retention: Retention::Normal,
+        }));
+    }
+
+    // User message with image (middle — will be stripped since keep_images=1)
+    messages.push(AgentMessage::Llm(Message::User {
+        content: vec![
+            Content::Text {
+                text: "another image".into(),
+            },
+            Content::Image {
+                mime_type: "image/png".into(),
+                source: ImageSource::Path {
+                    path: "/tmp/mid_screenshot.png".into(),
+                },
+            },
+        ],
+        timestamp: 0,
+    }));
+
+    // A few more messages to push the above out of recent boundary
+    for i in 10..14 {
+        let id = format!("tc_{i}");
+        messages.push(AgentMessage::Llm(Message::Assistant {
+            content: vec![Content::ToolCall {
+                id: id.clone(),
+                name: "Read".into(),
+                arguments: serde_json::json!({"path": format!("file_{i}.rs")}),
+            }],
+            stop_reason: StopReason::ToolUse,
+            model: "test".into(),
+            provider: "test".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+            response_id: None,
+        }));
+        messages.push(AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: id,
+            tool_name: "Read".into(),
+            content: vec![Content::Text {
+                text: "x".repeat(600),
+            }],
+            is_error: false,
+            timestamp: 0,
+            retention: Retention::Normal,
+        }));
+    }
+
+    // Recent user message with image (should be kept)
+    messages.push(AgentMessage::Llm(Message::User {
+        content: vec![
+            Content::Text {
+                text: "recent image".into(),
+            },
+            Content::Image {
+                mime_type: "image/png".into(),
+                source: ImageSource::Path {
+                    path: "/tmp/recent_screenshot.png".into(),
+                },
+            },
+        ],
+        timestamp: 0,
+    }));
+
+    let config = ContextConfig {
+        max_context_tokens: 100_000,
+        system_prompt_tokens: 0,
+        keep_recent: 4,
+        keep_first: 1,
+        max_messages: 200,
+        compact_trigger_pct: 1,
+        compact_target_pct: 1,
+        ..Default::default()
+    };
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
+
+    // Collect user messages and check image status
+    let user_msgs: Vec<_> = result
+        .messages
+        .iter()
+        .filter_map(|m| match m {
+            AgentMessage::Llm(Message::User { content, .. }) => Some(content),
+            _ => None,
+        })
+        .collect();
+
+    // The recent image (last user msg) should still have Content::Image
+    let last_user = user_msgs.last().expect("should have user messages");
+    let has_image = last_user.iter().any(|c| matches!(c, Content::Image { .. }));
+    assert!(has_image, "recent image should be preserved");
+
+    // The oldest user message image should be stripped to text
+    let first_user = &user_msgs[0];
+    let has_image = first_user
+        .iter()
+        .any(|c| matches!(c, Content::Image { .. }));
+    assert!(!has_image, "old image should be stripped");
+    let has_placeholder = first_user.iter().any(|c| match c {
+        Content::Text { text } => text.contains("[image:") || text.contains("[image]"),
+        _ => false,
+    });
+    assert!(
+        has_placeholder,
+        "stripped image should leave a text placeholder"
+    );
+}
+
+/// Images within recent boundary are never stripped.
+#[test]
+fn test_microcompact_preserves_recent_images() {
+    let mut messages = vec![AgentMessage::Llm(Message::user("start"))];
+
+    // 10 tool call/result pairs to trigger microcompact
+    for i in 0..10 {
+        let id = format!("tc_{i}");
+        messages.push(AgentMessage::Llm(Message::Assistant {
+            content: vec![Content::ToolCall {
+                id: id.clone(),
+                name: "Read".into(),
+                arguments: serde_json::json!({"path": format!("file_{i}.rs")}),
+            }],
+            stop_reason: StopReason::ToolUse,
+            model: "test".into(),
+            provider: "test".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+            response_id: None,
+        }));
+        messages.push(AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: id,
+            tool_name: "Read".into(),
+            content: vec![Content::Text {
+                text: "x".repeat(600),
+            }],
+            is_error: false,
+            timestamp: 0,
+            retention: Retention::Normal,
+        }));
+    }
+
+    // Image in recent boundary
+    messages.push(AgentMessage::Llm(Message::User {
+        content: vec![
+            Content::Text {
+                text: "check this".into(),
+            },
+            Content::Image {
+                mime_type: "image/png".into(),
+                source: ImageSource::Path {
+                    path: "/tmp/recent.png".into(),
+                },
+            },
+        ],
+        timestamp: 0,
+    }));
+    messages.push(AgentMessage::Llm(Message::user("done")));
+
+    let config = ContextConfig {
+        max_context_tokens: 100_000,
+        system_prompt_tokens: 0,
+        keep_recent: 4,
+        keep_first: 1,
+        max_messages: 200,
+        compact_trigger_pct: 1,
+        compact_target_pct: 1,
+        ..Default::default()
+    };
+    let budget_state = CompactionBudgetState::from_messages(&messages);
+    let result = compact_messages(messages, &config, &budget_state);
+
+    // The image should still be present (it's within recent boundary)
+    let has_image = result.messages.iter().any(|m| match m {
+        AgentMessage::Llm(Message::User { content, .. }) => {
+            content.iter().any(|c| matches!(c, Content::Image { .. }))
+        }
+        _ => false,
+    });
+    assert!(
+        has_image,
+        "image within recent boundary should be preserved"
+    );
+}

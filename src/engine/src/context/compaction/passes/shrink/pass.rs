@@ -21,8 +21,8 @@ impl Pass for Shrink {
 
     fn should_run(&self, ctx: &PassContext<'_>) -> bool {
         let threshold = oversize_threshold(ctx);
-        ctx.pressure.message_tokens > ctx.config.compact_trigger()
-            || ctx.pressure.estimate_pressure
+        ctx.pressure.estimated_tokens > ctx.config.compact_trigger()
+            || ctx.pressure.message_tokens > ctx.config.compact_trigger()
             || ctx.pressure.max_tool_result_tokens >= threshold
             || ctx.pressure.max_user_tokens >= threshold
     }
@@ -33,7 +33,7 @@ impl Pass for Shrink {
         let recent_boundary = len.saturating_sub(ctx.config.keep_recent);
         let oversize_token_threshold = oversize_threshold(ctx);
 
-        let mut running_tokens = ctx.pressure.message_tokens;
+        let mut running_tokens = ctx.pressure.estimated_tokens;
         let mut actions = Vec::new();
         let mut result = Vec::with_capacity(len);
 

@@ -7,11 +7,11 @@ use crate::types::*;
 #[derive(Clone, Copy, Debug)]
 pub struct Pressure {
     pub message_tokens: usize,
+    pub estimated_tokens: usize,
     pub compactable_tool_result_count: usize,
     pub max_tool_result_tokens: usize,
     pub max_user_tokens: usize,
     pub message_count: usize,
-    pub estimate_pressure: bool,
     pub image_pressure: bool,
 }
 
@@ -24,18 +24,16 @@ impl Pressure {
         let message_tokens = total_tokens(messages);
         let (compactable_tool_result_count, max_tool_result_tokens, max_user_tokens) =
             compute_message_stats(messages);
-        let estimate_pressure =
-            estimated_tokens > message_tokens.saturating_add(config.budget_tokens / 2);
         let image_pressure = estimated_tokens > config.budget_tokens.saturating_mul(2)
             && estimated_tokens > message_tokens.saturating_add(config.budget_tokens);
 
         Self {
             message_tokens,
+            estimated_tokens,
             compactable_tool_result_count,
             max_tool_result_tokens,
             max_user_tokens,
             message_count: messages.len(),
-            estimate_pressure,
             image_pressure,
         }
     }
