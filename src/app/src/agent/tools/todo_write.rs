@@ -332,6 +332,21 @@ impl evot_engine::AgentTool for TodoWriteTool {
             .map(|t| GoalTask::new(t.id, t.content.trim().to_string(), t.status))
             .collect();
 
+        // No-op detection: if incoming tasks are identical to current state, skip update.
+        {
+            let current = self.meta.state.lock().await;
+            if tasks_equal(&current, &tasks) {
+                self.meta.mark_used();
+                return Ok(ToolResult {
+                    content: vec![Content::Text {
+                        text: "Tasks unchanged.".into(),
+                    }],
+                    details: serde_json::Value::Null,
+                    retention: Retention::CurrentRun,
+                });
+            }
+        }
+
         // If active goal exists, delegate to GoalCoordinator for persistence.
         if self.has_active_goal().await {
             let summary = GoalCoordinator::update_tasks(&self.session, tasks.clone())
@@ -381,4 +396,14 @@ impl evot_engine::AgentTool for TodoWriteTool {
             retention: Retention::Normal,
         })
     }
+}
+
+fn tasks_equal(current: &[GoalTask], incoming: &[GoalTask]) -> bool {
+    if current.len() != incoming.len() {
+        return false;
+    }
+    current
+        .iter()
+        .zip(incoming.iter())
+        .all(|(a, b)| a.id == b.id && a.title == b.title && a.status == b.status)
 }

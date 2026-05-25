@@ -1,7 +1,7 @@
 pub(crate) mod accounting;
 pub(crate) mod compact;
 pub mod config;
-pub(crate) mod marker;
+pub mod marker;
 pub(crate) mod pass;
 pub(crate) mod passes;
 pub mod pipeline;
@@ -17,4 +17,5 @@ pub use compact::CompactionMethod;
 pub use compact::CompactionResult;
 pub use compact::CompactionStats;
 pub use compact::ToolTokenDetail;
+pub use marker::build_full_marker;
 pub use sanitize::sanitize_tool_pairs;

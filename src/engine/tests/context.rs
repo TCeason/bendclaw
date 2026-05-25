@@ -8,6 +8,8 @@ mod compaction_property;
 mod config;
 #[path = "context/lifecycle.rs"]
 mod lifecycle;
+#[path = "context/marker.rs"]
+mod marker;
 #[path = "context/sanitize.rs"]
 mod sanitize;
 
