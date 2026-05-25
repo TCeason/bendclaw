@@ -884,11 +884,27 @@ impl Agent {
             }
         }
 
-        // TodoWrite turn tracking (for stale reminders).
+        // Append current TodoWrite tasks to system prompt.
         {
             self.todo_meta.increment_turn();
             let tasks = self.todo_meta.state.lock().await;
-            if tasks.is_empty() && self.todo_meta.should_remind_never_used(10) {
+            if !tasks.is_empty() {
+                let mut fragment = String::from("# Current tasks\n\nThese tasks are already tracked. Only call TodoWrite to change status (e.g. mark completed), not to recreate this list.\n");
+                for t in tasks.iter() {
+                    let status = match t.status {
+                        crate::types::GoalTaskStatus::Pending => "pending",
+                        crate::types::GoalTaskStatus::InProgress => "in_progress",
+                        crate::types::GoalTaskStatus::Completed => "completed",
+                    };
+                    fragment.push_str(&format!("\n- [{}] {}", status, t.title));
+                }
+                system_prompt.push_str("\n\n");
+                system_prompt.push_str(&fragment);
+                sections.push(Section {
+                    name: "tasks",
+                    text: fragment,
+                });
+            } else if self.todo_meta.should_remind_never_used(10) {
                 let reminder = "The TodoWrite tool hasn't been used recently. \
                     If you're working on tasks that would benefit from tracking progress, \
                     consider using the TodoWrite tool to track progress. \
