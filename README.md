@@ -28,7 +28,7 @@
 Same model (Claude Opus 4.6), same task, same eval environment. evot completes the work with fewer tokens, less time, and lower cost.
 
 <p align="center">
-  <img src="docs/eval-comparison.png" alt="evot vs claude-code benchmark comparison" width="800" />
+  <img src="https://github.com/user-attachments/assets/eec2d498-31bc-41a2-86c2-88e3036ba115" alt="evot vs claude-code benchmark comparison" width="800" />
 </p>
 
 > Task: Fix a real bug in serde_json ([issue #979](https://github.com/serde-rs/json/issues/979)) — investigate root cause, apply fix, write regression test, verify all tests pass.
@@ -44,19 +44,19 @@ Both agents produce correct, passing code. The difference is in how they manage 
 
 ### Why is evot faster and cheaper?
 
-Most coding agents accumulate full conversation history — every tool call, every file read, every intermediate result stays in context forever. By the time the agent finishes a complex task, it's paying for hundreds of thousands of stale tokens on every request.
+Evot's goal: **complete tasks fast and well, without wasting a single token.** Every design decision serves this — give the LLM less context, but higher quality context.
 
-Evot takes a fundamentally different approach:
+Other agents accumulate everything and call the LLM to summarize when context overflows — extra tokens, extra latency. Evot uses **zero LLM calls for context management**:
 
-**Tiered context compaction.** Old tool results are progressively compressed: recent results stay full, older ones keep only metadata (file path, line count), and the oldest are cleared entirely. The model retains enough signal to avoid re-doing work, without paying for content it no longer needs.
+- **Algorithmic compaction** — a four-pass Rust pipeline (Reclaim → Shrink → Collapse → Evict) runs in microseconds between every turn. Images downgrade to path references; old turns collapse to one-line summaries.
+- **Spill to disk** — large tool results write to disk with a short preview. The model re-reads on demand instead of carrying megabytes in context.
+- **ReadSlim** — source files read in structural form (signatures + control flow). Same understanding, fraction of the tokens.
+- **Compaction markers** — structured metadata (files modified, conclusions, environment state) survives compaction. Progress is never lost.
 
-**Microcompact between turns.** Rather than waiting for context to hit a hard limit, evot proactively clears low-value content every turn. This keeps each request small and focused — 579K total input tokens across 36 requests vs. 1.29M across 39 for claude-code.
+Fewer tokens, higher signal density. Fast, high-quality task completion — no token wasted.
 
-**Progress-aware system prompt.** A lightweight task state is injected into the system prompt each turn, giving the model cross-compaction memory of what it already accomplished. This prevents the "start over" loops that plague agents after context eviction.
-
-**Structured markers in compacted history.** When older turns are summarized, evot preserves structured metadata — which files were modified, what environment was discovered, what conclusions were reached. The model can pick up where it left off without re-reading files.
-
-The result: evot's context stays lean throughout the session while claude-code's grows monotonically. Fewer tokens per request means faster API responses, lower cost, and less noise for the model to reason through.
+**Quantitative benchmarking against the best.**
+Evot maintains a reproducible eval pipeline that runs the same real-world tasks against Claude Code and Codex (latest versions). Every engine change is validated against these baselines — token usage, cost, time, and task success rate must improve or hold. This ensures continuous improvement without regression.
 
 ## 📢 News
 
@@ -70,17 +70,6 @@ The result: evot's context stays lean throughout the session while claude-code's
 - **2026-04-18** [REPL] `/history` + `/goto` — time-travel through conversation context.
 
 ---
-
-## ⚡ Why Evot
-
-Most agents dump everything into context — bloated outputs, stale history, invisible decisions. Tokens burn. Quality drifts.
-
-Evot does the opposite:
-
-- **Zero-waste context.** Every prompt is minimal, high-signal, rebuilt from scratch each turn.
-- **Half the tokens, half the time.** Less noise → fewer turns → complex tasks done faster.
-- **Self-evolving.** Full observability into every LLM call and tool execution feeds back into the engine — each prompt gets leaner automatically.
-- **Everything searchable.** Full-text index over all sessions — `/resume <query>` to find any past conversation, decision, or code snippet instantly.
 
 ## Installation
 
