@@ -8,7 +8,7 @@ use crate::types::*;
 pub struct Pressure {
     pub message_tokens: usize,
     pub estimated_tokens: usize,
-    pub compactable_tool_result_count: usize,
+    pub compactable_tool_result_tokens: usize,
     pub max_tool_result_tokens: usize,
     pub max_user_tokens: usize,
     pub message_count: usize,
@@ -22,7 +22,7 @@ impl Pressure {
         estimated_tokens: usize,
     ) -> Self {
         let message_tokens = total_tokens(messages);
-        let (compactable_tool_result_count, max_tool_result_tokens, max_user_tokens) =
+        let (compactable_tool_result_tokens, max_tool_result_tokens, max_user_tokens) =
             compute_message_stats(messages);
         let image_pressure = estimated_tokens > config.budget_tokens.saturating_mul(2)
             && estimated_tokens > message_tokens.saturating_add(config.budget_tokens);
@@ -30,7 +30,7 @@ impl Pressure {
         Self {
             message_tokens,
             estimated_tokens,
-            compactable_tool_result_count,
+            compactable_tool_result_tokens,
             max_tool_result_tokens,
             max_user_tokens,
             message_count: messages.len(),
@@ -40,7 +40,7 @@ impl Pressure {
 }
 
 fn compute_message_stats(messages: &[AgentMessage]) -> (usize, usize, usize) {
-    let mut compactable_count = 0usize;
+    let mut compactable_tokens = 0usize;
     let mut max_tool_tokens = 0usize;
     let mut max_user_tokens = 0usize;
 
@@ -59,7 +59,7 @@ fn compute_message_stats(messages: &[AgentMessage]) -> (usize, usize, usize) {
                     })
                     .sum();
                 if is_compactable_tool_result(tool_name, text_len) {
-                    compactable_count += 1;
+                    compactable_tokens += tokens;
                 }
             }
             AgentMessage::Llm(Message::User { content, .. }) => {
@@ -69,5 +69,5 @@ fn compute_message_stats(messages: &[AgentMessage]) -> (usize, usize, usize) {
         }
     }
 
-    (compactable_count, max_tool_tokens, max_user_tokens)
+    (compactable_tokens, max_tool_tokens, max_user_tokens)
 }

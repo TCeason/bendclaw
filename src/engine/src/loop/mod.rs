@@ -1,7 +1,6 @@
 mod compaction;
 mod config;
 mod driver;
-mod file_restore;
 mod input_filter;
 
 pub(crate) mod assistant_sanitize;

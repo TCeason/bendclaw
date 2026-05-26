@@ -1,8 +1,8 @@
-//! Microcompact pass — turn-based, quantity-driven tool result clearing.
+//! Microcompact pass — token-budget-driven tool result clearing.
 //!
-//! Triggered when compactable (non-cleared) tool results exceed a threshold.
-//! Three tiers: keep_full (newest) → keep_meta (middle) → clear (oldest).
-//! Does NOT use LLM — purely structural.
+//! Keeps the most recent compactable tool results whose cumulative tokens
+//! fit within `microcompact_keep_tokens`. Older results are replaced with
+//! metadata stubs. Does NOT use LLM — purely structural.
 
 use crate::context::compaction::pass::Pass;
 use crate::context::compaction::pass::PassContext;
@@ -23,19 +23,14 @@ impl Pass for Microcompact {
     }
 
     fn should_run(&self, ctx: &PassContext<'_>) -> bool {
-        // Purely count-driven — fire whenever enough compactable tool results
-        // accumulate, regardless of token pressure. This matches Claude Code's
-        // behavior where microcompact is independent of the autocompact threshold.
-        ctx.pressure.compactable_tool_result_count >= ctx.config.microcompact_trigger
+        ctx.pressure.compactable_tool_result_tokens > ctx.config.microcompact_keep_tokens
     }
 
     fn run(&self, messages: Vec<AgentMessage>, ctx: &PassContext<'_>) -> PassResult {
         let config = ctx.config;
 
-        // Find turn boundaries (assistant messages) from the end
         let recent_boundary = find_turn_boundary(&messages, 2);
 
-        // Collect compactable tool result indices (only before recent boundary)
         let compactable: Vec<usize> = messages
             .iter()
             .enumerate()
@@ -49,32 +44,29 @@ impl Pass for Microcompact {
             })
             .collect();
 
-        if compactable.len() < config.microcompact_trigger {
+        if compactable.is_empty() {
             return PassResult {
                 messages,
                 actions: vec![],
             };
         }
 
-        let total = compactable.len();
-        let keep_full = config.microcompact_keep_full.min(total);
-        let keep_meta = config
-            .microcompact_keep_meta
-            .min(total.saturating_sub(keep_full));
-
         let mut result = messages;
         let mut actions = Vec::new();
+        let mut budget_remaining = config.microcompact_keep_tokens;
+        let mut cleared_count = 0usize;
 
-        // Process from newest to oldest: assign tiers
-        // Microcompact is purely count-driven — always apply tier-based clearing
-        // regardless of token budget. This prevents unbounded context growth in
-        // sessions that stay below the autocompact threshold.
-        for (rank, &idx) in compactable.iter().rev().enumerate() {
-            if rank < keep_full {
-                // Tier 0: keep full content
-                continue;
+        // Walk from newest to oldest: keep full while within budget
+        for &idx in compactable.iter().rev() {
+            if let AgentMessage::Llm(Message::ToolResult { content, .. }) = &result[idx] {
+                let tokens = content_tokens(content);
+                if budget_remaining >= tokens {
+                    budget_remaining -= tokens;
+                    continue;
+                }
             }
 
+            // Over budget — clear to metadata
             if let AgentMessage::Llm(Message::ToolResult {
                 tool_call_id,
                 tool_name,
@@ -85,18 +77,9 @@ impl Pass for Microcompact {
             }) = &result[idx]
             {
                 let before_tokens = content_tokens(content);
-
-                let replacement = if rank < keep_full + keep_meta {
-                    // Tier 1: replace with metadata
-                    to_metadata(tool_name, content, &result, idx)
-                } else {
-                    // Tier 2: fully clear
-                    vec![Content::Text {
-                        text: "[cleared]".into(),
-                    }]
-                };
-
+                let replacement = to_metadata(tool_name, content, &result, idx);
                 let after_tokens = content_tokens(&replacement);
+
                 if after_tokens >= before_tokens {
                     continue;
                 }
@@ -119,14 +102,14 @@ impl Pass for Microcompact {
                     timestamp: *timestamp,
                     retention: *retention,
                 });
+                cleared_count += 1;
             }
         }
 
         // Truncate large tool_use inputs for cleared results
-        truncate_cleared_tool_use_inputs(&mut result, &compactable, keep_full);
+        truncate_cleared_tool_use_inputs(&mut result, &compactable, cleared_count);
 
         // --- Image age clearing ---
-        // Strip old images beyond recent boundary, keeping the most recent ones.
         let keep_images = config.microcompact_keep_images;
         let image_indices: Vec<usize> = result
             .iter()
@@ -201,8 +184,6 @@ impl Pass for Microcompact {
     }
 }
 
-/// Find the message index that marks the boundary of N recent turns.
-/// A "turn" starts at an Assistant message.
 fn find_turn_boundary(messages: &[AgentMessage], keep_turns: usize) -> usize {
     let mut turns_seen = 0;
     for (i, msg) in messages.iter().enumerate().rev() {
@@ -213,7 +194,7 @@ fn find_turn_boundary(messages: &[AgentMessage], keep_turns: usize) -> usize {
             }
         }
     }
-    messages.len() // not enough turns — protect everything
+    messages.len()
 }
 
 fn is_compactable_and_not_cleared(msg: &AgentMessage) -> bool {
@@ -234,20 +215,20 @@ fn is_compactable_and_not_cleared(msg: &AgentMessage) -> bool {
     }
 }
 
-/// For tool results that were cleared, truncate the corresponding tool_use input
-/// if it's large (e.g. Write/Edit with full file content).
+/// For tool results that were cleared, truncate the corresponding tool_use input.
 fn truncate_cleared_tool_use_inputs(
     messages: &mut [AgentMessage],
     compactable_indices: &[usize],
-    keep_full: usize,
+    cleared_count: usize,
 ) {
     const MAX_TOOL_USE_INPUT_CHARS: usize = 200;
 
-    // Collect tool_call_ids that were cleared (not in keep_full tier)
+    // The oldest `cleared_count` entries in compactable_indices were cleared
+    let keep_count = compactable_indices.len().saturating_sub(cleared_count);
     let cleared_ids: std::collections::HashSet<String> = compactable_indices
         .iter()
         .rev()
-        .skip(keep_full)
+        .skip(keep_count)
         .filter_map(|&idx| {
             if let AgentMessage::Llm(Message::ToolResult { tool_call_id, .. }) = &messages[idx] {
                 Some(tool_call_id.clone())
@@ -261,7 +242,6 @@ fn truncate_cleared_tool_use_inputs(
         return;
     }
 
-    // Find and truncate matching tool_call blocks in assistant messages
     for msg in messages.iter_mut() {
         if let AgentMessage::Llm(Message::Assistant { content, .. }) = msg {
             for block in content.iter_mut() {

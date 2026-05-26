@@ -230,9 +230,9 @@ pub struct ContextConfig {
     /// This avoids dropping a session from just-over-limit to only the pinned
     /// head/tail. Clamped to 1–100. Default: 90.
     pub message_limit_target_pct: u8,
-    /// Number of most-recent compactable tool results to keep at full content
-    /// during microcompact. Default: 8.
-    pub microcompact_keep_full: usize,
+    /// Token budget for microcompact: keep the most recent compactable tool
+    /// results whose cumulative tokens fit within this budget. Default: 40_000.
+    pub microcompact_keep_tokens: usize,
 }
 
 impl Default for ContextConfig {
@@ -247,7 +247,7 @@ impl Default for ContextConfig {
             compact_target_pct: 75,
             max_messages: 150,
             message_limit_target_pct: 90,
-            microcompact_keep_full: 6,
+            microcompact_keep_tokens: 40_000,
         }
     }
 }

@@ -3749,7 +3749,7 @@ fn test_microcompact_tiered_clearing() {
         max_messages: 200,
         compact_trigger_pct: 1,
         compact_target_pct: 1,
-        microcompact_keep_full: 4,
+        microcompact_keep_tokens: 200,
         ..Default::default()
     };
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -3816,7 +3816,7 @@ fn test_microcompact_truncates_tool_use_arguments() {
         max_messages: 200,
         compact_trigger_pct: 1,
         compact_target_pct: 99,
-        microcompact_keep_full: 4,
+        microcompact_keep_tokens: 1_200,
         ..Default::default()
     };
     let budget_state = CompactionBudgetState::from_messages(&messages);
@@ -3991,6 +3991,7 @@ fn test_microcompact_strips_old_images() {
         max_messages: 200,
         compact_trigger_pct: 1,
         compact_target_pct: 1,
+        microcompact_keep_tokens: 200,
         ..Default::default()
     };
     let budget_state = CompactionBudgetState::from_messages(&messages);

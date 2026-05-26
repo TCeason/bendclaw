@@ -27,12 +27,9 @@ pub struct CompactionConfig {
     pub message_limit_target_pct: u8,
 
     // -- Microcompact --
-    /// Trigger microcompact when compactable tool results >= this count.
-    pub microcompact_trigger: usize,
-    /// Keep this many most-recent tool results at full content.
-    pub microcompact_keep_full: usize,
-    /// Keep this many next-oldest tool results as metadata only.
-    pub microcompact_keep_meta: usize,
+    /// Token budget: keep the most recent compactable tool results whose
+    /// cumulative tokens fit within this budget. Older results are cleared.
+    pub microcompact_keep_tokens: usize,
     /// Keep this many most-recent images (before recent boundary) at full content.
     pub microcompact_keep_images: usize,
 
@@ -57,9 +54,7 @@ impl Default for CompactionConfig {
             max_messages: 150,
             message_limit_target_pct: 90,
 
-            microcompact_trigger: 8,
-            microcompact_keep_full: 4,
-            microcompact_keep_meta: 4,
+            microcompact_keep_tokens: 40_000,
             microcompact_keep_images: 1,
 
             tool_output_max_lines: 50,
@@ -85,9 +80,7 @@ impl CompactionConfig {
             keep_first: ctx.keep_first,
             max_messages: ctx.max_messages,
             message_limit_target_pct: ctx.message_limit_target_pct,
-            microcompact_trigger: defaults.microcompact_trigger,
-            microcompact_keep_full: ctx.microcompact_keep_full,
-            microcompact_keep_meta: defaults.microcompact_keep_meta,
+            microcompact_keep_tokens: ctx.microcompact_keep_tokens,
             microcompact_keep_images: defaults.microcompact_keep_images,
             tool_output_max_lines: ctx.tool_output_max_lines,
             oversize_abs_tokens: defaults.oversize_abs_tokens,
