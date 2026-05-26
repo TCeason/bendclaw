@@ -1,7 +1,7 @@
 //! Edit tool — surgical search/replace edits on files.
 //!
-//! This is the most important tool for coding agents. Instead of rewriting
-//! entire files, the agent specifies exact text to find and replace.
+//! Supports multiple disjoint edits in one call. All edits are matched against
+//! the original file content, then applied in reverse position order.
 
 use async_trait::async_trait;
 
@@ -48,25 +48,11 @@ impl AgentTool for EditFileTool {
     }
 
     fn description(&self) -> &str {
-        "Perform exact string replacements in files.\n\
+        "Make precise file edits with exact text replacement, including multiple disjoint edits in one call.\n\
          \n\
-         Usage:\n\
-         - You must use Read at least once in the conversation before editing. \
-         This tool will error if you attempt an edit without reading the file first.\n\
-         - ReadSlim output is not exact — do not copy it into old_text.\n\
-         - When editing text from Read output, ensure you preserve the exact indentation \
-         (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: \
-         line number + pipe. Everything after that is the actual file content to match. \
-         Never include any part of the line number prefix in old_text or new_text.\n\
-         - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless \
-         explicitly required.\n\
-         - The edit will FAIL if old_text is not unique in the file. Either provide a larger \
-         string with more surrounding context to make it unique, or use replace_all to change \
-         every instance of old_text.\n\
-         - Use replace_all for replacing and renaming exact strings across the file. This is useful \
-         for renaming a variable, for instance. Note: replace_all only supports exact matches \
-         and will not use fallback matching.\n\
-         - Use this tool instead of shell sed/awk for file modifications."
+         Each edits[].old_text is matched against the original file, not incrementally.\n\
+         Do not include overlapping or nested edits. If two changes touch nearby lines, merge them.\n\
+         Keep old_text as small as possible while still unique in the file."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -75,37 +61,36 @@ impl AgentTool for EditFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "File path to edit"
+                    "description": "Path to the file to edit (relative or absolute)"
                 },
-                "old_text": {
-                    "type": "string",
-                    "description": "Exact text to find (must match exactly, including whitespace)"
-                },
-                "new_text": {
-                    "type": "string",
-                    "description": "Text to replace it with"
-                },
-                "replace_all": {
-                    "type": "boolean",
-                    "description": "Replace all exact occurrences of old_text (default false)"
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Why this edit is being made (optional)"
+                "edits": {
+                    "type": "array",
+                    "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "old_text": {
+                                "type": "string",
+                                "description": "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].old_text in the same call."
+                            },
+                            "new_text": {
+                                "type": "string",
+                                "description": "Replacement text for this targeted edit."
+                            }
+                        },
+                        "required": ["old_text", "new_text"],
+                        "additionalProperties": false
+                    }
                 }
             },
-            "required": ["path", "old_text", "new_text"]
+            "required": ["path", "edits"]
         })
     }
 
     fn preview_command(&self, params: &serde_json::Value) -> Option<String> {
         let path = params["path"].as_str()?;
-        let replace_all = params["replace_all"].as_bool().unwrap_or(false);
-        if replace_all {
-            Some(format!("sed -i 's/<old>/<new>/g' {path}"))
-        } else {
-            Some(format!("sed -i 's/<old>/<new>/' {path}"))
-        }
+        let n = params["edits"].as_array().map(|a| a.len()).unwrap_or(1);
+        Some(format!("edit {path} ({n} replacement(s))"))
     }
 
     fn is_concurrency_safe(&self) -> bool {
@@ -124,15 +109,6 @@ impl AgentTool for EditFileTool {
         let path_str = params["path"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidArgs("missing 'path' parameter".into()))?;
-        let old_text = params["old_text"]
-            .as_str()
-            .ok_or_else(|| ToolError::InvalidArgs("missing 'old_text' parameter".into()))?;
-        let new_text = params["new_text"]
-            .as_str()
-            .ok_or_else(|| ToolError::InvalidArgs("missing 'new_text' parameter".into()))?;
-        let replace_all = params["replace_all"].as_bool().unwrap_or(false);
-        let reason = params["reason"].as_str();
-
         let path = ctx.path_guard.resolve_path(&ctx.cwd, path_str)?;
 
         if ctx.cancel.is_cancelled() {
@@ -155,67 +131,45 @@ impl AgentTool for EditFileTool {
         let (bom, content_raw) = normalize::strip_utf8_bom(&raw);
         let line_ending = normalize::detect_line_ending(content_raw);
         let content_lf = normalize::normalize_to_lf(content_raw);
-        let old_text_lf = normalize::normalize_to_lf(old_text);
-        let new_text_lf = normalize::normalize_to_lf(new_text);
 
-        if old_text_lf.is_empty() {
-            return Err(ToolError::Failed("old_text must not be empty.".into()));
+        // Parse edits
+        let edits = self.parse_edits(&params)?;
+
+        // Resolve all matches against original content
+        let mut resolved: Vec<(usize, usize, &str, String)> = Vec::with_capacity(edits.len());
+        for (i, (old_text_lf, new_text_lf)) in edits.iter().enumerate() {
+            let rm = matching::resolve_unique_match(&content_lf, old_text_lf)
+                .map_err(|e| self.match_error(e, path_str, old_text_lf, &content_lf, i))?;
+            let start = content_lf.find(&rm.actual_old_text).unwrap_or(0);
+            let end = start + rm.actual_old_text.len();
+            resolved.push((
+                start,
+                end,
+                new_text_lf.as_str(),
+                rm.kind.as_str().to_string(),
+            ));
         }
 
-        // Branch: replace_all uses exact match only; single replace uses
-        // the tiered fallback in resolve_unique_match.
-        let (new_content_lf, match_kind, replacement_count) = if replace_all {
-            let count = content_lf.matches(&old_text_lf).count();
-            if count == 0 {
-                let hint = matching::find_similar_text(&content_lf, &old_text_lf);
-                let suffix = match hint {
-                    Some(similar) => format!(
-                        "\n\nDid you mean:\n```\n{similar}\n```\n\
-                         replace_all requires an exact match."
-                    ),
-                    None => "\n\nreplace_all requires an exact match. \
-                         Use Read to see the current file contents."
-                        .into(),
-                };
-                return Err(ToolError::Failed(format!(
-                    "old_text not found in {path_str}.{suffix}"
-                )));
+        // Check for overlaps
+        resolved.sort_by_key(|(start, _, _, _)| *start);
+        for w in resolved.windows(2) {
+            if w[0].1 > w[1].0 {
+                return Err(ToolError::Failed(
+                    "Edits overlap. Merge nearby changes into one edit.".into(),
+                ));
             }
-            let replaced = content_lf.replace(&old_text_lf, &new_text_lf);
-            (replaced, "exact", count)
-        } else {
-            let resolved =
-                matching::resolve_unique_match(&content_lf, &old_text_lf).map_err(|e| match e {
-                    MatchError::EmptyOldText => {
-                        ToolError::Failed("old_text must not be empty.".into())
-                    }
-                     MatchError::NotFound => {
-                        let hint = matching::find_similar_text(&content_lf, &old_text_lf);
-                        let suffix = match hint {
-                            Some(similar) => format!(
-                                "\n\nDid you mean:\n```\n{similar}\n```\n\
-                                 Make sure old_text matches the current file content, \
-                                 including indentation. If you copied old_text from ReadSlim, \
-                                 use Read with offset/limit for exact text first."
-                            ),
-                            None => "\n\nTip: Use Read to see the current file contents, \
-                                 then copy the exact text you want to replace. Do not copy old_text \
-                                 from ReadSlim output because it is not exact."
-                                .into(),
-                        };
-                        ToolError::Failed(format!("old_text not found in {path_str}.{suffix}"))
-                    }
-                    MatchError::NotUnique { count } => ToolError::Failed(format!(
-                        "old_text matches {count} locations in {path_str}. \
-                         Include more surrounding context to make the match unique, \
-                         or set replace_all to true to replace all occurrences."
-                    )),
-                })?;
+        }
 
-            let replaced = content_lf.replacen(&resolved.actual_old_text, &new_text_lf, 1);
-            let kind = resolved.kind.as_str();
-            (replaced, kind, 1)
-        };
+        // Apply in reverse order to preserve offsets
+        let mut new_content_lf = content_lf.clone();
+        let match_kind = resolved
+            .last()
+            .map(|(_, _, _, k)| k.clone())
+            .unwrap_or_else(|| "exact".to_string());
+        let replacement_count = resolved.len();
+        for (start, end, new_text, _) in resolved.into_iter().rev() {
+            new_content_lf.replace_range(start..end, new_text);
+        }
 
         // No-change detection
         if new_content_lf == content_lf {
@@ -244,15 +198,79 @@ impl AgentTool for EditFileTool {
             details: serde_json::json!({
                 "path": path_str,
                 "match_kind": match_kind,
-                "replace_all": replace_all,
                 "replacement_count": replacement_count,
                 "diff": diff_result.unified,
                 "first_changed_line": diff_result.first_changed_line,
                 "added_lines": diff_result.added_lines,
                 "removed_lines": diff_result.removed_lines,
-                "reason": reason,
             }),
             retention: Retention::Normal,
         })
+    }
+}
+
+impl EditFileTool {
+    /// Parse edits from params.
+    fn parse_edits(&self, params: &serde_json::Value) -> Result<Vec<(String, String)>, ToolError> {
+        let arr = params["edits"]
+            .as_array()
+            .ok_or_else(|| ToolError::InvalidArgs("missing 'edits' parameter".into()))?;
+        if arr.is_empty() {
+            return Err(ToolError::InvalidArgs("edits[] must not be empty".into()));
+        }
+        let mut edits = Vec::with_capacity(arr.len());
+        for (i, entry) in arr.iter().enumerate() {
+            let old = entry["old_text"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidArgs(format!("edits[{i}] missing old_text")))?;
+            let new = entry["new_text"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidArgs(format!("edits[{i}] missing new_text")))?;
+            let old_lf = normalize::normalize_to_lf(old);
+            let new_lf = normalize::normalize_to_lf(new);
+            if old_lf.is_empty() {
+                return Err(ToolError::Failed(format!(
+                    "edits[{i}].old_text must not be empty."
+                )));
+            }
+            edits.push((old_lf, new_lf));
+        }
+        Ok(edits)
+    }
+
+    /// Format a match error with helpful hints.
+    fn match_error(
+        &self,
+        e: MatchError,
+        path_str: &str,
+        old_text_lf: &str,
+        content_lf: &str,
+        idx: usize,
+    ) -> ToolError {
+        let prefix = if idx > 0 {
+            format!("edits[{idx}]: ")
+        } else {
+            String::new()
+        };
+        match e {
+            MatchError::EmptyOldText => {
+                ToolError::Failed(format!("{prefix}old_text must not be empty."))
+            }
+            MatchError::NotFound => {
+                let hint = matching::find_similar_text(content_lf, old_text_lf);
+                let suffix = match hint {
+                    Some(similar) => format!(
+                        "\n\nDid you mean:\n```\n{similar}\n```\n\
+                         Make sure old_text matches the current file content exactly."
+                    ),
+                    None => "\n\nTip: Use Read to see the current file contents.".into(),
+                };
+                ToolError::Failed(format!("{prefix}old_text not found in {path_str}.{suffix}"))
+            }
+            MatchError::NotUnique { count } => ToolError::Failed(format!(
+                "{prefix}old_text matches {count} locations in {path_str}. \
+                 Include more surrounding context to make the match unique."
+            )),
+        }
     }
 }

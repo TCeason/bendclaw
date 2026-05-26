@@ -4,7 +4,6 @@ pub mod edit;
 pub mod file;
 pub mod glob_file;
 pub mod guard;
-pub mod memory;
 pub mod sandbox;
 pub mod search;
 pub mod skill;

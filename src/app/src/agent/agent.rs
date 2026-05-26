@@ -824,11 +824,8 @@ impl Agent {
             .unwrap_or_default();
         // Build path guard from sandbox policy
         let cwd_path = std::path::Path::new(&self.cwd);
-        let memory_dirs = super::prompt::memory::resolve_memory_dirs(&self.cwd);
         let skill_dirs = self.skills_dirs.read().clone();
-        let sandbox_rt = self
-            .sandbox
-            .build_runtime(cwd_path, &memory_dirs, &skill_dirs)?;
+        let sandbox_rt = self.sandbox.build_runtime(cwd_path, &skill_dirs)?;
 
         let mut tools = build_tools(
             mode,
@@ -853,18 +850,6 @@ impl Agent {
                 Arc::clone(&session),
                 self.todo_meta.clone(),
             )));
-        }
-
-        if !mode.is_readonly() {
-            if let Some(mt) = super::prompt::memory::load_memory_tool(&self.cwd) {
-                if mode.is_planning() {
-                    tools.push(Box::new(mt.disallow_writes(
-                        "Not allowed in planning mode. Use /act to switch.",
-                    )));
-                } else {
-                    tools.push(Box::new(mt));
-                }
-            }
         }
 
         // Append skills fragment to system prompt so the engine receives it

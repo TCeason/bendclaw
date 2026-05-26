@@ -158,21 +158,30 @@ impl AgentTool for ReadFileTool {
             let result = self
                 .read_lines_streaming(&path, path_str, offset.unwrap_or(1), lim)
                 .await;
-            if result.is_ok()
-                && ctx
+            if let Ok(ref res) = result {
+                if ctx
                     .spill
                     .as_ref()
                     .is_some_and(|spill| spill.contains_path(&path))
-            {
-                if let Some(progress) = &ctx.on_progress {
-                    progress(
-                        SpillProgress::read(
-                            path.to_string_lossy(),
-                            metadata.len() as usize,
-                            read_start.elapsed().as_millis() as u64,
-                        )
-                        .to_progress_text(),
-                    );
+                {
+                    if let Some(progress) = &ctx.on_progress {
+                        let actual_bytes = res
+                            .content
+                            .iter()
+                            .map(|c| match c {
+                                Content::Text { text } => text.len(),
+                                _ => 0,
+                            })
+                            .sum::<usize>();
+                        progress(
+                            SpillProgress::read(
+                                path.to_string_lossy(),
+                                actual_bytes,
+                                read_start.elapsed().as_millis() as u64,
+                            )
+                            .to_progress_text(),
+                        );
+                    }
                 }
             }
             return result;

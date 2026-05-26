@@ -17,8 +17,6 @@ pub fn to_metadata(
     let summary = match tool_name {
         "Read" | "ReadSlim" => metadata_for_read(messages, msg_idx, &text),
         "Bash" => metadata_for_bash(messages, msg_idx, &text),
-        "Grep" => metadata_for_grep(messages, msg_idx, &text),
-        "Glob" => metadata_for_glob(&text),
         "Edit" | "Write" => metadata_for_edit(messages, msg_idx),
         "WebFetch" => metadata_for_webfetch(messages, msg_idx, &text),
         _ => format!("[cleared — {tool_name}]"),
@@ -61,18 +59,6 @@ fn metadata_for_bash(messages: &[AgentMessage], msg_idx: usize, text: &str) -> S
         .map(|c| format!(", exit {c}"))
         .unwrap_or_default();
     format!("[cleared — `{cmd_short}`{exit_code}, {lines} lines]")
-}
-
-fn metadata_for_grep(messages: &[AgentMessage], msg_idx: usize, text: &str) -> String {
-    let pattern =
-        find_tool_use_param(messages, msg_idx, "pattern").unwrap_or_else(|| "unknown".into());
-    let matches = text.lines().count();
-    format!("[cleared — /{pattern}/, {matches} matches]")
-}
-
-fn metadata_for_glob(text: &str) -> String {
-    let files = text.lines().count();
-    format!("[cleared — {files} files]")
 }
 
 fn metadata_for_edit(messages: &[AgentMessage], msg_idx: usize) -> String {

@@ -156,19 +156,14 @@ impl AgentTool for BashTool {
          \n\
          The working directory persists between commands, but shell state does not.\n\
          \n\
-         IMPORTANT: Do not use this tool to run grep, find, ls, cat, head, tail, sed, awk, or echo \
-         commands when a relevant dedicated tool is available. Instead, use the appropriate dedicated tool:\n\
+         Use Bash for builds, tests, package managers, git, Docker, project CLIs, \
+         content search (grep, rg), file discovery (find, ls), and any command that needs a shell.\n\
          \n\
-         - Content search: Use Grep (NOT shell grep or rg)\n\
-         - Directory listing: Use Glob (NOT ls or find)\n\
+         Prefer dedicated tools over Bash for these operations:\n\
          - Understand large source files: Use ReadSlim\n\
          - Exact file reads: Use Read (NOT cat/head/tail/sed -n)\n\
          - Edit files: Use Edit (NOT sed/awk)\n\
          - Write files: Use Write (NOT echo/cat redirection)\n\
-         \n\
-         Use Bash for builds, tests, package managers, git, Docker, project CLIs, and commands that genuinely need a shell.\n\
-         \n\
-         The built-in tools provide a better experience and make it easier to review operations.\n\
          \n\
          Guidelines:\n\
          - Always quote file paths that contain spaces with double quotes.\n\

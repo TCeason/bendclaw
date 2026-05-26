@@ -80,7 +80,7 @@ async fn edit_file_disallowed_returns_error() {
     let tool = EditFileTool::new().disallow("editing is off");
     let result = tool
         .execute(
-            serde_json::json!({"path": "/tmp/x.txt", "old_text": "a", "new_text": "b"}),
+            serde_json::json!({"path": "/tmp/x.txt", "edits": [{"old_text": "a", "new_text": "b"}]}),
             ctx("Edit"),
         )
         .await;
@@ -100,8 +100,7 @@ async fn edit_file_disallowed_does_not_modify() {
         .execute(
             serde_json::json!({
                 "path": path.to_str().unwrap(),
-                "old_text": "original",
-                "new_text": "modified"
+                "edits": [{"old_text": "original", "new_text": "modified"}]
             }),
             ctx("Edit"),
         )
@@ -122,8 +121,7 @@ async fn edit_file_normal_still_works() {
         .execute(
             serde_json::json!({
                 "path": path.to_str().unwrap(),
-                "old_text": "bbb",
-                "new_text": "zzz"
+                "edits": [{"old_text": "bbb", "new_text": "zzz"}]
             }),
             ctx("Edit"),
         )
@@ -166,7 +164,7 @@ async fn disallowed_edit_returns_message() {
     let tool = EditFileTool::new().disallow("plan mode");
     let result = tool
         .execute(
-            serde_json::json!({"path": "/tmp/x.txt", "old_text": "a", "new_text": "b"}),
+            serde_json::json!({"path": "/tmp/x.txt", "edits": [{"old_text": "a", "new_text": "b"}]}),
             ctx("Edit"),
         )
         .await;

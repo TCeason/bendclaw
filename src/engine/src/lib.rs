@@ -27,7 +27,6 @@ pub use r#loop::ToolOnlyGuard;
 pub use r#loop::TransformContextFn;
 pub use retry::RetryPolicy;
 pub use tools::guard::PathGuard;
-pub use tools::memory::MemoryTool;
 pub use tools::sandbox::check_available as check_sandbox_available;
 pub use tools::sandbox::SandboxSupport;
 pub use tools::skill::SkillSet;

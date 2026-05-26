@@ -14,37 +14,16 @@ const SYSTEM_SECTION: &str = r#"# System
 
 const USING_TOOLS_SECTION: &str = r#"# Using your tools
 
-- Prefer dedicated tools over shell equivalents when available.
-- Use `Grep` instead of shell `grep` or `rg`.
-- For simple, directed codebase searches, use `Glob` or `Grep` directly.
-- Start broad investigations with batched `Grep` queries, then read only the most relevant files.
-- Avoid repeatedly reading the same file; use offsets/limits to read the specific ranges you need.
-- Use `ReadSlim` to understand large source files (>200 lines) cheaply — one call gives you the full structure. Only use `Read` with offset/limit for the specific sections you need to edit.
-- When you need exact text from multiple sections of a file, make parallel `Read` calls with different offsets in a single response — do NOT read one section at a time across multiple turns.
-- When you need to read multiple files, read them all in one response with parallel `Read`/`ReadSlim` calls.
-- Use `Read` instead of `cat`, `head`, `tail`, or `sed -n` when exact text matters.
-- Use `Read` with offset/limit before `Edit`; never copy `old_text` from `ReadSlim` output.
-- Use `Glob` instead of `ls` or `find`.
-- Use `Edit` instead of `sed`, `awk`, or ad-hoc rewrite scripts.
-- Use `Write` instead of `cat` with heredoc or `echo` redirection when creating files.
-- Use Bash for builds, tests, package managers, git, project CLIs, and commands that genuinely need a shell.
-- If Bash commands are independent and can run in parallel, make multiple Bash tool calls in a single response (e.g., `git status` and `git diff` as two parallel Bash calls). If commands depend on each other, chain them with `&&` in a single Bash call.
-
-## Parallel tool calls
-
-You can call multiple tools in a single response. If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel. Maximize use of parallel tool calls where possible to increase efficiency. However, if some tool calls depend on previous calls to inform dependent values, do NOT call these tools in parallel and instead call them sequentially.
-
-Examples of parallel tool calls:
-- Reading multiple files: call `Read` for each file in the same response
-- Searching + reading: call `Grep` for pattern A and `Grep` for pattern B together
-- Independent commands: call `Bash("git status")` and `Bash("git diff")` together
-- TodoWrite + other tools: update task status while also reading/editing files
-
-IMPORTANT: Do NOT fall into these patterns:
-- One tool call per response when multiple independent calls are possible
-- Reading a large file in many small sequential chunks instead of using `ReadSlim` or parallel `Read` with offsets
-- Using a separate turn just to update TodoWrite status
-- Reading files one by one when you already know which files you need"#;
+- Use Bash for grep, rg, find, ls, builds, tests, git, and any shell command.
+- Use Read/ReadSlim to examine files, not cat or sed. Use ReadSlim for large files (>200 lines).
+- Use Edit for precise changes:
+  - old_text must match the file exactly. Read first.
+  - Keep old_text as small as possible while still unique in the file.
+  - Each old_text matches against the original file, not after earlier edits apply.
+  - When changing multiple separate locations in one file, use one Edit call with multiple entries in edits[] instead of multiple Edit calls.
+- Use Write only for new files or complete rewrites.
+- When reading multiple files or running independent commands, make parallel tool calls.
+- Read with offset/limit before Edit; never use ReadSlim output as old_text."#;
 
 const TONE_AND_STYLE_SECTION: &str = r#"# Tone and style
 
@@ -409,57 +388,6 @@ impl SystemPrompt {
             self.sections.push(Section {
                 name: "project_instructions",
                 text: format!("# Project Instructions\n\n{context}"),
-            });
-        }
-        self
-    }
-
-    /// Load memory from evot directories, inject into system prompt.
-    /// Global (`~/.evotai/memory/`) and project (`~/.evotai/projects/<slug>/memory/`).
-    pub fn with_memory(mut self) -> Self {
-        let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .ok();
-        if let Some(text) = super::memory::build_section(&self.cwd, home.as_deref()) {
-            self.sections.push(Section {
-                name: "memory",
-                text,
-            });
-        }
-        self
-    }
-
-    /// Load memory with an explicit home directory override.
-    #[doc(hidden)]
-    pub fn with_memory_home(mut self, home: &str) -> Self {
-        if let Some(text) = super::memory::build_section(&self.cwd, Some(home)) {
-            self.sections.push(Section {
-                name: "memory",
-                text,
-            });
-        }
-        self
-    }
-
-    /// Temporary compatibility: append Claude Code memory as read-only reference.
-    /// Call after `with_memory()`. Safe to remove when Claude compat is no longer needed.
-    pub fn with_claude_memory(mut self) -> Self {
-        let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .ok();
-        if let Some(home) = home.as_deref() {
-            self = self.with_claude_memory_home(home);
-        }
-        self
-    }
-
-    /// Temporary compatibility: append Claude Code memory with explicit home override.
-    #[doc(hidden)]
-    pub fn with_claude_memory_home(mut self, home: &str) -> Self {
-        if let Some(text) = super::memory::build_claude_section(&self.cwd, home) {
-            self.sections.push(Section {
-                name: "claude_memory",
-                text,
             });
         }
         self

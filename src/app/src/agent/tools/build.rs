@@ -27,8 +27,6 @@ pub(crate) fn build_tools(
         return vec![
             Box::new(ReadFileTool::default()),
             Box::new(ReadSlimFileTool::default()),
-            Box::new(GlobFileTool::default()),
-            Box::new(SearchTool::default()),
         ];
     }
 
@@ -49,9 +47,6 @@ pub(crate) fn build_tools(
         t.push(Box::new(WriteFileTool::new()));
         t.push(Box::new(EditFileTool::new()));
     }
-
-    t.push(Box::new(GlobFileTool::default()));
-    t.push(Box::new(SearchTool::default()));
 
     if !matches!(mode, ToolMode::Headless) {
         t.push(Box::new(WebFetchTool::new()));
