@@ -7,10 +7,6 @@
 </p>
 
 <p align="center">
-  The engine behind <a href="https://evot.ai">evot.ai</a>
-</p>
-
-<p align="center">
   <a href="#benchmark">Benchmark</a> &middot;
   <a href="#-why-evot">Why</a> &middot;
   <a href="#installation">Install</a> &middot;
