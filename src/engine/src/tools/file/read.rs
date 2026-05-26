@@ -43,7 +43,6 @@ impl AgentTool for ReadFileTool {
          Usage:\n\
          - The path parameter should be an absolute path, not a relative path.\n\
          - Use this tool when exact text matters, especially before Edit.\n\
-         - Use ReadSlim for large source files when you only need to understand structure or logic.\n\
          - Use this tool instead of shell cat/head/tail/sed -n for exact file reads.\n\
          - Supports optional offset/limit for partial reads of large files.\n\
          - This tool can only read text files and images (jpg, png, webp, gif, bmp), not directories or binary files.\n\

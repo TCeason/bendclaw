@@ -160,7 +160,6 @@ impl AgentTool for BashTool {
          content search (grep, rg), file discovery (find, ls), and any command that needs a shell.\n\
          \n\
          Prefer dedicated tools over Bash for these operations:\n\
-         - Understand large source files: Use ReadSlim\n\
          - Exact file reads: Use Read (NOT cat/head/tail/sed -n)\n\
          - Edit files: Use Edit (NOT sed/awk)\n\
          - Write files: Use Write (NOT echo/cat redirection)\n\

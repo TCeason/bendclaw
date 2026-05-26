@@ -24,10 +24,7 @@ pub(crate) fn build_tools(
     sandbox_dirs: Option<Vec<PathBuf>>,
 ) -> Vec<Box<dyn evot_engine::AgentTool>> {
     if matches!(mode, ToolMode::Readonly) {
-        return vec![
-            Box::new(ReadFileTool::default()),
-            Box::new(ReadSlimFileTool::default()),
-        ];
+        return vec![Box::new(ReadFileTool::default())];
     }
 
     let mut t: Vec<Box<dyn evot_engine::AgentTool>> = Vec::new();
@@ -37,7 +34,6 @@ pub(crate) fn build_tools(
     }
 
     t.push(Box::new(ReadFileTool::default()));
-    t.push(Box::new(ReadSlimFileTool::default()));
 
     if let ToolMode::Planning { .. } = mode {
         let msg = "Not allowed in planning mode. Use /act to switch.";

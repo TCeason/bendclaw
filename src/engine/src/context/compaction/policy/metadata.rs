@@ -15,7 +15,7 @@ pub fn to_metadata(
 ) -> Vec<Content> {
     let text = extract_text(content);
     let summary = match tool_name {
-        "Read" | "ReadSlim" => metadata_for_read(messages, msg_idx, &text),
+        "Read" => metadata_for_read(messages, msg_idx, &text),
         "Bash" => metadata_for_bash(messages, msg_idx, &text),
         "Edit" | "Write" => metadata_for_edit(messages, msg_idx),
         "WebFetch" => metadata_for_webfetch(messages, msg_idx, &text),

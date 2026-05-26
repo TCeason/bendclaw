@@ -1,13 +1,11 @@
 //! File tools — read and write files with safety limits.
 
 mod read;
-mod read_slim;
 mod write;
 
 use std::path::Path;
 
 pub use read::ReadFileTool;
-pub use read_slim::ReadSlimFileTool;
 pub use write::WriteFileTool;
 
 /// 20 MB limit for image files

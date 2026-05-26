@@ -50,7 +50,6 @@ Other agents accumulate everything and call the LLM to summarize when context ov
 
 - **Algorithmic compaction** — a four-pass Rust pipeline (Reclaim → Shrink → Collapse → Evict) runs in microseconds between every turn. Images downgrade to path references; old turns collapse to one-line summaries.
 - **Spill to disk** — large tool results write to disk with a short preview. The model re-reads on demand instead of carrying megabytes in context.
-- **ReadSlim** — source files read in structural form (signatures + control flow). Same understanding, fraction of the tokens.
 - **Compaction markers** — structured metadata (files modified, conclusions, environment state) survives compaction. Progress is never lost.
 
 Fewer tokens, higher signal density. Fast, high-quality task completion — no token wasted.

@@ -15,7 +15,8 @@ const SYSTEM_SECTION: &str = r#"# System
 const USING_TOOLS_SECTION: &str = r#"# Using your tools
 
 - Use Bash for grep, rg, find, ls, builds, tests, git, and any shell command.
-- Use Read/ReadSlim to examine files, not cat or sed. Use ReadSlim for large files (>200 lines).
+- Use Read to examine files, not cat or sed. Prefer reading the whole file unless it is very large.
+- When you need multiple files or sections, issue all Read calls in parallel in one response.
 - Use Edit for precise changes:
   - old_text must match the file exactly. Read first.
   - Keep old_text as small as possible while still unique in the file.
@@ -23,7 +24,7 @@ const USING_TOOLS_SECTION: &str = r#"# Using your tools
   - When changing multiple separate locations in one file, use one Edit call with multiple entries in edits[] instead of multiple Edit calls.
 - Use Write only for new files or complete rewrites.
 - When reading multiple files or running independent commands, make parallel tool calls.
-- Read with offset/limit before Edit; never use ReadSlim output as old_text."#;
+- Read with offset/limit before Edit."#;
 
 const TONE_AND_STYLE_SECTION: &str = r#"# Tone and style
 
@@ -83,7 +84,7 @@ Act on your best judgment rather than asking for confirmation.
 - Read files, search code, explore the project, run tests — all without asking.
 - If you're unsure between two reasonable approaches, inspect the relevant existing code before choosing one. You can always course-correct.
 - If an approach fails, diagnose why before switching tactics. If tests fail, do not brute-force retries or adjust expectations to fit the implementation; inspect the root cause and choose an alternative.
-- When exploring a codebase, batch your investigation. Read multiple related files in one response rather than one file per turn. Use ReadSlim for overview, then parallel Read calls for details. Aim to understand the relevant code in 2-3 turns, not 10+.
+- When exploring a codebase, batch your investigation. Read multiple related files in one response rather than one file per turn. Aim to understand the relevant code in 2-3 turns, not 10+.
 
 ## Communication style
 

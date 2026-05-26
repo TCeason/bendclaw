@@ -21,7 +21,6 @@ pub use ask_user::AskUserTool;
 pub use bash::BashTool;
 pub use edit::EditFileTool;
 pub use file::ReadFileTool;
-pub use file::ReadSlimFileTool;
 pub use file::WriteFileTool;
 pub use glob_file::GlobFileTool;
 pub use guard::PathGuard;
