@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 
 use super::config::GetMessagesFn;
 use crate::context;
+use crate::context::file_state::SharedFileReadState;
 use crate::spill::FsSpill;
 use crate::tools::guard::PathGuard;
 use crate::types::*;
@@ -40,6 +41,7 @@ pub(super) async fn execute_tool_calls(
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
+    file_read_state: &Option<SharedFileReadState>,
 ) -> ToolExecutionResult {
     match strategy {
         ToolExecutionStrategy::Sequential => {
@@ -52,6 +54,7 @@ pub(super) async fn execute_tool_calls(
                 cwd,
                 path_guard,
                 spill,
+                file_read_state,
             )
             .await
         }
@@ -66,6 +69,7 @@ pub(super) async fn execute_tool_calls(
                     cwd,
                     path_guard,
                     spill,
+                    file_read_state,
                 )
                 .await
             } else {
@@ -78,6 +82,7 @@ pub(super) async fn execute_tool_calls(
                     cwd,
                     path_guard,
                     spill,
+                    file_read_state,
                 )
                 .await
             }
@@ -88,9 +93,31 @@ pub(super) async fn execute_tool_calls(
 
             for (batch_idx, batch) in tool_calls.chunks(*size).enumerate() {
                 let batch_result = if all_concurrency_safe(tools, batch) {
-                    execute_batch(tools, batch, tx, cancel, None, cwd, path_guard, spill).await
+                    execute_batch(
+                        tools,
+                        batch,
+                        tx,
+                        cancel,
+                        None,
+                        cwd,
+                        path_guard,
+                        spill,
+                        file_read_state,
+                    )
+                    .await
                 } else {
-                    execute_sequential(tools, batch, tx, cancel, None, cwd, path_guard, spill).await
+                    execute_sequential(
+                        tools,
+                        batch,
+                        tx,
+                        cancel,
+                        None,
+                        cwd,
+                        path_guard,
+                        spill,
+                        file_read_state,
+                    )
+                    .await
                 };
                 results.extend(batch_result.tool_results);
 
@@ -130,13 +157,25 @@ async fn execute_sequential(
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
+    file_read_state: &Option<SharedFileReadState>,
 ) -> ToolExecutionResult {
     let mut results: Vec<Message> = Vec::new();
     let mut steering_messages: Option<Vec<AgentMessage>> = None;
 
     for (index, (id, name, args)) in tool_calls.iter().enumerate() {
-        let (msg, _is_error) =
-            execute_single_tool(tools, id, name, args, tx, cancel, cwd, path_guard, spill).await;
+        let (msg, _is_error) = execute_single_tool(
+            tools,
+            id,
+            name,
+            args,
+            tx,
+            cancel,
+            cwd,
+            path_guard,
+            spill,
+            file_read_state,
+        )
+        .await;
         results.push(msg);
 
         // Check for steering — skip remaining tools if user interrupted
@@ -169,13 +208,25 @@ async fn execute_batch(
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
+    file_read_state: &Option<SharedFileReadState>,
 ) -> ToolExecutionResult {
     use futures::future::join_all;
 
     let futures: Vec<_> = tool_calls
         .iter()
         .map(|(id, name, args)| {
-            execute_single_tool(tools, id, name, args, tx, cancel, cwd, path_guard, spill)
+            execute_single_tool(
+                tools,
+                id,
+                name,
+                args,
+                tx,
+                cancel,
+                cwd,
+                path_guard,
+                spill,
+                file_read_state,
+            )
         })
         .collect();
 
@@ -213,6 +264,7 @@ async fn execute_single_tool(
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
+    file_read_state: &Option<SharedFileReadState>,
 ) -> (Message, bool) {
     let tool = tools.iter().find(|t| t.name() == name);
 
@@ -227,6 +279,15 @@ async fn execute_single_tool(
     .ok();
 
     let tool_start = std::time::Instant::now();
+
+    // --- File Read dedup: return stub if file unchanged since last read ---
+    if name == "Read" || name == "ReadSlim" {
+        if let Some(dedup_msg) =
+            check_read_dedup(id, name, args, cwd, path_guard, file_read_state, tx).await
+        {
+            return (dedup_msg, false);
+        }
+    }
 
     let on_update: Option<ToolUpdateFn> = {
         let tx = tx.clone();
@@ -356,6 +417,19 @@ async fn execute_single_tool(
         message: tool_result_msg.clone().into(),
     })
     .ok();
+
+    // --- Post-execution: update file read state ---
+    if !is_error {
+        update_file_read_state_after_exec(
+            name,
+            args,
+            &tool_result_msg,
+            cwd,
+            path_guard,
+            file_read_state,
+        )
+        .await;
+    }
 
     (tool_result_msg, is_error)
 }
@@ -647,4 +721,145 @@ fn merge_text_blocks(content: &[Content]) -> String {
         }
     }
     merged
+}
+
+// ── File Read dedup helpers ────────────────────────────────────────────────
+
+/// Check if a Read call can be short-circuited because the file hasn't changed.
+async fn check_read_dedup(
+    id: &str,
+    name: &str,
+    args: &serde_json::Value,
+    cwd: &std::path::Path,
+    path_guard: &Arc<PathGuard>,
+    file_read_state: &Option<SharedFileReadState>,
+    tx: &mpsc::UnboundedSender<AgentEvent>,
+) -> Option<Message> {
+    let state = file_read_state.as_ref()?;
+    let path_str = args.get("path")?.as_str()?;
+    let abs_path = path_guard.resolve_path(cwd, path_str).ok()?;
+    let abs_str = abs_path.to_string_lossy().to_string();
+
+    let mtime_ms = file_mtime_ms(&abs_path).await?;
+
+    let entry = {
+        let guard = state.lock().await;
+        let e = guard.is_unchanged(&abs_str, mtime_ms)?;
+        e.clone()
+    };
+
+    let stub_text = format!(
+        "[File unchanged since last read — {}, {} lines. \
+         The content from the earlier Read result is still current — \
+         refer to that instead of re-reading.]",
+        path_str, entry.total_lines
+    );
+
+    let result = ToolResult {
+        content: vec![Content::Text { text: stub_text }],
+        details: serde_json::json!({"path": path_str, "dedup": true}),
+        retention: Retention::Normal,
+    };
+
+    let result_tokens = context::content_tokens(&result.content);
+
+    tx.send(AgentEvent::ToolExecutionEnd {
+        tool_call_id: id.to_string(),
+        tool_name: name.to_string(),
+        result: result.clone(),
+        is_error: false,
+        result_tokens,
+        duration_ms: 0,
+    })
+    .ok();
+
+    let msg = Message::ToolResult {
+        tool_call_id: id.to_string(),
+        tool_name: name.to_string(),
+        content: result.content,
+        is_error: false,
+        timestamp: now_ms(),
+        retention: Retention::Normal,
+    };
+
+    tx.send(AgentEvent::MessageStart {
+        message: msg.clone().into(),
+    })
+    .ok();
+    tx.send(AgentEvent::MessageEnd {
+        message: msg.clone().into(),
+    })
+    .ok();
+
+    Some(msg)
+}
+
+/// After tool execution, update file read state for Read or invalidate for Edit/Write.
+async fn update_file_read_state_after_exec(
+    name: &str,
+    args: &serde_json::Value,
+    _result_msg: &Message,
+    cwd: &std::path::Path,
+    path_guard: &Arc<PathGuard>,
+    file_read_state: &Option<SharedFileReadState>,
+) {
+    let Some(state) = file_read_state else { return };
+
+    let path_str = match args.get("path").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return,
+    };
+    let abs_path = match path_guard.resolve_path(cwd, path_str) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let abs_str = abs_path.to_string_lossy().to_string();
+
+    match name {
+        "Read" | "ReadSlim" => {
+            let Some(mtime_ms) = file_mtime_ms(&abs_path).await else {
+                return;
+            };
+            let total_lines = extract_total_lines(_result_msg);
+            let mut guard = state.lock().await;
+            guard.record(&abs_str, mtime_ms, total_lines);
+        }
+        "Edit" | "Write" => {
+            let mut guard = state.lock().await;
+            guard.invalidate(&abs_str);
+        }
+        _ => {}
+    }
+}
+
+/// Extract total line count from a Read tool result message.
+fn extract_total_lines(msg: &Message) -> usize {
+    let content = match msg {
+        Message::ToolResult { content, .. } => content,
+        _ => return 0,
+    };
+    for c in content {
+        if let Content::Text { text } = c {
+            // Parse header like "[1429 lines]" or "[Lines 1-200 of 1429]"
+            if let Some(cap) = text.strip_prefix('[') {
+                if let Some(end) = cap.find(']') {
+                    let header = &cap[..end];
+                    if let Some(rest) = header.strip_suffix(" lines") {
+                        return rest.parse().unwrap_or(0);
+                    }
+                    if let Some(of_idx) = header.find(" of ") {
+                        return header[of_idx + 4..].parse().unwrap_or(0);
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+async fn file_mtime_ms(path: &std::path::Path) -> Option<u64> {
+    let meta = tokio::fs::metadata(path).await.ok()?;
+    let mtime = meta.modified().ok()?;
+    let dur = mtime.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some(dur.as_millis() as u64)
 }

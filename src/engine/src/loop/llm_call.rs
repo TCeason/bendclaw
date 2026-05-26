@@ -52,6 +52,14 @@ pub(super) async fn stream_assistant_response(
     let llm_messages =
         compact_tool_results_for_request_view(llm_messages, config.context_config.as_ref());
 
+    // Post-compaction file restore: re-inject recently read files that were compacted away
+    let llm_messages = super::file_restore::maybe_restore_compacted_files(
+        llm_messages,
+        config.context_config.as_ref(),
+        &config.file_read_state,
+    )
+    .await;
+
     // Strip thinking blocks before sending history back to the provider.
     // Most providers do not require thinking passback, and keeping it bloats
     // context/cache keys. DeepSeek-compatible Anthropic endpoints require

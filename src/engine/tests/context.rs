@@ -6,6 +6,8 @@ mod compaction_fuzz;
 mod compaction_property;
 #[path = "context/config.rs"]
 mod config;
+#[path = "context/file_state.rs"]
+mod file_state;
 #[path = "context/lifecycle.rs"]
 mod lifecycle;
 #[path = "context/marker.rs"]

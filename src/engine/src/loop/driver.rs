@@ -370,6 +370,7 @@ async fn run_loop(
                     &context.cwd,
                     &context.path_guard,
                     &config.spill,
+                    &config.file_read_state,
                 )
                 .await;
 
