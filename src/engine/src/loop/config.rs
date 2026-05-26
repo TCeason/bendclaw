@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use crate::context::ContextConfig;
 use crate::context::ExecutionLimits;
-use crate::context::SharedFileReadState;
 use crate::provider::ModelConfig;
 use crate::provider::StreamProvider;
 use crate::spill::FsSpill;
@@ -75,9 +74,6 @@ pub struct AgentLoopConfig {
 
     /// Spill: large tool results are written to disk instead of truncated.
     pub spill: Option<Arc<FsSpill>>,
-
-    /// Shared file read state for dedup and post-compaction restore.
-    pub file_read_state: Option<SharedFileReadState>,
 }
 
 /// Default convert_to_llm: keep only user/assistant/toolResult messages.

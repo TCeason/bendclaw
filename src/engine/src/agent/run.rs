@@ -253,7 +253,6 @@ impl Agent {
             after_turn: self.after_turn.clone(),
             input_filters: self.input_filters.clone(),
             spill: self.spill.clone(),
-            file_read_state: Some(crate::context::file_state::new_shared()),
         }
     }
 }

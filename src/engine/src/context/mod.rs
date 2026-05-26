@@ -9,7 +9,6 @@
 //! then summarize conversation if needed.
 
 pub mod compaction;
-pub mod file_state;
 pub mod image_resize;
 pub mod tokens;
 pub mod tracking;
@@ -22,8 +21,6 @@ pub use compaction::CompactionMethod;
 pub use compaction::CompactionResult;
 pub use compaction::CompactionStats;
 pub use compaction::ToolTokenDetail;
-pub use file_state::FileReadState;
-pub use file_state::SharedFileReadState;
 pub use image_resize::resize_image;
 pub use tokens::compute_call_stats;
 pub use tokens::compute_call_stats_from_agent_messages;
