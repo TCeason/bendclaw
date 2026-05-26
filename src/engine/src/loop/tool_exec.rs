@@ -281,7 +281,8 @@ async fn execute_single_tool(
     let tool_start = std::time::Instant::now();
 
     // --- File Read dedup: return stub if file unchanged since last read ---
-    if name == "Read" || name == "ReadSlim" {
+    // Only dedup exact Read, not ReadSlim (slimmed view ≠ exact content).
+    if name == "Read" {
         if let Some(dedup_msg) =
             check_read_dedup(id, name, args, cwd, path_guard, file_read_state, tx).await
         {
@@ -743,7 +744,7 @@ async fn check_read_dedup(
     let mtime_ms = file_mtime_ms(&abs_path).await?;
 
     let entry = {
-        let guard = state.lock().await;
+        let mut guard = state.lock().await;
         let e = guard.is_unchanged(&abs_str, mtime_ms)?;
         e.clone()
     };
@@ -816,7 +817,7 @@ async fn update_file_read_state_after_exec(
     let abs_str = abs_path.to_string_lossy().to_string();
 
     match name {
-        "Read" | "ReadSlim" => {
+        "Read" => {
             let Some(mtime_ms) = file_mtime_ms(&abs_path).await else {
                 return;
             };

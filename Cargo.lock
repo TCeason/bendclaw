@@ -924,6 +924,7 @@ dependencies = [
  "image",
  "jsonrepair",
  "landlock",
+ "lru",
  "parking_lot",
  "proptest",
  "rand 0.8.5",

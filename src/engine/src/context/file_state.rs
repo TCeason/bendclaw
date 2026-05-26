@@ -5,10 +5,13 @@
 //! - `tool_exec` (dedup: skip re-reads of unchanged files)
 //! - `file_restore` (restore: re-inject recently read files after compaction)
 
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
+use lru::LruCache;
 use tokio::sync::Mutex;
+
+const DEFAULT_CAPACITY: usize = 128;
 
 /// A record of a single file read.
 #[derive(Debug, Clone)]
@@ -24,24 +27,31 @@ pub struct FileReadEntry {
 }
 
 /// Tracks recently read files for dedup and restore purposes.
-#[derive(Debug, Default)]
+/// Uses LRU eviction to bound memory usage.
+#[derive(Debug)]
 pub struct FileReadState {
-    entries: HashMap<String, FileReadEntry>,
+    cache: LruCache<String, FileReadEntry>,
 }
 
 impl FileReadState {
     pub fn new() -> Self {
-        Self::default()
+        Self::with_capacity(DEFAULT_CAPACITY)
     }
 
-    /// Record a successful file read.
+    pub fn with_capacity(cap: usize) -> Self {
+        Self {
+            cache: LruCache::new(NonZeroUsize::new(cap).unwrap_or(NonZeroUsize::new(1).unwrap())),
+        }
+    }
+
+    /// Record a successful file read. Promotes the entry to most-recent.
     pub fn record(&mut self, path: &str, mtime_ms: u64, total_lines: usize) {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
 
-        self.entries.insert(path.to_string(), FileReadEntry {
+        self.cache.put(path.to_string(), FileReadEntry {
             path: path.to_string(),
             mtime_ms,
             total_lines,
@@ -53,15 +63,19 @@ impl FileReadState {
     ///
     /// Returns `Some(entry)` if the path was previously read AND the current
     /// mtime matches the recorded mtime (file hasn't been modified).
-    pub fn is_unchanged(&self, path: &str, current_mtime_ms: u64) -> Option<&FileReadEntry> {
-        self.entries
-            .get(path)
-            .filter(|entry| entry.mtime_ms == current_mtime_ms)
+    /// Promotes the entry in the LRU on hit.
+    pub fn is_unchanged(&mut self, path: &str, current_mtime_ms: u64) -> Option<&FileReadEntry> {
+        let entry = self.cache.get(path)?;
+        if entry.mtime_ms == current_mtime_ms {
+            Some(entry)
+        } else {
+            None
+        }
     }
 
-    /// Get the N most recently read files, sorted by recency (newest first).
+    /// Get the N most recently read files (sorted by recency, newest first).
     pub fn recent_files(&self, max: usize) -> Vec<&FileReadEntry> {
-        let mut entries: Vec<&FileReadEntry> = self.entries.values().collect();
+        let mut entries: Vec<&FileReadEntry> = self.cache.iter().map(|(_, entry)| entry).collect();
         entries.sort_by(|a, b| b.read_at.cmp(&a.read_at));
         entries.truncate(max);
         entries
@@ -69,14 +83,20 @@ impl FileReadState {
 
     /// Invalidate a path (called after Edit/Write modifies it).
     pub fn invalidate(&mut self, path: &str) {
-        self.entries.remove(path);
+        self.cache.pop(path);
     }
 
     /// Set the `read_at` timestamp for a path (test helper).
     pub fn set_read_at(&mut self, path: &str, ts: u64) {
-        if let Some(entry) = self.entries.get_mut(path) {
+        if let Some(entry) = self.cache.get_mut(path) {
             entry.read_at = ts;
         }
+    }
+}
+
+impl Default for FileReadState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

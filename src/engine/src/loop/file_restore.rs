@@ -3,13 +3,14 @@
 
 use std::path::Path;
 
+use crate::context::estimate_tokens;
 use crate::context::file_state::SharedFileReadState;
 use crate::context::ContextConfig;
 use crate::types::*;
 
-const POST_COMPACT_MAX_FILES: usize = 3;
-const POST_COMPACT_MAX_BYTES_PER_FILE: usize = 8_000;
-const POST_COMPACT_TOTAL_BUDGET_BYTES: usize = 20_000;
+const POST_COMPACT_MAX_FILES: usize = 5;
+const POST_COMPACT_MAX_TOKENS_PER_FILE: usize = 5_000;
+const POST_COMPACT_TOKEN_BUDGET: usize = 50_000;
 
 /// After request-view compaction, check if recently read files lost their content
 /// and re-inject a condensed version so the model retains working context.
@@ -30,21 +31,18 @@ pub(super) async fn maybe_restore_compacted_files(
     let keep_recent = ctx_config.map(|c| c.keep_recent).unwrap_or(10);
     let protected_start = messages.len().saturating_sub(keep_recent);
 
-    // Collect paths that still have substantial Read content in the protected tail
     let paths_with_content = collect_paths_with_content(&messages[protected_start..]);
 
-    // Build restore content for files that lost their content
     let mut restore_parts: Vec<String> = Vec::new();
     let mut budget_used: usize = 0;
 
     for entry in &recent {
-        if budget_used >= POST_COMPACT_TOTAL_BUDGET_BYTES {
+        if budget_used >= POST_COMPACT_TOKEN_BUDGET {
             break;
         }
         if paths_with_content.contains(&entry.path) {
             continue;
         }
-        // Check if this file was actually compacted (has a cleared/omitted marker in old messages)
         if !has_compacted_read(&messages[..protected_start], &entry.path) {
             continue;
         }
@@ -54,8 +52,9 @@ pub(super) async fn maybe_restore_compacted_files(
             Err(_) => continue,
         };
 
-        let truncated = truncate_head_tail(&content, POST_COMPACT_MAX_BYTES_PER_FILE);
-        budget_used += truncated.len();
+        let truncated = truncate_to_token_budget(&content, POST_COMPACT_MAX_TOKENS_PER_FILE);
+        let tokens = estimate_tokens(&truncated);
+        budget_used += tokens;
 
         restore_parts.push(format!(
             "--- {} ({} lines) ---\n{}",
@@ -83,7 +82,6 @@ pub(super) async fn maybe_restore_compacted_files(
     messages
 }
 
-/// Collect file paths that have substantial Read content in the given messages.
 fn collect_paths_with_content(messages: &[Message]) -> std::collections::HashSet<String> {
     let mut paths = std::collections::HashSet::new();
     for msg in messages {
@@ -99,7 +97,6 @@ fn collect_paths_with_content(messages: &[Message]) -> std::collections::HashSet
                         _ => 0,
                     })
                     .sum();
-                // Only count as "has content" if it's more than a stub/marker
                 if text_len > 200 {
                     if let Some(path) = extract_path_from_read_content(content) {
                         paths.insert(path);
@@ -111,7 +108,6 @@ fn collect_paths_with_content(messages: &[Message]) -> std::collections::HashSet
     paths
 }
 
-/// Check if any compacted Read result in the old messages references this path.
 fn has_compacted_read(messages: &[Message], path: &str) -> bool {
     let path_component = Path::new(path)
         .file_name()
@@ -128,8 +124,6 @@ fn has_compacted_read(messages: &[Message], path: &str) -> bool {
             }
             for c in content {
                 if let Content::Text { text } = c {
-                    // Markers from microcompact: "[cleared — path, N lines]"
-                    // Markers from request-view: "[tool result omitted..."
                     let is_marker = text.contains("[cleared")
                         || text.contains("[tool result omitted")
                         || text.contains("[omitted");
@@ -143,54 +137,54 @@ fn has_compacted_read(messages: &[Message], path: &str) -> bool {
     false
 }
 
-/// Extract file path from Read tool result content (first line header).
 fn extract_path_from_read_content(_content: &[Content]) -> Option<String> {
-    // Read results don't embed the path in content directly.
-    // We can't reliably extract it here without the tool_call args.
-    // For now, we skip this — the dedup mechanism is the primary defense.
     None
 }
 
-/// Truncate file content to head + tail within a byte budget.
-fn truncate_head_tail(content: &str, max_bytes: usize) -> String {
-    if content.len() <= max_bytes {
+fn truncate_to_token_budget(content: &str, max_tokens: usize) -> String {
+    if estimate_tokens(content) <= max_tokens {
         return content.to_string();
     }
 
     let lines: Vec<&str> = content.lines().collect();
     let total = lines.len();
 
-    // Allocate 70% to head, 30% to tail
-    let head_budget = max_bytes * 70 / 100;
-    let tail_budget = max_bytes - head_budget;
+    let head_token_budget = max_tokens * 70 / 100;
+    let tail_token_budget = max_tokens - head_token_budget;
 
     let mut head = String::new();
     for line in &lines {
-        if head.len() + line.len() + 1 > head_budget {
+        let candidate = if head.is_empty() {
+            line.to_string()
+        } else {
+            format!("{}\n{}", head, line)
+        };
+        if estimate_tokens(&candidate) > head_token_budget {
             break;
         }
-        if !head.is_empty() {
-            head.push('\n');
-        }
-        head.push_str(line);
+        head = candidate;
     }
 
-    let mut tail_lines: Vec<&str> = Vec::new();
-    let mut tail_size = 0;
+    let mut tail = String::new();
+    let mut tail_line_count: usize = 0;
     for line in lines.iter().rev() {
-        if tail_size + line.len() + 1 > tail_budget {
+        let candidate = if tail.is_empty() {
+            line.to_string()
+        } else {
+            format!("{}\n{}", line, tail)
+        };
+        if estimate_tokens(&candidate) > tail_token_budget {
             break;
         }
-        tail_size += line.len() + 1;
-        tail_lines.push(line);
+        tail = candidate;
+        tail_line_count += 1;
     }
-    tail_lines.reverse();
-    let tail = tail_lines.join("\n");
+
+    let head_lines = head.lines().count();
+    let omitted = total.saturating_sub(head_lines + tail_line_count);
 
     format!(
         "{}\n\n[... {} lines omitted ...]\n\n{}",
-        head,
-        total.saturating_sub(head.lines().count() + tail_lines.len()),
-        tail
+        head, omitted, tail
     )
 }
