@@ -215,7 +215,15 @@ async fn run_loop(
             turn_number += 1;
 
             // Compact context if configured
-            compact_context(context, config, &mut context_tracker, tx);
+            let did_compact = compact_context(context, config, &mut context_tracker, tx);
+
+            // Clear file read state after compaction so dedup doesn't fire
+            // when content has been cleared from context.
+            if did_compact {
+                if let Some(ref state) = config.file_read_state {
+                    state.blocking_lock().invalidate_all();
+                }
+            }
 
             // Build budget snapshot for the LLM call (same source as compaction)
             let tool_defs: Vec<ToolDefinition> = context

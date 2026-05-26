@@ -14,10 +14,10 @@ pub(super) fn compact_context(
     config: &AgentLoopConfig,
     context_tracker: &mut ContextTracker,
     tx: &mpsc::UnboundedSender<AgentEvent>,
-) {
+) -> bool {
     let ctx_config = match config.context_config {
         Some(ref c) => c,
-        None => return,
+        None => return false,
     };
 
     let original_count = context.messages.len();
@@ -58,6 +58,8 @@ pub(super) fn compact_context(
         context_tracker.record_compaction_savings(saved, context.messages.len());
     }
 
+    let compacted = result.stats.level > 0;
+
     // Re-estimate tokens using the tracker so the ✓ line is consistent with
     // the ● line (both use tracker-based estimates that include images).
     let mut stats = result.stats;
@@ -70,4 +72,6 @@ pub(super) fn compact_context(
         context_window: budget.context_window,
     })
     .ok();
+
+    compacted
 }

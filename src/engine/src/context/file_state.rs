@@ -86,6 +86,11 @@ impl FileReadState {
         self.cache.pop(path);
     }
 
+    /// Clear all entries (called after compaction clears content from context).
+    pub fn invalidate_all(&mut self) {
+        self.cache.clear();
+    }
+
     /// Set the `read_at` timestamp for a path (test helper).
     pub fn set_read_at(&mut self, path: &str, ts: u64) {
         if let Some(entry) = self.cache.get_mut(path) {
