@@ -22,7 +22,7 @@ export async function parseArgs(argv: string[]): Promise<CliOptions> {
   const opts: CliOptions = {
     command: 'repl',
     outputFormat: 'text',
-    verbose: true,
+    verbose: false,
     continueLatest: false,
     maxTurns: 512,
     maxTokens: 100_000_000,

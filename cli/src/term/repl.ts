@@ -143,7 +143,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   let appState: AppState = {
     ...createInitialState(agent.model, agent.cwd),
-    verbose: opts.verbose ?? true,
+    verbose: opts.verbose ?? false,
   }
   let spinnerState = createSpinnerState()
   let editor: EditorState = createEditorState()
