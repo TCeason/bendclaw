@@ -221,7 +221,7 @@ async fn run_loop(
             // when content has been cleared from context.
             if did_compact {
                 if let Some(ref state) = config.file_read_state {
-                    state.blocking_lock().invalidate_all();
+                    state.lock().await.invalidate_all();
                 }
             }
 
