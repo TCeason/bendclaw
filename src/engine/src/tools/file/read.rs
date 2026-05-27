@@ -58,19 +58,15 @@ impl AgentTool for ReadFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "File path to read"
+                    "description": "Path to the file to read (relative or absolute)"
                 },
                 "offset": {
-                    "type": "integer",
-                    "description": "Starting line number (1-indexed, optional)"
+                    "type": "number",
+                    "description": "Line number to start reading from (1-indexed)"
                 },
                 "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of lines to return (optional)"
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Why this file is being read (optional)"
+                    "type": "number",
+                    "description": "Maximum number of lines to read"
                 }
             },
             "required": ["path"]
@@ -100,7 +96,6 @@ impl AgentTool for ReadFileTool {
         let path_str = params["path"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidArgs("missing 'path' parameter".into()))?;
-        let reason = params["reason"].as_str();
 
         let path = ctx.path_guard.resolve_path(&ctx.cwd, path_str)?;
 
@@ -136,7 +131,6 @@ impl AgentTool for ReadFileTool {
                 details: serde_json::json!({
                     "path": path_str,
                     "bytes": meta.len(),
-                    "reason": reason,
                 }),
                 retention: Retention::Normal,
             });
@@ -246,7 +240,6 @@ impl AgentTool for ReadFileTool {
             content: vec![Content::Text { text: output }],
             details: serde_json::json!({
                 "path": path_str,
-                "reason": reason,
             }),
             retention: Retention::Normal,
         })

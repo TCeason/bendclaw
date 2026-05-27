@@ -56,15 +56,11 @@ impl AgentTool for WriteFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "File path to write"
+                    "description": "Path to the file to write (relative or absolute)"
                 },
                 "content": {
                     "type": "string",
                     "description": "Content to write to the file"
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Why this file is being written (optional)"
                 }
             },
             "required": ["path", "content"]
@@ -95,7 +91,6 @@ impl AgentTool for WriteFileTool {
         let content = params["content"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidArgs("missing 'content' parameter".into()))?;
-        let reason = params["reason"].as_str();
 
         let path = ctx.path_guard.resolve_path(&ctx.cwd, path_str)?;
 
@@ -132,7 +127,6 @@ impl AgentTool for WriteFileTool {
                 "bytes": bytes,
                 "created": !existed,
                 "diff": diff_result.unified,
-                "reason": reason,
             }),
             retention: Retention::Normal,
         })

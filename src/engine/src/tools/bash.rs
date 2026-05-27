@@ -194,11 +194,11 @@ impl AgentTool for BashTool {
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "The bash command to execute"
+                    "description": "Bash command to execute"
                 },
-                "reason": {
-                    "type": "string",
-                    "description": "Why this command is being run (optional)"
+                "timeout": {
+                    "type": "number",
+                    "description": "Timeout in seconds (optional, no default timeout)"
                 }
             },
             "required": ["command"]
@@ -222,7 +222,7 @@ impl AgentTool for BashTool {
         let command = params["command"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidArgs("missing 'command' parameter".into()))?;
-        let reason = params["reason"].as_str();
+        let _timeout = params["timeout"].as_f64();
 
         // Check deny patterns
         for pattern in &self.deny_patterns {
@@ -526,7 +526,6 @@ impl AgentTool for BashTool {
                 "exit_code": exit_code,
                 "success": exit_code == 0,
                 "slim": slim_stats,
-                "reason": reason,
             }),
             retention: Retention::Normal,
         })

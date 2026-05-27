@@ -81,8 +81,7 @@ impl AgentTool for EditFileTool {
                                 "description": "Replacement text for this targeted edit."
                             }
                         },
-                        "required": ["old_text", "new_text"],
-                        "additionalProperties": false
+                        "required": ["old_text", "new_text"]
                     }
                 }
             },
