@@ -15,8 +15,8 @@ async fn test_full_tools_complete() {
     ];
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     assert_eq!(names.len(), 7);
-    assert!(names.contains(&"Read"));
-    assert!(names.contains(&"Edit"));
+    assert!(names.contains(&"read"));
+    assert!(names.contains(&"edit"));
     assert!(names.contains(&"Glob"));
     assert!(names.contains(&"WebFetch"));
 }
@@ -30,12 +30,12 @@ async fn test_readonly_tools_contains_only_safe_tools() {
     ];
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     assert_eq!(names.len(), 3);
-    assert!(names.contains(&"Read"));
+    assert!(names.contains(&"read"));
     assert!(names.contains(&"Glob"));
     assert!(names.contains(&"Grep"));
     // Must not contain mutating or execution tools
-    assert!(!names.contains(&"Bash"));
-    assert!(!names.contains(&"Edit"));
-    assert!(!names.contains(&"Write"));
+    assert!(!names.contains(&"bash"));
+    assert!(!names.contains(&"edit"));
+    assert!(!names.contains(&"write"));
     assert!(!names.contains(&"WebFetch"));
 }

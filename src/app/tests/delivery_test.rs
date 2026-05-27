@@ -175,7 +175,7 @@ fn tool_finished(name: &str, success: bool) -> RunEvent {
 fn tool_progress(text: &str) -> RunEvent {
     event(RunEventPayload::ToolProgress {
         tool_call_id: "tc-1".into(),
-        tool_name: "Bash".into(),
+        tool_name: "bash".into(),
         text: text.to_string(),
     })
 }
@@ -277,9 +277,9 @@ async fn tool_progress_shown_in_edits() {
     DeliveryHarness::new()
         .events(vec![
             delta("Let me check. "),
-            tool_started("Bash"),
+            tool_started("bash"),
             delta("Running command..."),
-            tool_finished("Bash", true),
+            tool_finished("bash", true),
             delta(" Done!"),
         ])
         .deliver(&sink)
@@ -301,9 +301,9 @@ async fn tool_progress_hidden_when_disabled() {
         .no_tool_progress()
         .events(vec![
             delta("Let me check. "),
-            tool_started("Bash"),
+            tool_started("bash"),
             delta("Running..."),
-            tool_finished("Bash", true),
+            tool_finished("bash", true),
         ])
         .deliver(&sink)
         .await;
@@ -323,8 +323,8 @@ async fn failed_tool_shows_error_icon() {
     DeliveryHarness::new()
         .events(vec![
             delta("Trying... "),
-            tool_started("Bash"),
-            tool_finished("Bash", false),
+            tool_started("bash"),
+            tool_finished("bash", false),
             delta("Failed."),
         ])
         .deliver(&sink)
@@ -410,11 +410,11 @@ async fn multiple_tool_rounds() {
     let text = DeliveryHarness::new()
         .events(vec![
             delta("Step 1. "),
-            tool_started("Read"),
-            tool_finished("Read", true),
+            tool_started("read"),
+            tool_finished("read", true),
             delta("Step 2. "),
-            tool_started("Bash"),
-            tool_finished("Bash", true),
+            tool_started("bash"),
+            tool_finished("bash", true),
             delta("All done."),
         ])
         .deliver(&sink)
@@ -495,9 +495,9 @@ async fn edit_limit_does_not_send_empty_message() {
         .events(vec![
             delta("Hello "),
             delta("World "),          // 1st edit ok
-            tool_started("Bash"),     // 2nd edit fails → edit_broken
+            tool_started("bash"),     // 2nd edit fails → edit_broken
             tool_progress("running"), // no send (edit_broken, no msg_id)
-            tool_finished("Bash", true),
+            tool_finished("bash", true),
             delta("Result here."), // enough text → new send
         ])
         .deliver(&sink)

@@ -67,7 +67,7 @@ async fn openai_sse_text_response() {
 #[tokio::test]
 async fn openai_sse_tool_call() {
     let sse = openai_sse::body(vec![
-        openai_sse::tool_call_start(0, "call_abc", "Bash"),
+        openai_sse::tool_call_start(0, "call_abc", "bash"),
         openai_sse::tool_call_args(0, r#"{"command": "ls"}"#),
         openai_sse::finish_with_usage("tool_calls", 40, 8),
         openai_sse::done(),
@@ -86,7 +86,7 @@ async fn openai_sse_tool_call() {
             assert_eq!(content.len(), 1);
             assert!(
                 matches!(&content[0], Content::ToolCall { id, name, arguments }
-                    if id == "call_abc" && name == "Bash" && arguments["command"] == "ls")
+                    if id == "call_abc" && name == "bash" && arguments["command"] == "ls")
             );
             assert_eq!(*stop_reason, StopReason::ToolUse);
         }
@@ -95,7 +95,7 @@ async fn openai_sse_tool_call() {
 
     assert!(events
         .iter()
-        .any(|e| matches!(e, StreamEvent::ToolCallStart { name, .. } if name == "Bash")));
+        .any(|e| matches!(e, StreamEvent::ToolCallStart { name, .. } if name == "bash")));
     assert!(events
         .iter()
         .any(|e| matches!(e, StreamEvent::ToolCallEnd { .. })));

@@ -94,7 +94,7 @@ fn openai_success_tool_calls_response() {
 
     emitter.emit_tool_call(
         "call_abc123",
-        "Bash",
+        "bash",
         serde_json::json!({"command": "ls -la"}),
     );
     emitter.set_stop_reason(StopReason::ToolUse);
@@ -109,7 +109,7 @@ fn openai_success_tool_calls_response() {
         } => {
             assert_eq!(content.len(), 1);
             assert!(
-                matches!(&content[0], Content::ToolCall { id, name, arguments } if id == "call_abc123" && name == "Bash" && arguments["command"] == "ls -la")
+                matches!(&content[0], Content::ToolCall { id, name, arguments } if id == "call_abc123" && name == "bash" && arguments["command"] == "ls -la")
             );
             assert_eq!(*stop_reason, StopReason::ToolUse);
         }
@@ -119,7 +119,7 @@ fn openai_success_tool_calls_response() {
     let events = collect_stream_events(&mut rx);
     assert!(matches!(events[0], StreamEvent::Start));
     assert!(
-        matches!(&events[1], StreamEvent::ToolCallStart { id, name, .. } if id == "call_abc123" && name == "Bash")
+        matches!(&events[1], StreamEvent::ToolCallStart { id, name, .. } if id == "call_abc123" && name == "bash")
     );
     assert!(matches!(&events[2], StreamEvent::ToolCallEnd { .. }));
     assert!(matches!(&events[3], StreamEvent::Done { .. }));

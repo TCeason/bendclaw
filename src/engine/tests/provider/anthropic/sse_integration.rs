@@ -65,7 +65,7 @@ async fn anthropic_sse_text_response() {
 async fn anthropic_sse_tool_call() {
     let sse = anthropic_sse::body(vec![
         anthropic_sse::message_start(50, 0),
-        anthropic_sse::tool_block_start(0, "toolu_123", "Bash"),
+        anthropic_sse::tool_block_start(0, "toolu_123", "bash"),
         anthropic_sse::tool_input_delta(0, r#"{"command": "ls -la"}"#),
         anthropic_sse::block_stop(0),
         anthropic_sse::message_delta("tool_use", 5),
@@ -86,7 +86,7 @@ async fn anthropic_sse_tool_call() {
             assert_eq!(content.len(), 1);
             assert!(
                 matches!(&content[0], Content::ToolCall { id, name, arguments }
-                    if id == "toolu_123" && name == "Bash" && arguments["command"] == "ls -la")
+                    if id == "toolu_123" && name == "bash" && arguments["command"] == "ls -la")
             );
             assert_eq!(*stop_reason, StopReason::ToolUse);
         }
@@ -95,7 +95,7 @@ async fn anthropic_sse_tool_call() {
 
     assert!(events
         .iter()
-        .any(|e| matches!(e, StreamEvent::ToolCallStart { name, .. } if name == "Bash")));
+        .any(|e| matches!(e, StreamEvent::ToolCallStart { name, .. } if name == "bash")));
     assert!(events
         .iter()
         .any(|e| matches!(e, StreamEvent::ToolCallEnd { .. })));
@@ -105,7 +105,7 @@ async fn anthropic_sse_tool_call() {
 async fn anthropic_sse_tool_call_accumulates_split_input_json() {
     let sse = anthropic_sse::body(vec![
         anthropic_sse::message_start(50, 0),
-        anthropic_sse::tool_block_start(0, "toolu_123", "Write"),
+        anthropic_sse::tool_block_start(0, "toolu_123", "write"),
         anthropic_sse::tool_input_delta(0, r#"{"path":"demo.html","content":""#),
         anthropic_sse::tool_input_delta(0, "<html>"),
         anthropic_sse::tool_input_delta(0, "long content"),
@@ -126,7 +126,7 @@ async fn anthropic_sse_tool_call_accumulates_split_input_json() {
             assert!(
                 matches!(&content[0], Content::ToolCall { id, name, arguments }
                     if id == "toolu_123"
-                        && name == "Write"
+                        && name == "write"
                         && arguments["path"] == "demo.html"
                         && arguments["content"] == "<html>long content</html>")
             );
@@ -139,7 +139,7 @@ async fn anthropic_sse_tool_call_accumulates_split_input_json() {
 async fn anthropic_sse_tool_use_error_returns_provider_error() {
     let sse = anthropic_sse::body(vec![
         anthropic_sse::message_start(50, 0),
-        anthropic_sse::tool_block_start(0, "toolu_123", "Write"),
+        anthropic_sse::tool_block_start(0, "toolu_123", "write"),
         anthropic_sse::tool_input_delta(0, r#"{"path":"/tmp/a.txt""#),
         anthropic_sse::block_stop(0),
         anthropic_sse::error("overloaded_error", "Overloaded"),
@@ -157,7 +157,7 @@ async fn anthropic_sse_tool_use_error_returns_provider_error() {
 async fn anthropic_sse_error_before_tool_input_still_errors() {
     let sse = anthropic_sse::body(vec![
         anthropic_sse::message_start(50, 0),
-        anthropic_sse::tool_block_start(0, "toolu_123", "Write"),
+        anthropic_sse::tool_block_start(0, "toolu_123", "write"),
         anthropic_sse::error("overloaded_error", "Overloaded"),
     ]);
 

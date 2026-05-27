@@ -62,7 +62,7 @@ fn make_tool_result(tool_call_id: &str, tool_name: &str) -> AgentMessage {
 fn test_sanitize_orphan_tool_call() {
     let messages = vec![
         AgentMessage::Llm(Message::user("do something")),
-        make_assistant_with_tool_call("tc-1", "Bash"),
+        make_assistant_with_tool_call("tc-1", "bash"),
         // no ToolResult for tc-1
     ];
     let result = sanitize_tool_pairs(messages);
@@ -79,7 +79,7 @@ fn test_sanitize_orphan_tool_result() {
     let messages = vec![
         AgentMessage::Llm(Message::user("do something")),
         // no assistant with tool_call for tc-1
-        make_tool_result("tc-1", "Bash"),
+        make_tool_result("tc-1", "bash"),
     ];
     let result = sanitize_tool_pairs(messages);
     // orphan tool_result should be removed
@@ -94,8 +94,8 @@ fn test_sanitize_orphan_tool_result() {
 fn test_sanitize_matched_pairs_intact() {
     let messages = vec![
         AgentMessage::Llm(Message::user("do something")),
-        make_assistant_with_tool_call("tc-1", "Bash"),
-        make_tool_result("tc-1", "Bash"),
+        make_assistant_with_tool_call("tc-1", "bash"),
+        make_tool_result("tc-1", "bash"),
     ];
     let result = sanitize_tool_pairs(messages);
     assert_eq!(result.len(), 3);
@@ -106,7 +106,7 @@ fn test_sanitize_mixed_content() {
     // assistant has text + orphan tool_call → only tool_call stripped, text preserved
     let messages = vec![
         AgentMessage::Llm(Message::user("do something")),
-        make_assistant_with_text_and_tool_call("I'll help", "tc-1", "Bash"),
+        make_assistant_with_text_and_tool_call("I'll help", "tc-1", "bash"),
         // no ToolResult for tc-1
     ];
     let result = sanitize_tool_pairs(messages);
@@ -124,7 +124,7 @@ fn test_sanitize_empty_assistant_removed() {
     // assistant only has orphan tool_call → entire message removed
     let messages = vec![
         AgentMessage::Llm(Message::user("do something")),
-        make_assistant_with_tool_call("tc-1", "Bash"),
+        make_assistant_with_tool_call("tc-1", "bash"),
         // no ToolResult for tc-1
         AgentMessage::Llm(Message::user("next question")),
     ];

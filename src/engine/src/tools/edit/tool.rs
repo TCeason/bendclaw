@@ -40,7 +40,7 @@ impl EditFileTool {
 #[async_trait]
 impl AgentTool for EditFileTool {
     fn name(&self) -> &str {
-        "Edit"
+        "edit"
     }
 
     fn label(&self) -> &str {

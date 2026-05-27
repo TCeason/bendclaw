@@ -79,7 +79,7 @@ impl MessagePattern {
                     messages.push(AgentMessage::Llm(Message::Assistant {
                         content: vec![Content::ToolCall {
                             id,
-                            name: "Bash".into(),
+                            name: "bash".into(),
                             arguments: serde_json::json!({}),
                         }],
                         stop_reason: StopReason::ToolUse,
@@ -99,7 +99,7 @@ impl MessagePattern {
                     messages.push(AgentMessage::Llm(Message::Assistant {
                         content: vec![Content::ToolCall {
                             id,
-                            name: "Bash".into(),
+                            name: "bash".into(),
                             arguments: serde_json::json!({}),
                         }],
                         stop_reason: StopReason::ToolUse,
@@ -118,7 +118,7 @@ impl MessagePattern {
                         .unwrap_or_else(|| panic!("pattern error: 'r' without matching 't'"));
                     messages.push(AgentMessage::Llm(Message::ToolResult {
                         tool_call_id: id,
-                        tool_name: "Bash".into(),
+                        tool_name: "bash".into(),
                         content: vec![Content::Text {
                             text: "r".repeat(self.tool_output_chars),
                         }],

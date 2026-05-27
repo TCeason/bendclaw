@@ -2,7 +2,7 @@
 
 pub const ALREADY_COMPACTED_THRESHOLD: usize = 200;
 
-const COMPACTABLE_TOOLS: &[&str] = &["Read", "Bash", "WebFetch", "Edit", "Write"];
+const COMPACTABLE_TOOLS: &[&str] = &["read", "bash", "WebFetch", "edit", "write"];
 
 /// Return whether a tool result should count toward microcompaction pressure.
 pub fn is_compactable_tool_result(tool_name: &str, text_len: usize) -> bool {
@@ -26,7 +26,7 @@ pub struct ToolPolicy {
 pub fn tool_policy(tool_name: &str, max_lines: usize) -> ToolPolicy {
     let configured_max_lines = max_lines.max(1);
     let mut policy = match tool_name {
-        "Read" => ToolPolicy {
+        "read" => ToolPolicy {
             age_clear_threshold: None,
             oversize_max_lines: 30,
             normal_max_lines: 50,
@@ -38,7 +38,7 @@ pub fn tool_policy(tool_name: &str, max_lines: usize) -> ToolPolicy {
             normal_max_lines: 30,
             prefer_outline: false,
         },
-        "Bash" => ToolPolicy {
+        "bash" => ToolPolicy {
             age_clear_threshold: Some(4000),
             oversize_max_lines: 25,
             normal_max_lines: 40,

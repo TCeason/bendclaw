@@ -143,8 +143,8 @@ fn extract_file_modifications(messages: &[AgentMessage]) -> Vec<String> {
         }) = msg
         {
             let action = match tool_name.as_str() {
-                "Edit" => "edited",
-                "Write" => "created",
+                "edit" => "edited",
+                "write" => "created",
                 _ => continue,
             };
 
@@ -175,7 +175,7 @@ fn extract_env_discoveries(messages: &[AgentMessage]) -> Vec<String> {
             ..
         }) = msg
         {
-            if tool_name != "Bash" {
+            if tool_name != "bash" {
                 continue;
             }
 

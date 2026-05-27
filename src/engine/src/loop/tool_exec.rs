@@ -278,7 +278,7 @@ async fn execute_single_tool(
             };
 
             // Step 2: Edit-specific coercion (edits string→array, legacy single-edit)
-            if name == "Edit" {
+            if name == "edit" {
                 normalized = crate::tools::validation::coerce_edits(&normalized);
             }
 

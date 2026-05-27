@@ -53,12 +53,12 @@ async fn test_tool_call_and_response() {
     let output = TestHarness::new()
         .responses(vec![
             MockResponse::ToolCalls(vec![MockToolCall {
-                name: "Read".into(),
+                name: "read".into(),
                 arguments: serde_json::json!({"path": "test.txt"}),
             }]),
             MockResponse::Text("The file contains: hello".into()),
         ])
-        .tool(MockTool::ok("Read", "hello"))
+        .tool(MockTool::ok("read", "hello"))
         .run("Read test.txt")
         .await;
 
@@ -172,16 +172,16 @@ async fn test_no_convergence_reminder_injected() {
     let output = TestHarness::new()
         .responses(vec![
             MockResponse::ToolCalls(vec![MockToolCall {
-                name: "Read".into(),
+                name: "read".into(),
                 arguments: serde_json::json!({"path": "a.txt"}),
             }]),
             MockResponse::ToolCalls(vec![MockToolCall {
-                name: "Read".into(),
+                name: "read".into(),
                 arguments: serde_json::json!({"path": "b.txt"}),
             }]),
             MockResponse::Text("Done.".into()),
         ])
-        .tool(MockTool::ok("Read", "hello"))
+        .tool(MockTool::ok("read", "hello"))
         .run("Read files")
         .await;
 
@@ -1935,7 +1935,7 @@ async fn test_model_capability_preserves_tool_use_message_thinking() {
                     },
                     Content::ToolCall {
                         id: "tc-old".into(),
-                        name: "Bash".into(),
+                        name: "bash".into(),
                         arguments: serde_json::json!({"command": "pwd"}),
                     },
                 ],
@@ -1949,7 +1949,7 @@ async fn test_model_capability_preserves_tool_use_message_thinking() {
             }),
             AgentMessage::Llm(Message::ToolResult {
                 tool_call_id: "tc-old".into(),
-                tool_name: "Bash".into(),
+                tool_name: "bash".into(),
                 content: vec![Content::Text {
                     text: "old result".into(),
                 }],
@@ -1965,7 +1965,7 @@ async fn test_model_capability_preserves_tool_use_message_thinking() {
                     },
                     Content::ToolCall {
                         id: "tc-new".into(),
-                        name: "Bash".into(),
+                        name: "bash".into(),
                         arguments: serde_json::json!({"command": "date"}),
                     },
                 ],
@@ -1979,7 +1979,7 @@ async fn test_model_capability_preserves_tool_use_message_thinking() {
             }),
             AgentMessage::Llm(Message::ToolResult {
                 tool_call_id: "tc-new".into(),
-                tool_name: "Bash".into(),
+                tool_name: "bash".into(),
                 content: vec![Content::Text {
                     text: "new result".into(),
                 }],

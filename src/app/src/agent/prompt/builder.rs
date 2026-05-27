@@ -7,13 +7,13 @@ const DYNAMIC_BOUNDARY: &str = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
 const SYSTEM_SECTION: &str = r#""#;
 
 const USING_TOOLS_SECTION: &str = r#"Guidelines:
-- Use Bash for file operations like ls, rg, find
-- Use Read to examine files instead of cat or sed.
-- Use Edit for precise changes (old_text must match exactly)
-- When changing multiple separate locations in one file, use one Edit call with multiple entries in edits[] instead of multiple Edit calls
+- Use bash for file operations like ls, rg, find
+- Use read to examine files instead of cat or sed.
+- Use edit for precise changes (edits[].old_text must match exactly)
+- When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls
 - Each edits[].old_text is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.
 - Keep edits[].old_text as small as possible while still being unique in the file. Do not pad with large unchanged regions.
-- Use Write only for new files or complete rewrites.
+- Use write only for new files or complete rewrites.
 - Be concise in your responses
 - Show file paths clearly when working with files"#;
 
@@ -78,10 +78,10 @@ impl SystemPrompt {
                 text: "You are an expert coding assistant. You help users by reading files, \
                        executing commands, editing code, and writing new files.\
                        \n\nAvailable tools:\n\
-                       - Read: Read file contents\n\
-                       - Bash: Execute bash commands (ls, grep, find, etc.)\n\
-                       - Edit: Make precise file edits with exact text replacement, including multiple disjoint edits in one call\n\
-                       - Write: Create or overwrite files\n\n\
+                       - read: Read file contents\n\
+                       - bash: Execute bash commands (ls, grep, find, etc.)\n\
+                       - edit: Make precise file edits with exact text replacement, including multiple disjoint edits in one call\n\
+                       - write: Create or overwrite files\n\n\
                        In addition to the tools above, you may have access to other custom tools depending on the project."
                     .into(),
             }],

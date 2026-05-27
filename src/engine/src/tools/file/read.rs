@@ -35,7 +35,7 @@ impl ReadFileTool {
 #[async_trait]
 impl AgentTool for ReadFileTool {
     fn name(&self) -> &str {
-        "Read"
+        "read"
     }
 
     fn label(&self) -> &str {

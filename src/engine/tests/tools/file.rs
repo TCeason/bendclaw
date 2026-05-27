@@ -16,7 +16,7 @@ async fn test_read_write_file() {
     let result = write_tool
         .execute(
             serde_json::json!({"path": path, "content": "hello from yoagent"}),
-            ctx("Write"),
+            ctx("write"),
         )
         .await
         .unwrap();
@@ -30,7 +30,7 @@ async fn test_read_write_file() {
     // Read
     let read_tool = ReadFileTool::new();
     let result = read_tool
-        .execute(serde_json::json!({"path": path}), ctx("Read"))
+        .execute(serde_json::json!({"path": path}), ctx("read"))
         .await
         .unwrap();
 
@@ -59,7 +59,7 @@ async fn test_read_file_with_offset_limit() {
     let result = tool
         .execute(
             serde_json::json!({"path": path, "offset": 5, "limit": 3}),
-            ctx("Read"),
+            ctx("read"),
         )
         .await
         .unwrap();
@@ -81,7 +81,7 @@ async fn test_read_file_not_found() {
     let result = tool
         .execute(
             serde_json::json!({"path": "/nonexistent/file.txt"}),
-            ctx("Read"),
+            ctx("read"),
         )
         .await;
 
@@ -97,7 +97,7 @@ async fn test_write_creates_directories() {
     let result = tool
         .execute(
             serde_json::json!({"path": path, "content": "nested!"}),
-            ctx("Write"),
+            ctx("write"),
         )
         .await;
 
@@ -115,7 +115,7 @@ async fn test_read_file_line_numbers() {
     std::fs::write(&tmp, "first\nsecond\nthird\n").unwrap();
     let tool = ReadFileTool::new();
     let result = tool
-        .execute(serde_json::json!({"path": path}), ctx("Read"))
+        .execute(serde_json::json!({"path": path}), ctx("read"))
         .await
         .unwrap();
     let text = match &result.content[0] {
@@ -150,7 +150,7 @@ async fn test_read_image_file() {
     let result = tool
         .execute(
             serde_json::json!({"path": tmp.to_str().unwrap()}),
-            ctx("Read"),
+            ctx("read"),
         )
         .await
         .unwrap();
@@ -187,7 +187,7 @@ async fn test_read_jpeg_file() {
     let result = tool
         .execute(
             serde_json::json!({"path": tmp.to_str().unwrap()}),
-            ctx("Read"),
+            ctx("read"),
         )
         .await
         .unwrap();
@@ -212,7 +212,7 @@ async fn test_read_text_file_unchanged() {
     let result = tool
         .execute(
             serde_json::json!({"path": tmp.to_str().unwrap()}),
-            ctx("Read"),
+            ctx("read"),
         )
         .await
         .unwrap();

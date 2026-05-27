@@ -34,7 +34,7 @@ impl WriteFileTool {
 #[async_trait]
 impl AgentTool for WriteFileTool {
     fn name(&self) -> &str {
-        "Write"
+        "write"
     }
 
     fn label(&self) -> &str {

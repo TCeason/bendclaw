@@ -72,8 +72,8 @@ fn message_text_starts_with(message: &AgentMessage, prefix: &str) -> bool {
 fn test_provider_overhead_does_not_make_l2_collapse_tiny_turn() {
     let messages = vec![
         AgentMessage::Llm(Message::user("task")),
-        make_assistant_with_tool_call("tc-1", "Bash"),
-        make_tool_result("tc-1", "Bash"),
+        make_assistant_with_tool_call("tc-1", "bash"),
+        make_tool_result("tc-1", "bash"),
         AgentMessage::Llm(Message::user("next")),
     ];
 
@@ -170,10 +170,10 @@ fn test_level1_truncation() {
         .join("\n");
     let messages = vec![
         AgentMessage::Llm(Message::user("do something")),
-        make_assistant_with_tool_call("tc-1", "Bash"),
+        make_assistant_with_tool_call("tc-1", "bash"),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "tc-1".into(),
-            tool_name: "Bash".into(),
+            tool_name: "bash".into(),
             content: vec![Content::Text { text: big_output }],
             is_error: false,
             timestamp: 0,
@@ -319,10 +319,10 @@ fn test_level1_read_file_rust_uses_outline() {
         AgentMessage::Llm(Message::user("read the file")),
         make_assistant_with_tool_call_args(
             "tc-1",
-            "Read",
+            "read",
             serde_json::json!({"path": "/src/foo.rs"}),
         ),
-        make_tool_result_with_content("tc-1", "Read", &rust_output),
+        make_tool_result_with_content("tc-1", "read", &rust_output),
     ];
 
     let config = ContextConfig {
@@ -390,10 +390,10 @@ fn test_level1_read_file_unsupported_ext_falls_back_to_head_tail() {
         AgentMessage::Llm(Message::user("read the file")),
         make_assistant_with_tool_call_args(
             "tc-1",
-            "Read",
+            "read",
             serde_json::json!({"path": "/config/settings.toml"}),
         ),
-        make_tool_result_with_content("tc-1", "Read", &toml_output),
+        make_tool_result_with_content("tc-1", "read", &toml_output),
     ];
 
     let config = ContextConfig {
@@ -433,10 +433,10 @@ fn test_level1_bash_still_uses_head_tail() {
         AgentMessage::Llm(Message::user("run command")),
         make_assistant_with_tool_call_args(
             "tc-1",
-            "Bash",
+            "bash",
             serde_json::json!({"command": "cargo test"}),
         ),
-        make_tool_result_with_content("tc-1", "Bash", &big_output),
+        make_tool_result_with_content("tc-1", "bash", &big_output),
     ];
 
     let config = ContextConfig {
@@ -472,8 +472,8 @@ fn test_level1_read_file_no_matching_tool_call_falls_back() {
     // ToolCall exists but has no "path" argument, so outline can't determine extension
     let messages = vec![
         AgentMessage::Llm(Message::user("read the file")),
-        make_assistant_with_tool_call_args("tc-1", "Read", serde_json::json!({})),
-        make_tool_result_with_content("tc-1", "Read", &rust_output),
+        make_assistant_with_tool_call_args("tc-1", "read", serde_json::json!({})),
+        make_tool_result_with_content("tc-1", "read", &rust_output),
     ];
 
     let config = ContextConfig {
@@ -511,10 +511,10 @@ fn test_level1_read_file_short_content_not_truncated() {
         AgentMessage::Llm(Message::user("read the file")),
         make_assistant_with_tool_call_args(
             "tc-1",
-            "Read",
+            "read",
             serde_json::json!({"path": "/src/main.rs"}),
         ),
-        make_tool_result_with_content("tc-1", "Read", short_output),
+        make_tool_result_with_content("tc-1", "read", short_output),
     ];
 
     let config = ContextConfig {
@@ -579,10 +579,10 @@ fn test_level1_read_file_python_uses_outline() {
         AgentMessage::Llm(Message::user("read the file")),
         make_assistant_with_tool_call_args(
             "tc-1",
-            "Read",
+            "read",
             serde_json::json!({"path": "/app/main.py"}),
         ),
-        make_tool_result_with_content("tc-1", "Read", &py_output),
+        make_tool_result_with_content("tc-1", "read", &py_output),
     ];
 
     let config = ContextConfig {
@@ -636,10 +636,10 @@ fn test_level1_actions_only_non_skipped() {
 
     let messages = vec![
         AgentMessage::Llm(Message::user("do something")),
-        make_assistant_with_tool_call("tc-1", "Bash"),
-        make_tool_result_with_content("tc-1", "Bash", &big_output),
-        make_assistant_with_tool_call("tc-2", "Bash"),
-        make_tool_result_with_content("tc-2", "Bash", "short output"),
+        make_assistant_with_tool_call("tc-1", "bash"),
+        make_tool_result_with_content("tc-1", "bash", &big_output),
+        make_assistant_with_tool_call("tc-2", "bash"),
+        make_tool_result_with_content("tc-2", "bash", "short output"),
     ];
 
     let config = ContextConfig {
@@ -672,7 +672,7 @@ fn test_level1_actions_only_non_skipped() {
         1,
         "only one tool output should be truncated"
     );
-    assert_eq!(truncation_actions[0].tool_name, "Bash");
+    assert_eq!(truncation_actions[0].tool_name, "bash");
     assert!(truncation_actions[0].before_tokens > truncation_actions[0].after_tokens);
 }
 
@@ -685,11 +685,11 @@ fn test_level1_actions_have_correct_index() {
 
     let messages = vec![
         AgentMessage::Llm(Message::user("msg 0")),
-        make_assistant_with_tool_call("tc-1", "Bash"),
-        make_tool_result_with_content("tc-1", "Bash", "ok"),
+        make_assistant_with_tool_call("tc-1", "bash"),
+        make_tool_result_with_content("tc-1", "bash", "ok"),
         AgentMessage::Llm(Message::user("msg 3")),
-        make_assistant_with_tool_call("tc-2", "Bash"),
-        make_tool_result_with_content("tc-2", "Bash", &big_output),
+        make_assistant_with_tool_call("tc-2", "bash"),
+        make_tool_result_with_content("tc-2", "bash", &big_output),
     ];
 
     let config = ContextConfig {
@@ -728,10 +728,10 @@ fn test_level1_outline_action_method() {
         AgentMessage::Llm(Message::user("read the file")),
         make_assistant_with_tool_call_args(
             "tc-1",
-            "Read",
+            "read",
             serde_json::json!({"path": "/src/foo.rs"}),
         ),
-        make_tool_result_with_content("tc-1", "Read", &rust_output),
+        make_tool_result_with_content("tc-1", "read", &rust_output),
     ];
 
     let config = ContextConfig {
@@ -749,10 +749,10 @@ fn test_level1_outline_action_method() {
         .stats
         .actions
         .iter()
-        .filter(|a| a.tool_name == "Read")
+        .filter(|a| a.tool_name == "read")
         .collect();
     assert_eq!(outline_actions.len(), 1);
-    assert_eq!(outline_actions[0].tool_name, "Read");
+    assert_eq!(outline_actions[0].tool_name, "read");
     assert!(
         outline_actions[0].method == CompactionMethod::Outline
             || outline_actions[0].method == CompactionMethod::OversizeCapped
@@ -773,10 +773,10 @@ fn test_level1_outline_requires_10_percent_savings() {
         AgentMessage::Llm(Message::user("read the file")),
         make_assistant_with_tool_call_args(
             "tc-1",
-            "Read",
+            "read",
             serde_json::json!({"path": "/src/tiny.rs"}),
         ),
-        make_tool_result_with_content("tc-1", "Read", short_rust),
+        make_tool_result_with_content("tc-1", "read", short_rust),
     ];
 
     let config = ContextConfig {
@@ -839,10 +839,10 @@ fn test_level1_outline_works_on_short_code_files() {
         AgentMessage::Llm(Message::user("read the file")),
         make_assistant_with_tool_call_args(
             "tc-1",
-            "Read",
+            "read",
             serde_json::json!({"path": "/src/config.rs"}),
         ),
-        make_tool_result_with_content("tc-1", "Read", &rust_output),
+        make_tool_result_with_content("tc-1", "read", &rust_output),
     ];
 
     let config = ContextConfig {
@@ -915,10 +915,10 @@ fn test_level1_summarize_action_related_count() {
     let pad = "x".repeat(800);
     let messages = vec![
         AgentMessage::Llm(Message::user(&pad)),
-        make_assistant_with_tool_call("tc-1", "Bash"),
-        make_tool_result("tc-1", "Bash"),
-        make_tool_result_with_content("tc-1b", "Bash", "extra 1"),
-        make_tool_result_with_content("tc-1c", "Bash", "extra 2"),
+        make_assistant_with_tool_call("tc-1", "bash"),
+        make_tool_result("tc-1", "bash"),
+        make_tool_result_with_content("tc-1b", "bash", "extra 1"),
+        make_tool_result_with_content("tc-1c", "bash", "extra 2"),
         AgentMessage::Llm(Message::user("recent")),
     ];
 
@@ -1039,8 +1039,8 @@ fn test_compact_level1_actions_are_level1_only() {
 
     let messages = vec![
         AgentMessage::Llm(Message::user("do something")),
-        make_assistant_with_tool_call("tc-1", "Bash"),
-        make_tool_result_with_content("tc-1", "Bash", &big_output),
+        make_assistant_with_tool_call("tc-1", "bash"),
+        make_tool_result_with_content("tc-1", "bash", &big_output),
     ];
 
     let config = ContextConfig {
@@ -1227,7 +1227,7 @@ fn test_tool_output_max_lines_caps_policy() {
         AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: "c1".into(),
-                name: "Read".into(),
+                name: "read".into(),
                 arguments: serde_json::json!({"path": "/tmp/test.rs"}),
             }],
             model: "test".into(),
@@ -1240,7 +1240,7 @@ fn test_tool_output_max_lines_caps_policy() {
         }),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "c1".into(),
-            tool_name: "Read".into(),
+            tool_name: "read".into(),
             content: vec![Content::Text { text: long_content }],
             is_error: false,
             timestamp: 0,
@@ -1266,7 +1266,7 @@ fn test_tool_output_max_lines_caps_policy() {
             tool_name, content, ..
         }) = msg
         {
-            if tool_name == "Read" {
+            if tool_name == "read" {
                 if let Some(Content::Text { text }) = content.first() {
                     let line_count = text.lines().count();
                     assert!(
@@ -1353,7 +1353,7 @@ fn test_level1_summary_preserves_multiple_texts() {
                 },
                 Content::ToolCall {
                     id: "c1".into(),
-                    name: "Read".into(),
+                    name: "read".into(),
                     arguments: serde_json::json!({"path": "/tmp/a.rs"}),
                 },
                 Content::Text {
@@ -1361,7 +1361,7 @@ fn test_level1_summary_preserves_multiple_texts() {
                 },
                 Content::ToolCall {
                     id: "c2".into(),
-                    name: "Edit".into(),
+                    name: "edit".into(),
                     arguments: serde_json::json!({"path": "/tmp/a.rs"}),
                 },
             ],
@@ -1375,7 +1375,7 @@ fn test_level1_summary_preserves_multiple_texts() {
         }),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "c1".into(),
-            tool_name: "Read".into(),
+            tool_name: "read".into(),
             content: vec![Content::Text {
                 text: "x\n".repeat(500),
             }],
@@ -1385,7 +1385,7 @@ fn test_level1_summary_preserves_multiple_texts() {
         }),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "c2".into(),
-            tool_name: "Edit".into(),
+            tool_name: "edit".into(),
             content: vec![Content::Text { text: "ok".into() }],
             is_error: false,
             timestamp: 0,
@@ -1444,7 +1444,7 @@ fn test_oversize_read_file_prefers_outline_truncation() {
         AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: "c1".into(),
-                name: "Read".into(),
+                name: "read".into(),
                 arguments: serde_json::json!({"path": "/tmp/big.rs"}),
             }],
             model: "test".into(),
@@ -1457,7 +1457,7 @@ fn test_oversize_read_file_prefers_outline_truncation() {
         }),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "c1".into(),
-            tool_name: "Read".into(),
+            tool_name: "read".into(),
             content: vec![Content::Text { text: long_content }],
             is_error: false,
             timestamp: 0,
@@ -1482,7 +1482,7 @@ fn test_oversize_read_file_prefers_outline_truncation() {
             .stats
             .actions
             .iter()
-            .any(|a| a.method == CompactionMethod::OversizeCapped && a.tool_name == "Read"),
+            .any(|a| a.method == CompactionMethod::OversizeCapped && a.tool_name == "read"),
         "oversize Read should prefer outline/head-tail truncation, got actions={:?}",
         result.stats.actions,
     );
@@ -1899,7 +1899,7 @@ fn test_l1_compacts_to_target() {
                 },
                 Content::ToolCall {
                     id: id.clone(),
-                    name: "Read".into(),
+                    name: "read".into(),
                     arguments: serde_json::json!({"path": format!("/src/file_{}.rs", i)}),
                 },
             ],
@@ -1913,7 +1913,7 @@ fn test_l1_compacts_to_target() {
         }));
         messages.push(AgentMessage::Llm(Message::ToolResult {
             tool_call_id: id,
-            tool_name: "Read".into(),
+            tool_name: "read".into(),
             content: vec![Content::Text {
                 text: format!("fn func_{}() {{\n{}\n}}", i, "    // code\n".repeat(30)),
             }],
@@ -2021,7 +2021,7 @@ fn test_multi_round_compaction_prevents_toothpaste_squeezing() {
                 },
                 Content::ToolCall {
                     id: id.clone(),
-                    name: "Bash".into(),
+                    name: "bash".into(),
                     arguments: serde_json::json!({"command": "cargo build"}),
                 },
             ],
@@ -2035,7 +2035,7 @@ fn test_multi_round_compaction_prevents_toothpaste_squeezing() {
         }));
         messages.push(AgentMessage::Llm(Message::ToolResult {
             tool_call_id: id,
-            tool_name: "Bash".into(),
+            tool_name: "bash".into(),
             content: vec![Content::Text {
                 text: format!("output line {}\n{}", i, "data ".repeat(50)),
             }],
@@ -2210,7 +2210,7 @@ fn test_l1_and_l2_cooperate() {
                 },
                 Content::ToolCall {
                     id: id.clone(),
-                    name: "Bash".into(),
+                    name: "bash".into(),
                     arguments: serde_json::json!({}),
                 },
             ],
@@ -2224,7 +2224,7 @@ fn test_l1_and_l2_cooperate() {
         }));
         messages.push(AgentMessage::Llm(Message::ToolResult {
             tool_call_id: id,
-            tool_name: "Bash".into(),
+            tool_name: "bash".into(),
             content: vec![Content::Text {
                 text: "output ".repeat(200),
             }],
@@ -2331,7 +2331,7 @@ fn test_extreme_all_orphan_tool_results() {
         AgentMessage::Llm(Message::user("task")),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "orphan-1".into(),
-            tool_name: "Bash".into(),
+            tool_name: "bash".into(),
             content: vec![Content::Text {
                 text: "x".repeat(5000),
             }],
@@ -2341,7 +2341,7 @@ fn test_extreme_all_orphan_tool_results() {
         }),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "orphan-2".into(),
-            tool_name: "Bash".into(),
+            tool_name: "bash".into(),
             content: vec![Content::Text {
                 text: "y".repeat(5000),
             }],
@@ -2464,7 +2464,7 @@ fn test_l1_to_l2_escalation_single_call() {
                 },
                 Content::ToolCall {
                     id: id.clone(),
-                    name: "Bash".into(),
+                    name: "bash".into(),
                     arguments: serde_json::json!({}),
                 },
             ],
@@ -2478,7 +2478,7 @@ fn test_l1_to_l2_escalation_single_call() {
         }));
         messages.push(AgentMessage::Llm(Message::ToolResult {
             tool_call_id: id,
-            tool_name: "Bash".into(),
+            tool_name: "bash".into(),
             content: vec![Content::Text {
                 text: "result ".repeat(60),
             }],
@@ -2620,7 +2620,7 @@ fn test_l2_when_keep_recent_covers_all() {
         messages.push(AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: id.clone(),
-                name: "Bash".into(),
+                name: "bash".into(),
                 arguments: serde_json::json!({}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -2633,7 +2633,7 @@ fn test_l2_when_keep_recent_covers_all() {
         }));
         messages.push(AgentMessage::Llm(Message::ToolResult {
             tool_call_id: id,
-            tool_name: "Bash".into(),
+            tool_name: "bash".into(),
             content: vec![Content::Text {
                 text: format!("big output {} {}", i, "x".repeat(2000)),
             }],
@@ -2723,8 +2723,8 @@ fn test_evict_rechecks_budget_after_shrink() {
         .join("\n");
     let messages = vec![
         AgentMessage::Llm(Message::user("run command")),
-        make_assistant_with_tool_call("tc-1", "Bash"),
-        make_tool_result_with_content("tc-1", "Bash", &big_output),
+        make_assistant_with_tool_call("tc-1", "bash"),
+        make_tool_result_with_content("tc-1", "bash", &big_output),
         make_final_assistant("done"),
         AgentMessage::Llm(Message::user("next task")),
     ];
@@ -3051,8 +3051,8 @@ fn test_message_limit_prefers_dropping_assistant_and_tool_messages() {
         AgentMessage::Llm(Message::user("keep user 1")),
         make_final_assistant("response 1"),
         AgentMessage::Llm(Message::user("keep user 2")),
-        make_assistant_with_tool_call("drop-call", "Bash"),
-        make_tool_result("drop-call", "Bash"),
+        make_assistant_with_tool_call("drop-call", "bash"),
+        make_tool_result("drop-call", "bash"),
         make_final_assistant("response 2"),
         AgentMessage::Llm(Message::user("recent 1")),
         make_final_assistant("recent resp 1"),
@@ -3090,8 +3090,8 @@ fn test_message_limit_drops_user_messages_after_assistant_and_tool_exhausted() {
     let messages = vec![
         AgentMessage::Llm(Message::user("pinned start")),
         AgentMessage::Llm(Message::user("drop user 1")),
-        make_assistant_with_tool_call("drop-call", "Bash"),
-        make_tool_result("drop-call", "Bash"),
+        make_assistant_with_tool_call("drop-call", "bash"),
+        make_tool_result("drop-call", "bash"),
         make_final_assistant("drop response 1"),
         AgentMessage::Llm(Message::user("drop user 2")),
         make_final_assistant("drop response 2"),
@@ -3682,12 +3682,12 @@ fn test_microcompact_below_trigger_is_noop() {
         let id = format!("tc_{i}");
         messages.push(make_assistant_with_tool_call_args(
             &id,
-            "Read",
+            "read",
             serde_json::json!({"path": format!("file_{i}.rs")}),
         ));
         // Each result > 200 chars to be compactable
         let content = "x".repeat(600);
-        messages.push(make_tool_result_with_content(&id, "Read", &content));
+        messages.push(make_tool_result_with_content(&id, "read", &content));
     }
     messages.push(AgentMessage::Llm(Message::user("done")));
 
@@ -3733,11 +3733,11 @@ fn test_microcompact_tiered_clearing() {
         let id = format!("tc_{i}");
         messages.push(make_assistant_with_tool_call_args(
             &id,
-            "Read",
+            "read",
             serde_json::json!({"path": format!("file_{i}.rs")}),
         ));
         let content = format!("content_of_file_{i} {}", "x".repeat(600));
-        messages.push(make_tool_result_with_content(&id, "Read", &content));
+        messages.push(make_tool_result_with_content(&id, "read", &content));
     }
     messages.push(AgentMessage::Llm(Message::user("done")));
 
@@ -3802,9 +3802,9 @@ fn test_microcompact_truncates_tool_use_arguments() {
             "path": format!("file_{i}.rs"),
             "content": "y".repeat(2000),
         });
-        messages.push(make_assistant_with_tool_call_args(&id, "Write", big_args));
+        messages.push(make_assistant_with_tool_call_args(&id, "write", big_args));
         let content = format!("wrote file_{i} {}", "z".repeat(600));
-        messages.push(make_tool_result_with_content(&id, "Write", &content));
+        messages.push(make_tool_result_with_content(&id, "write", &content));
     }
     messages.push(AgentMessage::Llm(Message::user("done")));
 
@@ -3899,7 +3899,7 @@ fn test_microcompact_strips_old_images() {
         messages.push(AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: id.clone(),
-                name: "Read".into(),
+                name: "read".into(),
                 arguments: serde_json::json!({"path": format!("file_{i}.rs")}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -3912,7 +3912,7 @@ fn test_microcompact_strips_old_images() {
         }));
         messages.push(AgentMessage::Llm(Message::ToolResult {
             tool_call_id: id,
-            tool_name: "Read".into(),
+            tool_name: "read".into(),
             content: vec![Content::Text {
                 text: "x".repeat(600),
             }],
@@ -3944,7 +3944,7 @@ fn test_microcompact_strips_old_images() {
         messages.push(AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: id.clone(),
-                name: "Read".into(),
+                name: "read".into(),
                 arguments: serde_json::json!({"path": format!("file_{i}.rs")}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -3957,7 +3957,7 @@ fn test_microcompact_strips_old_images() {
         }));
         messages.push(AgentMessage::Llm(Message::ToolResult {
             tool_call_id: id,
-            tool_name: "Read".into(),
+            tool_name: "read".into(),
             content: vec![Content::Text {
                 text: "x".repeat(600),
             }],
@@ -4039,7 +4039,7 @@ fn test_microcompact_preserves_recent_images() {
         messages.push(AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: id.clone(),
-                name: "Read".into(),
+                name: "read".into(),
                 arguments: serde_json::json!({"path": format!("file_{i}.rs")}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -4052,7 +4052,7 @@ fn test_microcompact_preserves_recent_images() {
         }));
         messages.push(AgentMessage::Llm(Message::ToolResult {
             tool_call_id: id,
-            tool_name: "Read".into(),
+            tool_name: "read".into(),
             content: vec![Content::Text {
                 text: "x".repeat(600),
             }],

@@ -65,23 +65,23 @@ fn marker_includes_file_modifications() {
     let messages = vec![
         make_assistant_with_tool_call(
             "c1",
-            "Edit",
+            "edit",
             serde_json::json!({"file_path": "/src/main.rs", "old_string": "a", "new_string": "b"}),
         ),
-        make_tool_result("c1", "Edit", "File updated successfully.", false),
+        make_tool_result("c1", "edit", "File updated successfully.", false),
         make_assistant_with_tool_call(
             "c2",
-            "Write",
+            "write",
             serde_json::json!({"file_path": "/tests/new.rs", "content": "fn test() {}"}),
         ),
-        make_tool_result("c2", "Write", "File created successfully.", false),
+        make_tool_result("c2", "write", "File created successfully.", false),
         // Error edit should be excluded
         make_assistant_with_tool_call(
             "c3",
-            "Edit",
+            "edit",
             serde_json::json!({"file_path": "/src/bad.rs", "old_string": "x", "new_string": "y"}),
         ),
-        make_tool_result("c3", "Edit", "old_string not found", true),
+        make_tool_result("c3", "edit", "old_string not found", true),
     ];
 
     let text = marker_text(&messages, 6);
@@ -95,16 +95,16 @@ fn marker_deduplicates_file_modifications() {
     let messages = vec![
         make_assistant_with_tool_call(
             "c1",
-            "Edit",
+            "edit",
             serde_json::json!({"file_path": "/src/main.rs", "old_string": "a", "new_string": "b"}),
         ),
-        make_tool_result("c1", "Edit", "ok", false),
+        make_tool_result("c1", "edit", "ok", false),
         make_assistant_with_tool_call(
             "c2",
-            "Edit",
+            "edit",
             serde_json::json!({"file_path": "/src/main.rs", "old_string": "b", "new_string": "c"}),
         ),
-        make_tool_result("c2", "Edit", "ok", false),
+        make_tool_result("c2", "edit", "ok", false),
     ];
 
     let text = marker_text(&messages, 4);
@@ -114,10 +114,10 @@ fn marker_deduplicates_file_modifications() {
 #[test]
 fn marker_includes_env_discoveries() {
     let messages = vec![
-        make_assistant_with_tool_call("c1", "Bash", serde_json::json!({"command": "which cargo"})),
+        make_assistant_with_tool_call("c1", "bash", serde_json::json!({"command": "which cargo"})),
         make_tool_result(
             "c1",
-            "Bash",
+            "bash",
             "/root/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/bin/cargo",
             false,
         ),
@@ -130,8 +130,8 @@ fn marker_includes_env_discoveries() {
 #[test]
 fn marker_skips_non_probe_bash_commands() {
     let messages = vec![
-        make_assistant_with_tool_call("c1", "Bash", serde_json::json!({"command": "cargo build"})),
-        make_tool_result("c1", "Bash", "error: linker not found", false),
+        make_assistant_with_tool_call("c1", "bash", serde_json::json!({"command": "cargo build"})),
+        make_tool_result("c1", "bash", "error: linker not found", false),
     ];
 
     let text = marker_text(&messages, 2);
@@ -173,12 +173,12 @@ fn marker_includes_all_sections() {
         }),
         make_assistant_with_tool_call(
             "c1",
-            "Edit",
+            "edit",
             serde_json::json!({"file_path": "/src/de.rs", "old_string": "a", "new_string": "b"}),
         ),
-        make_tool_result("c1", "Edit", "ok", false),
-        make_assistant_with_tool_call("c2", "Bash", serde_json::json!({"command": "which cargo"})),
-        make_tool_result("c2", "Bash", "/usr/bin/cargo", false),
+        make_tool_result("c1", "edit", "ok", false),
+        make_assistant_with_tool_call("c2", "bash", serde_json::json!({"command": "which cargo"})),
+        make_tool_result("c2", "bash", "/usr/bin/cargo", false),
         make_assistant_text("The fix uses MapKey to enforce string-only keys."),
     ];
 

@@ -27,7 +27,7 @@ fn cache_config(cache: CacheConfig) -> StreamConfig {
             assistant("Hi there!"),
             Message::user("What is 2+2?"),
         ])
-        .tools(vec![tool_def("Bash", "Run commands")])
+        .tools(vec![tool_def("bash", "Run commands")])
         .cache_config(cache)
         .build()
 }
@@ -236,7 +236,7 @@ fn test_tool_result_with_image() {
             Message::Assistant {
                 content: vec![Content::ToolCall {
                     id: "tc-1".into(),
-                    name: "Read".into(),
+                    name: "read".into(),
                     arguments: serde_json::json!({"path": "test.png"}),
                 }],
                 stop_reason: StopReason::ToolUse,
@@ -249,7 +249,7 @@ fn test_tool_result_with_image() {
             },
             Message::ToolResult {
                 tool_call_id: "tc-1".into(),
-                tool_name: "Read".into(),
+                tool_name: "read".into(),
                 content: vec![
                     Content::Text {
                         text: "screenshot".into(),
@@ -288,7 +288,7 @@ fn test_tool_result_text_only_uses_string() {
             Message::Assistant {
                 content: vec![Content::ToolCall {
                     id: "tc-1".into(),
-                    name: "Bash".into(),
+                    name: "bash".into(),
                     arguments: serde_json::json!({"command": "echo hi"}),
                 }],
                 stop_reason: StopReason::ToolUse,
@@ -301,7 +301,7 @@ fn test_tool_result_text_only_uses_string() {
             },
             Message::ToolResult {
                 tool_call_id: "tc-1".into(),
-                tool_name: "Bash".into(),
+                tool_name: "bash".into(),
                 content: vec![Content::Text {
                     text: "hello".into(),
                 }],

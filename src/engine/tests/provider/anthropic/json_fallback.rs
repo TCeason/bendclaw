@@ -141,7 +141,7 @@ fn anthropic_success_tool_use_response() {
             {
                 "type": "tool_use",
                 "id": "toolu_123",
-                "name": "Bash",
+                "name": "bash",
                 "input": {"command": "ls -la"}
             }
         ],
@@ -182,7 +182,7 @@ fn anthropic_success_tool_use_response() {
         } => {
             assert_eq!(content.len(), 1);
             assert!(
-                matches!(&content[0], Content::ToolCall { id, name, .. } if id == "toolu_123" && name == "Bash")
+                matches!(&content[0], Content::ToolCall { id, name, .. } if id == "toolu_123" && name == "bash")
             );
             assert_eq!(*stop_reason, StopReason::ToolUse);
         }

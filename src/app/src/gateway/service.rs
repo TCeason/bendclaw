@@ -53,7 +53,6 @@ pub async fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
         .with_project_context()
         .with_dynamic_boundary()
         .with_today_date()
-        .with_git()
         .build_with_sections();
 
     let mut skills_dirs = Vec::new();

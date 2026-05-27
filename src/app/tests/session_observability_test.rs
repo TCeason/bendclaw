@@ -67,21 +67,21 @@ fn aggregator_ingests_tool_finished() {
     let mut agg = StatsAggregator::new();
     agg.ingest(&TranscriptStats::ToolFinished(ToolFinishedStats {
         tool_call_id: "tc1".into(),
-        tool_name: "Read".into(),
+        tool_name: "read".into(),
         result_tokens: 150,
         duration_ms: 80,
         is_error: false,
     }));
     agg.ingest(&TranscriptStats::ToolFinished(ToolFinishedStats {
         tool_call_id: "tc2".into(),
-        tool_name: "Read".into(),
+        tool_name: "read".into(),
         result_tokens: 200,
         duration_ms: 120,
         is_error: false,
     }));
     agg.ingest(&TranscriptStats::ToolFinished(ToolFinishedStats {
         tool_call_id: "tc3".into(),
-        tool_name: "Bash".into(),
+        tool_name: "bash".into(),
         result_tokens: 50,
         duration_ms: 500,
         is_error: true,
@@ -89,14 +89,14 @@ fn aggregator_ingests_tool_finished() {
 
     assert_eq!(agg.tool_call_count, 3);
 
-    let rf = agg.tool_stats.get("Read");
+    let rf = agg.tool_stats.get("read");
     assert!(rf.is_some());
     let rf = rf.unwrap();
     assert_eq!(rf.calls, 2);
     assert_eq!(rf.result_tokens, 350);
     assert_eq!(rf.errors, 0);
 
-    let bash = agg.tool_stats.get("Bash");
+    let bash = agg.tool_stats.get("bash");
     assert!(bash.is_some());
     let bash = bash.unwrap();
     assert_eq!(bash.calls, 1);
@@ -159,7 +159,7 @@ fn aggregator_ingests_run_once_cleared_compaction() {
                 actions: vec![
                     CompactionAction {
                         index: 1,
-                        tool_name: "Bash".into(),
+                        tool_name: "bash".into(),
                         method: "LifecycleCleared".into(),
                         before_tokens: 5000,
                         after_tokens: 100,
@@ -168,7 +168,7 @@ fn aggregator_ingests_run_once_cleared_compaction() {
                     },
                     CompactionAction {
                         index: 5,
-                        tool_name: "Read".into(),
+                        tool_name: "read".into(),
                         method: "LifecycleCleared".into(),
                         before_tokens: 3000,
                         after_tokens: 100,
@@ -209,7 +209,7 @@ fn aggregator_compaction_action_map_positions() {
                 actions: vec![
                     CompactionAction {
                         index: 2,
-                        tool_name: "Read".into(),
+                        tool_name: "read".into(),
                         method: "Outline".into(),
                         before_tokens: 1000,
                         after_tokens: 200,
@@ -303,7 +303,7 @@ fn aggregator_to_run_summary_produces_correct_data() {
     }));
     agg.ingest(&TranscriptStats::ToolFinished(ToolFinishedStats {
         tool_call_id: "tc1".into(),
-        tool_name: "Bash".into(),
+        tool_name: "bash".into(),
         result_tokens: 50,
         duration_ms: 300,
         is_error: false,
@@ -352,7 +352,7 @@ fn aggregator_to_run_summary_produces_correct_data() {
     assert_eq!(summary.llm_metrics.len(), 2);
     assert_eq!(summary.llm_output_tokens, vec![100, 150]);
     assert_eq!(summary.tool_stats.len(), 1);
-    assert_eq!(summary.tool_stats[0].0, "Bash");
+    assert_eq!(summary.tool_stats[0].0, "bash");
     assert_eq!(summary.duration_ms, 5000);
     assert_eq!(summary.turn_count, 1);
     assert!(summary.last_message_stats.is_none());

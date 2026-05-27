@@ -125,7 +125,7 @@ fn lifecycle_does_not_affect_normal_retention() {
         AgentMessage::Llm(Message::Assistant {
             content: vec![Content::ToolCall {
                 id: "c1".into(),
-                name: "Read".into(),
+                name: "read".into(),
                 arguments: serde_json::json!({}),
             }],
             stop_reason: StopReason::ToolUse,
@@ -138,7 +138,7 @@ fn lifecycle_does_not_affect_normal_retention() {
         }),
         AgentMessage::Llm(Message::ToolResult {
             tool_call_id: "c1".into(),
-            tool_name: "Read".into(),
+            tool_name: "read".into(),
             content: vec![Content::Text {
                 text: "file content here".into(),
             }],

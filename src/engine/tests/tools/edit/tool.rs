@@ -18,7 +18,7 @@ async fn test_edit_file() {
                 "path": path,
                 "edits": [{"old_text": "println!(\"hello\")", "new_text": "println!(\"goodbye\")"}]
             }),
-            ctx("Edit"),
+            ctx("edit"),
         )
         .await
         .unwrap();
@@ -66,7 +66,7 @@ async fn test_edit_file_no_match() {
     let result = tool
         .execute(
             serde_json::json!({"path": path, "edits": [{"old_text": "nonexistent", "new_text": "bar"}]}),
-            ctx("Edit"),
+            ctx("edit"),
         )
         .await;
     assert!(result.is_err());
@@ -86,7 +86,7 @@ async fn test_not_unique_error() {
                 "path": path,
                 "edits": [{"old_text": "aaa", "new_text": "ccc"}]
             }),
-            ctx("Edit"),
+            ctx("edit"),
         )
         .await;
 
@@ -108,7 +108,7 @@ async fn test_empty_old_text() {
                 "path": path,
                 "edits": [{"old_text": "", "new_text": "bar"}]
             }),
-            ctx("Edit"),
+            ctx("edit"),
         )
         .await;
 
@@ -133,7 +133,7 @@ async fn test_multi_edit() {
                     {"old_text": "fn baz() {}", "new_text": "fn baz_renamed() {}"}
                 ]
             }),
-            ctx("Edit"),
+            ctx("edit"),
         )
         .await
         .unwrap();
@@ -162,7 +162,7 @@ async fn test_multi_edit_overlap_rejected() {
                     {"old_text": "bbb ccc", "new_text": "yyy"}
                 ]
             }),
-            ctx("Edit"),
+            ctx("edit"),
         )
         .await;
 
@@ -184,7 +184,7 @@ async fn test_details_fields() {
                 "path": path,
                 "edits": [{"old_text": "println!(\"hello\")", "new_text": "println!(\"bye\")"}]
             }),
-            ctx("Edit"),
+            ctx("edit"),
         )
         .await
         .unwrap();

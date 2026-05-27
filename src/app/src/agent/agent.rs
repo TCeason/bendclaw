@@ -845,11 +845,12 @@ impl Agent {
             ));
         }
 
-        if !mode.is_readonly() && !mode.is_planning() {
-            tools.push(Box::new(evot_engine::tools::TodoWriteTool::new(
-                self.todo_state.clone(),
-            )));
-        }
+        // TodoWrite disabled for now — testing without it
+        // if !mode.is_readonly() && !mode.is_planning() {
+        //     tools.push(Box::new(evot_engine::tools::TodoWriteTool::new(
+        //         self.todo_state.clone(),
+        //     )));
+        // }
 
         // Append skills fragment to system prompt so the engine receives it
         // as part of the prompt text (engine no longer mutates system_prompt).
