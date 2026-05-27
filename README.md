@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  A self-evolving agent engine — fully observable, built for long-running complex work.
+  An agent engine that completes complex, long-running work with minimal tokens and maximum quality.
 </p>
 
 <p align="center">
@@ -21,22 +21,31 @@
 
 ## Benchmark
 
-Same model (Claude Opus 4.6), same task, same eval environment. evot completes the work with fewer tokens, less time, and lower cost.
+Same task, same eval environment, different models. evot completes the work with fewer tokens, less time, and lower cost — across both frontier and open-source models.
 
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/eec2d498-31bc-41a2-86c2-88e3036ba115" alt="evot vs claude-code benchmark comparison" width="800" />
-</p>
+<table align="center">
+  <tr>
+    <td align="center"><strong>Claude Opus 4.6</strong></td>
+    <td align="center"><strong>DeepSeek V4 Pro</strong></td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/evotai/evot/releases/download/v2026.5.26.2/screencapture-127-0-0-1-3200-2026-05-27-17_21_33.png" alt="evot benchmark — Claude Opus 4.6" width="480" /></td>
+    <td><img src="https://github.com/evotai/evot/releases/download/v2026.5.26.2/screencapture-127-0-0-1-3200-2026-05-27-17_21_18.png" alt="evot benchmark — DeepSeek V4 Pro" width="480" /></td>
+  </tr>
+</table>
 
 > Task: Fix a real bug in serde_json ([issue #979](https://github.com/serde-rs/json/issues/979)) — investigate root cause, apply fix, write regression test, verify all tests pass.
 
-| Metric | evot | claude-code | Difference |
-|--------|------|-------------|------------|
-| Cost | $2.94 | $6.60 | **55% cheaper** |
-| Time | 3m 35s | 5m 32s | **35% faster** |
-| Input tokens | 579K | 1.29M | **55% fewer** |
-| Requests | 36 | 39 | **8% fewer** |
+| Model | Metric | evot | claude-code | Difference |
+|-------|--------|------|-------------|------------|
+| Opus 4.6 | Cost | $2.24 | $6.16 | **64% cheaper** |
+| Opus 4.6 | Time | 2m 56s | 3m 51s | **24% faster** |
+| Opus 4.6 | Input tokens | 574.8K | 1.5M | **62% fewer** |
+| DeepSeek V4 Pro | Cost | $0.02 | $0.07 | **67% cheaper** |
+| DeepSeek V4 Pro | Time | 6m 10s | 16m 34s | **63% faster** |
+| DeepSeek V4 Pro | Input tokens | 42.9K | 133.8K | **68% fewer** |
 
-Both agents produce correct, passing code. The difference is in how they manage context.
+All agents produce correct, passing code. The difference is in how they manage context.
 
 ### Why is evot faster and cheaper?
 
@@ -152,14 +161,7 @@ make install      # compile standalone binary to ~/.evotai/bin/evot
 
 - [**GitHub Issues**](https://github.com/evotai/evot/issues) — Bug reports / Feature
 - [**Twitter @Evot_AI**](https://twitter.com/Evot_AI) — Announcements
-- [**team@evot.ai**](mailto:team@evot.ai) — Reach the team directly
 
 ## License
 
 Apache-2.0
-
----
-
-<p align="center">
-  Built with 🦀 + TypeScript by <a href="https://evot.ai">Evot AI</a>
-</p>
