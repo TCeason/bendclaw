@@ -42,8 +42,8 @@ impl AgentTool for WriteFileTool {
     }
 
     fn description(&self) -> &str {
-        "Write contents to a file. Creates parent directories if needed. \
-         Prefer Edit for modifying existing files. Use this for new files or complete rewrites."
+        "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. \
+         Automatically creates parent directories."
     }
 
     fn parameter_aliases(&self) -> Option<crate::tools::validation::AliasMap> {

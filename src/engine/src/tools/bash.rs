@@ -183,21 +183,9 @@ impl AgentTool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command and return its output.\
-         \n\
-         The working directory persists between commands, but shell state does not.\
-         \n\
-         Output is automatically tail-truncated to the last 2000 lines or 50KB \
-         (whichever is hit first). Do not pipe through tail/head to limit output — \
-         the tool handles this for you, preserving the most relevant (final) output.\
-         \n\
-         Guidelines:\
-         - Always quote file paths that contain spaces with double quotes.\
-         - Try to maintain your current working directory by using absolute paths and avoiding cd.\
-         - When issuing multiple commands:\
-           - If independent and can run in parallel, make multiple tool calls in a single message.\
-           - If dependent and must run sequentially, chain with && in a single call.\
-         - Avoid unnecessary sleep commands."
+        "Execute a bash command in the current working directory. Returns stdout and stderr. \
+         Output is truncated to last 2000 lines or 50KB (whichever is hit first). \
+         If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

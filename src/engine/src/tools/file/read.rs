@@ -43,8 +43,8 @@ impl AgentTool for ReadFileTool {
     }
 
     fn description(&self) -> &str {
-        "Read a text file and return its exact content. Supports images (jpg, png, webp, gif, bmp). \
-         Output is truncated to 2000 lines or 50KB (whichever is hit first). \
+        "Read the contents of a file. Supports text files and images (jpg, png, webp, gif, bmp). \
+         For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). \
          Use offset/limit for large files. When you need the full file, continue with offset until complete."
     }
 

@@ -48,11 +48,10 @@ impl AgentTool for EditFileTool {
     }
 
     fn description(&self) -> &str {
-        "Make precise file edits with exact text replacement, including multiple disjoint edits in one call.\n\
-         \n\
-         Each edits[].old_text is matched against the original file, not incrementally.\n\
-         Do not include overlapping or nested edits. If two changes touch nearby lines, merge them.\n\
-         Keep old_text as small as possible while still unique in the file."
+        "Edit a single file using exact text replacement. \
+         Every edits[].old_text must match a unique, non-overlapping region of the original file. \
+         If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. \
+         Do not include large unchanged regions just to connect distant changes."
     }
 
     fn parameter_aliases(&self) -> Option<crate::tools::validation::AliasMap> {
