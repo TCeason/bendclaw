@@ -49,15 +49,7 @@ pub async fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
         .map_err(|e| EvotError::Run(format!("failed to get cwd: {e}")))?;
 
     let (system_prompt_text, system_prompt_sections) = SystemPrompt::new(&cwd)
-        .with_system_guidance()
-        .with_agent_behavior()
-        .with_tool_guidance()
-        .with_tone_and_style()
-        .with_output_format()
-        .with_clarifying_questions()
-        .with_output_efficiency()
-        .with_context_management()
-        .with_environment_static()
+        .with_system()
         .with_tools()
         .with_project_context()
         .with_dynamic_boundary()

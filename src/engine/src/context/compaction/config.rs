@@ -57,7 +57,7 @@ impl Default for CompactionConfig {
             microcompact_keep_tokens: 40_000,
             microcompact_keep_images: 1,
 
-            tool_output_max_lines: 50,
+            tool_output_max_lines: 200,
             oversize_abs_tokens: 6000,
             oversize_budget_ratio: 0.20,
         }

@@ -159,7 +159,7 @@ pub struct Agent {
     /// Holds the OTel exporter alive for the agent's lifetime.
     _telemetry_exporter: Option<crate::telemetry::exporter::TelemetryExporter>,
     /// Session-level task tracking state (TodoWrite).
-    todo_meta: super::tools::todo_write::TodoMeta,
+    todo_state: evot_engine::tools::TodoState,
 }
 
 impl Agent {
@@ -186,7 +186,7 @@ impl Agent {
             active_runs: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             telemetry: config.telemetry.clone(),
             _telemetry_exporter: telemetry_exporter,
-            todo_meta: super::tools::todo_write::TodoMeta::new(),
+            todo_state: evot_engine::tools::new_todo_state(),
         }))
     }
 
@@ -585,7 +585,7 @@ impl Agent {
             active_runs: _,
             telemetry: _,
             _telemetry_exporter: _,
-            todo_meta: _,
+            todo_state: _,
         } = self.as_ref();
 
         let forked = Arc::new(Self {
@@ -606,7 +606,7 @@ impl Agent {
             active_runs: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             telemetry: TelemetryConfig::default(),
             _telemetry_exporter: None,
-            todo_meta: super::tools::todo_write::TodoMeta::new(),
+            todo_state: evot_engine::tools::new_todo_state(),
         });
         Ok(ForkedAgent {
             agent: forked,
@@ -846,9 +846,8 @@ impl Agent {
         }
 
         if !mode.is_readonly() && !mode.is_planning() {
-            tools.push(Box::new(super::tools::todo_write::TodoWriteTool::new(
-                Arc::clone(&session),
-                self.todo_meta.clone(),
+            tools.push(Box::new(evot_engine::tools::TodoWriteTool::new(
+                self.todo_state.clone(),
             )));
         }
 
@@ -869,40 +868,7 @@ impl Agent {
             }
         }
 
-        // Append current TodoWrite tasks to system prompt.
-        {
-            self.todo_meta.increment_turn();
-            let tasks = self.todo_meta.state.lock().await;
-            if !tasks.is_empty() {
-                let mut fragment = String::from("# Current tasks\n\nThese tasks are already tracked. Only call TodoWrite to change status (e.g. mark completed), not to recreate this list.\n");
-                for t in tasks.iter() {
-                    let status = match t.status {
-                        crate::types::GoalTaskStatus::Pending => "pending",
-                        crate::types::GoalTaskStatus::InProgress => "in_progress",
-                        crate::types::GoalTaskStatus::Completed => "completed",
-                    };
-                    fragment.push_str(&format!("\n- [{}] {}", status, t.title));
-                }
-                system_prompt.push_str("\n\n");
-                system_prompt.push_str(&fragment);
-                sections.push(Section {
-                    name: "tasks",
-                    text: fragment,
-                });
-            } else if self.todo_meta.should_remind_never_used(10) {
-                let reminder = "The TodoWrite tool hasn't been used recently. \
-                    If you're working on tasks that would benefit from tracking progress, \
-                    consider using the TodoWrite tool to track progress. \
-                    Only use it if it's relevant to the current work. \
-                    This is just a gentle reminder - ignore if not applicable.";
-                system_prompt.push_str("\n\n");
-                system_prompt.push_str(reminder);
-                sections.push(Section {
-                    name: "todo_reminder",
-                    text: reminder.into(),
-                });
-            }
-        }
+        // No longer need turn tracking — engine handles it.
 
         let prior_transcripts = session.transcript().await;
         let prior_messages = convert::into_agent_messages(&prior_transcripts);
@@ -929,6 +895,7 @@ impl Agent {
                     .as_ref()
                     .map(|root| root.join("sessions").join(session_id).join("tool-results")),
                 prompt_cache_key: Some(session_id.to_string()),
+                todo_state: self.todo_state.clone(),
             },
             history: prior_messages,
             input,

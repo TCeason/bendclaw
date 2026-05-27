@@ -18,6 +18,7 @@ use crate::r#loop::AfterTurnFn;
 use crate::r#loop::BeforeTurnFn;
 use crate::spill::FsSpill;
 use crate::tools::guard::PathGuard;
+use crate::tools::TodoState;
 use crate::types::*;
 
 /// The main Agent. Owns state, tools, and provider.
@@ -63,6 +64,9 @@ pub struct Agent {
     // Spill: large tool results written to disk
     pub(super) spill: Option<Arc<FsSpill>>,
 
+    // TodoWrite state (shared with tool and compaction)
+    pub(super) todo_state: TodoState,
+
     // Control
     pub(super) cancel: Option<CancellationToken>,
     pub(super) is_streaming: bool,
@@ -105,6 +109,7 @@ impl Agent {
             after_turn: None,
             input_filters: Vec::new(),
             spill: None,
+            todo_state: crate::tools::new_todo_state(),
             cancel: None,
             is_streaming: false,
             last_run_handle: None,
@@ -243,6 +248,12 @@ impl Agent {
         f: impl Fn(&[AgentMessage], &Usage) + Send + Sync + 'static,
     ) -> Self {
         self.after_turn = Some(Arc::new(f));
+        self
+    }
+
+    /// Set the shared TodoState for task tracking and compaction injection.
+    pub fn with_todo_state(mut self, state: TodoState) -> Self {
+        self.todo_state = state;
         self
     }
 

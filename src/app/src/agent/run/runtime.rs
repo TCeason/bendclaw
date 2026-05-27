@@ -78,6 +78,7 @@ pub struct EngineOptions {
     pub path_guard: std::sync::Arc<evot_engine::PathGuard>,
     pub spill_dir: Option<std::path::PathBuf>,
     pub prompt_cache_key: Option<String>,
+    pub todo_state: evot_engine::tools::TodoState,
 }
 
 // ---------------------------------------------------------------------------
@@ -1097,4 +1098,5 @@ pub(crate) fn build_agent(
                 .spill_dir
                 .map(|dir| Arc::new(evot_engine::spill::FsSpill::new(dir))),
         )
+        .with_todo_state(options.todo_state)
 }

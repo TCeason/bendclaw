@@ -60,6 +60,7 @@ impl Agent {
             cwd: self.cwd.clone(),
             path_guard: self.path_guard.clone(),
             prompt_cache_key: self.prompt_cache_key.clone(),
+            todo_state: self.todo_state.clone(),
         };
 
         let config = self.build_config_with_queues(run_steering, run_follow_up);
@@ -139,6 +140,7 @@ impl Agent {
             cwd: self.cwd.clone(),
             path_guard: self.path_guard.clone(),
             prompt_cache_key: self.prompt_cache_key.clone(),
+            todo_state: self.todo_state.clone(),
         };
 
         let config = self.build_config_with_queues(run_steering, run_follow_up);

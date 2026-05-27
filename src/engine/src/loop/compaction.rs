@@ -56,6 +56,13 @@ pub(super) fn compact_context(
             .before_estimated_tokens
             .saturating_sub(result.stats.after_estimated_tokens);
         context_tracker.record_compaction_savings(saved, context.messages.len());
+
+        // Inject current task list after compaction to prevent context loss.
+        if let Some(note) = crate::tools::format_todo_for_compaction(&context.todo_state) {
+            context
+                .messages
+                .push(AgentMessage::Llm(Message::system_reminder(note)));
+        }
     }
 
     // Re-estimate tokens using the tracker so the ✓ line is consistent with

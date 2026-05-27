@@ -7,6 +7,11 @@ use super::is_image_file;
 use super::MAX_IMAGE_SIZE_BYTES;
 use crate::types::*;
 
+/// Max lines returned by a single Read call (matches industry standard).
+const MAX_READ_LINES: usize = 2000;
+/// Max bytes returned by a single Read call.
+const MAX_READ_BYTES: usize = 50 * 1024; // 50KB
+
 /// Read a file's contents. Supports line range for large files.
 pub struct ReadFileTool {
     /// Max file size to read (prevents OOM)
@@ -39,7 +44,8 @@ impl AgentTool for ReadFileTool {
 
     fn description(&self) -> &str {
         "Read a text file and return its exact content. Supports images (jpg, png, webp, gif, bmp). \
-         Use offset/limit for partial reads of large files."
+         Output is truncated to 2000 lines or 50KB (whichever is hit first). \
+         Use offset/limit for large files. When you need the full file, continue with offset until complete."
     }
 
     fn parameter_aliases(&self) -> Option<crate::tools::validation::AliasMap> {
@@ -202,19 +208,39 @@ impl AgentTool for ReadFileTool {
             (None, None) => (0, total),
         };
 
-        let numbered: Vec<String> = lines[start..end]
+        // Apply truncation limits (2000 lines / 50KB) like pi does.
+        let selected_lines = &lines[start..end];
+        let (truncated_end, truncated_by) = truncate_selected(selected_lines, start, end, total);
+
+        let numbered: Vec<String> = lines[start..truncated_end]
             .iter()
             .enumerate()
             .map(|(i, line)| format!("{:>4} | {}", start + i + 1, line))
             .collect();
 
-        let header = if start > 0 || end < total {
-            format!("[Lines {}-{} of {}]", start + 1, end, total)
+        let mut output = if start > 0 || truncated_end < total {
+            format!(
+                "[Lines {}-{} of {}]\n{}",
+                start + 1,
+                truncated_end,
+                total,
+                numbered.join("\n")
+            )
         } else {
-            format!("[{} lines]", total)
+            format!("[{} lines]\n{}", total, numbered.join("\n"))
         };
 
-        let output = format!("{}\n{}", header, numbered.join("\n"));
+        if let Some(reason_str) = truncated_by {
+            let next_offset = truncated_end + 1;
+            output.push_str(&format!(
+                "\n\n[Showing lines {}-{} of {} ({} limit). Use offset={} to continue.]",
+                start + 1,
+                truncated_end,
+                total,
+                reason_str,
+                next_offset
+            ));
+        }
 
         Ok(ToolResult {
             content: vec![Content::Text { text: output }],
@@ -273,4 +299,36 @@ impl ReadFileTool {
             retention: Retention::Normal,
         })
     }
+}
+
+/// Determine how many lines to actually return, respecting MAX_READ_LINES and MAX_READ_BYTES.
+/// Returns (actual_end_index, truncation_reason) where truncation_reason is None if not truncated.
+fn truncate_selected(
+    lines: &[&str],
+    start: usize,
+    _end: usize,
+    _total: usize,
+) -> (usize, Option<&'static str>) {
+    let count = lines.len();
+
+    // Check line limit first
+    if count > MAX_READ_LINES {
+        return (start + MAX_READ_LINES, Some("2000 line"));
+    }
+
+    // Check byte limit (use UTF-8 byte length for correct CJK handling)
+    let mut byte_count = 0usize;
+    for (i, line) in lines.iter().enumerate() {
+        // Account for line number prefix "{:>4} | " = 7 bytes + line UTF-8 bytes + newline
+        byte_count += 7 + line.len() + 1;
+        if byte_count > MAX_READ_BYTES {
+            let truncated_end = start + i;
+            if truncated_end > start {
+                return (truncated_end, Some("50KB"));
+            }
+            return (start + 1, Some("50KB"));
+        }
+    }
+
+    (start + count, None)
 }

@@ -56,6 +56,7 @@ pub fn build_verify_fn(llm: &LlmConfig, cwd: &str) -> VerifyFn {
                 path_guard: Arc::new(evot_engine::PathGuard::open()),
                 spill_dir: None,
                 prompt_cache_key: None,
+                todo_state: evot_engine::tools::new_todo_state(),
             };
 
             let mut engine = build_agent(options, vec![]);

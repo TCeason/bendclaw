@@ -264,6 +264,7 @@ impl TestHarness {
             cwd: std::path::PathBuf::new(),
             path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
             prompt_cache_key: None,
+            todo_state: evotengine::tools::new_todo_state(),
         };
 
         let prompt_msg = AgentMessage::Llm(Message::user(prompt));
@@ -313,6 +314,7 @@ impl TestHarness {
             cwd: std::path::PathBuf::new(),
             path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
             prompt_cache_key: None,
+            todo_state: evotengine::tools::new_todo_state(),
         };
 
         let (tx, rx) = mpsc::unbounded_channel();

@@ -8,6 +8,7 @@ pub mod sandbox;
 pub mod search;
 pub mod skill;
 pub mod slim;
+pub mod todo_write;
 pub mod validation;
 pub mod web_fetch;
 
@@ -25,4 +26,8 @@ pub use file::WriteFileTool;
 pub use glob_file::GlobFileTool;
 pub use guard::PathGuard;
 pub use search::SearchTool;
+pub use todo_write::format_todo_for_compaction;
+pub use todo_write::new_todo_state;
+pub use todo_write::TodoState;
+pub use todo_write::TodoWriteTool;
 pub use web_fetch::WebFetchTool;
