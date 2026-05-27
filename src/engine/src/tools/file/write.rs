@@ -42,15 +42,12 @@ impl AgentTool for WriteFileTool {
     }
 
     fn description(&self) -> &str {
-        "Write contents to a file on the local filesystem.\n\
-         \n\
-         Usage:\n\
-         - This tool will overwrite the existing file if there is one at the provided path.\n\
-         - If this is an existing file, you MUST use Read first to read the file's contents. \
-         This tool will fail if you did not read the file first.\n\
-         - Prefer Edit for modifying existing files — it only sends the diff. \
-         Only use this tool to create new files or for complete rewrites.\n\
-         - Creates parent directories automatically if they don't exist."
+        "Write contents to a file. Creates parent directories if needed. \
+         Prefer Edit for modifying existing files. Use this for new files or complete rewrites."
+    }
+
+    fn parameter_aliases(&self) -> Option<crate::tools::validation::AliasMap> {
+        Some(&[("path", &["file_path", "filePath", "file"] as &[&str])])
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

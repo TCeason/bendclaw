@@ -90,18 +90,49 @@ impl BashTool {
     }
 }
 
+/// Max lines to include in the final tool result.
+const MAX_DISPLAY_LINES: usize = 2000;
+/// Max bytes to include in the final tool result.
+const MAX_DISPLAY_BYTES: usize = 50 * 1024; // 50KB
+
 /// Extract the last N lines from a byte buffer (up to `max_bytes`).
 fn tail_lines(buf: &[u8], max_lines: usize, max_bytes: usize) -> String {
     let text = String::from_utf8_lossy(buf);
-    let end = if text.len() > max_bytes {
-        text.ceil_char_boundary(text.len().saturating_sub(max_bytes))
+    let start = if text.len() > max_bytes {
+        text.ceil_char_boundary(text.len() - max_bytes)
     } else {
         0
     };
-    let slice = &text[end..];
-    let lines: Vec<&str> = slice.lines().collect();
-    let start = lines.len().saturating_sub(max_lines);
-    lines[start..].join("\n")
+    let lines: Vec<&str> = text[start..].lines().collect();
+    let skip = lines.len().saturating_sub(max_lines);
+    lines[skip..].join("\n")
+}
+
+/// Tail-truncate output: keep last `MAX_DISPLAY_LINES` / `MAX_DISPLAY_BYTES`.
+/// Returns (truncated_text, was_truncated, total_lines).
+fn tail_truncate(text: &str) -> (String, bool, usize) {
+    let lines: Vec<&str> = text.lines().collect();
+    let total_lines = lines.len();
+
+    if text.len() <= MAX_DISPLAY_BYTES && total_lines <= MAX_DISPLAY_LINES {
+        return (text.to_string(), false, total_lines);
+    }
+
+    // Work backwards: collect lines that fit within both limits
+    let mut collected: Vec<&str> = Vec::new();
+    let mut byte_count = 0usize;
+
+    for &line in lines.iter().rev() {
+        let line_bytes = line.len() + 1; // +1 for newline
+        if byte_count + line_bytes > MAX_DISPLAY_BYTES || collected.len() >= MAX_DISPLAY_LINES {
+            break;
+        }
+        collected.push(line);
+        byte_count += line_bytes;
+    }
+
+    collected.reverse();
+    (collected.join("\n"), true, total_lines)
 }
 
 /// Max bytes per single output line before truncation.
@@ -152,28 +183,20 @@ impl AgentTool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command and return its output.\n\
+        "Execute a shell command and return its output.\
          \n\
-         The working directory persists between commands, but shell state does not.\n\
+         The working directory persists between commands, but shell state does not.\
          \n\
-         Use Bash for builds, tests, package managers, git, Docker, project CLIs, \
-         content search (grep, rg), file discovery (find, ls), and any command that needs a shell.\n\
+         Output is automatically tail-truncated to the last 2000 lines or 50KB \
+         (whichever is hit first). Do not pipe through tail/head to limit output — \
+         the tool handles this for you, preserving the most relevant (final) output.\
          \n\
-         Prefer dedicated tools over Bash for these operations:\n\
-         - Exact file reads: Use Read (NOT cat/head/tail/sed -n)\n\
-         - Edit files: Use Edit (NOT sed/awk)\n\
-         - Write files: Use Write (NOT echo/cat redirection)\n\
-         \n\
-         Guidelines:\n\
-         - Always quote file paths that contain spaces with double quotes.\n\
-         - Try to maintain your current working directory by using absolute paths and avoiding cd.\n\
-         - When issuing multiple commands:\n\
-           - If independent and can run in parallel, make multiple tool calls in a single message.\n\
-           - If dependent and must run sequentially, chain with && in a single call.\n\
-         - For git commands:\n\
-           - Prefer creating a new commit rather than amending an existing commit.\n\
-           - Before running destructive operations (git reset --hard, git push --force, \
-         git checkout --), consider safer alternatives.\n\
+         Guidelines:\
+         - Always quote file paths that contain spaces with double quotes.\
+         - Try to maintain your current working directory by using absolute paths and avoiding cd.\
+         - When issuing multiple commands:\
+           - If independent and can run in parallel, make multiple tool calls in a single message.\
+           - If dependent and must run sequentially, chain with && in a single call.\
          - Avoid unnecessary sleep commands."
     }
 
@@ -276,7 +299,7 @@ impl AgentTool for BashTool {
         let stdout_buf = Arc::new(parking_lot::Mutex::new(Vec::<u8>::with_capacity(4096)));
         let stderr_buf = Arc::new(parking_lot::Mutex::new(Vec::<u8>::with_capacity(4096)));
 
-        // Spawn stdout reader task
+        // Spawn stdout reader task — tail-capture: keeps last max_bytes
         let stdout_buf_ref = stdout_buf.clone();
         let stdout_max = max_bytes;
         let stdout_task = tokio::spawn(async move {
@@ -287,10 +310,15 @@ impl AgentTool for BashTool {
                         Ok(0) => break,
                         Ok(n) => {
                             let mut buf = stdout_buf_ref.lock();
-                            let remaining = stdout_max.saturating_sub(buf.len());
-                            if remaining > 0 {
-                                let to_copy = n.min(remaining);
-                                buf.extend_from_slice(&tmp[..to_copy]);
+                            buf.extend_from_slice(&tmp[..n]);
+                            // Trim front when buffer exceeds 2x limit, drain to next newline
+                            if buf.len() > stdout_max * 2 {
+                                let target = buf.len() - stdout_max;
+                                let drain_to = buf[target..]
+                                    .iter()
+                                    .position(|&b| b == b'\n')
+                                    .map_or(target, |p| target + p + 1);
+                                buf.drain(..drain_to);
                             }
                         }
                         Err(_) => break,
@@ -299,7 +327,7 @@ impl AgentTool for BashTool {
             }
         });
 
-        // Spawn stderr reader task
+        // Spawn stderr reader task — tail-capture: keeps last max_bytes
         let stderr_buf_ref = stderr_buf.clone();
         let stderr_max = max_bytes;
         let stderr_task = tokio::spawn(async move {
@@ -310,10 +338,14 @@ impl AgentTool for BashTool {
                         Ok(0) => break,
                         Ok(n) => {
                             let mut buf = stderr_buf_ref.lock();
-                            let remaining = stderr_max.saturating_sub(buf.len());
-                            if remaining > 0 {
-                                let to_copy = n.min(remaining);
-                                buf.extend_from_slice(&tmp[..to_copy]);
+                            buf.extend_from_slice(&tmp[..n]);
+                            if buf.len() > stderr_max * 2 {
+                                let target = buf.len() - stderr_max;
+                                let drain_to = buf[target..]
+                                    .iter()
+                                    .position(|&b| b == b'\n')
+                                    .map_or(target, |p| target + p + 1);
+                                buf.drain(..drain_to);
                             }
                         }
                         Err(_) => break,
@@ -436,13 +468,9 @@ impl AgentTool for BashTool {
         stdout = truncate_long_lines(&stdout);
         stderr = truncate_long_lines(&stderr);
 
-        // Mark truncation if we hit the byte cap
-        if stdout.len() >= max_bytes {
-            stdout.push_str("\n... (output truncated)");
-        }
-        if stderr.len() >= max_bytes {
-            stderr.push_str("\n... (output truncated)");
-        }
+        // Tail-truncate: keep last 2000 lines / 50KB, discard earlier output
+        let (stdout, stdout_truncated, stdout_total) = tail_truncate(&stdout);
+        let (stderr, stderr_truncated, stderr_total) = tail_truncate(&stderr);
 
         // Slim: post-process output for token savings. Disabled commands and
         // `exit != 0` pass through untouched; the sandbox hint below still
@@ -453,12 +481,40 @@ impl AgentTool for BashTool {
         let slim_stats = slim_result.stats;
 
         let output = if stderr.is_empty() {
-            format!("Exit code: {}\n{}", exit_code, stdout)
+            if stdout_truncated {
+                format!(
+                    "Exit code: {}\n[Output truncated: showing last {} of {} lines]\n{}",
+                    exit_code,
+                    stdout.lines().count(),
+                    stdout_total,
+                    stdout
+                )
+            } else {
+                format!("Exit code: {}\n{}", exit_code, stdout)
+            }
         } else {
-            format!(
-                "Exit code: {}\nSTDOUT:\n{}\nSTDERR:\n{}",
-                exit_code, stdout, stderr
-            )
+            let mut out = format!("Exit code: {}\n", exit_code);
+            if stdout_truncated {
+                out.push_str(&format!(
+                    "STDOUT [truncated: showing last {} of {} lines]:\n{}\n",
+                    stdout.lines().count(),
+                    stdout_total,
+                    stdout
+                ));
+            } else {
+                out.push_str(&format!("STDOUT:\n{}\n", stdout));
+            }
+            if stderr_truncated {
+                out.push_str(&format!(
+                    "STDERR [truncated: showing last {} of {} lines]:\n{}",
+                    stderr.lines().count(),
+                    stderr_total,
+                    stderr
+                ));
+            } else {
+                out.push_str(&format!("STDERR:\n{}", stderr));
+            }
+            out
         };
 
         // Append sandbox hint when command fails with permission errors

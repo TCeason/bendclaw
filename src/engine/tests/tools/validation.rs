@@ -1,3 +1,5 @@
+use evotengine::tools::validation::coerce_edits;
+use evotengine::tools::validation::normalize_aliases;
 use evotengine::tools::validation::truncate_error;
 use evotengine::tools::validation::validate_and_coerce;
 use serde_json::json;
@@ -390,4 +392,112 @@ fn cap_preserves_non_text_content() {
     if let Content::Text { text } = &result[0] {
         assert!(text.contains("bytes truncated"));
     }
+}
+
+// ── parameter alias normalization ───────────────────────────────────────
+
+#[test]
+fn alias_file_path_to_path() {
+    let aliases: &[(&str, &[&str])] = &[("path", &["file_path", "filePath", "file"])];
+    let input = json!({ "file_path": "/tmp/foo.rs", "offset": 10 });
+    let result = normalize_aliases(&input, aliases);
+    assert_eq!(result["path"], json!("/tmp/foo.rs"));
+    assert_eq!(result["offset"], json!(10));
+    assert!(result.get("file_path").is_none());
+}
+
+#[test]
+fn alias_file_path_camel_case() {
+    let aliases: &[(&str, &[&str])] = &[("path", &["file_path", "filePath", "file"])];
+    let input = json!({ "filePath": "/tmp/bar.rs" });
+    let result = normalize_aliases(&input, aliases);
+    assert_eq!(result["path"], json!("/tmp/bar.rs"));
+}
+
+#[test]
+fn alias_skipped_when_canonical_present() {
+    let aliases: &[(&str, &[&str])] = &[("path", &["file_path", "filePath"])];
+    let input = json!({ "path": "/correct.rs", "file_path": "/wrong.rs" });
+    let result = normalize_aliases(&input, aliases);
+    assert_eq!(result["path"], json!("/correct.rs"));
+}
+
+#[test]
+fn alias_non_object_input_passthrough() {
+    let aliases: &[(&str, &[&str])] = &[("path", &["file_path"])];
+    let input = json!("just a string");
+    let result = normalize_aliases(&input, aliases);
+    assert_eq!(result, input);
+}
+
+// ── edits coercion ──────────────────────────────────────────────────────
+
+#[test]
+fn coerce_edits_string_to_array() {
+    let input = json!({
+        "path": "foo.rs",
+        "edits": "[{\"old_text\": \"a\", \"new_text\": \"b\"}]"
+    });
+    let result = coerce_edits(&input);
+    let edits = result["edits"].as_array().unwrap();
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0]["old_text"], json!("a"));
+}
+
+#[test]
+fn coerce_edits_top_level_old_new() {
+    let input = json!({
+        "path": "foo.rs",
+        "old_text": "hello",
+        "new_text": "world"
+    });
+    let result = coerce_edits(&input);
+    let edits = result["edits"].as_array().unwrap();
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0]["old_text"], json!("hello"));
+    assert_eq!(edits[0]["new_text"], json!("world"));
+    assert!(result.get("old_text").is_none());
+}
+
+#[test]
+fn coerce_edits_top_level_old_text_camel() {
+    let input = json!({
+        "path": "foo.rs",
+        "oldText": "hello",
+        "newText": "world"
+    });
+    let result = coerce_edits(&input);
+    let edits = result["edits"].as_array().unwrap();
+    assert_eq!(edits[0]["old_text"], json!("hello"));
+    assert_eq!(edits[0]["new_text"], json!("world"));
+}
+
+#[test]
+fn coerce_edits_normalize_entry_field_names() {
+    let input = json!({
+        "path": "foo.rs",
+        "edits": [{
+            "oldText": "aaa",
+            "newText": "bbb"
+        }, {
+            "old_string": "ccc",
+            "new_string": "ddd"
+        }]
+    });
+    let result = coerce_edits(&input);
+    let edits = result["edits"].as_array().unwrap();
+    assert_eq!(edits[0]["old_text"], json!("aaa"));
+    assert_eq!(edits[0]["new_text"], json!("bbb"));
+    assert_eq!(edits[1]["old_text"], json!("ccc"));
+    assert_eq!(edits[1]["new_text"], json!("ddd"));
+}
+
+#[test]
+fn coerce_edits_already_correct_unchanged() {
+    let input = json!({
+        "path": "foo.rs",
+        "edits": [{ "old_text": "x", "new_text": "y" }]
+    });
+    let result = coerce_edits(&input);
+    assert_eq!(result, input);
 }

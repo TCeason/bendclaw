@@ -3,6 +3,7 @@ name = "evot"
 version.workspace = true
 edition.workspace = true
 repository = "https://github.com/evotai/evot"
+autotests = false
 
 [dependencies]
 evot-engine.workspace = true
@@ -59,6 +60,10 @@ approx_constant = "allow"
 
 [dev-dependencies]
 insta = { version = "1", features = ["json", "yaml", "redactions"] }
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"
 
 [build-dependencies]
 chrono = "0.4"

@@ -38,17 +38,12 @@ impl AgentTool for ReadFileTool {
     }
 
     fn description(&self) -> &str {
-        "Read a text file from the local filesystem and return exact original content. You can access any file directly by using this tool.\n\
-         \n\
-         Usage:\n\
-         - The path parameter should be an absolute path, not a relative path.\n\
-         - Use this tool when exact text matters, especially before Edit.\n\
-         - Use this tool instead of shell cat/head/tail/sed -n for exact file reads.\n\
-         - Supports optional offset/limit for partial reads of large files.\n\
-         - This tool can only read text files and images (jpg, png, webp, gif, bmp), not directories or binary files.\n\
-         To discover files, use Glob.\n\
-         - If you read a file that exists but has empty contents you will receive a warning \
-         in place of file contents."
+        "Read a text file and return its exact content. Supports images (jpg, png, webp, gif, bmp). \
+         Use offset/limit for partial reads of large files."
+    }
+
+    fn parameter_aliases(&self) -> Option<crate::tools::validation::AliasMap> {
+        Some(&[("path", &["file_path", "filePath", "file"] as &[&str])])
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

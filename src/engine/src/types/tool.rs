@@ -131,6 +131,12 @@ pub trait AgentTool: Send + Sync {
     fn description(&self) -> &str;
     /// JSON Schema for parameters
     fn parameters_schema(&self) -> serde_json::Value;
+    /// Parameter alias mappings for input normalization.
+    /// Returns canonical_name → accepted_alternatives pairs.
+    /// Default: no aliases.
+    fn parameter_aliases(&self) -> Option<crate::tools::validation::AliasMap> {
+        None
+    }
     /// Preview the system command that will be executed, if applicable.
     ///
     /// Returns `None` for tools that don't invoke external commands.

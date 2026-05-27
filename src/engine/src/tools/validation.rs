@@ -1,5 +1,130 @@
 use serde_json::Value;
 
+// ── parameter alias normalization ────────────────────────────────────────
+
+/// Per-tool parameter alias mapping: canonical name → accepted alternatives.
+pub type AliasMap = &'static [(&'static str, &'static [&'static str])];
+
+/// Resolve known parameter aliases to their canonical names.
+///
+/// For each entry in `aliases`, if the canonical key is absent from `input`
+/// but one of its aliases is present, the alias is renamed to the canonical key.
+/// This runs before schema validation so the model can use either name.
+pub fn normalize_aliases(input: &Value, aliases: AliasMap) -> Value {
+    let obj = match input.as_object() {
+        Some(o) => o,
+        None => return input.clone(),
+    };
+    let mut normalized = obj.clone();
+    for (canonical, alt_names) in aliases {
+        if normalized.contains_key(*canonical) {
+            continue;
+        }
+        for alt in *alt_names {
+            if let Some(val) = normalized.remove(*alt) {
+                normalized.insert((*canonical).to_string(), val);
+                break;
+            }
+        }
+    }
+    Value::Object(normalized)
+}
+
+/// Coerce the `edits` field for the Edit tool.
+///
+/// Handles two common model mistakes:
+/// 1. `edits` is a JSON string instead of an array — parse it.
+/// 2. No `edits` field but top-level `old_text`/`new_text` — wrap into `edits[]`.
+///
+/// Also normalizes field names inside each edit entry (oldText/old_string → old_text).
+pub fn coerce_edits(input: &Value) -> Value {
+    let obj = match input.as_object() {
+        Some(o) => o,
+        None => return input.clone(),
+    };
+    let mut result = obj.clone();
+
+    // Case 1: edits is a JSON string — parse it
+    if let Some(s) = result.get("edits").and_then(|v| v.as_str()) {
+        if let Ok(parsed) = serde_json::from_str::<Value>(s) {
+            if parsed.is_array() {
+                result.insert("edits".to_string(), parsed);
+            }
+        }
+    }
+
+    // Case 2: no edits array, but top-level old_text/new_text present
+    if !result.get("edits").is_some_and(|v| v.is_array()) {
+        let old = result
+            .get("old_text")
+            .or_else(|| result.get("oldText"))
+            .or_else(|| result.get("old_string"))
+            .cloned();
+        let new = result
+            .get("new_text")
+            .or_else(|| result.get("newText"))
+            .or_else(|| result.get("new_string"))
+            .cloned();
+        if let (Some(o), Some(n)) = (old, new) {
+            result.insert(
+                "edits".to_string(),
+                serde_json::json!([{ "old_text": o, "new_text": n }]),
+            );
+            // Remove top-level keys so they don't confuse downstream
+            for key in [
+                "old_text",
+                "oldText",
+                "old_string",
+                "new_text",
+                "newText",
+                "new_string",
+            ] {
+                result.remove(key);
+            }
+        }
+    }
+
+    // Case 3: normalize field names inside each edit entry
+    if let Some(arr) = result.get("edits").and_then(|v| v.as_array()).cloned() {
+        let normalized: Vec<Value> = arr
+            .into_iter()
+            .map(|entry| normalize_edit_entry(&entry))
+            .collect();
+        result.insert("edits".to_string(), Value::Array(normalized));
+    }
+
+    Value::Object(result)
+}
+
+/// Normalize a single edit entry's field names to canonical `old_text`/`new_text`.
+fn normalize_edit_entry(entry: &Value) -> Value {
+    let obj = match entry.as_object() {
+        Some(o) => o,
+        None => return entry.clone(),
+    };
+    let mut out = obj.clone();
+
+    // old_text aliases
+    if !out.contains_key("old_text") {
+        for alt in ["oldText", "old_string"] {
+            if let Some(val) = out.remove(alt) {
+                out.insert("old_text".to_string(), val);
+                break;
+            }
+        }
+    }
+    // new_text aliases
+    if !out.contains_key("new_text") {
+        for alt in ["newText", "new_string"] {
+            if let Some(val) = out.remove(alt) {
+                out.insert("new_text".to_string(), val);
+                break;
+            }
+        }
+    }
+    Value::Object(out)
+}
+
 /// Lightweight tool-input validation and type coercion.
 ///
 /// Inspired by Claude Code's `toolErrors.ts` (structured error messages) and

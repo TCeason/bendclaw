@@ -271,11 +271,22 @@ async fn execute_single_tool(
 
     let (result, is_error) = match tool {
         Some(tool) => {
-            // Schema pre-validation + type coercion (à la Claude Code / Forge Code).
+            // Step 1: Normalize parameter aliases (file_path → path, etc.)
+            let mut normalized = match tool.parameter_aliases() {
+                Some(aliases) => crate::tools::validation::normalize_aliases(args, aliases),
+                None => args.clone(),
+            };
+
+            // Step 2: Edit-specific coercion (edits string→array, legacy single-edit)
+            if name == "Edit" {
+                normalized = crate::tools::validation::coerce_edits(&normalized);
+            }
+
+            // Step 3: Schema pre-validation + type coercion
             let validated_args = crate::tools::validation::validate_and_coerce(
                 name,
                 &tool.parameters_schema(),
-                args,
+                &normalized,
             );
             match validated_args {
                 Err(validation_error) => (

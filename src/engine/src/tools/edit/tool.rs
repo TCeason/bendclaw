@@ -55,6 +55,10 @@ impl AgentTool for EditFileTool {
          Keep old_text as small as possible while still unique in the file."
     }
 
+    fn parameter_aliases(&self) -> Option<crate::tools::validation::AliasMap> {
+        Some(&[("path", &["file_path", "filePath", "file"] as &[&str])])
+    }
+
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
