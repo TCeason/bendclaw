@@ -26,56 +26,6 @@ fn system_reminder_count(messages: &[AgentMessage]) -> usize {
         .count()
 }
 
-fn request_view_bytes(content: &[Content]) -> usize {
-    content
-        .iter()
-        .map(|c| match c {
-            Content::Text { text } => text.len(),
-            Content::Thinking { thinking, .. } => thinking.len(),
-            Content::ToolCall { arguments, .. } => arguments.to_string().len(),
-            Content::Image {
-                source: ImageSource::Base64 { data, .. },
-                ..
-            } => data.len(),
-            Content::Image { .. } => 0,
-        })
-        .sum()
-}
-
-fn tool_result_request_bytes(message: &Message) -> usize {
-    match message {
-        Message::ToolResult { content, .. } => request_view_bytes(content),
-        _ => 0,
-    }
-}
-
-fn prior_tool_result_pair(id: &str, content: Vec<Content>) -> Vec<AgentMessage> {
-    vec![
-        AgentMessage::Llm(Message::Assistant {
-            content: vec![Content::ToolCall {
-                id: id.into(),
-                name: "Bash".into(),
-                arguments: serde_json::json!({"command": id}),
-            }],
-            stop_reason: StopReason::ToolUse,
-            model: "test".into(),
-            provider: "test".into(),
-            usage: Usage::default(),
-            timestamp: 0,
-            error_message: None,
-            response_id: None,
-        }),
-        AgentMessage::Llm(Message::ToolResult {
-            tool_call_id: id.into(),
-            tool_name: "Bash".into(),
-            content,
-            is_error: false,
-            timestamp: 0,
-            retention: Retention::Normal,
-        }),
-    ]
-}
-
 // ---------------------------------------------------------------------------
 // Tests using TestHarness
 // ---------------------------------------------------------------------------
