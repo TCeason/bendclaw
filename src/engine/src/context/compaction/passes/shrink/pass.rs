@@ -20,11 +20,8 @@ impl Pass for Shrink {
     }
 
     fn should_run(&self, ctx: &PassContext<'_>) -> bool {
-        let threshold = oversize_threshold(ctx);
         ctx.pressure.estimated_tokens > ctx.config.compact_trigger()
             || ctx.pressure.message_tokens > ctx.config.compact_trigger()
-            || ctx.pressure.max_tool_result_tokens >= threshold
-            || ctx.pressure.max_user_tokens >= threshold
     }
 
     fn run(&self, messages: Vec<AgentMessage>, ctx: &PassContext<'_>) -> PassResult {

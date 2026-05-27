@@ -9,7 +9,9 @@ pub struct Pressure {
     pub message_tokens: usize,
     pub estimated_tokens: usize,
     pub compactable_tool_result_tokens: usize,
+    #[allow(dead_code)]
     pub max_tool_result_tokens: usize,
+    #[allow(dead_code)]
     pub max_user_tokens: usize,
     pub message_count: usize,
     pub image_pressure: bool,

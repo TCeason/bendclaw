@@ -182,7 +182,7 @@ fn test_level1_truncation() {
     ];
 
     let config = ContextConfig {
-        max_context_tokens: 50_000,
+        max_context_tokens: 10_000,
         system_prompt_tokens: 0,
         keep_recent: 10,
         keep_first: 2,
@@ -326,7 +326,7 @@ fn test_level1_read_file_rust_uses_outline() {
     ];
 
     let config = ContextConfig {
-        max_context_tokens: 50_000,
+        max_context_tokens: 10_000,
         system_prompt_tokens: 0,
         keep_recent: 10,
         keep_first: 2,
@@ -397,7 +397,7 @@ fn test_level1_read_file_unsupported_ext_falls_back_to_head_tail() {
     ];
 
     let config = ContextConfig {
-        max_context_tokens: 50_000,
+        max_context_tokens: 10_000,
         system_prompt_tokens: 0,
         keep_recent: 10,
         keep_first: 2,
@@ -440,7 +440,7 @@ fn test_level1_bash_still_uses_head_tail() {
     ];
 
     let config = ContextConfig {
-        max_context_tokens: 50_000,
+        max_context_tokens: 10_000,
         system_prompt_tokens: 0,
         keep_recent: 10,
         keep_first: 2,
@@ -477,7 +477,7 @@ fn test_level1_read_file_no_matching_tool_call_falls_back() {
     ];
 
     let config = ContextConfig {
-        max_context_tokens: 50_000,
+        max_context_tokens: 10_000,
         system_prompt_tokens: 0,
         keep_recent: 10,
         keep_first: 2,
@@ -518,7 +518,7 @@ fn test_level1_read_file_short_content_not_truncated() {
     ];
 
     let config = ContextConfig {
-        max_context_tokens: 50_000,
+        max_context_tokens: 10_000,
         system_prompt_tokens: 0,
         keep_recent: 10,
         keep_first: 2,
@@ -735,7 +735,7 @@ fn test_level1_outline_action_method() {
     ];
 
     let config = ContextConfig {
-        max_context_tokens: 50_000,
+        max_context_tokens: 10_000,
         system_prompt_tokens: 0,
         keep_recent: 10,
         keep_first: 2,
@@ -846,7 +846,7 @@ fn test_level1_outline_works_on_short_code_files() {
     ];
 
     let config = ContextConfig {
-        max_context_tokens: 50_000,
+        max_context_tokens: 10_000,
         system_prompt_tokens: 0,
         keep_recent: 10,
         keep_first: 2,
