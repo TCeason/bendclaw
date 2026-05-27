@@ -3,7 +3,6 @@ use evot::agent::prompt::SystemPrompt;
 fn build_prompt(cwd: &str) -> String {
     SystemPrompt::new(cwd)
         .with_system()
-        .with_tools()
         .with_project_context()
         .with_dynamic_boundary()
         .with_git()
@@ -14,10 +13,8 @@ fn build_prompt(cwd: &str) -> String {
 fn base_prompt_contains_section_headers() {
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
     let prompt = build_prompt(&tmp.path().to_string_lossy());
-    assert!(prompt.contains("# System"));
-    assert!(prompt.contains("# Agent behavior"));
-    assert!(prompt.contains("# Guidelines"));
-    assert!(prompt.contains("# Environment"));
+    assert!(prompt.contains("Guidelines:"));
+    assert!(prompt.contains("Current working directory:"));
     assert!(prompt.contains("Git repository: no"));
     assert!(!prompt.contains("Project Instructions"));
 }
@@ -56,7 +53,6 @@ fn append_is_included() {
     let prompt = SystemPrompt::new(&tmp.path().to_string_lossy())
         .with_environment()
         .with_git()
-        .with_tools()
         .with_project_context()
         .with_append("Be concise.")
         .build();
@@ -145,25 +141,25 @@ fn git_repo_shows_branch_and_status() {
 fn sections_are_ordered_static_then_dynamic() {
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
     let prompt = build_prompt(&tmp.path().to_string_lossy());
-    let system_pos = prompt.find("# System").expect("missing # System");
-    let agent_pos = prompt
-        .find("# Agent behavior")
-        .expect("missing # Agent behavior");
-    let guidelines_pos = prompt.find("# Guidelines").expect("missing # Guidelines");
-    let env_pos = prompt.find("# Environment").expect("missing # Environment");
+    let guidelines_pos = prompt.find("Guidelines:").expect("missing Guidelines:");
+    let cwd_pos = prompt
+        .find("Current working directory:")
+        .expect("missing Current working directory:");
+    let boundary_pos = prompt
+        .find("__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__")
+        .expect("missing dynamic boundary");
     let git_pos = prompt.find("# Git").expect("missing # Git");
 
     assert!(
-        system_pos < agent_pos,
-        "# System should come before # Agent behavior"
+        guidelines_pos < cwd_pos,
+        "Guidelines should come before cwd"
     );
     assert!(
-        agent_pos < guidelines_pos,
-        "# Agent behavior should come before # Guidelines"
+        cwd_pos < boundary_pos,
+        "cwd should come before dynamic boundary"
     );
     assert!(
-        guidelines_pos < env_pos,
-        "# Guidelines should come before # Environment"
+        boundary_pos < git_pos,
+        "dynamic boundary should come before # Git"
     );
-    assert!(env_pos < git_pos, "# Environment should come before # Git");
 }

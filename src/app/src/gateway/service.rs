@@ -50,7 +50,6 @@ pub async fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
 
     let (system_prompt_text, system_prompt_sections) = SystemPrompt::new(&cwd)
         .with_system()
-        .with_tools()
         .with_project_context()
         .with_dynamic_boundary()
         .with_today_date()
