@@ -29,8 +29,8 @@ Same task, same eval environment, different models. evot completes the work with
     <td align="center"><strong>DeepSeek V4 Pro</strong></td>
   </tr>
   <tr>
-    <td><img src="https://github.com/evotai/evot/releases/download/v2026.5.26.2/screencapture-127-0-0-1-3200-2026-05-27-17_21_33.png" alt="evot benchmark — Claude Opus 4.6" width="480" /></td>
-    <td><img src="https://github.com/evotai/evot/releases/download/v2026.5.26.2/screencapture-127-0-0-1-3200-2026-05-27-17_21_18.png" alt="evot benchmark — DeepSeek V4 Pro" width="480" /></td>
+    <td><a href=".github/assets/benchmark-opus-4.6.png"><img src=".github/assets/benchmark-opus-4.6.png" alt="evot benchmark — Claude Opus 4.6" width="480" /></a></td>
+    <td><a href=".github/assets/benchmark-deepseek-v4-pro.png"><img src=".github/assets/benchmark-deepseek-v4-pro.png" alt="evot benchmark — DeepSeek V4 Pro" width="480" /></a></td>
   </tr>
 </table>
 
