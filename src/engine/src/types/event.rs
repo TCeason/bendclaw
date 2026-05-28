@@ -97,12 +97,6 @@ pub enum AgentEvent {
         stats: LlmCallStats,
         /// Context budget snapshot (same source as compaction events).
         budget: crate::context::ContextBudgetSnapshot,
-        /// OTel: standardized provider name (e.g. "anthropic", "aws.bedrock", "openai").
-        provider_name: String,
-        /// OTel: server address extracted from base_url.
-        server_address: Option<String>,
-        /// OTel: server port extracted from base_url.
-        server_port: Option<u16>,
     },
     LlmCallRetry {
         turn: usize,
@@ -118,14 +112,13 @@ pub enum AgentEvent {
         error: Option<String>,
         metrics: LlmCallMetrics,
         context_window: usize,
-        /// Stop reason from the LLM response (for `gen_ai.response.finish_reasons`).
+        /// Stop reason from the LLM response.
         stop_reason: super::llm::StopReason,
         /// Response content blocks (text + tool calls). Empty on error.
-        /// Used for `gen_ai.output.messages` (Opt-In) and verbose UI.
         content: Vec<super::message::Content>,
-        /// OTel: actual model name from the provider response.
+        /// Actual model name from the provider response.
         response_model: Option<String>,
-        /// OTel: unique completion identifier from the provider (e.g. `chatcmpl-xxx`, `msg_xxx`).
+        /// Unique completion identifier from the provider (e.g. `chatcmpl-xxx`, `msg_xxx`).
         response_id: Option<String>,
     },
     ContextCompactionStart {

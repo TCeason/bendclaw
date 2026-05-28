@@ -317,7 +317,7 @@ export async function startServerBackground(port?: number, model?: string, envFi
 /**
  * Terminate the process immediately via `std::process::exit`, bypassing all
  * Rust `Drop` impls and async runtime shutdown. Use on user-triggered exit so
- * large sessions don't stall on telemetry flush or tokio runtime teardown.
+ * large sessions don't stall on tokio runtime teardown.
  * Callers must restore terminal state (raw mode, cursor, bracketed paste)
  * before invoking this.
  */

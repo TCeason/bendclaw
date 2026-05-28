@@ -102,7 +102,6 @@ pub(in crate::agent) struct ExecuteRunArgs {
     pub initial_input: Vec<evot_engine::Content>,
     pub factory: Arc<dyn TurnFactory>,
     pub on_complete: Option<Arc<dyn Fn() + Send + Sync>>,
-    pub telemetry: Option<crate::telemetry::config::TelemetryConfig>,
 }
 
 pub(in crate::agent) fn execute_run(args: ExecuteRunArgs) -> Run {
@@ -150,7 +149,6 @@ async fn run_loop(args: ExecuteRunArgs, tx: mpsc::UnboundedSender<RunEvent>, con
         initial_input,
         factory,
         on_complete,
-        telemetry,
     } = args;
 
     let started_at = Instant::now();
@@ -164,18 +162,9 @@ async fn run_loop(args: ExecuteRunArgs, tx: mpsc::UnboundedSender<RunEvent>, con
 
     if !control.is_cancelled() {
         let outcome = match factory.build(initial_input).await {
-            Ok(turn) => Some(
-                drive_one_turn(
-                    turn,
-                    &tx,
-                    &control,
-                    &run_id,
-                    &session_id,
-                    started_at,
-                    telemetry.as_ref(),
-                )
-                .await,
-            ),
+            Ok(turn) => {
+                Some(drive_one_turn(turn, &tx, &control, &run_id, &session_id, started_at).await)
+            }
             Err(e) => {
                 tracing::error!(
                     stage = "run",
@@ -281,7 +270,6 @@ async fn drive_one_turn(
     run_id: &str,
     session_id: &str,
     _started_at: Instant,
-    telemetry: Option<&crate::telemetry::config::TelemetryConfig>,
 ) -> TurnOutcome {
     let TurnInput {
         options,
@@ -301,10 +289,8 @@ async fn drive_one_turn(
     let (runtime_tx, mut runtime_rx) = mpsc::unbounded_channel();
     let rid = run_id.to_string();
     let sid = session_id.to_string();
-    let otel_sub =
-        telemetry.and_then(|cfg| crate::telemetry::subscriber::TelemetrySubscriber::new(cfg, &sid));
     tokio::spawn(async move {
-        forward_events(engine_rx, runtime_tx, &rid, &sid, otel_sub).await;
+        forward_events(engine_rx, runtime_tx, &rid, &sid).await;
     });
 
     // First user content is part of this turn's transcript record.
@@ -417,112 +403,14 @@ async fn forward_events(
     tx: mpsc::UnboundedSender<RuntimeEvent>,
     run_id: &str,
     session_id: &str,
-    mut otel: Option<crate::telemetry::subscriber::TelemetrySubscriber>,
 ) {
-    if let Some(ref mut sub) = otel {
-        sub.on_agent_start();
-    }
     while let Some(event) = engine_rx.recv().await {
-        // Drive OTel subscriber
-        if let Some(ref mut sub) = otel {
-            drive_otel(sub, &event);
-        }
         let runtime_events = map_agent_event(&event, run_id, session_id);
         for re in runtime_events {
             if tx.send(re).is_err() {
                 break;
             }
         }
-    }
-    if let Some(ref mut sub) = otel {
-        sub.on_agent_end();
-    }
-}
-
-/// Drive the OTel subscriber from an AgentEvent.
-fn drive_otel(
-    sub: &mut crate::telemetry::subscriber::TelemetrySubscriber,
-    event: &evot_engine::AgentEvent,
-) {
-    match event {
-        evot_engine::AgentEvent::LlmCallStart {
-            turn,
-            attempt,
-            request,
-            provider_name,
-            server_address,
-            server_port,
-            ..
-        } => {
-            sub.on_llm_call_start(
-                *turn,
-                *attempt,
-                &request.model,
-                provider_name,
-                server_address.as_deref(),
-                *server_port,
-                request.max_tokens,
-                request.temperature,
-                &request.messages,
-                &request.tools,
-            );
-        }
-        evot_engine::AgentEvent::LlmCallEnd {
-            turn,
-            attempt,
-            usage,
-            error,
-            metrics,
-            stop_reason,
-            content,
-            ..
-        } => {
-            let finish_reason = match stop_reason {
-                evot_engine::StopReason::Stop => "stop",
-                evot_engine::StopReason::ToolUse => "tool_calls",
-                evot_engine::StopReason::Length => "length",
-                evot_engine::StopReason::Error => "error",
-                evot_engine::StopReason::Aborted => "error",
-            };
-            sub.on_llm_call_end(
-                *turn,
-                *attempt,
-                None, // response_model set from Message, not available here
-                usage.input,
-                usage.output,
-                usage.cache_read,
-                usage.cache_write,
-                Some(finish_reason),
-                error.as_deref(),
-                metrics.ttft_ms,
-                stop_reason,
-                content,
-            );
-        }
-        evot_engine::AgentEvent::LlmCallRetry { .. } => {}
-        evot_engine::AgentEvent::ToolExecutionStart {
-            tool_call_id,
-            tool_name,
-            args,
-            ..
-        } => {
-            sub.on_tool_start(tool_call_id, tool_name, args);
-        }
-        evot_engine::AgentEvent::ToolExecutionEnd {
-            tool_call_id,
-            result,
-            is_error,
-            duration_ms,
-            ..
-        } => {
-            sub.on_tool_end(
-                tool_call_id,
-                *is_error,
-                *duration_ms,
-                Some(&serde_json::json!(result)),
-            );
-        }
-        _ => {}
     }
 }
 
@@ -713,9 +601,6 @@ fn map_agent_event(
             request,
             stats,
             budget,
-            provider_name: _,
-            server_address: _,
-            server_port: _,
         } => {
             let message_count = request.messages.len();
             let tool_count = request.tools.len();
