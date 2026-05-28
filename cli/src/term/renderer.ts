@@ -29,6 +29,13 @@ const SHOW_CURSOR = '\x1b[?25h'
 
 // --- Types ---
 
+export interface RenderFrame {
+  lines: string[]
+}
+
+/** Zero-width marker embedded in rendered output to indicate cursor position for IME. */
+export const CURSOR_MARKER = '\x1b]evot:c\x07'
+
 export interface TermRendererOptions {
   stdout?: NodeJS.WriteStream
 }
@@ -45,7 +52,7 @@ export class TermRenderer {
   private previousViewportTop = 0
 
   // Render scheduling
-  private renderCallback: (() => string[]) | null = null
+  private renderCallback: (() => RenderFrame | string[]) | null = null
   private renderRequested = false
   private renderTimer: ReturnType<typeof setTimeout> | undefined
   private lastRenderAt = 0
@@ -94,7 +101,7 @@ export class TermRenderer {
 
   // --- Public API ---
 
-  setRenderCallback(cb: () => string[]): void {
+  setRenderCallback(cb: () => RenderFrame | string[]): void {
     this.renderCallback = cb
   }
 
@@ -190,7 +197,9 @@ export class TermRenderer {
     const heightChanged = this.previousHeight !== 0 && this.previousHeight !== height
 
     // Get new frame from callback
-    const newLines = this.renderCallback()
+    const raw = this.renderCallback()
+    const newLines = Array.isArray(raw) ? raw : raw.lines
+    const cursorPos = this.extractCursorPosition(newLines, height)
 
     // --- Full render helper ---
     const fullRender = (clear: boolean): void => {
@@ -209,6 +218,7 @@ export class TermRenderer {
       this.previousLines = newLines
       this.previousWidth = width
       this.previousHeight = height
+      this.positionHardwareCursor(cursorPos, newLines.length)
     }
 
     // First render
@@ -370,6 +380,41 @@ export class TermRenderer {
     this.previousLines = newLines
     this.previousWidth = width
     this.previousHeight = height
+    this.positionHardwareCursor(cursorPos, newLines.length)
+  }
+
+  // --- Private: cursor positioning for IME ---
+
+  private extractCursorPosition(lines: string[], height: number): { row: number; col: number } | null {
+    const viewportTop = Math.max(0, lines.length - height)
+    for (let row = lines.length - 1; row >= viewportTop; row--) {
+      const line = lines[row]
+      const markerIndex = line.indexOf(CURSOR_MARKER)
+      if (markerIndex !== -1) {
+        const beforeMarker = line.slice(0, markerIndex)
+        const col = stripAnsiVisibleWidth(beforeMarker)
+        lines[row] = line.slice(0, markerIndex) + line.slice(markerIndex + CURSOR_MARKER.length)
+        return { row, col }
+      }
+    }
+    return null
+  }
+
+  private positionHardwareCursor(cursorPos: { row: number; col: number } | null, totalLines: number): void {
+    if (!cursorPos || totalLines <= 0) {
+      this.write(HIDE_CURSOR)
+      return
+    }
+    const targetRow = Math.max(0, Math.min(cursorPos.row, totalLines - 1))
+    const targetCol = Math.max(0, cursorPos.col)
+    const rowDelta = targetRow - this.hardwareCursorRow
+    let buffer = ''
+    if (rowDelta > 0) buffer += `\x1b[${rowDelta}B`
+    else if (rowDelta < 0) buffer += `\x1b[${-rowDelta}A`
+    buffer += `\x1b[${targetCol + 1}G`
+    buffer += SHOW_CURSOR
+    this.write(buffer)
+    this.hardwareCursorRow = targetRow
   }
 
   // --- Private: output ---
@@ -384,4 +429,8 @@ export class TermRenderer {
 
 function safeDimension(n: number | undefined, fallback: number): number {
   return n != null && Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
+}
+
+function stripAnsiVisibleWidth(text: string): number {
+  return stringWidth(stripAnsi(text))
 }

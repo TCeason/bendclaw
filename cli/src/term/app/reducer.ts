@@ -228,6 +228,11 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
           cumulativeStats: cumulative,
           systemPromptTokens: sysTok + toolDefTok,
         },
+        sessionTokens: {
+          ...state.sessionTokens,
+          contextTokens: (p.estimated_context_tokens as number) ?? state.sessionTokens.contextTokens,
+          contextWindow: (p.context_window as number) ?? state.sessionTokens.contextWindow,
+        },
         verboseEvents: [...state.verboseEvents, { kind: 'llm_call', text }],
       }
     }
@@ -284,6 +289,13 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       return {
         ...state,
         currentRunStats: stats,
+        sessionTokens: {
+          inputTokens: state.sessionTokens.inputTokens + inputTok,
+          outputTokens: state.sessionTokens.outputTokens + outputTok,
+          cacheReadTokens: state.sessionTokens.cacheReadTokens + ((usage?.cache_read as number) ?? 0),
+          contextTokens: stats.contextTokens,
+          contextWindow: stats.contextWindow,
+        },
         verboseEvents: [...state.verboseEvents, { kind: 'llm_completed', text: result.text, expandedText: result.expandedText }],
       }
     }
@@ -298,6 +310,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       return {
         ...state,
         currentRunStats: { ...state.currentRunStats, contextTokens: (p.estimated_tokens as number) ?? 0, contextWindow: (p.context_window as number) ?? 0 },
+        sessionTokens: { ...state.sessionTokens, contextTokens: (p.estimated_tokens as number) ?? state.sessionTokens.contextTokens, contextWindow: (p.context_window as number) ?? state.sessionTokens.contextWindow },
         verboseEvents: [...state.verboseEvents, { kind: 'compact_call', text }],
       }
     }

@@ -1,4 +1,4 @@
-import { TermRenderer } from './renderer.js'
+import { TermRenderer, type RenderFrame } from './renderer.js'
 import { parseInput, enableRawMode, type KeyEvent } from './input.js'
 import { installBracketedPaste } from './bracketed-paste.js'
 import { createSpinnerState, advanceSpinner, formatSpinnerLine } from './spinner.js'
@@ -91,6 +91,7 @@ import {
 import { findPreviousSession, shouldPreloadStartupSessions } from './app/session-view.js'
 import { handleSelectorControl } from './app/selector-control.js'
 import { decideReplControl, type ReplControlAction } from './app/repl-control.js'
+import { extractAtPrefix, completeAtFile } from '../commands/file-completion.js'
 
 const SPINNER_INTERVAL_MS = 100
 
@@ -156,6 +157,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const expandedLines: OutputLine[] = []
   let lastProgressLineCount = 0
   let lastThinkingLineCount = 0
+  let fdAbort: AbortController | null = null
   // Streaming text: use stream machine's pendingText for the viewport.
   const screenLog = new ScreenLog()
   const gitVersion = getGitVersion(agent.cwd)
@@ -277,6 +279,16 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       cwd: appState.cwd,
       gitRepo,
       gitBranch,
+      // Footer stats
+      inputTokens: appState.sessionTokens.inputTokens,
+      outputTokens: appState.sessionTokens.outputTokens,
+      cacheReadTokens: appState.sessionTokens.cacheReadTokens,
+      contextTokens: appState.sessionTokens.contextTokens,
+      contextWindow: appState.sessionTokens.contextWindow,
+      provider: configInfo?.provider ?? '',
+      thinkingLevel: '',
+      cost: 0,
+      autoCompact: true,
     }
   }
 
@@ -289,8 +301,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   // --- buildFrame: the single render callback for the new differential renderer ---
-  function buildFrame(): string[] {
-    if (destroyed) return []
+  function buildFrame(): RenderFrame {
+    if (destroyed) return { lines: [] }
 
     const blocks: ViewBlock[] = []
 
@@ -361,7 +373,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // 8. Prompt
     blocks.push(...buildPromptBlocks(getPromptVM()))
 
-    return blocksToLines(blocks)
+    return { lines: blocksToLines(blocks) }
   }
 
   renderer.setRenderCallback(buildFrame)
@@ -1041,6 +1053,46 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         break
       }
       case 'tab': {
+        // Try @file completion first (async)
+        const currentLine = editor.lines[editor.cursorLine] ?? ''
+        const beforeCursor = currentLine.slice(0, editor.cursorCol)
+        const atPrefix = extractAtPrefix(beforeCursor)
+        if (atPrefix) {
+          // Cancel any previous fd search
+          if (fdAbort) fdAbort.abort()
+          fdAbort = new AbortController()
+          completeAtFile(beforeCursor, appState.cwd, fdAbort.signal).then(result => {
+            if (!result || result.items.length === 0) return
+            if (result.items.length === 1) {
+              // Single match — apply directly
+              const item = result.items[0]!
+              const line = editor.lines[editor.cursorLine] ?? ''
+              const newLine = line.slice(0, result.prefixStart) + item.value + (item.isDirectory ? '' : ' ') + line.slice(editor.cursorCol)
+              const newCol = result.prefixStart + item.value.length + (item.isDirectory ? 0 : 1)
+              const lines = [...editor.lines]
+              lines[editor.cursorLine] = newLine
+              editor = { ...editor, lines, cursorCol: newCol, ghostHint: '', completionCandidates: [] }
+            } else {
+              // Multiple matches — show candidates and apply common prefix
+              const labels = result.items.map(i => i.label)
+              const values = result.items.map(i => i.value)
+              const common = commonPrefixOf(values)
+              if (common.length > atPrefix.prefix.length) {
+                const line = editor.lines[editor.cursorLine] ?? ''
+                const newLine = line.slice(0, result.prefixStart) + common + line.slice(editor.cursorCol)
+                const newCol = result.prefixStart + common.length
+                const lines = [...editor.lines]
+                lines[editor.cursorLine] = newLine
+                editor = { ...editor, lines, cursorCol: newCol, ghostHint: '', completionCandidates: labels }
+              } else {
+                editor = { ...editor, completionCandidates: labels }
+              }
+            }
+            renderer.requestRender()
+          }).catch(() => { /* ignore */ })
+          break
+        }
+        // Sync slash/path completion
         const result = applyCompletion(editor)
         if (result.applied) {
           editor = result.state
@@ -1052,6 +1104,31 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         editor = insertText(editor, event.char)
         editor = refreshGhostHint(editor)
         renderer.requestRender()
+        // Auto-trigger @file completion on any char while in @ context
+        {
+          const charLine = editor.lines[editor.cursorLine] ?? ''
+          const charBefore = charLine.slice(0, editor.cursorCol)
+          const charAtPrefix = extractAtPrefix(charBefore)
+          if (charAtPrefix) {
+            if (fdAbort) fdAbort.abort()
+            fdAbort = new AbortController()
+            completeAtFile(charBefore, appState.cwd, fdAbort.signal).then(atResult => {
+              if (!atResult || atResult.items.length === 0) {
+                if (editor.completionCandidates.length > 0) {
+                  editor = { ...editor, completionCandidates: [] }
+                  renderer.requestRender()
+                }
+                return
+              }
+              const labels = atResult.items.map(i => i.label)
+              editor = { ...editor, completionCandidates: labels }
+              renderer.requestRender()
+            }).catch(() => { /* ignore */ })
+          } else if (editor.completionCandidates.length > 0) {
+            editor = { ...editor, completionCandidates: [] }
+            renderer.requestRender()
+          }
+        }
         break
       case 'paste':
         insertPaste(event.text)
@@ -1076,6 +1153,31 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         }
         editor = refreshGhostHint(editor)
         renderer.requestRender()
+        // Update @file candidates after backspace
+        {
+          const bsLine = editor.lines[editor.cursorLine] ?? ''
+          const bsBefore = bsLine.slice(0, editor.cursorCol)
+          const bsAtPrefix = extractAtPrefix(bsBefore)
+          if (bsAtPrefix) {
+            if (fdAbort) fdAbort.abort()
+            fdAbort = new AbortController()
+            completeAtFile(bsBefore, appState.cwd, fdAbort.signal).then(atResult => {
+              if (!atResult || atResult.items.length === 0) {
+                if (editor.completionCandidates.length > 0) {
+                  editor = { ...editor, completionCandidates: [] }
+                  renderer.requestRender()
+                }
+                return
+              }
+              const labels = atResult.items.map(i => i.label)
+              editor = { ...editor, completionCandidates: labels }
+              renderer.requestRender()
+            }).catch(() => { /* ignore */ })
+          } else if (editor.completionCandidates.length > 0) {
+            editor = { ...editor, completionCandidates: [] }
+            renderer.requestRender()
+          }
+        }
         break
       }
       case 'left': {
@@ -1760,4 +1862,16 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   process.on('SIGTERM', () => { cleanup(); fastExit(143) })
 
   await new Promise<void>(() => {})
+}
+
+function commonPrefixOf(strings: string[]): string {
+  if (strings.length === 0) return ''
+  let prefix = strings[0]!
+  for (let i = 1; i < strings.length; i++) {
+    const s = strings[i]!
+    let j = 0
+    while (j < prefix.length && j < s.length && prefix[j] === s[j]) j++
+    prefix = prefix.slice(0, j)
+  }
+  return prefix
 }

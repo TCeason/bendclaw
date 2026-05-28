@@ -32,6 +32,16 @@ export interface AppState {
   lastTokenAt: number
   /** Pending ask_user request from the agent (null = none) */
   askUserRequest: AskUserRequest | null
+  /** Session-level cumulative token stats (not reset between runs) */
+  sessionTokens: SessionTokenStats
+}
+
+export interface SessionTokenStats {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  contextTokens: number
+  contextWindow: number
 }
 
 export function emptyRunStats(): RunStats {
@@ -74,5 +84,6 @@ export function createInitialState(model: string, cwd: string): AppState {
     verboseEvents: [],
     lastTokenAt: 0,
     askUserRequest: null,
+    sessionTokens: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, contextTokens: 0, contextWindow: 0 },
   }
 }

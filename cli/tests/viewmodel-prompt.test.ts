@@ -31,6 +31,15 @@ function defaultInput(overrides?: Partial<PromptVMInput>): PromptVMInput {
     cwd: '/Users/test/project',
     gitRepo: 'project',
     gitBranch: 'main',
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    contextTokens: 0,
+    contextWindow: 0,
+    provider: '',
+    thinkingLevel: '',
+    cost: 0,
+    autoCompact: true,
     ...overrides,
   }
 }
@@ -115,9 +124,11 @@ describe('buildPromptBlocks', () => {
     expect(result).toContain('/resume')
   })
 
-  test('does not add top margin while loading', () => {
+  test('does not add top margin', () => {
     const [promptBlock] = buildPromptBlocks(defaultInput({ isLoading: true }))
-    expect(promptBlock?.marginTop).toBe(0)
+    expect(promptBlock?.marginTop).toBeUndefined()
+    const [idleBlock] = buildPromptBlocks(defaultInput({ isLoading: false }))
+    expect(idleBlock?.marginTop).toBeUndefined()
   })
 
   test('shows update hint', () => {

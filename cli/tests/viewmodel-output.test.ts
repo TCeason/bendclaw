@@ -140,7 +140,7 @@ describe('buildOutputBlocks', () => {
 
   test('system lines are dim', () => {
     const result = render([{ id: 's1', kind: 'system', text: '  some info' }])
-    expect(result).toContain('\x1b[2m')
+    expect(result).toContain('\x1b[38;2;119;119;119m')
   })
 
   test('error lines are red', () => {
@@ -150,6 +150,6 @@ describe('buildOutputBlocks', () => {
 
   test('run_summary is dim', () => {
     const result = render([{ id: 'r1', kind: 'run_summary', text: '  3 turns · 1.2k tokens' }])
-    expect(result).toContain('\x1b[2m')
+    expect(result).toContain('\x1b[38;2;119;119;119m')
   })
 })

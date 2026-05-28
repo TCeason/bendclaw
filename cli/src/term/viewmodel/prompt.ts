@@ -1,4 +1,5 @@
 import { COMMANDS, HIDDEN_COMMANDS } from '../../commands/index.js'
+import { CURSOR_MARKER } from '../renderer.js'
 import { line, block, plain, dim, colored, inverse, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
 
 export interface PromptVMInput {
@@ -23,6 +24,16 @@ export interface PromptVMInput {
   cwd: string
   gitRepo: string | null
   gitBranch: string | null
+  // Footer stats
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  contextTokens: number
+  contextWindow: number
+  provider: string
+  thinkingLevel: string
+  cost: number
+  autoCompact: boolean
 }
 
 const KNOWN_COMMANDS = new Set(
@@ -42,7 +53,7 @@ export function buildPromptBlocks(input: PromptVMInput): ViewBlock[] {
   const columns = Number.isFinite(input.columns) ? Math.max(1, Math.floor(input.columns)) : 80
   const border = '─'.repeat(columns)
 
-  blocks.push(block([line(dim(border))], input.isLoading ? 0 : 1))
+  blocks.push(block([line(dim(border))]))
 
   const inputLines: StyledLine[] = []
   for (let i = 0; i < input.lines.length; i++) {
@@ -53,12 +64,12 @@ export function buildPromptBlocks(input: PromptVMInput): ViewBlock[] {
 
     if (i === input.cursorLine && input.active) {
       if (text === '' && input.lines.length === 1 && input.placeholder) {
-        inputLines.push(line(prefix, inverse(' '), dim(' Type a message...')))
+        inputLines.push(line(prefix, plain(CURSOR_MARKER), inverse(' '), dim(' Type a message...')))
       } else {
         const before = text.slice(0, input.cursorCol)
         const cursorChar = text[input.cursorCol] ?? ' '
         const after = text.slice(input.cursorCol + 1)
-        const spans: StyledSpan[] = [prefix, ...styleInputText(before), inverse(cursorChar), ...styleInputText(after)]
+        const spans: StyledSpan[] = [prefix, ...styleInputText(before), plain(CURSOR_MARKER), inverse(cursorChar), ...styleInputText(after)]
         if (input.ghostHint) spans.push(dim(input.ghostHint))
         inputLines.push(line(...spans))
       }
@@ -87,59 +98,119 @@ export function buildPromptBlocks(input: PromptVMInput): ViewBlock[] {
 
   const footerBlocks = buildFooter(input, columns)
   blocks.push(footerBlocks)
+  blocks.push(block([line(plain(''))]))
 
   return blocks
 }
 
 function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
+  // Single line: [plan][verbose] cwd (branch) stats    (provider) model • thinking
   const leftSpans: StyledSpan[] = []
 
-  // model
-  leftSpans.push(dim(input.model))
-
-  // [log] / [plan] modes
   if (input.logMode) {
-    leftSpans.push(plain('  '))
-    leftSpans.push(colored('[log]', 'magenta', { bold: true }))
-    leftSpans.push(dim(' Esc to exit'))
+    leftSpans.push(dim('[log] '))
   }
   if (input.planning) {
-    leftSpans.push(plain('  '))
-    leftSpans.push(colored('[plan]', 'yellow', { bold: true }))
+    leftSpans.push(dim('[plan] '))
   }
   if (input.verbose) {
-    leftSpans.push(plain('  '))
-    leftSpans.push(colored('[verbose]', 'cyan', { bold: true }))
-    leftSpans.push(dim(' /v to toggle'))
+    leftSpans.push(dim('[verbose] '))
   }
 
-  // git repo · branch
-  if (input.gitRepo) {
-    leftSpans.push(dim(' · '))
-    let cwd = input.cwd
-    const home = process.env.HOME || process.env.USERPROFILE || ''
-    if (home && cwd.startsWith(home)) {
-      cwd = '~' + cwd.slice(home.length)
-    }
-    leftSpans.push(dim(cwd))
-    if (input.gitBranch) {
-      leftSpans.push(dim(' (' + input.gitBranch + ')'))
+  // cwd + branch
+  let cwd = input.cwd
+  const home = process.env.HOME || process.env.USERPROFILE || ''
+  if (home && cwd.startsWith(home)) {
+    cwd = '~' + cwd.slice(home.length)
+  }
+  leftSpans.push(dim(cwd))
+  if (input.gitBranch) {
+    leftSpans.push(dim(` (${input.gitBranch})`))
+  }
+
+  // Token stats + context
+  const statParts: string[] = []
+  if (input.inputTokens > 0) statParts.push(`\u2191${formatFooterTokens(input.inputTokens)}`)
+  if (input.outputTokens > 0) statParts.push(`\u2193${formatFooterTokens(input.outputTokens)}`)
+  if (input.cacheReadTokens > 0) statParts.push(`R${formatFooterTokens(input.cacheReadTokens)}`)
+  if (input.cost > 0) statParts.push(`$${input.cost.toFixed(3)}`)
+  if (input.contextWindow > 0 && input.contextTokens > 0) {
+    const pct = (input.contextTokens / input.contextWindow * 100).toFixed(1)
+    const ctxText = input.autoCompact
+      ? `${pct}%/${formatFooterTokens(input.contextWindow)} (auto)`
+      : `${pct}%/${formatFooterTokens(input.contextWindow)}`
+    statParts.push(ctxText)
+  }
+  if (statParts.length > 0) {
+    leftSpans.push(dim(' '))
+    const pctNum = input.contextWindow > 0 && input.contextTokens > 0
+      ? input.contextTokens / input.contextWindow * 100
+      : 0
+    if (pctNum > 90) {
+      leftSpans.push(colored(statParts.join(' '), 'red'))
+    } else if (pctNum > 70) {
+      leftSpans.push(colored(statParts.join(' '), 'yellow'))
+    } else {
+      leftSpans.push(dim(statParts.join(' ')))
     }
   }
 
+  // Model info follows stats on the left
+  if (input.provider || input.model) {
+    leftSpans.push(dim(' '))
+    let modelDisplay = input.model
+    if (input.provider) {
+      modelDisplay = `(${input.provider}) ${input.model}`
+    }
+    if (input.thinkingLevel && input.thinkingLevel !== 'off') {
+      modelDisplay += ` \u2022 ${input.thinkingLevel}`
+    }
+    leftSpans.push(dim(modelDisplay))
+  }
+
+  // Right side: server/update (rightmost)
   const rightSpans: StyledSpan[] = []
   if (input.serverPort != null && input.serverUptime) {
-    rightSpans.push(colored(`[server :${input.serverPort} · ${input.serverUptime}]`, 'green'))
+    rightSpans.push(colored(`[server :${input.serverPort} \u00b7 ${input.serverUptime}]`, 'green'))
   }
   if (input.updateHint) {
     if (rightSpans.length > 0) rightSpans.push(plain('  '))
     rightSpans.push(colored(input.updateHint, 'yellow'))
   }
 
-  const leftText = leftSpans.map(s => s.text).join('')
+  let leftText = leftSpans.map(s => s.text).join('')
   const rightText = rightSpans.map(s => s.text).join('')
-  const gap = Math.max(1, columns - leftText.length - rightText.length)
+  const totalWidth = leftText.length + rightText.length
 
+  if (totalWidth >= columns) {
+    // Overflow: drop right side. If left still too wide, truncate cwd.
+    let leftWidth = leftText.length
+    if (leftWidth >= columns) {
+      const cwdIdx = leftSpans.findIndex(s => s.text === cwd)
+      if (cwdIdx >= 0) {
+        const otherWidth = leftWidth - cwd.length
+        const maxCwd = Math.max(8, columns - otherWidth - 1)
+        if (cwd.length > maxCwd) {
+          const shortened = '...' + cwd.slice(cwd.length - maxCwd + 3)
+          leftSpans[cwdIdx] = dim(shortened)
+          leftWidth = leftSpans.map(s => s.text).join('').length
+        }
+      }
+      // If still too wide, just let it be — terminal will clip the end
+    }
+    return block([line(...leftSpans)])
+  }
+
+  const gap = Math.max(1, columns - leftText.length - rightText.length)
   const spans: StyledSpan[] = [...leftSpans, plain(' '.repeat(gap)), ...rightSpans]
+
   return block([line(...spans)])
+}
+
+function formatFooterTokens(count: number): string {
+  if (count < 1000) return count.toString()
+  if (count < 10000) return `${(count / 1000).toFixed(1)}k`
+  if (count < 1000000) return `${Math.round(count / 1000)}k`
+  if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`
+  return `${Math.round(count / 1000000)}M`
 }
