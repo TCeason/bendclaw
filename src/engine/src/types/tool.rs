@@ -152,6 +152,23 @@ pub trait AgentTool: Send + Sync {
         true
     }
 
+    /// Model-specific name aliases: (model_pattern, llm_name).
+    /// If model contains pattern (case-insensitive), use that name for LLM.
+    fn name_aliases(&self) -> Vec<(String, String)> {
+        vec![]
+    }
+
+    /// Resolve the tool name to present to a given model.
+    fn resolve_name(&self, model: &str) -> String {
+        let model_lower = model.to_lowercase();
+        for (pattern, alias) in self.name_aliases() {
+            if model_lower.contains(&pattern.to_lowercase()) {
+                return alias;
+            }
+        }
+        self.name().to_string()
+    }
+
     /// Execute the tool.
     ///
     /// The `ctx` parameter provides per-invocation context:

@@ -37,6 +37,10 @@ impl AgentTool for WriteFileTool {
         "write"
     }
 
+    fn name_aliases(&self) -> Vec<(String, String)> {
+        vec![("claude".into(), "Write".into())]
+    }
+
     fn label(&self) -> &str {
         "Write File"
     }

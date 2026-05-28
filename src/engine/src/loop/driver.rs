@@ -222,7 +222,7 @@ async fn run_loop(
                 .tools
                 .iter()
                 .map(|t| ToolDefinition {
-                    name: t.name().to_string(),
+                    name: t.resolve_name(&config.model),
                     description: t.description().to_string(),
                     parameters: t.parameters_schema(),
                 })
@@ -370,6 +370,7 @@ async fn run_loop(
                     &context.cwd,
                     &context.path_guard,
                     &config.spill,
+                    &config.model,
                 )
                 .await;
 

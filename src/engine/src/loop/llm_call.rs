@@ -55,7 +55,7 @@ pub(super) async fn stream_assistant_response(
         .tools
         .iter()
         .map(|t| ToolDefinition {
-            name: t.name().to_string(),
+            name: t.resolve_name(&config.model),
             description: t.description().to_string(),
             parameters: t.parameters_schema(),
         })

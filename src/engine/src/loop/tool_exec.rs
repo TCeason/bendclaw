@@ -19,11 +19,12 @@ pub(super) struct ToolExecutionResult {
 fn all_concurrency_safe(
     tools: &[Box<dyn AgentTool>],
     tool_calls: &[(String, String, serde_json::Value)],
+    model: &str,
 ) -> bool {
     tool_calls.iter().all(|(_, name, _)| {
         tools
             .iter()
-            .find(|t| t.name() == name)
+            .find(|t| t.resolve_name(model) == *name)
             .map(|t| t.is_concurrency_safe())
             .unwrap_or(false)
     })
@@ -40,6 +41,7 @@ pub(super) async fn execute_tool_calls(
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
+    model: &str,
 ) -> ToolExecutionResult {
     match strategy {
         ToolExecutionStrategy::Sequential => {
@@ -52,11 +54,12 @@ pub(super) async fn execute_tool_calls(
                 cwd,
                 path_guard,
                 spill,
+                model,
             )
             .await
         }
         ToolExecutionStrategy::Parallel => {
-            if all_concurrency_safe(tools, tool_calls) {
+            if all_concurrency_safe(tools, tool_calls, model) {
                 execute_batch(
                     tools,
                     tool_calls,
@@ -66,6 +69,7 @@ pub(super) async fn execute_tool_calls(
                     cwd,
                     path_guard,
                     spill,
+                    model,
                 )
                 .await
             } else {
@@ -78,6 +82,7 @@ pub(super) async fn execute_tool_calls(
                     cwd,
                     path_guard,
                     spill,
+                    model,
                 )
                 .await
             }
@@ -87,10 +92,16 @@ pub(super) async fn execute_tool_calls(
             let mut steering_messages: Option<Vec<AgentMessage>> = None;
 
             for (batch_idx, batch) in tool_calls.chunks(*size).enumerate() {
-                let batch_result = if all_concurrency_safe(tools, batch) {
-                    execute_batch(tools, batch, tx, cancel, None, cwd, path_guard, spill).await
+                let batch_result = if all_concurrency_safe(tools, batch, model) {
+                    execute_batch(
+                        tools, batch, tx, cancel, None, cwd, path_guard, spill, model,
+                    )
+                    .await
                 } else {
-                    execute_sequential(tools, batch, tx, cancel, None, cwd, path_guard, spill).await
+                    execute_sequential(
+                        tools, batch, tx, cancel, None, cwd, path_guard, spill, model,
+                    )
+                    .await
                 };
                 results.extend(batch_result.tool_results);
 
@@ -130,13 +141,16 @@ async fn execute_sequential(
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
+    model: &str,
 ) -> ToolExecutionResult {
     let mut results: Vec<Message> = Vec::new();
     let mut steering_messages: Option<Vec<AgentMessage>> = None;
 
     for (index, (id, name, args)) in tool_calls.iter().enumerate() {
-        let (msg, _is_error) =
-            execute_single_tool(tools, id, name, args, tx, cancel, cwd, path_guard, spill).await;
+        let (msg, _is_error) = execute_single_tool(
+            tools, id, name, args, tx, cancel, cwd, path_guard, spill, model,
+        )
+        .await;
         results.push(msg);
 
         // Check for steering — skip remaining tools if user interrupted
@@ -169,13 +183,16 @@ async fn execute_batch(
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
+    model: &str,
 ) -> ToolExecutionResult {
     use futures::future::join_all;
 
     let futures: Vec<_> = tool_calls
         .iter()
         .map(|(id, name, args)| {
-            execute_single_tool(tools, id, name, args, tx, cancel, cwd, path_guard, spill)
+            execute_single_tool(
+                tools, id, name, args, tx, cancel, cwd, path_guard, spill, model,
+            )
         })
         .collect();
 
@@ -213,8 +230,9 @@ async fn execute_single_tool(
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
+    model: &str,
 ) -> (Message, bool) {
-    let tool = tools.iter().find(|t| t.name() == name);
+    let tool = tools.iter().find(|t| t.resolve_name(model) == name);
 
     let preview_command = tool.and_then(|t| t.preview_command(args));
 

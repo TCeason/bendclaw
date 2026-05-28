@@ -178,6 +178,10 @@ impl AgentTool for BashTool {
         "bash"
     }
 
+    fn name_aliases(&self) -> Vec<(String, String)> {
+        vec![("claude".into(), "Bash".into())]
+    }
+
     fn label(&self) -> &str {
         "Execute Command"
     }
