@@ -238,11 +238,13 @@ fn content_sniffing_routes_diff_from_unknown_command() {
 #[test]
 fn json_filter_compacts_long_strings_and_arrays() {
     with_slim_enabled(|| {
-        let long_body = "x".repeat(120);
+        // Must exceed 32KB gate to trigger JSON compaction.
+        let long_body = "x".repeat(33_000);
         let stdout = format!(
             r#"{{"title":"demo","body":"{}","items":[1,2,3,4,5,6,7]}}"#,
             long_body
         );
+        assert!(stdout.len() > 32 * 1024);
         let out = run("gh pr view --json title,body,items", 0, &stdout, "");
         assert_eq!(out.stats.filter, "json");
         assert!(out.stdout.contains("title: \"demo\""));
@@ -273,12 +275,28 @@ fn json_filter_keeps_tiny_json_when_compaction_would_expand() {
 }
 
 #[test]
+fn json_filter_skips_moderate_json_under_gate() {
+    with_slim_enabled(|| {
+        // Simulate a ~7KB JSON response (e.g. tweet thread) — must pass through untouched.
+        let body = "x".repeat(6_000);
+        let stdout = format!(r#"[{{"id":"123","text":"{}","author":"user"}}]"#, body);
+        assert!(stdout.len() < 32 * 1024);
+        let out = run("opencli twitter thread 123 -f json", 0, &stdout, "");
+        // Should fall through to tail, which also won't fire (under 8KB).
+        assert_eq!(out.stats.filter, "none");
+        assert_eq!(out.stdout, stdout);
+    });
+}
+
+#[test]
 fn json_filter_escapes_strings() {
     with_slim_enabled(|| {
+        // Must exceed 32KB gate to trigger JSON compaction.
         let long = format!(
             r#"{{"msg":"quote \" and newline\n {}","items":[1,2,3,4,5,6,7]}}"#,
-            "x".repeat(120)
+            "x".repeat(33_000)
         );
+        assert!(long.len() > 32 * 1024);
         let out = run("unknown-tool", 0, &long, "");
         assert_eq!(out.stats.filter, "json");
         assert!(out.stdout.contains(r#"\""#));

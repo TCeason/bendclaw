@@ -11,6 +11,12 @@ const MAX_STRING_CHARS: usize = 80;
 const MAX_ARRAY_ITEMS: usize = 5;
 const MAX_OBJECT_KEYS: usize = 20;
 
+/// Only compact JSON outputs larger than this threshold.
+/// JSON compaction is lossy (truncates strings, drops array items, limits depth),
+/// so we only apply it to large outputs where token savings outweigh information loss.
+/// 32KB ≈ 8-10k tokens — well within context budget; above this the savings matter.
+const MIN_BYTES_TO_COMPACT: usize = 32 * 1024;
+
 pub struct JsonFilter;
 
 impl CmdFilter for JsonFilter {
@@ -20,6 +26,9 @@ impl CmdFilter for JsonFilter {
 
     fn apply(&self, _ctx: &CmdCtx<'_>, stream: Stream, text: &str) -> Option<String> {
         if stream != Stream::Stdout || !looks_like_json(text) {
+            return None;
+        }
+        if text.len() < MIN_BYTES_TO_COMPACT {
             return None;
         }
 
