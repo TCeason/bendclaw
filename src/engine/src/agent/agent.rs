@@ -230,22 +230,6 @@ impl Agent {
         self
     }
 
-    pub fn on_before_turn(
-        mut self,
-        f: impl Fn(&[AgentMessage], usize) -> bool + Send + Sync + 'static,
-    ) -> Self {
-        self.before_turn = Some(Arc::new(f));
-        self
-    }
-
-    pub fn on_after_turn(
-        mut self,
-        f: impl Fn(&[AgentMessage], &Usage) + Send + Sync + 'static,
-    ) -> Self {
-        self.after_turn = Some(Arc::new(f));
-        self
-    }
-
     /// Add an input filter. Filters run in order on user messages before the LLM call.
     pub fn with_input_filter(mut self, filter: impl InputFilter + 'static) -> Self {
         self.input_filters.push(Arc::new(filter));
@@ -283,20 +267,8 @@ impl Agent {
         self.is_streaming
     }
 
-    pub fn set_tools(&mut self, tools: Vec<Box<dyn AgentTool>>) {
-        self.tools = tools;
-    }
-
-    pub fn clear_messages(&mut self) {
-        self.messages.clear();
-    }
-
     pub fn append_message(&mut self, msg: AgentMessage) {
         self.messages.push(msg);
-    }
-
-    pub fn replace_messages(&mut self, msgs: Vec<AgentMessage>) {
-        self.messages = msgs;
     }
 
     pub fn save_messages(&self) -> Result<String, serde_json::Error> {
