@@ -117,9 +117,6 @@ pub enum SubmitOutcome {
     Run(Run),
     /// A gateway command was handled; carry this text back to the caller.
     Command(String),
-    /// A command was handled AND a follow-up run was kicked off.
-    /// The caller should display `msg` and then stream `run`.
-    CommandThenRun { msg: String, run: Run },
 }
 
 // ---------------------------------------------------------------------------
@@ -1053,9 +1050,9 @@ impl ForkedAgent {
                 }
                 Ok(run)
             }
-            SubmitOutcome::Command(_) | SubmitOutcome::CommandThenRun { .. } => Err(
-                EvotError::Run("commands not supported in forked agent".into()),
-            ),
+            SubmitOutcome::Command(_) => Err(EvotError::Run(
+                "commands not supported in forked agent".into(),
+            )),
         }
     }
 }

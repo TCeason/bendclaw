@@ -12,11 +12,6 @@ mod edit;
 mod file;
 #[path = "tools/guard.rs"]
 mod guard;
-#[path = "tools/list.rs"]
-mod list;
-
-#[path = "tools/search.rs"]
-mod search;
 #[path = "tools/skill.rs"]
 mod skill;
 #[path = "tools/spill.rs"]

@@ -49,7 +49,6 @@ export interface VariableInfo {
 export type SubmitOutcome =
   | { kind: 'run'; stream: QueryStream }
   | { kind: 'command'; message: string }
-  | { kind: 'commandThenRun'; message: string; stream: QueryStream }
 
 export interface ConfigInfo {
   provider: string
@@ -186,9 +185,6 @@ export class Agent {
     const run = outcome.takeRun()
     if (!run) {
       throw new Error('No run in submit outcome')
-    }
-    if (outcome.kind === 'commandThenRun') {
-      return { kind: 'commandThenRun', message: outcome.message ?? '', stream: new QueryStream(run) }
     }
     return { kind: 'run', stream: new QueryStream(run) }
   }

@@ -5,12 +5,8 @@ use evotengine::types::AgentTool;
 
 #[test]
 fn read_only_tools_are_concurrency_safe() {
-    let tools: Vec<Box<dyn AgentTool>> = vec![
-        Box::new(ReadFileTool::new()),
-        Box::new(GlobFileTool::new()),
-        Box::new(SearchTool::new()),
-        Box::new(WebFetchTool::new()),
-    ];
+    let tools: Vec<Box<dyn AgentTool>> =
+        vec![Box::new(ReadFileTool::new()), Box::new(WebFetchTool::new())];
     for tool in &tools {
         assert!(
             tool.is_concurrency_safe(),

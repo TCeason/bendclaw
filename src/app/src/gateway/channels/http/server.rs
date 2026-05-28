@@ -113,10 +113,6 @@ impl Server {
                 Ok(SubmitOutcome::Command(text)) => {
                     let _ = tx.send(stream::text_event(&text)).await;
                 }
-                Ok(SubmitOutcome::CommandThenRun { msg, run }) => {
-                    let _ = tx.send(stream::text_event(&msg)).await;
-                    drain_run(run, tx.clone()).await;
-                }
                 Err(e) => {
                     let _ = tx.send(stream::error_event(e.to_string())).await;
                 }
