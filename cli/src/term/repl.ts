@@ -548,14 +548,16 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function setTerminalTitle(suffix?: string) {
     if (titleFrozen) return
-    const base = 'Evot'
+    const dirName = agent.cwd.split('/').pop() || agent.cwd
+    const base = `evot - ${dirName}`
     const portPart = serverState ? ` · :${serverState.port}` : ''
     const title = suffix ? `${suffix} ${base}${portPart}` : `${base}${portPart}`
     process.stdout.write(`\x1b]0;${title}\x07`)
   }
 
   function freezeTerminalTitle(suffix?: string) {
-    const base = 'Evot'
+    const dirName = agent.cwd.split('/').pop() || agent.cwd
+    const base = `evot - ${dirName}`
     const portPart = serverState ? ` · :${serverState.port}` : ''
     const title = suffix ? `${suffix} ${base}${portPart}` : `${base}${portPart}`
     process.stdout.write(`\x1b]0;${title}\x07`)
