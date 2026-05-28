@@ -198,7 +198,11 @@ export class TermRenderer {
 
     // Get new frame from callback
     const raw = this.renderCallback()
-    const newLines = Array.isArray(raw) ? raw : raw.lines
+    const rawLines = Array.isArray(raw) ? raw : raw.lines
+    // Truncate lines to terminal width to prevent wrapping, which would
+    // break the 1-logical-line = 1-physical-row assumption used by the
+    // differential renderer's cursor math.
+    const newLines = truncateLinesToWidth(rawLines, width)
     const cursorPos = this.extractCursorPosition(newLines, height)
 
     // --- Full render helper ---
@@ -433,4 +437,81 @@ function safeDimension(n: number | undefined, fallback: number): number {
 
 function stripAnsiVisibleWidth(text: string): number {
   return stringWidth(stripAnsi(text))
+}
+
+/**
+ * Truncate each line so its visible width does not exceed `maxWidth`.
+ * Preserves ANSI escape sequences and avoids splitting multi-byte characters.
+ * Lines at or under the width are returned unchanged (fast path).
+ */
+function truncateLinesToWidth(lines: string[], maxWidth: number): string[] {
+  let anyTruncated = false
+  const result: string[] = new Array(lines.length)
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!
+    // Fast path: check plain length first (avoids expensive stringWidth call
+    // for the common case where line is short and ASCII-only).
+    if (line.length <= maxWidth) {
+      result[i] = line
+      continue
+    }
+    const visWidth = stringWidth(stripAnsi(line))
+    if (visWidth <= maxWidth) {
+      result[i] = line
+      continue
+    }
+    // Need to truncate. Walk the string tracking visible width.
+    anyTruncated = true
+    result[i] = truncateAnsiLine(line, maxWidth)
+  }
+  return anyTruncated ? result : lines
+}
+
+/**
+ * Truncate a single ANSI-styled line to `maxWidth` visible columns.
+ * Keeps escape sequences intact and appends a reset if any were open.
+ */
+function truncateAnsiLine(line: string, maxWidth: number): string {
+  // eslint-disable-next-line no-control-regex
+  const ANSI_RE = /\x1b(?:\[[0-9;]*[A-Za-z]|\][^\x07]*\x07|\[[^\x1b]*)/g
+  let visWidth = 0
+  let out = ''
+  let lastIndex = 0
+  let hasOpenEscape = false
+
+  ANSI_RE.lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = ANSI_RE.exec(line)) !== null) {
+    // Process visible text before this escape
+    const textBefore = line.slice(lastIndex, match.index)
+    if (textBefore) {
+      for (const ch of textBefore) {
+        const cw = stringWidth(ch)
+        if (visWidth + cw > maxWidth) {
+          return out + (hasOpenEscape ? '\x1b[0m' : '')
+        }
+        out += ch
+        visWidth += cw
+      }
+    }
+    // Append the escape sequence itself (zero width)
+    out += match[0]
+    hasOpenEscape = true
+    lastIndex = ANSI_RE.lastIndex
+  }
+
+  // Process remaining text after last escape
+  const tail = line.slice(lastIndex)
+  if (tail) {
+    for (const ch of tail) {
+      const cw = stringWidth(ch)
+      if (visWidth + cw > maxWidth) {
+        return out + (hasOpenEscape ? '\x1b[0m' : '')
+      }
+      out += ch
+      visWidth += cw
+    }
+  }
+
+  return out
 }

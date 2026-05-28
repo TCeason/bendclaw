@@ -25,8 +25,10 @@ pub(super) fn compact_context(
     let pre_stats = crate::context::compute_call_stats_from_agent_messages(&context.messages);
 
     let budget_state = CompactionBudgetState::from_tracker(context_tracker, &context.messages);
+    let raw_estimated =
+        CompactionBudgetState::raw_estimated_tokens(context_tracker, &context.messages);
     let compact_budget = crate::context::ContextBudgetSnapshot {
-        estimated_tokens: budget_state.estimated_tokens,
+        estimated_tokens: raw_estimated,
         budget_tokens: budget.budget_tokens,
         system_prompt_tokens: budget.system_prompt_tokens,
         tool_definition_tokens: budget.tool_definition_tokens,

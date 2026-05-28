@@ -22,6 +22,7 @@ impl Pass for Shrink {
     fn should_run(&self, ctx: &PassContext<'_>) -> bool {
         ctx.pressure.estimated_tokens > ctx.config.compact_trigger()
             || ctx.pressure.message_tokens > ctx.config.compact_trigger()
+            || ctx.pressure.image_pressure
     }
 
     fn run(&self, messages: Vec<AgentMessage>, ctx: &PassContext<'_>) -> PassResult {

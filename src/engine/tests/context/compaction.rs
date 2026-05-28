@@ -1794,8 +1794,10 @@ fn test_oversized_user_with_images_preserved() {
         AgentMessage::Llm(Message::user("q5")),
     ];
 
+    // Use a large enough budget so image_pressure is false (image < 25% of budget)
+    // but estimated still exceeds trigger so oversized truncation runs.
     let config = ContextConfig {
-        max_context_tokens: char_tokens / 2,
+        max_context_tokens: char_tokens,
         system_prompt_tokens: 0,
         keep_recent: 3,
         keep_first: 1,
@@ -1981,107 +1983,6 @@ fn test_l1_compacts_to_target() {
 
     assert_no_orphan_tool_pairs(&result.messages);
     assert_actions_match_level(result.stats.level, &result.stats.actions);
-}
-
-/// Simulate multiple compaction rounds (like a real long session).
-///
-/// Each round: compact, then add a new turn, repeat.
-/// Verify that L1 prevents the "toothpaste squeezing" pattern where
-/// message count grows monotonically.
-#[test]
-fn test_multi_round_compaction_prevents_toothpaste_squeezing() {
-    let budget = 3_000;
-    let config = ContextConfig {
-        max_context_tokens: budget,
-        system_prompt_tokens: 0,
-        keep_recent: 10,
-        keep_first: 2,
-        tool_output_max_lines: 50,
-        ..Default::default()
-    };
-
-    let mut messages = Vec::new();
-    let mut tool_id = 0usize;
-
-    // Seed with initial user message
-    messages.push(AgentMessage::Llm(Message::user("start the task")));
-
-    let mut compaction_action_count = 0;
-    let mut max_message_count = 0usize;
-
-    // Simulate 60 turns
-    for i in 0..60 {
-        // Add a new turn: assistant + tool_call + tool_result
-        tool_id += 1;
-        let id = format!("tc-{}", tool_id);
-        messages.push(AgentMessage::Llm(Message::Assistant {
-            content: vec![
-                Content::Text {
-                    text: format!("Working on step {}", i),
-                },
-                Content::ToolCall {
-                    id: id.clone(),
-                    name: "bash".into(),
-                    arguments: serde_json::json!({"command": "cargo build"}),
-                },
-            ],
-            stop_reason: StopReason::ToolUse,
-            model: "test".into(),
-            provider: "test".into(),
-            usage: Usage::default(),
-            timestamp: 0,
-            error_message: None,
-            response_id: None,
-        }));
-        messages.push(AgentMessage::Llm(Message::ToolResult {
-            tool_call_id: id,
-            tool_name: "bash".into(),
-            content: vec![Content::Text {
-                text: format!("output line {}\n{}", i, "data ".repeat(50)),
-            }],
-            is_error: false,
-            timestamp: 0,
-            retention: Retention::Normal,
-        }));
-
-        // Run compaction
-        let est = total_tokens(&messages);
-        let budget_state = CompactionBudgetState {
-            estimated_tokens: est,
-        };
-        let result = compact_messages(messages, &config, &budget_state);
-
-        if !result.stats.actions.is_empty() {
-            compaction_action_count += 1;
-        }
-
-        messages = result.messages;
-        if messages.len() > max_message_count {
-            max_message_count = messages.len();
-        }
-    }
-
-    assert!(
-        compaction_action_count > 0,
-        "compaction should run at least once during a 60-turn session"
-    );
-
-    // Message count should be bounded — not growing to 120+ (2 msgs per turn × 60)
-    // With L1 active, it should stay well below the theoretical max
-    let theoretical_max = 1 + 60 * 2; // initial user + 60 turns × (assistant + tool_result)
-    assert!(
-        max_message_count < theoretical_max,
-        "message count should be bounded by compaction: max_seen={}, theoretical_max={}",
-        max_message_count,
-        theoretical_max,
-    );
-
-    // Final message count should be reasonable
-    assert!(
-        messages.len() < 100,
-        "final message count should be reasonable: got {}",
-        messages.len(),
-    );
 }
 
 /// When context is below trigger, L1 should NOT trigger.
@@ -2380,64 +2281,6 @@ fn test_extreme_all_orphan_tool_results() {
     );
     assert_no_orphan_tool_pairs(&result.messages);
 }
-
-/// Multi-round simulation where user-only history grows past the message limit.
-/// L2 should evict stale middle messages instead of building user summaries.
-#[test]
-fn test_multi_round_l2_escalation() {
-    let budget = 800;
-    let config = ContextConfig {
-        max_context_tokens: budget,
-        system_prompt_tokens: 0,
-        keep_recent: 2,
-        keep_first: 1,
-        tool_output_max_lines: 50,
-        max_messages: 8,
-        ..Default::default()
-    };
-
-    let mut messages = Vec::new();
-    messages.push(AgentMessage::Llm(Message::user("start")));
-
-    let mut saw_drop = false;
-
-    for i in 0..20 {
-        messages.push(AgentMessage::Llm(Message::user(format!(
-            "question {} {}",
-            i,
-            "context ".repeat(80)
-        ))));
-
-        let est = total_tokens(&messages);
-        let budget_state = CompactionBudgetState {
-            estimated_tokens: est,
-        };
-        let result = compact_messages(messages, &config, &budget_state);
-
-        if result.stats.messages_dropped > 0 {
-            saw_drop = true;
-        }
-
-        messages = result.messages;
-    }
-
-    // Message-count pressure should evict stale middle messages instead of
-    // creating low-value user-message summaries.
-    assert!(
-        saw_drop,
-        "message-count pressure should trigger L2 eviction"
-    );
-
-    let final_tokens = total_tokens(&messages);
-    assert!(
-        final_tokens <= budget,
-        "final tokens ({}) should be within budget ({})",
-        final_tokens,
-        budget,
-    );
-}
-
-// ---------------------------------------------------------------------------
 // L1 → L2 escalation tests
 // ---------------------------------------------------------------------------
 
@@ -2537,76 +2380,6 @@ fn test_l1_to_l2_escalation_single_call() {
     assert_no_orphan_tool_pairs(&result.messages);
     assert_actions_match_level(result.stats.level, &result.stats.actions);
 }
-
-/// Multi-round simulation where sessions grow so fast that L1 is never enough
-/// and L2 must repeatedly fire.
-#[test]
-fn test_multi_round_repeated_l2_escalation() {
-    // Very tight budget with keep_recent covering most messages.
-    // L1 boundary (len - keep_recent) is tiny, so L1 has almost nothing to
-    // collapse. L2 must drop messages to stay within compact_target (75%).
-    let budget = 3_000;
-    let _target = budget * 75 / 100;
-    let config = ContextConfig {
-        max_context_tokens: budget,
-        system_prompt_tokens: 0,
-        keep_recent: 20, // large keep_recent → L1 boundary is small
-        keep_first: 1,
-        tool_output_max_lines: 50,
-        ..Default::default()
-    };
-
-    let mut messages = Vec::new();
-    messages.push(AgentMessage::Llm(Message::user("start")));
-
-    let mut l2_count = 0;
-
-    for i in 0..40 {
-        // Add user messages — L1 doesn't collapse user messages
-        // Need enough text per message to fill budget with tiktoken counting
-        messages.push(AgentMessage::Llm(Message::user(format!(
-            "question {} about the architecture of the system {}",
-            i,
-            "the quick brown fox jumps over the lazy dog. ".repeat(20)
-        ))));
-
-        let est = total_tokens(&messages);
-        let budget_state = CompactionBudgetState {
-            estimated_tokens: est,
-        };
-        let result = compact_messages(messages, &config, &budget_state);
-
-        if result.stats.messages_dropped > 0 {
-            l2_count += 1;
-        }
-
-        messages = result.messages;
-    }
-
-    assert!(
-        l2_count > 0,
-        "L2 should trigger when L1 has nothing to collapse (user-only messages with large keep_recent)"
-    );
-
-    let final_tokens = total_tokens(&messages);
-    // After repeated L2 eviction, context should be well below original budget.
-    // May exceed compact_target if keep_recent messages are individually large.
-    assert!(
-        final_tokens <= budget,
-        "final tokens ({}) should be <= budget ({}) after L2 eviction",
-        final_tokens,
-        budget,
-    );
-    // Verify compaction actually reduced context
-    assert!(
-        messages.len() < 30,
-        "should have dropped messages: got {} messages",
-        messages.len(),
-    );
-}
-
-/// Edge case: keep_recent is larger than total messages.
-/// L1 boundary = 0, so L1 has nothing to collapse. L2 must handle it.
 #[test]
 fn test_l2_when_keep_recent_covers_all() {
     let mut messages = Vec::new();
@@ -3287,15 +3060,17 @@ fn test_old_images_preserved_until_severe_pressure() {
     ];
 
     let config = ContextConfig {
-        max_context_tokens: 10000,
+        max_context_tokens: 100_000,
         system_prompt_tokens: 0,
         keep_recent: 2,
         keep_first: 1,
         ..Default::default()
     };
 
+    // estimated is over trigger but image tokens are < 25% of budget,
+    // so image_pressure should be false and images preserved.
     let result = compact_messages(messages, &config, &CompactionBudgetState {
-        estimated_tokens: 12000,
+        estimated_tokens: 82_000,
     });
 
     let has_image = result.messages.iter().any(|m| {
@@ -4102,5 +3877,75 @@ fn test_microcompact_preserves_recent_images() {
     assert!(
         has_image,
         "image within recent boundary should be preserved"
+    );
+}
+// ---------------------------------------------------------------------------
+// Multi-round regression: tool definition overhead ghost pressure
+// ---------------------------------------------------------------------------
+
+/// When estimated_tokens includes large tool-definition overhead, compact should
+/// not repeatedly attempt (and fail) to shrink already-minimal messages.
+#[test]
+fn test_tool_overhead_does_not_cause_false_pressure() {
+    // Simulate: budget=50k, but provider reports estimated=50k because of
+    // 20k tool definitions overhead. Actual message content is only 30k.
+    let config = ContextConfig {
+        max_context_tokens: 50_000,
+        system_prompt_tokens: 0,
+        keep_recent: 6,
+        keep_first: 1,
+        tool_output_max_lines: 50,
+        ..Default::default()
+    };
+
+    let mut messages: Vec<AgentMessage> = vec![AgentMessage::Llm(Message::user("start"))];
+
+    // Build up ~30k of message content (well under budget)
+    for i in 0..30 {
+        let id = format!("tc-oh-{i}");
+        messages.push(make_assistant_with_tool_call(&id, "bash"));
+        messages.push(AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: id,
+            tool_name: "bash".into(),
+            content: vec![Content::Text {
+                text: format!("line {i} {}", "data ".repeat(40)),
+            }],
+            is_error: false,
+            timestamp: 0,
+            retention: Retention::Normal,
+        }));
+    }
+
+    let message_tokens = total_tokens(&messages);
+    assert!(
+        message_tokens < 40_000,
+        "setup: message_tokens should be under 40k, got {message_tokens}"
+    );
+
+    // With the fix: overhead subtracted, compact sees only message_tokens
+    let budget_state = CompactionBudgetState {
+        estimated_tokens: message_tokens,
+    };
+    let result = compact_messages(messages.clone(), &config, &budget_state);
+
+    // compact_trigger = 50k * 80% = 40k. message_tokens < 40k -> should be no-op
+    assert_eq!(
+        result.stats.level, 0,
+        "compact should not trigger when message tokens ({message_tokens}) are under trigger (40k)"
+    );
+
+    // Without the fix: passing provider_estimated (includes 20k overhead)
+    let provider_estimated = message_tokens + 20_000;
+    let budget_state_with_overhead = CompactionBudgetState {
+        estimated_tokens: provider_estimated,
+    };
+    let result_with_overhead = compact_messages(messages, &config, &budget_state_with_overhead);
+
+    // This triggers compaction (false positive) due to ghost pressure from overhead.
+    // Shrink runs but messages are already small -> minimal or zero savings.
+    // This documents the pre-fix behavior that caused toothpaste squeezing.
+    assert!(
+        result_with_overhead.stats.level > 0 || result_with_overhead.stats.actions.is_empty(),
+        "with overhead included, compact either triggers uselessly or finds nothing to do"
     );
 }

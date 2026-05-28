@@ -24,10 +24,11 @@ impl Pressure {
         estimated_tokens: usize,
     ) -> Self {
         let message_tokens = total_tokens(messages);
-        let (compactable_tool_result_tokens, max_tool_result_tokens, max_user_tokens) =
+        let (compactable_tool_result_tokens, max_tool_result_tokens, max_user_tokens, image_tokens) =
             compute_message_stats(messages);
-        let image_pressure = estimated_tokens > config.budget_tokens.saturating_mul(2)
-            && estimated_tokens > message_tokens.saturating_add(config.budget_tokens);
+        let image_pressure = image_tokens > config.budget_tokens / 4
+            && (estimated_tokens > config.compact_trigger()
+                || image_tokens > config.budget_tokens / 2);
 
         Self {
             message_tokens,
@@ -41,10 +42,11 @@ impl Pressure {
     }
 }
 
-fn compute_message_stats(messages: &[AgentMessage]) -> (usize, usize, usize) {
+fn compute_message_stats(messages: &[AgentMessage]) -> (usize, usize, usize, usize) {
     let mut compactable_tokens = 0usize;
     let mut max_tool_tokens = 0usize;
     let mut max_user_tokens = 0usize;
+    let mut image_tokens = 0usize;
 
     for msg in messages {
         match msg {
@@ -65,11 +67,22 @@ fn compute_message_stats(messages: &[AgentMessage]) -> (usize, usize, usize) {
                 }
             }
             AgentMessage::Llm(Message::User { content, .. }) => {
-                max_user_tokens = max_user_tokens.max(content_tokens(content));
+                let user_tokens = content_tokens(content);
+                max_user_tokens = max_user_tokens.max(user_tokens);
+                for c in content {
+                    if matches!(c, Content::Image { .. }) {
+                        image_tokens += content_tokens(std::slice::from_ref(c));
+                    }
+                }
             }
             _ => {}
         }
     }
 
-    (compactable_tokens, max_tool_tokens, max_user_tokens)
+    (
+        compactable_tokens,
+        max_tool_tokens,
+        max_user_tokens,
+        image_tokens,
+    )
 }

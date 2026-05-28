@@ -1,3 +1,5 @@
+#[path = "context/compact_scenarios.rs"]
+mod compact_scenarios;
 #[path = "context/compaction.rs"]
 mod compaction;
 #[path = "context/compaction_fuzz.rs"]

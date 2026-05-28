@@ -189,10 +189,20 @@ impl CompactionBudgetState {
     }
 
     /// Build from tracker estimate and message list.
+    ///
+    /// Subtracts system+tool overhead so compaction decisions are based on
+    /// message content only — the part compaction can actually reduce.
     pub fn from_tracker(tracker: &ContextTracker, messages: &[AgentMessage]) -> Self {
+        let raw = tracker.estimate_context_tokens(messages);
+        let overhead = tracker.system_tool_overhead_tokens();
         Self {
-            estimated_tokens: tracker.estimate_context_tokens(messages),
+            estimated_tokens: raw.saturating_sub(overhead),
         }
+    }
+
+    /// Raw estimated tokens (including system+tool overhead) for display purposes.
+    pub fn raw_estimated_tokens(tracker: &ContextTracker, messages: &[AgentMessage]) -> usize {
+        tracker.estimate_context_tokens(messages)
     }
 }
 
