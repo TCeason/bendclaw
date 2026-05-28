@@ -108,8 +108,37 @@ function buildToolCalls(
       args: tc.input,
       status: r ? (r.isError ? 'error' : 'done') : 'running' as const,
       result: r?.content,
+      previewCommand: inferPreviewCommand(tc.name, tc.input),
     }
   })
+}
+
+/** Re-derive previewCommand from tool name + args (mirrors engine preview_command logic). */
+function inferPreviewCommand(name: string, args: Record<string, unknown>): string | undefined {
+  const n = name.toLowerCase()
+  if (n === 'bash') {
+    const cmd = args.command as string | undefined
+    return cmd || undefined
+  }
+  if (n === 'read') {
+    const path = args.path as string | undefined
+    if (!path) return undefined
+    const offset = args.offset as number | undefined
+    const limit = args.limit as number | undefined
+    if (offset || limit) return `read ${path} [${offset ?? 1}:${(offset ?? 1) + (limit ?? 0) - 1}]`
+    return `read ${path}`
+  }
+  if (n === 'write') {
+    const path = args.path as string | undefined
+    return path ? `write ${path}` : undefined
+  }
+  if (n === 'edit') {
+    const path = args.path as string | undefined
+    const edits = args.edits as unknown[] | undefined
+    const count = edits?.length ?? 1
+    return path ? `edit ${path} (${count} replacement(s))` : undefined
+  }
+  return undefined
 }
 
 // ---------------------------------------------------------------------------
