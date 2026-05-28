@@ -64,7 +64,7 @@ Evot maintains a reproducible eval pipeline that runs the same real-world tasks 
 
 ## 📢 News
 
-- **2026-05-17** [REPL] `/goal` — autonomous objectives, e.g. `/goal remove unwraps in Rust context compaction`.
+- ~~**2026-05-17** [REPL] `/goal` — autonomous objectives, e.g. `/goal remove unwraps in Rust context compaction`.~~ *(removed — the agent loop handles multi-step tasks natively)*
 - **2026-05-11** [Skills] Built-in `opencli` — control the browser, use logged-in cookies, read Feishu/Lark messages, Twitter/X timelines, and more.
 - **2026-05-11** [Slim] Tool outputs now auto-compact, with token savings shown inline.
 - **2026-05-08** [REPL] `/harden` — stress-test plans and git changes before shipping. Inspired by [@cjzafir](https://x.com/cjzafir/status/2052110266566107321).
