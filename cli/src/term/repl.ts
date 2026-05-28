@@ -296,8 +296,31 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     return streamMachine?.toolProgress || streamMachine?.lastToolProgress || ''
   }
 
+  // Release notes (shown once after update)
+  let releaseNotes: string[] | null = null
+  try {
+    const { shouldShowReleaseNotes } = await import('../update/seen-version.js')
+    if (shouldShowReleaseNotes(appVersion)) {
+      const { parseReleaseNotes } = await import('../update/notes.js')
+      const { fetchLatestStable } = await import('../update/check.js')
+      fetchLatestStable().then((info) => {
+        if (info?.body) {
+          releaseNotes = parseReleaseNotes(info.body)
+          renderer.requestRender()
+        }
+      }).catch(() => {})
+    }
+  } catch { /* best effort */ }
+
   function currentBannerText(): string {
-    return renderBanner(agent.model, agent.cwd, configInfo, renderer.termCols, serverState)
+    return renderBanner({
+      model: agent.model,
+      cwd: agent.cwd,
+      configInfo,
+      columns: renderer.termCols,
+      serverState,
+      releaseNotes,
+    })
   }
 
   // --- buildFrame: the single render callback for the new differential renderer ---

@@ -35,7 +35,7 @@ export {
   type AskOption,
   type AskAnswer,
 } from './ask.js'
-export { renderBanner } from './banner.js'
+export { renderBanner, type BannerOptions } from './banner.js'
 export { startRepl, type ReplOptions } from './repl.js'
 export * from './viewmodel/index.js'
 export * from './input/editor.js'
