@@ -3,8 +3,6 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-use super::metrics::UsageSummary;
-
 // ---------------------------------------------------------------------------
 // MarkerKind — types of transcript markers that reset the context baseline
 // ---------------------------------------------------------------------------
@@ -262,8 +260,4 @@ pub fn entry_preview(item: &TranscriptItem) -> String {
     } else {
         preview
     }
-}
-
-pub fn empty_usage() -> UsageSummary {
-    UsageSummary::default()
 }

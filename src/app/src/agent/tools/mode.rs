@@ -11,13 +11,3 @@ pub enum ToolMode {
     /// Forked conversation: read-only
     Readonly,
 }
-
-impl ToolMode {
-    pub fn is_planning(&self) -> bool {
-        matches!(self, Self::Planning { .. })
-    }
-
-    pub fn is_readonly(&self) -> bool {
-        matches!(self, Self::Readonly)
-    }
-}
