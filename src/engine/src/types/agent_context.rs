@@ -4,7 +4,6 @@ use std::sync::Arc;
 use super::message::AgentMessage;
 use super::tool::AgentTool;
 use crate::tools::guard::PathGuard;
-use crate::tools::TodoState;
 
 // ---------------------------------------------------------------------------
 // Agent context (passed to the loop)
@@ -17,7 +16,6 @@ pub struct AgentContext {
     pub cwd: PathBuf,
     pub path_guard: Arc<PathGuard>,
     pub prompt_cache_key: Option<String>,
-    pub todo_state: TodoState,
 }
 
 // ---------------------------------------------------------------------------

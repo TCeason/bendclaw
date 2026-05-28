@@ -3,11 +3,8 @@
 //! This module owns the boundary between `evot_engine::AgentEvent` and the
 //! app-layer `RunEvent`. No engine types leak beyond this module.
 //!
-//! A single `Run` may comprise multiple internal engine turns when the
-//! session has an active goal: `execute_run` drives an outer loop that
-//! verifies the stop condition between turns and rebuilds the engine via the
-//! `TurnFactory`. Consumers see one `RunStarted` and one aggregated
-//! `RunFinished`.
+//! A single `Run` comprises one engine turn. Consumers see one `RunStarted`
+//! and one aggregated `RunFinished`.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -27,21 +24,9 @@ use super::event::RunEvent;
 use super::event::RunEventContext;
 use super::event::RunEventPayload;
 use super::run::Run;
-use crate::agent::goal::runtime::AfterTurn;
-use crate::agent::goal::runtime::GoalTurnReport;
 use crate::agent::session::Session;
 use crate::conf::Protocol;
 use crate::error::Result;
-
-pub type RunFuture<'a> =
-    std::pin::Pin<Box<dyn std::future::Future<Output = Result<Run>> + Send + 'a>>;
-
-/// Closure type for goal verification: sends a prompt to the verifier model and returns a verdict.
-pub(in crate::agent) type VerifyFn = Arc<
-    dyn Fn(String) -> futures::future::BoxFuture<'static, Result<crate::agent::goal::GoalVerdict>>
-        + Send
-        + Sync,
->;
 use crate::types::CompactRecord;
 use crate::types::ContextCompactionCompletedStats;
 use crate::types::ContextCompactionStartedStats;
@@ -78,7 +63,6 @@ pub struct EngineOptions {
     pub path_guard: std::sync::Arc<evot_engine::PathGuard>,
     pub spill_dir: Option<std::path::PathBuf>,
     pub prompt_cache_key: Option<String>,
-    pub todo_state: evot_engine::tools::TodoState,
 }
 
 // ---------------------------------------------------------------------------
@@ -100,7 +84,7 @@ pub(in crate::agent) struct TurnInput {
 ///
 /// The runtime calls this once per turn. The factory captures whatever
 /// the agent layer needs (config, sandbox, tools, system prompt) and
-/// resolves the latest history + goal state at call time.
+/// resolves the latest history at call time.
 #[async_trait]
 pub(in crate::agent) trait TurnFactory: Send + Sync + 'static {
     /// Build the engine options + history + initial user input for this turn.
@@ -119,8 +103,6 @@ pub(in crate::agent) struct ExecuteRunArgs {
     pub factory: Arc<dyn TurnFactory>,
     pub on_complete: Option<Arc<dyn Fn() + Send + Sync>>,
     pub telemetry: Option<crate::telemetry::config::TelemetryConfig>,
-    /// Closure that verifies whether an active goal should stop.
-    pub verify_fn: Option<VerifyFn>,
 }
 
 pub(in crate::agent) fn execute_run(args: ExecuteRunArgs) -> Run {
@@ -157,7 +139,7 @@ enum RuntimeEvent {
 }
 
 // ---------------------------------------------------------------------------
-// run_loop — outer loop: drive engine turns and consult goal verifier between
+// run_loop — outer loop: drive engine turns
 // ---------------------------------------------------------------------------
 
 async fn run_loop(args: ExecuteRunArgs, tx: mpsc::UnboundedSender<RunEvent>, control: RunControl) {
@@ -169,7 +151,6 @@ async fn run_loop(args: ExecuteRunArgs, tx: mpsc::UnboundedSender<RunEvent>, con
         factory,
         on_complete,
         telemetry,
-        verify_fn,
     } = args;
 
     let started_at = Instant::now();
@@ -180,14 +161,10 @@ async fn run_loop(args: ExecuteRunArgs, tx: mpsc::UnboundedSender<RunEvent>, con
     let mut total_transcripts: usize = 0;
     let mut last_text = String::new();
     let mut compact_records: Vec<CompactRecord> = Vec::new();
-    let mut next_input = Some(initial_input);
-    while let Some(input) = next_input.take() {
-        if control.is_cancelled() {
-            break;
-        }
 
-        let outcome = match factory.build(input).await {
-            Ok(turn) => {
+    if !control.is_cancelled() {
+        let outcome = match factory.build(initial_input).await {
+            Ok(turn) => Some(
                 drive_one_turn(
                     turn,
                     &tx,
@@ -197,8 +174,8 @@ async fn run_loop(args: ExecuteRunArgs, tx: mpsc::UnboundedSender<RunEvent>, con
                     started_at,
                     telemetry.as_ref(),
                 )
-                .await
-            }
+                .await,
+            ),
             Err(e) => {
                 tracing::error!(
                     stage = "run",
@@ -207,52 +184,31 @@ async fn run_loop(args: ExecuteRunArgs, tx: mpsc::UnboundedSender<RunEvent>, con
                     session_id = %session_id,
                     error = %e,
                 );
-                break;
+                None
             }
         };
 
-        let TurnOutcome {
-            turn_count,
-            usage,
-            transcript_count,
-            last_text: turn_last_text,
-            compact_records: turn_compacts,
-            engine_completed,
-            transcript,
-        } = outcome;
+        if let Some(outcome) = outcome {
+            let TurnOutcome {
+                turn_count,
+                usage,
+                transcript_count,
+                last_text: turn_last_text,
+                compact_records: turn_compacts,
+                engine_completed: _,
+                transcript: _,
+            } = outcome;
 
-        total_turns = total_turns.saturating_add(turn_count);
-        total_usage.input = total_usage.input.saturating_add(usage.input);
-        total_usage.output = total_usage.output.saturating_add(usage.output);
-        total_usage.cache_read = total_usage.cache_read.saturating_add(usage.cache_read);
-        total_usage.cache_write = total_usage.cache_write.saturating_add(usage.cache_write);
-        total_transcripts = total_transcripts.saturating_add(transcript_count);
-        if !turn_last_text.is_empty() {
-            last_text = turn_last_text;
-        }
-        compact_records.extend(turn_compacts);
-
-        if !engine_completed || control.is_cancelled() {
-            break;
-        }
-
-        match crate::agent::goal::runtime::after_turn(
-            &session,
-            verify_fn.as_ref(),
-            GoalTurnReport {
-                transcript: &transcript,
-                usage: &usage,
-                elapsed_seconds: started_at.elapsed().as_secs(),
-            },
-        )
-        .await
-        {
-            Ok(AfterTurn::Continue(input)) => next_input = Some(input),
-            Ok(AfterTurn::Stop) => break,
-            Err(e) => {
-                tracing::warn!(error = %e, "goal step failed");
-                break;
+            total_turns = total_turns.saturating_add(turn_count);
+            total_usage.input = total_usage.input.saturating_add(usage.input);
+            total_usage.output = total_usage.output.saturating_add(usage.output);
+            total_usage.cache_read = total_usage.cache_read.saturating_add(usage.cache_read);
+            total_usage.cache_write = total_usage.cache_write.saturating_add(usage.cache_write);
+            total_transcripts = total_transcripts.saturating_add(transcript_count);
+            if !turn_last_text.is_empty() {
+                last_text = turn_last_text;
             }
+            compact_records.extend(turn_compacts);
         }
     }
 
@@ -1098,5 +1054,4 @@ pub(crate) fn build_agent(
                 .spill_dir
                 .map(|dir| Arc::new(evot_engine::spill::FsSpill::new(dir))),
         )
-        .with_todo_state(options.todo_state)
 }

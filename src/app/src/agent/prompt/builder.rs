@@ -265,27 +265,6 @@ impl SystemPrompt {
         self
     }
 
-    /// Append current task list from TodoWrite state.
-    pub fn with_tasks(mut self, tasks: &[crate::types::GoalTask]) -> Self {
-        if tasks.is_empty() {
-            return self;
-        }
-        let mut lines = String::from("# Current tasks\n");
-        for t in tasks {
-            let status = match t.status {
-                crate::types::GoalTaskStatus::Pending => "pending",
-                crate::types::GoalTaskStatus::InProgress => "in_progress",
-                crate::types::GoalTaskStatus::Completed => "completed",
-            };
-            lines.push_str(&format!("\n- [{}] {}", status, t.title));
-        }
-        self.sections.push(Section {
-            name: "tasks",
-            text: lines,
-        });
-        self
-    }
-
     /// Consume the builder and produce the final prompt string.
     pub fn build(self) -> String {
         self.sections

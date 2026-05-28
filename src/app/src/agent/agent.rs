@@ -24,7 +24,6 @@ use crate::storage::open_storage;
 use crate::storage::MemoryStorage;
 use crate::storage::Storage;
 use crate::telemetry::config::TelemetryConfig;
-use crate::types::GoalStatus;
 use crate::types::ListSessions;
 use crate::types::PromptDump;
 use crate::types::SectionDump;
@@ -118,9 +117,8 @@ pub enum SubmitOutcome {
     Run(Run),
     /// A gateway command was handled; carry this text back to the caller.
     Command(String),
-    /// A command was handled AND a follow-up run was kicked off
-    /// (e.g. `/goal set` injects the continuation prompt). The caller
-    /// should display `msg` and then stream `run`.
+    /// A command was handled AND a follow-up run was kicked off.
+    /// The caller should display `msg` and then stream `run`.
     CommandThenRun { msg: String, run: Run },
 }
 
@@ -158,8 +156,6 @@ pub struct Agent {
     telemetry: crate::telemetry::config::TelemetryConfig,
     /// Holds the OTel exporter alive for the agent's lifetime.
     _telemetry_exporter: Option<crate::telemetry::exporter::TelemetryExporter>,
-    /// Session-level task tracking state (TodoWrite).
-    todo_state: evot_engine::tools::TodoState,
 }
 
 impl Agent {
@@ -186,7 +182,6 @@ impl Agent {
             active_runs: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             telemetry: config.telemetry.clone(),
             _telemetry_exporter: telemetry_exporter,
-            todo_state: evot_engine::tools::new_todo_state(),
         }))
     }
 
@@ -458,28 +453,6 @@ impl Agent {
                 }
                 Ok(Some(SubmitOutcome::Command(lines.join("\n"))))
             }
-            Command::Goal(sub) => {
-                let command_session = session.clone();
-                let run_session = session.clone();
-                let agent = Arc::clone(self);
-                let ctx = crate::agent::goal::command::GoalCommandContext {
-                    goal_verification_enabled: self.sandbox.goal_verification_enabled(),
-                    start_run: Box::new(move |request| {
-                        let session = run_session.clone();
-                        let agent = Arc::clone(&agent);
-                        Box::pin(async move { agent.start_run(request, session).await })
-                    }),
-                };
-                Ok(Some(
-                    crate::agent::goal::command::handle(
-                        command_session.as_ref(),
-                        request,
-                        sub,
-                        ctx,
-                    )
-                    .await?,
-                ))
-            }
             Command::Dump { target } => {
                 let msg = self
                     .handle_dump_command(&request.mode, session, target.as_deref())
@@ -541,9 +514,6 @@ impl Agent {
             session_id: session_id.clone(),
         });
 
-        let verify_fn =
-            crate::agent::goal::verifier_agent::build_verify_fn(&self.llm.read(), &self.cwd);
-
         let run = runtime::execute_run(runtime::ExecuteRunArgs {
             run_id: run_id.clone(),
             session_id: session_id.clone(),
@@ -552,7 +522,6 @@ impl Agent {
             factory,
             on_complete: Some(on_complete),
             telemetry: Some(self.telemetry.clone()),
-            verify_fn: Some(verify_fn),
         });
 
         // Register active run — skip if on_complete already fired
@@ -585,7 +554,6 @@ impl Agent {
             active_runs: _,
             telemetry: _,
             _telemetry_exporter: _,
-            todo_state: _,
         } = self.as_ref();
 
         let forked = Arc::new(Self {
@@ -601,12 +569,10 @@ impl Agent {
             sandbox: super::sandbox::SandboxPolicy {
                 enabled: sandbox.enabled,
                 extra_dirs: sandbox.extra_dirs.clone(),
-                goal_verification_enabled: sandbox.goal_verification_enabled,
             },
             active_runs: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             telemetry: TelemetryConfig::default(),
             _telemetry_exporter: None,
-            todo_state: evot_engine::tools::new_todo_state(),
         });
         Ok(ForkedAgent {
             agent: forked,
@@ -666,11 +632,7 @@ impl Agent {
 
     // -- private -------------------------------------------------------------
 
-    fn build_system_prompt(
-        &self,
-        mode: &ToolMode,
-        _goal: Option<&crate::types::SessionGoal>,
-    ) -> (String, Vec<Section>) {
+    fn build_system_prompt(&self, mode: &ToolMode) -> (String, Vec<Section>) {
         let mut sections = self.system_prompt_sections.read().clone();
 
         if matches!(mode, ToolMode::Planning { .. }) {
@@ -732,7 +694,7 @@ impl Agent {
     ) -> Result<String> {
         let session_id = session.session_id().await;
         // build_turn runs the full per-turn assembly (tools, skills_dirs,
-        // memory tool, goal tools). Reuse it so the dump matches reality.
+        // memory tool). Reuse it so the dump matches reality.
         let turn = self
             .build_turn(mode, Arc::clone(session), &session_id, Vec::new())
             .await?;
@@ -797,13 +759,6 @@ impl Agent {
             }
         };
 
-        if let Some(goal) = session.read_goal().await {
-            tracing::info!(
-                condition = %goal.condition,
-                "goal restored on resume"
-            );
-        }
-
         Ok(session)
     }
 
@@ -815,9 +770,7 @@ impl Agent {
         input: Vec<evot_engine::Content>,
     ) -> Result<runtime::TurnInput> {
         let llm = self.llm.read().clone();
-        let active_goal = session.read_goal().await;
-        let (mut system_prompt, mut sections) =
-            self.build_system_prompt(mode, active_goal.as_ref());
+        let (mut system_prompt, mut sections) = self.build_system_prompt(mode);
         let envs = self
             .variables()
             .map(|v| v.all_env_pairs())
@@ -827,30 +780,12 @@ impl Agent {
         let skill_dirs = self.skills_dirs.read().clone();
         let sandbox_rt = self.sandbox.build_runtime(cwd_path, &skill_dirs)?;
 
-        let mut tools = build_tools(
+        let tools = build_tools(
             mode,
             envs,
             sandbox_rt.allow_bash,
             sandbox_rt.bash_sandbox_dirs,
         );
-
-        if !mode.is_readonly()
-            && !mode.is_planning()
-            && active_goal
-                .as_ref()
-                .is_some_and(|goal| goal.status == GoalStatus::Active)
-        {
-            tools.push(Box::new(
-                super::goal::update_tasks_tool::UpdateGoalTasksTool::new(Arc::clone(&session)),
-            ));
-        }
-
-        // TodoWrite disabled for now — testing without it
-        // if !mode.is_readonly() && !mode.is_planning() {
-        //     tools.push(Box::new(evot_engine::tools::TodoWriteTool::new(
-        //         self.todo_state.clone(),
-        //     )));
-        // }
 
         // Append skills fragment to system prompt so the engine receives it
         // as part of the prompt text (engine no longer mutates system_prompt).
@@ -896,7 +831,6 @@ impl Agent {
                     .as_ref()
                     .map(|root| root.join("sessions").join(session_id).join("tool-results")),
                 prompt_cache_key: Some(session_id.to_string()),
-                todo_state: self.todo_state.clone(),
             },
             history: prior_messages,
             input,

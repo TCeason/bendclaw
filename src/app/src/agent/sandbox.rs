@@ -27,7 +27,6 @@ pub struct SandboxRuntime {
 pub struct SandboxPolicy {
     pub enabled: bool,
     pub extra_dirs: Vec<PathBuf>,
-    pub goal_verification_enabled: bool,
 }
 
 impl SandboxPolicy {
@@ -35,13 +34,7 @@ impl SandboxPolicy {
         Self {
             enabled: config.enabled,
             extra_dirs: config.allowed_dirs.clone(),
-            goal_verification_enabled: config.hooks_enabled,
         }
-    }
-
-    /// Whether goal verification is allowed by policy.
-    pub fn goal_verification_enabled(&self) -> bool {
-        self.goal_verification_enabled
     }
 
     /// Build the sandbox runtime: path guard + tool availability flags.

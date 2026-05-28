@@ -12,16 +12,6 @@ mod delivery_test;
 mod feishu_message_test;
 #[path = "feishu_sink_test.rs"]
 mod feishu_sink_test;
-#[path = "goal_command_test.rs"]
-mod goal_command_test;
-#[path = "goal_coordinator_test.rs"]
-mod goal_coordinator_test;
-#[path = "goal_display_test.rs"]
-mod goal_display_test;
-#[path = "goal_runtime_test.rs"]
-mod goal_runtime_test;
-#[path = "goal_verifier_test.rs"]
-mod goal_verifier_test;
 #[path = "run_ask_channel_test.rs"]
 mod run_ask_channel_test;
 #[path = "search_test.rs"]

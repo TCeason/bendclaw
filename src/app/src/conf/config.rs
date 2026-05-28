@@ -382,20 +382,8 @@ pub struct ChannelsConfig {
     pub feishu: Option<FeishuChannelConfig>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SandboxConfig {
     pub enabled: bool,
     pub allowed_dirs: Vec<PathBuf>,
-    /// When false, goal verification is disabled by policy.
-    pub hooks_enabled: bool,
-}
-
-impl Default for SandboxConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            allowed_dirs: Vec::new(),
-            hooks_enabled: true,
-        }
-    }
 }

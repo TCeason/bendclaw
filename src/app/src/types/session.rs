@@ -4,8 +4,6 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 
-use super::goal::SessionGoal;
-
 // ---------------------------------------------------------------------------
 // SessionMeta — session metadata
 // ---------------------------------------------------------------------------
@@ -28,9 +26,6 @@ pub struct SessionMeta {
     /// Context budget (window − system prompt) at last save.
     #[serde(default)]
     pub context_budget: usize,
-    /// Long-task goal bound to this session, if any.
-    #[serde(default)]
-    pub goal: Option<SessionGoal>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -48,7 +43,6 @@ impl SessionMeta {
             message_count: 0,
             context_tokens: 0,
             context_budget: 0,
-            goal: None,
             created_at: now.clone(),
             updated_at: now,
         }

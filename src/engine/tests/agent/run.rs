@@ -91,7 +91,6 @@ async fn test_abort_cancels_loop() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("Hi"));
@@ -254,7 +253,6 @@ async fn test_no_convergence_reminder_with_steering() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
     let prompt = AgentMessage::Llm(Message::user("Read test.txt"));
     let (tx, rx) = mpsc::unbounded_channel();
@@ -360,7 +358,6 @@ async fn test_parallel_tool_execution_faster_than_sequential() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("Run all tools"));
@@ -432,7 +429,6 @@ async fn test_sequential_tool_execution_is_slower() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("Run tools"));
@@ -503,7 +499,6 @@ async fn test_batched_tool_execution() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("Run all tools"));
@@ -618,7 +613,6 @@ async fn test_tool_execution_update_events_emitted() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("go"));
@@ -731,7 +725,6 @@ async fn test_retry_on_rate_limit_succeeds() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("hi"));
@@ -818,7 +811,6 @@ async fn test_retry_exhausted_returns_error() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("hi"));
@@ -890,7 +882,6 @@ async fn test_auth_error_not_retried() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("hi"));
@@ -950,7 +941,6 @@ async fn test_retry_none_disables_retries() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("hi"));
@@ -1068,7 +1058,6 @@ async fn test_before_turn_can_abort() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("go"));
@@ -1114,7 +1103,6 @@ async fn test_after_turn_receives_messages() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("go"));
@@ -1150,7 +1138,6 @@ async fn test_error_event_fires_on_provider_error() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("hi"));
@@ -1243,7 +1230,6 @@ async fn test_progress_message_event_emitted() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("go"));
@@ -1321,7 +1307,6 @@ async fn test_tool_ignoring_progress_no_panic() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("go"));
@@ -1407,7 +1392,6 @@ async fn test_parallel_tools_progress_distinguishable() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("go"));
@@ -1452,7 +1436,6 @@ async fn test_on_update_still_works_after_refactor() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("go"));
@@ -1618,7 +1601,6 @@ async fn test_filter_chain_first_reject_wins() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("Bad"));
@@ -1691,7 +1673,6 @@ async fn test_filter_non_text_content_only_text_extracted() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::User {
@@ -2184,7 +2165,6 @@ async fn test_empty_response_retried_then_succeeds() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("hi"));
@@ -2260,7 +2240,6 @@ async fn test_empty_response_exhausts_retries() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompt = AgentMessage::Llm(Message::user("hi"));

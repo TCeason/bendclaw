@@ -5,7 +5,7 @@
 //! a cloneable `RunControl`.
 //!
 //! Internally a Run may span multiple engine turns (auto-continuation
-//! while a session goal is Active). `RunControl` survives engine swaps
+//! while the run is active). `RunControl` survives engine swaps
 //! between turns; consumers see a single stable handle.
 
 use tokio::sync::mpsc;

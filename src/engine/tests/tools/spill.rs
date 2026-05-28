@@ -292,7 +292,6 @@ async fn test_agent_loop_spill_integration() {
         cwd: std::path::PathBuf::from("/tmp"),
         path_guard: Arc::new(PathGuard::open()),
         prompt_cache_key: None,
-        todo_state: evotengine::tools::new_todo_state(),
     };
 
     let prompts = vec![AgentMessage::Llm(Message::user("run large_tool"))];

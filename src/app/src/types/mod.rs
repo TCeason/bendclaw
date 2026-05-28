@@ -1,4 +1,3 @@
-mod goal;
 mod id;
 pub mod metrics;
 pub mod observability;
@@ -7,7 +6,6 @@ mod session;
 mod transcript;
 pub mod variables;
 
-pub use goal::*;
 pub use id::*;
 pub use metrics::*;
 pub use observability::*;

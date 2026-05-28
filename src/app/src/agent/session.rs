@@ -173,16 +173,6 @@ impl Session {
         Ok(value)
     }
 
-    /// Snapshot the current goal state, if any.
-    pub async fn read_goal(&self) -> Option<crate::types::SessionGoal> {
-        self.meta.read().await.goal.clone()
-    }
-
-    pub async fn write_goal(&self, goal: Option<crate::types::SessionGoal>) -> Result<()> {
-        self.meta.write().await.goal = goal;
-        self.save().await
-    }
-
     pub async fn transcript(&self) -> Vec<TranscriptItem> {
         self.transcript.read().await.clone()
     }
