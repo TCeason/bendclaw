@@ -89,6 +89,9 @@ pub struct Scenario {
     keep_recent: usize,
     keep_first: usize,
     max_messages: usize,
+    /// Multiplier to simulate provider tokenizer reporting higher counts than
+    /// tiktoken (e.g. 1.3 means provider sees 30% more tokens). Default: 1.0.
+    estimated_token_multiplier: f64,
     seed: Vec<Turn>,
     phases: Vec<Phase>,
     assertions: Vec<Assertion>,
@@ -126,6 +129,7 @@ pub fn scenario(name: &str) -> Scenario {
         keep_recent: 10,
         keep_first: 2,
         max_messages: 386,
+        estimated_token_multiplier: 1.0,
         seed: vec![],
         phases: vec![],
         assertions: vec![],
@@ -155,6 +159,12 @@ impl Scenario {
     }
     pub fn max_messages(mut self, n: usize) -> Self {
         self.max_messages = n;
+        self
+    }
+    /// Simulate provider tokenizer reporting higher counts than tiktoken.
+    /// E.g. 1.3 means estimated_tokens = message_tokens * 1.3.
+    pub fn estimated_token_multiplier(mut self, m: f64) -> Self {
+        self.estimated_token_multiplier = m;
         self
     }
 
@@ -228,17 +238,19 @@ impl Scenario {
             for _ in 0..phase.count {
                 Self::apply_turn(&phase.turn, &mut messages, &mut tool_id);
 
-                // Compute estimated_tokens: message tokens only (overhead subtracted per fix)
+                // Compute estimated_tokens: apply multiplier to simulate provider divergence
                 let message_tokens = total_tokens(&messages);
-                let budget_state = CompactionBudgetState {
-                    estimated_tokens: message_tokens,
-                };
+                let estimated_tokens =
+                    (message_tokens as f64 * self.estimated_token_multiplier) as usize;
+                let budget_state = CompactionBudgetState { estimated_tokens };
                 let result = compact_messages(messages, &config, &budget_state);
 
                 // Track toothpaste: high pressure + no savings
                 let budget_tokens = self.budget.saturating_sub(self.system_tokens);
                 let trigger = budget_tokens * config.compact_trigger_pct as usize / 100;
-                if message_tokens > trigger && result.stats.actions.is_empty() {
+                if (message_tokens > trigger || estimated_tokens > trigger)
+                    && result.stats.actions.is_empty()
+                {
                     toothpaste_count += 1;
                 }
 

@@ -18,17 +18,18 @@ impl Pass for Evict {
 
     fn should_run(&self, ctx: &PassContext<'_>) -> bool {
         ctx.pressure.message_tokens > ctx.config.budget_tokens
+            || ctx.pressure.estimated_tokens > ctx.config.budget_tokens
             || (ctx.config.max_messages > 0 && ctx.pressure.message_count > ctx.config.max_messages)
     }
 
     fn run(&self, messages: Vec<AgentMessage>, ctx: &PassContext<'_>) -> PassResult {
-        let over_tokens = ctx.pressure.message_tokens > ctx.config.budget_tokens;
+        let over_tokens = ctx.pressure.message_tokens > ctx.config.budget_tokens
+            || ctx.pressure.estimated_tokens > ctx.config.budget_tokens;
         let over_messages = ctx.config.max_messages > 0 && messages.len() > ctx.config.max_messages;
 
         if over_tokens {
-            if let Some(plan) =
-                planner::token_plan(&messages, ctx.config, ctx.pressure.message_tokens)
-            {
+            let effective_tokens = ctx.pressure.effective_tokens(ctx.config.budget_tokens / 2);
+            if let Some(plan) = planner::token_plan(&messages, ctx.config, effective_tokens) {
                 return apply::apply_plan(messages, plan);
             }
         }

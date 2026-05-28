@@ -21,6 +21,7 @@ impl Pass for Collapse {
 
     fn should_run(&self, ctx: &PassContext<'_>) -> bool {
         ctx.pressure.message_tokens > ctx.config.compact_trigger()
+            || ctx.pressure.estimated_tokens > ctx.config.compact_trigger()
     }
 
     fn run(&self, messages: Vec<AgentMessage>, ctx: &PassContext<'_>) -> PassResult {
@@ -36,7 +37,7 @@ impl Pass for Collapse {
         let compact_target = ctx.config.compact_target();
         let mut result = Vec::new();
         let mut actions = Vec::new();
-        let mut running_tokens = ctx.pressure.message_tokens;
+        let mut running_tokens = ctx.pressure.effective_tokens(compact_target / 2);
 
         let mut i = 0;
         while i < boundary {

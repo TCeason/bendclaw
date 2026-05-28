@@ -40,6 +40,19 @@ impl Pressure {
             image_pressure,
         }
     }
+
+    /// Effective token pressure: the higher of tiktoken-local estimate and
+    /// provider-reported estimate, but only when message_tokens is substantial
+    /// (above `floor`). When message_tokens is tiny but estimated_tokens is
+    /// huge, the inflation comes from overhead (system prompt, tool defs) that
+    /// compaction cannot reduce — so we fall back to message_tokens.
+    pub fn effective_tokens(&self, floor: usize) -> usize {
+        if self.estimated_tokens > self.message_tokens && self.message_tokens > floor {
+            self.estimated_tokens
+        } else {
+            self.message_tokens
+        }
+    }
 }
 
 fn compute_message_stats(messages: &[AgentMessage]) -> (usize, usize, usize, usize) {

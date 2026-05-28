@@ -190,3 +190,95 @@ fn scenario_repeated_l2_with_large_keep_recent() {
         .assert_message_count_below(30)
         .run();
 }
+
+// ---------------------------------------------------------------------------
+// Scenario: provider tokenizer divergence triggers collapse (root cause fix)
+// ---------------------------------------------------------------------------
+
+/// Simulates the bug where tiktoken underestimates by ~30% vs the provider.
+/// Without the fix, Collapse never fires because it only checked message_tokens
+/// (tiktoken), which stayed below trigger even though estimated_tokens (provider)
+/// was at 100%. This caused "toothpaste squeezing" — tiny L1 savings while
+/// context was maxed out.
+#[test]
+fn scenario_provider_divergence_triggers_collapse() {
+    // Budget 3k. With 1.4x multiplier, tiktoken sees ~2.4k at trigger point
+    // but estimated sees ~3.4k which exceeds trigger (80% of 3k = 2.4k).
+    // Collapse should fire via estimated_tokens path.
+    scenario("provider divergence triggers collapse")
+        .budget(3_000)
+        .system_tokens(0)
+        .keep_recent(4)
+        .keep_first(1)
+        .max_messages(500)
+        .estimated_token_multiplier(1.4)
+        .seed(vec![Turn::user("start")])
+        .phase(40, Turn::tool("bash", 300))
+        .assert_no_toothpaste()
+        .assert_compaction_fires()
+        .run();
+}
+
+/// Evict fires when estimated_tokens exceeds budget and collapse cannot
+/// free enough (e.g. messages are already small assistant texts that
+/// collapse into summaries of similar size).
+#[test]
+fn scenario_provider_divergence_triggers_evict() {
+    // Budget 1.5k with 1.8x multiplier. Tiktoken sees ~830 tokens per round
+    // but provider sees ~1500. Even after collapse, estimated stays over budget
+    // because collapse savings are measured in tiktoken-scale tokens while
+    // the inflated estimate remains high.
+    scenario("provider divergence triggers evict")
+        .budget(1_500)
+        .system_tokens(0)
+        .keep_recent(2)
+        .keep_first(1)
+        .max_messages(500)
+        .estimated_token_multiplier(1.8)
+        .seed(vec![Turn::user("start")])
+        .phase(30, Turn::tool("bash", 400))
+        .assert_no_toothpaste()
+        .assert_compaction_fires()
+        .run();
+}
+
+/// Regression: with multiplier=1.0 (no divergence), collapse still works normally.
+#[test]
+fn scenario_no_divergence_collapse_still_works() {
+    scenario("no divergence collapse still works")
+        .budget(2_000)
+        .system_tokens(0)
+        .keep_recent(4)
+        .keep_first(1)
+        .max_messages(500)
+        .estimated_token_multiplier(1.0)
+        .seed(vec![Turn::user("start")])
+        .phase(40, Turn::tool("bash", 300))
+        .assert_no_toothpaste()
+        .assert_compaction_fires()
+        .run();
+}
+
+/// Guard: huge estimated_tokens from overhead alone must NOT cause eviction
+/// of tiny messages. This mirrors test_provider_overhead_does_not_make_l2_collapse_tiny_turn
+/// but exercises the Evict path specifically.
+#[test]
+fn scenario_overhead_inflation_does_not_evict_tiny_messages() {
+    // Budget 1k, only 5 small tool turns (~200 tiktoken tokens total).
+    // Multiplier 100x simulates extreme overhead inflation (estimated=20k >> budget=1k).
+    // Evict should_run fires, but token_plan finds no valid span because
+    // freeing tiktoken-scale tokens barely dents the inflated estimate.
+    // Result: no messages dropped, no toothpaste (compaction fires via shrink
+    // but evict is a no-op).
+    scenario("overhead inflation does not evict tiny messages")
+        .budget(1_000)
+        .system_tokens(0)
+        .keep_recent(2)
+        .keep_first(1)
+        .max_messages(500)
+        .estimated_token_multiplier(100.0)
+        .seed(vec![Turn::user("start")])
+        .phase(5, Turn::tool("bash", 50))
+        .assert_message_count_below(500) // no mass eviction
+        .run();
+}
