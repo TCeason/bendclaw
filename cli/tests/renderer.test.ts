@@ -282,23 +282,30 @@ describe('TermRenderer', () => {
   })
 
   describe('line truncation', () => {
-    test('lines wider than terminal are truncated', async () => {
+    test('lines wider than terminal are clipped by DECAWM off', async () => {
       const { renderer, stdout } = createRenderer()
       stdout.columns = 20
       renderer.init()
+      // Verify DECAWM off (no-wrap) is sent on init
+      expect(stdout.output).toContain('\x1b[?7l')
       const longLine = 'A'.repeat(50)
       renderer.setRenderCallback(() => [longLine])
       stdout.clear()
       await renderFrame(renderer)
-      const out = stdout.output
-      // Should NOT contain the full 50-char line
-      expect(out).not.toContain(longLine)
-      // Should contain a truncated version (20 chars)
-      expect(out).toContain('A'.repeat(20))
+      // The renderer outputs the full line — the terminal clips it
+      expect(stdout.output).toContain(longLine)
       renderer.destroy()
     })
 
-    test('lines within terminal width are not truncated', async () => {
+    test('destroy re-enables auto-wrap', () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      stdout.clear()
+      renderer.destroy()
+      expect(stdout.output).toContain('\x1b[?7h')
+    })
+
+    test('lines within terminal width render normally', async () => {
       const { renderer, stdout } = createRenderer()
       stdout.columns = 80
       renderer.init()
@@ -307,24 +314,6 @@ describe('TermRenderer', () => {
       stdout.clear()
       await renderFrame(renderer)
       expect(stdout.output).toContain(shortLine)
-      renderer.destroy()
-    })
-
-    test('ANSI escape sequences are preserved during truncation', async () => {
-      const { renderer, stdout } = createRenderer()
-      stdout.columns = 10
-      renderer.init()
-      // 5 visible chars with color, then 20 more visible chars
-      const line = '\x1b[31m' + 'R'.repeat(5) + '\x1b[0m' + 'X'.repeat(20)
-      renderer.setRenderCallback(() => [line])
-      stdout.clear()
-      await renderFrame(renderer)
-      const out = stdout.output
-      // Should contain the red escape and some R's
-      expect(out).toContain('\x1b[31m')
-      expect(out).toContain('RRRRR')
-      // Should NOT contain all 20 X's
-      expect(out).not.toContain('X'.repeat(20))
       renderer.destroy()
     })
   })
