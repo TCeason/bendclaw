@@ -1,253 +1,14 @@
-import { buildError, buildRunSummary, buildToolCall, buildToolProgress, buildToolResult, buildVerboseEvent, buildAssistantLines, buildThinkingLines, buildThinkingSummary, type OutputLine } from '../../render/output.js'
+import { buildError, buildRunSummary, buildToolCall, buildToolProgress, buildToolResult, buildVerboseEvent, buildAssistantLines, buildThinkingSummary, type OutputLine } from '../../render/output.js'
 import { formatDuration } from '../../render/format.js'
-import { findStreamingCommitPoint, findNaturalPlainTextCommitPoint, highlightCodeLine, isInsideOpenMathBlock } from '../../render/markdown.js'
 import { setSpinnerPhase, type SpinnerState } from '../spinner.js'
 import { applyEvent } from './reducer.js'
 import type { AppState } from './state.js'
 import type { RunEvent } from '../../native/index.js'
 
-const PACE_INTERVAL_MS = 90
 let sepId = 0
-let codeBlockSeq = 0
-
-function nextCodeBlockId(): string {
-  codeBlockSeq += 1
-  return `codeblock-${codeBlockSeq}`
-}
-
-function buildCodeLine(text: string, fence: CodeFenceState): OutputLine {
-  return {
-    id: `code-${sepId++}`,
-    kind: 'code_line',
-    text,
-    codeBlockId: fence.id,
-    codeLanguage: fence.lang ?? 'plaintext',
-  }
-}
 
 function assistantContinuationSpacer(): OutputLine {
   return { id: `sep-${sepId++}`, kind: 'assistant', text: '', isContinuationSpacer: true }
-}
-
-interface CodeFenceState {
-  id: string
-  lang: string | null
-  marker: '`' | '~'
-  length: number
-  linesCommitted: number
-}
-
-// Detect pipe tables: two or more consecutive lines matching `| ... |`.
-// Splitting mid-table produces broken rendering.
-const PIPE_TABLE_LINE_RE = /^\s*\|.*\|\s*$/
-function isInsidePipeTable(text: string): boolean {
-  const lines = text.split('\n')
-  let tableLines = 0
-  for (const l of lines) {
-    if (PIPE_TABLE_LINE_RE.test(l)) {
-      tableLines++
-      if (tableLines >= 2) return true
-    } else if (l.trim()) {
-      tableLines = 0
-    }
-  }
-  return false
-}
-
-// Commit at the last safe newline so the pending tail is always a single
-// growing line (enables the renderer's setStatus append fast-path, which
-// produces a true character-by-character typing effect on the last line).
-//
-// Narrow path: only kicks in when the head above the last newline is plain
-// prose. Anything that changes shape with more context (lists, tables,
-// headings, blockquotes, tree diagrams, indented code, open code fences)
-// stays in the pending buffer so a later complete-block commit can render
-// it with correct widths and alignment.
-//
-// Also: only commit when at least one character already sits after the
-// trailing newline. Committing a line the moment `\n` arrives (before the
-// next token's first glyph lands) leaves the status tail momentarily empty,
-// which forces a cursorUp + eraseDown cycle that reads as "bottom flashes"
-// on every newline. Holding the commit until the next line has content
-// keeps the tail transition to a single-character diff → fast-path hit.
-function findLineByLineCommitPoint(text: string): number {
-  if (isInsideOpenMathBlock(text)) return 0
-
-  const idx = text.lastIndexOf('\n')
-  if (idx < 0) return 0
-  if (idx === text.length - 1) return 0
-  const head = text.slice(0, idx + 1)
-  if (!isPlainProseHead(head)) return 0
-  return idx + 1
-}
-
-function isPlainProseHead(head: string): boolean {
-  for (const rawLine of head.split('\n')) {
-    const line = rawLine
-    const trimmed = line.trimStart()
-    if (!trimmed) continue
-    if (/^(```|~~~)/.test(trimmed)) return false
-    if (/^#{1,6}(?:\s|$)/.test(trimmed)) return false
-    if (/^[-*+]\s+/.test(trimmed)) return false
-    if (/^\d+\.\s+/.test(trimmed)) return false
-    if (/^>\s?/.test(trimmed)) return false
-    if (/^\|.*\|\s*$/.test(trimmed)) return false
-    if (/^[│├└─]/.test(trimmed)) return false
-    if (/^(?: {4}|\t)\S/.test(line)) return false
-  }
-  return true
-}
-
-const FENCE_LINE_RE = /^([ \t]*)(```+|~~~+)([^\n]*)$/
-const TRAILING_FENCE_RE = /(```+|~~~+)/
-
-function isMatchingFenceRun(run: string, fence: CodeFenceState): boolean {
-  return run[0] === fence.marker && run.length >= fence.length
-}
-
-function splitFenceCloseLine(line: string, fence: CodeFenceState): { rest: string; runLength: number } | null {
-  const match = FENCE_LINE_RE.exec(line)
-  if (!match) return null
-  const run = match[2]!
-  if (!isMatchingFenceRun(run, fence)) return null
-  return { rest: (match[3] ?? '').trimStart(), runLength: run.length }
-}
-
-function splitTrailingFenceClose(line: string, fence: CodeFenceState): { code: string; rest: string } | null {
-  let match: RegExpExecArray | null
-  const re = new RegExp(TRAILING_FENCE_RE.source, 'g')
-  while ((match = re.exec(line)) !== null) {
-    const run = match[1]!
-    if (!isMatchingFenceRun(run, fence)) continue
-    const before = line.slice(0, match.index).trimEnd()
-    if (!before) continue
-    const rest = line.slice(match.index + run.length).trimStart()
-    return { code: before, rest }
-  }
-  return null
-}
-
-/**
- * One step of the streaming code-fence state machine.
- *
- * - Before a fence: detect an opening ``` line, commit any text before it
- *   as ordinary prose, then switch into fence mode.
- * - Inside a fence: commit each complete body line directly to the scroll
- *   area as a `code_line` (syntax-highlighted when a language is known),
- *   so the user sees code flow in line by line rather than all at once
- *   when the fence finally closes.
- * - At the closing ``` line: emit a trailing separator and leave fence mode.
- *
- * Returns `null` when no more progress is possible in the current
- * `streamingText`; callers loop until null so a single delta can process
- * "prose → open → body → close → prose" in one pass.
- */
-function advanceCodeFence(state: StreamMachineState, commitLines: OutputLine[]): StreamMachineState | null {
-  if (!state.codeFence) {
-    // Find an opening ``` or ~~~ line somewhere in the streaming buffer.
-    // Scanning line by line lets us commit any prose that precedes the
-    // fence before switching into fence mode.
-    const text = state.streamingText
-    let cursor = 0
-    while (cursor < text.length) {
-      const nl = text.indexOf('\n', cursor)
-      if (nl < 0) return null
-      const line = text.slice(cursor, nl)
-      const match = FENCE_LINE_RE.exec(line)
-      if (match) {
-        // Commit any prose ahead of the fence as a separate assistant
-        // paragraph so it doesn't get swallowed by the unclosed-fence
-        // repair logic in findStreamingCommitPoint.
-        if (cursor > 0) {
-          const prose = text.slice(0, cursor)
-          const built = buildAssistantLines(prose)
-          if (built.length > 0) {
-            if (state.assistantCommitted) {
-              commitLines.push(assistantContinuationSpacer())
-            }
-            commitLines.push(...built)
-          }
-        }
-        const run = match[2]!
-        const lang = (match[3] ?? '').trim() || null
-        const codeFence: CodeFenceState = {
-          id: nextCodeBlockId(),
-          lang,
-          marker: run[0] as '`' | '~',
-          length: run.length,
-          linesCommitted: 0,
-        }
-        let next: StreamMachineState = {
-          ...state,
-          streamingText: text.slice(nl + 1),
-          codeFence,
-          assistantCommitted: true,
-        }
-        // Blank separator so the fence starts on its own row.
-        if (state.assistantCommitted || cursor > 0) {
-          commitLines.push(assistantContinuationSpacer())
-        }
-        return next
-      }
-      cursor = nl + 1
-    }
-    return null
-  }
-
-  // Inside an open fence. Commit each fully-terminated body line, stopping
-  // at the closing ``` line (if present).
-  const fence = state.codeFence
-  const { lang } = fence
-  const text = state.streamingText
-  let cursor = 0
-  let linesCommitted = state.codeFence.linesCommitted
-  let closed = false
-  let closedAt = -1
-  while (cursor < text.length) {
-    const nl = text.indexOf('\n', cursor)
-    if (nl < 0) break
-    const line = text.slice(cursor, nl)
-    const closedLine = splitFenceCloseLine(line, fence)
-    if (closedLine) {
-      closed = true
-      closedAt = nl + 1
-      const rest = closedLine.rest
-      if (rest) {
-        const after = text.slice(closedAt)
-        // When the backtick run is longer than the opening fence and rest
-        // looks like a language tag, the model wrote close+open glued together
-        // (e.g. ``````json when fence was ```). Reconstruct as a fence open.
-        const isGluedOpen = closedLine.runLength > fence.length
-          && /^[A-Za-z0-9_+.#-]+$/.test(rest)
-        const prefix = isGluedOpen ? `${fence.marker.repeat(fence.length)}` : ''
-        return {
-          ...state,
-          streamingText: `${prefix}${rest}${after ? `\n${after}` : ''}`,
-          codeFence: null,
-        }
-      }
-      break
-    }
-    const highlighted = highlightCodeLine(line, lang ?? undefined)
-    commitLines.push(buildCodeLine(highlighted, fence))
-    linesCommitted += 1
-    cursor = nl + 1
-  }
-
-  if (cursor === 0 && !closed) return null
-
-  if (closed) {
-    return {
-      ...state,
-      streamingText: text.slice(closedAt),
-      codeFence: null,
-    }
-  }
-  return {
-    ...state,
-    streamingText: text.slice(cursor),
-      codeFence: { ...fence, linesCommitted },
-  }
 }
 
 export interface StreamMachineState {
@@ -262,18 +23,6 @@ export interface StreamMachineState {
   thinkingTokenCount: number
   prefixEmitted: boolean
   assistantCommitted: boolean
-  lastPendingRender: number
-  /** Reveal cursor into the *rendered* last line of streaming text. Only
-   *  advances — never rewinds — so consecutive reveal prefixes are always
-   *  extensions of each other. Resets when streamingText is cleared. */
-  revealCursor: number
-  /** When inside an open ``` fence, `lang` is the resolved language (or null
-   *  for "no language tag") and `lineCount` tracks how many content lines
-   *  have already been committed to the scroll area so flushStreaming knows
-   *  to skip them if the stream ends mid-fence. While active, streamingText
-   *  only holds the *partial last line* of the fence body (or the empty
-   *  string between newlines). */
-  codeFence: CodeFenceState | null
 }
 
 export interface StreamContext {
@@ -341,9 +90,6 @@ export function createStreamMachineState(appState: AppState, spinnerState: Spinn
     thinkingTokenCount: 0,
     prefixEmitted: false,
     assistantCommitted: false,
-    lastPendingRender: 0,
-    revealCursor: 0,
-    codeFence: null,
   }
 }
 
@@ -436,94 +182,9 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
         },
       }
 
-      // Code fence streaming: commit each completed line inside an open
-      // ``` fence directly to the scroll area so the user sees code flow
-      // line by line, not a single burst at close time. Runs repeatedly
-      // because a single delta can contain "prose → open fence → lines →
-      // close fence → more prose". Anything unhandled falls through to the
-      // markdown commit logic below.
-      for (;;) {
-        const advanced = advanceCodeFence(state, commitLines)
-        if (!advanced) break
-        state = advanced
-      }
-
-      // While inside an open code fence, skip normal markdown block
-      // commits — the body lines are being committed incrementally by
-      // advanceCodeFence.  The markdown commit-point logic would otherwise
-      // try to re-commit the whole fence as a single rendered block,
-      // producing duplicate output.
-      if (!state.codeFence) {
-        // Commit completed markdown blocks directly to scroll area. If markdown
-        // has no safe block boundary yet, allow long plain-text prose to flow by
-        // committing complete leading lines while keeping the active tail dynamic.
-        const mathBlockOpen = isInsideOpenMathBlock(state.streamingText)
-        const markdownCommitPoint = findStreamingCommitPoint(state.streamingText)
-        const naturalCommitPoint = markdownCommitPoint > 0 || mathBlockOpen ? 0 : findNaturalPlainTextCommitPoint(state.streamingText, ctx.termRows)
-        // Fall back to committing at the last safe newline so the pending tail
-        // is a single growing line — this is what enables the renderer's
-        // setStatus append fast-path (character-by-character typing on the
-        // last status line, no full-area repaint).
-        const lineCommitPoint = (markdownCommitPoint > 0 || naturalCommitPoint > 0)
-          ? 0
-          : findLineByLineCommitPoint(state.streamingText)
-        const commitPoint = markdownCommitPoint || naturalCommitPoint || lineCommitPoint
-        if (commitPoint > 0) {
-          const completed = state.streamingText.slice(0, commitPoint)
-          const pending = state.streamingText.slice(commitPoint)
-          const builtLines = buildAssistantLines(completed)
-          if (markdownCommitPoint > 0 && state.assistantCommitted && builtLines.length > 0) {
-            commitLines.push(assistantContinuationSpacer())
-          }
-          commitLines.push(...builtLines)
-          state = { ...state, streamingText: pending, assistantCommitted: true }
-        }
-
-        // Force-split when pending text exceeds a fraction of the visible area
-        // so content flows into the scroll zone (append) instead of staying in
-        // the status area (re-render in place). Prefer markdown-safe boundaries,
-        // then fall back to the last newline boundary unconditionally — this
-        // ensures structural content (lists, headings, blockquotes) also gets
-        // appended rather than redrawn in the status area.
-        const pendingLineCount = state.streamingText.split('\n').length
-        const forceThreshold = Math.max(4, Math.floor(ctx.termRows / 3))
-        if (pendingLineCount > forceThreshold) {
-          const markdownSplitAt = findStreamingCommitPoint(state.streamingText)
-          const naturalSplitAt = markdownSplitAt > 0 || isInsideOpenMathBlock(state.streamingText) ? 0 : findNaturalPlainTextCommitPoint(state.streamingText, ctx.termRows)
-          let splitAt = markdownSplitAt || naturalSplitAt
-          // Last resort: commit at the last newline so structural markdown
-          // (lists, tables, headings) doesn't accumulate in the status area.
-          // Skip if the text looks like a pipe table — splitting mid-table
-          // produces broken rendering.
-          if (splitAt <= 0 && !isInsideOpenMathBlock(state.streamingText) && !isInsidePipeTable(state.streamingText)) {
-            const lastNl = state.streamingText.lastIndexOf('\n')
-            if (lastNl > 0) splitAt = lastNl + 1
-          }
-          if (splitAt > 0 && splitAt < state.streamingText.length) {
-            const chunk = state.streamingText.slice(0, splitAt)
-            const rest = state.streamingText.slice(splitAt)
-            const builtLines = buildAssistantLines(chunk)
-            if (state.assistantCommitted && builtLines.length > 0) {
-              commitLines.push(assistantContinuationSpacer())
-            }
-            commitLines.push(...builtLines)
-            state = { ...state, streamingText: rest, assistantCommitted: true }
-          }
-        }
-      }
-
-      // Update pendingText for status area so the dynamic tail shows the
-      // growing current line incrementally. The actual typewriter reveal is
-      // driven by repl.ts' tail reveal timer, not by token arrival cadence;
-      // this keeps large provider chunks from appearing as whole-line bursts.
-      const now = Date.now()
-      const shouldPace = now - state.lastPendingRender >= PACE_INTERVAL_MS
-      const revealCursor = state.streamingText.length === 0 ? 0 : state.revealCursor
-      state = { ...state, pendingText: state.streamingText, revealCursor }
-      if (shouldPace || state.streamingText.length === 0) {
-        state = { ...state, lastPendingRender: now }
-        rerenderStatus = true
-      }
+      // Update pendingText for the viewport's streaming display.
+      state = { ...state, pendingText: state.streamingText }
+      rerenderStatus = true
     }
   }
 
@@ -546,7 +207,6 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     commitLines.push(...flushed.lines)
     mergeFlushExpanded(flushed)
     const newEvents = state.appState.verboseEvents.slice(prev.appState.verboseEvents.length)
-    // Error / retry flows must always surface, regardless of verbose flag.
     const hasForceVisible = newEvents.some(evt =>
       /^[↻✗]\s+LLM\b/.test(evt.text) || /^\[LLM\]\s+[↻✗]/.test(evt.text)
     )
@@ -561,7 +221,6 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     if (hasExpanded && (verboseOn || hasForceVisible)) {
       const baseExpanded = flushed.expandedLines ?? flushed.lines
       if (!expandedCommitLines) expandedCommitLines = []
-      // Replace any thinking summary already merged with full thinking lines
       expandedCommitLines = [...baseExpanded]
       for (const evt of newEvents) {
         const expLines = buildVerboseEvent(evt.expandedText ?? evt.text)
@@ -577,7 +236,6 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     mergeFlushExpanded(flushed)
     const toolName = (p.tool_name as string) ?? 'unknown'
     const isAskUser = toolName === 'AskUser' || toolName === 'ask_user'
-    // AskUser is waiting for user input, not "executing" — keep thinking phase
     const spinnerPhase = isAskUser ? 'thinking' : 'executing'
     state = {
       ...state,
@@ -701,74 +359,6 @@ export function flushStreaming(state: StreamMachineState): { state: StreamMachin
     expandedLines = [...expLines]
   }
 
-  if (state.codeFence) {
-    // Stream ended inside an open fence — commit whatever body lines are
-    // still buffered as code_line output (syntax-highlighted to match what
-    // was streamed earlier), then drop the fence state. Don't re-run
-    // buildAssistantLines on the same text or it would emit the body a
-    // second time as a full markdown code block.
-    const text = state.streamingText
-    const fence = state.codeFence
-    const { lang } = fence
-    let cursor = 0
-    while (cursor < text.length) {
-      const nl = text.indexOf('\n', cursor)
-      const end = nl < 0 ? text.length : nl
-      const line = text.slice(cursor, end)
-      const closeLine = splitFenceCloseLine(line, fence)
-      if (closeLine) {
-        // Treat a stray closing ``` as the fence close and stop.
-        cursor = nl < 0 ? text.length : nl + 1
-        if (closeLine.rest) {
-          cursor = nl < 0 ? text.length : nl + 1
-          const after = text.slice(cursor)
-          const restText = `${closeLine.rest}${after ? `\n${after}` : ''}`
-          return {
-            state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false, codeFence: null },
-            lines: lines.concat(buildAssistantLines(restText)),
-            expandedLines: expandedLines
-              ? expandedLines.concat(buildAssistantLines(restText))
-              : undefined,
-          }
-        }
-        break
-      }
-      const trailingClose = splitTrailingFenceClose(line, fence)
-      if (trailingClose) {
-        const highlighted = highlightCodeLine(trailingClose.code, lang ?? undefined)
-        lines.push(buildCodeLine(highlighted, fence))
-        cursor = nl < 0 ? text.length : nl + 1
-        const after = text.slice(cursor)
-        const restText = `${trailingClose.rest}${after ? `\n${after}` : ''}`
-        return {
-          state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false, codeFence: null },
-          lines: restText.trim()
-            ? lines.concat(buildAssistantLines(restText))
-            : lines,
-          expandedLines: expandedLines
-            ? (restText.trim() ? expandedLines.concat(buildAssistantLines(restText)) : expandedLines)
-            : undefined,
-        }
-      }
-      if (line.length > 0 || nl >= 0) {
-        const highlighted = highlightCodeLine(line, lang ?? undefined)
-        lines.push(buildCodeLine(highlighted, fence))
-      }
-      if (nl < 0) { cursor = text.length; break }
-      cursor = nl + 1
-    }
-    const rest = text.slice(cursor)
-    return {
-      state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false, codeFence: null },
-      lines: rest.trim()
-        ? lines.concat(buildAssistantLines(rest))
-        : lines,
-      expandedLines: expandedLines
-        ? (rest.trim() ? expandedLines.concat(buildAssistantLines(rest)) : expandedLines)
-        : undefined,
-    }
-  }
-
   if (state.streamingText.trim()) {
     const assistantLines = buildAssistantLines(state.streamingText)
     if (state.assistantCommitted && assistantLines.length > 0) {
@@ -781,13 +371,13 @@ export function flushStreaming(state: StreamMachineState): { state: StreamMachin
 
   if (lines.length === 0) {
     return {
-      state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false, codeFence: null },
+      state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false },
       lines: [],
     }
   }
 
   return {
-    state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false, codeFence: null },
+    state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false },
     lines,
     expandedLines,
   }

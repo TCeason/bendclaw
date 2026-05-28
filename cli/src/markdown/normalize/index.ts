@@ -694,12 +694,39 @@ function splitGluedTableRowTrailingText(line: string, columnCount: number): stri
   return [row, trailing]
 }
 
+function splitProseGluedToTableHeader(line: string, nextLine: string | undefined): string[] | null {
+  // Detect: `## heading text| col1 | col2 |` followed by `|------|------|`
+  // The line does NOT start with `|` but contains a table header glued to prose.
+  if (line.trimStart().startsWith('|')) return null
+  if (!nextLine || parseMarkdownTableSeparator(nextLine) === null) return null
+
+  // Find the first `|` that starts a valid table header matching the separator columns
+  const separatorColumns = parseMarkdownTableSeparator(nextLine)
+  if (separatorColumns === null) return null
+
+  const indexes = unescapedPipeIndexes(line)
+  for (const pipeIndex of indexes) {
+    const candidate = line.slice(pipeIndex)
+    if (!candidate.trimStart().startsWith('|')) continue
+    // Count columns in the candidate header
+    const cells = candidate.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|')
+    if (cells.length === separatorColumns) {
+      const prose = line.slice(0, pipeIndex).trimEnd()
+      if (!prose) continue
+      return [prose, '', candidate]
+    }
+  }
+  return null
+}
+
 function normalizeGluedTables(text: string): string {
+  const lines = text.split('\n')
   const expandedLines: string[] = []
   let inFence = false
   let fenceMarker = ''
 
-  for (const line of text.split('\n')) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!
     const fenceMatch = CODE_FENCE_RE.exec(line)
     if (fenceMatch) {
       const marker = fenceMatch[2]!
@@ -716,6 +743,12 @@ function normalizeGluedTables(text: string): string {
 
     if (inFence) {
       expandedLines.push(line)
+      continue
+    }
+
+    const proseSplit = splitProseGluedToTableHeader(line, lines[i + 1])
+    if (proseSplit) {
+      expandedLines.push(...proseSplit)
       continue
     }
 

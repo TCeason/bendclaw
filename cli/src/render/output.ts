@@ -19,7 +19,7 @@ import type { RunStats, SlimStats, UIMessage } from '../term/app/types.js'
 
 export interface OutputLine {
   id: string
-  kind: 'user' | 'assistant' | 'code_line' | 'thinking' | 'thinking_summary' | 'tool' | 'tool_result' | 'verbose' | 'error' | 'system' | 'run_summary'
+  kind: 'user' | 'assistant' | 'thinking' | 'thinking_summary' | 'tool' | 'tool_result' | 'verbose' | 'error' | 'system' | 'run_summary'
   text: string
   rawMarkdown?: string
   codeBlockId?: string

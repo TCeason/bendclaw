@@ -455,7 +455,7 @@ export function formatToken(
         }
       }
       // Keep fenced code aligned with prose/table output while preserving the
-      // highlighted text itself; streamed code_line output uses the same pad.
+      // highlighted text itself.
       return padCodeBlock(highlighted) + EOL
     }
     case 'codespan': {

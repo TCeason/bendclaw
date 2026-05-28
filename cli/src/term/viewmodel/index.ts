@@ -1,5 +1,4 @@
 export { type ViewBlock, type StyledLine, type StyledSpan, blocksToLines, styledLineToAnsi, line, block, plain, dim, bold, colored, inverse } from './types.js'
 export { buildOutputBlocks } from './output.js'
-export { buildActiveResponseBlocks, type ActiveResponseInput } from './active-response.js'
 export { buildPromptBlocks, type PromptVMInput } from './prompt.js'
 export { buildOverlayBlocks, buildAskBlocks, type OverlayState } from './overlays.js'

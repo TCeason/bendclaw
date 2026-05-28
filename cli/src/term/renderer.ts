@@ -1,337 +1,387 @@
 /**
- * TermRenderer — manages terminal output with two zones:
+ * TermRenderer — differential rendering engine for terminal output.
  *
- * 1. Scroll zone: content written here scrolls naturally (completed output)
- * 2. Status area: fixed N lines at the bottom, updated in-place via cursor control
+ * Renders a full frame each cycle, diffs against the previous frame, and only
+ * redraws changed lines. Uses synchronized output (DEC mode 2026) to eliminate
+ * flicker.
  *
- * The status area uses line-level diffing — only changed lines are redrawn.
- * This eliminates the flicker caused by Ink's clear+redraw model.
+ * Two zones:
+ *   - Frozen scrollback: lines that have been "frozen" scroll naturally into
+ *     the terminal's scrollback buffer and are never touched again.
+ *   - Viewport: the active rendering area, redrawn each frame via diffing.
+ *
+ * Inspired by github.com/anthropics/claude-code (pi) TUI architecture.
  */
 
-import {
-  cursorUp,
-  cursorDown,
-  eraseDown,
-  eraseLine,
-  eraseToEndOfLine,
-  hideCursor,
-  showCursor,
-  cursorToColumn,
-  cursorTo,
-} from './ansi.js'
+import { performance } from 'node:perf_hooks'
 import stringWidth from 'string-width'
 import stripAnsi from 'strip-ansi'
 
-function safeDimension(n: number | undefined, fallback: number): number {
-  return n != null && Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
-}
+// --- Constants ---
 
-function safeCount(n: number): number {
-  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
-}
+const MIN_RENDER_INTERVAL_MS = 16
+const SYNC_START = '\x1b[?2026h'
+const SYNC_END = '\x1b[?2026l'
+const CLEAR_LINE = '\x1b[2K'
+const CLEAR_SCREEN = '\x1b[2J\x1b[H\x1b[3J'
+const HIDE_CURSOR = '\x1b[?25l'
+const SHOW_CURSOR = '\x1b[?25h'
+
+// --- Types ---
 
 export interface TermRendererOptions {
-  /** Stream to write to (default: process.stdout) */
   stdout?: NodeJS.WriteStream
 }
 
+// --- Renderer ---
+
 export class TermRenderer {
   private stdout: NodeJS.WriteStream
-  private prevStatusLines: string[] = []
-  private statusHeight = 0
-  private rows: number
-  private cols: number
+  private previousLines: string[] = []
+  private previousWidth = 0
+  private previousHeight = 0
+  private hardwareCursorRow = 0
+  private maxLinesRendered = 0
+  private previousViewportTop = 0
+
+  // Render scheduling
+  private renderCallback: (() => string[]) | null = null
+  private renderRequested = false
+  private renderTimer: ReturnType<typeof setTimeout> | undefined
+  private lastRenderAt = 0
   private destroyed = false
-  private resizeHandler: (() => void) | null = null
-  private buf = ''
-  private buffering = false
+
+  // --- Constructor ---
 
   constructor(opts?: TermRendererOptions) {
     this.stdout = opts?.stdout ?? process.stdout
-    this.rows = safeDimension(this.stdout.rows, 24)
-    this.cols = safeDimension(this.stdout.columns, 80)
   }
 
-  /** Initialize renderer: hide cursor, listen for resize. */
+  // --- Accessors ---
+
+  get termRows(): number {
+    return safeDimension(this.stdout.rows, 24)
+  }
+
+  get termCols(): number {
+    return safeDimension(this.stdout.columns, 80)
+  }
+
+  // --- Lifecycle ---
+
   init(): void {
-    this.write(hideCursor())
-    this.resizeHandler = () => {
-      this.rows = safeDimension(this.stdout.rows, 24)
-      this.cols = safeDimension(this.stdout.columns, 80)
-      this.redrawStatus()
-    }
-    this.stdout.on('resize', this.resizeHandler)
+    this.destroyed = false
+    this.write(HIDE_CURSOR)
+    this.stdout.on('resize', this.onResize)
   }
 
-  /** Restore terminal state. */
   destroy(): void {
-    if (this.destroyed) return
-    if (this.resizeHandler) {
-      this.stdout.off('resize', this.resizeHandler)
-      this.resizeHandler = null
+    if (this.renderTimer) {
+      clearTimeout(this.renderTimer)
+      this.renderTimer = undefined
     }
-    // Clear status area and show cursor
-    this.clearStatusArea()
-    this.write(showCursor())
+    // Move cursor below rendered content so shell prompt appears cleanly
+    if (this.previousLines.length > 0) {
+      const targetRow = this.previousLines.length
+      const diff = targetRow - this.hardwareCursorRow
+      if (diff > 0) this.write(`\x1b[${diff}B`)
+      this.write('\r\n')
+    }
+    this.write(SHOW_CURSOR)
     this.destroyed = true
+    this.stdout.off('resize', this.onResize)
   }
 
-  /** Get terminal dimensions. */
-  get termRows(): number { return this.rows }
-  get termCols(): number { return this.cols }
+  // --- Public API ---
 
-  /**
-   * Append content to the scroll zone.
-   * Moves status area down to make room, then writes content.
-   */
-  appendScroll(text: string): void {
-    if (!text) return
-    const outerBatch = this.buffering
-    if (!outerBatch) this.beginBatch()
-    // Clear status area first
-    this.clearStatusArea()
-    // Write content (it scrolls naturally)
-    this.write(text)
-    // Ensure every logical output line is committed to the scrollback.  When
-    // text already ends with "\n", the cursor is sitting on that final empty
-    // line; moving one more row makes trailing separator lines durable instead
-    // of letting the next status redraw overwrite them.
-    this.write('\n')
-    // Do NOT redraw status here — caller is responsible for calling
-    // setStatus() after appendScroll to avoid stale content being redrawn.
-    if (!outerBatch) this.flushBatch()
+  setRenderCallback(cb: () => string[]): void {
+    this.renderCallback = cb
+  }
+
+  requestRender(force = false): void {
+    if (this.destroyed) return
+    if (force) {
+      this.previousLines = []
+      this.previousWidth = -1
+      this.previousHeight = -1
+      this.hardwareCursorRow = 0
+      this.maxLinesRendered = 0
+      this.previousViewportTop = 0
+      if (this.renderTimer) {
+        clearTimeout(this.renderTimer)
+        this.renderTimer = undefined
+      }
+      this.renderRequested = true
+      process.nextTick(() => {
+        if (this.destroyed || !this.renderRequested) return
+        this.renderRequested = false
+        this.lastRenderAt = performance.now()
+        this.doRender()
+      })
+      return
+    }
+    if (this.renderRequested) return
+    this.renderRequested = true
+    process.nextTick(() => this.scheduleRender())
+  }
+
+  fullRedraw(): void {
+    this.requestRender(true)
   }
 
   /**
-   * Update the status area (fixed bottom lines).
-   * Redraws only the changed suffix so stable pending markdown does not flash
-   * when the spinner or prompt line changes.
+   * Freeze the top `count` lines of the current viewport into scrollback.
+   * After freezing, those lines are no longer part of the diffed viewport —
+   * they live permanently in the terminal's scrollback buffer.
    */
-  setStatus(lines: string[]): void {
-    const prev = this.prevStatusLines
-    const next = lines
+  freezeLines(count: number): void {
+    if (count <= 0 || count > this.previousLines.length) return
+    // The frozen lines are already rendered on screen at their current position.
+    // We just need to adjust our tracking so we no longer diff them.
+    this.previousLines = this.previousLines.slice(count)
+    // Adjust cursor tracking: the hardware cursor row is relative to the
+    // full buffer, so subtract the frozen lines.
+    this.hardwareCursorRow = Math.max(0, this.hardwareCursorRow - count)
+    this.maxLinesRendered = Math.max(0, this.maxLinesRendered - count)
+    this.previousViewportTop = Math.max(0, this.previousViewportTop - count)
+  }
 
-    let firstChanged = 0
-    const shared = Math.min(prev.length, next.length)
-    while (firstChanged < shared && prev[firstChanged] === next[firstChanged]) {
-      firstChanged++
+  /**
+   * Clear the viewport and scrollback. Used for /clear command.
+   */
+  clearScreen(): void {
+    this.write(SYNC_START + CLEAR_SCREEN + SYNC_END)
+    this.previousLines = []
+    this.hardwareCursorRow = 0
+    this.maxLinesRendered = 0
+    this.previousViewportTop = 0
+    this.previousWidth = this.termCols
+    this.previousHeight = this.termRows
+  }
+
+  // --- Private: scheduling ---
+
+  private scheduleRender(): void {
+    if (this.destroyed || this.renderTimer || !this.renderRequested) return
+    const elapsed = performance.now() - this.lastRenderAt
+    const delay = Math.max(0, MIN_RENDER_INTERVAL_MS - elapsed)
+    this.renderTimer = setTimeout(() => {
+      this.renderTimer = undefined
+      if (this.destroyed || !this.renderRequested) return
+      this.renderRequested = false
+      this.lastRenderAt = performance.now()
+      this.doRender()
+      if (this.renderRequested) this.scheduleRender()
+    }, delay)
+  }
+
+  private onResize = (): void => {
+    this.requestRender(true)
+  }
+
+  // --- Private: core render ---
+
+  private doRender(): void {
+    if (this.destroyed || !this.renderCallback) return
+
+    const width = this.termCols
+    const height = this.termRows
+    const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width
+    const heightChanged = this.previousHeight !== 0 && this.previousHeight !== height
+
+    // Get new frame from callback
+    const newLines = this.renderCallback()
+
+    // --- Full render helper ---
+    const fullRender = (clear: boolean): void => {
+      let buffer = SYNC_START
+      if (clear) buffer += CLEAR_SCREEN
+      for (let i = 0; i < newLines.length; i++) {
+        if (i > 0) buffer += '\r\n'
+        buffer += newLines[i]
+      }
+      buffer += SYNC_END
+      this.write(buffer)
+      this.hardwareCursorRow = Math.max(0, newLines.length - 1)
+      this.maxLinesRendered = clear ? newLines.length : Math.max(this.maxLinesRendered, newLines.length)
+      const bufferLength = Math.max(height, newLines.length)
+      this.previousViewportTop = Math.max(0, bufferLength - height)
+      this.previousLines = newLines
+      this.previousWidth = width
+      this.previousHeight = height
     }
 
-    if (firstChanged === prev.length && firstChanged === next.length) return
-
-    const outerBatch = this.buffering
-    if (!outerBatch) this.beginBatch()
-
-    if (this.statusHeight === 0 || prev.length === 0) {
-      this.prevStatusLines = [...next]
-      this.statusHeight = next.length
-      this.drawStatus()
-      if (!outerBatch) this.flushBatch()
+    // First render
+    if (this.previousLines.length === 0 && !widthChanged && !heightChanged) {
+      fullRender(false)
       return
     }
 
-    if (firstChanged < prev.length && firstChanged < next.length) {
-      const prevLine = prev[firstChanged] ?? ''
-      const nextLine = next[firstChanged] ?? ''
-      const endCol = this.appendColumn(prevLine, nextLine)
-      const unchangedSuffix = prev.length === next.length
-        && prev.slice(firstChanged + 1).every((line, idx) => line === next[firstChanged + 1 + idx])
-      if (unchangedSuffix && endCol !== null && nextLine.startsWith(prevLine) && nextLine.length > prevLine.length) {
-        const rowsAfter = this.screenRows(prev.slice(firstChanged + 1))
-        this.write(cursorUp(rowsAfter + 1) + cursorToColumn(endCol) + eraseToEndOfLine())
-        this.write(nextLine.slice(prevLine.length) + cursorToColumn(1) + cursorDown(rowsAfter + 1))
-        this.prevStatusLines = [...next]
-        this.statusHeight = next.length
-        if (!outerBatch) this.flushBatch()
-        return
+    // Width changed — wrapping changes, must full redraw
+    if (widthChanged) {
+      fullRender(true)
+      return
+    }
+
+    // Height changed
+    if (heightChanged) {
+      fullRender(true)
+      return
+    }
+
+    // --- Differential render ---
+    const previousBufferLength = this.previousHeight > 0
+      ? this.previousViewportTop + this.previousHeight
+      : height
+    let prevViewportTop = this.previousViewportTop
+    let viewportTop = prevViewportTop
+    let hardwareCursorRow = this.hardwareCursorRow
+
+    const computeLineDiff = (targetRow: number): number => {
+      const currentScreenRow = hardwareCursorRow - prevViewportTop
+      const targetScreenRow = targetRow - viewportTop
+      return targetScreenRow - currentScreenRow
+    }
+
+    // Find first and last changed lines
+    let firstChanged = -1
+    let lastChanged = -1
+    const maxLines = Math.max(newLines.length, this.previousLines.length)
+    for (let i = 0; i < maxLines; i++) {
+      const oldLine = i < this.previousLines.length ? this.previousLines[i] : ''
+      const newLine = i < newLines.length ? newLines[i] : ''
+      if (oldLine !== newLine) {
+        if (firstChanged === -1) firstChanged = i
+        lastChanged = i
       }
     }
 
-    // Single-line change with all following lines identical: only redraw that
-    // one physical line instead of eraseDown(), which would clear through the
-    // prompt area and cause visible jumping when spinner frames update.
-    if (firstChanged < prev.length
-        && firstChanged < next.length
-        && prev.length === next.length
-        && prev.length > 1
-        && this.screenRows([prev[firstChanged] ?? '']) === 1
-        && this.screenRows([next[firstChanged] ?? '']) === 1
-        && prev.slice(firstChanged + 1).every((line, idx) => line === next[firstChanged + 1 + idx])) {
-      const rowsAfter = this.screenRows(prev.slice(firstChanged + 1))
-      this.write(cursorUp(rowsAfter + 1) + eraseLine())
-      this.write(this.truncateLine(next[firstChanged]!))
-      // +1 accounts for the newline after the changed line from the original
-      // drawStatus() call, keeping the cursor below the status area.
-      this.write(cursorDown(rowsAfter + 1))
-      this.write(cursorToColumn(1))
-      this.prevStatusLines = [...next]
-      this.statusHeight = next.length
-      if (!outerBatch) this.flushBatch()
+    const appendedLines = newLines.length > this.previousLines.length
+    if (appendedLines) {
+      if (firstChanged === -1) firstChanged = this.previousLines.length
+      lastChanged = newLines.length - 1
+    }
+    const appendStart = appendedLines && firstChanged === this.previousLines.length && firstChanged > 0
+
+    // No changes
+    if (firstChanged === -1) {
+      this.previousViewportTop = prevViewportTop
+      this.previousHeight = height
       return
     }
 
-    const rowsToReplace = this.screenRows(prev.slice(firstChanged))
-    this.write(cursorUp(rowsToReplace) + cursorToColumn(1) + eraseDown())
-
-    this.prevStatusLines = [...next]
-    this.statusHeight = next.length
-    for (const line of next.slice(firstChanged)) {
-      this.write(this.truncateLine(line) + '\n')
+    // All changes are in deleted lines (content shrunk)
+    if (firstChanged >= newLines.length) {
+      if (this.previousLines.length > newLines.length) {
+        let buffer = SYNC_START
+        const targetRow = Math.max(0, newLines.length - 1)
+        if (targetRow < prevViewportTop) {
+          fullRender(true)
+          return
+        }
+        const lineDiff = computeLineDiff(targetRow)
+        if (lineDiff > 0) buffer += `\x1b[${lineDiff}B`
+        else if (lineDiff < 0) buffer += `\x1b[${-lineDiff}A`
+        buffer += '\r'
+        const extraLines = this.previousLines.length - newLines.length
+        if (extraLines > height) {
+          fullRender(true)
+          return
+        }
+        if (extraLines > 0) buffer += '\x1b[1B'
+        for (let i = 0; i < extraLines; i++) {
+          buffer += `\r${CLEAR_LINE}`
+          if (i < extraLines - 1) buffer += '\x1b[1B'
+        }
+        if (extraLines > 0) buffer += `\x1b[${extraLines}A`
+        buffer += SYNC_END
+        this.write(buffer)
+        this.hardwareCursorRow = targetRow
+      }
+      this.previousLines = newLines
+      this.previousWidth = width
+      this.previousHeight = height
+      this.previousViewportTop = prevViewportTop
+      return
     }
 
-    if (!outerBatch) this.flushBatch()
-  }
-
-  /** Begin a batch — all writes are buffered until flushBatch(). */
-  beginBatch(): void {
-    this.buffering = true
-    this.buf = ''
-  }
-
-  /** Flush buffered writes as a single stdout.write(). */
-  flushBatch(): void {
-    this.buffering = false
-    if (this.buf) {
-      this.stdout.write(this.buf)
-      this.buf = ''
+    // First changed line is above viewport — need full redraw
+    if (firstChanged < prevViewportTop) {
+      fullRender(true)
+      return
     }
-  }
 
-  /** Calculate actual screen rows a set of lines occupies (accounting for wrapping). */
-  private screenRows(lines: string[]): number {
-    let total = 0
-    const cols = this.cols || 80
-    for (const line of lines) {
-      const width = stringWidth(stripAnsi(line))
-      total += width === 0 ? 1 : Math.ceil(width / cols)
+    // --- Build differential update buffer ---
+    let buffer = SYNC_START
+    const prevViewportBottom = prevViewportTop + height - 1
+    const moveTargetRow = appendStart ? firstChanged - 1 : firstChanged
+
+    // If target is below visible viewport, scroll down
+    if (moveTargetRow > prevViewportBottom) {
+      const currentScreenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - prevViewportTop))
+      const moveToBottom = height - 1 - currentScreenRow
+      if (moveToBottom > 0) buffer += `\x1b[${moveToBottom}B`
+      const scroll = moveTargetRow - prevViewportBottom
+      buffer += '\r\n'.repeat(scroll)
+      prevViewportTop += scroll
+      viewportTop += scroll
+      hardwareCursorRow = moveTargetRow
     }
-    return total
-  }
 
-  private appendColumn(prevLine: string, nextLine: string): number | null {
-    const prevWidth = stringWidth(stripAnsi(prevLine))
-    const nextWidth = stringWidth(stripAnsi(nextLine))
-    if (prevWidth >= this.cols || nextWidth >= this.cols) return null
-    return prevWidth + 1
-  }
+    // Move cursor to first changed line
+    const lineDiff = computeLineDiff(moveTargetRow)
+    if (lineDiff > 0) buffer += `\x1b[${lineDiff}B`
+    else if (lineDiff < 0) buffer += `\x1b[${-lineDiff}A`
 
-  /** Clear the status area (move up and erase). */
-  private clearStatusArea(): void {
-    if (this.statusHeight <= 0) return
-    const rows = this.screenRows(this.prevStatusLines)
-    this.write(cursorUp(rows) + cursorToColumn(1) + eraseDown())
-    this.statusHeight = 0
-    this.prevStatusLines = []
-  }
+    buffer += appendStart ? '\r\n' : '\r'
 
-  /** Draw status area from scratch. */
-  private drawStatus(): void {
-    if (this.prevStatusLines.length === 0) return
-    for (const line of this.prevStatusLines) {
-      this.write(this.truncateLine(line) + '\n')
+    // Render changed lines
+    const renderEnd = Math.min(lastChanged, newLines.length - 1)
+    for (let i = firstChanged; i <= renderEnd; i++) {
+      if (i > firstChanged) buffer += '\r\n'
+      buffer += CLEAR_LINE
+      buffer += newLines[i]
     }
-  }
 
-  /** Redraw status area (after resize). */
-  private redrawStatus(): void {
-    if (this.prevStatusLines.length === 0) return
-    const lines = [...this.prevStatusLines]
-    const outerBatch = this.buffering
-    if (!outerBatch) this.beginBatch()
-    this.clearStatusArea()
-    this.prevStatusLines = lines
-    this.statusHeight = lines.length
-    this.drawStatus()
-    if (!outerBatch) this.flushBatch()
-  }
+    // Track where cursor ended up
+    let finalCursorRow = renderEnd
 
-  /**
-   * Redraw the current viewport in place, removing previous scroll content from the viewport.
-   * Keeps the normal screen buffer so terminal scrollback remains available.
-   */
-  redrawViewport(text: string): void {
-    const outerBatch = this.buffering
-    if (!outerBatch) this.beginBatch()
-    // Reset status bookkeeping directly — cursorTo(1,1)+eraseDown handles
-    // clearing the visible viewport regardless of scroll position.
-    // clearStatusArea() would use relative cursorUp() which breaks when
-    // the user has scrolled up and auto-scroll is off.
-    this.statusHeight = 0
-    this.prevStatusLines = []
-    this.write(cursorTo(1, 1) + eraseDown() + '\x1b[0m')
-    const lines = text ? text.split('\n') : []
-    if (text) {
-      this.write(text)
-      if (!text.endsWith('\n')) this.write('\n')
+    // If content shrunk, clear extra lines
+    if (this.previousLines.length > newLines.length) {
+      if (renderEnd < newLines.length - 1) {
+        const moveDown = newLines.length - 1 - renderEnd
+        buffer += `\x1b[${moveDown}B`
+        finalCursorRow = newLines.length - 1
+      }
+      const extraLines = this.previousLines.length - newLines.length
+      for (let i = newLines.length; i < this.previousLines.length; i++) {
+        buffer += `\r\n${CLEAR_LINE}`
+      }
+      buffer += `\x1b[${extraLines}A`
     }
-    const usedRows = text ? this.screenRows(lines) : 0
-    const remainingRows = safeCount(this.rows - usedRows)
-    if (remainingRows > 0) this.write('\n'.repeat(remainingRows))
-    if (!outerBatch) this.flushBatch()
+
+    buffer += SYNC_END
+    this.write(buffer)
+
+    // Update state
+    this.hardwareCursorRow = finalCursorRow
+    this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length)
+    this.previousViewportTop = Math.max(prevViewportTop, finalCursorRow - height + 1)
+    this.previousLines = newLines
+    this.previousWidth = width
+    this.previousHeight = height
   }
 
-  /**
-   * Redraw the current viewport tightly from the top, without padding to the bottom.
-   * Used when idle so the prompt can sit directly after the latest output.
-   */
-  redrawViewportTight(text: string): void {
-    const outerBatch = this.buffering
-    if (!outerBatch) this.beginBatch()
-    // Reset state directly — cursorTo(1,1)+eraseDown handles clearing.
-    this.statusHeight = 0
-    this.prevStatusLines = []
-    this.write(cursorTo(1, 1) + eraseDown() + '\x1b[0m')
-    if (text) {
-      this.write(text)
-      if (!text.endsWith('\n')) this.write('\n')
-    }
-    if (!outerBatch) this.flushBatch()
-  }
-
-  /** Clear the current viewport redraw without leaving normal scrollback. */
-  restoreViewport(): void {
-    const outerBatch = this.buffering
-    if (!outerBatch) this.beginBatch()
-    this.statusHeight = 0
-    this.prevStatusLines = []
-    this.write(cursorTo(1, 1) + eraseDown() + '\x1b[0m')
-    this.write('\n'.repeat(safeCount(this.rows)))
-    if (!outerBatch) this.flushBatch()
-  }
-
-  /**
-   * Clear the entire screen and reset status state.
-   * Used for mode switches (e.g. verbose toggle) where all content
-   * is re-rendered from scratch.
-   */
-  clearScreen(): void {
-    const outerBatch = this.buffering
-    if (!outerBatch) this.beginBatch()
-    this.statusHeight = 0
-    this.prevStatusLines = []
-    // Push old content into scrollback with blank lines instead of erasing
-    // the viewport. This feels more natural — the user can still scroll up
-    // to see previous output, and the prompt lands at the bottom.
-    this.write('\n'.repeat(safeCount(this.rows)))
-    if (!outerBatch) this.flushBatch()
-  }
-
-  /** Truncate a line to terminal width to prevent wrapping artifacts. */
-  private truncateLine(line: string): string {
-    // Fast path: if visible width fits, return as-is
-    if (stringWidth(line) <= this.cols) return line
-    // Slow path: truncate visible content
-    // For simplicity, just return the line — terminal will wrap
-    // A proper implementation would do ANSI-aware truncation
-    return line
-  }
+  // --- Private: output ---
 
   private write(data: string): void {
     if (this.destroyed) return
-    if (this.buffering) {
-      this.buf += data
-    } else {
-      this.stdout.write(data)
-    }
+    this.stdout.write(data)
   }
+}
+
+// --- Helpers ---
+
+function safeDimension(n: number | undefined, fallback: number): number {
+  return n != null && Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
 }

@@ -50,7 +50,14 @@ export function blocksToLines(blocks: ViewBlock[]): string[] {
       for (let i = 0; i < block.marginTop; i++) result.push('')
     }
     for (const line of block.lines) {
-      result.push(styledLineToAnsi(line))
+      const rendered = styledLineToAnsi(line)
+      // Safety: if a span contains embedded newlines, split so the renderer
+      // treats each physical line independently (needed for CLEAR_LINE).
+      if (rendered.includes('\n')) {
+        for (const sub of rendered.split('\n')) result.push(sub)
+      } else {
+        result.push(rendered)
+      }
     }
   }
   return result

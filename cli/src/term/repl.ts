@@ -1,10 +1,11 @@
 import { TermRenderer } from './renderer.js'
 import { parseInput, enableRawMode, type KeyEvent } from './input.js'
 import { installBracketedPaste } from './bracketed-paste.js'
-import { createSpinnerState, advanceSpinner } from './spinner.js'
+import { createSpinnerState, advanceSpinner, formatSpinnerLine } from './spinner.js'
 import { createSelectorState, selectorExpandItems, selectorClearQuery } from './selector.js'
 import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
 import { buildUserMessage, buildAssistantLines, buildThinkingLines, type OutputLine } from '../render/output.js'
+import { renderMarkdownCached } from '../render/markdown.js'
 import { Agent, QueryStream, fastExit, type SessionMeta, type ConfigInfo } from '../native/index.js'
 import { createInitialState, type AppState } from './app/state.js'
 import type { AskUserRequest } from './app/types.js'
@@ -14,16 +15,14 @@ import { isSlashCommand, resolveCommand, buildHardenPrompt } from '../commands/i
 import { renderBanner } from './banner.js'
 import {
   buildOutputBlocks,
-  buildActiveResponseBlocks,
   buildPromptBlocks,
   buildOverlayBlocks,
   blocksToLines,
-  styledLineToAnsi,
   type OverlayState,
   type PromptVMInput,
+  type StyledLine,
   type ViewBlock,
 } from './viewmodel/index.js'
-import { renderedPendingTailWidth } from './viewmodel/active-response.js'
 import {
   createEditorState,
   getEditorText,
@@ -65,7 +64,6 @@ import { handleSlashCommand } from './app/commands.js'
 import { askStateToResponse } from './app/ask-user.js'
 import { syncProvider } from './app/provider.js'
 import chalk from 'chalk'
-import stripAnsi from 'strip-ansi'
 import {
   shouldCollapse,
   cleanPastedText,
@@ -95,14 +93,7 @@ import { handleSelectorControl } from './app/selector-control.js'
 import { decideReplControl, type ReplControlAction } from './app/repl-control.js'
 
 const SPINNER_INTERVAL_MS = 100
-const TAIL_REVEAL_INTERVAL_MS = 24
-const TAIL_REVEAL_CHARS_PER_TICK = 1
-const TAIL_REVEAL_MAX_CATCHUP = 6
-const TAIL_REVEAL_FAST_CATCHUP = 12
-// Cap matches the markdown renderer's MAX_RENDER_WIDTH (140) so wide single-line
-// tails on large terminals also wait for the typewriter to catch up before
-// commit, instead of flashing as a half-revealed status → full scroll line.
-const TAIL_REVEAL_FINAL_MAX_WIDTH = 140
+
 
 export interface ReplOptions {
   agent: Agent
@@ -151,7 +142,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let isLoading = false
   let streamRef: QueryStream | null = null
   let spinnerTimer: ReturnType<typeof setInterval> | null = null
-  let tailRevealTimer: ReturnType<typeof setInterval> | null = null
   let titleFrozen = false
   let destroyed = false
   let sessionId: string | null = null
@@ -164,99 +154,25 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let expanded = false
   const compactLines: OutputLine[] = []
   const expandedLines: OutputLine[] = []
-  // Paced commit queue: assistant streaming lines are queued here and
-  // drained gradually (a few lines per spinner tick) to produce a smooth
-  // line-by-line append effect instead of large bursts.
-  const pacedQueue: OutputLine[] = []
-  const PACED_DRAIN_BASE_LINES = 2
   let lastProgressLineCount = 0
   let lastThinkingLineCount = 0
+  // Streaming text: use stream machine's pendingText for the viewport.
   const screenLog = new ScreenLog()
   const gitVersion = getGitVersion(agent.cwd)
   const gitDirty = isGitDirty(agent.cwd)
   const markdownRendererVersion = `evot-${appVersion}:markdown-trace-v2${gitVersion ? `:git-${gitVersion}` : ''}${gitDirty ? ':dirty' : ''}`
   let markdownTraceId = 0
 
-  function logMarkdownTrace(outputLines: OutputLine[], renderedLines: string[], allLines: OutputLine[] = outputLines) {
+  function logMarkdownTrace(outputLines: OutputLine[], renderedLines: string[]) {
     const raw = outputLines.find(line => line.kind === 'assistant' && line.rawMarkdown)?.rawMarkdown
-      ?? codeLinesToFence(expandCodeTraceLines(outputLines, allLines))
     if (!raw) return
     const firstLine = outputLines.find(line => line.kind === 'assistant' && line.rawMarkdown === raw)
-      ?? outputLines.find(line => line.kind === 'code_line')
     screenLog.logMarkdownTrace({
       messageId: firstLine?.id ?? `markdown-${++markdownTraceId}`,
       rendererVersion: markdownRendererVersion,
       rawMarkdown: raw,
       renderedLines,
     })
-  }
-
-  function logMarkdownRenderTrace(outputLines: OutputLine[], blocks: ViewBlock[], renderedLines: string[], statusLines: string[], allLines: OutputLine[] = outputLines) {
-    const traceLines = expandCodeTraceLines(outputLines, allLines)
-    const raw = outputLines.find(line => line.kind === 'assistant' && line.rawMarkdown)?.rawMarkdown
-      ?? codeLinesToFence(traceLines)
-    if (!raw) return
-    const firstLine = outputLines.find(line => line.kind === 'assistant' && line.rawMarkdown === raw)
-      ?? outputLines.find(line => line.kind === 'code_line')
-    const messageId = firstLine?.id ?? `markdown-render-${++markdownTraceId}`
-    const appendText = renderedLines.join('\n') + '\n'
-    screenLog.logMarkdownRenderTrace({
-      messageId,
-      rendererVersion: markdownRendererVersion,
-      columns: renderer.termCols,
-      rows: renderer.termRows,
-      source: {
-        rawMarkdown: raw,
-      },
-      outputLines: traceLines.map(line => ({
-        id: line.id,
-        kind: line.kind,
-        textAnsi: line.text,
-        ...(line.rawMarkdown !== undefined ? { rawMarkdown: line.rawMarkdown } : {}),
-        ...(line.codeBlockId !== undefined ? { codeBlockId: line.codeBlockId } : {}),
-        ...(line.codeLanguage !== undefined ? { codeLanguage: line.codeLanguage } : {}),
-      })),
-      viewBlocks: blocks.map(block => ({
-        marginTop: block.marginTop ?? 0,
-        linesAnsi: block.lines.map(styledLineToAnsi),
-      })),
-      renderedLinesAnsi: renderedLines,
-      appendTextAnsi: appendText,
-      statusLinesAnsi: statusLines,
-    })
-  }
-
-  function expandCodeTraceLines(outputLines: OutputLine[], allLines: OutputLine[]): OutputLine[] {
-    const codeIds = new Set(outputLines
-      .filter(line => line.kind === 'code_line' && line.codeBlockId)
-      .map(line => line.codeBlockId!))
-    if (codeIds.size === 0) return outputLines
-    const expanded = allLines.filter(line => line.kind === 'code_line' && line.codeBlockId && codeIds.has(line.codeBlockId))
-    return expanded.length > 0 ? expanded : outputLines
-  }
-
-  function codeLinesToFence(outputLines: OutputLine[]): string | null {
-    const groups: { lang: string; lines: string[] }[] = []
-    let current: { id: string; lang: string; lines: string[] } | null = null
-    for (const line of outputLines) {
-      if (line.kind !== 'code_line') continue
-      const text = stripAnsi(line.text).replace(/^ {2}/, '')
-      if (!text.trim()) {
-        current = null
-        continue
-      }
-      const id = line.codeBlockId ?? 'legacy-code-block'
-      if (!current || current.id !== id) {
-        current = { id, lang: line.codeLanguage ?? '', lines: [] }
-        groups.push({ lang: current.lang, lines: current.lines })
-      }
-      current.lines.push(text)
-    }
-    if (groups.length === 0) return null
-    return groups.map(group => {
-      const fence = group.lang ? `\`\`\`${group.lang}` : '```'
-      return [fence, ...group.lines, '```'].join('\n')
-    }).join('\n\n')
   }
 
   // Server state
@@ -277,7 +193,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   )
   updateMgr.on('update-available', (info: { version: string }) => {
     updateHint = `v${info.version} available · /update`
-    renderStatus()
+    renderer.requestRender()
   })
   updateMgr.start()
 
@@ -314,8 +230,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
   refreshGitInfo(agent.cwd)
 
-  const bannerText = currentBannerText()
-  renderer.appendScroll(bannerText)
   setTerminalTitle('✳')
 
   if (opts.continueLatest) {
@@ -338,7 +252,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
-  renderStatus()
+  renderer.requestRender()
 
   function getPromptVM(): PromptVMInput {
     return {
@@ -374,176 +288,153 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     return renderBanner(agent.model, agent.cwd, configInfo, renderer.termCols, serverState)
   }
 
-  function renderStatus(): string[] {
+  // --- buildFrame: the single render callback for the new differential renderer ---
+  function buildFrame(): string[] {
     if (destroyed) return []
-    // The pending tail is rendered via renderMarkdownCached + revealCursor
-    // so setStatus only ever diffs a single prefix-extending line; completed
-    // markdown blocks are committed to the scroll area by the stream machine.
+
+    const blocks: ViewBlock[] = []
+
+    // 1. Banner
+    const banner = currentBannerText()
+    if (banner) {
+      blocks.push({ lines: banner.split('\n').map(l => ({ spans: [{ text: l }] })), marginTop: 0 })
+    }
+
+    // 2. History (committed output lines)
+    const historyLines = expanded ? expandedLines : compactLines
+    if (historyLines.length > 0) {
+      blocks.push(...buildOutputBlocks(historyLines))
+    }
+
+    // 3. Thinking text preview (shown during reasoning phase before text arrives)
+    const pendingThinking = streamMachine?.pendingThinkingText ?? ''
+    if (pendingThinking && isLoading) {
+      if (expanded) {
+        const thinkLines = pendingThinking.split('\n').map(l => ({ spans: [{ text: `  ${l}`, dim: true }] }))
+        blocks.push({ lines: thinkLines, marginTop: 1 })
+      } else {
+        // Compact preview: header + last few lines
+        const allThinkLines = pendingThinking.split('\n')
+        const totalLines = allThinkLines.length
+        const MAX_THINKING_PREVIEW = 4
+        const MAX_LINE_WIDTH = 120
+        const visible = allThinkLines.slice(-MAX_THINKING_PREVIEW)
+        const thinkStyled: StyledLine[] = [
+          { spans: [{ text: '[REASONING]', fg: 'cyan' as const, bold: true }, { text: ` ${totalLines} lines...`, dim: true }] },
+        ]
+        for (const l of visible) {
+          const truncated = l.length > MAX_LINE_WIDTH ? l.slice(0, MAX_LINE_WIDTH - 1) + '\u2026' : l
+          thinkStyled.push({ spans: [{ text: `  ${truncated}`, dim: true }] })
+        }
+        blocks.push({ lines: thinkStyled, marginTop: 1 })
+      }
+    }
+
+    // 4. Streaming content (full markdown re-render each frame)
     const pendingText = streamMachine?.pendingText ?? ''
-    const pendingThinkingText = streamMachine?.pendingThinkingText ?? ''
+    if (pendingText && isLoading) {
+      const rendered = renderMarkdownCached(pendingText)
+      const mdLines = rendered.split('\n')
+      const styledLines = mdLines.map((l, i) => {
+        if (i === 0) return { spans: [{ text: '\u23fa ', fg: 'cyan' as const }, { text: l }] }
+        return { spans: [{ text: `  ${l}` }] }
+      })
+      blocks.push({ lines: styledLines, marginTop: 1 })
+    }
+
+    // 5. Tool progress
     const toolProgress = currentToolProgress()
+    if (toolProgress && isLoading) {
+      const progLines = toolProgress.split('\n').slice(0, 5).map(l => ({ spans: [{ text: `  ${l}`, dim: true }] }))
+      blocks.push({ lines: progLines, marginTop: 1 })
+    }
 
-    // When ask-user is active, suppress the spinner — the agent is waiting
-    // for user input, not "thinking" or "executing".
-    const isAskUserActive = overlay.kind === 'ask-user'
-    const activeBlocks = buildActiveResponseBlocks({
-      isLoading: isAskUserActive ? false : isLoading,
-      pendingText: isAskUserActive ? '' : pendingText,
-      pendingThinkingText: isAskUserActive ? '' : pendingThinkingText,
-      toolProgress: isAskUserActive ? '' : toolProgress,
-      spinner: spinnerState,
-      termRows: renderer.termRows,
-      termColumns: renderer.termCols,
-      expanded,
-      assistantCommitted: streamMachine?.assistantCommitted,
-      revealCursor: streamMachine?.revealCursor ?? 0,
-    })
+    // 6. Spinner
+    if (isLoading && overlay.kind !== 'ask-user') {
+      const spinnerText = formatSpinnerLine(spinnerState, Date.now())
+      blocks.push({ lines: [{ spans: [{ text: spinnerText }] }], marginTop: 1 })
+    }
 
-    // Show queued lines in the status area so content appears immediately
-    // (smooth growth) before being drained to the scroll zone.
-    // Cap to half the terminal height to prevent pushing the prompt off-screen.
-    const maxQueueDisplay = Math.max(4, Math.floor(renderer.termRows / 2))
-    const queueSlice = pacedQueue.length > maxQueueDisplay
-      ? pacedQueue.slice(pacedQueue.length - maxQueueDisplay)
-      : pacedQueue
-    const queueBlocks = queueSlice.length > 0
-      ? buildOutputBlocks(queueSlice, outputContextFor(compactLines))
-      : []
+    // 7. Overlay
+    blocks.push(...buildOverlayBlocks(overlay, renderer.termCols))
 
-    const overlayBlocks = buildOverlayBlocks(overlay, renderer.termCols)
-    const promptBlocks = buildPromptBlocks(getPromptVM())
-    const statusLines = blocksToLines([...queueBlocks, ...activeBlocks, ...overlayBlocks, ...promptBlocks])
-    renderer.setStatus(statusLines)
-    return statusLines
+    // 8. Prompt
+    blocks.push(...buildPromptBlocks(getPromptVM()))
+
+    return blocksToLines(blocks)
   }
 
-  function restoreCurrentViewport() {
-    const lines = expanded ? expandedLines : compactLines
-    const output = lines.length > 0 ? blocksToLines(buildOutputBlocks(lines)).join('\n') : ''
-    const text = [currentBannerText().trimEnd(), output].filter(Boolean).join('\n')
-    renderer.restoreViewport()
-    if (text) renderer.appendScroll(text)
-  }
+  renderer.setRenderCallback(buildFrame)
 
-  function outputContextFor(lines: OutputLine[]): { prevKind?: string; prevCodeBlockId?: string } {
+  function outputContextFor(lines: OutputLine[]): { prevKind?: string } {
     const prev = lines.length > 0 ? lines[lines.length - 1] : undefined
     return {
       prevKind: prev?.kind,
-      prevCodeBlockId: prev?.kind === 'code_line' ? prev.codeBlockId : undefined,
     }
   }
 
   function commitLines(outputLines: OutputLine[]) {
     if (outputLines.length === 0) return
-    const context = outputContextFor(compactLines)
     compactLines.push(...outputLines)
     expandedLines.push(...outputLines)
+    // Log for tracing
     const visible = expanded ? expandedLines.slice(-outputLines.length) : outputLines
+    const context = outputContextFor(compactLines.slice(0, -outputLines.length))
     const blocks = buildOutputBlocks(visible, context)
     const rendered = blocksToLines(blocks)
-    renderer.beginBatch()
-    renderer.appendScroll(rendered.join('\n'))
-    const statusLines = renderStatus()
-    renderer.flushBatch()
     screenLog.logLines(rendered)
-    logMarkdownTrace(outputLines, rendered, compactLines)
-    logMarkdownRenderTrace(outputLines, blocks, rendered, statusLines, compactLines)
+    logMarkdownTrace(outputLines, rendered)
+    // Trigger re-render — buildFrame will pick up the new lines
+    renderer.requestRender()
   }
 
   /** Commit flush result with optional dual-commit (compact summary vs expanded full). */
   function commitFlushResult(flushed: { lines: OutputLine[]; expandedLines?: OutputLine[] }) {
     if (flushed.lines.length === 0) return
     if (flushed.expandedLines) {
-      const context = outputContextFor(compactLines)
       compactLines.push(...flushed.lines)
       expandedLines.push(...flushed.expandedLines)
       const visible = expanded ? flushed.expandedLines : flushed.lines
+      const context = outputContextFor(compactLines.slice(0, -flushed.lines.length))
       const blocks = buildOutputBlocks(visible, context)
       const rendered = blocksToLines(blocks)
-      renderer.beginBatch()
-      renderer.appendScroll(rendered.join('\n'))
-      renderStatus()
-      renderer.flushBatch()
       screenLog.logLines(rendered)
+      renderer.requestRender()
     } else {
       commitLines(flushed.lines)
     }
   }
 
-  /** Drain a few lines from the paced commit queue to the scroll area. */
-  function drainPacedQueue(): void {
-    if (pacedQueue.length === 0) return
-    const backlogBoost = Math.floor(pacedQueue.length / Math.max(4, Math.floor(renderer.termRows / 2)))
-    const drainLines = Math.min(
-      Math.max(PACED_DRAIN_BASE_LINES, PACED_DRAIN_BASE_LINES + backlogBoost * 2),
-      Math.max(PACED_DRAIN_BASE_LINES, Math.floor(renderer.termRows / 2)),
-    )
-    const batch = pacedQueue.splice(0, drainLines)
-    commitLines(batch)
-  }
-
-  /** Flush all queued lines immediately (tool start, turn end). */
-  function flushPacedQueue(): void {
-    if (pacedQueue.length === 0) return
-    commitLines(pacedQueue.splice(0))
-  }
-
   function commitToolStarted(event: import('../native/index.js').RunEvent): void {
     const compact = buildToolStartedLines(event)
     const exp = buildToolStartedLines(event, true)
-    const context = outputContextFor(compactLines)
     compactLines.push(...compact)
     expandedLines.push(...exp)
     const visible = expanded ? exp : compact
+    const context = outputContextFor(compactLines.slice(0, -compact.length))
     const blocks = buildOutputBlocks(visible, context)
     const rendered = blocksToLines(blocks)
-    renderer.beginBatch()
-    renderer.appendScroll(rendered.join('\n'))
-    renderStatus()
-    renderer.flushBatch()
     screenLog.logLines(rendered)
+    renderer.requestRender()
   }
 
   function commitToolFinished(event: import('../native/index.js').RunEvent): void {
     const compact = buildToolFinishedLines(event)
     const exp = buildToolFinishedLines(event, true)
-    const context = outputContextFor(compactLines)
     compactLines.push(...compact)
     expandedLines.push(...exp)
     const visible = expanded ? exp : compact
+    const context = outputContextFor(compactLines.slice(0, -compact.length))
     const blocks = buildOutputBlocks(visible, context)
     const rendered = blocksToLines(blocks)
-    renderer.beginBatch()
-    renderer.appendScroll(rendered.join('\n'))
-    renderStatus()
-    renderer.flushBatch()
     screenLog.logLines(rendered)
+    renderer.requestRender()
   }
 
   /** Toggle expanded view and redraw. */
   function toggleExpanded(): void {
     expanded = !expanded
-    const lines = expanded ? expandedLines : compactLines
-    renderer.beginBatch()
-    if (expanded) {
-      const snapshot = currentToolProgress()
-      const snapshotLines: OutputLine[] = snapshot
-        ? snapshot.split('\n').map(l => ({
-            id: `prog-snapshot-${Date.now()}`,
-            kind: 'tool_result' as const,
-            text: `  ${l}`,
-          }))
-        : []
-      const viewLines = snapshotLines.length > 0 ? [...lines, ...snapshotLines] : lines
-      renderer.redrawViewport(viewLines.length > 0 ? blocksToLines(buildOutputBlocks(viewLines)).join('\n') : '')
-    } else {
-      renderer.restoreViewport()
-      if (lines.length > 0) {
-        renderer.appendScroll(blocksToLines(buildOutputBlocks(lines)).join('\n'))
-      }
-    }
-    renderStatus()
-    renderer.flushBatch()
+    renderer.fullRedraw()
   }
 
   function setTerminalTitle(suffix?: string) {
@@ -574,17 +465,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   function startSpinner() {
     if (spinnerTimer) return
     titleFrame = 0
-    startTailReveal()
     spinnerTimer = setInterval(() => {
       spinnerState = advanceSpinner(spinnerState)
-      if (streamMachine) {
-        streamMachine = { ...streamMachine, spinnerState }
-        const drained = pacedQueue.length > 0
-        drainPacedQueue()
-        // Skip redundant renderStatus when drainPacedQueue already rendered
-        // via commitLines.
-        if (!drained) renderStatus()
-      }
+      renderer.requestRender()
       // Terminal title animation — update at ~960ms like Claude Code.
       if (spinnerState.frame % TITLE_INTERVAL_FRAMES === 0) {
         const glyphs = ['⠂', '⠐']
@@ -595,61 +478,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }, SPINNER_INTERVAL_MS)
   }
 
-  function advanceTailReveal(): boolean {
-    if (!streamMachine?.pendingText) return false
-    const width = renderedPendingTailWidth(streamMachine.pendingText)
-    if (width <= 0 || streamMachine.revealCursor >= width) return false
-    const gap = width - streamMachine.revealCursor
-    const step = gap > 60
-      ? TAIL_REVEAL_FAST_CATCHUP
-      : gap > 24
-        ? TAIL_REVEAL_MAX_CATCHUP
-        : TAIL_REVEAL_CHARS_PER_TICK
-    const next = Math.min(width, streamMachine.revealCursor + step)
-    streamMachine = { ...streamMachine, revealCursor: next }
-    renderStatus()
-    return true
-  }
-
-  async function finishSingleLineRevealIfNeeded() {
-    if (!streamMachine?.pendingText) return
-    const width = renderedPendingTailWidth(streamMachine.pendingText)
-    if (width <= 0 || width > TAIL_REVEAL_FINAL_MAX_WIDTH) return
-    while (!destroyed && isLoading && streamMachine?.pendingText && streamMachine.revealCursor < width) {
-      advanceTailReveal()
-      await Bun.sleep(TAIL_REVEAL_INTERVAL_MS)
-    }
-  }
-
-  function startTailReveal() {
-    if (tailRevealTimer) return
-    tailRevealTimer = setInterval(() => {
-      if (destroyed || !isLoading || !streamMachine?.pendingText) return
-      const width = renderedPendingTailWidth(streamMachine.pendingText)
-      if (width <= 0) {
-        // Multi-line pending text: can't advance cursor but still need to
-        // refresh the status area so new lines appear smoothly instead of
-        // waiting for the 100ms spinner tick.
-        renderStatus()
-        return
-      }
-      advanceTailReveal()
-    }, TAIL_REVEAL_INTERVAL_MS)
-  }
-
-  function stopTailReveal() {
-    if (tailRevealTimer) {
-      clearInterval(tailRevealTimer)
-      tailRevealTimer = null
-    }
-  }
-
   function stopSpinner() {
     if (spinnerTimer) {
       clearInterval(spinnerTimer)
       spinnerTimer = null
     }
-    stopTailReveal()
     setTerminalTitle('✳')
   }
 
@@ -723,7 +556,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const filePath = await storeImage(img.base64, img.mediaType)
       pastedImages.set(id, { id, base64: img.base64, mediaType: img.mediaType, filePath: filePath ?? undefined })
       editor = insertText(editor, formatImageRef(id))
-      renderStatus()
+      renderer.requestRender()
     }
   }
 
@@ -769,7 +602,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     spinnerState = createSpinnerState()
     streamMachine = createStreamMachineState(appState, spinnerState)
     startSpinner()
-    renderStatus()
+    renderer.requestRender()
 
     try {
       const stream = prebuiltStream
@@ -784,7 +617,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         if (!streamMachine) break
 
         if (event.kind === 'ask_user') {
-          flushPacedQueue()
+          
           const payload = (event.payload ?? {}) as { questions?: AskUserRequest['questions'] }
           if (payload.questions && payload.questions.length > 0) {
             const questions: AskQuestion[] = payload.questions.map(q => ({
@@ -797,8 +630,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             // Append a single prompt line to scroll zone so the question
             // appears inline with message history; the actual interactive UI
             // renders in the status area and updates in-place.
-            renderer.appendScroll(chalk.dim('  Agent is asking…'))
-            renderStatus()
+            
+            renderer.requestRender()
           }
           continue
         }
@@ -809,13 +642,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         appState = update.state.appState
         spinnerState = update.state.spinnerState
 
+        // Request re-render on each delta so streaming text appears
+        if (event.kind === 'assistant_delta') {
+          renderer.requestRender()
+        }
+
+        // When a tool starts, stream machine already committed pending text via update.commitLines
         if (!update.suppressToolStarted && event.kind === 'tool_started') {
-          flushPacedQueue()
           commitToolStarted(event)
           lastProgressLineCount = 0
         }
         if (!update.suppressToolFinished && event.kind === 'tool_finished') {
-          flushPacedQueue()
           commitToolFinished(event)
           lastProgressLineCount = 0
         }
@@ -829,16 +666,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             const newLines = allLines.slice(baseline)
             lastProgressLineCount = allLines.length
             if (newLines.length > 0) {
-              const compactProgress = buildToolProgressLines({ ...event, payload: { ...(event.payload ?? {}), text: newLines.join('\n') } })
               const expandedProgress = buildToolProgressLines({ ...event, payload: { ...(event.payload ?? {}), text: newLines.join('\n') } }, true)
               expandedLines.push(...expandedProgress)
-              const blocks = buildOutputBlocks(expandedProgress)
-              const rendered = blocksToLines(blocks)
-              renderer.beginBatch()
-              renderer.appendScroll(rendered.join('\n'))
-              renderStatus()
-              renderer.flushBatch()
-              screenLog.logLines(rendered)
+              renderer.requestRender()
             }
           }
         }
@@ -855,13 +685,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             if (completeNewLines.length > 0) {
               const thinkingOutputLines = buildThinkingLines(completeNewLines.join('\n'))
               expandedLines.push(...thinkingOutputLines)
-              const blocks = buildOutputBlocks(thinkingOutputLines)
-              const rendered = blocksToLines(blocks)
-              renderer.beginBatch()
-              renderer.appendScroll(rendered.join('\n'))
-              renderStatus()
-              renderer.flushBatch()
-              screenLog.logLines(rendered)
+              renderer.requestRender()
             }
           }
           // Reset when thinking ends (first text delta after thinking)
@@ -876,20 +700,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             // Dual-commit: compact in compactLines, expanded in expandedLines
             const compact = update.commitLines
             const exp = update.expandedCommitLines
-            const context = outputContextFor(compactLines)
             compactLines.push(...compact)
             expandedLines.push(...exp)
             const visible = expanded ? exp : compact
+            const context = outputContextFor(compactLines.slice(0, -compact.length))
             const blocks = buildOutputBlocks(visible, context)
             const rendered = blocksToLines(blocks)
-            renderer.beginBatch()
-            renderer.appendScroll(rendered.join('\n'))
-            renderStatus()
-            renderer.flushBatch()
             screenLog.logLines(rendered)
             logMarkdownTrace(visible, rendered)
+            renderer.requestRender()
           } else {
-            pacedQueue.push(...update.commitLines)
+            commitLines(update.commitLines)
           }
         }
 
@@ -902,24 +723,19 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           screenLog.logLines(rendered)
         }
 
-        if (update.rerenderStatus && !streamMachine?.spinnerState.streaming) renderStatus()
+        if (update.rerenderStatus) renderer.requestRender()
       }
 
       if (streamMachine) {
-        flushPacedQueue()
-        await finishSingleLineRevealIfNeeded()
+        
         const final = flushStreaming(streamMachine)
-        // Update streamMachine BEFORE commitFlushResult so that renderStatus()
-        // inside commitLines sees empty pendingText — otherwise the just-flushed
-        // content appears in both the scroll area AND the status area for one
-        // frame, causing the "partial then full" flash.
         streamMachine = final.state
         appState = final.state.appState
         commitFlushResult(final)
       }
     } catch (err: any) {
+      
       if (streamMachine) {
-        flushPacedQueue()
         const final = flushStreaming(streamMachine)
         streamMachine = final.state
         commitFlushResult(final)
@@ -931,7 +747,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       isLoading = false
       streamMachine = null
       stopSpinner()
-      renderStatus()
+      renderer.requestRender()
     }
   }
 
@@ -965,13 +781,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         fastExit(0)
       case 'show-exit-hint':
         exitHint = true
-        renderStatus()
+        renderer.requestRender()
         if (exitHintTimer) clearTimeout(exitHintTimer)
-        exitHintTimer = setTimeout(() => { exitHint = false; renderStatus() }, 2000)
+        exitHintTimer = setTimeout(() => { exitHint = false; renderer.requestRender() }, 2000)
         return true
       case 'clear-editor':
         editor = clearEditor(editor)
-        renderStatus()
+        renderer.requestRender()
         return true
       case 'clear-exit-hint':
         exitHint = false
@@ -983,25 +799,22 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         return true
       case 'clear-selector-query':
         if (overlay.kind === 'selector') overlay = { kind: 'selector', state: selectorClearQuery(overlay.state) }
-        renderStatus()
+        renderer.requestRender()
         return true
       case 'close-overlay': {
         const redraw = overlay.kind === 'selector'
         overlay = { kind: 'none' }
         if (redraw) {
-          renderer.beginBatch()
-          restoreCurrentViewport()
-          renderStatus()
-          renderer.flushBatch()
+          renderer.fullRedraw()
         } else {
-          renderStatus()
+          renderer.requestRender()
         }
         return true
       }
       case 'exit-log-mode':
         logMode = null
         commitLines([{ id: 'sys-log-exit', kind: 'system', text: '  [log mode] exited' }])
-        renderStatus()
+        renderer.requestRender()
         return true
       case 'selector-key':
         handleSelectorKey(event)
@@ -1018,13 +831,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       case 'loading-char':
         if (event.type === 'char') {
           editor = insertText(editor, event.char)
-          renderStatus()
+          renderer.requestRender()
         }
         return true
       case 'loading-paste':
         if (event.type === 'paste') {
           insertPaste(event.text)
-          renderStatus()
+          renderer.requestRender()
         }
         return true
       case 'normal-key':
@@ -1033,9 +846,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
-  /** Flush any in-progress content from the stream machine to the scroll area.
-   *  Call before nulling streamMachine on any abort/cancel path. */
+  /** Flush any in-progress streaming content to committed output.
+   *  Call before clearing streaming state on any abort/cancel path. */
   function flushStreamContent() {
+    
+    // Flush anything the stream machine accumulated
     if (!streamMachine) return
     const flushed = flushStreaming(streamMachine)
     streamMachine = flushed.state
@@ -1090,7 +905,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         commitLines([{ id: 'sys-log', kind: 'system', text: text ?? `  Log: ${logPath}` }])
       }
       else commitLines([{ id: 'sys-log', kind: 'system', text: '  No active screen log.' }])
-      renderStatus()
+      renderer.requestRender()
       return
     }
 
@@ -1106,7 +921,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       commitLines([{ id: 'sys-v', kind: 'system', text: `  verbose: ${next ? 'on' : 'off'}` }])
       clearAll()
-      renderStatus()
+      renderer.requestRender()
       return
     }
 
@@ -1119,7 +934,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       commitLines(buildUserMessage(displayText))
       clearAll()
-      renderStatus()
+      renderer.requestRender()
     }
   }
 
@@ -1128,11 +943,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       switch (event.key) {
         case 'u':
           editor = clearLineBefore(editor)
-          renderStatus()
+          renderer.requestRender()
           return
         case 'k':
           editor = clearLineAfter(editor)
-          renderStatus()
+          renderer.requestRender()
           return
         case 'd':
           if (isEditorEmpty(editor)) {
@@ -1140,23 +955,23 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             fastExit(0)
           }
           editor = deleteForward(editor)
-          renderStatus()
+          renderer.requestRender()
           return
         case 'w':
           editor = deleteWordBefore(editor)
-          renderStatus()
+          renderer.requestRender()
           return
         case 'a':
           editor = moveHome(editor)
-          renderStatus()
+          renderer.requestRender()
           return
         case 'e':
           editor = moveEnd(editor)
-          renderStatus()
+          renderer.requestRender()
           return
         case 'l':
           clearAll()
-          renderStatus()
+          renderer.requestRender()
           return
         case 'v':
           tryPasteImage()
@@ -1176,7 +991,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         // Check for continuation (unclosed fences, trailing backslash)
         if (editorNeedsContinuation(editor)) {
           editor = insertNewline(editor)
-          renderStatus()
+          renderer.requestRender()
           return
         }
         const displayText = getDisplayText()
@@ -1190,7 +1005,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         // Allow image-only or text-only submissions
         if (!expandedText && !imageBlocks) return
         clearAll()
-        renderStatus()
+        renderer.requestRender()
         if (isSlashCommand(expandedText || rawText)) {
           if (displayText) {
             historyMgr.append(displayText)
@@ -1222,25 +1037,25 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       case 'alt-enter': {
         editor = insertNewline(editor)
-        renderStatus()
+        renderer.requestRender()
         break
       }
       case 'tab': {
         const result = applyCompletion(editor)
         if (result.applied) {
           editor = result.state
-          renderStatus()
+          renderer.requestRender()
         }
         break
       }
       case 'char':
         editor = insertText(editor, event.char)
         editor = refreshGhostHint(editor)
-        renderStatus()
+        renderer.requestRender()
         break
       case 'paste':
         insertPaste(event.text)
-        renderStatus()
+        renderer.requestRender()
         break
       case 'backspace': {
         // Check if we should delete an entire paste ref
@@ -1260,7 +1075,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           editor = backspace(editor)
         }
         editor = refreshGhostHint(editor)
-        renderStatus()
+        renderer.requestRender()
         break
       }
       case 'left': {
@@ -1272,7 +1087,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         } else {
           editor = moveLeft(editor)
         }
-        renderStatus()
+        renderer.requestRender()
         break
       }
       case 'right': {
@@ -1284,22 +1099,22 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         } else {
           editor = moveRight(editor)
         }
-        renderStatus()
+        renderer.requestRender()
         break
       }
       case 'home':
         editor = moveHome(editor)
-        renderStatus()
+        renderer.requestRender()
         break
       case 'end':
         editor = moveEnd(editor)
-        renderStatus()
+        renderer.requestRender()
         break
       case 'up': {
         // Multi-line: move cursor up within editor, unless already at first line
         if (editor.lines.length > 1 && editor.cursorLine > 0) {
           editor = moveUp(editor)
-          renderStatus()
+          renderer.requestRender()
           break
         }
         // At first line or single-line: history navigation
@@ -1307,7 +1122,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         if (result.changed) {
           historyState = result.history
           editor = result.editor
-          renderStatus()
+          renderer.requestRender()
         }
         break
       }
@@ -1315,7 +1130,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         // Multi-line: move cursor down within editor, unless already at last line
         if (editor.lines.length > 1 && editor.cursorLine < editor.lines.length - 1) {
           editor = moveDown(editor)
-          renderStatus()
+          renderer.requestRender()
           break
         }
         // At last line or single-line: history navigation
@@ -1323,7 +1138,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         if (result.changed) {
           historyState = result.history
           editor = result.editor
-          renderStatus()
+          renderer.requestRender()
         }
         break
       }
@@ -1365,8 +1180,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       compactLines.length = 0
       expandedLines.length = 0
       try { preloadedSessions = await agent.listSessions(20) } catch {}
-      const banner = currentBannerText()
-      renderer.appendScroll(banner)
     }
     if (result.newSession) {
       // Abort any in-flight streaming
@@ -1384,8 +1197,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       compactLines.length = 0
       expandedLines.length = 0
       try { preloadedSessions = await agent.listSessions(20) } catch { preloadedSessions = [newSession] }
-      const banner = currentBannerText()
-      renderer.appendScroll(banner)
       commitLines([{ id: 'sys-new-session', kind: 'system', text: chalk.dim(`  new session ${sessionId.slice(0, 8)}`) }])
     }
     if (result.exit) { cleanup(); fastExit(0) }
@@ -1395,7 +1206,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // Handle async commands that the simple handleSlashCommand can't do
     const resolved = resolveCommand(text)
     if (resolved.kind !== 'resolved') {
-      renderStatus()
+      renderer.requestRender()
       return
     }
     const { name, args } = resolved
@@ -1514,7 +1325,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
     }
 
-    renderStatus()
+    renderer.requestRender()
   }
 
   function openResumeSelector(initialQuery?: string) {
@@ -1530,7 +1341,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         kind: 'selector',
         state: createSelectorState(RESUME_SELECTOR_TITLE, metaItems, allMetaItems, initialQuery),
       }
-      renderStatus()
+      renderer.requestRender()
       agent.listSessionsWithText(0).then(allWithText => {
         if (overlay.kind !== 'selector' || !isResumeSelectorTitle(overlay.state.title)) return
         const fullPool = selectSessionPool(allWithText, agent.cwd)
@@ -1539,7 +1350,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           kind: 'selector',
           state: selectorExpandItems(overlay.state, fullItems),
         }
-        renderStatus()
+        renderer.requestRender()
       }).catch(() => {})
     }).catch((err: any) => {
       commitLines([{ id: 'sys-r-err', kind: 'system', text: chalk.red(`  Failed to list sessions: ${err?.message ?? err}`) }])
@@ -1592,13 +1403,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         commitLines([{ id: 'sys-skill-err', kind: 'system', text: '  Usage: /skill install <owner/repo>' }])
       } else {
         commitLines([{ id: 'sys-skill-inst', kind: 'system', text: `  cloning ${source}` }])
-        renderStatus()
+        renderer.requestRender()
         try {
           const { skillInstall } = await import('../commands/skill.js')
           const forked = agent.fork('You analyze skills and provide setup guides.')
           const result = await skillInstall(source, forked, (msg, level) => {
             commitLines([{ id: `sys-skill-${Date.now()}`, kind: 'system', text: `  ${msg}` }])
-            renderStatus()
+            renderer.requestRender()
           })
           if (result) commitLines([{ id: 'sys-skill-done', kind: 'system', text: `  ${result}` }])
         } catch (err: any) {
@@ -1620,12 +1431,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     } else {
       commitLines([{ id: 'sys-skill-err', kind: 'system', text: '  Usage: /skill [list | install <source> | remove <name>]' }])
     }
-    renderStatus()
+    renderer.requestRender()
   }
 
   async function handleUpdateCommand() {
     commitLines([{ id: 'sys-upd', kind: 'system', text: '  checking for updates...' }])
-    renderStatus()
+    renderer.requestRender()
     try {
       const { runUpdate } = await import('../update/index.js')
       const { version } = await import('../native/index.js')
@@ -1689,7 +1500,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         }
       }
       commitLines([{ id: 'sys-log-up', kind: 'system', text: `  packing session ${resolvedSid!.slice(0, 8)}...` }])
-      renderStatus()
+      renderer.requestRender()
       try {
         const { logPut } = await import('../commands/log-share.js')
         const result = await logPut(resolvedSid!)
@@ -1705,7 +1516,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         return
       }
       commitLines([{ id: 'sys-log-dl', kind: 'system', text: '  downloading and importing...' }])
-      renderStatus()
+      renderer.requestRender()
       try {
         const { logGet } = await import('../commands/log-share.js')
         const result = await logGet(dlUrl)
@@ -1753,20 +1564,20 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         const forked = agent.fork(systemPrompt)
         logMode = forked
         commitLines([{ id: 'sys-log-mode', kind: 'system', text: `  [log mode] analyzing: ${logPath}\n  not persisted. press Esc to exit.` }])
-        renderStatus()
+        renderer.requestRender()
         await runLogQuery(forked, query)
       } catch (err: any) {
         commitLines([{ id: 'sys-log-err', kind: 'system', text: chalk.red(`  Fork failed: ${err?.message ?? err}`) }])
       }
     }
-    renderStatus()
+    renderer.requestRender()
   }
 
   async function runLogQuery(forked: import('../native/index.js').ForkedAgent, prompt: string) {
     isLoading = true
     spinnerState = createSpinnerState()
     startSpinner()
-    renderStatus()
+    renderer.requestRender()
     commitLines(buildUserMessage(prompt))
 
     try {
@@ -1806,7 +1617,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       streamRef = null
       isLoading = false
       stopSpinner()
-      renderStatus()
+      renderer.requestRender()
     }
   }
 
@@ -1817,26 +1628,26 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     switch (action.kind) {
       case 'update':
         overlay = { kind: 'selector', state: action.state }
-        renderStatus()
+        renderer.requestRender()
         return
       case 'close':
         overlay = { kind: 'none' }
-        renderStatus()
+        renderer.requestRender()
         return
       case 'resume':
         overlay = { kind: 'none' }
-        resumeSession({ session_id: action.sessionId } as SessionMeta).then(() => renderStatus())
-        renderStatus()
+        resumeSession({ session_id: action.sessionId } as SessionMeta).then(() => renderer.requestRender())
+        renderer.requestRender()
         return
       case 'history-goto':
         overlay = { kind: 'none' }
         handleSlashInput(`/goto ${action.seq}`)
-        renderStatus()
+        renderer.requestRender()
         return
       case 'history-preview':
         overlay = { kind: 'none' }
         commitLines([{ id: 'sys-hist-preview', kind: 'system', text: `  ${action.label} assistant: ${action.text}` }])
-        renderStatus()
+        renderer.requestRender()
         return
       case 'select-model':
         overlay = { kind: 'none' }
@@ -1844,7 +1655,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         syncProvider(agent, action.model, configInfo)
         appState = { ...appState, model: action.model }
         commitLines([{ id: 'sys-model', kind: 'system', text: `  Model → ${action.model}` }])
-        renderStatus()
+        renderer.requestRender()
         return
       case 'delete-session':
         overlay = { kind: 'selector', state: action.state }
@@ -1853,7 +1664,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             commitLines([{ id: 'sys-del', kind: 'system', text: `  Deleted session ${action.label}` }])
           }
         })
-        renderStatus()
+        renderer.requestRender()
         return
       case 'none':
         return
@@ -1888,7 +1699,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         streamMachine = null
         stopSpinner()
         commitLines([{ id: 'sys-ask-cancel', kind: 'system', text: '  ⏺ Cancelled.' }])
-        renderStatus()
+        renderer.requestRender()
         return
       case 'submit':
         if (streamRef) {
@@ -1910,11 +1721,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           ]))
           commitLines(answerLines)
         }
-        renderStatus()
+        renderer.requestRender()
         return
       case 'update':
         overlay = { kind: 'ask-user', state: result.state }
-        renderStatus()
+        renderer.requestRender()
         return
     }
   }
@@ -1930,7 +1741,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   })
 
   process.stdout.write('\x1b[?2004h')
-  renderStatus()
+  renderer.requestRender()
 
   function cleanup() {
     destroyed = true

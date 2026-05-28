@@ -3,14 +3,12 @@ import { line, block, plain, dim, bold, colored, type ViewBlock, type StyledLine
 
 export interface OutputContext {
   prevKind?: string
-  prevCodeBlockId?: string
 }
 
 export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | string = {}): ViewBlock[] {
   const blocks: ViewBlock[] = []
   const initialContext: OutputContext = typeof context === 'string' ? { prevKind: context } : context
   let prevKind: string | undefined = initialContext.prevKind
-  let prevCodeBlockId: string | undefined = initialContext.prevCodeBlockId
 
   for (const ol of lines) {
     let nextPrevKind: string | undefined = ol.kind
@@ -36,27 +34,6 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
         blocks.push(block([
           line(dot, plain(ol.text)),
         ], isBlockStart ? 1 : 0))
-        break
-      }
-
-      case 'code_line': {
-        // Streamed code-fence line. Preserve any ANSI from syntax highlighting
-        // and apply the same left padding as finalized fenced code blocks so
-        // tokens don't shift when the closing fence eventually arrives. Empty
-        // code_line entries are used as block separators around the fence.
-        if (!ol.text) {
-          blocks.push(block([line(plain(''))]))
-          nextPrevKind = undefined
-          prevCodeBlockId = undefined
-          break
-        }
-        const hasCodeBlockId = ol.codeBlockId !== undefined
-        const isLegacyContinuation = prevKind === 'code_line' && !hasCodeBlockId && prevCodeBlockId === undefined
-        const isSameCodeBlock = prevKind === 'code_line' && hasCodeBlockId && ol.codeBlockId === prevCodeBlockId
-        const isNewCodeBlock = prevKind === 'code_line' && hasCodeBlockId && prevCodeBlockId !== undefined && ol.codeBlockId !== prevCodeBlockId
-        const marginTop = isLegacyContinuation || isSameCodeBlock ? 0 : isNewCodeBlock ? 2 : 1
-        blocks.push(block([line(plain(`  ${ol.text}`))], marginTop))
-        prevCodeBlockId = ol.codeBlockId
         break
       }
 
@@ -91,7 +68,7 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
         break
 
       case 'system':
-        blocks.push(block([line(dim(ol.text))]))
+        blocks.push(block(ol.text.split('\n').map(l => line(dim(l)))))
         break
 
       case 'run_summary':
@@ -101,7 +78,6 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
       default:
         break
     }
-    if (ol.kind !== 'code_line') prevCodeBlockId = undefined
     prevKind = nextPrevKind
   }
 

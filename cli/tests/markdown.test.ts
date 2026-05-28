@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test'
-import { renderMarkdown, formatToken, findStreamingCommitPoint } from '../src/render/markdown.js'
+import { renderMarkdown } from '../src/render/markdown.js'
+import { formatToken } from '../src/markdown/render/ansi.js'
 import { getTheme } from '../src/render/theme.js'
 import chalk from 'chalk'
 import { marked, type Token } from 'marked'
@@ -88,18 +89,6 @@ describe('renderMarkdown', () => {
     expect(result).toContain('这是粗体文本')
     expect(result).toContain('这是斜体文本')
     expect(result).not.toContain('\n- 这是斜体文本')
-  })
-
-  test('keeps open math blocks pending while streaming', () => {
-    expect(findStreamingCommitPoint('Before\n\n$$\nE = mc^2')).toBe(0)
-    expect(findStreamingCommitPoint('Before\n\n$$\nE = mc^2\n$$\n\nAfter')).toBeGreaterThan(0)
-  })
-
-  test('keeps complete math blocks together while streaming', () => {
-    const md = 'Block:\n\n$$\n\\sum_{i=1}^{n} x_i\n$$\n\nAfter'
-    const splitAt = findStreamingCommitPoint(md)
-
-    expect(splitAt).toBe('Block:\n\n'.length)
   })
 
   test('renders inline code', () => {
@@ -1318,21 +1307,6 @@ describe('renderMarkdown', () => {
     }
   })
 
-  test('keeps streaming tree blocks pending until the tree ends', () => {
-    const tree = [
-      '⏺ /Users/bohu/github/evotai/evot',
-      '  ├── Cargo.toml     # Rust workspace root (engine/app/addon)',
-      '  ├── Cargo.lock',
-      '  │',
-      '  ├── src/      # Rust 核心代码',
-      '  │   ├── engine/              # evotengine — agent 运行时',
-    ].join('\n')
-
-    expect(findStreamingCommitPoint(tree)).toBe(0)
-    expect(findStreamingCommitPoint(`intro\n\n${tree}`)).toBe('intro\n\n'.length)
-    expect(findStreamingCommitPoint(`${tree}\n\n要点：`)).toBeGreaterThan(0)
-  })
-
   test('does not treat markdown tables containing box-drawing text as streaming tree tails', () => {
     const table = [
       '| Name | Shape |',
@@ -1342,7 +1316,6 @@ describe('renderMarkdown', () => {
       'next',
     ].join('\n')
 
-    expect(findStreamingCommitPoint(table)).toBeGreaterThan(0)
     expect(stripAnsi(renderMarkdown(table))).toContain('Shape')
   })
 
@@ -1360,6 +1333,21 @@ describe('renderMarkdown', () => {
     expect(result).toContain('┤')
     expect(result).toContain('└')
     expect(result).toContain('┘')
+  })
+
+  test('renders table when heading is glued to table header', () => {
+    const md = [
+      '## 架构层面的区别| 方面 | Pi | Evot |',
+      '|------|-----|------|',
+      '| 组件模型 | Component 树 | buildFrame() |',
+    ].join('\n')
+
+    const result = render(md).replace(/\u200b/g, '')
+    expect(result).toContain('┌')
+    expect(result).toContain('方面')
+    expect(result).toContain('组件模型')
+    expect(result).toContain('架构层面的区别')
+    expect(result).not.toContain('|------|')
   })
 
   test('repairs table rows glued to separators and following prose', () => {
@@ -1592,139 +1580,5 @@ describe('file path linkification', () => {
       if (prev === undefined) delete process.env.FORCE_HYPERLINK
       else process.env.FORCE_HYPERLINK = prev
     }
-  })
-})
-
-import { splitMarkdownBlocks } from '../src/render/markdown.js'
-
-describe('splitMarkdownBlocks', () => {
-  test('empty text returns empty', () => {
-    expect(splitMarkdownBlocks('')).toEqual({ completed: '', pending: '' })
-  })
-
-  test('single paragraph without blank line stays pending', () => {
-    const result = splitMarkdownBlocks('hello world')
-    expect(result.completed).toBe('')
-    expect(result.pending).toBe('hello world')
-  })
-
-  test('two paragraphs split at blank line', () => {
-    const text = 'paragraph one\n\nparagraph two'
-    const result = splitMarkdownBlocks(text)
-    expect(result.completed).toBe('paragraph one\n\n')
-    expect(result.pending).toBe('paragraph two')
-  })
-
-  test('multiple paragraphs split at last blank line', () => {
-    const text = 'para one\n\npara two\n\npara three'
-    const result = splitMarkdownBlocks(text)
-    expect(result.completed).toBe('para one\n\npara two\n\n')
-    expect(result.pending).toBe('para three')
-  })
-
-  test('code fence keeps content pending until closed', () => {
-    const text = 'intro\n\n```js\nconst x = 1\n```\n\nafter'
-    const result = splitMarkdownBlocks(text)
-    expect(result.completed).toContain('intro')
-    expect(result.completed).toContain('```')
-    expect(result.pending).toBe('after')
-  })
-
-  test('unclosed code fence keeps everything pending', () => {
-    const text = 'intro\n\n```js\nconst x = 1\nmore code'
-    const result = splitMarkdownBlocks(text)
-    expect(result.completed).toBe('intro\n\n')
-    expect(result.pending).toBe('```js\nconst x = 1\nmore code')
-  })
-
-  test('unclosed code fence can commit following markdown after heuristic repair', () => {
-    const text = '```json\n[\n  {"id":"evt-001"}\n]\n\n## next'
-    const result = splitMarkdownBlocks(text)
-    expect(result.completed).toBe('```json\n[\n  {"id":"evt-001"}\n]\n\n')
-    expect(result.pending).toBe('## next')
-  })
-
-  test('unclosed code fence can commit following horizontal rule after heuristic repair', () => {
-    const text = '最终合并结果：\n```json\n{\n  "id": "tr-abc",\n  "is_deleted": 0\n}\n---\n第 8 站：补充 input / output'
-    const result = splitMarkdownBlocks(text)
-    expect(result.completed).toBe('最终合并结果：\n```json\n{\n  "id": "tr-abc",\n  "is_deleted": 0\n}\n')
-    expect(result.pending).toBe('---\n第 8 站：补充 input / output')
-  })
-
-  test('trailing blank line makes everything completed', () => {
-    const text = 'hello world\n\n'
-    const result = splitMarkdownBlocks(text)
-    expect(result.completed).toBe('hello world\n\n')
-    expect(result.pending).toBe('')
-  })
-
-  test('heading followed by paragraph', () => {
-    const text = '# Title\n\nSome text\n\nMore text'
-    const result = splitMarkdownBlocks(text)
-    expect(result.completed).toContain('# Title')
-    expect(result.completed).toContain('Some text')
-    expect(result.pending).toBe('More text')
-  })
-
-  test('unclosed text diagram fence stays pending while streaming', () => {
-    const text = [
-      'before',
-      '',
-      '```text',
-      '  left      right',
-      '  ────      ─────',
-      '  │         │',
-      '',
-    ].join('\n')
-
-    const result = splitMarkdownBlocks(text)
-
-    expect(result.completed).toBe('before\n\n')
-    expect(result.pending).toBe('```text\n  left      right\n  ────      ─────\n  │         │\n')
-  })
-
-  test('unclosed indented text diagram fence stays pending while streaming', () => {
-    const text = [
-      '  before',
-      '',
-      '  ```text',
-      '        冷启动 (昨天)       命中磁盘 (今天)',
-      '      ─────────────────                ──────────────────',
-      '    prompt: A B C            prompt: A B C D E F',
-      '       │                                 │',
-      '',
-    ].join('\n')
-
-    const result = splitMarkdownBlocks(text)
-
-    expect(result.completed).toBe('  before\n\n')
-    expect(result.pending).toStartWith('  ```text\n')
-    expect(result.pending).toContain('冷启动 (昨天)')
-  })
-
-  test('unclosed text diagram fence can commit with following markdown paragraph', () => {
-    const text = [
-      'before',
-      '',
-      '```text',
-      '  left      right',
-      '  ────      ─────',
-      '  │         │',
-      '',
-      '**after**',
-    ].join('\n')
-
-    const result = splitMarkdownBlocks(text)
-
-    expect(result.completed).toBe('before\n\n```text\n  left      right\n  ────      ─────\n  │         │\n\n')
-    expect(result.pending).toBe('**after**')
-  })
-
-  test('tilde code fence handled', () => {
-    const text = 'before\n\n~~~\ncode\n~~~\n\nafter'
-    const result = splitMarkdownBlocks(text)
-    expect(result.completed).toContain('before')
-    expect(result.completed).toContain('~~~')
-    expect(result.pending).toBe('after')
   })
 })

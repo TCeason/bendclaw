@@ -47,6 +47,14 @@ function createRenderer(): { renderer: TermRenderer; stdout: MockStdout } {
   return { renderer, stdout }
 }
 
+// Helper: trigger a synchronous render by calling requestRender + flushing nextTick
+async function renderFrame(renderer: TermRenderer): Promise<void> {
+  renderer.requestRender()
+  await new Promise(resolve => process.nextTick(resolve))
+  // Wait for the scheduled render (MIN_RENDER_INTERVAL_MS = 16ms)
+  await Bun.sleep(20)
+}
+
 describe('TermRenderer', () => {
   describe('init / destroy', () => {
     test('init hides cursor', () => {
@@ -72,283 +80,158 @@ describe('TermRenderer', () => {
     })
   })
 
-  describe('appendScroll', () => {
-    test('writes text to stdout', () => {
+  describe('differential rendering', () => {
+    test('first render outputs all lines', async () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()
+      renderer.setRenderCallback(() => ['line1', 'line2', 'line3'])
       stdout.clear()
-      renderer.appendScroll('hello world')
-      expect(stdout.output).toContain('hello world')
-      renderer.destroy()
-    })
-
-    test('adds trailing newline if missing', () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      stdout.clear()
-      renderer.appendScroll('no newline')
-      expect(stdout.output).toContain('no newline\n')
-      renderer.destroy()
-    })
-
-    test('does not double newline', () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      stdout.clear()
-      renderer.appendScroll('has newline\n')
-      // Should not have \n\n at the end
-      const idx = stdout.output.indexOf('has newline\n')
-      expect(idx).toBeGreaterThanOrEqual(0)
-      renderer.destroy()
-    })
-
-    test('commits trailing blank separator lines before status redraw', () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      stdout.clear()
-      renderer.appendScroll('code line\n')
-      expect(stdout.output).toContain('code line\n\n')
-      renderer.destroy()
-    })
-
-    test('empty text does nothing', () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      stdout.clear()
-      renderer.appendScroll('')
-      expect(stdout.output).toBe('')
-      renderer.destroy()
-    })
-  })
-
-  describe('setStatus', () => {
-    test('first call draws all lines', () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      stdout.clear()
-      renderer.setStatus(['line1', 'line2'])
+      await renderFrame(renderer)
       expect(stdout.output).toContain('line1')
-      expect(stdout.output).toContain('line2')
-      renderer.destroy()
-    })
-
-    test('identical lines produce no output', () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      renderer.setStatus(['line1', 'line2'])
-      stdout.clear()
-      renderer.setStatus(['line1', 'line2'])
-      // Should produce no output since nothing changed
-      expect(stdout.output).toBe('')
-      renderer.destroy()
-    })
-
-    test('growing line appends only new suffix', () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      renderer.setStatus(['⏺ hello'])
-      stdout.clear()
-      renderer.setStatus(['⏺ hello world'])
-
-      expect(stdout.output).toContain(' world')
-      expect(stdout.output).toContain('\x1b[1A')
-      expect(stdout.output).toContain('\x1b[8G')
-      expect(stdout.output).toContain('\x1b[1B')
-      expect(stdout.output).not.toContain('⏺ hello world')
-      renderer.destroy()
-    })
-
-    test('growing line falls back when it would wrap', () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      stdout.columns = 10
-      stdout.emit('resize')
-      stdout.clear()
-      renderer.setStatus(['123456789'])
-      stdout.clear()
-      renderer.setStatus(['1234567890'])
-
-      expect(stdout.output).toContain('1234567890')
-      expect(stdout.output).toContain('\x1b[1G')
-      renderer.destroy()
-    })
-
-    test('changed suffix keeps unchanged prefix in place', () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      renderer.setStatus(['pending line 1', 'pending line 2', 'spinner a'])
-      stdout.clear()
-      renderer.setStatus(['pending line 1', 'pending line 2', 'spinner b'])
-
-      expect(stdout.output).toContain('spinner b')
-      expect(stdout.output).toContain('\x1b[1A')
-      expect(stdout.output).not.toContain('pending line 1')
-      expect(stdout.output).not.toContain('pending line 2')
-      renderer.destroy()
-    })
-
-    test('changed middle line redraws changed suffix', () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      renderer.setStatus(['line1', 'line2', 'line3'])
-      stdout.clear()
-      renderer.setStatus(['line1', 'CHANGED', 'line3'])
-      // Should contain only the changed line; unchanged suffix stays in place.
-      expect(stdout.output).toContain('CHANGED')
-      expect(stdout.output).toContain('\x1b[2A')
-      expect(stdout.output).not.toContain('line1')
-      expect(stdout.output).not.toContain('line3')
-      renderer.destroy()
-    })
-
-    test('single-line spinner update does not erase following prompt lines', () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      renderer.setStatus(['pending', '', '⠋ Thinking', '╭─', '│ >'])
-      stdout.clear()
-      renderer.setStatus(['pending', '', '⠙ Thinking', '╭─', '│ >'])
-
-      expect(stdout.output).toContain('⠙ Thinking')
-      expect(stdout.output).not.toContain('\x1b[J')
-      expect(stdout.output).not.toContain('╭─')
-      expect(stdout.output).not.toContain('│ >')
-      renderer.destroy()
-    })
-
-    test('height increase appends changed suffix only', () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      renderer.setStatus(['line1'])
-      stdout.clear()
-      renderer.setStatus(['line1', 'line2', 'line3'])
-      expect(stdout.output).not.toContain('line1')
       expect(stdout.output).toContain('line2')
       expect(stdout.output).toContain('line3')
       renderer.destroy()
     })
 
-    test('height decrease clears old lines', () => {
+    test('identical frames produce no output', async () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()
-      renderer.setStatus(['line1', 'line2', 'line3'])
+      renderer.setRenderCallback(() => ['line1', 'line2'])
+      await renderFrame(renderer)
       stdout.clear()
-      renderer.setStatus(['only-one'])
-      // Should clear old area (eraseDown) and draw new
-      expect(stdout.output).toContain('\x1b[J') // eraseDown
-      expect(stdout.output).toContain('only-one')
+      await renderFrame(renderer)
+      expect(stdout.output).toBe('')
       renderer.destroy()
     })
 
-    test('empty lines array clears status', () => {
+    test('appended lines use append fast path', async () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()
-      renderer.setStatus(['line1', 'line2'])
+      let lines = ['line1', 'line2']
+      renderer.setRenderCallback(() => lines)
+      await renderFrame(renderer)
       stdout.clear()
-      renderer.setStatus([])
-      expect(stdout.output).toContain('\x1b[J') // eraseDown to clear
+      lines = ['line1', 'line2', 'line3']
+      await renderFrame(renderer)
+      const out = stdout.output
+      expect(out).toContain('line3')
+      // Should not redraw line1 or line2
+      expect(out).not.toContain('line1')
+      expect(out).not.toContain('line2')
+      renderer.destroy()
+    })
+
+    test('changed middle line only redraws that line', async () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      let lines = ['line1', 'line2', 'line3']
+      renderer.setRenderCallback(() => lines)
+      await renderFrame(renderer)
+      stdout.clear()
+      lines = ['line1', 'CHANGED', 'line3']
+      await renderFrame(renderer)
+      const out = stdout.output
+      expect(out).toContain('CHANGED')
+      expect(out).not.toContain('line1')
+      expect(out).not.toContain('line3')
+      renderer.destroy()
+    })
+
+    test('shrinking content clears extra lines', async () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      let lines = ['line1', 'line2', 'line3']
+      renderer.setRenderCallback(() => lines)
+      await renderFrame(renderer)
+      stdout.clear()
+      lines = ['line1']
+      await renderFrame(renderer)
+      const out = stdout.output
+      // Should contain clear line sequences for removed lines
+      expect(out).toContain('\x1b[2K')
+      renderer.destroy()
+    })
+
+    test('uses synchronized output wrapping', async () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      renderer.setRenderCallback(() => ['hello'])
+      stdout.clear()
+      await renderFrame(renderer)
+      const out = stdout.output
+      expect(out).toContain('\x1b[?2026h') // sync start
+      expect(out).toContain('\x1b[?2026l') // sync end
       renderer.destroy()
     })
   })
 
-  describe('appendScroll with active status', () => {
-    test('clears status before appending, then redraws', () => {
+  describe('freezeLines', () => {
+    test('frozen lines are not redrawn on next frame', async () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()
-      renderer.setStatus(['status1', 'status2'])
+      let lines = ['frozen1', 'frozen2', 'active1']
+      renderer.setRenderCallback(() => lines)
+      await renderFrame(renderer)
+
+      // Freeze the first 2 lines
+      renderer.freezeLines(2)
       stdout.clear()
-      renderer.appendScroll('new content')
-      // Should clear status, write content, then redraw status
+
+      // Change active content
+      lines = ['frozen1', 'frozen2', 'active-changed']
+      // After freeze, renderer only tracks ['active1'] as previous
+      // New callback returns 3 lines but renderer compares against ['active1']
+      renderer.setRenderCallback(() => ['active-changed'])
+      await renderFrame(renderer)
       const out = stdout.output
-      expect(out).toContain('new content')
+      expect(out).toContain('active-changed')
+      expect(out).not.toContain('frozen1')
+      expect(out).not.toContain('frozen2')
       renderer.destroy()
     })
 
-    test('appendScroll clears status area — no stale pending text redrawn', () => {
+    test('freeze with count 0 does nothing', async () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()
-
-      // Simulate: status shows pending assistant text
-      renderer.setStatus(['  pending assistant text', '> '])
+      renderer.setRenderCallback(() => ['line1'])
+      await renderFrame(renderer)
       stdout.clear()
-
-      // Now flush: append the same text to scroll
-      renderer.appendScroll('  pending assistant text')
-      const out = stdout.output
-
-      // appendScroll clears status first, so the old status text
-      // does NOT get redrawn. Only the scroll content appears.
-      const matches = out.split('pending assistant text').length - 1
-      expect(matches).toBe(1)
+      renderer.freezeLines(0)
+      renderer.setRenderCallback(() => ['line1-changed'])
+      await renderFrame(renderer)
+      expect(stdout.output).toContain('line1-changed')
       renderer.destroy()
     })
-    test('selector close restore flow re-appends content before drawing prompt', () => {
+  })
+
+  describe('clearScreen', () => {
+    test('clears screen and resets state', async () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()
-      renderer.setStatus(['selector row 1', 'selector row 2', 'selector row 3', 'prompt'])
+      renderer.setRenderCallback(() => ['line1', 'line2'])
+      await renderFrame(renderer)
       stdout.clear()
-
-      renderer.beginBatch()
-      renderer.restoreViewport()
-      renderer.appendScroll('banner\nprevious output')
-      renderer.setStatus(['prompt'])
-      renderer.flushBatch()
-
+      renderer.clearScreen()
       const out = stdout.output
-      const restoreIndex = out.indexOf('\x1b[1;1H\x1b[J')
-      const contentIndex = out.indexOf('banner\nprevious output\n')
-      const promptIndex = out.lastIndexOf('prompt\n')
-
-      expect(restoreIndex).toBeGreaterThanOrEqual(0)
-      expect(contentIndex).toBeGreaterThan(restoreIndex)
-      expect(promptIndex).toBeGreaterThan(contentIndex)
-      expect(out).not.toContain('selector row 1')
-      expect(out).not.toContain('selector row 2')
-      expect(out).not.toContain('selector row 3')
+      expect(out).toContain('\x1b[2J') // clear screen
+      expect(out).toContain('\x1b[H')  // cursor home
       renderer.destroy()
     })
+  })
 
-    test('redrawViewport redraws normal screen without pushing blank rows or alternate buffer', () => {
+  describe('fullRedraw', () => {
+    test('force redraws all lines', async () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()
+      renderer.setRenderCallback(() => ['line1', 'line2'])
+      await renderFrame(renderer)
       stdout.clear()
-      renderer.redrawViewport('line1\nline2')
+      renderer.fullRedraw()
+      await new Promise(resolve => process.nextTick(resolve))
+      await Bun.sleep(5)
       const out = stdout.output
-      expect(out).toContain('\x1b[1;1H')
-      expect(out).toContain('\x1b[J')
-      expect(out).toContain('line1\nline2\n')
-      expect(out).toContain('\n'.repeat(22))
-      expect(out).not.toContain('\x1b[?1049h')
-      expect(out).not.toContain('\x1b[24A')
-      expect(out).not.toBe('\n'.repeat(24))
-      renderer.destroy()
-    })
-
-    test('redrawViewportTight redraws without padding blank rows', () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      stdout.clear()
-      renderer.redrawViewportTight('line1\nline2')
-      const out = stdout.output
-      expect(out).toContain('\x1b[1;1H')
-      expect(out).toContain('\x1b[J')
-      expect(out).toContain('line1\nline2\n')
-      expect(out).not.toContain('\n'.repeat(22))
-      renderer.destroy()
-    })
-
-    test('restoreViewport clears normal screen and keeps scrollback available', () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      renderer.setStatus(['status1', 'status2'])
-      stdout.clear()
-      renderer.restoreViewport()
-      const out = stdout.output
-      // cursorTo(1,1) + eraseDown() clears the entire visible viewport,
-      // including any status area. No relative cursorUp() needed.
-      expect(out).toContain('\x1b[1;1H')
-      expect(out).toContain('\x1b[J')
-      expect(out).toContain('\n'.repeat(24))
-      expect(out).not.toContain('\x1b[?1049l')
+      expect(out).toContain('line1')
+      expect(out).toContain('line2')
       renderer.destroy()
     })
   })
@@ -357,7 +240,6 @@ describe('TermRenderer', () => {
     test('updates dimensions on resize', () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()
-      renderer.setStatus(['test'])
       stdout.rows = 40
       stdout.columns = 120
       stdout.emit('resize')
@@ -374,7 +256,27 @@ describe('TermRenderer', () => {
       stdout.emit('resize')
       expect(renderer.termRows).toBe(24)
       expect(renderer.termCols).toBe(80)
-      expect(() => renderer.restoreViewport()).not.toThrow()
+      renderer.destroy()
+    })
+  })
+
+  describe('render throttling', () => {
+    test('multiple requestRender calls coalesce into one render', async () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      let callCount = 0
+      renderer.setRenderCallback(() => {
+        callCount++
+        return ['frame ' + callCount]
+      })
+      stdout.clear()
+      renderer.requestRender()
+      renderer.requestRender()
+      renderer.requestRender()
+      await new Promise(resolve => process.nextTick(resolve))
+      await Bun.sleep(20)
+      // Should only have rendered once
+      expect(callCount).toBe(1)
       renderer.destroy()
     })
   })
