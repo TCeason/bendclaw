@@ -101,6 +101,12 @@ function otherText(state: AskState): string {
   return getUIState(state, state.currentTab).otherText
 }
 
+/** Whether the current tab already has a submitted answer */
+function hasAnswer(state: AskState): boolean {
+  const answer = state.answers[state.currentTab]
+  return answer !== undefined && (answer.selectedOption !== null || answer.customText !== null)
+}
+
 function focusOption(state: AskState, index: number): AskState {
   const tab = state.currentTab
   const max = optionCount(state) - 1
@@ -361,10 +367,10 @@ export function handleAskKeyEvent(
     case 'tab':
       return { action: 'update', state: askNextTab(state) }
     case 'right':
-      if (inOther(state)) return { action: 'update', state: askCursorRight(state) }
+      if (inOther(state) && !hasAnswer(state)) return { action: 'update', state: askCursorRight(state) }
       return { action: 'update', state: askNextTab(state) }
     case 'left':
-      if (inOther(state)) return { action: 'update', state: askCursorLeft(state) }
+      if (inOther(state) && !hasAnswer(state)) return { action: 'update', state: askCursorLeft(state) }
       return { action: 'update', state: askPrevTab(state) }
     case 'char':
       if (inOther(state) && char)
