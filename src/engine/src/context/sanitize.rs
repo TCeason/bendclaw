@@ -1,9 +1,7 @@
-//! Tool call / tool result pair sanitization.
+//! Tool pair sanitization — ensures every tool call has a matching result and vice-versa.
 
 use std::collections::HashSet;
 
-use crate::context::tokens::message_tokens;
-use crate::context::tokens::total_tokens;
 use crate::types::*;
 
 fn has_content(content: &[Content]) -> bool {
@@ -14,13 +12,8 @@ fn has_content(content: &[Content]) -> bool {
     })
 }
 
-/// Sanitize tool call / tool result pairing in a message list.
-///
-/// Ensures every assistant `Content::ToolCall` has a matching `Message::ToolResult`
-/// and vice-versa. Orphaned entries are removed so the message list stays valid
-/// for providers (e.g. OpenAI) that enforce strict pairing.
-///
-/// Fast path: when no orphans exist the original `Vec` is returned untouched.
+/// Ensure every tool call has a matching tool result and vice-versa.
+/// Orphaned entries are removed.
 pub fn sanitize_tool_pairs(messages: Vec<AgentMessage>) -> Vec<AgentMessage> {
     let mut call_ids: HashSet<String> = HashSet::new();
     let mut result_ids: HashSet<String> = HashSet::new();
@@ -48,8 +41,7 @@ pub fn sanitize_tool_pairs(messages: Vec<AgentMessage>) -> Vec<AgentMessage> {
         return messages;
     }
 
-    let before_tokens = total_tokens(&messages);
-    let filtered: Vec<AgentMessage> = messages
+    messages
         .into_iter()
         .filter_map(|msg| match msg {
             AgentMessage::Llm(Message::ToolResult {
@@ -88,28 +80,7 @@ pub fn sanitize_tool_pairs(messages: Vec<AgentMessage>) -> Vec<AgentMessage> {
                 }
             }
 
-            AgentMessage::Llm(Message::User { content, timestamp }) => {
-                if has_content(&content) {
-                    Some(AgentMessage::Llm(Message::User { content, timestamp }))
-                } else {
-                    None
-                }
-            }
-
             other => Some(other),
         })
-        .collect();
-
-    // Avoid turning a tiny/empty orphan into a larger synthetic message. When
-    // there was real content, keep a minimal marker so compaction does not
-    // erase a non-empty conversation completely.
-    if filtered.is_empty() {
-        let marker = super::marker::build_fallback_marker();
-        if message_tokens(&marker) <= before_tokens {
-            return vec![marker];
-        }
-        return Vec::new();
-    }
-
-    filtered
+        .collect()
 }

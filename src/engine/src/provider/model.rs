@@ -299,6 +299,13 @@ pub struct ModelConfig {
     pub thinking_passback: ThinkingPassbackPolicy,
 }
 
+fn openai_context_window(id: &str) -> u32 {
+    match id.trim().to_ascii_lowercase().as_str() {
+        "gpt-5.5" => 400_000,
+        _ => 128_000,
+    }
+}
+
 impl ModelConfig {
     pub fn apply_inferred_capabilities(&mut self) {
         if self.api == ApiProtocol::AnthropicMessages && self.requires_tool_use_thinking_passback()
@@ -332,14 +339,16 @@ impl ModelConfig {
 
     /// Create a new OpenAI model config.
     pub fn openai(id: impl Into<String>, name: impl Into<String>) -> Self {
+        let id = id.into();
+        let context_window = openai_context_window(&id);
         Self {
-            id: id.into(),
+            id,
             name: name.into(),
             api: ApiProtocol::OpenAiCompletions,
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             reasoning: false,
-            context_window: 128_000,
+            context_window,
             max_tokens: 4096,
             cost: CostConfig::default(),
             headers: HashMap::new(),
@@ -351,14 +360,16 @@ impl ModelConfig {
     /// Create a config for a local OpenAI-compatible server (LM Studio, Ollama, etc.).
     /// No API key required — sends an empty Bearer token.
     pub fn local(base_url: impl Into<String>, model_id: impl Into<String>) -> Self {
+        let id = model_id.into();
+        let context_window = openai_context_window(&id);
         Self {
-            id: model_id.into(),
+            id,
             name: "Local Model".into(),
             api: ApiProtocol::OpenAiCompletions,
             provider: "local".into(),
             base_url: base_url.into(),
             reasoning: false,
-            context_window: 128_000,
+            context_window,
             max_tokens: 4096,
             cost: CostConfig::default(),
             headers: HashMap::new(),

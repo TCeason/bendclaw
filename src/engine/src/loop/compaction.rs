@@ -1,75 +1,109 @@
-//! Context compaction: shrink context when approaching token budget.
+//! Context compaction integration with the agent loop.
+
+use std::sync::Arc;
 
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use super::config::AgentLoopConfig;
-use crate::context::compact_messages;
-use crate::context::CompactionBudgetState;
+use crate::context::AfterResponseAction;
+use crate::context::CompactionController;
 use crate::context::ContextTracker;
+use crate::context::ModelId;
+use crate::context::SummarizerContext;
+use crate::context::UsageSnapshot;
 use crate::types::*;
 
-/// Run context compaction if configured.
-pub(super) fn compact_context(
-    context: &mut AgentContext,
+/// Run the post-response compaction policy for one assistant message.
+pub(super) async fn post_response_compaction(
+    controller: &mut Option<CompactionController>,
+    tracker: &mut ContextTracker,
+    messages: &mut Vec<AgentMessage>,
+    assistant_message: &Message,
     config: &AgentLoopConfig,
-    context_tracker: &mut ContextTracker,
+    cancel: CancellationToken,
     tx: &mpsc::UnboundedSender<AgentEvent>,
-) {
-    let ctx_config = match config.context_config {
-        Some(ref c) => c,
-        None => return,
+) -> bool {
+    let ctrl = match controller.as_mut() {
+        Some(ctrl) => ctrl,
+        None => return false,
     };
 
-    let original_count = context.messages.len();
-    let budget = context_tracker.budget_snapshot(&context.messages, Some(ctx_config));
-    let pre_stats = crate::context::compute_call_stats_from_agent_messages(&context.messages);
-
-    let budget_state = CompactionBudgetState::from_tracker(context_tracker, &context.messages);
-    let raw_estimated =
-        CompactionBudgetState::raw_estimated_tokens(context_tracker, &context.messages);
-    let compact_budget = crate::context::ContextBudgetSnapshot {
-        estimated_tokens: raw_estimated,
-        budget_tokens: budget.budget_tokens,
-        system_prompt_tokens: budget.system_prompt_tokens,
-        tool_definition_tokens: budget.tool_definition_tokens,
-        context_window: budget.context_window,
+    let usage = match usage_snapshot_from_message(assistant_message) {
+        Some(usage) => usage,
+        None => return false,
     };
-    let result = compact_messages(
-        std::mem::take(&mut context.messages),
-        ctx_config,
-        &budget_state,
-    );
-    context.messages = result.messages;
 
-    tx.send(AgentEvent::ContextCompactionStart {
-        message_count: original_count,
-        budget: compact_budget.clone(),
-        message_stats: pre_stats,
-    })
-    .ok();
+    let current_model = ModelId {
+        provider: usage.model.provider.clone(),
+        model: config.model.clone(),
+    };
+    let summarizer_ctx = SummarizerContext {
+        provider: Arc::clone(&config.provider),
+        model: config.model.clone(),
+        api_key: config.api_key.clone(),
+        thinking_level: config.thinking_level,
+    };
 
-    // Adjust baseline by what compaction actually saved, rather than resetting
-    // it entirely. A full reset would fall back to chars/4 which severely
-    // underestimates images. Keeping the adjusted baseline lets the next
-    // compaction check see the real cost of remaining content (especially images).
-    if result.stats.level > 0 {
-        let saved = result
-            .stats
-            .before_estimated_tokens
-            .saturating_sub(result.stats.after_estimated_tokens);
-        context_tracker.record_compaction_savings(saved, context.messages.len());
+    let response = ctrl
+        .after_response(
+            messages,
+            &usage,
+            &current_model,
+            Some(&summarizer_ctx),
+            cancel,
+        )
+        .await;
+
+    if let Some(ref stats) = response.stats {
+        tx.send(AgentEvent::ContextCompactionEnd {
+            stats: stats.clone(),
+            messages: messages.clone(),
+            context_window: ctrl.config().context_window,
+        })
+        .ok();
+        if stats.before_tokens > stats.after_tokens {
+            tracker.record_compaction_done();
+        }
     }
 
-    // Re-estimate tokens using the tracker so the ✓ line is consistent with
-    // the ● line (both use tracker-based estimates that include images).
-    let mut stats = result.stats;
-    stats.before_estimated_tokens = compact_budget.estimated_tokens;
-    stats.after_estimated_tokens = context_tracker.estimate_context_tokens(&context.messages);
+    let should_retry = response.action == AfterResponseAction::Retry;
+    if !should_retry {
+        if let Message::Assistant { stop_reason, .. } = assistant_message {
+            if *stop_reason == StopReason::Stop {
+                ctrl.on_success();
+            }
+        }
+    }
 
-    tx.send(AgentEvent::ContextCompactionEnd {
-        stats,
-        messages: context.messages.clone(),
-        context_window: budget.context_window,
-    })
-    .ok();
+    should_retry
+}
+
+fn usage_snapshot_from_message(message: &Message) -> Option<UsageSnapshot> {
+    if let Message::Assistant {
+        usage,
+        stop_reason,
+        model,
+        provider,
+        timestamp,
+        error_message,
+        ..
+    } = message
+    {
+        Some(UsageSnapshot {
+            input: usage.input as usize,
+            cache_read: usage.cache_read as usize,
+            cache_write: usage.cache_write as usize,
+            output: usage.output as usize,
+            model: ModelId {
+                provider: provider.clone(),
+                model: model.clone(),
+            },
+            timestamp: *timestamp,
+            stop_reason: stop_reason.clone(),
+            error_message: error_message.clone(),
+        })
+    } else {
+        None
+    }
 }

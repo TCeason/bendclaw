@@ -29,7 +29,6 @@ use crate::conf::Protocol;
 use crate::error::Result;
 use crate::types::CompactRecord;
 use crate::types::ContextCompactionCompletedStats;
-use crate::types::ContextCompactionStartedStats;
 use crate::types::LlmCallCompletedStats;
 use crate::types::LlmCallMetrics;
 use crate::types::LlmCallRetryStats;
@@ -748,36 +747,8 @@ fn map_agent_event(
             ]
         }
 
-        evot_engine::AgentEvent::ContextCompactionStart {
-            message_count,
-            budget,
-            message_stats,
-        } => {
-            let stats = Some(LlmMessageStats::from(message_stats.clone()));
-            vec![
-                RuntimeEvent::Transcript(
-                    TranscriptStats::ContextCompactionStarted(ContextCompactionStartedStats {
-                        message_count: *message_count,
-                        estimated_tokens: budget.estimated_tokens,
-                        budget_tokens: budget.budget_tokens,
-                        system_prompt_tokens: budget.system_prompt_tokens,
-                        tool_definition_tokens: budget.tool_definition_tokens,
-                        context_window: budget.context_window,
-                    })
-                    .to_item(),
-                ),
-                RuntimeEvent::Public(RunEventPayload::ContextCompactionStarted {
-                    message_count: *message_count,
-                    estimated_tokens: budget.estimated_tokens,
-                    budget_tokens: budget.budget_tokens,
-                    system_prompt_tokens: budget.system_prompt_tokens,
-                    tool_definition_tokens: budget.tool_definition_tokens,
-                    context_window: budget.context_window,
-                    message_stats: stats,
-                }),
-            ]
-        }
-
+        // ContextCompactionStart was removed — compaction is now triggered
+        // post-response and only emits ContextCompactionEnd.
         evot_engine::AgentEvent::ContextCompactionEnd {
             stats,
             messages,
@@ -785,30 +756,20 @@ fn map_agent_event(
         } => {
             let compacted_transcripts = from_agent_messages(messages);
 
-            let result = if stats.level > 0 {
-                crate::types::CompactionResult::LevelCompacted {
-                    level: stats.level,
+            let result = if stats.messages_evicted > 0
+                || stats.tool_results_shrunk > 0
+                || stats.images_downgraded > 0
+                || stats.current_run_reclaimed > 0
+            {
+                crate::types::CompactionResult::Compacted {
                     before_message_count: stats.before_message_count,
                     after_message_count: stats.after_message_count,
-                    before_estimated_tokens: stats.before_estimated_tokens,
-                    after_estimated_tokens: stats.after_estimated_tokens,
-                    tool_outputs_truncated: stats.tool_outputs_truncated,
-                    turns_summarized: stats.turns_summarized,
-                    messages_dropped: stats.messages_dropped,
-                    oversize_capped: stats.oversize_capped,
-                    age_cleared: stats.age_cleared,
-                    actions: crate::types::convert_compaction_actions(&stats.actions),
-                }
-            } else if stats.current_run_cleared > 0 {
-                crate::types::CompactionResult::RunOnceCleared {
-                    cleared_count: stats.current_run_cleared,
-                    before_message_count: stats.before_message_count,
-                    before_estimated_tokens: stats.before_estimated_tokens,
-                    after_estimated_tokens: stats.after_estimated_tokens,
-                    saved_tokens: stats
-                        .before_estimated_tokens
-                        .saturating_sub(stats.after_estimated_tokens),
-                    actions: crate::types::convert_compaction_actions(&stats.actions),
+                    before_tokens: stats.before_tokens,
+                    after_tokens: stats.after_tokens,
+                    messages_evicted: stats.messages_evicted,
+                    tool_results_shrunk: stats.tool_results_shrunk,
+                    images_downgraded: stats.images_downgraded,
+                    current_run_reclaimed: stats.current_run_reclaimed,
                 }
             } else {
                 crate::types::CompactionResult::NoOp
@@ -816,7 +777,13 @@ fn map_agent_event(
 
             vec![
                 RuntimeEvent::Compacted {
-                    level: stats.level,
+                    level: if stats.messages_evicted > 0 {
+                        3
+                    } else if stats.tool_results_shrunk > 0 {
+                        1
+                    } else {
+                        0
+                    },
                     transcripts: compacted_transcripts,
                 },
                 RuntimeEvent::Transcript(

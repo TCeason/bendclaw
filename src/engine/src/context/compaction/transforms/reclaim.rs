@@ -1,40 +1,37 @@
-//! Reclaim pass — always-on, lossless cleanup.
+//! Reclaim transform — always-on, lossless cleanup.
 //!
-//! Two sub-transforms:
 //! 1. Clear expired `Retention::CurrentRun` tool results.
 //! 2. Downgrade old base64 images to path references.
 
-use crate::context::compaction::pass::Pass;
-use crate::context::compaction::pass::PassContext;
-use crate::context::compaction::pass::PassLevel;
-use crate::context::compaction::pass::PassResult;
-use crate::context::compaction::types::CompactionAction;
-use crate::context::compaction::types::CompactionMethod;
+use crate::context::compaction::config::CompactionConfig;
 use crate::context::tokens::content_tokens;
 use crate::types::*;
 
-pub struct Reclaim;
-
-impl Pass for Reclaim {
-    fn level(&self) -> PassLevel {
-        PassLevel::Reclaim
-    }
-
-    fn should_run(&self, _ctx: &PassContext<'_>) -> bool {
-        true // always-on
-    }
-
-    fn run(&self, messages: Vec<AgentMessage>, _ctx: &PassContext<'_>) -> PassResult {
-        let (messages, mut actions) = clear_current_run(messages);
-        let (messages, image_actions) = downgrade_images(messages);
-        actions.extend(image_actions);
-        PassResult { messages, actions }
-    }
+/// Run reclaim on all messages. Returns transformed messages and stats updates.
+pub fn run(
+    messages: Vec<AgentMessage>,
+    config: &CompactionConfig,
+) -> (Vec<AgentMessage>, ReclaimStats) {
+    let (messages, current_run_reclaimed) = clear_current_run(messages);
+    let (messages, images_downgraded) = downgrade_images(messages, config.keep_recent_images);
+    let stats = ReclaimStats {
+        current_run_reclaimed,
+        images_downgraded,
+    };
+    (messages, stats)
 }
 
-// -- CurrentRun clearing --
+pub struct ReclaimStats {
+    pub current_run_reclaimed: usize,
+    pub images_downgraded: usize,
+}
 
-fn clear_current_run(messages: Vec<AgentMessage>) -> (Vec<AgentMessage>, Vec<CompactionAction>) {
+// ---------------------------------------------------------------------------
+// CurrentRun clearing
+// ---------------------------------------------------------------------------
+
+fn clear_current_run(messages: Vec<AgentMessage>) -> (Vec<AgentMessage>, usize) {
+    // Mark which messages have a user message after them.
     let mut has_user_after = vec![false; messages.len()];
     let mut seen_user = false;
     for i in (0..messages.len()).rev() {
@@ -44,7 +41,7 @@ fn clear_current_run(messages: Vec<AgentMessage>) -> (Vec<AgentMessage>, Vec<Com
         }
     }
 
-    let mut actions = Vec::new();
+    let mut reclaimed = 0usize;
     let result = messages
         .into_iter()
         .enumerate()
@@ -80,17 +77,8 @@ fn clear_current_run(messages: Vec<AgentMessage>) -> (Vec<AgentMessage>, Vec<Com
                 } else {
                     Vec::new()
                 };
-                let after_tokens = content_tokens(&replacement);
 
-                actions.push(CompactionAction {
-                    index: idx,
-                    tool_name: tool_name.clone(),
-                    method: CompactionMethod::LifecycleReclaimed,
-                    before_tokens,
-                    after_tokens,
-                    end_index: None,
-                    related_count: None,
-                });
+                reclaimed += 1;
 
                 AgentMessage::Llm(Message::ToolResult {
                     tool_call_id,
@@ -106,61 +94,48 @@ fn clear_current_run(messages: Vec<AgentMessage>) -> (Vec<AgentMessage>, Vec<Com
         })
         .collect();
 
-    (result, actions)
+    (result, reclaimed)
 }
-// -- Image path downgrade --
 
-fn downgrade_images(messages: Vec<AgentMessage>) -> (Vec<AgentMessage>, Vec<CompactionAction>) {
-    // Keep the most recent image-bearing message intact
-    let keep_idx = messages.iter().enumerate().rev().find_map(|(idx, msg)| {
-        let content = match msg {
-            AgentMessage::Llm(Message::User { content, .. }) => content,
-            AgentMessage::Llm(Message::Assistant { content, .. }) => content,
-            AgentMessage::Llm(Message::ToolResult { content, .. }) => content,
-            _ => return None,
-        };
-        let has_image = content.iter().any(|c| {
-            matches!(
-                c,
-                Content::Image {
-                    source: ImageSource::Path { .. },
-                    ..
-                } | Content::Image {
-                    source: ImageSource::Base64 { path: Some(_), .. },
-                    ..
-                }
-            )
-        });
-        if has_image {
-            Some(idx)
-        } else {
-            None
-        }
-    });
+// ---------------------------------------------------------------------------
+// Image downgrade
+// ---------------------------------------------------------------------------
 
-    let mut actions = Vec::new();
+fn downgrade_images(messages: Vec<AgentMessage>, keep_recent: usize) -> (Vec<AgentMessage>, usize) {
+    // Find indices of messages with images, keep the most recent N.
+    let image_indices: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, msg)| has_downgradable_image(msg))
+        .map(|(i, _)| i)
+        .collect();
+
+    let to_downgrade: std::collections::HashSet<usize> = if image_indices.len() > keep_recent {
+        image_indices[..image_indices.len() - keep_recent]
+            .iter()
+            .copied()
+            .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    if to_downgrade.is_empty() {
+        return (messages, 0);
+    }
+
+    let mut downgraded = 0usize;
     let result = messages
         .into_iter()
         .enumerate()
         .map(|(idx, msg)| {
-            if Some(idx) == keep_idx {
+            if !to_downgrade.contains(&idx) {
                 return msg;
             }
             match msg {
                 AgentMessage::Llm(Message::User { content, timestamp }) => {
-                    let before_tokens = content_tokens(&content);
                     let mut new_content = content;
                     if downgrade_content(&mut new_content) {
-                        let after_tokens = content_tokens(&new_content);
-                        actions.push(CompactionAction {
-                            index: idx,
-                            tool_name: "user".into(),
-                            method: CompactionMethod::ImageStripped,
-                            before_tokens,
-                            after_tokens,
-                            end_index: None,
-                            related_count: None,
-                        });
+                        downgraded += 1;
                     }
                     AgentMessage::Llm(Message::User {
                         content: new_content,
@@ -175,19 +150,9 @@ fn downgrade_images(messages: Vec<AgentMessage>) -> (Vec<AgentMessage>, Vec<Comp
                     timestamp,
                     retention,
                 }) => {
-                    let before_tokens = content_tokens(&content);
                     let mut new_content = content;
                     if downgrade_content(&mut new_content) {
-                        let after_tokens = content_tokens(&new_content);
-                        actions.push(CompactionAction {
-                            index: idx,
-                            tool_name: tool_name.clone(),
-                            method: CompactionMethod::ImageStripped,
-                            before_tokens,
-                            after_tokens,
-                            end_index: None,
-                            related_count: None,
-                        });
+                        downgraded += 1;
                     }
                     AgentMessage::Llm(Message::ToolResult {
                         tool_call_id,
@@ -203,7 +168,21 @@ fn downgrade_images(messages: Vec<AgentMessage>) -> (Vec<AgentMessage>, Vec<Comp
         })
         .collect();
 
-    (result, actions)
+    (result, downgraded)
+}
+
+fn has_downgradable_image(msg: &AgentMessage) -> bool {
+    let content = match msg {
+        AgentMessage::Llm(Message::User { content, .. }) => content,
+        AgentMessage::Llm(Message::ToolResult { content, .. }) => content,
+        _ => return false,
+    };
+    content.iter().any(|c| {
+        matches!(c, Content::Image {
+            source: ImageSource::Base64 { path: Some(_), .. },
+            ..
+        })
+    })
 }
 
 fn downgrade_content(content: &mut [Content]) -> bool {

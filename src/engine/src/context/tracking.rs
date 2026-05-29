@@ -57,34 +57,19 @@ impl ContextTracker {
         }
     }
 
-    /// Adjust baseline after compaction by subtracting saved tokens.
+    /// Invalidate the baseline after compaction.
     ///
-    /// Resetting the baseline entirely would cause fallback to chars/4, which
-    /// severely underestimates images. Instead, subtract what compaction saved
-    /// so the baseline still reflects the real API cost of remaining content
-    /// (especially images that compaction cannot reduce).
+    /// After compaction, the last assistant usage reflects pre-compaction
+    /// context size and cannot be trusted. Reset the baseline so that
+    /// `estimate_context_tokens` returns `None` (unknown) until the next
+    /// LLM response provides fresh usage data.
     ///
-    /// Also adjusts the baseline index when it points beyond the new array,
-    /// since message eviction invalidates the old index position.
-    pub fn record_compaction_savings(&mut self, tokens_saved: usize, new_message_count: usize) {
-        if let Some(ref mut baseline) = self.last_baseline_tokens {
-            *baseline = baseline.saturating_sub(tokens_saved);
-        }
-        // Only clamp when the old index is out of bounds for the new array.
-        // This prevents fallback to chars/4 which severely underestimates images.
-        if let Some(ref mut idx) = self.last_baseline_index {
-            if *idx >= new_message_count && new_message_count > 0 {
-                *idx = new_message_count - 1;
-            }
-        }
-    }
-
-    /// Reset baseline entirely. Use only when messages are replaced wholesale
-    /// (e.g., full conversation summary replacing all prior messages).
-    pub fn record_compaction(&mut self) {
+    /// This matches Pi's approach: context size is unknown between compaction
+    /// and the next provider response, avoiding any synthetic estimation that
+    /// mixes different tokenizer scales.
+    pub fn record_compaction_done(&mut self) {
         self.last_baseline_tokens = None;
         self.last_baseline_index = None;
-        self.system_tool_overhead_tokens = 0;
     }
 
     /// Estimate current context size: baseline + tiktoken for trailing messages.
@@ -168,44 +153,6 @@ pub struct ContextBudgetSnapshot {
 // Compaction budget state (runtime, passed into compact)
 // ---------------------------------------------------------------------------
 
-/// Runtime token state passed into compaction.
-///
-/// Uses message-only token estimates (chars/4) so compaction decisions
-/// are based on what it can actually reduce — message content — rather
-/// than the full provider input which includes system prompt + tool
-/// definitions that compaction cannot touch.
-#[derive(Debug, Clone)]
-pub struct CompactionBudgetState {
-    /// Current estimated message tokens (chars/4, excludes system/tools overhead).
-    pub estimated_tokens: usize,
-}
-
-impl CompactionBudgetState {
-    /// Build from a message list using pure chars/4 estimation.
-    pub fn from_messages(messages: &[AgentMessage]) -> Self {
-        Self {
-            estimated_tokens: total_tokens(messages),
-        }
-    }
-
-    /// Build from tracker estimate and message list.
-    ///
-    /// Subtracts system+tool overhead so compaction decisions are based on
-    /// message content only — the part compaction can actually reduce.
-    pub fn from_tracker(tracker: &ContextTracker, messages: &[AgentMessage]) -> Self {
-        let raw = tracker.estimate_context_tokens(messages);
-        let overhead = tracker.system_tool_overhead_tokens();
-        Self {
-            estimated_tokens: raw.saturating_sub(overhead),
-        }
-    }
-
-    /// Raw estimated tokens (including system+tool overhead) for display purposes.
-    pub fn raw_estimated_tokens(tracker: &ContextTracker, messages: &[AgentMessage]) -> usize {
-        tracker.estimate_context_tokens(messages)
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Context configuration
 // ---------------------------------------------------------------------------
@@ -221,28 +168,8 @@ pub struct ContextConfig {
     pub keep_recent: usize,
     /// Minimum first messages to always keep
     pub keep_first: usize,
-    /// Max lines to keep per tool output in Level 1 compaction
+    /// Max lines to keep per tool output after truncation
     pub tool_output_max_lines: usize,
-    /// Compaction trigger as percentage of budget (0–100).
-    /// When context exceeds this fraction, L1 starts summarizing old turns.
-    /// Set to 100 to disable early collapse. Default: 80.
-    pub compact_trigger_pct: u8,
-    /// Compaction target as percentage of budget (0–100).
-    /// L1 and L2 both aim to reduce context to this fraction.
-    /// Must be <= compact_trigger_pct. Default: 75.
-    pub compact_target_pct: u8,
-    /// Maximum messages before compaction trims stale middle context, even if
-    /// the token estimate is within budget. This keeps long sessions focused
-    /// without treating message-count pressure like token-budget pressure.
-    /// Set to 0 to disable message-count compaction. Default: 150.
-    pub max_messages: usize,
-    /// Target percentage of `max_messages` when message-count eviction runs.
-    /// This avoids dropping a session from just-over-limit to only the pinned
-    /// head/tail. Clamped to 1–100. Default: 90.
-    pub message_limit_target_pct: u8,
-    /// Token budget for microcompact: keep the most recent compactable tool
-    /// results whose cumulative tokens fit within this budget. Default: 40_000.
-    pub microcompact_keep_tokens: usize,
 }
 
 impl Default for ContextConfig {
@@ -253,11 +180,6 @@ impl Default for ContextConfig {
             keep_recent: 10,
             keep_first: 2,
             tool_output_max_lines: 50,
-            compact_trigger_pct: 80,
-            compact_target_pct: 75,
-            max_messages: 150,
-            message_limit_target_pct: 90,
-            microcompact_keep_tokens: 40_000,
         }
     }
 }
@@ -269,13 +191,8 @@ impl ContextConfig {
     /// as the compaction budget. All other settings use defaults.
     pub fn from_context_window(context_window: u32) -> Self {
         let max_context_tokens = (context_window as usize) * 80 / 100;
-        // Scale max_messages with context window. Assume ~250 tokens per
-        // message on average; allow enough messages to fill ~60% of the
-        // token budget before message-count eviction kicks in.
-        let max_messages = (max_context_tokens * 60 / 100 / 250).max(150);
         Self {
             max_context_tokens,
-            max_messages,
             ..Default::default()
         }
     }

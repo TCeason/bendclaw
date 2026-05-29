@@ -326,11 +326,11 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const text = formatCompactionCompleted(data)
 
       const compactRecord: CompactRecord | null =
-        type === 'level_compacted' || type === 'level_done'
+        type === 'level_compacted' || type === 'level_done' || type === 'compacted'
           ? {
-              level: (result?.level as number) ?? 0,
-              beforeTokens: ((result?.before_estimated_tokens as number) ?? (result?.tokens_before as number)) ?? 0,
-              afterTokens: ((result?.after_estimated_tokens as number) ?? (result?.tokens_after as number)) ?? 0,
+              level: (result?.level as number) ?? (result?.messages_evicted ? 3 : 1),
+              beforeTokens: ((result?.before_estimated_tokens as number) ?? (result?.before_tokens as number) ?? (result?.tokens_before as number)) ?? 0,
+              afterTokens: ((result?.after_estimated_tokens as number) ?? (result?.after_tokens as number) ?? (result?.tokens_after as number)) ?? 0,
             }
           : type === 'run_once_cleared'
             ? {

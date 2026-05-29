@@ -9,11 +9,9 @@ pub mod types;
 
 pub use agent::Agent;
 pub use agent::RunHandle;
+pub use context::now_ms;
 pub use context::resize_image;
 pub use context::sanitize_tool_pairs;
-pub use context::CompactionBudgetState;
-pub use context::CompactionResult;
-pub use context::CompactionStats;
 pub use r#loop::agent_loop;
 pub use r#loop::agent_loop_continue;
 pub use r#loop::AfterTurnFn;

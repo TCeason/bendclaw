@@ -1,27 +1,27 @@
-//! Context window management — smart truncation and token counting.
-//!
-//! The #1 engineering challenge for agents. This module provides:
-//! - Token estimation (fast, no external deps)
-//! - Tiered compaction (tool output truncation → turn summarization → full summary)
-//! - Execution limits (max turns, tokens, duration)
-//!
-//! Designed based on Claude Code's approach: clear old tool outputs first,
-//! then summarize conversation if needed.
+//! Context window management — token counting, compaction, and execution limits.
 
 pub mod compaction;
 pub mod image_resize;
+pub mod sanitize;
 pub mod tokens;
 pub mod tracking;
 
-pub use compaction::compact_messages;
-pub use compaction::sanitize_tool_pairs;
-pub use compaction::truncate_text_head_tail;
-pub use compaction::CompactionAction;
-pub use compaction::CompactionMethod;
-pub use compaction::CompactionResult;
+pub use compaction::truncate_head_tail;
+pub use compaction::AfterResponseAction;
+pub use compaction::CompactionConfig;
+pub use compaction::CompactionController;
+pub use compaction::CompactionOutcome;
+pub use compaction::CompactionResponse;
+pub use compaction::CompactionState;
 pub use compaction::CompactionStats;
-pub use compaction::ToolTokenDetail;
+pub use compaction::FileOps;
+pub use compaction::ModelId;
+pub use compaction::SummarizerContext;
+pub use compaction::SummarizerMode;
+pub use compaction::TriggerDecision;
+pub use compaction::UsageSnapshot;
 pub use image_resize::resize_image;
+pub use sanitize::sanitize_tool_pairs;
 pub use tokens::compute_call_stats;
 pub use tokens::compute_call_stats_from_agent_messages;
 pub use tokens::content_tokens;
@@ -29,9 +29,16 @@ pub use tokens::estimate_tokens;
 pub use tokens::message_tokens;
 pub use tokens::tool_definition_tokens;
 pub use tokens::total_tokens;
-pub use tracking::CompactionBudgetState;
 pub use tracking::ContextBudgetSnapshot;
 pub use tracking::ContextConfig;
 pub use tracking::ContextTracker;
 pub use tracking::ExecutionLimits;
 pub use tracking::ExecutionTracker;
+
+/// Milliseconds since UNIX epoch, or 0 if the system clock is unavailable.
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}

@@ -648,18 +648,15 @@ async fn stats_after_compact_filtered_on_resume() -> TestResult {
     // Write compact + stats + new message
     let compact_stats = evot::types::TranscriptStats::ContextCompactionCompleted(
         evot::types::ContextCompactionCompletedStats {
-            result: evot::types::CompactionResult::LevelCompacted {
-                level: 1,
+            result: evot::types::CompactionResult::Compacted {
                 before_message_count: 10,
                 after_message_count: 4,
-                before_estimated_tokens: 30000,
-                after_estimated_tokens: 12000,
-                tool_outputs_truncated: 2,
-                turns_summarized: 3,
-                messages_dropped: 1,
-                oversize_capped: 0,
-                age_cleared: 0,
-                actions: vec![],
+                before_tokens: 30000,
+                after_tokens: 12000,
+                messages_evicted: 6,
+                tool_results_shrunk: 2,
+                images_downgraded: 0,
+                current_run_reclaimed: 0,
             },
             context_window: 0,
         },

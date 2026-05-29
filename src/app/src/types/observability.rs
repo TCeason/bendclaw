@@ -85,54 +85,19 @@ pub struct CompactionAction {
     pub related_count: Option<usize>,
 }
 
-impl From<&evot_engine::context::CompactionAction> for CompactionAction {
-    fn from(a: &evot_engine::context::CompactionAction) -> Self {
-        Self {
-            index: a.index,
-            tool_name: a.tool_name.clone(),
-            method: format!("{:?}", a.method),
-            before_tokens: a.before_tokens,
-            after_tokens: a.after_tokens,
-            end_index: a.end_index,
-            related_count: a.related_count,
-        }
-    }
-}
-
-pub fn convert_compaction_actions(
-    actions: &[evot_engine::context::CompactionAction],
-) -> Vec<CompactionAction> {
-    actions.iter().map(CompactionAction::from).collect()
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CompactionResult {
     NoOp,
-    RunOnceCleared {
-        cleared_count: usize,
-        before_message_count: usize,
-        before_estimated_tokens: usize,
-        after_estimated_tokens: usize,
-        saved_tokens: usize,
-        #[serde(default)]
-        actions: Vec<CompactionAction>,
-    },
-    LevelCompacted {
-        level: u8,
+    Compacted {
         before_message_count: usize,
         after_message_count: usize,
-        before_estimated_tokens: usize,
-        after_estimated_tokens: usize,
-        tool_outputs_truncated: usize,
-        turns_summarized: usize,
-        messages_dropped: usize,
-        #[serde(default)]
-        oversize_capped: usize,
-        #[serde(default)]
-        age_cleared: usize,
-        #[serde(default)]
-        actions: Vec<CompactionAction>,
+        before_tokens: usize,
+        after_tokens: usize,
+        messages_evicted: usize,
+        tool_results_shrunk: usize,
+        images_downgraded: usize,
+        current_run_reclaimed: usize,
     },
 }
 

@@ -301,6 +301,35 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
       return lines.join('\n')
     }
 
+    case 'compacted': {
+      const beforeMsgs = (result.before_message_count as number) ?? 0
+      const afterMsgs = (result.after_message_count as number) ?? 0
+      const before = (result.before_tokens as number) ?? 0
+      const after = (result.after_tokens as number) ?? 0
+      const saved = before - after
+      const savedPct = before > 0 ? ((saved / before) * 100).toFixed(0) : '0'
+      const evicted = (result.messages_evicted as number) ?? 0
+      const shrunk = (result.tool_results_shrunk as number) ?? 0
+      const reclaimed = (result.current_run_reclaimed as number) ?? 0
+      const contextWindow = ((data.context_window as number) ?? 0)
+
+      const level = evicted > 0 ? 3 : shrunk > 0 ? 1 : 0
+      const parts: string[] = []
+      if (evicted > 0) parts.push(`evicted ${evicted} msgs`)
+      if (shrunk > 0) parts.push(`shrunk ${shrunk} results`)
+      if (reclaimed > 0) parts.push(`reclaimed ${reclaimed}`)
+      const summary = parts.length > 0 ? parts.join(' · ') : 'no changes'
+
+      const lines: string[] = []
+      lines.push(`[COMPACT] ✓ · L${level} · ${beforeMsgs} → ${afterMsgs} msgs · saved ${humanTokens(saved)} (${savedPct}%)`)
+
+      const ctx = contextLine(after, contextWindow, saved)
+      if (ctx) lines.push(ctx)
+      lines.push(`    summary   ${summary}`)
+
+      return lines.join('\n')
+    }
+
     case 'level_done':
     case 'level_compacted': {
       const level = (result.level as number) ?? 0

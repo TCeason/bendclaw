@@ -121,13 +121,6 @@ pub enum AgentEvent {
         /// Unique completion identifier from the provider (e.g. `chatcmpl-xxx`, `msg_xxx`).
         response_id: Option<String>,
     },
-    ContextCompactionStart {
-        message_count: usize,
-        /// Context budget snapshot at the time of compaction.
-        budget: crate::context::ContextBudgetSnapshot,
-        /// Pre-computed message stats for the context being compacted.
-        message_stats: LlmCallStats,
-    },
     ContextCompactionEnd {
         stats: crate::context::CompactionStats,
         messages: Vec<AgentMessage>,

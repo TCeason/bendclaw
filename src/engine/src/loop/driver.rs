@@ -8,7 +8,7 @@
 use tokio::sync::mpsc;
 
 use super::assistant_sanitize::sanitize_assistant_text;
-use super::compaction::compact_context;
+use super::compaction::post_response_compaction;
 use super::config::AgentLoopConfig;
 use super::doom_loop::DoomLoopDetector;
 use super::input_filter::apply_input_filters;
@@ -137,6 +137,11 @@ async fn run_loop(
 
     let mut thinking_only_guard = ThinkingOnlyGuard::new();
     let mut context_tracker = ContextTracker::new();
+    let mut compaction_controller = config.context_config.as_ref().map(|ctx_cfg| {
+        crate::context::CompactionController::new(
+            crate::context::CompactionConfig::from_context_config(ctx_cfg),
+        )
+    });
 
     // Check for steering messages at start
     let mut pending: Vec<AgentMessage> = config
@@ -213,9 +218,6 @@ async fn run_loop(
             }
             turn_number += 1;
 
-            // Compact context if configured
-            compact_context(context, config, &mut context_tracker, tx);
-
             // Build budget snapshot for the LLM call (same source as compaction)
             let tool_defs: Vec<ToolDefinition> = context
                 .tools
@@ -259,6 +261,48 @@ async fn run_loop(
                 context_tracker.record_usage(usage, msg_index);
             }
 
+            // Extract tool calls before compaction. A tool-use assistant message
+            // must stay adjacent to its tool results; compacting before results
+            // are appended creates orphaned pairs that provider APIs reject.
+            let tool_calls: Vec<_> = match &message {
+                Message::Assistant { content, .. } => content
+                    .iter()
+                    .filter_map(|c| match c {
+                        Content::ToolCall {
+                            id,
+                            name,
+                            arguments,
+                        } => Some((id.clone(), name.clone(), arguments.clone())),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => vec![],
+            };
+
+            let has_tool_calls = !tool_calls.is_empty();
+
+            // Post-response compaction check (overflow recovery + threshold).
+            // For tool-use responses, defer threshold compaction until after
+            // tool results have been appended so the message list is valid.
+            if !has_tool_calls {
+                let should_retry = post_response_compaction(
+                    &mut compaction_controller,
+                    &mut context_tracker,
+                    &mut context.messages,
+                    &message,
+                    config,
+                    cancel.clone(),
+                    tx,
+                )
+                .await;
+                if should_retry {
+                    // Remove the agent_msg we just pushed to new_messages.
+                    // The controller already removed it from context.messages.
+                    new_messages.pop();
+                    continue;
+                }
+            }
+
             // Check for error/abort
             if let Message::Assistant {
                 ref stop_reason,
@@ -295,24 +339,6 @@ async fn run_loop(
                 }
             }
 
-            // Extract tool calls
-            let tool_calls: Vec<_> = match &message {
-                Message::Assistant { content, .. } => content
-                    .iter()
-                    .filter_map(|c| match c {
-                        Content::ToolCall {
-                            id,
-                            name,
-                            arguments,
-                        } => Some((id.clone(), name.clone(), arguments.clone())),
-                        _ => None,
-                    })
-                    .collect(),
-                _ => vec![],
-            };
-
-            let has_tool_calls = !tool_calls.is_empty();
-
             // Doom-loop detection: if the same tool batch repeats >= threshold
             // times, skip execution and inject a steering message instead.
             if has_tool_calls {
@@ -326,6 +352,20 @@ async fn run_loop(
                         tool_results.push(result);
                     }
                     pending.push(intervention.steering_message);
+
+                    let should_retry = post_response_compaction(
+                        &mut compaction_controller,
+                        &mut context_tracker,
+                        &mut context.messages,
+                        &message,
+                        config,
+                        cancel.clone(),
+                        tx,
+                    )
+                    .await;
+                    if should_retry {
+                        continue;
+                    }
 
                     // Track turn + emit TurnEnd, then continue inner loop.
                     if let Some(ref mut tracker) = tracker {
@@ -376,6 +416,24 @@ async fn run_loop(
                     let am: AgentMessage = result.clone().into();
                     context.messages.push(am.clone());
                     new_messages.push(am);
+                }
+
+                // Tool-use responses can independently cross the compaction
+                // threshold, but providers require every retained tool call to
+                // have its matching tool result. Run compaction only after the
+                // results are in context.
+                let should_retry = post_response_compaction(
+                    &mut compaction_controller,
+                    &mut context_tracker,
+                    &mut context.messages,
+                    &message,
+                    config,
+                    cancel.clone(),
+                    tx,
+                )
+                .await;
+                if should_retry {
+                    continue;
                 }
 
                 if steering_after_tools.is_none() {

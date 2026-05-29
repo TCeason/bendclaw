@@ -18,31 +18,21 @@ use crate::types::UsageSummary;
 /// Build a `CompactRecord` from a `CompactionResult`, or `None` for `NoOp`.
 pub fn compact_record_from_result(result: &CompactionResult) -> Option<CompactRecord> {
     match result {
-        CompactionResult::LevelCompacted {
-            level,
-            before_message_count,
-            before_estimated_tokens,
-            after_estimated_tokens,
-            actions,
+        CompactionResult::Compacted {
+            before_message_count: _,
+            before_tokens,
+            after_tokens,
+            messages_evicted,
             ..
-        } => Some(CompactRecord {
-            level: *level,
-            from_tokens: *before_estimated_tokens,
-            to_tokens: *after_estimated_tokens,
-            action_map: build_action_map(*before_message_count, actions),
-        }),
-        CompactionResult::RunOnceCleared {
-            before_message_count,
-            before_estimated_tokens,
-            after_estimated_tokens,
-            actions,
-            ..
-        } => Some(CompactRecord {
-            level: 0,
-            from_tokens: *before_estimated_tokens,
-            to_tokens: *after_estimated_tokens,
-            action_map: build_action_map(*before_message_count, actions),
-        }),
+        } => {
+            let level = if *messages_evicted > 0 { 3 } else { 1 };
+            Some(CompactRecord {
+                level,
+                from_tokens: *before_tokens,
+                to_tokens: *after_tokens,
+                action_map: String::new(),
+            })
+        }
         CompactionResult::NoOp => None,
     }
 }
@@ -172,51 +162,5 @@ impl StatsAggregator {
             }
         }
         agg
-    }
-}
-
-/// Build a per-message action map string from compaction actions.
-///
-/// Each character represents one message in the original list:
-/// `.` = kept, `O` = Outline, `H` = HeadTail, `S` = Summarized,
-/// `D` = Dropped, `C` = Cleared, `X` = OversizeCapped
-///
-/// When multiple actions target the same index, the higher-priority
-/// action wins (Dropped > Summarized > Outline > HeadTail > OversizeCapped > Cleared).
-pub fn build_action_map(
-    message_count: usize,
-    actions: &[crate::types::CompactionAction],
-) -> String {
-    let mut map = vec!['.'; message_count];
-    for action in actions {
-        let ch = match action.method.as_str() {
-            "Outline" => 'O',
-            "HeadTail" => 'H',
-            "Summarized" => 'S',
-            "Dropped" => 'D',
-            "LifecycleCleared" | "AgeCleared" => 'C',
-            "OversizeCapped" => 'X',
-            _ => '?',
-        };
-        let end = action.end_index.unwrap_or(action.index);
-        for i in action.index..=end.min(message_count.saturating_sub(1)) {
-            if i < map.len() && priority(ch) >= priority(map[i]) {
-                map[i] = ch;
-            }
-        }
-    }
-    map.into_iter().collect()
-}
-
-fn priority(ch: char) -> u8 {
-    match ch {
-        'D' => 6,
-        'S' => 5,
-        'O' => 4,
-        'H' => 3,
-        'X' => 2,
-        'C' => 1,
-        '?' => 1,
-        _ => 0,
     }
 }

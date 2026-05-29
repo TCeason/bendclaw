@@ -1706,7 +1706,10 @@ async fn test_filter_non_text_content_only_text_extracted() {
 
 #[tokio::test]
 async fn test_compact_messages_reduces_over_budget_context() {
-    use evotengine::context::ContextConfig;
+    use evotengine::context::compaction::config::CompactionConfig;
+    use evotengine::context::compaction::controller::CompactionController;
+    use evotengine::context::SummarizerMode;
+    use tokio_util::sync::CancellationToken;
 
     let mut messages = Vec::new();
     for i in 0..100 {
@@ -1717,24 +1720,29 @@ async fn test_compact_messages_reduces_over_budget_context() {
         ))));
     }
 
-    let config = ContextConfig {
-        max_context_tokens: 500,
-        system_prompt_tokens: 100,
-        keep_recent: 5,
+    let config = CompactionConfig {
+        context_window: 2_000,
+        reserve_tokens: 500,
+        keep_recent_tokens: 500,
+        keep_recent_min: 5,
         keep_first: 2,
+        max_tool_result_tokens: 500,
         tool_output_max_lines: 20,
-        ..Default::default()
+        keep_recent_images: 1,
+        summarizer_mode: SummarizerMode::default(),
+        summary_max_chars: 4000,
     };
 
-    let budget_state = CompactionBudgetState::from_messages(&messages);
-    let result = evotengine::context::compact_messages(messages, &config, &budget_state);
+    let mut ctrl = CompactionController::new(config);
+    let cancel = CancellationToken::new();
+    ctrl.force_compact(&mut messages, None, cancel).await;
 
     assert!(
-        result.messages.len() < 100,
+        messages.len() < 100,
         "compaction should have reduced messages"
     );
     assert!(
-        result.messages.len() >= 2,
+        messages.len() >= 2,
         "should keep at least keep_first messages"
     );
 }
@@ -1743,112 +1751,9 @@ async fn test_compact_messages_reduces_over_budget_context() {
 // Context compaction event tests
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
-async fn test_compaction_events_emitted_when_context_exceeds_budget() {
-    use evotengine::context::ContextConfig;
-
-    let mut prior_messages = Vec::new();
-    for i in 0..20 {
-        prior_messages.push(AgentMessage::Llm(Message::user(format!(
-            "msg {} {}",
-            i,
-            "x".repeat(500)
-        ))));
-        prior_messages.push(AgentMessage::Llm(Message::Assistant {
-            content: vec![Content::Text {
-                text: format!("reply {} {}", i, "y".repeat(500)),
-            }],
-            stop_reason: StopReason::Stop,
-            model: "mock".into(),
-            provider: "mock".into(),
-            usage: Usage::default(),
-            timestamp: 0,
-            error_message: None,
-            response_id: None,
-        }));
-    }
-
-    let output = TestHarness::new()
-        .responses(vec![MockResponse::Text("Got it.".into())])
-        .system_prompt("")
-        .prior_messages(prior_messages)
-        .context_config(ContextConfig {
-            max_context_tokens: 500,
-            system_prompt_tokens: 0,
-            keep_recent: 4,
-            keep_first: 2,
-            tool_output_max_lines: 20,
-            ..Default::default()
-        })
-        .retry_policy(evotengine::RetryPolicy::disabled())
-        .run("hello")
-        .await;
-
-    let starts: Vec<_> = output
-        .events
-        .iter()
-        .filter_map(|e| match e {
-            AgentEvent::ContextCompactionStart {
-                message_count,
-                budget,
-                ..
-            } => Some((*message_count, budget.estimated_tokens)),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(starts.len(), 1);
-    assert!(starts[0].0 > 20);
-    assert!(starts[0].1 > 500);
-
-    let ends: Vec<_> = output
-        .events
-        .iter()
-        .filter_map(|e| match e {
-            AgentEvent::ContextCompactionEnd { stats, .. } => Some(stats.clone()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(ends.len(), 1);
-    let stats = &ends[0];
-    assert!(stats.level > 0);
-    assert!(stats.after_message_count < stats.before_message_count);
-    assert!(stats.after_estimated_tokens < stats.before_estimated_tokens);
-}
-
-#[tokio::test]
-async fn test_compaction_noop_when_within_budget() {
-    use evotengine::context::ContextConfig;
-
-    let output = TestHarness::new()
-        .responses(vec![MockResponse::Text("ok".into())])
-        .system_prompt("")
-        .context_config(ContextConfig {
-            max_context_tokens: 1_000_000,
-            system_prompt_tokens: 0,
-            keep_recent: 10,
-            keep_first: 2,
-            tool_output_max_lines: 50,
-            ..Default::default()
-        })
-        .retry_policy(evotengine::RetryPolicy::disabled())
-        .run("hi")
-        .await;
-
-    // Within budget → no-op, but compact events still emitted for verbose tracking
-    assert_eq!(output.event_count("CompactionStart"), 1);
-    assert_eq!(output.event_count("CompactionEnd"), 1);
-
-    let ends: Vec<_> = output
-        .events
-        .iter()
-        .filter_map(|e| match e {
-            AgentEvent::ContextCompactionEnd { stats, .. } => Some(stats.clone()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(ends[0].level, 0);
-    assert_eq!(ends[0].before_message_count, ends[0].after_message_count);
-}
+// NOTE: Compaction is now triggered post-response based on usage, not pre-turn.
+// These tests are adapted to the new architecture where compaction events are
+// only emitted when the controller detects threshold/overflow conditions.
 
 #[tokio::test]
 async fn test_compaction_not_emitted_without_context_config() {
@@ -1858,8 +1763,167 @@ async fn test_compaction_not_emitted_without_context_config() {
         .run("hi")
         .await;
 
-    assert_eq!(output.event_count("CompactionStart"), 0);
     assert_eq!(output.event_count("CompactionEnd"), 0);
+}
+
+#[tokio::test]
+async fn test_compaction_after_tool_use_waits_for_tool_results() {
+    use std::collections::HashSet;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    use evotengine::context::ContextConfig;
+
+    struct ToolUseThenTextProvider {
+        requests: std::sync::Arc<parking_lot::Mutex<Vec<Vec<Message>>>>,
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl StreamProvider for ToolUseThenTextProvider {
+        async fn stream(
+            &self,
+            config: StreamConfig,
+            tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+            cancel: tokio_util::sync::CancellationToken,
+        ) -> Result<StreamOutcome, ProviderError> {
+            if cancel.is_cancelled() {
+                return Err(ProviderError::Cancelled);
+            }
+
+            self.requests.lock().push(config.messages.clone());
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            let _ = tx.send(StreamEvent::Start);
+
+            let message = if call == 0 {
+                let id = "tc-high-usage".to_string();
+                let _ = tx.send(StreamEvent::ToolCallStart {
+                    content_index: 0,
+                    id: id.clone(),
+                    name: "read".into(),
+                });
+                let _ = tx.send(StreamEvent::ToolCallEnd { content_index: 0 });
+                Message::Assistant {
+                    content: vec![Content::ToolCall {
+                        id,
+                        name: "read".into(),
+                        arguments: serde_json::json!({"path": "file.txt"}),
+                    }],
+                    stop_reason: StopReason::ToolUse,
+                    model: "mock".into(),
+                    provider: "mock".into(),
+                    usage: Usage {
+                        input: 980,
+                        output: 20,
+                        ..Default::default()
+                    },
+                    timestamp: 1,
+                    error_message: None,
+                    response_id: None,
+                }
+            } else {
+                let text = "done".to_string();
+                let _ = tx.send(StreamEvent::TextDelta {
+                    content_index: 0,
+                    delta: text.clone(),
+                });
+                Message::Assistant {
+                    content: vec![Content::Text { text }],
+                    stop_reason: StopReason::Stop,
+                    model: "mock".into(),
+                    provider: "mock".into(),
+                    usage: Usage::default(),
+                    timestamp: 2,
+                    error_message: None,
+                    response_id: None,
+                }
+            };
+
+            let _ = tx.send(StreamEvent::Done {
+                message: message.clone(),
+            });
+            Ok(StreamOutcome::complete(message))
+        }
+    }
+
+    let requests = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let provider = std::sync::Arc::new(ToolUseThenTextProvider {
+        requests: requests.clone(),
+        calls: AtomicUsize::new(0),
+    });
+
+    let mut config = make_config(MockProvider::text("unused"));
+    config.provider = provider;
+    config.context_config = Some(ContextConfig {
+        max_context_tokens: 1_000,
+        system_prompt_tokens: 0,
+        keep_recent: 1,
+        keep_first: 1,
+        tool_output_max_lines: 50,
+    });
+
+    let mut prior_messages = Vec::new();
+    for i in 0..20 {
+        prior_messages.push(AgentMessage::Llm(Message::user(format!(
+            "history {i} {}",
+            "x".repeat(200)
+        ))));
+    }
+
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: prior_messages,
+        tools: vec![Box::new(MockTool::ok("read", "tool output"))],
+        cwd: std::path::PathBuf::new(),
+        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+        prompt_cache_key: None,
+    };
+
+    let prompt = AgentMessage::Llm(Message::user("read the file"));
+    let (tx, rx) = mpsc::unbounded_channel();
+    let cancel = CancellationToken::new();
+
+    agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
+    let events = collect_events(rx);
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ContextCompactionEnd { .. })),
+        "expected compaction to run after the tool result was appended"
+    );
+
+    let captured_requests = requests.lock().clone();
+    assert!(
+        captured_requests.len() >= 2,
+        "expected a second LLM request after executing the tool"
+    );
+    let second_request = match captured_requests.get(1) {
+        Some(messages) => messages,
+        None => panic!("missing second LLM request"),
+    };
+
+    let mut tool_call_ids = HashSet::new();
+    let mut tool_result_ids = HashSet::new();
+    for message in second_request {
+        match message {
+            Message::Assistant { content, .. } => {
+                for content in content {
+                    if let Content::ToolCall { id, .. } = content {
+                        tool_call_ids.insert(id.clone());
+                    }
+                }
+            }
+            Message::ToolResult { tool_call_id, .. } => {
+                tool_result_ids.insert(tool_call_id.clone());
+            }
+            _ => {}
+        }
+    }
+
+    assert!(
+        tool_result_ids.is_subset(&tool_call_ids),
+        "second request contains orphan tool results: calls={tool_call_ids:?}, results={tool_result_ids:?}"
+    );
 }
 
 #[tokio::test]

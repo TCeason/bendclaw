@@ -1,93 +1,159 @@
+//! Compaction types — data structures for the compaction system.
+
+use std::collections::BTreeSet;
+use std::ops::Range;
+
 use serde::Deserialize;
 use serde::Serialize;
 
 use crate::types::AgentMessage;
 
-/// Per-tool token breakdown entry.
+// ---------------------------------------------------------------------------
+// Trigger
+// ---------------------------------------------------------------------------
+
+/// Identifies a model (provider + model id) for overflow detection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelId {
+    pub provider: String,
+    pub model: String,
+}
+
+/// Snapshot of usage from the most recent assistant response.
+#[derive(Debug, Clone)]
+pub struct UsageSnapshot {
+    pub input: usize,
+    pub cache_read: usize,
+    pub cache_write: usize,
+    pub output: usize,
+    pub model: ModelId,
+    pub timestamp: u64,
+    pub stop_reason: crate::types::StopReason,
+    pub error_message: Option<String>,
+}
+
+/// Result of trigger evaluation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TriggerDecision {
+    /// No compaction needed.
+    Skip,
+    /// Context exceeds threshold — compact, do not retry.
+    Threshold { context_tokens: usize },
+    /// Context overflow error — compact and retry the turn.
+    Overflow { context_tokens: usize },
+}
+
+// ---------------------------------------------------------------------------
+// Planner
+// ---------------------------------------------------------------------------
+
+/// Describes the three zones of a compaction plan.
+#[derive(Debug, Clone)]
+pub struct CompactionPlan {
+    /// Zone A: pinned head messages (always kept).
+    pub pinned_head: Range<usize>,
+    /// Zone B: messages to evict (replaced by marker).
+    pub evict_zone: Range<usize>,
+    /// Zone C: retained tail (recent work, kept in full or shrunk).
+    pub retained_tail: Range<usize>,
+    /// If the cut point splits a turn, info about the split.
+    pub split_turn: Option<SplitTurn>,
+}
+
+/// When the cut point falls inside a turn (not at a user message boundary).
+#[derive(Debug, Clone)]
+pub struct SplitTurn {
+    /// Index of the user message that started this turn.
+    pub turn_start: usize,
+    /// Index where the retained tail begins (mid-turn).
+    pub cut_at: usize,
+}
+
+// ---------------------------------------------------------------------------
+// Tracker (cross-compaction state)
+// ---------------------------------------------------------------------------
+
+/// Accumulated state across compactions — serialized into transcript.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ToolTokenDetail {
-    pub tool_name: String,
-    pub tokens: usize,
-}
-
-/// Describes what happened to a single item during compaction.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompactionAction {
-    /// Message index in the original list (0-based).
-    pub index: usize,
-    /// Tool name, "assistant", or "messages".
-    pub tool_name: String,
-    /// What method was used.
-    pub method: CompactionMethod,
-    /// Tokens before compaction.
-    pub before_tokens: usize,
-    /// Tokens after compaction.
-    pub after_tokens: usize,
-    /// End index for range actions (evict).
+pub struct CompactionState {
+    /// Cumulative file operations.
+    pub file_ops: FileOps,
+    /// Environment discoveries (paths, toolchains).
+    pub env_discoveries: Vec<String>,
+    /// Completed user requests (short summaries).
+    pub completed_requests: Vec<String>,
+    /// Timestamp of this compaction.
+    pub timestamp: u64,
+    /// How many compactions have occurred in this session.
+    pub generation: u32,
+    /// LLM-generated summary from last compaction (for incremental updates).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub end_index: Option<usize>,
-    /// Count of related messages (e.g. tool results in a collapsed turn).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub related_count: Option<usize>,
+    pub last_summary: Option<String>,
 }
 
-/// The method used to compact a message or tool result.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum CompactionMethod {
-    /// CurrentRun result reclaimed after its lifecycle ended.
-    #[serde(alias = "LifecycleCleared")]
-    LifecycleReclaimed,
-    /// Oversized result capped.
-    #[serde(alias = "oversize_capped")]
-    OversizeCapped,
-    /// Old result cleared by age policy.
-    #[serde(alias = "age_cleared")]
-    AgeCleared,
-    /// Head + tail truncation.
-    HeadTail,
-    /// Tree-sitter structural outline extraction.
-    Outline,
-    /// Old image stripped under severe pressure.
-    ImageStripped,
-    /// Assistant turn collapsed into a summary.
-    #[serde(alias = "Summarized")]
-    TurnCollapsed,
-    /// Messages evicted from stale context.
-    #[serde(alias = "Dropped")]
-    MessagesEvicted,
+/// Tracked file operations, accumulated across compactions.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FileOps {
+    pub read: BTreeSet<String>,
+    pub written: BTreeSet<String>,
+    pub edited: BTreeSet<String>,
 }
 
+impl FileOps {
+    /// Files that were modified (written or edited).
+    pub fn modified(&self) -> BTreeSet<&String> {
+        self.written.iter().chain(self.edited.iter()).collect()
+    }
+
+    /// Files that were only read (not modified).
+    pub fn read_only(&self) -> Vec<&String> {
+        let modified = self.modified();
+        self.read.iter().filter(|f| !modified.contains(f)).collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Executor output
+// ---------------------------------------------------------------------------
+
+/// Final result of a compaction execution.
+#[derive(Debug, Clone)]
+pub struct CompactionOutcome {
+    pub messages: Vec<AgentMessage>,
+    pub state: CompactionState,
+    pub stats: CompactionStats,
+}
+
+/// Statistics about what compaction did.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompactionStats {
-    /// User-visible compaction level: 3=evict, 2=collapse, 1=shrink, 0=reclaim/no-op.
-    pub level: u8,
+    /// Messages before compaction.
     pub before_message_count: usize,
+    /// Messages after compaction.
     pub after_message_count: usize,
-    pub before_estimated_tokens: usize,
-    pub after_estimated_tokens: usize,
-    pub tool_outputs_truncated: usize,
-    pub turns_summarized: usize,
-    pub messages_dropped: usize,
-    pub current_run_cleared: usize,
-    /// Count of oversized results capped.
-    #[serde(default)]
-    pub oversize_capped: usize,
-    /// Count of old results/images cleared by age policy.
-    #[serde(default)]
-    pub age_cleared: usize,
-    /// Per-tool token breakdown before compaction (sorted by tokens desc).
-    #[serde(default)]
-    pub before_tool_details: Vec<ToolTokenDetail>,
-    /// Per-tool token breakdown after compaction (sorted by tokens desc).
-    #[serde(default)]
-    pub after_tool_details: Vec<ToolTokenDetail>,
-    /// Per-message compaction actions.
-    #[serde(default)]
-    pub actions: Vec<CompactionAction>,
+    /// Estimated tokens before.
+    pub before_tokens: usize,
+    /// Estimated tokens after.
+    pub after_tokens: usize,
+    /// Messages evicted.
+    pub messages_evicted: usize,
+    /// Tool results shrunk in retained zone.
+    pub tool_results_shrunk: usize,
+    /// Images downgraded.
+    pub images_downgraded: usize,
+    /// CurrentRun results reclaimed.
+    pub current_run_reclaimed: usize,
 }
 
-#[derive(Debug, Clone)]
-pub struct CompactionResult {
-    pub messages: Vec<AgentMessage>,
-    pub stats: CompactionStats,
+// ---------------------------------------------------------------------------
+// Action returned by loop integration
+// ---------------------------------------------------------------------------
+
+/// What the agent loop should do after compaction evaluation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AfterResponseAction {
+    /// Continue normally.
+    Continue,
+    /// Retry the current turn (after overflow recovery).
+    Retry,
 }

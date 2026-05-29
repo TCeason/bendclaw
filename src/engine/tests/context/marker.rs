@@ -1,12 +1,23 @@
-use evotengine::context::compaction::marker::build_full_marker;
+//! Tests for the marker module.
+
+use evotengine::context::compaction::marker::MarkerInput;
+use evotengine::context::compaction::marker::{self};
+use evotengine::context::compaction::types::CompactionState;
 use evotengine::types::*;
 
-fn make_assistant_with_tool_call(id: &str, name: &str, args: serde_json::Value) -> AgentMessage {
+fn user_msg(text: &str) -> AgentMessage {
+    AgentMessage::Llm(Message::User {
+        content: vec![Content::Text {
+            text: text.to_string(),
+        }],
+        timestamp: 0,
+    })
+}
+
+fn assistant_msg(text: &str) -> AgentMessage {
     AgentMessage::Llm(Message::Assistant {
-        content: vec![Content::ToolCall {
-            id: id.to_string(),
-            name: name.to_string(),
-            arguments: args,
+        content: vec![Content::Text {
+            text: text.to_string(),
         }],
         stop_reason: StopReason::Stop,
         model: "test".into(),
@@ -18,174 +29,186 @@ fn make_assistant_with_tool_call(id: &str, name: &str, args: serde_json::Value) 
     })
 }
 
-fn make_tool_result(id: &str, name: &str, text: &str, is_error: bool) -> AgentMessage {
+fn tool_call_msg(id: &str, name: &str, path: &str) -> AgentMessage {
+    let mut args = serde_json::Map::new();
+    args.insert(
+        "path".to_string(),
+        serde_json::Value::String(path.to_string()),
+    );
+    AgentMessage::Llm(Message::Assistant {
+        content: vec![Content::ToolCall {
+            id: id.to_string(),
+            name: name.to_string(),
+            arguments: serde_json::Value::Object(args),
+        }],
+        stop_reason: StopReason::ToolUse,
+        model: "test".into(),
+        provider: "test".into(),
+        usage: Usage::default(),
+        timestamp: 0,
+        error_message: None,
+        response_id: None,
+    })
+}
+fn tool_result_msg(id: &str, name: &str, content: &str) -> AgentMessage {
     AgentMessage::Llm(Message::ToolResult {
         tool_call_id: id.to_string(),
         tool_name: name.to_string(),
         content: vec![Content::Text {
-            text: text.to_string(),
+            text: content.to_string(),
         }],
-        is_error,
+        is_error: false,
         timestamp: 0,
         retention: Retention::Normal,
     })
 }
 
-fn make_assistant_text(text: &str) -> AgentMessage {
-    AgentMessage::Llm(Message::Assistant {
-        content: vec![Content::Text {
-            text: text.to_string(),
-        }],
-        stop_reason: StopReason::Stop,
-        model: "test".into(),
-        provider: "test".into(),
-        usage: Usage::default(),
-        timestamp: 0,
-        error_message: None,
-        response_id: None,
-    })
-}
-
-fn marker_text(messages: &[AgentMessage], removed: usize) -> String {
-    let marker = build_full_marker(messages, removed);
-    match marker {
-        AgentMessage::Llm(Message::User { content, .. }) => content
-            .into_iter()
-            .find_map(|c| match c {
-                Content::Text { text } => Some(text),
-                _ => None,
-            })
-            .unwrap_or_default(),
-        _ => panic!("expected user message"),
+fn extract_marker_text(msg: &AgentMessage) -> &str {
+    match msg {
+        AgentMessage::Llm(Message::User { content, .. }) => {
+            if let Some(Content::Text { text }) = content.first() {
+                text.as_str()
+            } else {
+                ""
+            }
+        }
+        _ => "",
     }
 }
 
 #[test]
-fn marker_includes_file_modifications() {
-    let messages = vec![
-        make_assistant_with_tool_call(
-            "c1",
-            "edit",
-            serde_json::json!({"file_path": "/src/main.rs", "old_string": "a", "new_string": "b"}),
-        ),
-        make_tool_result("c1", "edit", "File updated successfully.", false),
-        make_assistant_with_tool_call(
-            "c2",
-            "write",
-            serde_json::json!({"file_path": "/tests/new.rs", "content": "fn test() {}"}),
-        ),
-        make_tool_result("c2", "write", "File created successfully.", false),
-        // Error edit should be excluded
-        make_assistant_with_tool_call(
-            "c3",
-            "edit",
-            serde_json::json!({"file_path": "/src/bad.rs", "old_string": "x", "new_string": "y"}),
-        ),
-        make_tool_result("c3", "edit", "old_string not found", true),
-    ];
-
-    let text = marker_text(&messages, 6);
-    assert!(text.contains("/src/main.rs (edited)"));
-    assert!(text.contains("/tests/new.rs (created)"));
-    assert!(!text.contains("/src/bad.rs"));
+fn marker_contains_message_count() {
+    let evicted = vec![user_msg("hello"), assistant_msg("hi")];
+    let input = MarkerInput {
+        evicted: &evicted,
+        split_turn_prefix: None,
+        prev_state: None,
+    };
+    let marker = marker::build(&input);
+    let text = extract_marker_text(&marker);
+    assert!(text.contains("2 messages removed"));
 }
 
 #[test]
-fn marker_deduplicates_file_modifications() {
-    let messages = vec![
-        make_assistant_with_tool_call(
-            "c1",
-            "edit",
-            serde_json::json!({"file_path": "/src/main.rs", "old_string": "a", "new_string": "b"}),
-        ),
-        make_tool_result("c1", "edit", "ok", false),
-        make_assistant_with_tool_call(
-            "c2",
-            "edit",
-            serde_json::json!({"file_path": "/src/main.rs", "old_string": "b", "new_string": "c"}),
-        ),
-        make_tool_result("c2", "edit", "ok", false),
+fn marker_extracts_user_requests() {
+    let evicted = vec![
+        user_msg("Fix the typo in main.rs"),
+        assistant_msg("Done, fixed the typo."),
+        user_msg("Add a test for the parser"),
+        assistant_msg("Added parser_test.rs"),
     ];
-
-    let text = marker_text(&messages, 4);
-    assert_eq!(text.matches("/src/main.rs").count(), 1);
+    let input = MarkerInput {
+        evicted: &evicted,
+        split_turn_prefix: None,
+        prev_state: None,
+    };
+    let marker = marker::build(&input);
+    let text = extract_marker_text(&marker);
+    assert!(text.contains("Completed requests"));
+    assert!(text.contains("Fix the typo"));
+    assert!(text.contains("Add a test"));
 }
 
 #[test]
-fn marker_includes_env_discoveries() {
-    let messages = vec![
-        make_assistant_with_tool_call("c1", "bash", serde_json::json!({"command": "which cargo"})),
-        make_tool_result(
-            "c1",
-            "bash",
-            "/root/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/bin/cargo",
-            false,
-        ),
+fn marker_extracts_file_ops() {
+    let evicted = vec![
+        user_msg("read the config"),
+        tool_call_msg("c1", "Read", "/src/config.rs"),
+        tool_result_msg("c1", "Read", "pub struct Config {}"),
+        tool_call_msg("c2", "Write", "/src/new_file.rs"),
+        tool_result_msg("c2", "Write", "ok"),
+        assistant_msg("Done."),
     ];
-
-    let text = marker_text(&messages, 2);
-    assert!(text.contains("/bin/cargo"));
+    let input = MarkerInput {
+        evicted: &evicted,
+        split_turn_prefix: None,
+        prev_state: None,
+    };
+    let marker = marker::build(&input);
+    let text = extract_marker_text(&marker);
+    assert!(text.contains("config.rs") || text.contains("Files read"));
+    assert!(text.contains("new_file.rs") || text.contains("Files modified"));
 }
 
 #[test]
-fn marker_skips_non_probe_bash_commands() {
-    let messages = vec![
-        make_assistant_with_tool_call("c1", "bash", serde_json::json!({"command": "cargo build"})),
-        make_tool_result("c1", "bash", "error: linker not found", false),
+fn marker_includes_last_conclusion() {
+    let evicted = vec![
+        user_msg("explain the architecture"),
+        assistant_msg("The system uses a layered approach with clear separation of concerns."),
     ];
-
-    let text = marker_text(&messages, 2);
-    assert!(!text.contains("Environment"));
+    let input = MarkerInput {
+        evicted: &evicted,
+        split_turn_prefix: None,
+        prev_state: None,
+    };
+    let marker = marker::build(&input);
+    let text = extract_marker_text(&marker);
+    assert!(text.contains("Last assistant conclusion"));
+    assert!(text.contains("layered approach"));
 }
 
 #[test]
-fn marker_includes_last_assistant_conclusion() {
-    let messages = vec![
-        make_assistant_text("The fix is to use MapKey wrapper instead of raw deserializer."),
-        make_assistant_text("done."),
+fn marker_with_split_turn_prefix() {
+    let prefix = vec![
+        user_msg("refactor the module"),
+        tool_call_msg("c1", "Edit", "/src/mod.rs"),
+        tool_result_msg("c1", "Edit", "updated"),
     ];
-
-    let text = marker_text(&messages, 2);
-    assert!(text.contains("MapKey wrapper"));
+    let evicted = vec![
+        user_msg("first task"),
+        assistant_msg("done"),
+        user_msg("refactor the module"),
+        tool_call_msg("c1", "Edit", "/src/mod.rs"),
+        tool_result_msg("c1", "Edit", "updated"),
+    ];
+    let input = MarkerInput {
+        evicted: &evicted,
+        split_turn_prefix: Some(&prefix),
+        prev_state: None,
+    };
+    let marker = marker::build(&input);
+    let text = extract_marker_text(&marker);
+    assert!(text.contains("Current turn context"));
+    assert!(text.contains("refactor the module"));
 }
 
 #[test]
-fn marker_skips_summary_and_filler_text() {
-    let messages = vec![
-        make_assistant_text("The real conclusion here."),
-        make_assistant_text("[Summary] Edit, Bash"),
-        make_assistant_text("done."),
+fn marker_accumulates_state_from_prev() {
+    let mut prev_file_ops = evotengine::context::compaction::types::FileOps::default();
+    prev_file_ops.read.insert("/old/file.rs".to_string());
+    let prev_state = CompactionState {
+        file_ops: prev_file_ops,
+        env_discoveries: vec!["rust 1.75".to_string()],
+        completed_requests: vec!["old request".to_string()],
+        timestamp: 1000,
+        generation: 1,
+        last_summary: None,
+    };
+
+    let evicted = vec![
+        user_msg("new task"),
+        tool_call_msg("c1", "Read", "/new/file.rs"),
+        tool_result_msg("c1", "Read", "content"),
+        assistant_msg("read it"),
     ];
 
-    let text = marker_text(&messages, 3);
-    assert!(text.contains("The real conclusion here."));
-    assert!(!text.contains("[Summary]"));
+    let state = marker::build_state(&evicted, None, Some(&prev_state));
+    assert!(state.file_ops.read.contains("/old/file.rs"));
+    assert!(state.file_ops.read.contains("/new/file.rs"));
+    assert_eq!(state.generation, 2);
+    assert!(state
+        .completed_requests
+        .contains(&"old request".to_string()));
 }
 
 #[test]
-fn marker_includes_all_sections() {
-    let messages = vec![
-        AgentMessage::Llm(Message::User {
-            content: vec![Content::Text {
-                text: "Fix the bug in src/de.rs".into(),
-            }],
-            timestamp: 0,
-        }),
-        make_assistant_with_tool_call(
-            "c1",
-            "edit",
-            serde_json::json!({"file_path": "/src/de.rs", "old_string": "a", "new_string": "b"}),
-        ),
-        make_tool_result("c1", "edit", "ok", false),
-        make_assistant_with_tool_call("c2", "bash", serde_json::json!({"command": "which cargo"})),
-        make_tool_result("c2", "bash", "/usr/bin/cargo", false),
-        make_assistant_text("The fix uses MapKey to enforce string-only keys."),
-    ];
-
-    let text = marker_text(&messages, 6);
-    assert!(text.contains("6 messages removed"));
-    assert!(text.contains("/src/de.rs (edited)"));
-    assert!(text.contains("/usr/bin/cargo"));
-    assert!(text.contains("MapKey to enforce string-only keys"));
-    assert!(text.contains("Fix the bug in src/de.rs"));
+fn marker_is_user_message() {
+    let evicted = vec![user_msg("hi"), assistant_msg("hello")];
+    let input = MarkerInput {
+        evicted: &evicted,
+        split_turn_prefix: None,
+        prev_state: None,
+    };
+    let marker = marker::build(&input);
+    assert!(matches!(marker, AgentMessage::Llm(Message::User { .. })));
 }

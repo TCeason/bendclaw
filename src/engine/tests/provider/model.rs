@@ -12,10 +12,20 @@ fn model_config_anthropic() {
 fn model_config_openai() {
     let config = ModelConfig::openai("gpt-4o", "GPT-4o");
     assert_eq!(config.api, ApiProtocol::OpenAiCompletions);
+    assert_eq!(config.context_window, 128_000);
     let compat = config.compat.unwrap();
     assert!(compat.caps.contains(CompatCaps::STORE));
     assert!(compat.caps.contains(CompatCaps::DEVELOPER_ROLE));
     assert_eq!(compat.max_tokens_field, MaxTokensField::MaxCompletionTokens);
+}
+
+#[test]
+fn model_config_openai_gpt_5_5_uses_400k_context() {
+    let config = ModelConfig::openai("gpt-5.5", "GPT-5.5");
+    assert_eq!(config.context_window, 400_000);
+
+    let local_config = ModelConfig::local("", "gpt-5.5");
+    assert_eq!(local_config.context_window, 400_000);
 }
 
 #[test]

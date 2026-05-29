@@ -1,8 +1,6 @@
 #[allow(dead_code)]
 pub mod agent_harness;
 #[allow(dead_code)]
-pub mod compact_scenario;
-#[allow(dead_code)]
 pub mod compaction_assert;
 #[allow(dead_code)]
 pub mod message_dsl;
