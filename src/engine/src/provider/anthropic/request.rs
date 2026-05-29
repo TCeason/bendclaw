@@ -118,7 +118,7 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
 
     let mut body = serde_json::json!({
         "model": config.model,
-        "max_tokens": config.max_tokens.unwrap_or(32768),
+        "max_tokens": config.max_tokens.unwrap_or(128000),
         "stream": true,
         "messages": messages,
     });

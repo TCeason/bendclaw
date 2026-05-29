@@ -75,7 +75,7 @@ fn test_anthropic_default_max_tokens_matches_claude_code() {
     let config = StreamConfigBuilder::anthropic().no_max_tokens().build();
 
     let body = build_request_body(&config, false);
-    assert_eq!(body["max_tokens"], 32768);
+    assert_eq!(body["max_tokens"], 128000);
 }
 
 // ---------------------------------------------------------------------------
