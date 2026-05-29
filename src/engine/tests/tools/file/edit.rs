@@ -235,20 +235,20 @@ fn empty_old_text() {
 }
 
 #[test]
-fn quote_normalized_match() {
+fn unicode_normalized_match() {
     let content = "let s = \u{201C}hello\u{201D};\n";
     let old = "let s = \"hello\";";
     let m = resolve_unique_match(content, old).unwrap();
-    assert_eq!(m.kind, MatchKind::QuoteNormalized);
+    assert_eq!(m.kind, MatchKind::UnicodeNormalized);
     assert_eq!(m.actual_old_text, "let s = \u{201C}hello\u{201D};");
 }
 
 #[test]
-fn quote_normalized_reverse() {
+fn unicode_normalized_reverse() {
     let content = "let s = \"hello\";\n";
     let old = "let s = \u{201C}hello\u{201D};";
     let m = resolve_unique_match(content, old).unwrap();
-    assert_eq!(m.kind, MatchKind::QuoteNormalized);
+    assert_eq!(m.kind, MatchKind::UnicodeNormalized);
     assert_eq!(m.actual_old_text, "let s = \"hello\";");
 }
 
@@ -424,15 +424,15 @@ fn strip_bom_absent() {
 #[test]
 fn normalize_curly_quotes() {
     let input = "\u{201C}hello\u{201D} \u{2018}world\u{2019}";
-    let result = normalize_quotes(input);
+    let result = normalize_unicode(input);
     assert_eq!(result, "\"hello\" 'world'");
     assert_eq!(input.chars().count(), result.chars().count());
 }
 
 #[test]
-fn normalize_quotes_no_change() {
+fn normalize_unicode_no_change() {
     let input = "\"hello\" 'world'";
-    assert_eq!(normalize_quotes(input), input);
+    assert_eq!(normalize_unicode(input), input);
 }
 
 #[test]
@@ -472,4 +472,134 @@ fn preserve_quote_style_mixed() {
 fn preserve_quote_style_no_curly_in_actual() {
     let result = preserve_quote_style("abc", "def", "ghi");
     assert_eq!(result, "ghi");
+}
+
+// ─── Unicode dash / NBSP normalization tests ─────────────────────────────────
+
+#[test]
+fn unicode_dash_normalized_match() {
+    // em-dash in file, hyphen in old_text
+    let content = "// This is a long \u{2014} explanation\n";
+    let old = "// This is a long - explanation";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::UnicodeNormalized);
+    assert!(m.actual_old_text.contains('\u{2014}'));
+}
+
+#[test]
+fn unicode_en_dash_normalized_match() {
+    let content = "pages 10\u{2013}20\n";
+    let old = "pages 10-20";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::UnicodeNormalized);
+    assert!(m.actual_old_text.contains('\u{2013}'));
+}
+
+#[test]
+fn unicode_minus_sign_normalized_match() {
+    let content = "x \u{2212} y\n";
+    let old = "x - y";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::UnicodeNormalized);
+    assert!(m.actual_old_text.contains('\u{2212}'));
+}
+
+#[test]
+fn nbsp_normalized_match() {
+    // NBSP in file, regular space in old_text
+    let content = "let\u{00A0}x = 1;\n";
+    let old = "let x = 1;";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::UnicodeNormalized);
+    assert!(m.actual_old_text.contains('\u{00A0}'));
+}
+
+#[test]
+fn normalize_unicode_dashes() {
+    let input = "a\u{2010}b\u{2013}c\u{2014}d\u{2212}e";
+    assert_eq!(normalize_unicode(input), "a-b-c-d-e");
+    assert_eq!(
+        input.chars().count(),
+        normalize_unicode(input).chars().count()
+    );
+}
+
+#[test]
+fn normalize_unicode_nbsp() {
+    let input = "hello\u{00A0}world";
+    assert_eq!(normalize_unicode(input), "hello world");
+}
+
+// ─── Full normalization (Level 4) tests ──────────────────────────────────────
+
+#[test]
+fn full_normalized_quotes_plus_trailing_ws() {
+    // curly quotes + trailing whitespace — Level 2 handles this because
+    // the substring search finds the match within the line.
+    // Level 4 is needed when old_text itself has trailing ws that differs.
+    let content = "let s = \u{201C}hello\u{201D};   \n";
+    let old = "let s = \"hello\";";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::UnicodeNormalized);
+    assert_eq!(m.actual_old_text, "let s = \u{201C}hello\u{201D};");
+}
+
+#[test]
+fn full_normalized_dash_plus_trailing_ws() {
+    // Same: Level 2 substring search handles dash normalization
+    let content = "// long \u{2014} text   \nfn foo() {}\n";
+    let old = "// long - text";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::UnicodeNormalized);
+    assert!(m.actual_old_text.contains('\u{2014}'));
+}
+
+#[test]
+fn full_normalized_quotes_and_ws_in_old_text() {
+    // old_text has trailing ws that doesn't match file — Level 2 fails,
+    // Level 3 fails (quotes differ), Level 4 catches it.
+    let content = "let s = \u{201C}hello\u{201D};\n";
+    let old = "let s = \"hello\";  ";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::FullNormalized);
+}
+
+#[test]
+fn full_normalized_multiline_quotes_and_ws() {
+    // Multiline: curly quotes + trailing ws on each line
+    let content = "let a = \u{201C}x\u{201D};   \nlet b = \u{2014};  \n";
+    let old = "let a = \"x\";  \nlet b = -;";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::FullNormalized);
+    assert!(m.actual_old_text.contains('\u{201C}'));
+    assert!(m.actual_old_text.contains('\u{2014}'));
+}
+
+// ─── Overlap error message tests ─────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_overlap_error_includes_indices() {
+    let tmp = std::env::temp_dir().join("evot-test-overlap-idx.txt");
+    let path = tmp.to_str().unwrap();
+    std::fs::write(&tmp, "aaa bbb ccc\n").unwrap();
+
+    let tool = EditFileTool::new();
+    let result = tool
+        .execute(
+            serde_json::json!({
+                "path": path,
+                "edits": [
+                    {"old_text": "aaa bbb", "new_text": "xxx"},
+                    {"old_text": "bbb ccc", "new_text": "yyy"}
+                ]
+            }),
+            ctx("edit"),
+        )
+        .await;
+
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("edits[0]"));
+    assert!(err.contains("edits[1]"));
+    assert!(err.contains("overlap"));
+    let _ = std::fs::remove_file(tmp);
 }

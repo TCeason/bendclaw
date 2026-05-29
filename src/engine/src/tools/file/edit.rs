@@ -3,8 +3,11 @@
 //! Supports multiple disjoint edits in one call. All edits are matched against
 //! the original file content, then applied in reverse position order.
 //!
-//! Includes the matching logic (exact / quote-normalized / whitespace-insensitive)
-//! and text normalization primitives used by the tool.
+//! Matching strategy (tiered fallback):
+//! 1. Exact match
+//! 2. Unicode-normalized match (quotes + dashes + NBSP → ASCII, 1:1 char mapping)
+//! 3. Trailing-whitespace-insensitive line match
+//! 4. Full normalization (unicode + trailing ws combined)
 
 use async_trait::async_trait;
 
@@ -45,7 +48,6 @@ impl AgentTool for EditFileTool {
     fn name(&self) -> &str {
         "edit"
     }
-
     fn name_aliases(&self) -> Vec<(String, String)> {
         vec![("claude".into(), "Edit".into())]
     }
@@ -101,7 +103,6 @@ impl AgentTool for EditFileTool {
         let n = params["edits"].as_array().map(|a| a.len()).unwrap_or(1);
         Some(format!("edit {path} ({n} replacement(s))"))
     }
-
     async fn execute(
         &self,
         params: serde_json::Value,
@@ -148,27 +149,43 @@ impl AgentTool for EditFileTool {
         let edits = self.parse_edits(&params)?;
 
         // Resolve all matches against original content
-        let mut resolved: Vec<(usize, usize, &str, String)> = Vec::with_capacity(edits.len());
+        struct ResolvedEdit {
+            edit_index: usize,
+            start: usize,
+            end: usize,
+            new_text: String,
+            kind: MatchKind,
+        }
+
+        let mut resolved: Vec<ResolvedEdit> = Vec::with_capacity(edits.len());
         for (i, (old_text_lf, new_text_lf)) in edits.iter().enumerate() {
             let rm = resolve_unique_match(&content_lf, old_text_lf)
                 .map_err(|e| self.match_error(e, path_str, old_text_lf, &content_lf, i))?;
-            let start = content_lf.find(&rm.actual_old_text).unwrap_or(0);
+            let start = rm.byte_offset;
             let end = start + rm.actual_old_text.len();
-            resolved.push((
+            let final_new_text = match rm.kind {
+                MatchKind::UnicodeNormalized | MatchKind::FullNormalized => {
+                    preserve_quote_style(old_text_lf, &rm.actual_old_text, new_text_lf)
+                }
+                _ => new_text_lf.clone(),
+            };
+            resolved.push(ResolvedEdit {
+                edit_index: i,
                 start,
                 end,
-                new_text_lf.as_str(),
-                rm.kind.as_str().to_string(),
-            ));
+                new_text: final_new_text,
+                kind: rm.kind,
+            });
         }
 
         // Check for overlaps
-        resolved.sort_by_key(|(start, _, _, _)| *start);
+        resolved.sort_by_key(|r| r.start);
         for w in resolved.windows(2) {
-            if w[0].1 > w[1].0 {
-                return Err(ToolError::Failed(
-                    "Edits overlap. Merge nearby changes into one edit.".into(),
-                ));
+            if w[0].end > w[1].start {
+                return Err(ToolError::Failed(format!(
+                    "edits[{}] and edits[{}] overlap in {path_str}. Merge them into one edit.",
+                    w[0].edit_index, w[1].edit_index
+                )));
             }
         }
 
@@ -176,11 +193,11 @@ impl AgentTool for EditFileTool {
         let mut new_content_lf = content_lf.clone();
         let match_kind = resolved
             .last()
-            .map(|(_, _, _, k)| k.clone())
+            .map(|r| r.kind.as_str().to_string())
             .unwrap_or_else(|| "exact".to_string());
         let replacement_count = resolved.len();
-        for (start, end, new_text, _) in resolved.into_iter().rev() {
-            new_content_lf.replace_range(start..end, new_text);
+        for r in resolved.into_iter().rev() {
+            new_content_lf.replace_range(r.start..r.end, &r.new_text);
         }
 
         // No-change detection
@@ -291,8 +308,9 @@ impl EditFileTool {
 //
 // Tiered fallback strategy:
 // 1. Exact match
-// 2. Quote-normalized match (curly quotes → straight quotes)
+// 2. Unicode-normalized match (quotes + dashes + NBSP → ASCII)
 // 3. Trailing-whitespace-insensitive line match
+// 4. Full normalization (unicode + trailing ws combined)
 //
 // All functions are pure — no IO, no side effects.
 
@@ -300,8 +318,9 @@ impl EditFileTool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchKind {
     Exact,
-    QuoteNormalized,
+    UnicodeNormalized,
     WhitespaceInsensitive,
+    FullNormalized,
 }
 
 impl MatchKind {
@@ -309,17 +328,19 @@ impl MatchKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Exact => "exact",
-            Self::QuoteNormalized => "quote_normalized",
+            Self::UnicodeNormalized => "unicode_normalized",
             Self::WhitespaceInsensitive => "whitespace_insensitive",
+            Self::FullNormalized => "full_normalized",
         }
     }
 }
 
 /// A successfully resolved match — contains the actual text from the original
-/// file content that can be used directly with `replacen`.
+/// file content that can be used directly with `replace_range`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedMatch {
     pub actual_old_text: String,
+    pub byte_offset: usize,
     pub kind: MatchKind,
 }
 
@@ -346,8 +367,11 @@ pub fn resolve_unique_match(
     // Level 1: Exact match
     let count = content_lf.matches(old_text_lf).count();
     if count == 1 {
+        // Safe: count == 1 guarantees find() returns the unique position
+        let byte_offset = content_lf.find(old_text_lf).unwrap_or(0);
         return Ok(ResolvedMatch {
             actual_old_text: old_text_lf.to_string(),
+            byte_offset,
             kind: MatchKind::Exact,
         });
     }
@@ -355,8 +379,8 @@ pub fn resolve_unique_match(
         return Err(MatchError::NotUnique { count });
     }
 
-    // Level 2: Quote-normalized match
-    if let Some(result) = try_quote_normalized(content_lf, old_text_lf) {
+    // Level 2: Unicode-normalized match (1:1 char mapping)
+    if let Some(result) = try_unicode_normalized(content_lf, old_text_lf) {
         return result;
     }
 
@@ -365,19 +389,24 @@ pub fn resolve_unique_match(
         return result;
     }
 
+    // Level 4: Full normalization (unicode + trailing ws combined)
+    if let Some(result) = try_full_normalized(content_lf, old_text_lf) {
+        return result;
+    }
+
     Err(MatchError::NotFound)
 }
 
-/// Try matching after normalizing curly quotes to straight quotes.
+/// Level 2: Try matching after normalizing Unicode characters to ASCII equivalents.
 ///
-/// Because `normalize_quotes` is a 1:1 char mapping, char indices in the
+/// Because `normalize_unicode` is a 1:1 char mapping, char indices in the
 /// normalized string correspond exactly to char indices in the original.
-fn try_quote_normalized(
+fn try_unicode_normalized(
     content_lf: &str,
     old_text_lf: &str,
 ) -> Option<Result<ResolvedMatch, MatchError>> {
-    let norm_content = normalize_quotes(content_lf);
-    let norm_old = normalize_quotes(old_text_lf);
+    let norm_content = normalize_unicode(content_lf);
+    let norm_old = normalize_unicode(old_text_lf);
 
     // If normalization didn't change anything, skip (already tried exact)
     if norm_content == content_lf && norm_old == old_text_lf {
@@ -402,8 +431,13 @@ fn try_quote_normalized(
     match matches.len() {
         0 => None,
         1 => {
-            // Map char index back to original content
+            // Map char index to byte offset
             let start_char = matches[0];
+            let byte_offset = content_lf
+                .chars()
+                .take(start_char)
+                .map(|c| c.len_utf8())
+                .sum();
             let actual: String = content_lf
                 .chars()
                 .skip(start_char)
@@ -411,7 +445,8 @@ fn try_quote_normalized(
                 .collect();
             Some(Ok(ResolvedMatch {
                 actual_old_text: actual,
-                kind: MatchKind::QuoteNormalized,
+                byte_offset,
+                kind: MatchKind::UnicodeNormalized,
             }))
         }
         count => Some(Err(MatchError::NotUnique { count })),
@@ -419,7 +454,6 @@ fn try_quote_normalized(
 }
 
 /// A line span: byte range `[start, end)` within the source string.
-/// `end` points past the `\n` if one exists, or to the string end for the last line.
 struct LineSpan {
     start: usize,
     /// Byte offset one past the end of this line (including its `\n`, if any).
@@ -434,7 +468,6 @@ fn build_line_spans(text: &str) -> Vec<LineSpan> {
     let mut pos = 0;
     for line in text.split('\n') {
         let content_end = pos + line.len();
-        // end includes the '\n' if present, otherwise stops at string end
         let end = if content_end < text.len() {
             content_end + 1
         } else {
@@ -450,7 +483,24 @@ fn build_line_spans(text: &str) -> Vec<LineSpan> {
     spans
 }
 
-/// Try matching lines with trailing whitespace stripped on both sides.
+/// Resolve byte range from a line-based match.
+fn line_match_byte_range(
+    content_spans: &[LineSpan],
+    start_line: usize,
+    line_count: usize,
+    old_text_lf: &str,
+) -> (usize, usize) {
+    let last = start_line + line_count - 1;
+    let byte_start = content_spans[start_line].start;
+    let byte_end = if old_text_lf.ends_with('\n') {
+        content_spans[last].end
+    } else {
+        content_spans[last].content_end
+    };
+    (byte_start, byte_end)
+}
+
+/// Level 3: Try matching lines with trailing whitespace stripped on both sides.
 fn try_whitespace_insensitive(
     content_lf: &str,
     old_text_lf: &str,
@@ -476,19 +526,12 @@ fn try_whitespace_insensitive(
     match matches.len() {
         0 => None,
         1 => {
-            let start = matches[0];
-            let last = start + old_lines.len() - 1;
-            let byte_start = content_spans[start].start;
-            // Use content_end of the last matched line (excludes trailing \n),
-            // then include the \n only if old_text itself ended with one.
-            let byte_end = if old_text_lf.ends_with('\n') {
-                content_spans[last].end
-            } else {
-                content_spans[last].content_end
-            };
+            let (byte_start, byte_end) =
+                line_match_byte_range(&content_spans, matches[0], old_lines.len(), old_text_lf);
             let actual = content_lf[byte_start..byte_end].to_string();
             Some(Ok(ResolvedMatch {
                 actual_old_text: actual,
+                byte_offset: byte_start,
                 kind: MatchKind::WhitespaceInsensitive,
             }))
         }
@@ -496,10 +539,55 @@ fn try_whitespace_insensitive(
     }
 }
 
+/// Level 4: Combined unicode normalization + trailing whitespace stripping.
+/// Handles cases where quotes/dashes AND trailing whitespace differ simultaneously.
+fn try_full_normalized(
+    content_lf: &str,
+    old_text_lf: &str,
+) -> Option<Result<ResolvedMatch, MatchError>> {
+    let old_lines: Vec<&str> = old_text_lf.lines().collect();
+    let content_spans = build_line_spans(content_lf);
+
+    if old_lines.is_empty() || content_spans.len() < old_lines.len() {
+        return None;
+    }
+
+    // Pre-normalize old_text lines: unicode + trim trailing ws
+    let norm_old_lines: Vec<String> = old_lines
+        .iter()
+        .map(|l| normalize_unicode(l).trim_end().to_string())
+        .collect();
+
+    let mut matches: Vec<usize> = Vec::new();
+    for i in 0..=content_spans.len() - norm_old_lines.len() {
+        let all_match = norm_old_lines.iter().enumerate().all(|(j, norm_old_line)| {
+            let span = &content_spans[i + j];
+            let content_line = &content_lf[span.start..span.content_end];
+            let norm_content_line = normalize_unicode(content_line);
+            norm_content_line.trim_end() == norm_old_line.as_str()
+        });
+        if all_match {
+            matches.push(i);
+        }
+    }
+
+    match matches.len() {
+        0 => None,
+        1 => {
+            let (byte_start, byte_end) =
+                line_match_byte_range(&content_spans, matches[0], old_lines.len(), old_text_lf);
+            let actual = content_lf[byte_start..byte_end].to_string();
+            Some(Ok(ResolvedMatch {
+                actual_old_text: actual,
+                byte_offset: byte_start,
+                kind: MatchKind::FullNormalized,
+            }))
+        }
+        count => Some(Err(MatchError::NotUnique { count })),
+    }
+}
+
 /// Try to find similar text in the file content for error hints.
-///
-/// Looks for lines containing the first line of `target` and returns
-/// a snippet of surrounding context.
 pub fn find_similar_text(content: &str, target: &str) -> Option<String> {
     let target_trimmed = target.trim();
     if target_trimmed.is_empty() {
@@ -526,7 +614,7 @@ pub fn find_similar_text(content: &str, target: &str) -> Option<String> {
     None
 }
 
-// ─── Normalization ───────────────────────────────────────────────────────
+// ─── Normalization ─────────────────────────────────────────────────────────
 //
 // Text normalization primitives for edit matching.
 // All functions are pure — no IO, no side effects.
@@ -541,7 +629,6 @@ pub enum LineEnding {
 /// Detect the dominant line ending in `content` by counting occurrences.
 pub fn detect_line_ending(content: &str) -> LineEnding {
     let crlf = content.matches("\r\n").count();
-    // Total LF minus those that are part of CRLF = standalone LF count
     let lf = content.matches('\n').count().saturating_sub(crlf);
     if crlf > lf {
         LineEnding::CrLf
@@ -564,7 +651,6 @@ pub fn restore_line_endings(text: &str, ending: LineEnding) -> String {
 }
 
 /// Strip UTF-8 BOM if present.
-/// Returns `(bom_str, content_without_bom)` where `bom_str` is `"\u{FEFF}"` or `""`.
 pub fn strip_utf8_bom(content: &str) -> (&str, &str) {
     if let Some(stripped) = content.strip_prefix('\u{FEFF}') {
         ("\u{FEFF}", stripped)
@@ -573,33 +659,37 @@ pub fn strip_utf8_bom(content: &str) -> (&str, &str) {
     }
 }
 
-/// Normalize curly/smart quotes to ASCII straight quotes.
+/// Normalize Unicode characters to ASCII equivalents.
 ///
 /// IMPORTANT: This is a length-preserving, 1:1 Unicode character replacement.
-/// Each curly quote maps to exactly one straight quote character.
-/// This invariant is relied upon by the matching code to map char indices
-/// between normalized and original content. Do not add any transformation
-/// that changes character count.
-pub fn normalize_quotes(text: &str) -> String {
+/// Each source char maps to exactly one output char. This invariant is relied
+/// upon by the matching code to map char indices between normalized and original.
+///
+/// Covers: curly quotes, Unicode dashes/hyphens, NBSP.
+pub fn normalize_unicode(text: &str) -> String {
     text.chars()
         .map(|c| match c {
-            '\u{2018}' | '\u{2019}' => '\'', // ‘ ’ → '
-            '\u{201C}' | '\u{201D}' => '"',  // “ ” → "
+            // Smart single quotes → '
+            '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => '\'',
+            // Smart double quotes → "
+            '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' => '"',
+            // Dashes/hyphens → -
+            '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}'
+            | '\u{2212}' => '-',
+            // NBSP → space
+            '\u{00A0}' => ' ',
             other => other,
         })
         .collect()
 }
 
 /// Preserve the curly-quote style from the file when the match was
-/// quote-normalized.
+/// unicode-normalized.
 ///
 /// When `actual_old_text` (from the file) contains curly quotes but
 /// `old_text` (from the agent) used straight quotes, we apply the same
 /// curly style to `new_text` so the replacement doesn't break the file's
 /// typography.
-///
-/// If no quote normalization happened (`old_text == actual_old_text`),
-/// returns `new_text` unchanged.
 pub fn preserve_quote_style(old_text: &str, actual_old_text: &str, new_text: &str) -> String {
     if old_text == actual_old_text {
         return new_text.to_string();
@@ -623,8 +713,7 @@ pub fn preserve_quote_style(old_text: &str, actual_old_text: &str, new_text: &st
 }
 
 /// Returns `true` if the character before `index` is whitespace, start of
-/// string, or an opening bracket — i.e. the quote at `index` is an opening
-/// quote.
+/// string, or an opening bracket — i.e. the quote at `index` is an opening quote.
 fn is_opening_context(chars: &[char], index: usize) -> bool {
     if index == 0 {
         return true;
@@ -641,9 +730,9 @@ fn apply_curly_double_quotes(text: &str) -> String {
     for (i, &c) in chars.iter().enumerate() {
         if c == '"' {
             if is_opening_context(&chars, i) {
-                out.push('\u{201C}'); // “
+                out.push('\u{201C}');
             } else {
-                out.push('\u{201D}'); // ”
+                out.push('\u{201D}');
             }
         } else {
             out.push(c);
@@ -657,15 +746,14 @@ fn apply_curly_single_quotes(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for (i, &c) in chars.iter().enumerate() {
         if c == '\'' {
-            // Apostrophe in a contraction (letter'letter) → right single curly
             let prev_is_letter = i > 0 && chars[i - 1].is_alphabetic();
             let next_is_letter = i + 1 < chars.len() && chars[i + 1].is_alphabetic();
             if prev_is_letter && next_is_letter {
-                out.push('\u{2019}'); // ’
+                out.push('\u{2019}');
             } else if is_opening_context(&chars, i) {
-                out.push('\u{2018}'); // ‘
+                out.push('\u{2018}');
             } else {
-                out.push('\u{2019}'); // ’
+                out.push('\u{2019}');
             }
         } else {
             out.push(c);
