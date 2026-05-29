@@ -49,7 +49,10 @@ impl AgentTool for EditFileTool {
         "edit"
     }
     fn name_aliases(&self) -> Vec<(String, String)> {
-        vec![("claude".into(), "Edit".into())]
+        vec![
+            ("claude".into(), "Edit".into()),
+            ("kimi".into(), "Edit".into()),
+        ]
     }
 
     fn label(&self) -> &str {

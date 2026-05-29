@@ -39,7 +39,10 @@ impl AgentTool for WriteFileTool {
     }
 
     fn name_aliases(&self) -> Vec<(String, String)> {
-        vec![("claude".into(), "Write".into())]
+        vec![
+            ("claude".into(), "Write".into()),
+            ("kimi".into(), "Write".into()),
+        ]
     }
 
     fn label(&self) -> &str {
