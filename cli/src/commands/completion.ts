@@ -39,9 +39,13 @@ export function complete(line: string, cursorCol: number): CompletionResult | nu
     return completeSlashCommand(beforeCursor)
   }
 
-  // File path completion: word containing /
-  const word = currentWord(beforeCursor)
-  if (word && (word.includes('/') || word.startsWith('~') || word.startsWith('.'))) {
+  // File path completion: walk back from the cursor collecting only
+  // path-friendly characters so that paths glued to surrounding text
+  // (CJK, punctuation, etc.) are still detected. Trigger only when the
+  // captured segment looks like a real path: contains `/` or starts with
+  // `~/` (a bare `~` is not enough because we'd otherwise replace it).
+  const word = currentPathLike(beforeCursor)
+  if (word && (word.includes('/') || word.startsWith('~/'))) {
     return completeFilePath(word, cursorCol)
   }
 
@@ -194,20 +198,18 @@ function completeFilePath(word: string, cursorCol: number): CompletionResult | n
     ? (process.env.HOME ?? '') + word.slice(1)
     : word
 
+  // Always treat the path as parent + basename so tab works whether or not
+  // the typed path happens to resolve to an existing directory. This avoids
+  // the previous bug where typing `~/github/pi` (where `pi` is a real
+  // directory) produced candidates like `~/github/piLICENSE` because the
+  // trailing `/` separator was missing in the candidate prefix.
   let dir: string
   let prefix: string
-
-  try {
-    const stat = statSync(expanded)
-    if (stat.isDirectory()) {
-      dir = expanded.endsWith('/') ? expanded : expanded + '/'
-      prefix = ''
-    } else {
-      return null // exact file, nothing to complete
-    }
-  } catch {
-    // Not a valid path yet — complete the last segment
-    dir = dirname(expanded)
+  if (expanded.endsWith('/')) {
+    dir = expanded
+    prefix = ''
+  } else {
+    dir = dirname(expanded) || '.'
     prefix = basename(expanded)
   }
 
@@ -224,7 +226,8 @@ function completeFilePath(word: string, cursorCol: number): CompletionResult | n
 
   if (matches.length === 0) return null
 
-  // Build full paths relative to original word
+  // Build full paths relative to the original word, preserving the user's
+  // tilde / relative form rather than the expanded absolute path.
   const dirPrefix = word.endsWith('/')
     ? word
     : word.slice(0, word.length - prefix.length)
@@ -261,6 +264,18 @@ function currentWord(beforeCursor: string): string | null {
   // Extract the last whitespace-delimited word
   const match = beforeCursor.match(/(\S+)$/)
   return match ? match[1]! : null
+}
+
+// Walk back from the end collecting characters that look like part of a
+// Unix path. Stops at any non-path character — whitespace, CJK, quotes,
+// brackets, etc. — so a path glued to surrounding text (e.g. `看下~/x`)
+// is still extracted correctly.
+function currentPathLike(beforeCursor: string): string | null {
+  const isPathChar = (ch: string): boolean => /[A-Za-z0-9_./~+-]/.test(ch)
+  let i = beforeCursor.length
+  while (i > 0 && isPathChar(beforeCursor[i - 1]!)) i--
+  if (i === beforeCursor.length) return null
+  return beforeCursor.slice(i)
 }
 
 function commonPrefix(strings: string[]): string {

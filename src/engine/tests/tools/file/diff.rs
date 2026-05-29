@@ -1,4 +1,4 @@
-use evotengine::tools::edit::diff::*;
+use evotengine::tools::file::diff::*;
 
 #[test]
 fn single_line_replace() {

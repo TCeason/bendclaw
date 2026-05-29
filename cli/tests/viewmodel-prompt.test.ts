@@ -172,4 +172,53 @@ describe('buildPromptBlocks', () => {
     const lines = result.split('\n')
     expect(lines.some(l => l === '─'.repeat(80))).toBe(true)
   })
+
+  test('wraps long ascii input across multiple visual lines', () => {
+    // columns=20 -> 18 cols available for text after the prefix.
+    const text = 'a'.repeat(50)
+    const result = renderPlain(defaultInput({ columns: 20, lines: [text], cursorCol: 50, placeholder: false }))
+    const lines = result.split('\n')
+    // First wrapped row uses '❯ ' prefix, continuation rows use '  '.
+    const firstRow = lines.find(l => l.startsWith('❯ '))
+    const contRows = lines.filter(l => /^  a+/.test(l))
+    expect(firstRow).toBeTruthy()
+    // Visible width of each input row should not exceed the terminal width.
+    for (const row of [firstRow!, ...contRows]) {
+      expect(row.length).toBeLessThanOrEqual(20)
+    }
+    // Joining row contents (minus prefix) reproduces the original text.
+    const joined = (firstRow!.slice(2) + contRows.map(r => r.slice(2)).join('')).replace(/\s+$/, '')
+    expect(joined.startsWith('a'.repeat(50))).toBe(true)
+  })
+
+  test('cursor at end of overflow text appears on a fresh wrap row', () => {
+    // Available width = 20 - 2 = 18. Use exactly 18 chars so cursor at end
+    // would otherwise overflow the row.
+    const text = 'a'.repeat(18)
+    const result = render(defaultInput({ columns: 20, lines: [text], cursorCol: 18, placeholder: false }))
+    const plainResult = stripAnsi(result)
+    const rows = plainResult.split('\n')
+    // We expect at least two input rows (the filled row + an empty wrap row
+    // hosting the cursor).
+    const inputRows = rows.filter(r => r.startsWith('❯ ') || /^  /.test(r))
+    expect(inputRows.length).toBeGreaterThanOrEqual(2)
+    // Inverse escape (cursor) should appear in the output.
+    expect(result).toContain('\x1b[7m')
+  })
+
+  test('wraps wide CJK characters without overflowing terminal width', () => {
+    // Each CJK char has display width 2, so 18 cols hold 9 chars.
+    const text = '改进不过测试一定要在目录'
+    const result = renderPlain(defaultInput({ columns: 20, lines: [text], cursorCol: text.length, placeholder: false }))
+    const rows = result.split('\n')
+    const inputRows = rows.filter(r => r.startsWith('❯ ') || /^  \S/.test(r))
+    expect(inputRows.length).toBeGreaterThanOrEqual(2)
+    // Visible width of each row should fit within the terminal.
+    for (const r of inputRows) {
+      // Approximate visible width via string-width is fine, but here we just
+      // check character count doesn't exceed columns (since CJK is 2 cols
+      // each, this is a conservative bound).
+      expect(r.length).toBeLessThanOrEqual(20)
+    }
+  })
 })

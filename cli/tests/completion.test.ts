@@ -60,6 +60,62 @@ describe('file path completion', () => {
     const result = complete('hello world', 11)
     expect(result).toBeNull()
   })
+
+  test('treats existing directory as a parent for descent (appends trailing /)', () => {
+    // The cwd of the test runner is the cli/ directory, which contains a
+    // `tests` subdirectory. Typing `./tests` (no slash) and pressing tab
+    // should produce candidates that include a trailing slash, so a follow-up
+    // tab descends into the directory rather than concatenating filenames
+    // directly to the typed path.
+    const result = complete('./tests', 7)
+    expect(result).not.toBeNull()
+    // Either a single match `./tests/` or, if multiple siblings begin with
+    // `tests`, all of them must keep a clear separator before any filename.
+    for (const cand of result!.candidates) {
+      // No candidate should look like "./testsfoo" — the segment after
+      // `./tests` must start with `/` (directory boundary) or the candidate
+      // must be a sibling whose name begins with `tests`.
+      if (cand.startsWith('./tests') && cand !== './tests/') {
+        const after = cand.slice('./tests'.length)
+        // Either it's a deeper path ("./tests/...") or a sibling name
+        // ("./testsuite" — starts with extra letters then maybe `/`).
+        // What we must never see is something like "./testsfile.ts" where
+        // the original `./tests` was a real directory but got concatenated
+        // with a child filename without a slash.
+        if (after.length > 0 && after[0] !== '/' && /^[a-z]/i.test(after[0]!)) {
+          // Allow only when this is genuinely a sibling, not a child of ./tests
+          // For the tests/ directory in the cli workspace there is no sibling
+          // entry whose name starts with "tests" other than `tests/` itself.
+          throw new Error(`unexpected candidate without separator: ${cand}`)
+        }
+      }
+    }
+  })
+
+  test('extracts path glued to CJK text without space', () => {
+    // "看下./tests" — a path appended directly to CJK characters with no
+    // separating whitespace. Tab should still recognise the path segment.
+    const line = '看下./tests'
+    const result = complete(line, line.length)
+    expect(result).not.toBeNull()
+    expect(result!.replacement.startsWith('./tests')).toBe(true)
+    // wordStart must point at `.` of `./tests`, not the start of the line.
+    expect(line.slice(result!.wordStart)).toBe('./tests')
+  })
+
+  test('extracts path mid-line preceded by ASCII text and space', () => {
+    const line = 'edit ./tests rest'
+    // cursor right after `./tests`
+    const cursor = 'edit ./tests'.length
+    const result = complete(line, cursor)
+    expect(result).not.toBeNull()
+    expect(line.slice(result!.wordStart, cursor)).toBe('./tests')
+  })
+
+  test('does not trigger for bare ~ without slash', () => {
+    const result = complete('please look at ~', 16)
+    expect(result).toBeNull()
+  })
 })
 
 describe('ghost hints', () => {

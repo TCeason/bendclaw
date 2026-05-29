@@ -2,9 +2,9 @@
 
 use async_trait::async_trait;
 
-use super::get_image_mime_type;
-use super::is_image_file;
-use super::MAX_IMAGE_SIZE_BYTES;
+use super::image::get_image_mime_type;
+use super::image::is_image_file;
+use super::image::MAX_IMAGE_SIZE_BYTES;
 use crate::types::*;
 
 /// Max lines returned by a single Read call (matches industry standard).

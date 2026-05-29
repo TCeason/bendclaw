@@ -145,13 +145,6 @@ pub trait AgentTool: Send + Sync {
         None
     }
 
-    /// Whether this tool call can safely execute concurrently with other tools.
-    /// When a batch contains any tool where this returns `false`,
-    /// the entire batch is executed sequentially.
-    fn is_concurrency_safe(&self) -> bool {
-        true
-    }
-
     /// Model-specific name aliases: (model_pattern, llm_name).
     /// If model contains pattern (case-insensitive), use that name for LLM.
     fn name_aliases(&self) -> Vec<(String, String)> {

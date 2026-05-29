@@ -15,21 +15,6 @@ pub(super) struct ToolExecutionResult {
     pub steering_messages: Option<Vec<AgentMessage>>,
 }
 
-/// Check if all tool calls in a batch are concurrency-safe.
-fn all_concurrency_safe(
-    tools: &[Box<dyn AgentTool>],
-    tool_calls: &[(String, String, serde_json::Value)],
-    model: &str,
-) -> bool {
-    tool_calls.iter().all(|(_, name, _)| {
-        tools
-            .iter()
-            .find(|t| t.resolve_name(model) == *name)
-            .map(|t| t.is_concurrency_safe())
-            .unwrap_or(false)
-    })
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn execute_tool_calls(
     tools: &[Box<dyn AgentTool>],
@@ -59,50 +44,28 @@ pub(super) async fn execute_tool_calls(
             .await
         }
         ToolExecutionStrategy::Parallel => {
-            if all_concurrency_safe(tools, tool_calls, model) {
-                execute_batch(
-                    tools,
-                    tool_calls,
-                    tx,
-                    cancel,
-                    get_steering,
-                    cwd,
-                    path_guard,
-                    spill,
-                    model,
-                )
-                .await
-            } else {
-                execute_sequential(
-                    tools,
-                    tool_calls,
-                    tx,
-                    cancel,
-                    get_steering,
-                    cwd,
-                    path_guard,
-                    spill,
-                    model,
-                )
-                .await
-            }
+            execute_batch(
+                tools,
+                tool_calls,
+                tx,
+                cancel,
+                get_steering,
+                cwd,
+                path_guard,
+                spill,
+                model,
+            )
+            .await
         }
         ToolExecutionStrategy::Batched { size } => {
             let mut results: Vec<Message> = Vec::new();
             let mut steering_messages: Option<Vec<AgentMessage>> = None;
 
             for (batch_idx, batch) in tool_calls.chunks(*size).enumerate() {
-                let batch_result = if all_concurrency_safe(tools, batch, model) {
-                    execute_batch(
-                        tools, batch, tx, cancel, None, cwd, path_guard, spill, model,
-                    )
-                    .await
-                } else {
-                    execute_sequential(
-                        tools, batch, tx, cancel, None, cwd, path_guard, spill, model,
-                    )
-                    .await
-                };
+                let batch_result = execute_batch(
+                    tools, batch, tx, cancel, None, cwd, path_guard, spill, model,
+                )
+                .await;
                 results.extend(batch_result.tool_results);
 
                 // Check steering between batches

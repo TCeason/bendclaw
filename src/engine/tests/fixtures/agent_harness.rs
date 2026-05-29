@@ -37,7 +37,6 @@ pub struct MockTool {
     description: String,
     schema: serde_json::Value,
     result: Result<ToolResult, ToolError>,
-    concurrency_safe: bool,
 }
 
 impl MockTool {
@@ -55,7 +54,6 @@ impl MockTool {
                 details: serde_json::Value::Null,
                 retention: Retention::Normal,
             }),
-            concurrency_safe: true,
         }
     }
 
@@ -67,19 +65,12 @@ impl MockTool {
             description: format!("Mock {}", name),
             schema: serde_json::json!({"type": "object", "properties": {}}),
             result: Err(ToolError::Failed(error.into())),
-            concurrency_safe: true,
         }
     }
 
     /// Override the JSON schema.
     pub fn with_schema(mut self, schema: serde_json::Value) -> Self {
         self.schema = schema;
-        self
-    }
-
-    /// Mark as not concurrency-safe.
-    pub fn sequential(mut self) -> Self {
-        self.concurrency_safe = false;
         self
     }
 }
@@ -97,9 +88,6 @@ impl AgentTool for MockTool {
     }
     fn parameters_schema(&self) -> serde_json::Value {
         self.schema.clone()
-    }
-    fn is_concurrency_safe(&self) -> bool {
-        self.concurrency_safe
     }
     async fn execute(
         &self,

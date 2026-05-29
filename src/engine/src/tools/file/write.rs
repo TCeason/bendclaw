@@ -2,7 +2,8 @@
 
 use async_trait::async_trait;
 
-use crate::tools::edit::diff;
+use super::diff;
+use super::mutex::acquire_file_lock;
 use crate::types::*;
 
 /// Write content to a file. Creates parent directories if needed.
@@ -76,10 +77,6 @@ impl AgentTool for WriteFileTool {
         Some(format!("cat > {}", path))
     }
 
-    fn is_concurrency_safe(&self) -> bool {
-        false
-    }
-
     async fn execute(
         &self,
         params: serde_json::Value,
@@ -97,6 +94,13 @@ impl AgentTool for WriteFileTool {
             .ok_or_else(|| ToolError::InvalidArgs("missing 'content' parameter".into()))?;
 
         let path = ctx.path_guard.resolve_path(&ctx.cwd, path_str)?;
+
+        if ctx.cancel.is_cancelled() {
+            return Err(ToolError::Cancelled);
+        }
+
+        // Acquire per-file lock to serialize mutations on the same file
+        let _lock = acquire_file_lock(&path).await;
 
         if ctx.cancel.is_cancelled() {
             return Err(ToolError::Cancelled);

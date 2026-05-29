@@ -1,3 +1,4 @@
+import stringWidth from 'string-width'
 import { COMMANDS, HIDDEN_COMMANDS } from '../../commands/index.js'
 import { CURSOR_MARKER } from '../renderer.js'
 import { line, block, plain, dim, colored, inverse, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
@@ -56,25 +57,61 @@ export function buildPromptBlocks(input: PromptVMInput): ViewBlock[] {
   blocks.push(block([line(dim(border))]))
 
   const inputLines: StyledLine[] = []
+  // Visual width available for input text after the 2-column prefix (`❯ ` / `  `).
+  const availWidth = Math.max(1, columns - 2)
   for (let i = 0; i < input.lines.length; i++) {
     const text = input.lines[i]!
-    const prefix: StyledSpan = i === 0
-      ? colored('❯ ', 'cyan', { bold: true })
-      : plain('  ')
+    const isActiveLine = i === input.cursorLine && input.active
 
-    if (i === input.cursorLine && input.active) {
-      if (text === '' && input.lines.length === 1 && input.placeholder) {
-        inputLines.push(line(prefix, plain(CURSOR_MARKER), inverse(' '), dim(' Type a message...')))
-      } else {
-        const before = text.slice(0, input.cursorCol)
-        const cursorChar = text[input.cursorCol] ?? ' '
-        const after = text.slice(input.cursorCol + 1)
-        const spans: StyledSpan[] = [prefix, ...styleInputText(before), plain(CURSOR_MARKER), inverse(cursorChar), ...styleInputText(after)]
-        if (input.ghostHint) spans.push(dim(input.ghostHint))
-        inputLines.push(line(...spans))
+    if (isActiveLine && text === '' && input.lines.length === 1 && input.placeholder) {
+      const prefix = colored('❯ ', 'cyan', { bold: true })
+      inputLines.push(line(prefix, plain(CURSOR_MARKER), inverse(' '), dim(' Type a message...')))
+      continue
+    }
+
+    const chunks = wrapTextByWidth(text, availWidth)
+    let cursorChunkIdx = -1
+    if (isActiveLine) {
+      for (let k = 0; k < chunks.length; k++) {
+        const c = chunks[k]!
+        if (input.cursorCol >= c.start && input.cursorCol < c.end) {
+          cursorChunkIdx = k
+          break
+        }
       }
-    } else {
-      inputLines.push(line(prefix, ...(text ? styleInputText(text) : [plain(' ')])))
+      if (cursorChunkIdx === -1) {
+        // Cursor is at the very end of text. If the last chunk filled the row,
+        // append an empty chunk so the cursor renders on a fresh wrap line
+        // instead of falling off-screen.
+        const last = chunks[chunks.length - 1]!
+        const lastWidth = stringWidth(text.slice(last.start, last.end))
+        if (lastWidth >= availWidth && input.cursorCol === text.length) {
+          chunks.push({ start: text.length, end: text.length })
+        }
+        cursorChunkIdx = chunks.length - 1
+      }
+    }
+
+    for (let k = 0; k < chunks.length; k++) {
+      const c = chunks[k]!
+      const isFirstVisual = i === 0 && k === 0
+      const prefix: StyledSpan = isFirstVisual
+        ? colored('❯ ', 'cyan', { bold: true })
+        : plain('  ')
+      const chunkText = text.slice(c.start, c.end)
+
+      if (isActiveLine && k === cursorChunkIdx) {
+        const localCursorCol = input.cursorCol - c.start
+        const before = chunkText.slice(0, localCursorCol)
+        const cursorChar = chunkText[localCursorCol] ?? ' '
+        const after = chunkText.slice(localCursorCol + 1)
+        const spans: StyledSpan[] = [prefix, ...styleInputText(before), plain(CURSOR_MARKER), inverse(cursorChar), ...styleInputText(after)]
+        // Only show the ghost hint on the wrap row that contains the end of the text.
+        if (input.ghostHint && c.end === text.length) spans.push(dim(input.ghostHint))
+        inputLines.push(line(...spans))
+      } else {
+        inputLines.push(line(prefix, ...(chunkText ? styleInputText(chunkText) : [plain(' ')])))
+      }
     }
   }
   blocks.push(block(inputLines))
@@ -214,3 +251,33 @@ function formatFooterTokens(count: number): string {
   if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`
   return `${Math.round(count / 1000000)}M`
 }
+
+// Wrap a logical input line into visual chunks that each fit within `width`
+// columns of display width. Returns chunks expressed as character index ranges
+// `[start, end)` over the original string.
+//
+// Wrapping is character-based (not word-based) so the cursor column maps
+// cleanly to a chunk. CJK and other wide characters are accounted for via
+// `string-width`, so a wide character at the boundary is pushed to the next
+// chunk instead of overflowing.
+export function wrapTextByWidth(text: string, width: number): { start: number; end: number }[] {
+  if (width <= 0) return [{ start: 0, end: text.length }]
+  if (text.length === 0) return [{ start: 0, end: 0 }]
+
+  const chunks: { start: number; end: number }[] = []
+  let start = 0
+  let used = 0
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!
+    const w = stringWidth(ch)
+    if (used + w > width && i > start) {
+      chunks.push({ start, end: i })
+      start = i
+      used = 0
+    }
+    used += w
+  }
+  chunks.push({ start, end: text.length })
+  return chunks
+}
+

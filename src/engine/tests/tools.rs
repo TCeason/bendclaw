@@ -2,13 +2,7 @@
 mod ask_user;
 #[path = "tools/bash.rs"]
 mod bash;
-#[path = "tools/concurrency.rs"]
-mod concurrency;
-#[path = "tools/disallow.rs"]
-mod disallow;
-#[path = "tools/edit/mod.rs"]
-mod edit;
-#[path = "tools/file.rs"]
+#[path = "tools/file/mod.rs"]
 mod file;
 #[path = "tools/guard.rs"]
 mod guard;

@@ -1,38 +1,12 @@
-//! File tools — read and write files with safety limits.
+//! File operation tools — edit, read, write — and their shared infrastructure.
 
-mod read;
-mod write;
+pub mod diff;
+pub mod edit;
+pub mod image;
+pub mod mutex;
+pub mod read;
+pub mod write;
 
-use std::path::Path;
-
+pub use edit::EditFileTool;
 pub use read::ReadFileTool;
 pub use write::WriteFileTool;
-
-/// 20 MB limit for image files
-pub(crate) const MAX_IMAGE_SIZE_BYTES: u64 = 20 * 1024 * 1024;
-
-pub(crate) fn is_image_file(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase())
-            .as_deref(),
-        Some("jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp")
-    )
-}
-
-pub(crate) fn get_image_mime_type(path: &Path) -> Option<&'static str> {
-    match path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase())
-        .as_deref()
-    {
-        Some("jpg" | "jpeg") => Some("image/jpeg"),
-        Some("png") => Some("image/png"),
-        Some("webp") => Some("image/webp"),
-        Some("gif") => Some("image/gif"),
-        Some("bmp") => Some("image/bmp"),
-        _ => None,
-    }
-}

@@ -1,7 +1,7 @@
 //! Tests for the disallow mechanism on WriteFileTool and EditFileTool.
 
-use evotengine::tools::edit::EditFileTool;
-use evotengine::tools::file::WriteFileTool;
+use evotengine::tools::EditFileTool;
+use evotengine::tools::WriteFileTool;
 use evotengine::types::*;
 use tokio_util::sync::CancellationToken;
 
