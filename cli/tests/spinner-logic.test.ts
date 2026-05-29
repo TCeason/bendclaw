@@ -191,4 +191,12 @@ describe('formatSpinnerLine', () => {
     const line = stripAnsi(formatSpinnerLine(state, now))
     expect(line).toContain('↓ 100 tokens')
   })
+
+  test('shows session token stats when provided', () => {
+    const now = Date.now()
+    const state = { ...createSpinnerState(), phaseStartedAt: now - 5000 }
+    const line = stripAnsi(formatSpinnerLine(state, now, { inputTokens: 408000, outputTokens: 1100, cacheReadTokens: 89000 }))
+    expect(line).toContain('↑408k ↓1.1k cache 18%')
+    expect(line).not.toContain('tokens')
+  })
 })

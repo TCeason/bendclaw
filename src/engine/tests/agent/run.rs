@@ -1939,7 +1939,6 @@ async fn test_llm_call_start_carries_budget_and_window() {
             keep_recent: 10,
             keep_first: 2,
             tool_output_max_lines: 50,
-            ..Default::default()
         })
         .retry_policy(evotengine::RetryPolicy::disabled())
         .run("hi")

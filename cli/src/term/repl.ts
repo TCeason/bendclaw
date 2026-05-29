@@ -391,7 +391,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
     // 6. Spinner
     if (isLoading && overlay.kind !== 'ask-user') {
-      const spinnerText = formatSpinnerLine(spinnerState, Date.now())
+      const activeLlmCall = streamMachine?.activeLlmCall ?? false
+      const liveOutputTokens = activeLlmCall ? spinnerState.tokenCount : 0
+      const spinnerText = formatSpinnerLine(spinnerState, Date.now(), {
+        inputTokens: appState.sessionTokens.inputTokens,
+        outputTokens: appState.sessionTokens.outputTokens + liveOutputTokens,
+        cacheReadTokens: appState.sessionTokens.cacheReadTokens,
+      })
       blocks.push({ lines: [{ spans: [{ text: spinnerText }] }], marginTop: 1 })
     }
 

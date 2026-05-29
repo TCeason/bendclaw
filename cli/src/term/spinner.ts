@@ -70,7 +70,13 @@ export function isSlow(state: SpinnerState, now: number): boolean {
   return true
 }
 
-export function formatSpinnerLine(state: SpinnerState, now: number): string {
+export interface SpinnerStats {
+  inputTokens?: number
+  outputTokens?: number
+  cacheReadTokens?: number
+}
+
+export function formatSpinnerLine(state: SpinnerState, now: number, stats?: SpinnerStats): string {
   const elapsed = now - state.phaseStartedAt
   const slow = isSlow(state, now)
   const char = SPINNER_FRAMES[state.frame]!
@@ -84,8 +90,8 @@ export function formatSpinnerLine(state: SpinnerState, now: number): string {
     label = isTool ? `Executing${tool}…` : 'Thinking…'
   }
 
-  const status = humanDuration(elapsed)
-  const tokenSuffix = state.tokenCount > 0 ? ` · ↓ ${formatTokens(state.tokenCount)} tokens` : ''
+  const status = formatFixedDuration(elapsed)
+  const tokenSuffix = formatSpinnerTokenSuffix(state, stats)
 
   if (slow) {
     return `\x1b[31m${char}\x1b[0m \x1b[31m${label}\x1b[0m\x1b[2m (${status}${tokenSuffix}) · esc to interrupt\x1b[0m`
@@ -109,6 +115,10 @@ function glimmerText(text: string, pos: number): string {
   return result
 }
 
+function formatFixedDuration(ms: number): string {
+  return humanDuration(ms).padStart(5)
+}
+
 function humanDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
   const secs = Math.floor(ms / 100) / 10
@@ -119,7 +129,30 @@ function humanDuration(ms: number): string {
   return rem > 0 ? `${mins}m${rem}s` : `${mins}m`
 }
 
+function formatSpinnerTokenSuffix(state: SpinnerState, stats?: SpinnerStats): string {
+  const inputTokens = stats?.inputTokens ?? 0
+  const outputTokens = stats?.outputTokens ?? 0
+  const cacheReadTokens = stats?.cacheReadTokens ?? 0
+  if (inputTokens > 0 || outputTokens > 0 || cacheReadTokens > 0) {
+    const parts: string[] = []
+    if (inputTokens > 0) parts.push(`↑${formatTokens(inputTokens)}`)
+    if (outputTokens > 0) parts.push(`↓${formatTokens(outputTokens)}`)
+    if (cacheReadTokens > 0) parts.push(`cache ${formatCacheHitPercent(inputTokens, cacheReadTokens)}`)
+    return ` · ${parts.join(' ')}`
+  }
+  return state.tokenCount > 0 ? ` · ↓ ${formatTokens(state.tokenCount)} tokens` : ''
+}
+
+function formatCacheHitPercent(inputTokens: number, cacheReadTokens: number): string {
+  const total = inputTokens + cacheReadTokens
+  if (total <= 0) return '0%'
+  return `${Math.round(cacheReadTokens / total * 100)}%`
+}
+
 function formatTokens(count: number): string {
-  if (count >= 1000) return `${(count / 1000).toFixed(1)}k`
-  return `${count}`
+  if (count < 1000) return `${count}`
+  if (count < 10000) return `${(count / 1000).toFixed(1)}k`
+  if (count < 1000000) return `${Math.round(count / 1000)}k`
+  if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`
+  return `${Math.round(count / 1000000)}M`
 }

@@ -23,6 +23,7 @@ export interface StreamMachineState {
   thinkingTokenCount: number
   prefixEmitted: boolean
   assistantCommitted: boolean
+  activeLlmCall: boolean
 }
 
 export interface StreamContext {
@@ -90,6 +91,7 @@ export function createStreamMachineState(appState: AppState, spinnerState: Spinn
     thinkingTokenCount: 0,
     prefixEmitted: false,
     assistantCommitted: false,
+    activeLlmCall: false,
   }
 }
 
@@ -122,7 +124,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
 
   if (event.kind === 'llm_call_started' || event.kind === 'llm_call_retry' || event.kind === 'api_retry' || event.kind === 'context_compaction_started') {
     const flushed = flushStreaming(state)
-    state = { ...flushed.state, toolProgress: '', lastToolProgress: '' }
+    state = { ...flushed.state, toolProgress: '', lastToolProgress: '', activeLlmCall: event.kind === 'llm_call_started' || event.kind === 'llm_call_retry' || event.kind === 'api_retry' }
     commitLines.push(...flushed.lines)
     mergeFlushExpanded(flushed)
     const newEvents = state.appState.verboseEvents.slice(prev.appState.verboseEvents.length)
@@ -194,6 +196,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
       ...flushed.state,
       toolProgress: '',
       lastToolProgress: '',
+      activeLlmCall: event.kind === 'assistant_completed' ? false : flushed.state.activeLlmCall,
       spinnerState: { ...flushed.state.spinnerState, streaming: false },
     }
     commitLines.push(...flushed.lines)
@@ -203,7 +206,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
 
   if (event.kind === 'llm_call_completed' || event.kind === 'context_compaction_completed') {
     const flushed = flushStreaming(state)
-    state = flushed.state
+    state = { ...flushed.state, activeLlmCall: event.kind === 'llm_call_completed' ? false : flushed.state.activeLlmCall }
     commitLines.push(...flushed.lines)
     mergeFlushExpanded(flushed)
     const newEvents = state.appState.verboseEvents.slice(prev.appState.verboseEvents.length)

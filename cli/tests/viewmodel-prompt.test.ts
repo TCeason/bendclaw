@@ -76,9 +76,10 @@ describe('buildPromptBlocks', () => {
     expect(result).toContain('hello')
   })
 
-  test('shows model in footer', () => {
-    const result = renderPlain(defaultInput())
+  test('shows model in footer without provider prefix', () => {
+    const result = renderPlain(defaultInput({ provider: 'anthropic' }))
     expect(result).toContain('claude-sonnet')
+    expect(result).not.toContain('(anthropic)')
   })
 
   test('shows [plan] when planning', () => {
@@ -140,6 +141,20 @@ describe('buildPromptBlocks', () => {
     const result = renderPlain(defaultInput({ serverPort: 8082, serverUptime: '5m' }))
     expect(result).toContain(':8082')
     expect(result).toContain('5m')
+  })
+
+  test('footer shows context but not session token totals', () => {
+    const result = renderPlain(defaultInput({
+      inputTokens: 408000,
+      outputTokens: 1100,
+      cacheReadTokens: 89000,
+      contextTokens: 86400,
+      contextWindow: 320000,
+    }))
+    expect(result).toContain('27.0%/320k (auto)')
+    expect(result).not.toContain('↑408k')
+    expect(result).not.toContain('↓1.1k')
+    expect(result).not.toContain('R89k')
   })
 
   test('cursor is rendered with inverse', () => {

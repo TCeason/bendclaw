@@ -165,12 +165,8 @@ function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
     leftSpans.push(dim(` (${input.gitBranch})`))
   }
 
-  // Token stats + context
+  // Context only; session token totals are shown in the loading spinner.
   const statParts: string[] = []
-  if (input.inputTokens > 0) statParts.push(`\u2191${formatFooterTokens(input.inputTokens)}`)
-  if (input.outputTokens > 0) statParts.push(`\u2193${formatFooterTokens(input.outputTokens)}`)
-  if (input.cacheReadTokens > 0) statParts.push(`R${formatFooterTokens(input.cacheReadTokens)}`)
-  if (input.cost > 0) statParts.push(`$${input.cost.toFixed(3)}`)
   if (input.contextWindow > 0 && input.contextTokens > 0) {
     const pct = (input.contextTokens / input.contextWindow * 100).toFixed(1)
     const ctxText = input.autoCompact
@@ -192,13 +188,10 @@ function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
     }
   }
 
-  // Model info follows stats on the left
-  if (input.provider || input.model) {
+  // Model info follows stats on the left. Provider is omitted to keep the footer compact.
+  if (input.model) {
     leftSpans.push(dim(' '))
     let modelDisplay = input.model
-    if (input.provider) {
-      modelDisplay = `(${input.provider}) ${input.model}`
-    }
     if (input.thinkingLevel && input.thinkingLevel !== 'off') {
       modelDisplay += ` \u2022 ${input.thinkingLevel}`
     }
