@@ -537,6 +537,7 @@ fn map_agent_event(
                 tool_call_id: tool_call_id.clone(),
                 tool_name: tool_name.clone(),
                 text,
+                details: partial_result.details.clone(),
             })]
         }
 
@@ -586,6 +587,7 @@ fn map_agent_event(
             tool_call_id: tool_call_id.clone(),
             tool_name: tool_name.clone(),
             text: text.clone(),
+            details: serde_json::Value::Null,
         })],
 
         evot_engine::AgentEvent::Error { error } => {

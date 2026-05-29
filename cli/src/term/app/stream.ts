@@ -249,7 +249,23 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
 
   if (event.kind === 'tool_progress') {
     const text = p.text as string | undefined
-    if (text) {
+    const details = p.details as Record<string, any> | undefined
+
+    // Preview diff — render immediately before tool finishes
+    if (details?.preview && details?.diff) {
+      const flushed = flushStreaming(state)
+      state = { ...flushed.state, toolProgress: '', lastToolProgress: '' }
+      commitLines.push(...flushed.lines)
+      mergeFlushExpanded(flushed)
+      const toolName = (p.tool_name as string) ?? 'unknown'
+      const previewArgs = { diff: details.diff as string }
+      const compactLines = buildToolResult(toolName, previewArgs, 'done', undefined, undefined)
+      commitLines.push(...compactLines)
+      const expLines = buildToolResult(toolName, previewArgs, 'done', undefined, undefined, true)
+      if (!expandedCommitLines) expandedCommitLines = []
+      expandedCommitLines.push(...expLines)
+      rerenderStatus = true
+    } else if (text) {
       const spill = parseSpillProgress(text)
       if (spill) {
         const flushed = flushStreaming(state)
@@ -313,8 +329,11 @@ export function buildToolFinishedLines(event: RunEvent, expanded?: boolean): Out
   const toolName = (p.tool_name as string) ?? 'unknown'
   const args = (p.args as Record<string, unknown>) ?? {}
   const details = p.details as Record<string, any> | undefined
-  const mergedArgs = details?.diff
-    ? { ...args, diff: details.diff }
+  const diff = details?.diff as string | undefined
+  // Skip diff if it was already rendered as a preview
+  const skipDiff = !!details?.preview_rendered && !!diff
+  const mergedArgs = diff && !skipDiff
+    ? { ...args, diff }
     : toolName === 'update_goal_tasks' && Array.isArray(details?.goal?.tasks)
       ? { ...args, tasks: details.goal.tasks }
       : args

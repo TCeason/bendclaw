@@ -177,6 +177,7 @@ fn tool_progress(text: &str) -> RunEvent {
         tool_call_id: "tc-1".into(),
         tool_name: "bash".into(),
         text: text.to_string(),
+        details: serde_json::Value::Null,
     })
 }
 

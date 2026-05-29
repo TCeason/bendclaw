@@ -118,14 +118,29 @@ impl AgentTool for WriteFileTool {
             }
         }
 
-        tokio::fs::write(&path, content)
-            .await
-            .map_err(|e| ToolError::Failed(format!("Cannot write {}: {}", path.display(), e)))?;
-
         let bytes = content.len();
         let existed = old_content.is_some();
         let old = old_content.as_deref().unwrap_or("");
         let diff_result = diff::unified_diff(old, content, path_str);
+
+        // Emit preview diff before writing (for immediate UI rendering)
+        if let Some(ref on_update) = ctx.on_update {
+            on_update(ToolResult {
+                content: vec![],
+                details: serde_json::json!({
+                    "preview": true,
+                    "diff": diff_result.unified,
+                    "added_lines": diff_result.added_lines,
+                    "removed_lines": diff_result.removed_lines,
+                }),
+                retention: Retention::CurrentRun,
+            });
+        }
+
+        tokio::fs::write(&path, content)
+            .await
+            .map_err(|e| ToolError::Failed(format!("Cannot write {}: {}", path.display(), e)))?;
+
         Ok(ToolResult {
             content: vec![Content::Text {
                 text: format!("Wrote {} bytes to {}", bytes, path_str),
@@ -135,6 +150,7 @@ impl AgentTool for WriteFileTool {
                 "bytes": bytes,
                 "created": !existed,
                 "diff": diff_result.unified,
+                "preview_rendered": ctx.on_update.is_some(),
             }),
             retention: Retention::Normal,
         })

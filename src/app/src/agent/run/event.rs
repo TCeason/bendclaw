@@ -44,6 +44,8 @@ pub enum RunEventPayload {
         tool_call_id: String,
         tool_name: String,
         text: String,
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        details: serde_json::Value,
     },
     ToolFinished {
         tool_call_id: String,
