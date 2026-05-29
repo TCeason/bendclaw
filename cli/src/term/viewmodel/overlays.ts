@@ -266,7 +266,7 @@ export function buildAskBlocks(state: AskState, columns: number): ViewBlock[] {
   result.push(line(bold(q.question)))
   result.push(line(plain('')))
 
-  const ui = state.uiStates.get(state.currentTab) ?? { focusIndex: 0, inOtherMode: false, otherText: '' }
+  const ui = state.uiStates.get(state.currentTab) ?? { focusIndex: 0, inOtherMode: false, otherText: '', otherCursor: 0 }
   const selectedKind = selectedAnswerKind(state, state.currentTab)
   const selectedIndex = selectedOptionIndex(state, state.currentTab)
   const selectedText = selectedAnswerText(state, state.currentTab)
@@ -300,7 +300,13 @@ export function buildAskBlocks(state: AskState, columns: number): ViewBlock[] {
   ]
   if (otherFocused) {
     if (otherText) {
-      otherSpans.push(plain(otherText), inverse(' '))
+      const cursor = ui.otherCursor ?? otherText.length
+      const before = otherText.slice(0, cursor)
+      const atCursor = otherText[cursor] ?? ' '
+      const after = otherText.slice(cursor + 1)
+      if (before) otherSpans.push(plain(before))
+      otherSpans.push(inverse(atCursor))
+      if (after) otherSpans.push(plain(after))
     } else {
       otherSpans.push(inverse(' '), dim('Type something.'))
     }

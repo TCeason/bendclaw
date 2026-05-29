@@ -20,6 +20,7 @@ export interface QuestionUIState {
   focusIndex: number
   inOtherMode: boolean
   otherText: string
+  otherCursor: number
 }
 
 export interface AskState {
@@ -42,6 +43,7 @@ function getUIState(state: AskState, tab: number): QuestionUIState {
       focusIndex: 0,
       inOtherMode: false,
       otherText: '',
+      otherCursor: 0,
     }
   )
 }
@@ -56,6 +58,7 @@ function setUIState(
     focusIndex: patch.focusIndex ?? existing.focusIndex,
     inOtherMode: patch.inOtherMode ?? existing.inOtherMode,
     otherText: patch.otherText ?? existing.otherText,
+    otherCursor: patch.otherCursor ?? existing.otherCursor,
   }
   const uiStates = new Map(state.uiStates)
   uiStates.set(tab, next)
@@ -102,9 +105,12 @@ function focusOption(state: AskState, index: number): AskState {
   const tab = state.currentTab
   const max = optionCount(state) - 1
   const next = Math.max(0, Math.min(index, max))
+  const enteringOther = next === max
+  const ui = getUIState(state, tab)
   return setUIState(state, tab, {
     focusIndex: next,
-    inOtherMode: next === max,
+    inOtherMode: enteringOther,
+    otherCursor: enteringOther ? ui.otherText.length : ui.otherCursor,
   })
 }
 
@@ -126,12 +132,13 @@ export function askDown(state: AskState): AskState {
   const ui = getUIState(state, tab)
   const max = optionCount(state) - 1
   if (ui.focusIndex >= max) {
-    return setUIState(state, tab, { inOtherMode: true, focusIndex: max })
+    return setUIState(state, tab, { inOtherMode: true, focusIndex: max, otherCursor: ui.otherText.length })
   }
   const next = ui.focusIndex + 1
   return setUIState(state, tab, {
     focusIndex: next,
     inOtherMode: next === max,
+    otherCursor: next === max ? ui.otherText.length : ui.otherCursor,
   })
 }
 
@@ -194,7 +201,12 @@ export function askTypeChar(state: AskState, char: string): AskState {
   if (!inOther(state)) return state
   const tab = state.currentTab
   const ui = getUIState(state, tab)
-  return setUIState(state, tab, { otherText: ui.otherText + char })
+  const before = ui.otherText.slice(0, ui.otherCursor)
+  const after = ui.otherText.slice(ui.otherCursor)
+  return setUIState(state, tab, {
+    otherText: before + char + after,
+    otherCursor: ui.otherCursor + char.length,
+  })
 }
 
 /**
@@ -210,10 +222,14 @@ export function askPasteText(state: AskState, text: string): AskState {
   if (!cleaned.trim()) return state
   const tab = state.currentTab
   const ui = getUIState(state, tab)
+  const cursor = ui.inOtherMode ? ui.otherCursor : ui.otherText.length
+  const before = ui.otherText.slice(0, cursor)
+  const after = ui.otherText.slice(cursor)
   return setUIState(state, tab, {
     inOtherMode: true,
     focusIndex: optionCount(state) - 1,
-    otherText: ui.otherText + cleaned,
+    otherText: before + cleaned + after,
+    otherCursor: cursor + cleaned.length,
   })
 }
 
@@ -221,11 +237,55 @@ export function askBackspace(state: AskState): AskState {
   if (!inOther(state)) return state
   const tab = state.currentTab
   const ui = getUIState(state, tab)
-  return setUIState(state, tab, { otherText: ui.otherText.slice(0, -1) })
+  if (ui.otherCursor <= 0) return state
+  const before = ui.otherText.slice(0, ui.otherCursor - 1)
+  const after = ui.otherText.slice(ui.otherCursor)
+  return setUIState(state, tab, {
+    otherText: before + after,
+    otherCursor: ui.otherCursor - 1,
+  })
 }
 
 export function askClearOther(state: AskState): AskState {
-  return setUIState(state, state.currentTab, { otherText: '' })
+  return setUIState(state, state.currentTab, { otherText: '', otherCursor: 0 })
+}
+
+export function askCursorLeft(state: AskState): AskState {
+  if (!inOther(state)) return state
+  const tab = state.currentTab
+  const ui = getUIState(state, tab)
+  if (ui.otherCursor <= 0) return state
+  return setUIState(state, tab, { otherCursor: ui.otherCursor - 1 })
+}
+
+export function askCursorRight(state: AskState): AskState {
+  if (!inOther(state)) return state
+  const tab = state.currentTab
+  const ui = getUIState(state, tab)
+  if (ui.otherCursor >= ui.otherText.length) return state
+  return setUIState(state, tab, { otherCursor: ui.otherCursor + 1 })
+}
+
+export function askCursorHome(state: AskState): AskState {
+  if (!inOther(state)) return state
+  return setUIState(state, state.currentTab, { otherCursor: 0 })
+}
+
+export function askCursorEnd(state: AskState): AskState {
+  if (!inOther(state)) return state
+  const tab = state.currentTab
+  const ui = getUIState(state, tab)
+  return setUIState(state, tab, { otherCursor: ui.otherText.length })
+}
+
+export function askDelete(state: AskState): AskState {
+  if (!inOther(state)) return state
+  const tab = state.currentTab
+  const ui = getUIState(state, tab)
+  if (ui.otherCursor >= ui.otherText.length) return state
+  const before = ui.otherText.slice(0, ui.otherCursor)
+  const after = ui.otherText.slice(ui.otherCursor + 1)
+  return setUIState(state, tab, { otherText: before + after })
 }
 
 export type AskKeyResult =
@@ -301,8 +361,10 @@ export function handleAskKeyEvent(
     case 'tab':
       return { action: 'update', state: askNextTab(state) }
     case 'right':
+      if (inOther(state)) return { action: 'update', state: askCursorRight(state) }
       return { action: 'update', state: askNextTab(state) }
     case 'left':
+      if (inOther(state)) return { action: 'update', state: askCursorLeft(state) }
       return { action: 'update', state: askPrevTab(state) }
     case 'char':
       if (inOther(state) && char)
@@ -325,6 +387,18 @@ export function handleAskKeyEvent(
     case 'backspace':
       if (inOther(state))
         return { action: 'update', state: askBackspace(state) }
+      return { action: 'update', state }
+    case 'delete':
+      if (inOther(state))
+        return { action: 'update', state: askDelete(state) }
+      return { action: 'update', state }
+    case 'home':
+      if (inOther(state))
+        return { action: 'update', state: askCursorHome(state) }
+      return { action: 'update', state }
+    case 'end':
+      if (inOther(state))
+        return { action: 'update', state: askCursorEnd(state) }
       return { action: 'update', state }
     case 'enter': {
       const result = askSelect(state)
