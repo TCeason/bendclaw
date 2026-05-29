@@ -259,11 +259,10 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
       mergeFlushExpanded(flushed)
       const toolName = (p.tool_name as string) ?? 'unknown'
       const previewArgs = { diff: details.diff as string }
-      const compactLines = buildToolResult(toolName, previewArgs, 'done', undefined, undefined)
-      commitLines.push(...compactLines)
-      const expLines = buildToolResult(toolName, previewArgs, 'done', undefined, undefined, true)
+      const previewLines = buildToolResult(toolName, previewArgs, 'done', undefined, undefined)
+      commitLines.push(...previewLines)
       if (!expandedCommitLines) expandedCommitLines = []
-      expandedCommitLines.push(...expLines)
+      expandedCommitLines.push(...previewLines)
       rerenderStatus = true
     } else if (text) {
       const spill = parseSpillProgress(text)
