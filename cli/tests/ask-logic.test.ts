@@ -9,6 +9,12 @@ import {
   askBackspace,
   askClearOther,
   askSelect,
+  askCursorLeft,
+  askCursorRight,
+  askCursorHome,
+  askCursorEnd,
+  askDelete,
+  askPasteText,
   handleAskKeyEvent,
 } from '../src/term/ask.js'
 import { askStateToResponse } from '../src/term/app/ask-user.js'
@@ -475,6 +481,205 @@ describe('renderAsk via viewmodel', () => {
     expect(tickIndex).toBeGreaterThan(textIndex)
   })
 
+})
+
+describe('Other field cursor movement', () => {
+  test('left/right moves cursor within Other text', () => {
+    let state = createAskState(singleQuestion)
+    // Navigate to Other (last option)
+    state = askDown(state)
+    state = askDown(state)
+    // Type some text
+    state = askTypeChar(state, 'a')
+    state = askTypeChar(state, 'b')
+    state = askTypeChar(state, 'c')
+    const ui0 = state.uiStates.get(0)!
+    expect(ui0.otherText).toBe('abc')
+    expect(ui0.otherCursor).toBe(3)
+
+    // Move left
+    state = askCursorLeft(state)
+    expect(state.uiStates.get(0)!.otherCursor).toBe(2)
+    state = askCursorLeft(state)
+    expect(state.uiStates.get(0)!.otherCursor).toBe(1)
+
+    // Insert at cursor
+    state = askTypeChar(state, 'X')
+    expect(state.uiStates.get(0)!.otherText).toBe('aXbc')
+    expect(state.uiStates.get(0)!.otherCursor).toBe(2)
+
+    // Move right
+    state = askCursorRight(state)
+    expect(state.uiStates.get(0)!.otherCursor).toBe(3)
+  })
+
+  test('left at position 0 is a no-op', () => {
+    let state = createAskState(singleQuestion)
+    state = askDown(state)
+    state = askDown(state)
+    state = askTypeChar(state, 'x')
+    state = askCursorLeft(state)
+    expect(state.uiStates.get(0)!.otherCursor).toBe(0)
+    state = askCursorLeft(state)
+    expect(state.uiStates.get(0)!.otherCursor).toBe(0)
+  })
+
+  test('right at end of text is a no-op', () => {
+    let state = createAskState(singleQuestion)
+    state = askDown(state)
+    state = askDown(state)
+    state = askTypeChar(state, 'x')
+    expect(state.uiStates.get(0)!.otherCursor).toBe(1)
+    state = askCursorRight(state)
+    expect(state.uiStates.get(0)!.otherCursor).toBe(1)
+  })
+
+  test('home moves cursor to start', () => {
+    let state = createAskState(singleQuestion)
+    state = askDown(state)
+    state = askDown(state)
+    state = askTypeChar(state, 'a')
+    state = askTypeChar(state, 'b')
+    state = askTypeChar(state, 'c')
+    state = askCursorHome(state)
+    expect(state.uiStates.get(0)!.otherCursor).toBe(0)
+  })
+
+  test('end moves cursor to end', () => {
+    let state = createAskState(singleQuestion)
+    state = askDown(state)
+    state = askDown(state)
+    state = askTypeChar(state, 'a')
+    state = askTypeChar(state, 'b')
+    state = askTypeChar(state, 'c')
+    state = askCursorHome(state)
+    state = askCursorEnd(state)
+    expect(state.uiStates.get(0)!.otherCursor).toBe(3)
+  })
+
+  test('delete removes character at cursor', () => {
+    let state = createAskState(singleQuestion)
+    state = askDown(state)
+    state = askDown(state)
+    state = askTypeChar(state, 'a')
+    state = askTypeChar(state, 'b')
+    state = askTypeChar(state, 'c')
+    state = askCursorHome(state)
+    state = askDelete(state)
+    expect(state.uiStates.get(0)!.otherText).toBe('bc')
+    expect(state.uiStates.get(0)!.otherCursor).toBe(0)
+  })
+
+  test('delete at end of text is a no-op', () => {
+    let state = createAskState(singleQuestion)
+    state = askDown(state)
+    state = askDown(state)
+    state = askTypeChar(state, 'x')
+    state = askDelete(state)
+    expect(state.uiStates.get(0)!.otherText).toBe('x')
+  })
+
+  test('backspace at cursor removes character before cursor', () => {
+    let state = createAskState(singleQuestion)
+    state = askDown(state)
+    state = askDown(state)
+    state = askTypeChar(state, 'a')
+    state = askTypeChar(state, 'b')
+    state = askTypeChar(state, 'c')
+    state = askCursorLeft(state)
+    state = askBackspace(state)
+    expect(state.uiStates.get(0)!.otherText).toBe('ac')
+    expect(state.uiStates.get(0)!.otherCursor).toBe(1)
+  })
+
+  test('paste inserts at cursor position', () => {
+    let state = createAskState(singleQuestion)
+    state = askDown(state)
+    state = askDown(state)
+    state = askTypeChar(state, 'a')
+    state = askTypeChar(state, 'c')
+    state = askCursorLeft(state)
+    state = askPasteText(state, 'XY')
+    expect(state.uiStates.get(0)!.otherText).toBe('aXYc')
+    expect(state.uiStates.get(0)!.otherCursor).toBe(3)
+  })
+
+  test('entering Other mode via down sets cursor to end of text', () => {
+    let state = createAskState(singleQuestion)
+    state = askDown(state)
+    state = askDown(state)
+    state = askTypeChar(state, 'hi')
+    // Leave Other mode
+    state = askUp(state)
+    expect(state.uiStates.get(0)!.inOtherMode).toBe(false)
+    // Re-enter Other mode
+    state = askDown(state)
+    state = askDown(state)
+    expect(state.uiStates.get(0)!.inOtherMode).toBe(true)
+    expect(state.uiStates.get(0)!.otherCursor).toBe(2)
+  })
+})
+
+describe('left/right after answer submission', () => {
+  test('left/right switches tabs after Other answer is submitted', () => {
+    let state = createAskState(multiQuestion)
+    // Go to Other on first tab
+    state = askDown(state)
+    state = askDown(state)
+    state = askTypeChar(state, 'custom')
+    // Submit (enter) — advances to next tab
+    const result = askSelect(state)
+    state = result.state
+    expect(state.currentTab).toBe(1)
+
+    // Go back to first tab
+    state = askPrevTab(state)
+    expect(state.currentTab).toBe(0)
+    // Focus is still on Other with submitted answer
+    expect(state.answers[0]!.customText).toBe('custom')
+
+    // Now left/right should switch tabs, not move cursor
+    const r1 = handleAskKeyEvent(state, 'right', '')
+    expect(r1.action).toBe('update')
+    if (r1.action === 'update') {
+      expect(r1.state.currentTab).toBe(1)
+    }
+  })
+
+  test('left/right moves cursor in Other when not yet submitted', () => {
+    let state = createAskState(multiQuestion)
+    // Go to Other on first tab
+    state = askDown(state)
+    state = askDown(state)
+    state = askTypeChar(state, 'abc')
+    // NOT submitted yet — left should move cursor
+    const r1 = handleAskKeyEvent(state, 'left', '')
+    expect(r1.action).toBe('update')
+    if (r1.action === 'update') {
+      expect(r1.state.currentTab).toBe(0) // stays on same tab
+      expect(r1.state.uiStates.get(0)!.otherCursor).toBe(2) // cursor moved
+    }
+  })
+
+  test('left/right switches tabs after regular option is submitted', () => {
+    let state = createAskState(multiQuestion)
+    // Select first option (Rust) — advances to next tab
+    const result = askSelect(state)
+    state = result.state
+    expect(state.currentTab).toBe(1)
+
+    // Go back to first tab
+    state = askPrevTab(state)
+    expect(state.currentTab).toBe(0)
+    expect(state.answers[0]!.selectedOption).toBe(0)
+
+    // Right should switch tab
+    const r1 = handleAskKeyEvent(state, 'right', '')
+    expect(r1.action).toBe('update')
+    if (r1.action === 'update') {
+      expect(r1.state.currentTab).toBe(1)
+    }
+  })
 })
 
 describe('askStateToResponse', () => {
