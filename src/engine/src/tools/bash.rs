@@ -179,10 +179,7 @@ impl AgentTool for BashTool {
     }
 
     fn name_aliases(&self) -> Vec<(String, String)> {
-        vec![
-            ("claude".into(), "Bash".into()),
-            ("kimi".into(), "Bash".into()),
-        ]
+        vec![("claude".into(), "Bash".into())]
     }
 
     fn label(&self) -> &str {

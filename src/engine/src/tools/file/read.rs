@@ -39,10 +39,7 @@ impl AgentTool for ReadFileTool {
     }
 
     fn name_aliases(&self) -> Vec<(String, String)> {
-        vec![
-            ("claude".into(), "Read".into()),
-            ("kimi".into(), "Read".into()),
-        ]
+        vec![("claude".into(), "Read".into())]
     }
 
     fn label(&self) -> &str {
