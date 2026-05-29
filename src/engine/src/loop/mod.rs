@@ -8,7 +8,6 @@ pub(crate) mod doom_loop;
 mod llm_call;
 mod thinking_only_guard;
 mod tool_exec;
-mod tool_only_guard;
 
 pub use config::AfterTurnFn;
 pub use config::AgentLoopConfig;
@@ -20,4 +19,3 @@ pub use doom_loop::DoomLoopDetector;
 pub use driver::agent_loop;
 pub use driver::agent_loop_continue;
 pub use thinking_only_guard::ThinkingOnlyGuard;
-pub use tool_only_guard::ToolOnlyGuard;

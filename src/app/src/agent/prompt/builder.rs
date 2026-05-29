@@ -14,6 +14,7 @@ const USING_TOOLS_SECTION: &str = r#"Guidelines:
 - Each edits[].old_text is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.
 - Keep edits[].old_text as small as possible while still being unique in the file. Do not pad with large unchanged regions.
 - Use write only for new files or complete rewrites.
+- Make independent tool calls in parallel to increase efficiency. When one call depends on the result of another, run them sequentially instead.
 - Be concise in your responses
 - Show file paths clearly when working with files"#;
 

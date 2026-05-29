@@ -22,7 +22,8 @@ async fn test_bash_echo() {
         _ => panic!("expected text"),
     };
     assert!(text.contains("hello"));
-    assert!(text.contains("Exit code: 0"));
+    // Exit code: 0 is no longer emitted for successful commands
+    assert!(!text.contains("Exit code:"));
 }
 
 #[tokio::test]
@@ -232,7 +233,7 @@ async fn test_bash_long_line_truncated() {
     };
     assert!(text.contains("bytes truncated"));
     // Should keep head and tail
-    assert!(text.starts_with("Exit code: 0\nxx"));
+    assert!(text.starts_with("xx"));
     assert!(text.ends_with("xx"));
     // Total output should be much smaller than 8000
     assert!(text.len() < 6000);

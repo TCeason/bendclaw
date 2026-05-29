@@ -470,18 +470,33 @@ impl AgentTool for BashTool {
 
         let output = if stderr.is_empty() {
             if stdout_truncated {
-                format!(
-                    "Exit code: {}\n[Output truncated: showing last {} of {} lines]\n{}",
-                    exit_code,
-                    stdout.lines().count(),
-                    stdout_total,
-                    stdout
-                )
+                if exit_code == 0 {
+                    format!(
+                        "[Output truncated: showing last {} of {} lines]\n{}",
+                        stdout.lines().count(),
+                        stdout_total,
+                        stdout
+                    )
+                } else {
+                    format!(
+                        "Exit code: {}\n[Output truncated: showing last {} of {} lines]\n{}",
+                        exit_code,
+                        stdout.lines().count(),
+                        stdout_total,
+                        stdout
+                    )
+                }
+            } else if exit_code == 0 {
+                stdout.to_string()
             } else {
                 format!("Exit code: {}\n{}", exit_code, stdout)
             }
         } else {
-            let mut out = format!("Exit code: {}\n", exit_code);
+            let mut out = if exit_code != 0 {
+                format!("Exit code: {}\n", exit_code)
+            } else {
+                String::new()
+            };
             if stdout_truncated {
                 out.push_str(&format!(
                     "STDOUT [truncated: showing last {} of {} lines]:\n{}\n",
