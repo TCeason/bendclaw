@@ -152,6 +152,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let exitHintTimer: ReturnType<typeof setTimeout> | null = null
   let overlay: OverlayState = { kind: 'none' }
   let streamMachine: StreamMachineState | null = null
+  let lastPendingText = ''
+  let lastPendingRendered = ''
   let expanded = false
   const compactLines: OutputLine[] = []
   const expandedLines: OutputLine[] = []
@@ -365,11 +367,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
     }
 
-    // 4. Streaming content (full markdown re-render each frame)
+    // 4. Streaming content — only re-render markdown when text actually changes
     const pendingText = streamMachine?.pendingText ?? ''
     if (pendingText && isLoading) {
-      const rendered = renderMarkdownCached(pendingText)
-      const mdLines = rendered.split('\n')
+      if (pendingText !== lastPendingText) {
+        lastPendingText = pendingText
+        lastPendingRendered = renderMarkdownCached(pendingText)
+      }
+      const mdLines = lastPendingRendered.split('\n')
       const styledLines = mdLines.map((l, i) => {
         if (i === 0) return { spans: [{ text: '\u23fa ', fg: 'cyan' as const }, { text: l }] }
         return { spans: [{ text: `  ${l}` }] }
