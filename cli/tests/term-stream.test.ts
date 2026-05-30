@@ -486,6 +486,48 @@ describe('term stream machine', () => {
     expect(completedWrite).toContain('[LLM] \u2713')
   })
 
+  test('llm_call_completed sets footer context tokens from real usage', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState({ ...appState, verbose: false }, spinner)
+
+    // Pre-call estimate lands first via llm_call_started.
+    state = reduceRunEvent(state, {
+      kind: 'llm_call_started',
+      payload: { model: 'test', messages: [], estimated_context_tokens: 5000, context_window: 160000 },
+    }, { termRows: 24 }).state
+    expect(state.appState.currentRunStats.contextTokens).toBe(5000)
+
+    // On completion the footer must switch to the provider's real usage,
+    // matching the compaction trigger: input + cache_read + cache_write + output.
+    const completed = reduceRunEvent(state, {
+      kind: 'llm_call_completed',
+      payload: {
+        model: 'test',
+        usage: { input: 100000, output: 2000, cache_read: 8000, cache_write: 1000 },
+        metrics: { duration_ms: 1000 },
+      },
+    }, { termRows: 24 })
+    expect(completed.state.appState.currentRunStats.contextTokens).toBe(111000)
+    expect(completed.state.appState.sessionTokens.contextTokens).toBe(111000)
+  })
+
+  test('llm_call_completed without usage keeps prior context tokens', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState({ ...appState, verbose: false }, spinner)
+    state = reduceRunEvent(state, {
+      kind: 'llm_call_started',
+      payload: { model: 'test', messages: [], estimated_context_tokens: 7000, context_window: 160000 },
+    }, { termRows: 24 }).state
+
+    const completed = reduceRunEvent(state, {
+      kind: 'llm_call_completed',
+      payload: { model: 'test', metrics: { duration_ms: 1000 } },
+    }, { termRows: 24 })
+    expect(completed.state.appState.currentRunStats.contextTokens).toBe(7000)
+  })
+
   test('verbose off: llm retry still surfaces in commitLines', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()

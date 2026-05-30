@@ -13,7 +13,7 @@ pub struct SummarizerInput {
     pub previous_summary: Option<String>,
     /// File operations extracted from evicted zone (rule-based, always present).
     pub file_ops: FileOps,
-    /// Number of evicted messages (for marker header).
+    /// Number of evicted messages (for summary header).
     pub evicted_count: usize,
     /// Completed user requests extracted from evicted zone.
     pub completed_requests: Vec<String>,
@@ -26,7 +26,7 @@ pub struct SummarizerInput {
 /// Output from summarization.
 #[derive(Debug, Clone)]
 pub struct SummarizerOutput {
-    /// The summary text (becomes the marker message content).
+    /// The summary text (becomes the memory summary message content).
     pub summary: String,
 }
 

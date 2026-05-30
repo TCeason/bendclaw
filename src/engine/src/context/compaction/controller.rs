@@ -6,7 +6,6 @@ use super::config::CompactionConfig;
 use super::executor;
 use super::planner;
 use super::summarizer::mode::SummarizerContext;
-use super::summarizer::SummarizerMode;
 use super::trigger::TriggerInput;
 use super::trigger::{self};
 use super::types::*;
@@ -15,7 +14,6 @@ use crate::types::AgentMessage;
 /// Stateful controller that lives across turns in the agent loop.
 pub struct CompactionController {
     config: CompactionConfig,
-    state: Option<CompactionState>,
     overflow_recovery_attempted: bool,
     last_compaction_ts: Option<u64>,
 }
@@ -24,7 +22,6 @@ impl CompactionController {
     pub fn new(config: CompactionConfig) -> Self {
         Self {
             config,
-            state: None,
             overflow_recovery_attempted: false,
             last_compaction_ts: None,
         }
@@ -38,11 +35,6 @@ impl CompactionController {
     /// Access current config.
     pub fn config(&self) -> &CompactionConfig {
         &self.config
-    }
-
-    /// Access current compaction state.
-    pub fn state(&self) -> Option<&CompactionState> {
-        self.state.as_ref()
     }
 
     /// Call after a successful (non-error, non-aborted) assistant response
@@ -73,9 +65,11 @@ impl CompactionController {
             TriggerDecision::Skip => CompactionResponse {
                 action: AfterResponseAction::Continue,
                 stats: None,
+                reason: None,
+                context_tokens: None,
             },
 
-            TriggerDecision::Overflow { context_tokens: _ } => {
+            TriggerDecision::Overflow { context_tokens } => {
                 self.overflow_recovery_attempted = true;
                 // Remove the error assistant message before compacting.
                 if let Some(last) = messages.last() {
@@ -91,15 +85,19 @@ impl CompactionController {
                 CompactionResponse {
                     action: AfterResponseAction::Retry,
                     stats,
+                    reason: Some(CompactReason::Overflow),
+                    context_tokens: Some(context_tokens),
                 }
             }
 
-            TriggerDecision::Threshold { context_tokens: _ } => {
+            TriggerDecision::Threshold { context_tokens } => {
                 self.overflow_recovery_attempted = false;
                 let stats = self.run_compaction(messages, summarizer_ctx, cancel).await;
                 CompactionResponse {
                     action: AfterResponseAction::Continue,
                     stats,
+                    reason: Some(CompactReason::Threshold),
+                    context_tokens: Some(context_tokens),
                 }
             }
         }
@@ -123,21 +121,12 @@ impl CompactionController {
     ) -> Option<CompactionStats> {
         let plan = planner::plan(messages, &self.config)?;
 
-        // For overflow, summarizer_ctx is None which forces rule-based via mode dispatch.
-        // Build an override config for overflow: always rule-based.
-        let effective_config = if summarizer_ctx.is_none() {
-            let mut cfg = self.config.clone();
-            cfg.summarizer_mode = SummarizerMode::RuleBased;
-            cfg
-        } else {
-            self.config.clone()
-        };
-
+        // For overflow, summarizer_ctx is None which triggers emergency summary.
         let outcome = executor::execute(
             std::mem::take(messages),
             &plan,
-            &effective_config,
-            self.state.as_ref(),
+            &self.config,
+            None,
             summarizer_ctx,
             cancel,
         )
@@ -150,7 +139,6 @@ impl CompactionController {
         }
 
         *messages = outcome.messages;
-        self.state = Some(outcome.state);
         self.last_compaction_ts = Some(now_ms());
 
         Some(outcome.stats)
@@ -163,6 +151,8 @@ pub struct CompactionResponse {
     pub action: AfterResponseAction,
     /// Stats if compaction ran, None if skipped or nothing to evict.
     pub stats: Option<CompactionStats>,
+    pub reason: Option<CompactReason>,
+    pub context_tokens: Option<usize>,
 }
 
 fn now_ms() -> u64 {

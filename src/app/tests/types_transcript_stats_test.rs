@@ -76,6 +76,7 @@ fn stats_llm_call_completed_round_trip() {
         }),
         error: None,
         context_window: 0,
+        stop_reason: "stop".into(),
     });
     let item = stats.to_item();
     let decoded = TranscriptStats::try_from_item(&item);
@@ -119,6 +120,10 @@ fn stats_context_compaction_started_round_trip() {
         system_prompt_tokens: 5000,
         tool_definition_tokens: 7000,
         context_window: 100000,
+        reason: evot::types::CompactReason::Threshold,
+        reserve_tokens: 0,
+        trigger_threshold: 0,
+        will_retry: false,
     });
     let item = stats.to_item();
     let decoded = TranscriptStats::try_from_item(&item);
@@ -133,6 +138,7 @@ fn stats_context_compaction_started_round_trip() {
 #[test]
 fn stats_context_compaction_completed_round_trip() {
     let stats = TranscriptStats::ContextCompactionCompleted(ContextCompactionCompletedStats {
+        reason: evot::types::CompactReason::Threshold,
         result: evot::types::CompactionResult::Compacted {
             before_message_count: 20,
             after_message_count: 8,
@@ -144,6 +150,7 @@ fn stats_context_compaction_completed_round_trip() {
             current_run_reclaimed: 0,
         },
         context_window: 0,
+        will_retry: false,
     });
     let item = stats.to_item();
     let decoded = TranscriptStats::try_from_item(&item);
@@ -249,10 +256,17 @@ fn user_item_is_context() {
 #[test]
 fn compact_item_is_not_context() {
     let item = TranscriptItem::Compact {
-        messages: vec![TranscriptItem::User {
-            text: "hi".into(),
-            content: vec![],
-        }],
+        id: "compact".into(),
+        created_at: 0,
+        reason: evot::types::CompactReason::Manual,
+        summary: "hi".into(),
+        first_kept_seq: 1,
+        tokens_before: 10,
+        tokens_after: 5,
+        messages_before: 2,
+        messages_after: 1,
+        split_turn: None,
+        details: evot::types::CompactDetails::default(),
     };
     assert!(!item.is_context_item());
 }

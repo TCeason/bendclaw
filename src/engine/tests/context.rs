@@ -4,10 +4,12 @@ mod controller;
 mod dsl;
 #[path = "context/executor.rs"]
 mod executor;
-#[path = "context/marker.rs"]
-mod marker;
+#[path = "context/memory.rs"]
+mod memory;
 #[path = "context/planner.rs"]
 mod planner;
+#[path = "context/session.rs"]
+mod session;
 #[path = "context/summarizer.rs"]
 mod summarizer;
 #[path = "context/trigger.rs"]

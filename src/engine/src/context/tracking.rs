@@ -160,7 +160,9 @@ pub struct ContextBudgetSnapshot {
 /// Configuration for context management
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextConfig {
-    /// Maximum context tokens (leave room for response)
+    /// Usable context tokens — the model's full context window.
+    /// Output headroom is reserved separately via
+    /// `CompactionConfig::reserve_tokens`, so this is NOT pre-discounted.
     pub max_context_tokens: usize,
     /// Tokens reserved for the system prompt
     pub system_prompt_tokens: usize,
@@ -187,12 +189,14 @@ impl Default for ContextConfig {
 impl ContextConfig {
     /// Derive a context config from a model's context window size.
     ///
-    /// Reserves 20% of the context window for output tokens, uses the rest
-    /// as the compaction budget. All other settings use defaults.
+    /// Uses the full context window as the budget. Output headroom is the
+    /// sole responsibility of `CompactionConfig::reserve_tokens`, so the
+    /// window is not pre-discounted here (avoids double-counting headroom,
+    /// which previously made compaction trigger at ~70% of the real window
+    /// while the footer measured against the discounted 80% value).
     pub fn from_context_window(context_window: u32) -> Self {
-        let max_context_tokens = (context_window as usize) * 80 / 100;
         Self {
-            max_context_tokens,
+            max_context_tokens: context_window as usize,
             ..Default::default()
         }
     }

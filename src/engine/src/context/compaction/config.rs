@@ -31,7 +31,7 @@ pub struct CompactionConfig {
     pub keep_recent_images: usize,
 
     // — Summarizer —
-    /// Summarization strategy for marker generation.
+    /// Summarization strategy for summary generation.
     pub summarizer_mode: SummarizerMode,
     /// Max chars for stored last_summary (prevents unbounded growth).
     pub summary_max_chars: usize,
@@ -56,8 +56,9 @@ impl CompactionConfig {
 
     /// Build from a `ContextConfig`, respecting user-customized fields.
     pub fn from_context_config(ctx: &crate::context::tracking::ContextConfig) -> Self {
-        // ContextConfig.max_context_tokens is already the usable budget
-        // (typically 80% of real window). Treat it as our context_window.
+        // ContextConfig.max_context_tokens is the full context window.
+        // Output headroom is reserved here via reserve_tokens (single source
+        // of headroom), so trigger threshold = window - reserve_tokens.
         let context_window = ctx.max_context_tokens;
         let mut cfg = Self::from_context_window(context_window);
         cfg.keep_first = ctx.keep_first;

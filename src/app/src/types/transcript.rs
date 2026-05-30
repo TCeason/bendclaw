@@ -14,8 +14,6 @@ pub enum MarkerKind {
     Clear,
     /// Go to a specific message — restore that point's context snapshot.
     Goto,
-    /// Compaction — compressed context snapshot.
-    Compact,
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +80,32 @@ pub enum TranscriptImageSource {
 }
 
 // ---------------------------------------------------------------------------
+// Compact transcript model
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactReason {
+    Threshold,
+    Overflow,
+    Manual,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactSplitTurn {
+    pub turn_start_seq: u64,
+    pub cut_seq: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CompactDetails {
+    #[serde(default)]
+    pub read_files: Vec<String>,
+    #[serde(default)]
+    pub modified_files: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
 // TranscriptItem — a single item in a conversation transcript
 // ---------------------------------------------------------------------------
 
@@ -114,10 +138,20 @@ pub enum TranscriptItem {
         kind: String,
         data: serde_json::Value,
     },
-    /// Deprecated: old compact format kept for deserialization compatibility.
-    /// New compactions use `Marker { kind: MarkerKind::Compact, .. }`.
     Compact {
-        messages: Vec<TranscriptItem>,
+        id: String,
+        created_at: u64,
+        reason: CompactReason,
+        summary: String,
+        first_kept_seq: u64,
+        tokens_before: usize,
+        tokens_after: usize,
+        messages_before: usize,
+        messages_after: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        split_turn: Option<CompactSplitTurn>,
+        #[serde(default)]
+        details: CompactDetails,
     },
     /// Observability fact — persisted in transcript.jsonl but never enters
     /// the conversation context sent to the engine.
@@ -126,9 +160,8 @@ pub enum TranscriptItem {
         data: serde_json::Value,
     },
     /// Unified marker that resets the current context baseline.
-    /// All three kinds (Clear, Goto, Compact) carry a snapshot of messages
-    /// that become the new baseline. Subsequent context items after the
-    /// marker are appended to this baseline.
+    /// Clear and Goto carry a concrete baseline snapshot. Compaction is a
+    /// first-class `TranscriptItem::Compact` entry instead of a marker kind.
     Marker {
         kind: MarkerKind,
         /// For Goto: the target seq the user requested (audit only).
@@ -149,6 +182,13 @@ impl TranscriptItem {
             self,
             Self::Stats { .. } | Self::Compact { .. } | Self::Marker { .. }
         )
+    }
+
+    pub fn as_user_text(&self) -> Option<String> {
+        match self {
+            Self::User { text, .. } => Some(text.clone()),
+            _ => None,
+        }
     }
 
     /// Build a User transcript item from engine content blocks.

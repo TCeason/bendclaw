@@ -2,8 +2,12 @@
 mod agent_prompt_test;
 #[path = "agent_variable_test.rs"]
 mod agent_variable_test;
+#[path = "auto_compact_test.rs"]
+mod auto_compact_test;
 #[path = "command_test.rs"]
 mod command_test;
+#[path = "compact_test.rs"]
+mod compact_test;
 #[path = "conf_load_test.rs"]
 mod conf_load_test;
 #[path = "delivery_test.rs"]
@@ -12,6 +16,10 @@ mod delivery_test;
 mod feishu_message_test;
 #[path = "feishu_sink_test.rs"]
 mod feishu_sink_test;
+#[path = "manual_compact_llm_test.rs"]
+mod manual_compact_llm_test;
+#[path = "orchestrator_compact_test.rs"]
+mod orchestrator_compact_test;
 #[path = "run_ask_channel_test.rs"]
 mod run_ask_channel_test;
 #[path = "search_test.rs"]

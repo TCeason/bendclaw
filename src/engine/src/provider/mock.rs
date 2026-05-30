@@ -12,7 +12,22 @@ use crate::types::*;
 #[derive(Debug, Clone)]
 pub enum MockResponse {
     Text(String),
+    TextWithUsage {
+        text: String,
+        usage: Usage,
+    },
     ToolCalls(Vec<MockToolCall>),
+    TextWithUsageAndStop {
+        text: String,
+        usage: Usage,
+        stop_reason: StopReason,
+    },
+    TextWithUsageStopAndModel {
+        text: String,
+        usage: Usage,
+        stop_reason: StopReason,
+        model: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -74,21 +89,22 @@ impl StreamProvider for MockProvider {
 
         let message = match response {
             MockResponse::Text(text) => {
-                let _ = tx.send(StreamEvent::TextDelta {
-                    content_index: 0,
-                    delta: text.clone(),
-                });
-                Message::Assistant {
-                    content: vec![Content::Text { text }],
-                    stop_reason: StopReason::Stop,
-                    model: "mock".into(),
-                    provider: "mock".into(),
-                    usage: Usage::default(),
-                    timestamp: now_ms(),
-                    error_message: None,
-                    response_id: None,
-                }
+                build_text_response(text, Usage::default(), StopReason::Stop, "mock".into(), &tx)
             }
+            MockResponse::TextWithUsage { text, usage } => {
+                build_text_response(text, usage, StopReason::Stop, "mock".into(), &tx)
+            }
+            MockResponse::TextWithUsageAndStop {
+                text,
+                usage,
+                stop_reason,
+            } => build_text_response(text, usage, stop_reason, "mock".into(), &tx),
+            MockResponse::TextWithUsageStopAndModel {
+                text,
+                usage,
+                stop_reason,
+                model,
+            } => build_text_response(text, usage, stop_reason, model, &tx),
             MockResponse::ToolCalls(calls) => {
                 let content: Vec<Content> = calls
                     .iter()
@@ -126,5 +142,28 @@ impl StreamProvider for MockProvider {
             message: message.clone(),
         });
         Ok(StreamOutcome::complete(message))
+    }
+}
+
+fn build_text_response(
+    text: String,
+    usage: Usage,
+    stop_reason: StopReason,
+    model: String,
+    tx: &mpsc::UnboundedSender<StreamEvent>,
+) -> Message {
+    let _ = tx.send(StreamEvent::TextDelta {
+        content_index: 0,
+        delta: text.clone(),
+    });
+    Message::Assistant {
+        content: vec![Content::Text { text }],
+        stop_reason,
+        model,
+        provider: "local".into(),
+        usage,
+        timestamp: now_ms(),
+        error_message: None,
+        response_id: None,
     }
 }

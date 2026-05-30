@@ -212,11 +212,10 @@ async fn controller_does_not_retry_twice() {
 }
 
 #[tokio::test]
-async fn controller_accumulates_state_across_compactions() {
+async fn controller_allows_multiple_stateless_compactions() {
     let config = config_small();
     let mut ctrl = CompactionController::new(config);
 
-    // First compaction
     let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];
     for _ in 0..20 {
         messages.push(user_msg(&big_text(300)));
@@ -225,24 +224,18 @@ async fn controller_accumulates_state_across_compactions() {
     messages.push(user_msg("recent"));
     messages.push(assistant_msg("recent answer"));
 
-    let cancel = CancellationToken::new();
-    ctrl.force_compact(&mut messages, None, cancel).await;
-    let gen1 = match ctrl.state() {
-        Some(state) => state.generation,
-        None => panic!("expected state after first compaction"),
-    };
+    let first = ctrl
+        .force_compact(&mut messages, None, CancellationToken::new())
+        .await;
+    assert!(first.is_some());
 
-    // Add more messages and compact again
     for _ in 0..20 {
         messages.push(user_msg(&big_text(300)));
         messages.push(assistant_msg(&big_text(300)));
     }
 
-    let cancel2 = CancellationToken::new();
-    ctrl.force_compact(&mut messages, None, cancel2).await;
-    let gen2 = match ctrl.state() {
-        Some(state) => state.generation,
-        None => panic!("expected state after second compaction"),
-    };
-    assert!(gen2 > gen1);
+    let second = ctrl
+        .force_compact(&mut messages, None, CancellationToken::new())
+        .await;
+    assert!(second.is_some());
 }

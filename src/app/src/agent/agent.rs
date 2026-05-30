@@ -18,6 +18,7 @@ use super::variables::Variables;
 use crate::agent::prompt::Section;
 use crate::conf::Config;
 use crate::conf::LlmConfig;
+use crate::conf::Protocol;
 use crate::error::EvotError;
 use crate::error::Result;
 use crate::storage::open_storage;
@@ -146,6 +147,7 @@ pub struct Agent {
     storage: RwLock<Arc<dyn Storage>>,
     variables: RwLock<Option<Arc<Variables>>>,
     sandbox: super::sandbox::SandboxPolicy,
+    provider_override: RwLock<Option<Arc<dyn evot_engine::provider::StreamProvider>>>,
     /// session_id → (run_id, handle, done_flag)
     active_runs: Arc<parking_lot::Mutex<HashMap<String, ActiveRun>>>,
 }
@@ -154,8 +156,12 @@ impl Agent {
     pub fn new(config: &Config, cwd: impl Into<String>) -> Result<Arc<Self>> {
         let cwd = cwd.into();
         let storage = open_storage(&config.storage)?;
+        Ok(Arc::new(Self::new_inner(config, cwd, storage)?))
+    }
+
+    fn new_inner(config: &Config, cwd: String, storage: Arc<dyn Storage>) -> Result<Self> {
         let system_prompt = format!("You are a helpful assistant. Working directory: {cwd}");
-        Ok(Arc::new(Self {
+        Ok(Self {
             llm: RwLock::new(config.active_llm()?),
             system_prompt: RwLock::new(system_prompt),
             system_prompt_sections: RwLock::new(Vec::new()),
@@ -169,8 +175,28 @@ impl Agent {
             storage: RwLock::new(storage),
             variables: RwLock::new(None),
             sandbox: super::sandbox::SandboxPolicy::from_config(&config.sandbox),
+            provider_override: RwLock::new(None),
             active_runs: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-        }))
+        })
+    }
+
+    pub fn new_with_storage_for_test(
+        config: &Config,
+        cwd: impl Into<String>,
+        storage: Arc<dyn Storage>,
+    ) -> Result<Arc<Self>> {
+        Ok(Arc::new(Self::new_inner(config, cwd.into(), storage)?))
+    }
+
+    pub fn new_with_provider_for_test(
+        config: &Config,
+        cwd: impl Into<String>,
+        storage: Arc<dyn Storage>,
+        provider: impl evot_engine::provider::StreamProvider + 'static,
+    ) -> Result<Arc<Self>> {
+        let agent = Arc::new(Self::new_inner(config, cwd.into(), storage)?);
+        *agent.provider_override.write() = Some(Arc::new(provider));
+        Ok(agent)
     }
 
     // -- configuration (fluent setters) --------------------------------------
@@ -421,6 +447,41 @@ impl Agent {
                 }
                 Ok(Some(SubmitOutcome::Command(lines.join("\n"))))
             }
+            Command::Compact {
+                custom_instructions,
+            } => {
+                let session_id = session.session_id().await;
+                self.abort_run(&session_id);
+                let request = crate::compact::orchestrator::ManualCompactRequest {
+                    reason: crate::types::CompactReason::Manual,
+                    custom_instructions,
+                    summary_override: None,
+                    summarizer: Some(self.compact_summarizer()),
+                    settings: crate::compact::orchestrator::CompactSettings::default(),
+                };
+                let result = crate::compact::orchestrator::compact_session(
+                    session,
+                    request,
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await?;
+                session.save().await?;
+                let msg = match result {
+                    Some(crate::types::TranscriptItem::Compact {
+                        tokens_before,
+                        tokens_after,
+                        messages_before,
+                        messages_after,
+                        ..
+                    }) => {
+                        format!(
+                            "Session compacted: {tokens_before} → {tokens_after} tokens, {messages_before} → {messages_after} messages."
+                        )
+                    }
+                    _ => "Nothing to compact.".into(),
+                };
+                Ok(Some(SubmitOutcome::Command(msg)))
+            }
             Command::History(limit) => {
                 let entries = session.recent_context_entries(usize::MAX).await?;
                 let user_entries: Vec<_> = entries
@@ -451,6 +512,26 @@ impl Agent {
     }
 
     // -- run execution (private) ----------------------------------------------
+
+    fn compact_summarizer(&self) -> crate::compact::orchestrator::CompactSummarizer {
+        use evot_engine::provider::AnthropicProvider;
+        use evot_engine::provider::OpenAiCompatProvider;
+
+        let llm = self.llm.read().clone();
+        let provider =
+            self.provider_override
+                .read()
+                .clone()
+                .unwrap_or_else(|| match llm.protocol {
+                    Protocol::Anthropic => Arc::new(AnthropicProvider),
+                    Protocol::OpenAi => Arc::new(OpenAiCompatProvider),
+                });
+        crate::compact::orchestrator::CompactSummarizer {
+            provider,
+            llm,
+            max_tokens: 4096,
+        }
+    }
 
     async fn start_run(
         self: &Arc<Self>,
@@ -538,6 +619,7 @@ impl Agent {
             storage: _,
             variables: _,
             sandbox,
+            provider_override: _,
             active_runs: _,
         } = self.as_ref();
 
@@ -555,6 +637,7 @@ impl Agent {
                 enabled: sandbox.enabled,
                 extra_dirs: sandbox.extra_dirs.clone(),
             },
+            provider_override: RwLock::new(None),
             active_runs: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         });
         Ok(ForkedAgent {
@@ -814,6 +897,7 @@ impl Agent {
                     .as_ref()
                     .map(|root| root.join("sessions").join(session_id).join("tool-results")),
                 prompt_cache_key: Some(session_id.to_string()),
+                provider_override: self.provider_override.read().clone(),
             },
             history: prior_messages,
             input,

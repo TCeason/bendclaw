@@ -1,7 +1,7 @@
 //! Serialize messages to text for LLM summarization.
 
 use super::types::SummarizerInput;
-use crate::context::compaction::marker;
+use crate::context::compaction::memory;
 use crate::context::compaction::types::CompactionState;
 use crate::types::*;
 
@@ -18,10 +18,10 @@ pub fn prepare_input(
     let conversation = serialize_messages(evicted);
     let turn_prefix = split_prefix.map(serialize_messages);
     let previous_summary = prev_state.and_then(|s| s.last_summary.clone());
-    let file_ops = marker::extract_file_ops(evicted, prev_state);
-    let completed_requests = marker::extract_user_requests(evicted);
-    let env_discoveries = marker::extract_env_discoveries(evicted, prev_state);
-    let last_conclusion = marker::latest_assistant_text(evicted);
+    let file_ops = memory::extract_file_ops(evicted, prev_state);
+    let completed_requests = memory::extract_user_requests(evicted);
+    let env_discoveries = memory::extract_env_discoveries(evicted, prev_state);
+    let last_conclusion = memory::latest_assistant_text(evicted);
 
     SummarizerInput {
         conversation,

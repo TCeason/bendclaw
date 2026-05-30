@@ -302,6 +302,8 @@ pub struct ModelConfig {
 fn openai_context_window(id: &str) -> u32 {
     match id.trim().to_ascii_lowercase().as_str() {
         "gpt-5.5" => 400_000,
+        #[cfg(test)]
+        "tiny-context" => 128,
         _ => 128_000,
     }
 }

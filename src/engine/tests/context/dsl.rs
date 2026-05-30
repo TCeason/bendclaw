@@ -20,7 +20,7 @@ fn config_for_dsl() -> CompactionConfig {
         max_tool_result_tokens: 100,
         tool_output_max_lines: 8,
         keep_recent_images: 1,
-        summarizer_mode: SummarizerMode::RuleBased,
+        summarizer_mode: SummarizerMode::default(),
         summary_max_chars: 4000,
     }
 }

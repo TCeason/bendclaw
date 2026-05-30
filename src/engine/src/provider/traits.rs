@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
@@ -88,6 +90,18 @@ impl From<Message> for StreamOutcome {
 }
 
 /// The core provider trait. Implement this for each LLM backend.
+#[async_trait]
+impl<T: StreamProvider + ?Sized> StreamProvider for Arc<T> {
+    async fn stream(
+        &self,
+        config: StreamConfig,
+        tx: mpsc::UnboundedSender<StreamEvent>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<StreamOutcome, ProviderError> {
+        self.as_ref().stream(config, tx, cancel).await
+    }
+}
+
 #[async_trait]
 pub trait StreamProvider: Send + Sync {
     /// Stream a completion, sending [`StreamEvent`]s through the channel.

@@ -1,10 +1,10 @@
-//! Rule-based summarization — wraps existing marker.rs extraction logic.
+//! Emergency compact summary — deterministic fallback used only for overflow recovery.
 
-use super::types::SummarizerInput;
-use super::types::SummarizerOutput;
+use super::summarizer::types::SummarizerInput;
+use super::summarizer::types::SummarizerOutput;
 use crate::context::compaction::types::FileOps;
 
-/// Generate a summary using rule-based extraction (same as current marker logic).
+/// Generate a deterministic emergency summary using compact memory extraction.
 pub fn summarize(input: &SummarizerInput) -> SummarizerOutput {
     let mut sections: Vec<String> = Vec::new();
 
@@ -41,7 +41,7 @@ pub fn summarize(input: &SummarizerInput) -> SummarizerOutput {
     }
 
     // Section 5: Turn prefix context (if split turn)
-    if let Some(ref prefix) = input.turn_prefix {
+    if let Some(prefix) = input.turn_prefix.as_deref() {
         if !prefix.is_empty() {
             sections.push(format!("Current turn context (prefix removed):\n{prefix}"));
         }

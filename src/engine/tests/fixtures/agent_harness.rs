@@ -352,6 +352,7 @@ impl TestOutput {
                 AgentEvent::LlmCallStart { .. } => "LlmCallStart",
                 AgentEvent::LlmCallRetry { .. } => "LlmCallRetry",
                 AgentEvent::LlmCallEnd { .. } => "LlmCallEnd",
+                AgentEvent::ContextCompactionStarted { .. } => "CompactionStart",
                 AgentEvent::ContextCompactionEnd { .. } => "CompactionEnd",
             })
             .collect()

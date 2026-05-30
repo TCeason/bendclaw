@@ -29,6 +29,7 @@ use crate::conf::Protocol;
 use crate::error::Result;
 use crate::types::CompactRecord;
 use crate::types::ContextCompactionCompletedStats;
+use crate::types::ContextCompactionStartedStats;
 use crate::types::LlmCallCompletedStats;
 use crate::types::LlmCallMetrics;
 use crate::types::LlmCallRetryStats;
@@ -62,6 +63,7 @@ pub struct EngineOptions {
     pub path_guard: std::sync::Arc<evot_engine::PathGuard>,
     pub spill_dir: Option<std::path::PathBuf>,
     pub prompt_cache_key: Option<String>,
+    pub provider_override: Option<Arc<dyn evot_engine::provider::StreamProvider>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -130,9 +132,12 @@ enum RuntimeEvent {
         usage: UsageSummary,
         transcript_count: usize,
     },
-    Compacted {
-        level: u8,
-        transcripts: Vec<TranscriptItem>,
+    CompactionCompleted {
+        reason: crate::types::CompactReason,
+        result: crate::types::CompactionResult,
+        summary: Option<String>,
+        context_window: usize,
+        will_retry: bool,
     },
 }
 
@@ -328,18 +333,61 @@ async fn drive_one_turn(
             RuntimeEvent::Transcript(item) => {
                 turn_transcripts.push(item);
             }
-            RuntimeEvent::Compacted { level, transcripts } => {
-                if level > 0 {
-                    let item = TranscriptItem::Marker {
-                        kind: crate::types::MarkerKind::Compact,
-                        target_seq: None,
-                        messages: transcripts,
-                    };
-                    if let Some(record) = compact_record_from_marker(&item) {
-                        outcome.compact_records.push(record);
-                    }
-                    turn_transcripts.push(item);
+            RuntimeEvent::CompactionCompleted {
+                reason,
+                result,
+                summary,
+                context_window,
+                will_retry,
+            } => {
+                if let Some(record) = compact_record_from_result(&result) {
+                    outcome.compact_records.push(record);
                 }
+
+                if let crate::types::CompactionResult::Compacted { .. } = result {
+                    if let Err(e) = flush(&session, &turn_transcripts, &mut saved_count).await {
+                        tracing::warn!(
+                            stage = "run",
+                            status = "pre_compact_flush_failed",
+                            run_id = %run_id,
+                            session_id = %session_id,
+                            error = %e,
+                        );
+                    } else {
+                        let request = crate::compact::orchestrator::ManualCompactRequest {
+                            reason: reason.clone(),
+                            custom_instructions: None,
+                            summary_override: summary.clone(),
+                            summarizer: None,
+                            settings: crate::compact::orchestrator::CompactSettings::default(),
+                        };
+                        if let Err(e) = crate::compact::orchestrator::compact_session(
+                            &session,
+                            request,
+                            control.cancel_token(),
+                        )
+                        .await
+                        {
+                            tracing::warn!(
+                                stage = "run",
+                                status = "structured_compact_persist_failed",
+                                run_id = %run_id,
+                                session_id = %session_id,
+                                error = %e,
+                            );
+                        }
+                    }
+                }
+
+                turn_transcripts.push(
+                    TranscriptStats::ContextCompactionCompleted(ContextCompactionCompletedStats {
+                        reason,
+                        result,
+                        context_window,
+                        will_retry,
+                    })
+                    .to_item(),
+                );
             }
             RuntimeEvent::TurnEnded => {
                 if let Err(e) = flush(&session, &turn_transcripts, &mut saved_count).await {
@@ -725,6 +773,7 @@ fn map_agent_event(
                         metrics: Some(llm_metrics.clone()),
                         error: error.clone(),
                         context_window: *context_window,
+                        stop_reason: stop_reason.to_string(),
                     })
                     .to_item(),
                 ),
@@ -747,15 +796,55 @@ fn map_agent_event(
             ]
         }
 
-        // ContextCompactionStart was removed — compaction is now triggered
-        // post-response and only emits ContextCompactionEnd.
-        evot_engine::AgentEvent::ContextCompactionEnd {
-            stats,
-            messages,
+        evot_engine::AgentEvent::ContextCompactionStarted {
+            reason,
+            estimated_tokens,
             context_window,
+            reserve_tokens,
+            trigger_threshold,
+            will_retry,
         } => {
-            let compacted_transcripts = from_agent_messages(messages);
+            let reason = map_compact_reason(*reason);
+            vec![
+                RuntimeEvent::Transcript(
+                    TranscriptStats::ContextCompactionStarted(ContextCompactionStartedStats {
+                        reason: reason.clone(),
+                        message_count: 0,
+                        estimated_tokens: *estimated_tokens,
+                        budget_tokens: context_window.saturating_sub(*reserve_tokens),
+                        reserve_tokens: *reserve_tokens,
+                        trigger_threshold: *trigger_threshold,
+                        system_prompt_tokens: 0,
+                        tool_definition_tokens: 0,
+                        context_window: *context_window,
+                        will_retry: *will_retry,
+                    })
+                    .to_item(),
+                ),
+                RuntimeEvent::Public(RunEventPayload::ContextCompactionStarted {
+                    reason,
+                    message_count: 0,
+                    estimated_tokens: *estimated_tokens,
+                    budget_tokens: context_window.saturating_sub(*reserve_tokens),
+                    reserve_tokens: *reserve_tokens,
+                    trigger_threshold: *trigger_threshold,
+                    system_prompt_tokens: 0,
+                    tool_definition_tokens: 0,
+                    context_window: *context_window,
+                    will_retry: *will_retry,
+                    message_stats: None,
+                }),
+            ]
+        }
 
+        evot_engine::AgentEvent::ContextCompactionEnd {
+            reason,
+            stats,
+            messages: _,
+            summary,
+            context_window,
+            will_retry,
+        } => {
             let result = if stats.messages_evicted > 0
                 || stats.tool_results_shrunk > 0
                 || stats.images_downgraded > 0
@@ -775,27 +864,21 @@ fn map_agent_event(
                 crate::types::CompactionResult::NoOp
             };
 
+            let reason = map_compact_reason(*reason);
             vec![
-                RuntimeEvent::Compacted {
-                    level: if stats.messages_evicted > 0 {
-                        3
-                    } else if stats.tool_results_shrunk > 0 {
-                        1
-                    } else {
-                        0
-                    },
-                    transcripts: compacted_transcripts,
-                },
-                RuntimeEvent::Transcript(
-                    TranscriptStats::ContextCompactionCompleted(ContextCompactionCompletedStats {
-                        result: result.clone(),
-                        context_window: *context_window,
-                    })
-                    .to_item(),
-                ),
-                RuntimeEvent::Public(RunEventPayload::ContextCompactionCompleted {
-                    result,
+                RuntimeEvent::CompactionCompleted {
+                    reason: reason.clone(),
+                    result: result.clone(),
+                    summary: summary.clone(),
                     context_window: *context_window,
+                    will_retry: *will_retry,
+                },
+                RuntimeEvent::Public(RunEventPayload::ContextCompactionCompleted {
+                    reason,
+                    result,
+                    summary: summary.clone(),
+                    context_window: *context_window,
+                    will_retry: *will_retry,
                 }),
             ]
         }
@@ -805,6 +888,14 @@ fn map_agent_event(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn map_compact_reason(reason: evot_engine::CompactReason) -> crate::types::CompactReason {
+    match reason {
+        evot_engine::CompactReason::Threshold => crate::types::CompactReason::Threshold,
+        evot_engine::CompactReason::Overflow => crate::types::CompactReason::Overflow,
+        evot_engine::CompactReason::Manual => crate::types::CompactReason::Manual,
+    }
+}
 
 fn serialize_or_placeholder<T: serde::Serialize>(value: &T, kind: &str) -> serde_json::Value {
     match serde_json::to_value(value) {
@@ -820,15 +911,8 @@ fn serialize_or_placeholder<T: serde::Serialize>(value: &T, kind: &str) -> serde
     }
 }
 
-/// Extract a compact record from a single transcript item.
-fn compact_record_from_marker(item: &TranscriptItem) -> Option<CompactRecord> {
-    use crate::agent::run::observability::compact_record_from_result;
-
-    let stats = TranscriptStats::try_from_item(item)?;
-    match stats {
-        TranscriptStats::ContextCompactionCompleted(s) => compact_record_from_result(&s.result),
-        _ => None,
-    }
+fn compact_record_from_result(result: &crate::types::CompactionResult) -> Option<CompactRecord> {
+    crate::agent::run::observability::compact_record_from_result(result)
 }
 
 pub(crate) fn build_agent(
@@ -871,9 +955,10 @@ pub(crate) fn build_agent(
         }
     }
 
-    let provider_agent = match options.protocol {
-        Protocol::Anthropic => evot_engine::Agent::new(AnthropicProvider),
-        Protocol::OpenAi => evot_engine::Agent::new(OpenAiCompatProvider),
+    let provider_agent = match (options.provider_override, &options.protocol) {
+        (Some(provider), _) => evot_engine::Agent::new(provider),
+        (None, Protocol::Anthropic) => evot_engine::Agent::new(AnthropicProvider),
+        (None, Protocol::OpenAi) => evot_engine::Agent::new(OpenAiCompatProvider),
     };
 
     let limits = evot_engine::context::ExecutionLimits {

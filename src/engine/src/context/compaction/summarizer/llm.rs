@@ -29,11 +29,12 @@ pub async fn summarize(
     // Main summary call
     let main_summary = call_provider(ctx, &user_prompt, max_tokens, cancel.clone()).await?;
 
-    // Turn prefix call (if split turn)
+    // Turn prefix call (if split turn). Very small test/default max_tokens can
+    // round to zero, so keep the provider call valid.
     let turn_prefix_summary = match &input.turn_prefix {
         Some(prefix_text) => {
             let prefix_prompt = prompt::format_turn_prefix(prefix_text);
-            let prefix_max = max_tokens / 2;
+            let prefix_max = (max_tokens / 2).max(1);
             Some(call_provider(ctx, &prefix_prompt, prefix_max, cancel).await?)
         }
         None => None,

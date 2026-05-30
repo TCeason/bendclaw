@@ -199,9 +199,16 @@ pub fn agent_message_from_transcript(item: &TranscriptItem) -> evot_engine::Agen
         TranscriptItem::Extension { kind, data } => evot_engine::AgentMessage::Extension(
             evot_engine::ExtensionMessage::new(kind.clone(), data.clone()),
         ),
-        TranscriptItem::Compact { .. } => evot_engine::AgentMessage::Extension(
-            evot_engine::ExtensionMessage::new("compact", serde_json::json!({})),
-        ),
+        TranscriptItem::Compact { summary, .. } => {
+            evot_engine::AgentMessage::Llm(evot_engine::Message::User {
+                content: vec![evot_engine::Content::Text {
+                    text: crate::compact::context_view::compact_summary_item(summary)
+                        .as_user_text()
+                        .unwrap_or_default(),
+                }],
+                timestamp: evot_engine::now_ms(),
+            })
+        }
         // Marker items should never reach conversion — filtered by resolve_transcript.
         // Defensive fallback: convert to a no-op extension that the engine will ignore.
         TranscriptItem::Marker { .. } => evot_engine::AgentMessage::Extension(

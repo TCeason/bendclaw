@@ -56,10 +56,26 @@ pub(super) async fn post_response_compaction(
         .await;
 
     if let Some(ref stats) = response.stats {
+        let reason = response
+            .reason
+            .unwrap_or(crate::context::CompactReason::Threshold);
+        let will_retry = response.action == AfterResponseAction::Retry;
+        tx.send(AgentEvent::ContextCompactionStarted {
+            reason,
+            estimated_tokens: response.context_tokens.unwrap_or(stats.before_tokens),
+            context_window: ctrl.config().context_window,
+            reserve_tokens: ctrl.config().reserve_tokens,
+            trigger_threshold: ctrl.config().trigger_threshold(),
+            will_retry,
+        })
+        .ok();
         tx.send(AgentEvent::ContextCompactionEnd {
+            reason,
             stats: stats.clone(),
             messages: messages.clone(),
+            summary: stats.summary.clone(),
             context_window: ctrl.config().context_window,
+            will_retry,
         })
         .ok();
         if stats.before_tokens > stats.after_tokens {

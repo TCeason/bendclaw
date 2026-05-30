@@ -14,6 +14,7 @@ pub use anthropic::AnthropicProvider;
 pub use bedrock::BedrockProvider;
 pub use error::*;
 pub use mock::MockProvider;
+pub use mock::MockResponse;
 pub use model::ApiProtocol;
 pub use model::CompatCaps;
 pub use model::CostConfig;

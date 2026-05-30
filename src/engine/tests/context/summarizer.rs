@@ -1,12 +1,22 @@
 //! Tests for the summarizer subsystem.
 
+use std::sync::Arc;
+
+use evotengine::context::compaction::emergency;
+use evotengine::context::compaction::summarizer::llm;
+use evotengine::context::compaction::summarizer::mode::SummarizerContext;
 use evotengine::context::compaction::summarizer::mode::SummarizerMode;
-use evotengine::context::compaction::summarizer::rule_based;
 use evotengine::context::compaction::summarizer::serialize;
+use evotengine::context::compaction::summarizer::types::SummarizerError;
 use evotengine::context::compaction::summarizer::types::SummarizerInput;
+use evotengine::context::compaction::summarizer::types::SummarizerOutput;
 use evotengine::context::compaction::types::FileOps;
 use evotengine::types::*;
 use tokio_util::sync::CancellationToken;
+
+use super::fixtures::recording_provider::Captured;
+use super::fixtures::recording_provider::RecordingProvider;
+use super::fixtures::recording_provider::Reply;
 
 fn user_msg(text: &str) -> AgentMessage {
     AgentMessage::Llm(Message::User {
@@ -157,11 +167,11 @@ fn prepare_input_with_split_prefix() {
 }
 
 // ---------------------------------------------------------------------------
-// rule_based tests
+// emergency summary tests
 // ---------------------------------------------------------------------------
 
 #[test]
-fn rule_based_includes_message_count() {
+fn emergency_includes_message_count() {
     let input = SummarizerInput {
         conversation: String::new(),
         turn_prefix: None,
@@ -172,12 +182,12 @@ fn rule_based_includes_message_count() {
         env_discoveries: vec![],
         last_conclusion: None,
     };
-    let output = rule_based::summarize(&input);
+    let output = emergency::summarize(&input);
     assert!(output.summary.contains("15 messages removed"));
 }
 
 #[test]
-fn rule_based_includes_completed_requests() {
+fn emergency_includes_completed_requests() {
     let input = SummarizerInput {
         conversation: String::new(),
         turn_prefix: None,
@@ -188,14 +198,14 @@ fn rule_based_includes_completed_requests() {
         env_discoveries: vec![],
         last_conclusion: None,
     };
-    let output = rule_based::summarize(&input);
+    let output = emergency::summarize(&input);
     assert!(output.summary.contains("Completed requests"));
     assert!(output.summary.contains("Fix bug #123"));
     assert!(output.summary.contains("Add tests"));
 }
 
 #[test]
-fn rule_based_includes_file_ops() {
+fn emergency_includes_file_ops() {
     let mut file_ops = FileOps::default();
     file_ops.edited.insert("/src/main.rs".into());
     file_ops.read.insert("/src/lib.rs".into());
@@ -210,7 +220,7 @@ fn rule_based_includes_file_ops() {
         env_discoveries: vec![],
         last_conclusion: None,
     };
-    let output = rule_based::summarize(&input);
+    let output = emergency::summarize(&input);
     assert!(output.summary.contains("Files modified"));
     assert!(output.summary.contains("/src/main.rs"));
     assert!(output.summary.contains("Files read"));
@@ -218,7 +228,7 @@ fn rule_based_includes_file_ops() {
 }
 
 #[test]
-fn rule_based_includes_conclusion() {
+fn emergency_includes_conclusion() {
     let input = SummarizerInput {
         conversation: String::new(),
         turn_prefix: None,
@@ -229,13 +239,13 @@ fn rule_based_includes_conclusion() {
         env_discoveries: vec![],
         last_conclusion: Some("All tests pass now".into()),
     };
-    let output = rule_based::summarize(&input);
+    let output = emergency::summarize(&input);
     assert!(output.summary.contains("Last assistant conclusion"));
     assert!(output.summary.contains("All tests pass now"));
 }
 
 #[test]
-fn rule_based_includes_turn_prefix() {
+fn emergency_includes_turn_prefix() {
     let input = SummarizerInput {
         conversation: String::new(),
         turn_prefix: Some(
@@ -248,7 +258,7 @@ fn rule_based_includes_turn_prefix() {
         env_discoveries: vec![],
         last_conclusion: None,
     };
-    let output = rule_based::summarize(&input);
+    let output = emergency::summarize(&input);
     assert!(output.summary.contains("Current turn context"));
     assert!(output.summary.contains("refactor auth module"));
 }
@@ -256,29 +266,6 @@ fn rule_based_includes_turn_prefix() {
 // ---------------------------------------------------------------------------
 // mode dispatch tests
 // ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn mode_rule_based_returns_ok() {
-    let input = SummarizerInput {
-        conversation: "[User]: hello".into(),
-        turn_prefix: None,
-        previous_summary: None,
-        file_ops: FileOps::default(),
-        evicted_count: 2,
-        completed_requests: vec!["hello".into()],
-        env_discoveries: vec![],
-        last_conclusion: Some("hi".into()),
-    };
-    let cancel = CancellationToken::new();
-    let result = SummarizerMode::RuleBased
-        .summarize(input, None, cancel)
-        .await;
-    let output = match result {
-        Ok(output) => output,
-        Err(err) => panic!("expected rule-based summarizer to succeed: {err:?}"),
-    };
-    assert!(output.summary.contains("2 messages removed"));
-}
 
 #[tokio::test]
 async fn mode_llm_without_context_returns_error() {
@@ -296,4 +283,160 @@ async fn mode_llm_without_context_returns_error() {
     let mode = SummarizerMode::Llm { max_tokens: 4096 };
     let result = mode.summarize(input, None, cancel).await;
     assert!(result.is_err());
+}
+
+// ---------------------------------------------------------------------------
+// LLM summarize — request-boundary tests (captures prompts via RecordingProvider)
+// ---------------------------------------------------------------------------
+
+fn base_input(conversation: &str) -> SummarizerInput {
+    SummarizerInput {
+        conversation: conversation.into(),
+        turn_prefix: None,
+        previous_summary: None,
+        file_ops: FileOps::default(),
+        evicted_count: 1,
+        completed_requests: vec![],
+        env_discoveries: vec![],
+        last_conclusion: None,
+    }
+}
+
+async fn summarize_capturing(
+    input: SummarizerInput,
+    max_tokens: u32,
+    replies: Vec<Reply>,
+) -> (Result<SummarizerOutput, SummarizerError>, Captured) {
+    let provider = Arc::new(RecordingProvider::new(replies));
+    let captured = provider.captured();
+    let ctx = SummarizerContext {
+        provider,
+        model: "test-model".into(),
+        api_key: "test-key".into(),
+        thinking_level: ThinkingLevel::Off,
+    };
+    let result = llm::summarize(input, &ctx, max_tokens, CancellationToken::new()).await;
+    (result, captured)
+}
+
+fn first_user_prompt(captured: &Captured) -> String {
+    let requests = captured.lock();
+    let config = match requests.first() {
+        Some(config) => config,
+        None => panic!("expected at least one captured request"),
+    };
+    match config.messages.first() {
+        Some(Message::User { content, .. }) => content
+            .iter()
+            .filter_map(|c| match c {
+                Content::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>(),
+        _ => String::new(),
+    }
+}
+
+#[tokio::test]
+async fn llm_summarize_initial_uses_initial_prompt() {
+    let (result, captured) =
+        summarize_capturing(base_input("[User]: fix the bug"), 4096, vec![Reply::text(
+            "## Goal\nFix the bug",
+        )])
+        .await;
+    assert!(result.is_ok());
+    let prompt = first_user_prompt(&captured);
+    assert!(prompt.contains("<conversation>"));
+    assert!(prompt.contains("fix the bug"));
+    // Initial prompt asks for the structured checkpoint, not an update.
+    assert!(prompt.contains("structured context"));
+    assert!(!prompt.contains("<previous-summary>"));
+}
+
+#[tokio::test]
+async fn llm_summarize_injects_previous_summary() {
+    let mut input = base_input("[User]: continue the work");
+    input.previous_summary = Some("EARLIER SUMMARY TEXT".into());
+    let (result, captured) =
+        summarize_capturing(input, 4096, vec![Reply::text("## Goal\nContinue")]).await;
+    assert!(result.is_ok());
+    let prompt = first_user_prompt(&captured);
+    assert!(prompt.contains("<previous-summary>\nEARLIER SUMMARY TEXT\n</previous-summary>"));
+}
+
+#[tokio::test]
+async fn llm_summarize_merges_turn_prefix_with_halved_budget() {
+    let mut input = base_input("[User]: big request");
+    input.turn_prefix = Some("[User]: prefix of the split turn".into());
+    let (result, captured) = summarize_capturing(input, 4096, vec![
+        Reply::text("## Goal\nMain summary"),
+        Reply::text("## Original Request\nPrefix summary"),
+    ])
+    .await;
+    let output = match result {
+        Ok(output) => output,
+        Err(e) => panic!("expected summary, got {e:?}"),
+    };
+    assert!(output.summary.contains("Main summary"));
+    assert!(output.summary.contains("**Turn Context (split turn):**"));
+    assert!(output.summary.contains("Prefix summary"));
+
+    let requests = captured.lock();
+    assert_eq!(requests.len(), 2, "split turn issues two LLM calls");
+    assert_eq!(requests[0].max_tokens, Some(4096));
+    assert_eq!(
+        requests[1].max_tokens,
+        Some(2048),
+        "prefix budget is halved"
+    );
+}
+
+#[tokio::test]
+async fn llm_summarize_appends_file_ops_xml() {
+    let mut input = base_input("[User]: touch files");
+    input.file_ops.read.insert("src/lib.rs".into());
+    input.file_ops.edited.insert("src/main.rs".into());
+    let (result, _captured) =
+        summarize_capturing(input, 4096, vec![Reply::text("## Goal\nWork")]).await;
+    let output = match result {
+        Ok(output) => output,
+        Err(e) => panic!("expected summary, got {e:?}"),
+    };
+    assert!(output.summary.contains("<read-files>"));
+    assert!(output.summary.contains("src/lib.rs"));
+    assert!(output.summary.contains("<modified-files>"));
+    assert!(output.summary.contains("src/main.rs"));
+}
+
+#[tokio::test]
+async fn llm_summarize_uses_system_prompt() {
+    let (_result, captured) =
+        summarize_capturing(base_input("[User]: hi"), 4096, vec![Reply::text(
+            "## Goal\nx",
+        )])
+        .await;
+    let requests = captured.lock();
+    assert!(requests[0]
+        .system_prompt
+        .contains("context summarization assistant"));
+}
+
+#[tokio::test]
+async fn llm_summarize_propagates_provider_error() {
+    let (result, _captured) =
+        summarize_capturing(base_input("[User]: hi"), 4096, vec![Reply::error(
+            "provider exploded",
+        )])
+        .await;
+    match result {
+        Err(SummarizerError::Failed(msg)) => assert!(msg.contains("provider exploded")),
+        other => panic!("expected Failed error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn llm_summarize_propagates_cancellation() {
+    let (result, _captured) =
+        summarize_capturing(base_input("[User]: hi"), 4096, vec![Reply::Cancel]).await;
+    assert!(matches!(result, Err(SummarizerError::Cancelled)));
 }

@@ -57,6 +57,7 @@ fn aggregator_ingests_llm_call_completed() {
         }),
         error: None,
         context_window: 0,
+        stop_reason: "stop".into(),
     }));
     assert_eq!(agg.llm_metrics.len(), 1);
     assert_eq!(agg.llm_output_tokens, vec![200]);
@@ -108,6 +109,7 @@ fn aggregator_ingests_compaction_completed() {
     let mut agg = StatsAggregator::new();
     agg.ingest(&TranscriptStats::ContextCompactionCompleted(
         ContextCompactionCompletedStats {
+            reason: evot::types::CompactReason::Threshold,
             result: evot::types::CompactionResult::Compacted {
                 before_message_count: 20,
                 after_message_count: 10,
@@ -119,6 +121,7 @@ fn aggregator_ingests_compaction_completed() {
                 current_run_reclaimed: 0,
             },
             context_window: 0,
+            will_retry: false,
         },
     ));
     assert_eq!(agg.compact_history.len(), 1);
@@ -132,8 +135,10 @@ fn aggregator_ignores_noop_compaction() {
     let mut agg = StatsAggregator::new();
     agg.ingest(&TranscriptStats::ContextCompactionCompleted(
         ContextCompactionCompletedStats {
+            reason: evot::types::CompactReason::Threshold,
             result: evot::types::CompactionResult::NoOp,
             context_window: 0,
+            will_retry: false,
         },
     ));
     assert!(agg.compact_history.is_empty());
@@ -144,6 +149,7 @@ fn aggregator_ingests_run_once_cleared_compaction() {
     let mut agg = StatsAggregator::new();
     agg.ingest(&TranscriptStats::ContextCompactionCompleted(
         ContextCompactionCompletedStats {
+            reason: evot::types::CompactReason::Threshold,
             result: evot::types::CompactionResult::Compacted {
                 before_message_count: 8,
                 after_message_count: 6,
@@ -155,6 +161,7 @@ fn aggregator_ingests_run_once_cleared_compaction() {
                 current_run_reclaimed: 2,
             },
             context_window: 0,
+            will_retry: false,
         },
     ));
     assert_eq!(agg.compact_history.len(), 1);
@@ -168,6 +175,7 @@ fn aggregator_compaction_action_map_positions() {
     let mut agg = StatsAggregator::new();
     agg.ingest(&TranscriptStats::ContextCompactionCompleted(
         ContextCompactionCompletedStats {
+            reason: evot::types::CompactReason::Threshold,
             result: evot::types::CompactionResult::Compacted {
                 before_message_count: 10,
                 after_message_count: 8,
@@ -179,6 +187,7 @@ fn aggregator_compaction_action_map_positions() {
                 current_run_reclaimed: 0,
             },
             context_window: 0,
+            will_retry: false,
         },
     ));
     assert_eq!(agg.compact_history.len(), 1);
@@ -241,6 +250,7 @@ fn aggregator_to_run_summary_produces_correct_data() {
         }),
         error: None,
         context_window: 0,
+        stop_reason: "stop".into(),
     }));
     agg.ingest(&TranscriptStats::ToolFinished(ToolFinishedStats {
         tool_call_id: "tc1".into(),
@@ -277,6 +287,7 @@ fn aggregator_to_run_summary_produces_correct_data() {
         }),
         error: None,
         context_window: 0,
+        stop_reason: "stop".into(),
     }));
 
     let usage = UsageSummary {
@@ -393,6 +404,7 @@ fn aggregator_from_items_batch_ingest() {
             metrics: None,
             error: None,
             context_window: 0,
+            stop_reason: "stop".into(),
         })
         .to_item(),
         TranscriptItem::Assistant {

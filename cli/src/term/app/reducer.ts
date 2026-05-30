@@ -265,6 +265,20 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         stats.outputTokens += outputTok
         stats.cacheReadTokens += (usage.cache_read as number) ?? 0
         stats.cacheWriteTokens += (usage.cache_write as number) ?? 0
+
+        // Footer context size: use the provider's real usage the moment a
+        // response lands, matching the compaction trigger's measure
+        // (input + cache_read + cache_write + output). This keeps the
+        // displayed % in lockstep with what actually drives compaction,
+        // instead of carrying the pre-call estimate forward.
+        const realContextTokens =
+          inputTok +
+          ((usage.cache_read as number) ?? 0) +
+          ((usage.cache_write as number) ?? 0) +
+          outputTok
+        if (realContextTokens > 0) {
+          stats.contextTokens = realContextTokens
+        }
       }
 
       stats.llmCallDetails = [...stats.llmCallDetails, {

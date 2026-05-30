@@ -8,6 +8,14 @@ use serde::Serialize;
 
 use crate::types::AgentMessage;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactReason {
+    Threshold,
+    Overflow,
+    Manual,
+}
+
 // ---------------------------------------------------------------------------
 // Trigger
 // ---------------------------------------------------------------------------
@@ -52,7 +60,7 @@ pub enum TriggerDecision {
 pub struct CompactionPlan {
     /// Zone A: pinned head messages (always kept).
     pub pinned_head: Range<usize>,
-    /// Zone B: messages to evict (replaced by marker).
+    /// Zone B: messages to evict (replaced by compact memory summary).
     pub evict_zone: Range<usize>,
     /// Zone C: retained tail (recent work, kept in full or shrunk).
     pub retained_tail: Range<usize>,
@@ -127,6 +135,9 @@ pub struct CompactionOutcome {
 /// Statistics about what compaction did.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompactionStats {
+    /// Summary generated for the evicted context, when a summarizing compaction ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
     /// Messages before compaction.
     pub before_message_count: usize,
     /// Messages after compaction.

@@ -183,32 +183,50 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
             }));
         }
         RunEventPayload::ContextCompactionStarted {
+            reason,
             message_count,
             estimated_tokens,
             budget_tokens,
+            reserve_tokens,
+            trigger_threshold,
             system_prompt_tokens,
             tool_definition_tokens,
             context_window,
+            will_retry,
             message_stats,
         } => {
             events.push(json!({
                 "type": "context_compaction_started",
                 "data": {
+                    "reason": reason,
                     "message_count": message_count,
                     "estimated_tokens": estimated_tokens,
                     "budget_tokens": budget_tokens,
+                    "reserve_tokens": reserve_tokens,
+                    "trigger_threshold": trigger_threshold,
                     "system_prompt_tokens": system_prompt_tokens,
                     "tool_definition_tokens": tool_definition_tokens,
                     "context_window": context_window,
+                    "will_retry": will_retry,
                     "message_stats": message_stats,
                 }
             }));
         }
-        RunEventPayload::ContextCompactionCompleted { result, .. } => {
+        RunEventPayload::ContextCompactionCompleted {
+            reason,
+            result,
+            summary,
+            context_window,
+            will_retry,
+        } => {
             events.push(json!({
                 "type": "context_compaction_completed",
                 "data": {
+                    "reason": reason,
                     "result": result,
+                    "summary": summary,
+                    "context_window": context_window,
+                    "will_retry": will_retry,
                 }
             }));
         }

@@ -3,7 +3,8 @@
 use tokio_util::sync::CancellationToken;
 
 use super::config::CompactionConfig;
-use super::marker;
+use super::emergency;
+use super::memory;
 use super::summarizer::mode::SummarizerContext;
 use super::summarizer::serialize;
 use super::transforms;
@@ -16,6 +17,7 @@ use crate::context::tokens::total_tokens;
 use crate::types::*;
 
 /// Execute a compaction plan against the given messages.
+/// If `summarizer_ctx` is None, uses the emergency deterministic summary (for overflow).
 pub async fn execute(
     messages: Vec<AgentMessage>,
     plan: &CompactionPlan,
@@ -43,27 +45,31 @@ pub async fn execute(
 
     let summarizer_input = serialize::prepare_input(evicted, split_prefix, prev_state);
 
-    // Step 4: Generate summary via configured mode
-    let output = config
-        .summarizer_mode
-        .summarize(summarizer_input, summarizer_ctx, cancel)
-        .await;
-
-    let summary_text = match output {
-        Ok(out) => out.summary,
-        Err(_) => {
-            // LLM failed — compaction cannot proceed
-            // Return original messages unchanged (controller handles the error)
-            return CompactionOutcome {
-                messages,
-                state: prev_state.cloned().unwrap_or_default(),
-                stats: CompactionStats::default(),
-            };
+    // Step 4: Generate summary
+    let summary_text = if let Some(ctx) = summarizer_ctx {
+        // LLM summarization for threshold/manual compaction
+        match config
+            .summarizer_mode
+            .summarize(summarizer_input, Some(ctx), cancel)
+            .await
+        {
+            Ok(out) => out.summary,
+            Err(_) => {
+                // LLM failed — compaction cannot proceed
+                return CompactionOutcome {
+                    messages,
+                    state: prev_state.cloned().unwrap_or_default(),
+                    stats: CompactionStats::default(),
+                };
+            }
         }
+    } else {
+        // Emergency deterministic summary for overflow recovery
+        emergency::summarize(&summarizer_input).summary
     };
 
-    // Step 5: Build marker message
-    let marker_msg = AgentMessage::Llm(Message::User {
+    // Step 5: Build memory summary message
+    let memory_summary_msg = AgentMessage::Llm(Message::User {
         content: vec![Content::Text {
             text: summary_text.clone(),
         }],
@@ -71,7 +77,7 @@ pub async fn execute(
     });
 
     // Step 6: Build new state
-    let mut new_state = marker::build_state(evicted, split_prefix, prev_state);
+    let mut new_state = memory::build_state(evicted, split_prefix, prev_state);
     // Store summary for incremental updates (capped at char boundary)
     let capped_summary = if summary_text.len() > config.summary_max_chars {
         let mut end = config.summary_max_chars;
@@ -80,14 +86,14 @@ pub async fn execute(
         }
         summary_text[..end].to_string()
     } else {
-        summary_text
+        summary_text.clone()
     };
     new_state.last_summary = Some(capped_summary);
 
-    // Step 7: Assemble final messages: pinned_head + marker + retained_tail
+    // Step 7: Assemble final messages: pinned_head + memory_summary + retained_tail
     let mut result = Vec::with_capacity(plan.pinned_head.len() + 1 + plan.retained_tail.len());
     result.extend_from_slice(&messages[plan.pinned_head.clone()]);
-    result.push(marker_msg);
+    result.push(memory_summary_msg);
     result.extend_from_slice(&messages[plan.retained_tail.clone()]);
 
     // Step 8: Sanitize orphaned tool pairs
@@ -97,6 +103,7 @@ pub async fn execute(
     let after_tokens = total_tokens(&result);
 
     let stats = CompactionStats {
+        summary: Some(summary_text.clone()),
         before_message_count,
         after_message_count,
         before_tokens,

@@ -70,7 +70,7 @@ impl Session {
             .await?;
 
         let next_seq = entries.last().map(|e| e.seq).unwrap_or(0);
-        let transcript = resolve_transcript(entries);
+        let transcript = crate::compact::context_view::resolve_context_items(&entries);
 
         Ok(Some(Self::init(storage, meta, transcript, next_seq)))
     }
@@ -217,16 +217,9 @@ impl Session {
         Ok(())
     }
 
-    /// Write a compaction marker — resets context to the compacted snapshot.
-    pub async fn write_compact_marker(&self, messages: Vec<TranscriptItem>) -> Result<()> {
-        let item = TranscriptItem::Marker {
-            kind: crate::types::MarkerKind::Compact,
-            target_seq: None,
-            messages: messages.clone(),
-        };
-        self.write_items(vec![item]).await?;
+    /// Replace the in-memory context view after a control operation.
+    pub async fn replace_transcript(&self, messages: Vec<TranscriptItem>) {
         *self.transcript.write().await = messages;
-        Ok(())
     }
 
     /// Check whether `seq` points to a valid goto-able message in storage.
@@ -274,19 +267,11 @@ impl Session {
         let mut context: Vec<(u64, TranscriptItem)> = Vec::new();
 
         match last_control {
-            Some(idx) => {
-                // Snapshot baseline — seq=0 means not addressable by /goto
-                if let Some(snapshot) = extract_snapshot(&entries[idx].item) {
-                    for item in snapshot {
-                        if is_history_visible(&item) {
-                            context.push((0, item));
-                        }
-                    }
-                }
-                // Post-marker entries with real seq
-                for entry in &entries[idx + 1..] {
-                    if is_history_visible(&entry.item) {
-                        context.push((entry.seq, entry.item.clone()));
+            Some(_idx) => {
+                let resolved = crate::compact::context_view::resolve_context_entries(&entries);
+                for (seq, item) in resolved {
+                    if is_history_visible(&item) {
+                        context.push((seq, item));
                     }
                 }
             }
@@ -378,16 +363,6 @@ fn last_context_usage(items: &[TranscriptItem]) -> Option<(usize, usize)> {
     })
 }
 
-/// Extract the context snapshot from a control-point item.
-/// Returns `Some(messages)` for old `Compact` and new `Marker` variants.
-fn extract_snapshot(item: &TranscriptItem) -> Option<Vec<TranscriptItem>> {
-    match item {
-        TranscriptItem::Compact { messages } => Some(messages.clone()),
-        TranscriptItem::Marker { messages, .. } => Some(messages.clone()),
-        _ => None,
-    }
-}
-
 /// Returns true if this item is a control point (Compact or Marker).
 fn is_control_point(item: &TranscriptItem) -> bool {
     matches!(
@@ -396,42 +371,8 @@ fn is_control_point(item: &TranscriptItem) -> bool {
     )
 }
 
-/// Build the conversation context view from raw transcript entries.
-///
-/// Finds the last control-point entry (old `Compact` or new `Marker`) and
-/// uses its snapshot as the baseline, then appends every context item that
-/// follows it. Items that are not part of the conversation context (Stats,
-/// Compact, Marker) are filtered out.
-fn resolve_transcript(entries: Vec<TranscriptEntry>) -> Vec<TranscriptItem> {
-    let last_control = entries
-        .iter()
-        .rposition(|e| extract_snapshot(&e.item).is_some());
-
-    match last_control {
-        Some(idx) => {
-            let mut items = extract_snapshot(&entries[idx].item).unwrap_or_default();
-            for entry in &entries[idx + 1..] {
-                if entry.item.is_context_item() {
-                    items.push(entry.item.clone());
-                }
-            }
-            items
-        }
-        None => entries
-            .iter()
-            .filter(|e| e.item.is_context_item())
-            .map(|e| e.item.clone())
-            .collect(),
-    }
-}
-
 /// Resolve the context snapshot as it was at `target_seq`.
 /// Used by `/goto` to compute the baseline at a historical point.
 fn resolve_snapshot_at(entries: &[TranscriptEntry], target_seq: u64) -> Vec<TranscriptItem> {
-    let scoped: Vec<TranscriptEntry> = entries
-        .iter()
-        .filter(|e| e.seq <= target_seq)
-        .cloned()
-        .collect();
-    resolve_transcript(scoped)
+    crate::compact::context_view::resolve_snapshot_at(entries, target_seq)
 }

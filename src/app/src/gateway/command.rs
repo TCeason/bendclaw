@@ -8,6 +8,9 @@ pub enum Command {
     Clear,
     Goto(u64),
     History(usize),
+    Compact {
+        custom_instructions: Option<String>,
+    },
     /// Hidden `/_dump` — emit current system prompt + tools as JSON.
     /// Optional argument is an output path. When None, the agent picks a
     /// timestamped default under `~/.evotai/dumps/`.
@@ -33,6 +36,16 @@ pub fn parse_command(text: &str) -> Option<Command> {
             },
             _ => return Some(Command::UsageError("Usage: /goto <message_number>".into())),
         }
+    }
+    if lower == "/compact" || lower.starts_with("/compact ") {
+        let arg = trimmed
+            .strip_prefix("/compact")
+            .or_else(|| trimmed.strip_prefix("/COMPACT"))
+            .map(str::trim)
+            .unwrap_or("");
+        return Some(Command::Compact {
+            custom_instructions: (!arg.is_empty()).then(|| arg.to_string()),
+        });
     }
     if lower == "/history" || lower.starts_with("/history ") {
         let arg = lower.strip_prefix("/history").map(|s| s.trim());

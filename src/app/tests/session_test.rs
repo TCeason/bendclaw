@@ -12,6 +12,22 @@ fn missing_error(message: &str) -> std::io::Error {
     std::io::Error::other(message.to_string())
 }
 
+fn compact_item(summary: &str, first_kept_seq: u64) -> TranscriptItem {
+    TranscriptItem::Compact {
+        id: format!("compact-{first_kept_seq}"),
+        created_at: 0,
+        reason: evot::types::CompactReason::Manual,
+        summary: summary.into(),
+        first_kept_seq,
+        tokens_before: 100,
+        tokens_after: 10,
+        messages_before: 4,
+        messages_after: 2,
+        split_turn: None,
+        details: evot::types::CompactDetails::default(),
+    }
+}
+
 #[tokio::test]
 async fn new_session_creates_meta_and_empty_transcript() -> TestResult {
     let dir = TempDir::new()?;
@@ -328,20 +344,7 @@ async fn open_resumes_from_last_compact_entry() -> TestResult {
 
     // Append a Compact entry (simulating compaction)
     session
-        .write_items(vec![TranscriptItem::Compact {
-            messages: vec![
-                TranscriptItem::User {
-                    text: "summary of prior context".into(),
-                    content: vec![],
-                },
-                TranscriptItem::Assistant {
-                    text: "acknowledged".into(),
-                    thinking: None,
-                    tool_calls: vec![],
-                    stop_reason: "stop".into(),
-                },
-            ],
-        }])
+        .write_items(vec![compact_item("summary of prior context", 3)])
         .await?;
 
     // Append more messages after compaction
@@ -360,25 +363,23 @@ async fn open_resumes_from_last_compact_entry() -> TestResult {
         ])
         .await?;
 
-    // Load — should resume from the Compact snapshot
+    // Load — should resume from the structured compact boundary
     let loaded = Session::open("sess-compact", storage.clone())
         .await?
         .ok_or_else(|| missing_error("missing compacted session"))?;
     let transcript = loaded.transcript().await;
 
-    // Should have: 2 from compact + 2 new = 4 (not the original 4 + compact + 2)
-    assert_eq!(transcript.len(), 4);
+    // Should have: compact summary + kept tail from first_kept_seq + new messages.
+    assert_eq!(transcript.len(), 5);
     assert!(
-        matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "summary of prior context")
+        matches!(&transcript[0], TranscriptItem::User { text, .. } if text.contains("summary of prior context"))
+    );
+    assert!(matches!(&transcript[1], TranscriptItem::User { text, .. } if text == "old message 2"));
+    assert!(
+        matches!(&transcript[2], TranscriptItem::Assistant { text, .. } if text == "old reply 2")
     );
     assert!(
-        matches!(&transcript[1], TranscriptItem::Assistant { text, .. } if text == "acknowledged")
-    );
-    assert!(
-        matches!(&transcript[2], TranscriptItem::User { text, .. } if text == "new message after compact")
-    );
-    assert!(
-        matches!(&transcript[3], TranscriptItem::Assistant { text, .. } if text == "new reply")
+        matches!(&transcript[3], TranscriptItem::User { text, .. } if text == "new message after compact")
     );
     Ok(())
 }
@@ -442,12 +443,7 @@ async fn write_items_is_append_only() -> TestResult {
         .await?;
 
     session
-        .write_items(vec![TranscriptItem::Compact {
-            messages: vec![TranscriptItem::User {
-                text: "compacted".into(),
-                content: vec![],
-            }],
-        }])
+        .write_items(vec![compact_item("compacted", 1)])
         .await?;
 
     // Raw storage should have 2 entries (User + Compact), not a rewrite
@@ -495,12 +491,7 @@ async fn multiple_compactions_uses_last() -> TestResult {
 
     // First compaction
     session
-        .write_items(vec![TranscriptItem::Compact {
-            messages: vec![TranscriptItem::User {
-                text: "compact-v1".into(),
-                content: vec![],
-            }],
-        }])
+        .write_items(vec![compact_item("compact-v1", 1)])
         .await?;
 
     // More messages
@@ -513,12 +504,7 @@ async fn multiple_compactions_uses_last() -> TestResult {
 
     // Second compaction
     session
-        .write_items(vec![TranscriptItem::Compact {
-            messages: vec![TranscriptItem::User {
-                text: "compact-v2".into(),
-                content: vec![],
-            }],
-        }])
+        .write_items(vec![compact_item("compact-v2", 3)])
         .await?;
 
     // One more message after second compaction
@@ -536,9 +522,12 @@ async fn multiple_compactions_uses_last() -> TestResult {
     let transcript = loaded.transcript().await;
 
     // compact-v2 messages (1) + msg3 (1) = 2
-    assert_eq!(transcript.len(), 2);
-    assert!(matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "compact-v2"));
-    assert!(matches!(&transcript[1], TranscriptItem::User { text, .. } if text == "msg3"));
+    assert_eq!(transcript.len(), 3);
+    assert!(
+        matches!(&transcript[0], TranscriptItem::User { text, .. } if text.contains("compact-v2"))
+    );
+    assert!(matches!(&transcript[1], TranscriptItem::User { text, .. } if text == "msg2"));
+    assert!(matches!(&transcript[2], TranscriptItem::User { text, .. } if text == "msg3"));
     Ok(())
 }
 
@@ -572,6 +561,7 @@ async fn stats_items_persisted_but_filtered_on_resume() -> TestResult {
             metrics: None,
             error: None,
             context_window: 0,
+            stop_reason: "stop".into(),
         })
         .to_item();
 
@@ -648,6 +638,7 @@ async fn stats_after_compact_filtered_on_resume() -> TestResult {
     // Write compact + stats + new message
     let compact_stats = evot::types::TranscriptStats::ContextCompactionCompleted(
         evot::types::ContextCompactionCompletedStats {
+            reason: evot::types::CompactReason::Threshold,
             result: evot::types::CompactionResult::Compacted {
                 before_message_count: 10,
                 after_message_count: 4,
@@ -659,18 +650,14 @@ async fn stats_after_compact_filtered_on_resume() -> TestResult {
                 current_run_reclaimed: 0,
             },
             context_window: 0,
+            will_retry: false,
         },
     )
     .to_item();
 
     session
         .write_items(vec![
-            TranscriptItem::Compact {
-                messages: vec![TranscriptItem::User {
-                    text: "summary".into(),
-                    content: vec![],
-                }],
-            },
+            compact_item("summary", 3),
             compact_stats,
             TranscriptItem::User {
                 text: "new msg".into(),
@@ -686,7 +673,9 @@ async fn stats_after_compact_filtered_on_resume() -> TestResult {
         .ok_or_else(|| missing_error("missing session"))?;
     let transcript = loaded.transcript().await;
     assert_eq!(transcript.len(), 2);
-    assert!(matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "summary"));
+    assert!(
+        matches!(&transcript[0], TranscriptItem::User { text, .. } if text.contains("summary"))
+    );
     assert!(matches!(&transcript[1], TranscriptItem::User { text, .. } if text == "new msg"));
     Ok(())
 }
@@ -949,7 +938,7 @@ async fn goto_after_clear_restores_old_context() -> TestResult {
 }
 
 #[tokio::test]
-async fn new_compact_marker_works_like_old_compact() -> TestResult {
+async fn structured_compact_entry_rebuilds_context() -> TestResult {
     let dir = TempDir::new()?;
     let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
 
@@ -976,13 +965,16 @@ async fn new_compact_marker_works_like_old_compact() -> TestResult {
         ])
         .await?;
 
-    // Write new-style compact marker
+    // Write compact entry
     session
-        .write_compact_marker(vec![TranscriptItem::User {
+        .write_items(vec![compact_item("compacted summary", 1)])
+        .await?;
+    session
+        .replace_transcript(vec![TranscriptItem::User {
             text: "compacted summary".into(),
             content: vec![],
         }])
-        .await?;
+        .await;
 
     session
         .write_items(vec![TranscriptItem::User {
@@ -991,16 +983,17 @@ async fn new_compact_marker_works_like_old_compact() -> TestResult {
         }])
         .await?;
 
-    // Reload — should see compact snapshot + new message
+    // Reload — should see compact summary + retained boundary + new message
     let loaded = Session::open("sess-new-compact", storage.clone())
         .await?
         .ok_or_else(|| missing_error("missing session"))?;
     let transcript = loaded.transcript().await;
-    assert_eq!(transcript.len(), 2);
+    assert_eq!(transcript.len(), 4);
     assert!(
-        matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "compacted summary")
+        matches!(&transcript[0], TranscriptItem::User { text, .. } if text.contains("compacted summary"))
     );
-    assert!(matches!(&transcript[1], TranscriptItem::User { text, .. } if text == "after compact"));
+    assert!(matches!(&transcript[1], TranscriptItem::User { text, .. } if text == "old"));
+    assert!(matches!(&transcript[3], TranscriptItem::User { text, .. } if text == "after compact"));
     Ok(())
 }
 

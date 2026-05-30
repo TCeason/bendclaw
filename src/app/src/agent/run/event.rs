@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::types::AssistantBlock;
+use crate::types::CompactReason;
 use crate::types::CompactRecord;
 use crate::types::CompactionResult;
 use crate::types::LlmCallMetrics;
@@ -114,20 +115,34 @@ pub enum RunEventPayload {
         tool_calls: Option<Vec<LlmToolCallSummary>>,
     },
     ContextCompactionStarted {
+        reason: CompactReason,
+        #[serde(default)]
         message_count: usize,
         estimated_tokens: usize,
         budget_tokens: usize,
+        #[serde(default)]
+        reserve_tokens: usize,
+        #[serde(default)]
+        trigger_threshold: usize,
+        #[serde(default)]
         system_prompt_tokens: usize,
         #[serde(default)]
         tool_definition_tokens: usize,
         context_window: usize,
+        #[serde(default)]
+        will_retry: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         message_stats: Option<LlmMessageStats>,
     },
     ContextCompactionCompleted {
+        reason: CompactReason,
         result: CompactionResult,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
         #[serde(default)]
         context_window: usize,
+        #[serde(default)]
+        will_retry: bool,
     },
     RunFinished {
         text: String,

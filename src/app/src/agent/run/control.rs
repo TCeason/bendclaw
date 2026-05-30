@@ -54,6 +54,10 @@ impl RunControl {
         self.cancel.is_cancelled()
     }
 
+    pub(in crate::agent) fn cancel_token(&self) -> CancellationToken {
+        self.cancel.clone()
+    }
+
     /// Forward a steering message to the active engine turn, if any.
     pub fn steer(&self, msg: evot_engine::AgentMessage) {
         if let Some(h) = self.engine.lock().as_ref() {

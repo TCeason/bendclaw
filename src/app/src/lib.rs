@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod compact;
 pub mod conf;
 pub mod error;
 pub mod gateway;

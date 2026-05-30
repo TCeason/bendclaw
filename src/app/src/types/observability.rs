@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use super::metrics::LlmCallMetrics;
 use super::metrics::UsageSummary;
+use super::transcript::CompactReason;
 use super::transcript::TranscriptItem;
 
 // ---------------------------------------------------------------------------
@@ -50,6 +51,8 @@ pub struct LlmCallCompletedStats {
     pub error: Option<String>,
     #[serde(default)]
     pub context_window: usize,
+    #[serde(default)]
+    pub stop_reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,13 +66,23 @@ pub struct ToolFinishedStats {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextCompactionStartedStats {
+    #[serde(default = "default_compact_reason")]
+    pub reason: CompactReason,
+    #[serde(default)]
     pub message_count: usize,
     pub estimated_tokens: usize,
     pub budget_tokens: usize,
+    #[serde(default)]
+    pub reserve_tokens: usize,
+    #[serde(default)]
+    pub trigger_threshold: usize,
+    #[serde(default)]
     pub system_prompt_tokens: usize,
     #[serde(default)]
     pub tool_definition_tokens: usize,
     pub context_window: usize,
+    #[serde(default)]
+    pub will_retry: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,9 +116,13 @@ pub enum CompactionResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextCompactionCompletedStats {
+    #[serde(default = "default_compact_reason")]
+    pub reason: CompactReason,
     pub result: CompactionResult,
     #[serde(default)]
     pub context_window: usize,
+    #[serde(default)]
+    pub will_retry: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +131,10 @@ pub struct RunFinishedStats {
     pub turn_count: u32,
     pub duration_ms: u64,
     pub transcript_count: usize,
+}
+
+fn default_compact_reason() -> CompactReason {
+    CompactReason::Threshold
 }
 
 // ---------------------------------------------------------------------------

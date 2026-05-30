@@ -1,9 +1,8 @@
-//! Summarizer — pluggable marker generation strategy (rule-based or LLM).
+//! Summarizer — LLM-generated compact memory summaries.
 
 pub mod llm;
 pub mod mode;
 pub mod prompt;
-pub mod rule_based;
 pub mod serialize;
 pub mod types;
 

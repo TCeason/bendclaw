@@ -1,4 +1,4 @@
-//! Marker — generates the structured summary that replaces evicted messages.
+//! Memory extraction — builds compact memory from evicted messages.
 
 use std::collections::HashSet;
 
@@ -6,8 +6,8 @@ use super::types::CompactionState;
 use super::types::FileOps;
 use crate::types::*;
 
-/// Input for marker generation.
-pub struct MarkerInput<'a> {
+/// Input for compact memory generation.
+pub struct MemoryInput<'a> {
     /// Messages being evicted.
     pub evicted: &'a [AgentMessage],
     /// If a turn was split, the prefix portion (turn_start..cut_at).
@@ -16,8 +16,8 @@ pub struct MarkerInput<'a> {
     pub prev_state: Option<&'a CompactionState>,
 }
 
-/// Build a marker message that replaces the evicted zone.
-pub fn build(input: &MarkerInput<'_>) -> AgentMessage {
+/// Build a memory summary message that replaces the evicted zone.
+pub fn build(input: &MemoryInput<'_>) -> AgentMessage {
     let mut sections: Vec<String> = Vec::new();
 
     // Section 1: Overview
