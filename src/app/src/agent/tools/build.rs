@@ -29,21 +29,23 @@ pub(crate) fn build_tools(
 
     let mut t: Vec<Box<dyn evot_engine::AgentTool>> = Vec::new();
 
+    // Core tool order mirrors the pi harness: read, bash, edit, write.
+    t.push(Box::new(ReadFileTool::default()));
+
     if allow_bash {
         t.push(build_bash_tool(envs, sandbox_dirs));
     }
 
-    t.push(Box::new(ReadFileTool::default()));
-
     if let ToolMode::Planning { .. } = mode {
         let msg = "Not allowed in planning mode. Use /act to switch.";
-        t.push(Box::new(WriteFileTool::new().disallow(msg)));
         t.push(Box::new(EditFileTool::new().disallow(msg)));
+        t.push(Box::new(WriteFileTool::new().disallow(msg)));
     } else {
-        t.push(Box::new(WriteFileTool::new()));
         t.push(Box::new(EditFileTool::new()));
+        t.push(Box::new(WriteFileTool::new()));
     }
 
+    // evot-specific tools, appended after the pi-aligned core set.
     if !matches!(mode, ToolMode::Headless) {
         t.push(Box::new(WebFetchTool::new()));
     }
