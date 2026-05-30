@@ -1,5 +1,6 @@
 use crate::types::TranscriptEntry;
 use crate::types::TranscriptItem;
+use crate::types::UsageSummary;
 
 const SUMMARY_PREFIX: &str =
     "The conversation history before this point was compacted into the following summary:\n\n";
@@ -28,7 +29,11 @@ pub fn resolve_context_entries(entries: &[TranscriptEntry]) -> Vec<(u64, Transcr
                         && entry.seq < compact_seq
                         && entry.item.is_context_item()
                     {
-                        items.push((entry.seq, entry.item.clone()));
+                        // These entries are retained from before the compact
+                        // control point. Their assistant usage reflects the
+                        // pre-compaction context and must not be reused as a
+                        // fresh pre-prompt baseline.
+                        items.push((entry.seq, clear_assistant_usage(entry.item.clone())));
                     }
                 }
                 for entry in &entries[idx + 1..] {
@@ -83,4 +88,31 @@ fn is_control_point(item: &TranscriptItem) -> bool {
         item,
         TranscriptItem::Compact { .. } | TranscriptItem::Marker { .. }
     )
+}
+
+fn clear_assistant_usage(item: TranscriptItem) -> TranscriptItem {
+    match item {
+        TranscriptItem::Assistant {
+            text,
+            thinking,
+            tool_calls,
+            stop_reason,
+            model,
+            provider,
+            timestamp,
+            error_message,
+            ..
+        } => TranscriptItem::Assistant {
+            text,
+            thinking,
+            tool_calls,
+            stop_reason,
+            usage: UsageSummary::default(),
+            model,
+            provider,
+            timestamp,
+            error_message,
+        },
+        other => other,
+    }
 }

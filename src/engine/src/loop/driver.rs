@@ -9,6 +9,7 @@ use tokio::sync::mpsc;
 
 use super::assistant_sanitize::sanitize_assistant_text;
 use super::compaction::post_response_compaction;
+use super::compaction::pre_prompt_compaction;
 use super::config::AgentLoopConfig;
 use super::doom_loop::DoomLoopDetector;
 use super::input_filter::apply_input_filters;
@@ -37,6 +38,11 @@ pub async fn agent_loop(
         Some(p) => p,
         None => return vec![],
     };
+
+    // Compact existing context before adding the new prompt. This mirrors Pi's
+    // pre-prompt check and avoids sending an oversized request while ensuring
+    // the freshly submitted user prompt is never summarized away.
+    run_pre_prompt_compaction(context, config, &tx, &cancel).await;
 
     let mut new_messages: Vec<AgentMessage> = prompts.clone();
 
@@ -105,6 +111,10 @@ pub async fn agent_loop_continue(
 
     let mut new_messages: Vec<AgentMessage> = Vec::new();
 
+    // Continue sends the current context as-is, so proactively compact before
+    // the first LLM call when it is already over the threshold.
+    run_pre_prompt_compaction(context, config, &tx, &cancel).await;
+
     tx.send(AgentEvent::TurnStart).ok();
 
     run_loop(context, &mut new_messages, config, &tx, &cancel).await;
@@ -114,6 +124,29 @@ pub async fn agent_loop_continue(
     })
     .ok();
     new_messages
+}
+
+async fn run_pre_prompt_compaction(
+    context: &mut AgentContext,
+    config: &AgentLoopConfig,
+    tx: &mpsc::UnboundedSender<AgentEvent>,
+    cancel: &tokio_util::sync::CancellationToken,
+) {
+    let mut controller = config.context_config.as_ref().map(|ctx_cfg| {
+        crate::context::CompactionController::new(
+            crate::context::CompactionConfig::from_context_config(ctx_cfg),
+        )
+    });
+    let mut tracker = ContextTracker::new();
+    pre_prompt_compaction(
+        &mut controller,
+        &mut tracker,
+        &mut context.messages,
+        config,
+        cancel.clone(),
+        tx,
+    )
+    .await;
 }
 
 /// Main loop logic shared by agent_loop and agent_loop_continue.

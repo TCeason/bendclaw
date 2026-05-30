@@ -17,7 +17,7 @@ use super::convert::assistant_blocks_from_content;
 use super::convert::extract_content_text;
 use super::convert::from_agent_messages;
 use super::convert::total_usage;
-use super::convert::transcript_from_assistant_completed;
+use super::convert::transcript_from_agent_message;
 use super::event::LlmMessageStats;
 use super::event::LlmToolCallSummary;
 use super::event::RunEvent;
@@ -545,8 +545,7 @@ fn map_agent_event(
                     cache_read: usage.cache_read,
                     cache_write: usage.cache_write,
                 };
-                let transcript_item =
-                    transcript_from_assistant_completed(&blocks, &stop_reason.to_string());
+                let transcript_item = transcript_from_agent_message(message);
 
                 vec![
                     RuntimeEvent::Transcript(transcript_item),

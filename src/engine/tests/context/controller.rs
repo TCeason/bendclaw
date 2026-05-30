@@ -19,6 +19,10 @@ fn user_msg(text: &str) -> AgentMessage {
 }
 
 fn assistant_msg(text: &str) -> AgentMessage {
+    assistant_msg_with_usage(text, 0, 0)
+}
+
+fn assistant_msg_with_usage(text: &str, input: u64, output: u64) -> AgentMessage {
     AgentMessage::Llm(Message::Assistant {
         content: vec![Content::Text {
             text: text.to_string(),
@@ -26,7 +30,14 @@ fn assistant_msg(text: &str) -> AgentMessage {
         stop_reason: evotengine::StopReason::Stop,
         model: "test".into(),
         provider: "test".into(),
-        usage: Usage::default(),
+        usage: Usage {
+            input,
+            output,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: input + output,
+            reasoning_output: 0,
+        },
         timestamp: 0,
         error_message: None,
         response_id: None,
@@ -35,6 +46,20 @@ fn assistant_msg(text: &str) -> AgentMessage {
 
 fn big_text(n: usize) -> String {
     "x".repeat(n)
+}
+
+/// Build text with `n` distinct words so the tiktoken estimate reflects real
+/// token volume (repeated characters compress heavily under BPE and would not
+/// exercise threshold-based logic).
+fn varied_text(n: usize) -> String {
+    let mut s = String::with_capacity(n * 8);
+    for i in 0..n {
+        if i > 0 {
+            s.push(' ');
+        }
+        s.push_str(&format!("token{i}word"));
+    }
+    s
 }
 
 fn model_id() -> ModelId {
@@ -238,4 +263,109 @@ async fn controller_allows_multiple_stateless_compactions() {
         .force_compact(&mut messages, None, CancellationToken::new())
         .await;
     assert!(second.is_some());
+}
+
+#[tokio::test]
+async fn before_prompt_skips_when_below_threshold() {
+    let config = config_small();
+    let mut ctrl = CompactionController::new(config);
+
+    let mut messages = vec![user_msg("hello"), assistant_msg("hi")];
+    let original_count = messages.len();
+
+    let response = ctrl
+        .before_prompt(&mut messages, &model_id(), None, CancellationToken::new())
+        .await;
+
+    assert_eq!(response.action, AfterResponseAction::Continue);
+    assert!(response.stats.is_none());
+    assert_eq!(messages.len(), original_count); // unchanged
+}
+
+#[tokio::test]
+async fn before_prompt_compacts_when_over_threshold() {
+    let config = config_small();
+    let mut ctrl = CompactionController::new(config);
+
+    // Build a context that is large enough to compact; the pre-prompt trigger
+    // uses the latest assistant provider usage rather than recomputing local
+    // estimates, matching the post-response trigger semantics.
+    let mut messages = vec![
+        user_msg(&varied_text(300)),
+        assistant_msg(&varied_text(300)),
+    ];
+    for _ in 0..20 {
+        messages.push(user_msg(&varied_text(300)));
+        messages.push(assistant_msg(&varied_text(300)));
+    }
+    messages.push(user_msg("recent"));
+    messages.push(assistant_msg_with_usage("recent answer", 8_500, 500));
+    let original_count = messages.len();
+
+    let response = ctrl
+        .before_prompt(&mut messages, &model_id(), None, CancellationToken::new())
+        .await;
+
+    assert_eq!(response.action, AfterResponseAction::Continue);
+    assert!(response.stats.is_some());
+    assert!(!response.overflow_exhausted);
+    assert!(messages.len() < original_count);
+}
+
+#[tokio::test]
+async fn overflow_exhausted_signals_after_second_overflow() {
+    let config = config_small();
+    let mut ctrl = CompactionController::new(config);
+
+    let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];
+    for _ in 0..20 {
+        messages.push(user_msg(&big_text(300)));
+        messages.push(assistant_msg(&big_text(300)));
+    }
+    messages.push(user_msg("recent"));
+    messages.push(assistant_msg("error"));
+
+    // The first overflow's compaction records last_compaction_ts = now_ms().
+    // The second usage must carry a timestamp after that, otherwise it would
+    // be skipped as stale rather than treated as overflow-exhausted.
+    let future_ts = evotengine::context::now_ms() + 60_000;
+    let overflow_usage = |ts: u64| UsageSnapshot {
+        input: 0,
+        cache_read: 0,
+        cache_write: 0,
+        output: 0,
+        model: model_id(),
+        timestamp: ts,
+        stop_reason: StopReason::Error,
+        error_message: Some("prompt is too long: 50000 tokens > 10000 maximum".into()),
+    };
+
+    // First overflow triggers a compact-and-retry.
+    let first = ctrl
+        .after_response(
+            &mut messages,
+            &overflow_usage(future_ts),
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(first.action, AfterResponseAction::Retry);
+    assert!(!first.overflow_exhausted);
+
+    // Second overflow this turn: recovery is exhausted. Do not retry, and
+    // signal the loop to surface a user-visible message.
+    messages.push(assistant_msg("error again"));
+    let second = ctrl
+        .after_response(
+            &mut messages,
+            &overflow_usage(future_ts + 1),
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(second.action, AfterResponseAction::Continue);
+    assert!(second.overflow_exhausted);
+    assert!(second.stats.is_none());
 }

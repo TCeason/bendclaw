@@ -412,6 +412,11 @@ fn aggregator_from_items_batch_ingest() {
             thinking: None,
             tool_calls: vec![],
             stop_reason: "end_turn".into(),
+            usage: UsageSummary::default(),
+            model: String::new(),
+            provider: String::new(),
+            timestamp: 0,
+            error_message: None,
         },
         TranscriptStats::RunFinished(RunFinishedStats {
             usage: UsageSummary {

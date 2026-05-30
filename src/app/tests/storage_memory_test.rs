@@ -62,6 +62,11 @@ async fn memory_storage_append_and_list_entries() -> TestResult {
                 thinking: None,
                 tool_calls: vec![],
                 stop_reason: "stop".into(),
+                usage: UsageSummary::default(),
+                model: String::new(),
+                provider: String::new(),
+                timestamp: 0,
+                error_message: None,
             },
         ))
         .await?;
@@ -76,7 +81,7 @@ async fn memory_storage_append_and_list_entries() -> TestResult {
         .await?;
     assert_eq!(entries.len(), 2);
     assert!(matches!(&entries[0].item, TranscriptItem::User { text, .. } if text == "hello"));
-    assert!(matches!(&entries[1].item, TranscriptItem::Assistant { text, .. } if text == "hi"));
+    assert!(matches!(&entries[1].item, TranscriptItem::Assistant { text, ..} if text == "hi"));
     Ok(())
 }
 
@@ -194,6 +199,11 @@ async fn session_write_and_read_transcript_in_memory() -> TestResult {
                 thinking: None,
                 tool_calls: vec![],
                 stop_reason: "stop".into(),
+                usage: UsageSummary::default(),
+                model: String::new(),
+                provider: String::new(),
+                timestamp: 0,
+                error_message: None,
             },
         ])
         .await?;
@@ -201,7 +211,7 @@ async fn session_write_and_read_transcript_in_memory() -> TestResult {
     let transcript = session.transcript().await;
     assert_eq!(transcript.len(), 2);
     assert!(matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "hello"));
-    assert!(matches!(&transcript[1], TranscriptItem::Assistant { text, .. } if text == "hi"));
+    assert!(matches!(&transcript[1], TranscriptItem::Assistant { text, ..} if text == "hi"));
     Ok(())
 }
 
@@ -229,6 +239,11 @@ async fn session_open_with_memory_storage_restores_transcript() -> TestResult {
                 thinking: None,
                 tool_calls: vec![],
                 stop_reason: "stop".into(),
+                usage: UsageSummary::default(),
+                model: String::new(),
+                provider: String::new(),
+                timestamp: 0,
+                error_message: None,
             },
         ])
         .await?;
@@ -242,7 +257,7 @@ async fn session_open_with_memory_storage_restores_transcript() -> TestResult {
     let transcript = reopened.transcript().await;
     assert_eq!(transcript.len(), 2);
     assert!(matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "first"));
-    assert!(matches!(&transcript[1], TranscriptItem::Assistant { text, .. } if text == "reply"));
+    assert!(matches!(&transcript[1], TranscriptItem::Assistant { text, ..} if text == "reply"));
     Ok(())
 }
 
@@ -270,6 +285,11 @@ async fn session_multi_turn_with_memory_storage() -> TestResult {
                 thinking: None,
                 tool_calls: vec![],
                 stop_reason: "stop".into(),
+                usage: UsageSummary::default(),
+                model: String::new(),
+                provider: String::new(),
+                timestamp: 0,
+                error_message: None,
             },
         ])
         .await?;
@@ -294,6 +314,11 @@ async fn session_multi_turn_with_memory_storage() -> TestResult {
                 thinking: None,
                 tool_calls: vec![],
                 stop_reason: "stop".into(),
+                usage: UsageSummary::default(),
+                model: String::new(),
+                provider: String::new(),
+                timestamp: 0,
+                error_message: None,
             },
         ])
         .await?;
@@ -310,13 +335,13 @@ async fn session_multi_turn_with_memory_storage() -> TestResult {
         matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "turn 1 question")
     );
     assert!(
-        matches!(&transcript[1], TranscriptItem::Assistant { text, .. } if text == "turn 1 answer")
+        matches!(&transcript[1], TranscriptItem::Assistant { text, ..} if text == "turn 1 answer")
     );
     assert!(
         matches!(&transcript[2], TranscriptItem::User { text, .. } if text == "turn 2 question")
     );
     assert!(
-        matches!(&transcript[3], TranscriptItem::Assistant { text, .. } if text == "turn 2 answer")
+        matches!(&transcript[3], TranscriptItem::Assistant { text, ..} if text == "turn 2 answer")
     );
     Ok(())
 }

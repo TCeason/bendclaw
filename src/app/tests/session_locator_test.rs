@@ -10,6 +10,7 @@ use evot::agent::session::Session;
 use evot::agent::session_locator::SessionLocator;
 use evot::storage::MemoryStorage;
 use evot::types::TranscriptItem;
+use evot::types::UsageSummary;
 
 fn text_item(text: &str) -> TranscriptItem {
     TranscriptItem::user_from_content(&[evot_engine::Content::Text {
@@ -23,6 +24,11 @@ fn assistant_item(text: &str) -> TranscriptItem {
         tool_calls: vec![],
         stop_reason: "stop".to_string(),
         thinking: None,
+        usage: UsageSummary::default(),
+        model: String::new(),
+        provider: String::new(),
+        timestamp: 0,
+        error_message: None,
     }
 }
 

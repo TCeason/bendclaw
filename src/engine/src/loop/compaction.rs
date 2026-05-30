@@ -8,11 +8,17 @@ use tokio_util::sync::CancellationToken;
 use super::config::AgentLoopConfig;
 use crate::context::AfterResponseAction;
 use crate::context::CompactionController;
+use crate::context::CompactionResponse;
 use crate::context::ContextTracker;
 use crate::context::ModelId;
 use crate::context::SummarizerContext;
 use crate::context::UsageSnapshot;
 use crate::types::*;
+
+/// User-visible message emitted when overflow recovery is exhausted.
+const OVERFLOW_EXHAUSTED_MESSAGE: &str =
+    "Context overflow recovery failed after one compact-and-retry attempt. \
+     Try reducing context or switching to a larger-context model.";
 
 /// Run the post-response compaction policy for one assistant message.
 pub(super) async fn post_response_compaction(
@@ -55,6 +61,74 @@ pub(super) async fn post_response_compaction(
         )
         .await;
 
+    emit_compaction_events(ctrl, tracker, messages, &response, tx);
+
+    let should_retry = response.action == AfterResponseAction::Retry;
+    if !should_retry {
+        if let Message::Assistant { stop_reason, .. } = assistant_message {
+            if *stop_reason == StopReason::Stop {
+                ctrl.on_success();
+            }
+        }
+    }
+
+    should_retry
+}
+
+/// Run the pre-prompt compaction policy before the first LLM call of a run.
+///
+/// Proactively compacts when the estimated context already exceeds the trigger
+/// threshold (e.g. resuming a near-full session, or after the user aborted a
+/// large turn). This avoids sending an oversized request that would only be
+/// recovered reactively via overflow handling.
+pub(super) async fn pre_prompt_compaction(
+    controller: &mut Option<CompactionController>,
+    tracker: &mut ContextTracker,
+    messages: &mut Vec<AgentMessage>,
+    config: &AgentLoopConfig,
+    cancel: CancellationToken,
+    tx: &mpsc::UnboundedSender<AgentEvent>,
+) {
+    let ctrl = match controller.as_mut() {
+        Some(ctrl) => ctrl,
+        None => return,
+    };
+
+    let summarizer_ctx = SummarizerContext {
+        provider: Arc::clone(&config.provider),
+        model: config.model.clone(),
+        api_key: config.api_key.clone(),
+        thinking_level: config.thinking_level,
+    };
+
+    let current_model = ModelId {
+        provider: config
+            .model_config
+            .as_ref()
+            .map(|m| m.provider.clone())
+            .or_else(|| latest_assistant_provider(messages))
+            .unwrap_or_default(),
+        model: config.model.clone(),
+    };
+
+    let response = ctrl
+        .before_prompt(messages, &current_model, Some(&summarizer_ctx), cancel)
+        .await;
+
+    emit_compaction_events(ctrl, tracker, messages, &response, tx);
+}
+
+/// Emit compaction lifecycle events and the overflow-exhausted notice.
+///
+/// Shared by post-response and pre-prompt compaction so both surface the same
+/// observability events and persist via the app layer's compact orchestrator.
+fn emit_compaction_events(
+    ctrl: &CompactionController,
+    tracker: &mut ContextTracker,
+    messages: &[AgentMessage],
+    response: &CompactionResponse,
+    tx: &mpsc::UnboundedSender<AgentEvent>,
+) {
     if let Some(ref stats) = response.stats {
         let reason = response
             .reason
@@ -72,7 +146,7 @@ pub(super) async fn post_response_compaction(
         tx.send(AgentEvent::ContextCompactionEnd {
             reason,
             stats: stats.clone(),
-            messages: messages.clone(),
+            messages: messages.to_vec(),
             summary: stats.summary.clone(),
             context_window: ctrl.config().context_window,
             will_retry,
@@ -83,16 +157,24 @@ pub(super) async fn post_response_compaction(
         }
     }
 
-    let should_retry = response.action == AfterResponseAction::Retry;
-    if !should_retry {
-        if let Message::Assistant { stop_reason, .. } = assistant_message {
-            if *stop_reason == StopReason::Stop {
-                ctrl.on_success();
-            }
+    if response.overflow_exhausted {
+        tx.send(AgentEvent::Error {
+            error: AgentErrorInfo {
+                kind: AgentErrorKind::Runtime,
+                message: OVERFLOW_EXHAUSTED_MESSAGE.to_string(),
+            },
+        })
+        .ok();
+    }
+}
+
+fn latest_assistant_provider(messages: &[AgentMessage]) -> Option<String> {
+    for message in messages.iter().rev() {
+        if let AgentMessage::Llm(Message::Assistant { provider, .. }) = message {
+            return Some(provider.clone());
         }
     }
-
-    should_retry
+    None
 }
 
 fn usage_snapshot_from_message(message: &Message) -> Option<UsageSnapshot> {

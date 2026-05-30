@@ -3,6 +3,8 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+use super::UsageSummary;
+
 // ---------------------------------------------------------------------------
 // MarkerKind — types of transcript markers that reset the context baseline
 // ---------------------------------------------------------------------------
@@ -124,6 +126,12 @@ pub enum TranscriptItem {
         #[serde(default)]
         tool_calls: Vec<ToolCallRecord>,
         stop_reason: String,
+        usage: UsageSummary,
+        model: String,
+        provider: String,
+        timestamp: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error_message: Option<String>,
     },
     ToolResult {
         tool_call_id: String,

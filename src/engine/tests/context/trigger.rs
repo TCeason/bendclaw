@@ -117,7 +117,7 @@ fn overflow_on_error_message() {
 }
 
 #[test]
-fn skip_overflow_when_already_attempted() {
+fn overflow_exhausted_when_already_attempted() {
     let config = default_config();
     let mut usage = make_usage(0, 0, StopReason::Error);
     usage.error_message = Some("prompt is too long: 200000 tokens > 128000 maximum".into());
@@ -127,7 +127,26 @@ fn skip_overflow_when_already_attempted() {
         last_compaction_ts: None,
         overflow_recovery_attempted: true,
     };
-    assert_eq!(evaluate(&input, &config), TriggerDecision::Skip);
+    assert!(matches!(
+        evaluate(&input, &config),
+        TriggerDecision::OverflowExhausted { .. }
+    ));
+}
+
+#[test]
+fn silent_overflow_exhausted_when_already_attempted() {
+    let config = default_config();
+    // input exceeds context_window, but recovery was already attempted
+    let input = TriggerInput {
+        usage: Some(make_usage(130_000, 1_000, StopReason::Stop)),
+        current_model: model_id(),
+        last_compaction_ts: None,
+        overflow_recovery_attempted: true,
+    };
+    assert!(matches!(
+        evaluate(&input, &config),
+        TriggerDecision::OverflowExhausted { .. }
+    ));
 }
 
 #[test]

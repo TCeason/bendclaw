@@ -425,6 +425,11 @@ fn entry_preview_exact_60_chars_no_ellipsis() {
         thinking: None,
         tool_calls: vec![],
         stop_reason: "stop".into(),
+        usage: UsageSummary::default(),
+        model: String::new(),
+        provider: String::new(),
+        timestamp: 0,
+        error_message: None,
     };
     let preview = entry_preview(&item);
     assert!(!preview.ends_with('…'));

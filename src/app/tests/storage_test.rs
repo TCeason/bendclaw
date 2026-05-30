@@ -41,6 +41,11 @@ async fn open_storage_returns_working_backend() -> TestResult {
                 thinking: None,
                 tool_calls: vec![],
                 stop_reason: "stop".into(),
+                usage: UsageSummary::default(),
+                model: String::new(),
+                provider: String::new(),
+                timestamp: 0,
+                error_message: None,
             },
         ))
         .await?;

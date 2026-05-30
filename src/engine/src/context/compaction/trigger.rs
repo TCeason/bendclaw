@@ -48,10 +48,10 @@ pub fn evaluate(input: &TriggerInput, config: &CompactionConfig) -> TriggerDecis
     if usage.stop_reason == StopReason::Error {
         if let Some(ref err) = usage.error_message {
             if is_context_overflow(err) {
-                if input.overflow_recovery_attempted {
-                    return TriggerDecision::Skip;
-                }
                 let context_tokens = calculate_context_tokens(usage);
+                if input.overflow_recovery_attempted {
+                    return TriggerDecision::OverflowExhausted { context_tokens };
+                }
                 return TriggerDecision::Overflow { context_tokens };
             }
         }
@@ -64,7 +64,7 @@ pub fn evaluate(input: &TriggerInput, config: &CompactionConfig) -> TriggerDecis
     let context_tokens = calculate_context_tokens(usage);
     if usage.stop_reason == StopReason::Stop && context_tokens > config.context_window {
         if input.overflow_recovery_attempted {
-            return TriggerDecision::Skip;
+            return TriggerDecision::OverflowExhausted { context_tokens };
         }
         return TriggerDecision::Overflow { context_tokens };
     }
@@ -74,7 +74,7 @@ pub fn evaluate(input: &TriggerInput, config: &CompactionConfig) -> TriggerDecis
         let input_tokens = usage.input + usage.cache_read;
         if input_tokens >= config.context_window * 99 / 100 {
             if input.overflow_recovery_attempted {
-                return TriggerDecision::Skip;
+                return TriggerDecision::OverflowExhausted { context_tokens };
             }
             return TriggerDecision::Overflow { context_tokens };
         }

@@ -49,6 +49,10 @@ pub enum TriggerDecision {
     Threshold { context_tokens: usize },
     /// Context overflow error — compact and retry the turn.
     Overflow { context_tokens: usize },
+    /// Context overflow detected again after a compact-and-retry was already
+    /// attempted this turn. Do not retry — surface a user-visible message so
+    /// the user can reduce context or switch to a larger-context model.
+    OverflowExhausted { context_tokens: usize },
 }
 
 // ---------------------------------------------------------------------------

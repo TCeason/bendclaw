@@ -3,6 +3,7 @@ use evot::search::TextMatcher;
 use evot::types::SessionMeta;
 use evot::types::TranscriptEntry;
 use evot::types::TranscriptItem;
+use evot::types::UsageSummary;
 
 #[test]
 fn text_matcher_empty_matches_everything() {
@@ -95,6 +96,11 @@ fn searcher_matches_transcript_assistant_text() {
         thinking: None,
         tool_calls: vec![],
         stop_reason: "end_turn".to_string(),
+        usage: UsageSummary::default(),
+        model: String::new(),
+        provider: String::new(),
+        timestamp: 0,
+        error_message: None,
     })];
     let searcher = SessionSearcher::new("databend");
     let hit = searcher.matches_transcript(&session, &entries);

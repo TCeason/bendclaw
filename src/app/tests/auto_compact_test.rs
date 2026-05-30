@@ -8,6 +8,7 @@ use evot::conf::Protocol;
 use evot::conf::ProviderProfile;
 use evot::storage::MemoryStorage;
 use evot::types::TranscriptItem;
+use evot::types::UsageSummary;
 use evot_engine::provider::MockProvider;
 use evot_engine::provider::MockResponse;
 use evot_engine::Usage;
@@ -29,20 +30,22 @@ async fn auto_compaction_persists_structured_compact_item() -> TestResult {
     config.llm.provider = "test".into();
 
     let provider = MockProvider::new(vec![
+        // Pre-prompt compaction now runs before the new request is sent, so
+        // the first provider call is the summarization call.
+        MockResponse::Text("AUTO SUMMARY FROM LLM".into()),
         MockResponse::TextWithUsageStopAndModel {
-            text: "assistant response that triggers compaction".into(),
+            text: "assistant response after pre-prompt compaction".into(),
             usage: Usage {
-                input: 120_000,
+                input: 10_000,
                 output: 10,
                 cache_read: 0,
                 cache_write: 0,
-                total_tokens: 120_010,
+                total_tokens: 10_010,
                 reasoning_output: 0,
             },
             stop_reason: evot_engine::StopReason::Stop,
             model: "gpt-4o".into(),
         },
-        MockResponse::Text("AUTO SUMMARY FROM LLM".into()),
     ]);
 
     let storage = Arc::new(MemoryStorage::new());
@@ -65,7 +68,7 @@ async fn auto_compaction_persists_structured_compact_item() -> TestResult {
             user(&"old message two ".repeat(30_000)),
             assistant("old assistant two"),
             user("old message three with enough content to be summarized"),
-            assistant("old assistant three"),
+            assistant_with_usage("old assistant three", 120_000),
         ])
         .await?;
 
@@ -125,10 +128,24 @@ fn user(text: &str) -> TranscriptItem {
 }
 
 fn assistant(text: &str) -> TranscriptItem {
+    assistant_with_usage(text, 0)
+}
+
+fn assistant_with_usage(text: &str, input_tokens: u64) -> TranscriptItem {
     TranscriptItem::Assistant {
         text: text.into(),
         thinking: None,
         tool_calls: vec![],
         stop_reason: "stop".into(),
+        usage: UsageSummary {
+            input: input_tokens,
+            output: 10,
+            cache_read: 0,
+            cache_write: 0,
+        },
+        model: "gpt-4o".into(),
+        provider: "local".into(),
+        timestamp: evot_engine::now_ms(),
+        error_message: None,
     }
 }

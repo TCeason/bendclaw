@@ -62,12 +62,7 @@ impl CompactionController {
         };
 
         match trigger::evaluate(&trigger_input, &self.config) {
-            TriggerDecision::Skip => CompactionResponse {
-                action: AfterResponseAction::Continue,
-                stats: None,
-                reason: None,
-                context_tokens: None,
-            },
+            TriggerDecision::Skip => CompactionResponse::skip(),
 
             TriggerDecision::Overflow { context_tokens } => {
                 self.overflow_recovery_attempted = true;
@@ -87,6 +82,20 @@ impl CompactionController {
                     stats,
                     reason: Some(CompactReason::Overflow),
                     context_tokens: Some(context_tokens),
+                    overflow_exhausted: false,
+                }
+            }
+
+            TriggerDecision::OverflowExhausted { context_tokens } => {
+                // A compact-and-retry was already attempted this turn and the
+                // context still overflows. Do not retry again — signal the loop
+                // to surface a user-visible message.
+                CompactionResponse {
+                    action: AfterResponseAction::Continue,
+                    stats: None,
+                    reason: Some(CompactReason::Overflow),
+                    context_tokens: Some(context_tokens),
+                    overflow_exhausted: true,
                 }
             }
 
@@ -98,9 +107,32 @@ impl CompactionController {
                     stats,
                     reason: Some(CompactReason::Threshold),
                     context_tokens: Some(context_tokens),
+                    overflow_exhausted: false,
                 }
             }
         }
+    }
+
+    /// Evaluate whether the context should be compacted *before* sending the
+    /// next prompt to the provider.
+    ///
+    /// This mirrors the post-response threshold check using the latest
+    /// assistant provider usage retained in the transcript. Returning `Skip`
+    /// when no assistant usage is available is intentional: without provider
+    /// usage, pre-prompt compaction would need a separate estimator and would
+    /// no longer share the same trigger semantics as post-response compaction.
+    pub async fn before_prompt(
+        &mut self,
+        messages: &mut Vec<AgentMessage>,
+        current_model: &ModelId,
+        summarizer_ctx: Option<&SummarizerContext>,
+        cancel: CancellationToken,
+    ) -> CompactionResponse {
+        let Some(usage) = latest_assistant_usage(messages) else {
+            return CompactionResponse::skip();
+        };
+        self.after_response(messages, &usage, current_model, summarizer_ctx, cancel)
+            .await
     }
 
     /// Force a compaction (e.g., manual trigger from user command).
@@ -153,6 +185,52 @@ pub struct CompactionResponse {
     pub stats: Option<CompactionStats>,
     pub reason: Option<CompactReason>,
     pub context_tokens: Option<usize>,
+    /// Set when overflow recovery was already attempted this turn and the
+    /// context still overflows. The loop should surface this to the user.
+    pub overflow_exhausted: bool,
+}
+
+impl CompactionResponse {
+    fn skip() -> Self {
+        Self {
+            action: AfterResponseAction::Continue,
+            stats: None,
+            reason: None,
+            context_tokens: None,
+            overflow_exhausted: false,
+        }
+    }
+}
+
+fn latest_assistant_usage(messages: &[AgentMessage]) -> Option<UsageSnapshot> {
+    for message in messages.iter().rev() {
+        let AgentMessage::Llm(crate::types::Message::Assistant {
+            usage,
+            stop_reason,
+            model,
+            provider,
+            timestamp,
+            error_message,
+            ..
+        }) = message
+        else {
+            continue;
+        };
+        return Some(UsageSnapshot {
+            input: usage.input as usize,
+            cache_read: usage.cache_read as usize,
+            cache_write: usage.cache_write as usize,
+            output: usage.output as usize,
+            model: ModelId {
+                provider: provider.clone(),
+                model: model.clone(),
+            },
+            timestamp: *timestamp,
+            stop_reason: stop_reason.clone(),
+            error_message: error_message.clone(),
+        });
+    }
+    None
 }
 
 fn now_ms() -> u64 {

@@ -7,6 +7,7 @@ use evot::conf::StorageConfig;
 use evot::storage::open_storage;
 use evot::types::CompactReason;
 use evot::types::TranscriptItem;
+use evot::types::UsageSummary;
 use tempfile::TempDir;
 
 const KEEP_RECENT_TOKENS: usize = 1;
@@ -154,5 +155,10 @@ fn assistant(text: &str) -> TranscriptItem {
         thinking: None,
         tool_calls: vec![],
         stop_reason: "stop".into(),
+        usage: UsageSummary::default(),
+        model: String::new(),
+        provider: String::new(),
+        timestamp: 0,
+        error_message: None,
     }
 }

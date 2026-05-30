@@ -20,6 +20,7 @@ use evot::conf::StorageConfig;
 use evot::storage::open_storage;
 use evot::types::CompactReason;
 use evot::types::TranscriptItem;
+use evot::types::UsageSummary;
 use evot_engine::provider::error::ProviderError;
 use evot_engine::provider::traits::StreamConfig;
 use evot_engine::provider::traits::StreamEvent;
@@ -260,5 +261,10 @@ fn assistant(text: &str) -> TranscriptItem {
         thinking: None,
         tool_calls: vec![],
         stop_reason: "stop".into(),
+        usage: UsageSummary::default(),
+        model: String::new(),
+        provider: String::new(),
+        timestamp: 0,
+        error_message: None,
     }
 }

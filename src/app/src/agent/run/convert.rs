@@ -41,6 +41,11 @@ pub fn transcript_from_agent_message(message: &evot_engine::AgentMessage) -> Tra
         evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant {
             content,
             stop_reason,
+            model,
+            provider,
+            usage,
+            timestamp,
+            error_message,
             ..
         }) => {
             let mut text = String::new();
@@ -80,6 +85,11 @@ pub fn transcript_from_agent_message(message: &evot_engine::AgentMessage) -> Tra
                 thinking,
                 tool_calls,
                 stop_reason: stop_reason.to_string(),
+                usage: usage_summary_from_engine(usage),
+                model: model.clone(),
+                provider: provider.clone(),
+                timestamp: *timestamp,
+                error_message: error_message.clone(),
             }
         }
         evot_engine::AgentMessage::Llm(evot_engine::Message::ToolResult {
@@ -147,6 +157,11 @@ pub fn agent_message_from_transcript(item: &TranscriptItem) -> evot_engine::Agen
             thinking,
             tool_calls,
             stop_reason,
+            usage,
+            model,
+            provider,
+            timestamp,
+            error_message,
         } => {
             let mut content = Vec::new();
 
@@ -170,11 +185,11 @@ pub fn agent_message_from_transcript(item: &TranscriptItem) -> evot_engine::Agen
             evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant {
                 content,
                 stop_reason: parse_stop_reason(stop_reason),
-                model: String::new(),
-                provider: String::new(),
-                usage: evot_engine::Usage::default(),
-                timestamp: evot_engine::types::now_ms(),
-                error_message: None,
+                model: model.clone(),
+                provider: provider.clone(),
+                usage: engine_usage_from_summary(usage),
+                timestamp: *timestamp,
+                error_message: error_message.clone(),
                 response_id: None,
             })
         }
@@ -247,6 +262,31 @@ pub fn assistant_blocks_from_content(content: &[evot_engine::Content]) -> Vec<As
         .collect()
 }
 
+fn engine_usage_from_summary(usage: &UsageSummary) -> evot_engine::Usage {
+    let total_tokens = usage
+        .input
+        .saturating_add(usage.output)
+        .saturating_add(usage.cache_read)
+        .saturating_add(usage.cache_write);
+    evot_engine::Usage {
+        input: usage.input,
+        output: usage.output,
+        cache_read: usage.cache_read,
+        cache_write: usage.cache_write,
+        total_tokens,
+        reasoning_output: 0,
+    }
+}
+
+fn usage_summary_from_engine(usage: &evot_engine::Usage) -> UsageSummary {
+    UsageSummary {
+        input: usage.input,
+        output: usage.output,
+        cache_read: usage.cache_read,
+        cache_write: usage.cache_write,
+    }
+}
+
 /// Compute total usage from engine AgentMessages.
 pub fn total_usage(messages: &[evot_engine::AgentMessage]) -> UsageSummary {
     let mut input: u64 = 0;
@@ -289,11 +329,40 @@ fn parse_stop_reason(s: &str) -> evot_engine::StopReason {
     }
 }
 
+pub fn transcript_from_assistant_message(message: &evot_engine::Message) -> Option<TranscriptItem> {
+    let evot_engine::Message::Assistant { .. } = message else {
+        return None;
+    };
+    Some(transcript_from_agent_message(
+        &evot_engine::AgentMessage::Llm(message.clone()),
+    ))
+}
+
 /// Build a TranscriptItem::Assistant from AssistantBlock content and stop_reason.
-/// Used by the app event loop to incrementally build transcripts from ProtocolEvents.
+/// Used by tests and protocol fixtures that do not have the full engine message.
 pub fn transcript_from_assistant_completed(
     content: &[AssistantBlock],
     stop_reason: &str,
+) -> TranscriptItem {
+    transcript_from_assistant_completed_with_usage(
+        content,
+        stop_reason,
+        UsageSummary::default(),
+        String::new(),
+        String::new(),
+        evot_engine::now_ms(),
+        None,
+    )
+}
+
+pub fn transcript_from_assistant_completed_with_usage(
+    content: &[AssistantBlock],
+    stop_reason: &str,
+    usage: UsageSummary,
+    model: String,
+    provider: String,
+    timestamp: u64,
+    error_message: Option<String>,
 ) -> TranscriptItem {
     let mut text = String::new();
     let mut thinking = None;
@@ -325,5 +394,10 @@ pub fn transcript_from_assistant_completed(
         thinking,
         tool_calls,
         stop_reason: stop_reason.to_string(),
+        usage,
+        model,
+        provider,
+        timestamp,
+        error_message,
     }
 }
