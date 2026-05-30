@@ -19,9 +19,6 @@ function defaultInput(overrides?: Partial<PromptVMInput>): PromptVMInput {
     planning: false,
     logMode: false,
     queuedMessages: [],
-    updateHint: null,
-    serverUptime: null,
-    serverPort: null,
     exitHint: false,
     completionCandidates: [],
     ghostHint: '',
@@ -36,10 +33,6 @@ function defaultInput(overrides?: Partial<PromptVMInput>): PromptVMInput {
     cacheReadTokens: 0,
     contextTokens: 0,
     contextWindow: 0,
-    provider: '',
-    thinkingLevel: '',
-    cost: 0,
-    autoCompact: true,
     ...overrides,
   }
 }
@@ -74,12 +67,6 @@ describe('buildPromptBlocks', () => {
     const result = renderPlain(defaultInput({ lines: ['hello'], cursorCol: 5, placeholder: false }))
     expect(result).not.toContain('Type a message...')
     expect(result).toContain('hello')
-  })
-
-  test('shows model in footer without provider prefix', () => {
-    const result = renderPlain(defaultInput({ provider: 'anthropic' }))
-    expect(result).toContain('claude-sonnet')
-    expect(result).not.toContain('(anthropic)')
   })
 
   test('shows [plan] when planning', () => {
@@ -132,26 +119,17 @@ describe('buildPromptBlocks', () => {
     expect(idleBlock?.marginTop).toBeUndefined()
   })
 
-  test('shows update hint', () => {
-    const result = renderPlain(defaultInput({ updateHint: 'v0.2.0 available' }))
-    expect(result).toContain('v0.2.0 available')
-  })
-
-  test('shows server state', () => {
-    const result = renderPlain(defaultInput({ serverPort: 8082, serverUptime: '5m' }))
-    expect(result).toContain(':8082')
-    expect(result).toContain('5m')
-  })
-
-  test('footer shows context but not session token totals', () => {
+  test('footer shows context with model but not session token totals', () => {
     const result = renderPlain(defaultInput({
+      model: 'claude-sonnet',
       inputTokens: 408000,
       outputTokens: 1100,
       cacheReadTokens: 89000,
       contextTokens: 86400,
       contextWindow: 320000,
     }))
-    expect(result).toContain('27.0%/320k (auto)')
+    expect(result).toContain('context: 27.0% (86.4k/320.0k)')
+    expect(result).toContain('claude-sonnet')
     expect(result).not.toContain('↑408k')
     expect(result).not.toContain('↓1.1k')
     expect(result).not.toContain('R89k')

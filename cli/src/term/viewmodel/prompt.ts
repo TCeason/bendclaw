@@ -13,9 +13,6 @@ export interface PromptVMInput {
   planning: boolean
   logMode: boolean
   queuedMessages: string[]
-  updateHint: string | null
-  serverUptime: string | null
-  serverPort: number | null
   exitHint: boolean
   completionCandidates: string[]
   ghostHint: string
@@ -31,10 +28,6 @@ export interface PromptVMInput {
   cacheReadTokens: number
   contextTokens: number
   contextWindow: number
-  provider: string
-  thinkingLevel: string
-  cost: number
-  autoCompact: boolean
 }
 
 const KNOWN_COMMANDS = new Set(
@@ -141,7 +134,7 @@ export function buildPromptBlocks(input: PromptVMInput): ViewBlock[] {
 }
 
 function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
-  // Single line: [plan][verbose] cwd (branch) stats    (provider) model • thinking
+  // Single line: [plan][verbose] cwd (branch) context: N% (used/window) model
   const leftSpans: StyledSpan[] = []
 
   if (input.logMode) {
@@ -165,48 +158,25 @@ function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
     leftSpans.push(dim(` (${input.gitBranch})`))
   }
 
-  // Context only; session token totals are shown in the loading spinner.
-  const statParts: string[] = []
+  // Context usage + current model
   if (input.contextWindow > 0 && input.contextTokens > 0) {
-    const pct = (input.contextTokens / input.contextWindow * 100).toFixed(1)
-    const ctxText = input.autoCompact
-      ? `${pct}%/${formatFooterTokens(input.contextWindow)} (auto)`
-      : `${pct}%/${formatFooterTokens(input.contextWindow)}`
-    statParts.push(ctxText)
-  }
-  if (statParts.length > 0) {
+    const pctNum = input.contextTokens / input.contextWindow * 100
+    const ctxText = `context: ${pctNum.toFixed(1)}% (${formatContextTokens(input.contextTokens)}/${formatContextTokens(input.contextWindow)})`
     leftSpans.push(dim(' '))
-    const pctNum = input.contextWindow > 0 && input.contextTokens > 0
-      ? input.contextTokens / input.contextWindow * 100
-      : 0
     if (pctNum > 90) {
-      leftSpans.push(colored(statParts.join(' '), 'red'))
+      leftSpans.push(colored(ctxText, 'red'))
     } else if (pctNum > 70) {
-      leftSpans.push(colored(statParts.join(' '), 'yellow'))
+      leftSpans.push(colored(ctxText, 'yellow'))
     } else {
-      leftSpans.push(dim(statParts.join(' ')))
+      leftSpans.push(dim(ctxText))
     }
   }
-
-  // Model info follows stats on the left. Provider is omitted to keep the footer compact.
   if (input.model) {
-    leftSpans.push(dim(' '))
-    let modelDisplay = input.model
-    if (input.thinkingLevel && input.thinkingLevel !== 'off') {
-      modelDisplay += ` \u2022 ${input.thinkingLevel}`
-    }
-    leftSpans.push(dim(modelDisplay))
+    leftSpans.push(dim(` ${input.model}`))
   }
 
-  // Right side: server/update (rightmost)
+  // Right side (reserved for future use)
   const rightSpans: StyledSpan[] = []
-  if (input.serverPort != null && input.serverUptime) {
-    rightSpans.push(colored(`[server :${input.serverPort} \u00b7 ${input.serverUptime}]`, 'green'))
-  }
-  if (input.updateHint) {
-    if (rightSpans.length > 0) rightSpans.push(plain('  '))
-    rightSpans.push(colored(input.updateHint, 'yellow'))
-  }
 
   let leftText = leftSpans.map(s => s.text).join('')
   const rightText = rightSpans.map(s => s.text).join('')
@@ -237,12 +207,10 @@ function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
   return block([line(...spans)])
 }
 
-function formatFooterTokens(count: number): string {
+function formatContextTokens(count: number): string {
   if (count < 1000) return count.toString()
-  if (count < 10000) return `${(count / 1000).toFixed(1)}k`
-  if (count < 1000000) return `${Math.round(count / 1000)}k`
-  if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`
-  return `${Math.round(count / 1000000)}M`
+  if (count < 1000000) return `${(count / 1000).toFixed(1)}k`
+  return `${(count / 1000000).toFixed(1)}M`
 }
 
 // Wrap a logical input line into visual chunks that each fit within `width`

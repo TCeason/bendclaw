@@ -78,7 +78,7 @@ import {
 import { getImageFromClipboard } from './input/clipboard_image.js'
 import { storeImage, formatImageSourceText } from './input/image_store.js'
 import type { ContentBlock } from '../native/index.js'
-import { tryStartServer, formatUptime, type ServerState } from './app/server.js'
+import { tryStartServer, type ServerState } from './app/server.js'
 import {
   RESUME_SELECTOR_TITLE,
   formatSessionItems,
@@ -92,6 +92,7 @@ import { findPreviousSession, shouldPreloadStartupSessions } from './app/session
 import { handleSelectorControl } from './app/selector-control.js'
 import { decideReplControl, type ReplControlAction } from './app/repl-control.js'
 import { extractAtPrefix, completeAtFile } from '../commands/file-completion.js'
+import { GitInfoProvider } from './git-info.js'
 
 const SPINNER_INTERVAL_MS = 100
 
@@ -190,13 +191,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const pastedImages = new Map<number, { id: number; base64: string; mediaType: string; filePath?: string }>()
   let nextPasteId = 1
 
-  // Update hint
-  let updateHint: string | null = null
+  // Update info
+  let updateAvailable: { version: string } | null = null
   const updateMgr = new (await import('../update/index.js')).UpdateManager(
     appVersion
   )
   updateMgr.on('update-available', (info: { version: string }) => {
-    updateHint = `v${info.version} available · /update`
+    updateAvailable = { version: info.version }
     renderer.requestRender()
   })
   updateMgr.start()
@@ -213,26 +214,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     try { preloadedSessions = await agent.listSessions(opts.continueLatest ? 0 : 20) } catch {}
   }
 
-  // Git info (computed once at startup, refreshed on cwd change)
-  let gitRepo: string | null = null
-  let gitBranch: string | null = null
-  function refreshGitInfo(cwd: string) {
-    try {
-      const branchResult = Bun.spawnSync(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], { cwd, stdout: 'pipe', stderr: 'pipe' })
-      gitBranch = branchResult.exitCode === 0 ? branchResult.stdout.toString().trim() : null
-      const repoResult = Bun.spawnSync(['git', 'rev-parse', '--show-toplevel'], { cwd, stdout: 'pipe', stderr: 'pipe' })
-      if (repoResult.exitCode === 0) {
-        const fullPath = repoResult.stdout.toString().trim()
-        gitRepo = fullPath.split('/').pop() || null
-      } else {
-        gitRepo = null
-      }
-    } catch {
-      gitRepo = null
-      gitBranch = null
-    }
-  }
-  refreshGitInfo(agent.cwd)
+  // Git info is watched so the footer follows external `git switch` / checkout
+  // operations without requiring a REPL restart.
+  const gitInfo = new GitInfoProvider(agent.cwd)
+  gitInfo.onChange(() => renderer.requestRender())
 
   setTerminalTitle('✳')
 
@@ -269,9 +254,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       planning,
       logMode: logMode !== null,
       queuedMessages: [],
-      updateHint,
-      serverUptime: serverState ? formatUptime(serverState.startedAt) : null,
-      serverPort: serverState?.port ?? null,
       exitHint,
       completionCandidates: editor.completionCandidates,
       ghostHint: editor.ghostHint,
@@ -279,18 +261,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       isLoading,
       placeholder: isEditorEmpty(editor) && !isLoading,
       cwd: appState.cwd,
-      gitRepo,
-      gitBranch,
+      gitRepo: gitInfo.getRepo(),
+      gitBranch: gitInfo.getBranch(),
       // Footer stats
       inputTokens: appState.sessionTokens.inputTokens,
       outputTokens: appState.sessionTokens.outputTokens,
       cacheReadTokens: appState.sessionTokens.cacheReadTokens,
       contextTokens: appState.sessionTokens.contextTokens,
       contextWindow: appState.sessionTokens.contextWindow,
-      provider: configInfo?.provider ?? '',
-      thinkingLevel: '',
-      cost: 0,
-      autoCompact: true,
     }
   }
 
@@ -322,6 +300,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       columns: renderer.termCols,
       serverState,
       releaseNotes,
+      updateAvailable,
     })
   }
 
@@ -1311,7 +1290,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       sessionId = null
       appState = { ...createInitialState(appState.model, agent.cwd), verbose: appState.verbose }
-      refreshGitInfo(agent.cwd)
+      gitInfo.setCwd(agent.cwd)
       renderer.clearScreen()
       compactLines.length = 0
       expandedLines.length = 0
@@ -1328,7 +1307,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const newSession = await agent.createSession()
       sessionId = newSession.session_id
       appState = { ...createInitialState(newSession.model || appState.model, agent.cwd), verbose: appState.verbose, sessionId }
-      refreshGitInfo(agent.cwd)
+      gitInfo.setCwd(agent.cwd)
       renderer.clearScreen()
       compactLines.length = 0
       expandedLines.length = 0
@@ -1883,6 +1862,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     destroyed = true
     unfreezeTerminalTitle()
     stopSpinner()
+    gitInfo.dispose()
     updateMgr.cleanup()
     if (exitHintTimer) clearTimeout(exitHintTimer)
     process.stdout.write('\x1b[?2004l')

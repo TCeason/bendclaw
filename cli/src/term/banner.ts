@@ -25,65 +25,81 @@ export interface BannerOptions {
   quiet?: boolean
   /** Release notes to show after an update (What's New) */
   releaseNotes?: string[] | null
+  /** Update available info */
+  updateAvailable?: { version: string } | null
 }
 
 export function renderBanner(opts: BannerOptions): string {
   if (opts.quiet) return ''
 
-  const { model, cwd, configInfo, columns, serverState, releaseNotes } = opts
-  const provider = configInfo?.provider ?? ''
-  const modelLine = provider ? `${model} · ${provider}` : model
+  const { model, cwd, configInfo, columns, serverState, releaseNotes, updateAvailable } = opts
   const ver = version()
-  const maxRight = columns - 14 // logo width + gap
 
   const lines: string[] = []
 
-  const logo = [
-    ' ▗██████▖ ',
-    '▐████████▌',
-    ' ▀██▀▀██▀ ',
-  ]
+  // Line 1: name + version
+  lines.push(`  ${chalk.bold('evot')} ${chalk.dim(`v${ver}`)}`)
 
-  // Line 1: logo + name + version
-  lines.push(chalk.hex('#3b82f6')(logo[0]!) + '  ' + chalk.bold('evot') + chalk.dim(` v${ver}`))
+  // Line 2: compact keyboard hints
+  lines.push(chalk.dim('  escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ctrl+o expand output'))
 
-  // Line 2: logo + model · provider
-  lines.push(chalk.hex('#3b82f6')(logo[1]!) + '  ' + chalk.dim(truncate(modelLine, maxRight)))
-
-  // Line 3: logo + context/skills summary
-  const skills = getSkillNames()
+  // [Context] section
   const contextFiles = getContextFiles(cwd)
-  const infoParts: string[] = []
   if (contextFiles.length > 0) {
-    infoParts.push(contextFiles.join(', '))
+    lines.push('')
+    lines.push(chalk.hex('#f0c674')('  [Context]'))
+    lines.push(chalk.hex('#666666')(`    ${contextFiles.join(', ')}`))
   }
+
+  // [Skills] section
+  const skills = getSkillNames()
   if (skills.length > 0) {
-    infoParts.push(`skills: ${skills.join(', ')}`)
+    lines.push('')
+    lines.push(chalk.hex('#f0c674')('  [Skills]'))
+    lines.push(chalk.hex('#666666')(`    ${skills.join(', ')}`))
   }
-  const infoLine = infoParts.join('  ·  ')
-  lines.push(chalk.hex('#3b82f6')(logo[2]!) + '  ' + chalk.dim(truncate(infoLine, maxRight)))
+
+  // Update Available (yellow bordered section)
+  if (updateAvailable) {
+    lines.push('')
+    const border = chalk.hex('#ffff00')('  ' + '─'.repeat(Math.max(1, Math.min(columns - 4, 72))))
+    lines.push(border)
+    lines.push(chalk.bold.hex('#ffff00')('  Update Available'))
+    lines.push(
+      chalk.hex('#808080')(`  New version ${updateAvailable.version} is available. Run `) +
+        chalk.hex('#8abeb7')('evot update')
+    )
+    lines.push(
+      chalk.hex('#808080')('  Changelog: ') +
+        chalk.hex('#8abeb7')('https://github.com/evotai/evot/releases')
+    )
+    lines.push(border)
+  }
+
+  // What's New (shown once after update)
+  if (releaseNotes && releaseNotes.length > 0) {
+    lines.push('')
+    lines.push(chalk.bold.hex('#8abeb7')("  What's New:"))
+    for (const note of releaseNotes) {
+      lines.push(chalk.hex('#808080')(`    • ${note}`))
+    }
+  }
+
+  // Model line
+  const provider = configInfo?.provider ?? ''
+  const modelLine = provider ? `${model} · ${provider}` : model
+  lines.push('')
+  lines.push(chalk.hex('#808080')(`  Model: ${truncate(modelLine, Math.max(8, columns - 12))}`))
 
   // Server info
   if (serverState) {
-    lines.push(chalk.dim(`  server: ${serverState.address}`))
+    lines.push(chalk.hex('#808080')(`  Server: ${serverState.address}`))
   }
 
   // API key warning
   if (configInfo && !configInfo.hasApiKey) {
     const envPath = configInfo.envPath?.replace(process.env.HOME ?? '', '~') ?? '.env'
-    lines.push(chalk.yellow(`  ⚠ No API key — edit ${envPath}`))
-  }
-
-  // Help hints
-  lines.push(chalk.dim('  /help · Tab · ↑↓ history · Ctrl+C×2 exit'))
-
-  // What's New (shown once after update)
-  if (releaseNotes && releaseNotes.length > 0) {
-    lines.push('')
-    lines.push(chalk.bold.hex('#3b82f6')("  What's New:"))
-    for (const note of releaseNotes) {
-      lines.push(chalk.dim(`    • ${note}`))
-    }
+    lines.push(chalk.hex('#ffff00')(`  ⚠ No API key — edit ${envPath}`))
   }
 
   lines.push('')

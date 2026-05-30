@@ -28,9 +28,6 @@ function defaultPromptVM(overrides?: Partial<PromptVMInput>): PromptVMInput {
     planning: false,
     logMode: false,
     queuedMessages: [],
-    updateHint: null,
-    serverUptime: null,
-    serverPort: null,
     exitHint: false,
     completionCandidates: [],
     ghostHint: '',
@@ -45,10 +42,6 @@ function defaultPromptVM(overrides?: Partial<PromptVMInput>): PromptVMInput {
     cacheReadTokens: 0,
     contextTokens: 0,
     contextWindow: 0,
-    provider: '',
-    thinkingLevel: '',
-    cost: 0,
-    autoCompact: true,
     ...overrides,
   }
 }
@@ -241,12 +234,6 @@ describe('renderPrompt', () => {
     const lines = blocksToLines(buildPromptBlocks(defaultPromptVM()))
     expect(Array.isArray(lines)).toBe(true)
     expect(lines.length).toBeGreaterThan(0)
-  })
-
-  test('contains model name', () => {
-    const lines = blocksToLines(buildPromptBlocks(defaultPromptVM({ model: 'claude-opus' })))
-    const joined = lines.join('\n')
-    expect(joined).toContain('claude-opus')
   })
 
   test('contains cursor (inverse video)', () => {
