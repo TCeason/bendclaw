@@ -201,11 +201,10 @@ impl Agent {
 
     /// Register the skill tool so the LLM can activate skills by name.
     ///
-    /// **Does not** modify `self.system_prompt`. Callers are responsible for
-    /// including [`SkillSet::format_for_prompt`] (or equivalent) in the
-    /// system prompt they pass to `with_system_prompt`. This keeps the engine
-    /// honest: the system prompt it sends is exactly what the caller built,
-    /// which is what `/_dump`-style tooling relies on.
+    /// **Does not** modify `self.system_prompt`. Skill availability is conveyed
+    /// through the SkillTool's own description, not the system prompt. This keeps
+    /// the engine honest: the system prompt it sends is exactly what the caller
+    /// built, which is what `/_dump`-style tooling relies on.
     ///
     /// **Must be called after `with_tools()`** — `with_tools()` replaces the
     /// tool list, so calling it afterwards would remove the SkillTool.

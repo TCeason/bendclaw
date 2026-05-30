@@ -836,7 +836,7 @@ impl Agent {
         input: Vec<evot_engine::Content>,
     ) -> Result<runtime::TurnInput> {
         let llm = self.llm.read().clone();
-        let (mut system_prompt, mut sections) = self.build_system_prompt(mode);
+        let (system_prompt, sections) = self.build_system_prompt(mode);
         let envs = self
             .variables()
             .map(|v| v.all_env_pairs())
@@ -853,22 +853,9 @@ impl Agent {
             sandbox_rt.bash_sandbox_dirs,
         );
 
-        // Append skills fragment to system prompt so the engine receives it
-        // as part of the prompt text (engine no longer mutates system_prompt).
-        if let Ok(specs) = crate::agent::prompt::skill::load_skills(&skill_dirs) {
-            if !specs.is_empty() {
-                let skill_set = evot_engine::SkillSet::new(specs);
-                let fragment = skill_set.format_for_prompt();
-                if !fragment.is_empty() {
-                    system_prompt.push_str("\n\n");
-                    system_prompt.push_str(&fragment);
-                    sections.push(Section {
-                        name: "skills",
-                        text: fragment,
-                    });
-                }
-            }
-        }
+        // Skill availability is surfaced via the Skill tool's own description,
+        // not injected into the system prompt. This keeps the prompt the engine
+        // sends exactly what the caller built (aligned with the pi harness).
 
         // No longer need turn tracking — engine handles it.
 

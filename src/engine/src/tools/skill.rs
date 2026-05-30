@@ -65,19 +65,6 @@ impl SkillSet {
     pub fn is_empty(&self) -> bool {
         self.skills.is_empty()
     }
-
-    pub fn format_for_prompt(&self) -> String {
-        if self.skills.is_empty() {
-            return String::new();
-        }
-
-        String::from(
-            "When the user's request matches a skill's description, \
-             you MUST invoke the skill tool BEFORE generating any other response. \
-             Do not explain, summarize, or ask clarifying questions before activating the skill. \
-             Never mention a skill without actually calling the skill tool.",
-        )
-    }
 }
 
 pub fn truncate_str(s: &str, max_chars: usize) -> String {

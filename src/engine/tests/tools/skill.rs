@@ -40,7 +40,6 @@ fn new_deduplicates_and_sorts() {
 fn empty_set() {
     let skills = SkillSet::empty();
     assert!(skills.is_empty());
-    assert_eq!(skills.format_for_prompt(), "");
 }
 
 #[test]
@@ -70,21 +69,6 @@ fn merge_skill_sets() {
     let names: Vec<&str> = set1.specs().iter().map(|s| s.name.as_str()).collect();
     assert_eq!(names, vec!["docker", "git", "weather"]);
     assert_eq!(set1.find("weather").unwrap().description, "Weather v2.");
-}
-
-#[test]
-fn format_for_prompt_has_instruction() {
-    let skills = SkillSet::new(vec![spec("weather", "Get weather.", "instructions")]);
-    let prompt = skills.format_for_prompt();
-
-    assert!(prompt.contains("MUST invoke the skill tool"));
-    assert!(prompt.contains("Never mention a skill"));
-}
-
-#[test]
-fn format_for_prompt_empty_when_no_skills() {
-    let skills = SkillSet::empty();
-    assert_eq!(skills.format_for_prompt(), "");
 }
 
 // ---------------------------------------------------------------------------
