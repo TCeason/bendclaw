@@ -12,6 +12,8 @@ mod planner;
 mod session;
 #[path = "context/summarizer.rs"]
 mod summarizer;
+#[path = "context/tracking.rs"]
+mod tracking;
 #[path = "context/trigger.rs"]
 mod trigger;
 

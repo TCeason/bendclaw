@@ -1,9 +1,16 @@
-//! Token estimation — tiktoken-based for accuracy and consistency.
+//! Local, model-agnostic token *approximation*.
 //!
-//! Uses `o200k_base` (GPT-4o / o1 / o3 / GPT-5 family encoding) as the
-//! universal tokenizer. This is a reasonable approximation for non-OpenAI
-//! models and ensures all subsystems (compaction, call stats, context
-//! tracking) agree on token counts.
+//! This is deliberately NOT a real tokenizer. The accurate, model-specific
+//! context size always comes from the provider's own `usage` (see
+//! `ContextTracker::estimate_context_tokens`, which anchors on the latest
+//! assistant usage embedded in the transcript). A real tokenizer here would
+//! only be right for one model family and wrong for every other, so we use a
+//! cheap byte-based heuristic instead.
+//!
+//! It is used only where an exact count is unnecessary:
+//!   - sizing the small trailing delta since the last provider response,
+//!   - relative sizing inside compaction (which messages to cut, before/after),
+//!   - per-role breakdowns shown in observability events (labelled estimates).
 
 use crate::provider::ToolDefinition;
 use crate::types::*;
@@ -14,11 +21,13 @@ use crate::types::*;
 /// post-resize cost instead of a low placeholder.
 const IMAGE_FIXED_TOKEN_ESTIMATE: usize = 5_333;
 
-/// Estimate tokens for a text string using the tiktoken `o200k_base` encoding.
+/// Approximate tokens for a text string.
+///
+/// Byte-length / 4: matches the ~4 bytes/token of ASCII text and code while
+/// staying closer to reality for multi-byte (e.g. CJK) text than a char count.
+/// Model-agnostic by design — the precise count is the provider's job.
 pub fn estimate_tokens(text: &str) -> usize {
-    tiktoken_rs::o200k_base_singleton()
-        .encode_with_special_tokens(text)
-        .len()
+    text.len().div_ceil(4)
 }
 
 /// Estimate tokens for a single message

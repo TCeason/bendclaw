@@ -159,16 +159,18 @@ fn detects_split_turn() {
                                                        // Big turn
     messages.push(user_msg(&big_text(200)));
     messages.push(tool_call_msg("t1", "read"));
-    messages.push(tool_result_msg("t1", &big_text(800)));
+    messages.push(tool_result_msg("t1", &big_text(2000)));
     messages.push(tool_call_msg("t2", "read"));
-    messages.push(tool_result_msg("t2", &big_text(800)));
-    // If cut happens inside this turn, split_turn should be detected
+    messages.push(tool_result_msg("t2", &big_text(2000)));
+    // The retained tail lands on this trailing assistant, cutting inside the
+    // turn that began at the user message, so split_turn must be detected.
     messages.push(assistant_msg(&big_text(100)));
 
-    let plan = planner::plan(&messages, &config);
-    // Plan may or may not split depending on exact token math,
-    // but the function should not panic
-    assert!(plan.is_some() || messages.len() < 4);
+    let plan = planner::plan(&messages, &config).expect("large turn should produce a plan");
+    assert!(
+        plan.split_turn.is_some(),
+        "cut inside a turn should be reported as a split"
+    );
 }
 
 #[test]

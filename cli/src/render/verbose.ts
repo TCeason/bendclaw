@@ -311,6 +311,7 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
       const evicted = (result.messages_evicted as number) ?? 0
       const shrunk = (result.tool_results_shrunk as number) ?? 0
       const reclaimed = (result.current_run_reclaimed as number) ?? 0
+      const imagesDowngraded = (result.images_downgraded as number) ?? 0
       const contextWindow = ((data.context_window as number) ?? 0)
 
       const level = evicted > 0 ? 3 : shrunk > 0 ? 1 : 0
@@ -318,6 +319,7 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
       if (evicted > 0) parts.push(`evicted ${evicted} msgs`)
       if (shrunk > 0) parts.push(`shrunk ${shrunk} results`)
       if (reclaimed > 0) parts.push(`reclaimed ${reclaimed}`)
+      if (imagesDowngraded > 0) parts.push(`imgs downgraded ${imagesDowngraded}`)
       const summary = parts.length > 0 ? parts.join(' · ') : 'no changes'
 
       const lines: string[] = []

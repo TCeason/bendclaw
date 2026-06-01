@@ -288,10 +288,11 @@ async fn run_loop(
             context.messages.push(agent_msg.clone());
             new_messages.push(agent_msg.clone());
 
-            // Record real usage from provider for accurate context tracking
+            // Clear the post-compaction stale flag once a real response lands,
+            // re-enabling the provider anchor (which is read from the message
+            // list itself, so no token count needs to be stored here).
             if let Message::Assistant { ref usage, .. } = message {
-                let msg_index = context.messages.len() - 1;
-                context_tracker.record_usage(usage, msg_index);
+                context_tracker.record_response(usage);
             }
 
             // Extract tool calls before compaction. A tool-use assistant message

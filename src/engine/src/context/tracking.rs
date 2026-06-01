@@ -13,23 +13,28 @@ use crate::types::*;
 // Context tracking (real usage + estimates)
 // ---------------------------------------------------------------------------
 
-/// Tracks context size using provider usage as baseline, with chars/4
-/// fallback for LLM call UI snapshots.
+/// Measures current context size, anchored on the provider's own token count.
 ///
-/// Important: the provider baseline includes system prompt + tool definitions
-/// (fixed overhead) that compaction cannot reduce. Compaction uses
-/// `total_tokens(messages)` directly instead of the tracker estimate.
+/// The accurate, model-specific size always comes from the latest assistant
+/// `usage` already embedded in the transcript — not from any local tokenizer.
+/// Because that anchor lives in the message list itself, the measurement is
+/// correct immediately on resume (no in-memory state to lose) and is identical
+/// across all models. A cheap byte approximation only sizes the small trailing
+/// delta since that response, and serves as a floor before the first response.
 pub struct ContextTracker {
-    last_baseline_tokens: Option<usize>,
-    last_baseline_index: Option<usize>,
+    /// Set after a compaction rewrites the messages: the trailing assistant
+    /// usage then reflects the pre-compaction (larger) context, so it must not
+    /// be used as an anchor until a fresh provider response arrives. This is
+    /// transient run state — correctly absent on resume, where the resolved
+    /// context view already exposes a valid post-compaction anchor.
+    baseline_stale: bool,
     system_tool_overhead_tokens: usize,
 }
 
 impl ContextTracker {
     pub fn new() -> Self {
         Self {
-            last_baseline_tokens: None,
-            last_baseline_index: None,
+            baseline_stale: false,
             system_tool_overhead_tokens: 0,
         }
     }
@@ -44,53 +49,41 @@ impl ContextTracker {
         self.system_tool_overhead_tokens
     }
 
-    /// Update baseline from provider usage (call after each assistant message).
-    ///
-    /// Only input-side tokens count toward context size. Output tokens are
-    /// excluded because the assistant message is already in `messages` and
-    /// will be estimated via chars/4 for trailing-message accounting.
-    pub fn record_usage(&mut self, usage: &Usage, message_index: usize) {
-        let total = usage.input + usage.cache_read + usage.cache_write;
-        if total > 0 {
-            self.last_baseline_tokens = Some(total as usize);
-            self.last_baseline_index = Some(message_index);
+    /// Re-enable the provider anchor once a fresh response with real usage
+    /// lands after a compaction. Responses with no usable usage (e.g. empty or
+    /// error responses) are ignored so the stale pre-compaction anchor stays
+    /// suppressed until a genuine measurement arrives.
+    pub fn record_response(&mut self, usage: &Usage) {
+        if usage.input + usage.cache_read + usage.cache_write > 0 {
+            self.baseline_stale = false;
         }
     }
 
-    /// Invalidate the baseline after compaction.
+    /// Suppress the provider anchor after compaction.
     ///
-    /// After compaction, the last assistant usage reflects pre-compaction
-    /// context size and cannot be trusted. Reset the baseline so that
-    /// `estimate_context_tokens` returns `None` (unknown) until the next
-    /// LLM response provides fresh usage data.
-    ///
-    /// This matches Pi's approach: context size is unknown between compaction
-    /// and the next provider response, avoiding any synthetic estimation that
-    /// mixes different tokenizer scales.
+    /// The trailing assistant usage now reflects pre-compaction context size.
+    /// Until the next real response, `estimate_context_tokens` falls back to the
+    /// byte approximation over the (already shrunk) message list.
     pub fn record_compaction_done(&mut self) {
-        self.last_baseline_tokens = None;
-        self.last_baseline_index = None;
+        self.baseline_stale = true;
     }
 
-    /// Estimate current context size: baseline + tiktoken for trailing messages.
+    /// Measure current context size: provider anchor + byte estimate of the
+    /// trailing delta since that response.
     ///
-    /// When a valid provider baseline exists, trust it — it reflects the real
-    /// token count from the model's own tokenizer. The tiktoken `o200k_base`
-    /// estimate is only used as a fallback when no baseline is available (e.g.
-    /// models that report `usage.input = 0` or the very first turn).
-    ///
-    /// Previously, `total_tokens(messages)` was used as a floor even when a
-    /// baseline existed. This caused overestimation for Claude models (whose
-    /// tokenizer produces ~40% fewer tokens than o200k_base), preventing
-    /// compaction from triggering when it should.
+    /// The anchor is the most recent assistant `usage` in the message list
+    /// (input + cached input), which is the model's own count for everything up
+    /// to that point. Only the few messages appended afterward are approximated.
+    /// Falls back to a whole-list byte estimate when no anchor is usable (the
+    /// first turn of a fresh session, or the brief window just after compaction).
     pub fn estimate_context_tokens(&self, messages: &[AgentMessage]) -> usize {
-        match (self.last_baseline_tokens, self.last_baseline_index) {
-            (Some(baseline_tokens), Some(idx)) if baseline_tokens > 0 && idx < messages.len() => {
+        if !self.baseline_stale {
+            if let Some((baseline, idx)) = latest_provider_anchor(messages) {
                 let trailing: usize = messages[idx + 1..].iter().map(message_tokens).sum();
-                baseline_tokens + trailing
+                return baseline + trailing;
             }
-            _ => total_tokens(messages),
         }
+        total_tokens(messages)
     }
 
     /// Build a budget snapshot from the current tracker state and config.
@@ -119,13 +112,23 @@ impl ContextTracker {
             context_window,
         }
     }
+}
 
-    /// Discard the baseline entirely.
-    pub fn reset(&mut self) {
-        self.last_baseline_tokens = None;
-        self.last_baseline_index = None;
-        self.system_tool_overhead_tokens = 0;
-    }
+/// The most recent assistant `usage` in the list, as (anchor_tokens, index).
+///
+/// The anchor is the provider's own count of the input it processed for that
+/// response — uncached input plus cached input (`cache_read` + `cache_write`),
+/// which together cover the full prompt regardless of cache state. Output is
+/// excluded: the assistant message itself is in the list and is approximated
+/// as part of the trailing delta. Responses with no usable usage are skipped.
+fn latest_provider_anchor(messages: &[AgentMessage]) -> Option<(usize, usize)> {
+    messages.iter().enumerate().rev().find_map(|(idx, msg)| {
+        let AgentMessage::Llm(Message::Assistant { usage, .. }) = msg else {
+            return None;
+        };
+        let anchor = (usage.input + usage.cache_read + usage.cache_write) as usize;
+        (anchor > 0).then_some((anchor, idx))
+    })
 }
 
 impl Default for ContextTracker {

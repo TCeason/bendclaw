@@ -48,9 +48,8 @@ fn big_text(n: usize) -> String {
     "x".repeat(n)
 }
 
-/// Build text with `n` distinct words so the tiktoken estimate reflects real
-/// token volume (repeated characters compress heavily under BPE and would not
-/// exercise threshold-based logic).
+/// Build text with `n` distinct words. Kept distinct so the byte estimate
+/// reflects real text volume the way production content does.
 fn varied_text(n: usize) -> String {
     let mut s = String::with_capacity(n * 8);
     for i in 0..n {
