@@ -2399,3 +2399,55 @@ async fn test_no_steering_reports_zero() {
     assert!(!counts.is_empty());
     assert_eq!(counts[0], 0, "Expected 0 injected messages");
 }
+
+// ---------------------------------------------------------------------------
+// Cross-model tool-name aliasing (resume scenario)
+// ---------------------------------------------------------------------------
+
+/// When a session is resumed under a non-Claude model, the model may call a
+/// tool using the capitalized alias (e.g. `Edit`) it saw in history. Dispatch
+/// must still resolve to the tool, and edit-specific coercion (legacy
+/// single-edit args) must still apply — gated on the tool's canonical name,
+/// not the called alias.
+#[tokio::test]
+async fn test_aliased_edit_call_dispatches_and_coerces() {
+    use evotengine::tools::EditFileTool;
+
+    let tmp = std::env::temp_dir().join("evot-harden-alias-edit.txt");
+    std::fs::write(&tmp, "alpha\n").expect("write temp file");
+    let path = tmp.to_string_lossy().to_string();
+
+    let output = TestHarness::new()
+        .responses(vec![
+            // Model calls the Claude-style alias with legacy top-level
+            // old_text/new_text (no edits array) — both paths must work.
+            MockResponse::ToolCalls(vec![MockToolCall {
+                name: "Edit".into(),
+                arguments: serde_json::json!({
+                    "path": path,
+                    "old_text": "alpha",
+                    "new_text": "beta",
+                }),
+            }]),
+            MockResponse::Text("done".into()),
+        ])
+        .tool_boxed(Box::new(EditFileTool::new()))
+        .run("edit it")
+        .await;
+
+    output.assert_completed();
+
+    // The tool result must not be a dispatch failure.
+    assert!(
+        output.tool_errors().is_empty(),
+        "aliased Edit call should dispatch and succeed without tool errors"
+    );
+
+    let content = std::fs::read_to_string(&tmp).expect("read temp file");
+    let _ = std::fs::remove_file(&tmp);
+    assert!(
+        content.contains("beta"),
+        "edit coercion should have applied the legacy single-edit, file: {:?}",
+        content
+    );
+}

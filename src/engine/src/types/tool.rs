@@ -162,6 +162,18 @@ pub trait AgentTool: Send + Sync {
         self.name().to_string()
     }
 
+    /// Check if a called tool name matches this tool (case-insensitive).
+    /// Matches against the base name and all known aliases regardless of model.
+    fn matches_call_name(&self, called_name: &str) -> bool {
+        let called_lower = called_name.to_lowercase();
+        if self.name().to_lowercase() == called_lower {
+            return true;
+        }
+        self.name_aliases()
+            .iter()
+            .any(|(_, alias)| alias.to_lowercase() == called_lower)
+    }
+
     /// Execute the tool.
     ///
     /// The `ctx` parameter provides per-invocation context:

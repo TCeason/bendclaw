@@ -439,7 +439,6 @@ async fn run_loop(
                     &context.cwd,
                     &context.path_guard,
                     &config.spill,
-                    &config.model,
                 )
                 .await;
 

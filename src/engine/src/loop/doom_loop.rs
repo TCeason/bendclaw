@@ -95,7 +95,7 @@ impl DoomLoopDetector {
         tool_calls
             .iter()
             .map(|(_id, name, args)| ToolCallSignature {
-                name: name.clone(),
+                name: name.to_lowercase(),
                 args_canonical: canonical_json(args),
             })
             .collect()

@@ -26,7 +26,6 @@ pub(super) async fn execute_tool_calls(
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
-    model: &str,
 ) -> ToolExecutionResult {
     match strategy {
         ToolExecutionStrategy::Sequential => {
@@ -39,7 +38,6 @@ pub(super) async fn execute_tool_calls(
                 cwd,
                 path_guard,
                 spill,
-                model,
             )
             .await
         }
@@ -53,7 +51,6 @@ pub(super) async fn execute_tool_calls(
                 cwd,
                 path_guard,
                 spill,
-                model,
             )
             .await
         }
@@ -62,10 +59,8 @@ pub(super) async fn execute_tool_calls(
             let mut steering_messages: Option<Vec<AgentMessage>> = None;
 
             for (batch_idx, batch) in tool_calls.chunks(*size).enumerate() {
-                let batch_result = execute_batch(
-                    tools, batch, tx, cancel, None, cwd, path_guard, spill, model,
-                )
-                .await;
+                let batch_result =
+                    execute_batch(tools, batch, tx, cancel, None, cwd, path_guard, spill).await;
                 results.extend(batch_result.tool_results);
 
                 // Check steering between batches
@@ -104,16 +99,13 @@ async fn execute_sequential(
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
-    model: &str,
 ) -> ToolExecutionResult {
     let mut results: Vec<Message> = Vec::new();
     let mut steering_messages: Option<Vec<AgentMessage>> = None;
 
     for (index, (id, name, args)) in tool_calls.iter().enumerate() {
-        let (msg, _is_error) = execute_single_tool(
-            tools, id, name, args, tx, cancel, cwd, path_guard, spill, model,
-        )
-        .await;
+        let (msg, _is_error) =
+            execute_single_tool(tools, id, name, args, tx, cancel, cwd, path_guard, spill).await;
         results.push(msg);
 
         // Check for steering — skip remaining tools if user interrupted
@@ -146,16 +138,13 @@ async fn execute_batch(
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
-    model: &str,
 ) -> ToolExecutionResult {
     use futures::future::join_all;
 
     let futures: Vec<_> = tool_calls
         .iter()
         .map(|(id, name, args)| {
-            execute_single_tool(
-                tools, id, name, args, tx, cancel, cwd, path_guard, spill, model,
-            )
+            execute_single_tool(tools, id, name, args, tx, cancel, cwd, path_guard, spill)
         })
         .collect();
 
@@ -193,9 +182,8 @@ async fn execute_single_tool(
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
-    model: &str,
 ) -> (Message, bool) {
-    let tool = tools.iter().find(|t| t.resolve_name(model) == name);
+    let tool = tools.iter().find(|t| t.matches_call_name(name));
 
     let preview_command = tool.and_then(|t| t.preview_command(args));
 
@@ -258,8 +246,10 @@ async fn execute_single_tool(
                 None => args.clone(),
             };
 
-            // Step 2: Edit-specific coercion (edits string→array, legacy single-edit)
-            if name == "edit" {
+            // Step 2: Edit-specific coercion (edits string→array, legacy single-edit).
+            // Gate on the tool's canonical name, not the called name: a model
+            // resuming a session may call the alias ("Edit") it saw in history.
+            if tool.name() == "edit" {
                 normalized = crate::tools::validation::coerce_edits(&normalized);
             }
 
