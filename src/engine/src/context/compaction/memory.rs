@@ -147,7 +147,10 @@ pub(crate) fn extract_user_requests(messages: &[AgentMessage]) -> Vec<String> {
                 continue;
             }
             let short = if trimmed.len() > ANCHOR_MAX_CHARS {
-                format!("{}…", &trimmed[..ANCHOR_MAX_CHARS])
+                format!(
+                    "{}…",
+                    &trimmed[..trimmed.floor_char_boundary(ANCHOR_MAX_CHARS)]
+                )
             } else {
                 trimmed.to_string()
             };
@@ -307,7 +310,7 @@ pub(crate) fn extract_env_discoveries(
                     || trimmed.contains("rustup")
                 {
                     let entry = if trimmed.len() > 100 {
-                        format!("{}...", &trimmed[..97])
+                        format!("{}...", &trimmed[..trimmed.floor_char_boundary(97)])
                     } else {
                         trimmed.to_string()
                     };
@@ -342,7 +345,10 @@ fn summarize_turn_prefix(prefix: &[AgentMessage]) -> String {
             let trimmed = text.trim();
             if !trimmed.is_empty() {
                 let short = if trimmed.len() > ANCHOR_MAX_CHARS {
-                    format!("{}…", &trimmed[..ANCHOR_MAX_CHARS])
+                    format!(
+                        "{}…",
+                        &trimmed[..trimmed.floor_char_boundary(ANCHOR_MAX_CHARS)]
+                    )
                 } else {
                     trimmed.to_string()
                 };

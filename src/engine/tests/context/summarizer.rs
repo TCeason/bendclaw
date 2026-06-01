@@ -110,6 +110,23 @@ fn serialize_messages_truncates_long_tool_results() {
 }
 
 #[test]
+fn serialize_messages_truncates_multibyte_tool_results_at_char_boundary() {
+    // Regression: the 2000-byte truncation budget must snap to a char boundary.
+    // Devanagari characters are 3 bytes, so a fixed `&text[..2000]` slice lands
+    // mid-codepoint and panics. Pad so byte 2000 falls inside a multi-byte char.
+    let content = format!("{}ग्राहक वॉलेट", "a".repeat(1999));
+    assert!(
+        !content.is_char_boundary(2000),
+        "test setup: byte 2000 must split a char"
+    );
+    let messages = vec![tool_result_msg("c1", &content)];
+
+    // Must not panic on the non-boundary byte index.
+    let text = serialize::serialize_messages(&messages);
+    assert!(text.contains("more characters truncated"));
+}
+
+#[test]
 fn serialize_messages_includes_thinking() {
     let msg = AgentMessage::Llm(Message::Assistant {
         content: vec![
