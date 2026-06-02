@@ -36,6 +36,8 @@ impl ProviderError {
             Self::ContextOverflow {
                 message: message.to_string(),
             }
+        } else if status == 429 && is_quota_exceeded(message) {
+            Self::Other(message.to_string())
         } else if status == 429 {
             Self::RateLimited { retry_after_ms }
         } else if status == 529 || is_overloaded_message(message) {
@@ -159,6 +161,11 @@ fn is_context_overflow(status: u16, message: &str) -> bool {
 pub(crate) fn is_overloaded_message(message: &str) -> bool {
     let lower = message.to_lowercase();
     lower.contains("overloaded_error") || lower.contains("service is overloaded")
+}
+
+fn is_quota_exceeded(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    lower.contains("quota_exceeded") || lower.contains("quota exceeded")
 }
 
 // ---------------------------------------------------------------------------
