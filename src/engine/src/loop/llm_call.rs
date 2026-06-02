@@ -66,6 +66,15 @@ pub(super) async fn stream_assistant_response(
     let mut attempt = 0;
     let shared_metrics = std::sync::Arc::new(std::sync::Mutex::new(LlmCallMetrics::default()));
     let result = loop {
+        // Temperature is incompatible with extended thinking — the Anthropic
+        // API requires temperature=1 (the default) when thinking is enabled.
+        // Suppress any user-configured temperature to avoid API errors.
+        let effective_temperature = if config.thinking_level == ThinkingLevel::Off {
+            config.temperature
+        } else {
+            None
+        };
+
         let stream_config = StreamConfig {
             model: config.model.clone(),
             system_prompt: context.system_prompt.clone(),
@@ -74,7 +83,7 @@ pub(super) async fn stream_assistant_response(
             thinking_level: config.thinking_level,
             api_key: config.api_key.clone(),
             max_tokens: config.max_tokens,
-            temperature: config.temperature,
+            temperature: effective_temperature,
             model_config: config.model_config.clone(),
             cache_config: config.cache_config.clone(),
             prompt_cache_key: context.prompt_cache_key.clone(),
@@ -92,7 +101,7 @@ pub(super) async fn stream_assistant_response(
                 messages: llm_messages.clone(),
                 tools: tool_defs.clone(),
                 max_tokens: config.max_tokens,
-                temperature: config.temperature,
+                temperature: effective_temperature,
             },
             stats: llm_stats,
             budget: budget.clone(),
