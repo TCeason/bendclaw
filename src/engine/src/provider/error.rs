@@ -165,7 +165,13 @@ pub(crate) fn is_overloaded_message(message: &str) -> bool {
 
 fn is_quota_exceeded(message: &str) -> bool {
     let lower = message.to_lowercase();
-    lower.contains("quota_exceeded") || lower.contains("quota exceeded")
+    lower.contains("quota_exceeded")
+        || lower.contains("quota exceeded")
+        || lower.contains("insufficient_quota")
+        || lower.contains("out of budget")
+        || lower.contains("available balance")
+        || lower.contains("usage limit reached")
+        || lower.contains("billing")
 }
 
 // ---------------------------------------------------------------------------
