@@ -58,7 +58,7 @@ impl AgentTool for EditFileTool {
 
     fn description(&self) -> &str {
         "Edit a single file using exact text replacement. \
-         Every edits[].old_text must match a unique, non-overlapping region of the original file. \
+         Every edits[].oldText must match a unique, non-overlapping region of the original file. \
          If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. \
          Do not include large unchanged regions just to connect distant changes."
     }
@@ -81,16 +81,16 @@ impl AgentTool for EditFileTool {
                     "items": {
                         "type": "object",
                         "properties": {
-                            "old_text": {
+                            "oldText": {
                                 "type": "string",
-                                "description": "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].old_text in the same call."
+                                "description": "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call."
                             },
-                            "new_text": {
+                            "newText": {
                                 "type": "string",
                                 "description": "Replacement text for this targeted edit."
                             }
                         },
-                        "required": ["old_text", "new_text"]
+                        "required": ["oldText", "newText"]
                     }
                 }
             },
@@ -266,15 +266,15 @@ impl EditFileTool {
         for (i, entry) in arr.iter().enumerate() {
             let old = entry["old_text"]
                 .as_str()
-                .ok_or_else(|| ToolError::InvalidArgs(format!("edits[{i}] missing old_text")))?;
+                .ok_or_else(|| ToolError::InvalidArgs(format!("edits[{i}] missing oldText")))?;
             let new = entry["new_text"]
                 .as_str()
-                .ok_or_else(|| ToolError::InvalidArgs(format!("edits[{i}] missing new_text")))?;
+                .ok_or_else(|| ToolError::InvalidArgs(format!("edits[{i}] missing newText")))?;
             let old_lf = normalize_to_lf(old);
             let new_lf = normalize_to_lf(new);
             if old_lf.is_empty() {
                 return Err(ToolError::Failed(format!(
-                    "edits[{i}].old_text must not be empty."
+                    "edits[{i}].oldText must not be empty."
                 )));
             }
             edits.push((old_lf, new_lf));
@@ -298,21 +298,21 @@ impl EditFileTool {
         };
         match e {
             MatchError::EmptyOldText => {
-                ToolError::Failed(format!("{prefix}old_text must not be empty."))
+                ToolError::Failed(format!("{prefix}oldText must not be empty."))
             }
             MatchError::NotFound => {
                 let hint = find_similar_text(content_lf, old_text_lf);
                 let suffix = match hint {
                     Some(similar) => format!(
                         "\n\nDid you mean:\n```\n{similar}\n```\n\
-                         Make sure old_text matches the current file content exactly."
+                         Make sure oldText matches the current file content exactly."
                     ),
                     None => "\n\nTip: Use Read to see the current file contents.".into(),
                 };
-                ToolError::Failed(format!("{prefix}old_text not found in {path_str}.{suffix}"))
+                ToolError::Failed(format!("{prefix}oldText not found in {path_str}.{suffix}"))
             }
             MatchError::NotUnique { count } => ToolError::Failed(format!(
-                "{prefix}old_text matches {count} locations in {path_str}. \
+                "{prefix}oldText matches {count} locations in {path_str}. \
                  Include more surrounding context to make the match unique."
             )),
         }

@@ -113,7 +113,7 @@ async fn test_empty_old_text() {
         .await;
 
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("old_text must not be empty"));
+    assert!(err.contains("oldText must not be empty"));
     let _ = std::fs::remove_file(tmp);
 }
 
