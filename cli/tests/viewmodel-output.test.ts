@@ -17,6 +17,14 @@ function renderPlain(lines: OutputLine[]): string {
   return stripAnsi(render(lines))
 }
 
+function renderWithColumns(lines: OutputLine[], columns: number): string {
+  return blocksToLines(buildOutputBlocks(lines, { columns })).join('\n')
+}
+
+function renderPlainWithColumns(lines: OutputLine[], columns: number): string {
+  return stripAnsi(renderWithColumns(lines, columns))
+}
+
 describe('buildOutputBlocks', () => {
   test('user message has marginTop=1 and bold prefix', () => {
     const result = renderPlain([{ id: 'u1', kind: 'user', text: 'hello' }])
@@ -151,5 +159,30 @@ describe('buildOutputBlocks', () => {
   test('run_summary is dim', () => {
     const result = render([{ id: 'r1', kind: 'run_summary', text: '  3 turns · 1.2k tokens' }])
     expect(result).toContain('\x1b[38;2;119;119;119m')
+  })
+
+  test('user message wraps when columns is provided', () => {
+    // 20 columns minus 2 for prefix = 18 chars per line
+    const longText = 'a'.repeat(40)
+    const result = renderPlainWithColumns([{ id: 'u1', kind: 'user', text: longText }], 20)
+    const lines = result.split('\n').filter(l => l.trim() !== '')
+    // Should wrap into 3 lines: 18 + 18 + 4
+    expect(lines.length).toBe(3)
+    expect(lines[0]).toContain('❯ ' + 'a'.repeat(18))
+    expect(lines[1]).toContain('  ' + 'a'.repeat(18))
+    expect(lines[2]).toContain('  ' + 'a'.repeat(4))
+  })
+
+  test('user message wraps CJK characters correctly', () => {
+    // Each CJK char is 2 columns wide. With 22 columns, avail = 20.
+    // Each char takes 2 cols, so 10 chars per line.
+    const cjkText = '你'.repeat(25)
+    const result = renderPlainWithColumns([{ id: 'u1', kind: 'user', text: cjkText }], 22)
+    const lines = result.split('\n').filter(l => l.trim() !== '')
+    // 25 chars at 2-width each = 50 cols, avail = 20, so 10 chars/line => 3 lines
+    expect(lines.length).toBe(3)
+    expect(lines[0]).toContain('❯ ' + '你'.repeat(10))
+    expect(lines[1]).toContain('  ' + '你'.repeat(10))
+    expect(lines[2]).toContain('  ' + '你'.repeat(5))
   })
 })

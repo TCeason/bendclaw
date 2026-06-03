@@ -1,5 +1,5 @@
 export { TermRenderer, type TermRendererOptions } from './renderer.js'
-export { parseInput, enableRawMode, type KeyEvent, type KeyHandler } from './input.js'
+export { parseInput, enableRawMode, enableEnhancedKeyboard, type KeyEvent, type KeyHandler } from './input.js'
 export {
   createSpinnerState,
   advanceSpinner,

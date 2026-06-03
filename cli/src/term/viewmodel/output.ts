@@ -1,8 +1,10 @@
 import type { OutputLine } from '../../render/output.js'
 import { line, block, plain, dim, bold, colored, type ViewBlock, type StyledLine } from './types.js'
+import { wrapTextByWidth } from './prompt.js'
 
 export interface OutputContext {
   prevKind?: string
+  columns?: number
 }
 
 export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | string = {}): ViewBlock[] {
@@ -13,11 +15,23 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
   for (const ol of lines) {
     let nextPrevKind: string | undefined = ol.kind
     switch (ol.kind) {
-      case 'user':
-        blocks.push(block([
-          line(bold('❯ ', 'yellow'), bold(ol.text)),
-        ], 1))
+      case 'user': {
+        const cols = initialContext.columns
+        const availWidth = cols ? Math.max(1, cols - 2) : 0
+        if (availWidth > 0 && ol.text.length > 0) {
+          const chunks = wrapTextByWidth(ol.text, availWidth)
+          const userLines = chunks.map((c, k) => {
+            const prefix = k === 0 ? bold('❯ ', 'yellow') : plain('  ')
+            return line(prefix, bold(ol.text.slice(c.start, c.end)))
+          })
+          blocks.push(block(userLines, 1))
+        } else {
+          blocks.push(block([
+            line(bold('❯ ', 'yellow'), bold(ol.text)),
+          ], 1))
+        }
         break
+      }
 
       case 'assistant': {
         // Empty-text assistant lines are block-spacing separators inserted by

@@ -117,6 +117,34 @@ describe('parseInput', () => {
     test('escape (bare)', () => {
       expect(parse('\x1b')).toEqual([{ type: 'escape' }])
     })
+
+    test('Alt+Enter (ESC CR)', () => {
+      expect(parse('\x1b\r')).toEqual([{ type: 'alt-enter' }])
+    })
+
+    test('Shift+Enter (Kitty CSI-u)', () => {
+      expect(parse('\x1b[13;2u')).toEqual([{ type: 'shift-enter' }])
+    })
+
+    test('Shift+Enter (xterm modifyOtherKeys)', () => {
+      expect(parse('\x1b[27;2;13~')).toEqual([{ type: 'shift-enter' }])
+    })
+
+    test('Shift+Enter (LF mapping)', () => {
+      expect(parse('\n')).toEqual([{ type: 'shift-enter' }])
+    })
+
+    test('Shift+Enter (legacy CSI tilde form)', () => {
+      expect(parse('\x1b[13;2~')).toEqual([{ type: 'shift-enter' }])
+    })
+
+    test('Kitty CSI-u Enter', () => {
+      expect(parse('\x1b[13u')).toEqual([{ type: 'enter' }])
+    })
+
+    test('Kitty CSI-u Ctrl+C', () => {
+      expect(parse('\x1b[99;5u')).toEqual([{ type: 'ctrl', key: 'c' }])
+    })
   })
 
   describe('bracketed paste', () => {

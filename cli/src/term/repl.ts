@@ -1,5 +1,5 @@
 import { TermRenderer, type RenderFrame } from './renderer.js'
-import { parseInput, enableRawMode, type KeyEvent } from './input.js'
+import { parseInput, enableRawMode, enableEnhancedKeyboard, type KeyEvent } from './input.js'
 import { installBracketedPaste } from './bracketed-paste.js'
 import { createSpinnerState, advanceSpinner, formatSpinnerLine } from './spinner.js'
 import { createSelectorState, selectorExpandItems, selectorClearQuery } from './selector.js'
@@ -319,7 +319,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // 2. History (committed output lines)
     const historyLines = expanded ? expandedLines : compactLines
     if (historyLines.length > 0) {
-      blocks.push(...buildOutputBlocks(historyLines))
+      blocks.push(...buildOutputBlocks(historyLines, { columns: renderer.termCols }))
     }
 
     // 3. Thinking text preview (shown during reasoning phase before text arrives)
@@ -391,10 +391,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   renderer.setRenderCallback(buildFrame)
 
-  function outputContextFor(lines: OutputLine[]): { prevKind?: string } {
+  function outputContextFor(lines: OutputLine[]): { prevKind?: string; columns?: number } {
     const prev = lines.length > 0 ? lines[lines.length - 1] : undefined
     return {
       prevKind: prev?.kind,
+      columns: renderer.termCols,
     }
   }
 
@@ -743,7 +744,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         // off. Render them with the same formatting pipeline so screen.log
         // still captures LLM/COMPACT/SPILL observability for post-hoc debug.
         if (update.writeLines.length > 0) {
-          const blocks = buildOutputBlocks(update.writeLines)
+          const blocks = buildOutputBlocks(update.writeLines, { columns: renderer.termCols })
           const rendered = blocksToLines(blocks)
           screenLog.logLines(rendered)
         }
@@ -1060,6 +1061,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         }
         break
       }
+      case 'shift-enter':
       case 'alt-enter': {
         editor = insertNewline(editor)
         renderer.requestRender()
@@ -1846,6 +1848,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   const disableRaw = enableRawMode(process.stdin)
+  const disableEnhancedKeyboard = enableEnhancedKeyboard(process.stdout)
   const { stream: pasteStream, cleanup: cleanupPaste } = installBracketedPaste(process.stdin, () => {
     // Empty paste — likely Cmd+V with image in clipboard
     tryPasteImage()
@@ -1866,6 +1869,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     updateMgr.cleanup()
     if (exitHintTimer) clearTimeout(exitHintTimer)
     process.stdout.write('\x1b[?2004l')
+    disableEnhancedKeyboard()
     setTerminalTitle()
     cleanupPaste()
     disableRaw()
