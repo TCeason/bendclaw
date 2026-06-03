@@ -324,10 +324,18 @@ impl EditFileTool {
                 };
                 ToolError::Failed(format!("{prefix}oldText not found in {path_str}.{suffix}"))
             }
-            MatchError::NotUnique { count } => ToolError::Failed(format!(
-                "{prefix}oldText matches {count} locations in {path_str}. \
-                 Include more surrounding context to make the match unique."
-            )),
+            MatchError::NotUnique { lines } => {
+                let count = lines.len();
+                let line_list = lines
+                    .iter()
+                    .map(|l| l.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                ToolError::Failed(format!(
+                    "{prefix}oldText matches {count} locations in {path_str} (lines {line_list}). \
+                     Include more surrounding context to make the match unique."
+                ))
+            }
         }
     }
 }
@@ -377,7 +385,12 @@ pub struct ResolvedMatch {
 pub enum MatchError {
     EmptyOldText,
     NotFound,
-    NotUnique { count: usize },
+    /// The text matched multiple locations. `lines` holds the 1-based line
+    /// number where each match begins, so the error can point the model at the
+    /// exact spots that need more surrounding context.
+    NotUnique {
+        lines: Vec<usize>,
+    },
 }
 
 /// Resolve a unique match of `old_text_lf` within `content_lf`.
@@ -404,7 +417,15 @@ pub fn resolve_unique_match(
         });
     }
     if count > 1 {
-        return Err(MatchError::NotUnique { count });
+        // Collect the 1-based line number of each match start.
+        let mut lines = Vec::with_capacity(count);
+        let mut search_from = 0;
+        while let Some(rel) = content_lf[search_from..].find(old_text_lf) {
+            let abs = search_from + rel;
+            lines.push(byte_offset_to_line(content_lf, abs));
+            search_from = abs + old_text_lf.len();
+        }
+        return Err(MatchError::NotUnique { lines });
     }
 
     // Level 2: Unicode-normalized match (1:1 char mapping)
@@ -477,7 +498,22 @@ fn try_unicode_normalized(
                 kind: MatchKind::UnicodeNormalized,
             }))
         }
-        count => Some(Err(MatchError::NotUnique { count })),
+        count => {
+            // Map each matching char index to a 1-based line number.
+            let lines = matches
+                .iter()
+                .take(count)
+                .map(|&start_char| {
+                    let byte_offset: usize = content_lf
+                        .chars()
+                        .take(start_char)
+                        .map(|c| c.len_utf8())
+                        .sum();
+                    byte_offset_to_line(content_lf, byte_offset)
+                })
+                .collect();
+            Some(Err(MatchError::NotUnique { lines }))
+        }
     }
 }
 
@@ -488,6 +524,15 @@ struct LineSpan {
     end: usize,
     /// Byte offset of the end of the line content (excluding `\n`).
     content_end: usize,
+}
+
+/// Convert a byte offset within `text` to a 1-based line number.
+fn byte_offset_to_line(text: &str, byte_offset: usize) -> usize {
+    text[..byte_offset.min(text.len())]
+        .bytes()
+        .filter(|&b| b == b'\n')
+        .count()
+        + 1
 }
 
 /// Build a line span table for `text`. Each entry records the byte range of one line.
@@ -563,7 +608,9 @@ fn try_whitespace_insensitive(
                 kind: MatchKind::WhitespaceInsensitive,
             }))
         }
-        count => Some(Err(MatchError::NotUnique { count })),
+        _ => Some(Err(MatchError::NotUnique {
+            lines: matches.iter().map(|&i| i + 1).collect(),
+        })),
     }
 }
 
@@ -611,7 +658,9 @@ fn try_full_normalized(
                 kind: MatchKind::FullNormalized,
             }))
         }
-        count => Some(Err(MatchError::NotUnique { count })),
+        _ => Some(Err(MatchError::NotUnique {
+            lines: matches.iter().map(|&i| i + 1).collect(),
+        })),
     }
 }
 

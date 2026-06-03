@@ -92,6 +92,8 @@ async fn test_not_unique_error() {
 
     let err = result.unwrap_err().to_string();
     assert!(err.contains("2 locations"));
+    // The error should name the exact lines where the text occurs (lines 1 and 3).
+    assert!(err.contains("lines 1, 3"), "error was: {err}");
     let _ = std::fs::remove_file(tmp);
 }
 
@@ -225,7 +227,15 @@ fn exact_unique() {
 fn exact_not_unique() {
     let content = "aaa\nbbb\naaa\n";
     let err = resolve_unique_match(content, "aaa").unwrap_err();
-    assert_eq!(err, MatchError::NotUnique { count: 2 });
+    assert_eq!(err, MatchError::NotUnique { lines: vec![1, 3] });
+}
+
+#[test]
+fn not_unique_reports_correct_lines_deeper_in_file() {
+    // Match starts on lines 2 and 5 (1-based).
+    let content = "header\nfont-size: 16px;\nmid\nother\nfont-size: 16px;\n";
+    let err = resolve_unique_match(content, "font-size: 16px;").unwrap_err();
+    assert_eq!(err, MatchError::NotUnique { lines: vec![2, 5] });
 }
 
 #[test]
