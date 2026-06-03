@@ -493,6 +493,17 @@ fn coerce_edits_normalize_entry_field_names() {
 }
 
 #[test]
+fn coerce_edits_invalid_string_becomes_empty_array() {
+    let input = json!({
+        "path": "foo.rs",
+        "edits": "not valid json"
+    });
+    let result = coerce_edits(&input);
+    let edits = result["edits"].as_array().unwrap();
+    assert!(edits.is_empty());
+}
+
+#[test]
 fn coerce_edits_already_correct_unchanged() {
     let input = json!({
         "path": "foo.rs",

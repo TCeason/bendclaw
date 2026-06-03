@@ -192,6 +192,10 @@ impl AgentTool for BashTool {
          If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds."
     }
 
+    fn prompt_snippet(&self) -> Option<&str> {
+        Some("Execute bash commands (ls, grep, find, etc.)")
+    }
+
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",

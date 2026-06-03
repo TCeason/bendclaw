@@ -52,6 +52,14 @@ impl AgentTool for ReadFileTool {
          Use offset/limit for large files. When you need the full file, continue with offset until complete."
     }
 
+    fn prompt_snippet(&self) -> Option<&str> {
+        Some("Read file contents")
+    }
+
+    fn prompt_guidelines(&self) -> Vec<&str> {
+        vec!["Use read to examine files instead of cat or sed."]
+    }
+
     fn parameter_aliases(&self) -> Option<crate::tools::validation::AliasMap> {
         Some(&[("path", &["file_path", "filePath", "file"] as &[&str])])
     }

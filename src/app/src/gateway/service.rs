@@ -48,7 +48,8 @@ pub async fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
         .map(|p| p.to_string_lossy().to_string())
         .map_err(|e| EvotError::Run(format!("failed to get cwd: {e}")))?;
 
-    let (system_prompt_text, system_prompt_sections) = SystemPrompt::new(&cwd)
+    let tools = crate::agent::tools::prompt_tools();
+    let (system_prompt_text, system_prompt_sections) = SystemPrompt::with_tool_set(&cwd, &tools)
         .with_system()
         .with_project_context()
         .with_dynamic_boundary()

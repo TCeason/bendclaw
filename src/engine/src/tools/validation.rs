@@ -46,9 +46,17 @@ pub fn coerce_edits(input: &Value) -> Value {
 
     // Case 1: edits is a JSON string — parse it
     if let Some(s) = result.get("edits").and_then(|v| v.as_str()) {
-        if let Ok(parsed) = serde_json::from_str::<Value>(s) {
-            if parsed.is_array() {
+        let s_owned = s.to_owned();
+        match serde_json::from_str::<Value>(&s_owned) {
+            Ok(parsed) if parsed.is_array() => {
                 result.insert("edits".to_string(), parsed);
+            }
+            _ => {
+                // Parse failed or not an array — coerce to empty array so
+                // generic schema validation passes and the tool's own
+                // parse_edits reports a meaningful "edits[] must not be empty"
+                // error instead of a generic type-mismatch.
+                result.insert("edits".to_string(), Value::Array(vec![]));
             }
         }
     }

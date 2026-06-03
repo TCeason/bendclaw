@@ -6,16 +6,18 @@ const DYNAMIC_BOUNDARY: &str = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
 
 const SYSTEM_SECTION: &str = r#""#;
 
-const USING_TOOLS_SECTION: &str = r#"Guidelines:
-- Use bash for file operations like ls, rg, find
-- Use read to examine files instead of cat or sed.
-- Use edit for precise changes (edits[].oldText must match exactly)
-- When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls
-- Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.
-- Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.
-- Use write only for new files or complete rewrites.
-- Be concise in your responses
-- Show file paths clearly when working with files"#;
+const USING_TOOLS_HEADER: &str = "Guidelines:";
+const BASH_FILE_OPS_GUIDELINE: &str = "Use bash for file operations like ls, rg, find";
+const USING_TOOLS_TRAILER: &[&str] = &[
+    "Be concise in your responses",
+    "Show file paths clearly when working with files",
+];
+
+const IDENTITY_INTRO: &str =
+    "You are an expert coding assistant. You help users by reading files, \
+     executing commands, editing code, and writing new files.";
+const IDENTITY_OUTRO: &str =
+    "In addition to the tools above, you may have access to other custom tools depending on the project.";
 
 const TONE_AND_STYLE_SECTION: &str = r#""#;
 
@@ -66,24 +68,51 @@ pub struct Section {
 
 pub struct SystemPrompt {
     cwd: String,
+    has_bash: bool,
+    tools_guidelines: Vec<String>,
     sections: Vec<Section>,
 }
 
 impl SystemPrompt {
     pub fn new(cwd: &str) -> Self {
+        Self::with_tool_set(cwd, &[])
+    }
+
+    /// Construct a prompt whose identity "Available tools" list and guidelines
+    /// are derived from the given tools, matching the pi harness exactly:
+    /// a tool appears in "Available tools" only when it provides a snippet, and
+    /// the guidelines section is assembled in tool order with dedup.
+    pub fn with_tool_set(cwd: &str, tools: &[Box<dyn evot_engine::AgentTool>]) -> Self {
+        let mut text = String::from(IDENTITY_INTRO);
+        let listed: Vec<&Box<dyn evot_engine::AgentTool>> = tools
+            .iter()
+            .filter(|t| t.prompt_snippet().is_some())
+            .collect();
+        if !listed.is_empty() {
+            text.push_str("\n\nAvailable tools:");
+            for t in &listed {
+                if let Some(snippet) = t.prompt_snippet() {
+                    text.push_str(&format!("\n- {}: {}", t.name(), snippet));
+                }
+            }
+            text.push_str("\n\n");
+            text.push_str(IDENTITY_OUTRO);
+        }
         Self {
             cwd: cwd.to_string(),
+            has_bash: tools.iter().any(|t| t.name() == "bash"),
+            tools_guidelines: tools
+                .iter()
+                .flat_map(|t| {
+                    t.prompt_guidelines()
+                        .into_iter()
+                        .map(|g| g.to_string())
+                        .collect::<Vec<_>>()
+                })
+                .collect(),
             sections: vec![Section {
                 name: "identity",
-                text: "You are an expert coding assistant. You help users by reading files, \
-                       executing commands, editing code, and writing new files.\
-                       \n\nAvailable tools:\n\
-                       - read: Read file contents\n\
-                       - bash: Execute bash commands (ls, grep, find, etc.)\n\
-                       - edit: Make precise file edits with exact text replacement, including multiple disjoint edits in one call\n\
-                       - write: Create or overwrite files\n\n\
-                       In addition to the tools above, you may have access to other custom tools depending on the project."
-                    .into(),
+                text,
             }],
         }
     }
@@ -107,11 +136,35 @@ impl SystemPrompt {
         self
     }
 
-    /// Append tool-use guidance: prefer dedicated tools and choose shell when useful.
+    /// Append tool-use guidance assembled from the registered tools' own
+    /// `prompt_guidelines`, matching the pi harness ordering exactly:
+    /// the conditional bash file-ops line first, then per-tool guidelines in
+    /// tool order, then the shared trailer lines — all deduplicated.
     pub fn with_tool_guidance(mut self) -> Self {
+        let mut seen = std::collections::HashSet::new();
+        let mut guidelines: Vec<String> = Vec::new();
+        let mut add = |g: &str| {
+            let g = g.trim();
+            if !g.is_empty() && seen.insert(g.to_string()) {
+                guidelines.push(g.to_string());
+            }
+        };
+
+        if self.has_bash {
+            add(BASH_FILE_OPS_GUIDELINE);
+        }
+        for g in &self.tools_guidelines {
+            add(g);
+        }
+        for t in USING_TOOLS_TRAILER {
+            add(t);
+        }
+
+        let mut lines = vec![USING_TOOLS_HEADER.to_string()];
+        lines.extend(guidelines.into_iter().map(|g| format!("- {g}")));
         self.sections.push(Section {
             name: "using_tools",
-            text: USING_TOOLS_SECTION.into(),
+            text: lines.join("\n"),
         });
         self
     }

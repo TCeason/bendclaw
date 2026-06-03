@@ -131,6 +131,16 @@ pub trait AgentTool: Send + Sync {
     fn description(&self) -> &str;
     /// JSON Schema for parameters
     fn parameters_schema(&self) -> serde_json::Value;
+    /// One-line capability summary for the system prompt's "Available tools"
+    /// list. Tools returning `None` are omitted from the list (still usable).
+    fn prompt_snippet(&self) -> Option<&str> {
+        None
+    }
+    /// Usage guidelines this tool contributes to the system prompt's
+    /// "Guidelines" section. Default: none.
+    fn prompt_guidelines(&self) -> Vec<&str> {
+        Vec::new()
+    }
     /// Parameter alias mappings for input normalization.
     /// Returns canonical_name → accepted_alternatives pairs.
     /// Default: no aliases.

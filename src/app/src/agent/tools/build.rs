@@ -62,3 +62,15 @@ pub(crate) fn build_tools(
 
     t
 }
+
+/// Canonical tool set used to assemble the system prompt's tool list and
+/// guidelines at startup. Mirrors the core read/bash/edit/write set so the
+/// prompt advertises exactly the tools the agent ships with.
+pub(crate) fn prompt_tools() -> Vec<Box<dyn evot_engine::AgentTool>> {
+    vec![
+        Box::new(ReadFileTool::default()),
+        Box::new(BashTool::default()),
+        Box::new(EditFileTool::new()),
+        Box::new(WriteFileTool::new()),
+    ]
+}

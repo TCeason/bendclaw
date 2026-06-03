@@ -51,6 +51,14 @@ impl AgentTool for WriteFileTool {
          Automatically creates parent directories."
     }
 
+    fn prompt_snippet(&self) -> Option<&str> {
+        Some("Create or overwrite files")
+    }
+
+    fn prompt_guidelines(&self) -> Vec<&str> {
+        vec!["Use write only for new files or complete rewrites."]
+    }
+
     fn parameter_aliases(&self) -> Option<crate::tools::validation::AliasMap> {
         Some(&[("path", &["file_path", "filePath", "file"] as &[&str])])
     }

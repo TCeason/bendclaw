@@ -163,3 +163,36 @@ fn sections_are_ordered_static_then_dynamic() {
         "dynamic boundary should come before # Git"
     );
 }
+
+#[test]
+fn tool_set_drives_identity_list_and_guidelines() {
+    use evot_engine::tools::BashTool;
+    use evot_engine::tools::EditFileTool;
+    use evot_engine::tools::ReadFileTool;
+    use evot_engine::tools::WriteFileTool;
+    let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let tools: Vec<Box<dyn evot_engine::AgentTool>> = vec![
+        Box::new(ReadFileTool::default()),
+        Box::new(BashTool::default()),
+        Box::new(EditFileTool::new()),
+        Box::new(WriteFileTool::new()),
+    ];
+    let prompt = SystemPrompt::with_tool_set(&tmp.path().to_string_lossy(), &tools)
+        .with_system()
+        .build();
+
+    // Identity "Available tools" list is derived from each tool's snippet.
+    assert!(prompt.contains("Available tools:"));
+    assert!(prompt.contains("- read: Read file contents"));
+    assert!(prompt.contains("- write: Create or overwrite files"));
+
+    // Guidelines section is assembled from each tool's own guidelines plus the
+    // shared trailer lines. The bash file-ops line comes first.
+    assert!(prompt.contains("Use bash for file operations like ls, rg, find"));
+    assert!(prompt.contains("Use edit for precise changes (edits[].oldText must match exactly)"));
+    assert!(prompt.contains("Use write only for new files or complete rewrites."));
+    assert!(prompt.contains("Be concise in your responses"));
+
+    // The legacy snake_case spelling must not leak back in.
+    assert!(!prompt.contains("old_text"));
+}
