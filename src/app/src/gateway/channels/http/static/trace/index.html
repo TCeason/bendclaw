@@ -475,10 +475,10 @@
       function renderMessages(d) {
         const root = el("div");
 
-        // Time badge: duration + context + token economics.
+        // Time badge: duration + token economics.
         const totalCtx = (d.input_tokens || 0) + (d.cache_read || 0);
         const cachePct = totalCtx > 0 ? Math.round((d.cache_read || 0) / totalCtx * 100) : 0;
-        let badge = `\u23F1 ${fmtDur(d.duration_ms) || "\u2014"} \u00B7 context ${fmtNum(totalCtx)} \u00B7 input ${fmtNum(d.input_tokens)} \u00B7 output ${fmtNum(d.output_tokens)}`;
+        let badge = `\u23F1 ${fmtDur(d.duration_ms) || "\u2014"} \u00B7 input ${fmtNum(totalCtx)} \u00B7 output ${fmtNum(d.output_tokens)}`;
         if (d.cache_read) badge += ` \u00B7 cache ${fmtNum(d.cache_read)} (${cachePct}%)`;
         root.appendChild(el("div", "span-time-badge", badge));
 
@@ -515,7 +515,7 @@
         const ctxBlocks = inputMsgs.filter(b => b.type !== "tool_result");
         const inResults = inputMsgs.filter(b => b.type === "tool_result");
         if (ctxBlocks.length) {
-          input.appendChild(reqFold("context", `${ctxBlocks.length} message block${ctxBlocks.length === 1 ? "" : "s"}`, body => {
+          input.appendChild(reqFold("messages", `${ctxBlocks.length} message${ctxBlocks.length === 1 ? "" : "s"}`, body => {
             for (const b of ctxBlocks) { const node = renderBlock(b); if (node) body.appendChild(node); }
           }));
         }
