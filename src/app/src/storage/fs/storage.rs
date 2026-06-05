@@ -29,16 +29,26 @@ impl FsStorage {
         self.root_dir.join("sessions")
     }
 
-    fn session_dir(&self, session_id: &str) -> PathBuf {
-        self.sessions_dir().join(session_id)
+    /// Resolve a session's directory, rejecting IDs that are not well-formed.
+    ///
+    /// This is the single point where an (possibly untrusted) session ID is
+    /// joined to a filesystem path, so the validation that prevents path
+    /// traversal lives here and covers every read and write path builder.
+    fn session_dir(&self, session_id: &str) -> Result<PathBuf> {
+        if !crate::types::is_valid_id(session_id) {
+            return Err(EvotError::Store(format!(
+                "invalid session id: {session_id:?}"
+            )));
+        }
+        Ok(self.sessions_dir().join(session_id))
     }
 
-    fn session_meta_path(&self, session_id: &str) -> PathBuf {
-        self.session_dir(session_id).join("session.json")
+    fn session_meta_path(&self, session_id: &str) -> Result<PathBuf> {
+        Ok(self.session_dir(session_id)?.join("session.json"))
     }
 
-    fn transcript_path(&self, session_id: &str) -> PathBuf {
-        self.session_dir(session_id).join("transcript.jsonl")
+    fn transcript_path(&self, session_id: &str) -> Result<PathBuf> {
+        Ok(self.session_dir(session_id)?.join("transcript.jsonl"))
     }
 
     fn variables_path(&self) -> PathBuf {
@@ -98,12 +108,12 @@ impl FsStorage {
 #[async_trait]
 impl Storage for FsStorage {
     async fn save_session(&self, session: SessionMeta) -> Result<()> {
-        self.write_json(self.session_meta_path(&session.session_id), &session)
+        self.write_json(self.session_meta_path(&session.session_id)?, &session)
             .await
     }
 
     async fn get_session(&self, session_id: &str) -> Result<Option<SessionMeta>> {
-        self.read_json(&self.session_meta_path(session_id)).await
+        self.read_json(&self.session_meta_path(session_id)?).await
     }
 
     async fn list_sessions(&self, params: ListSessions) -> Result<Vec<SessionMeta>> {
@@ -142,7 +152,7 @@ impl Storage for FsStorage {
     }
 
     async fn delete_session(&self, session_id: &str) -> Result<bool> {
-        let dir = self.session_dir(session_id);
+        let dir = self.session_dir(session_id)?;
         match fs::remove_dir_all(&dir).await {
             Ok(()) => Ok(true),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -151,13 +161,13 @@ impl Storage for FsStorage {
     }
 
     async fn append_entry(&self, entry: TranscriptEntry) -> Result<()> {
-        self.append_jsonl(self.transcript_path(&entry.session_id), &entry)
+        self.append_jsonl(self.transcript_path(&entry.session_id)?, &entry)
             .await
     }
 
     async fn list_entries(&self, params: ListTranscriptEntries) -> Result<Vec<TranscriptEntry>> {
         let mut entries = self
-            .read_jsonl::<TranscriptEntry>(&self.transcript_path(&params.session_id))
+            .read_jsonl::<TranscriptEntry>(&self.transcript_path(&params.session_id)?)
             .await?;
 
         if let Some(run_id) = &params.run_id {
@@ -196,15 +206,21 @@ impl Storage for FsStorage {
         let mut result = Vec::with_capacity(sessions.len());
 
         for session in &sessions {
-            let entries: Vec<TranscriptEntry> = match self
-                .read_jsonl(&self.transcript_path(&session.session_id))
-                .await
-            {
-                Ok(e) => e,
+            let entries: Vec<TranscriptEntry> = match self.transcript_path(&session.session_id) {
+                Ok(path) => match self.read_jsonl(&path).await {
+                    Ok(e) => e,
+                    Err(e) => {
+                        tracing::warn!(
+                            session_id = %session.session_id,
+                            "skipping transcript: {e}"
+                        );
+                        vec![]
+                    }
+                },
                 Err(e) => {
                     tracing::warn!(
                         session_id = %session.session_id,
-                        "skipping transcript: {e}"
+                        "skipping session with invalid id: {e}"
                     );
                     vec![]
                 }

@@ -35,6 +35,7 @@ use crate::types::LlmCallMetrics;
 use crate::types::LlmCallRetryStats;
 use crate::types::LlmCallStartedStats;
 use crate::types::RunFinishedStats;
+use crate::types::ToolDef;
 use crate::types::ToolFinishedStats;
 use crate::types::TranscriptItem;
 use crate::types::TranscriptStats;
@@ -223,6 +224,9 @@ async fn run_loop(args: ExecuteRunArgs, tx: mpsc::UnboundedSender<RunEvent>, con
             error = %e,
         );
     }
+    session
+        .add_usage(total_usage.input, total_usage.output)
+        .await;
     let _ = session.save().await;
 
     let finished = RunEventContext::new(&run_id, &session_id, total_turns).finished(
@@ -673,6 +677,16 @@ fn map_agent_event(
                         message_bytes,
                         system_prompt_tokens: budget.system_prompt_tokens,
                         tool_definition_tokens: budget.tool_definition_tokens,
+                        system_prompt: request.system_prompt.clone(),
+                        tool_definitions: request
+                            .tools
+                            .iter()
+                            .map(|t| ToolDef {
+                                name: t.name.clone(),
+                                description: t.description.clone(),
+                                parameters: t.parameters.clone(),
+                            })
+                            .collect(),
                     })
                     .to_item(),
                 ),

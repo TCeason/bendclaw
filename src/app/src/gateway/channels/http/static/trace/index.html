@@ -1,0 +1,1038 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Session Trace · evot</title>
+    <style>
+      :root {
+        --bg: #141920;
+        --panel: #1c2230;
+        --panel2: #232b3a;
+        --border: #2d3748;
+        --fg: #e2e8f0;
+        --muted: #7a8599;
+        --accent: #4ade80;
+        --accent-dim: rgba(74, 222, 128, 0.12);
+        --accent-border: rgba(74, 222, 128, 0.3);
+        --del: #f87171;
+        --cache: #fbbf24;
+        --blue: #60a5fa;
+        --blue-dim: rgba(96, 165, 250, 0.12);
+        --orange: #fb923c;
+        --orange-dim: rgba(251, 146, 60, 0.12);
+        --purple: #a78bfa;
+        --purple-dim: rgba(167, 139, 250, 0.12);
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        --sans: "Inter", system-ui, -apple-system, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: var(--sans);
+        background: var(--bg);
+        color: var(--fg);
+      }
+      .layout { display: flex; gap: 0; height: 580px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg); }
+      .list-panel { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: #111720; }
+      .list-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+      .list-head-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+      .diff-btn { font-size: 10px; font-family: var(--mono); padding: 3px 9px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel2); color: var(--muted); cursor: pointer; transition: all .12s; }
+      .diff-btn:hover { color: var(--fg); border-color: var(--accent-border); }
+      .diff-btn.on { background: var(--accent-dim); color: var(--accent); border-color: var(--accent-border); }
+      .list {
+        flex: 1; overflow-y: auto;
+        padding: 8px;
+      }
+      .detail { flex: 1; overflow-y: auto; padding: 16px 20px; background: var(--bg); }
+      .empty { color: var(--muted); padding: 24px; text-align: center; font-size: 13px; }
+      /* trace list items */
+      .trace-item {
+        padding: 9px 11px; margin-bottom: 4px; border-radius: 8px;
+        border: 1px solid transparent; cursor: pointer; transition: background .1s;
+      }
+      .trace-item:hover { background: rgba(255,255,255,0.03); }
+      .trace-item.active { background: var(--accent-dim); border-left: 3px solid var(--accent); }
+      .trace-item.diff-pick { background: var(--blue-dim); border-left: 3px solid var(--blue); }
+      .trace-item.diff-pick .trace-seq { color: var(--blue); }
+      .trace-item-top { display: flex; align-items: center; gap: 8px; }
+      .trace-seq { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--accent); }
+      .trace-item-model { font-size: 11px; color: var(--fg); font-weight: 500; }
+      .trace-stop { margin-left: auto; font-size: 9px; padding: 1px 7px; border-radius: 8px; background: var(--panel2); color: var(--muted); text-transform: lowercase; }
+      .trace-stop.tooluse, .trace-stop.tool_use, .trace-stop.tool_calls { background: var(--purple-dim); color: var(--purple); }
+      .trace-stop.error { background: rgba(248,113,113,0.12); color: var(--del); }
+      .trace-preview { font-size: 11.5px; color: var(--muted); margin: 4px 0 0; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+      .trace-item-meta { font-size: 10px; color: var(--muted); margin-top: 4px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+      .trace-tools { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 5px; }
+      .trace-tool-chip { font-family: var(--mono); font-size: 9px; padding: 1px 6px; border-radius: 6px; background: var(--blue-dim); color: var(--blue); }
+
+      /* duration-bar timeline (ported from evot-eval) */
+      .dur-bar { display: flex; height: 22px; margin: 0 0 14px; border-radius: 6px; overflow: hidden; gap: 1px; }
+      .dur-seg { position: relative; cursor: pointer; transition: opacity .15s; min-width: 2px; }
+      .dur-seg:nth-child(4n+1) { background: #4a5568; }
+      .dur-seg:nth-child(4n+2) { background: #5a6a7a; }
+      .dur-seg:nth-child(4n+3) { background: #6b7b8c; }
+      .dur-seg:nth-child(4n) { background: #7c8c9e; }
+      .dur-seg:hover { opacity: .8; }
+      .dur-seg.active { box-shadow: inset 0 0 0 2px var(--accent); }
+
+      /* detail tabs */
+      .detail-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+      .detail-tab { padding: 7px 14px; font-size: 12px; font-weight: 500; color: var(--muted); background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; text-transform: lowercase; }
+      .detail-tab:hover { color: var(--fg); }
+      .detail-tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+
+      /* span detail */
+      .span-detail { font-size: 12px; }
+      .span-time-badge { padding: 8px 14px; margin-bottom: 14px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; font-size: 12px; color: var(--fg); font-variant-numeric: tabular-nums; font-family: var(--mono); }
+
+      /* three IO sections (INPUT / TOOL RESULTS / OUTPUT), matching evot-eval */
+      .io { padding: 16px 0; margin-top: 0; border-top: 1px solid var(--border); }
+      .io:first-child { border-top: none; padding-top: 0; }
+      .io-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+      .io-title { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; }
+      .io-input .io-title { color: var(--blue); }
+      .io-execution .io-title { color: var(--orange); }
+      .io-output .io-title { color: var(--accent); }
+      .io-meta { margin-left: auto; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; font-family: var(--mono); }
+      .io-params { font-family: var(--mono); font-size: 11px; color: var(--muted); margin: 4px 0 8px; padding: 8px 12px; background: var(--panel2); border-radius: 8px; border: 1px solid var(--border); }
+      .msg-flow { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
+      .span-reacting { font-family: var(--mono); font-size: 11px; color: var(--muted); padding: 8px 12px; background: var(--panel2); border-radius: 8px; border: 1px solid var(--border); }
+      .span-reacting b { color: var(--purple); font-weight: 600; }
+
+      /* request envelope folds: system prompt + tool schemas */
+      .req-fold { margin: 6px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); overflow: hidden; }
+      .req-fold > summary { list-style: none; cursor: pointer; padding: 7px 12px; font-size: 11px; display: flex; align-items: baseline; gap: 8px; }
+      .req-fold > summary::-webkit-details-marker { display: none; }
+      .req-fold > summary::before { content: '\25B6'; font-size: 9px; color: var(--muted); transition: transform .2s; }
+      .req-fold[open] > summary::before { transform: rotate(90deg); }
+      .req-fold-title { font-weight: 600; color: var(--accent); text-transform: lowercase; }
+      .req-fold-meta { color: var(--muted); font-size: 10px; }
+      .req-fold-body { padding: 4px 12px 10px; border-top: 1px solid var(--border); }
+      .req-fold-pre { margin: 8px 0 0; font-family: var(--mono); font-size: 11px; white-space: pre-wrap; word-break: break-word; line-height: 1.5; max-height: 360px; overflow: auto; background: var(--panel2); padding: 8px 10px; border-radius: 6px; color: var(--fg); }
+      .tool-def { margin: 8px 0; padding: 8px 10px; background: var(--panel2); border-radius: 6px; }
+      .tool-def-name { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--blue); }
+      .tool-def-desc { font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.45; white-space: pre-wrap; }
+      .tool-def-params { margin-top: 6px; }
+      .tool-def-params > summary { list-style: none; cursor: pointer; font-size: 10px; color: var(--accent); }
+      .tool-def-params > summary::-webkit-details-marker { display: none; }
+      .tool-def-params > summary::before { content: '\25B6'; font-size: 8px; margin-right: 5px; transition: transform .2s; display: inline-block; }
+      .tool-def-params[open] > summary::before { transform: rotate(90deg); }
+      .tool-def-params pre { margin: 6px 0 0; font-family: var(--mono); font-size: 10.5px; white-space: pre-wrap; word-break: break-word; line-height: 1.45; max-height: 280px; overflow: auto; background: var(--bg); padding: 8px 10px; border-radius: 6px; color: var(--fg); }
+
+      /* overview cards */
+      .span-cards { display: flex; flex-wrap: wrap; gap: 10px; }
+      .span-card { padding: 8px 14px; min-width: 90px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+      .span-card dt { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+      .span-card dd { margin: 3px 0 0; font-family: var(--mono); font-size: 14px; font-weight: 500; color: var(--fg); }
+      .span-card dd small { font-size: 10px; color: var(--muted); font-weight: 400; }
+
+      /* content blocks (eval .cb styling) */
+      .cb { margin: 6px 0; }
+      .cb-h { display: flex; align-items: baseline; gap: 6px; margin-bottom: 2px; font-family: var(--mono); font-size: 11px; }
+      .cb-label { color: var(--fg); font-weight: 600; }
+      .cb-thinking .cb-label { color: var(--muted); }
+      .cb-text .cb-label { color: var(--fg); }
+      .cb-err .cb-label { color: var(--del); }
+      .cb pre { margin: 0; padding: 6px 10px; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; color: var(--fg); background: var(--panel2); border-left: 2px solid var(--border); border-radius: 0 6px 6px 0; max-height: 320px; overflow: auto; }
+      .cb-thinking pre { color: var(--muted); font-style: italic; background: none; border-left-color: transparent; padding-left: 0; }
+
+      /* tool-call rows (collapsed summary + expandable input/result) */
+      .tc-row { margin: 6px 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+      .tc-row.tc-open { border-color: var(--accent-border); }
+      .tc-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 8px 12px; background: var(--panel); border: none; cursor: pointer; font-size: 12px; color: var(--fg); text-align: left; }
+      .tc-head:hover { background: rgba(255,255,255,0.03); }
+      .tc-icon { font-size: 13px; flex-shrink: 0; }
+      .tc-prefix { font-weight: 600; white-space: nowrap; }
+      .tc-code { font-family: var(--mono); font-size: 11px; background: var(--panel2); padding: 2px 6px; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; display: inline-block; vertical-align: middle; color: var(--fg); }
+      .tc-err { font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--del); }
+      .tc-time { margin-left: auto; font-size: 10px; color: var(--muted); font-family: var(--mono); padding-right: 6px; }
+      .tc-chevron { font-size: 10px; color: var(--muted); }
+      .tc-detail { padding: 10px 14px; border-top: 1px solid var(--border); background: rgba(255,255,255,0.015); }
+      .tc-section { margin: 8px 0; }
+      .tc-section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 4px; }
+      .tc-section-label .tc-err { margin-left: 6px; }
+      .tc-section pre { margin: 0; font-family: var(--mono); font-size: 11px; white-space: pre-wrap; word-break: break-word; line-height: 1.5; max-height: 360px; overflow: auto; background: var(--panel2); padding: 8px 10px; border-radius: 6px; color: var(--fg); }
+      .muted { color: var(--muted); font-size: 12px; }
+
+      /* --- Span diff (ported from eval) --- */
+      .diff-hint { color: var(--muted); font-size: 13px; padding: 24px; text-align: center; }
+      .diff-head { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; font-family: var(--mono); font-size: 12px; }
+      .diff-side { padding: 3px 10px; border-radius: 6px; font-weight: 600; }
+      .diff-side.diff-del { background: rgba(248,113,113,0.12); color: var(--del); }
+      .diff-side.diff-add { background: var(--accent-dim); color: var(--accent); }
+      .diff-arrow { color: var(--muted); }
+      .diff-counts { display: flex; gap: 14px; margin-bottom: 14px; font-size: 11px; font-family: var(--mono); }
+      .dc-add { color: var(--accent); }
+      .dc-del { color: var(--del); }
+      .dc-common { color: var(--muted); }
+      .diff-section { margin-bottom: 18px; }
+      .diff-section-title { font-size: 11px; font-weight: 700; letter-spacing: .04em; padding: 4px 0; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+      .diff-section-title.dt-add { color: var(--accent); }
+      .diff-section-title.dt-del { color: var(--del); }
+      .diff-block { padding: 4px 0 4px 10px; margin: 6px 0; border-left: 2px solid var(--border); }
+      .diff-block.db-add { border-left-color: var(--accent); background: rgba(74,222,128,0.05); }
+      .diff-block.db-del { border-left-color: var(--del); background: rgba(248,113,113,0.05); }
+      .diff-blabel { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+      .mdb-idx { color: var(--muted); }
+      .mdb-role { text-transform: uppercase; letter-spacing: .04em; font-weight: 700; }
+      .mdb-role.msg-user { color: var(--blue); }
+      .mdb-role.msg-assistant { color: var(--accent); }
+      .mdb-role.msg-tool { color: var(--purple); }
+      /* overview metric diff */
+      .diff-metrics { width: 100%; border-collapse: collapse; font-size: 11px; font-family: var(--mono); }
+      .diff-metrics th { text-align: left; padding: 6px 10px; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); }
+      .diff-metrics td { padding: 5px 10px; border-bottom: 1px solid rgba(255,255,255,0.04); font-variant-numeric: tabular-nums; }
+      .diff-metrics td.dm-name { color: var(--muted); }
+      .diff-metrics td.dm-delta.up { color: var(--accent); }
+      .diff-metrics td.dm-delta.down { color: var(--del); }
+
+      /* --- Tool Call Sequence + Span Details (ported from eval compare) --- */
+      .sc-section { margin: 24px 4px 0; }
+      .sc-collapsible > summary { list-style: none; cursor: pointer; }
+      .sc-collapsible > summary::-webkit-details-marker { display: none; }
+      .sc-collapsible > summary::before { content: '\25B6'; display: inline-block; margin-right: 8px; font-size: 10px; transition: transform .2s; color: var(--muted); }
+      .sc-collapsible[open] > summary::before { transform: rotate(90deg); }
+      .sc-title { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); display: inline-block; width: 100%; }
+
+      .sc-sequence { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+      .sc-seq-grid { display: flex; align-items: flex-start; }
+      .sc-seq-labels { width: 90px; flex-shrink: 0; display: flex; flex-direction: column; }
+      .sc-seq-label { font-size: 11px; color: var(--muted); display: flex; align-items: center; }
+      .sc-seq-label-ruler { height: 14px; margin-bottom: 2px; }
+      .sc-seq-labels .sc-seq-label:last-child { height: 18px; }
+      /* Shared horizontal scroll: ruler + lane scroll together, page never widens. */
+      .sc-seq-scroll { flex: 1; min-width: 0; overflow-x: auto; }
+      .sc-seq-track { display: flex; gap: 1px; }
+      .sc-seq-ruler { margin-bottom: 2px; }
+      /* flex-grow fills the width when spans are few; flex-basis floors each cell
+         so many spans overflow into the scroll instead of compressing away. */
+      .sc-seq-cell { flex: 1 0 6px; height: 18px; border-radius: 3px; opacity: .85; cursor: pointer; transition: opacity .2s; }
+      .sc-seq-cell.sc-seq-parallel { display: flex; flex-direction: column; gap: 1px; background: transparent; }
+      .sc-seq-cell.sc-seq-parallel .sc-seq-layer { flex: 1; border-radius: 2px; min-height: 0; transition: opacity .2s; }
+      .sc-seq-cell:hover { opacity: 1; outline: 1px solid var(--fg); z-index: 1; }
+      .sc-seq-cell.sc-seq-empty { background: var(--panel2); opacity: .3; cursor: default; }
+      .sc-seq-cell.sc-seq-empty:hover { outline: none; opacity: .3; }
+      .sc-seq-tick { flex: 1 0 6px; font-size: 9px; color: var(--muted); text-align: center; border-left: 1px solid var(--border); height: 14px; line-height: 14px; overflow: visible; white-space: nowrap; }
+      .sc-seq-tick-minor { border-left: 1px solid rgba(255,255,255,0.06); color: transparent; }
+      .sc-seq-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+      .sc-seq-legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--muted); cursor: pointer; transition: opacity .2s; }
+      .sc-seq-legend-dot { width: 8px; height: 8px; border-radius: 3px; }
+      .sc-seq-legend-pct { color: var(--muted); font-size: 9px; margin-left: 2px; }
+      .sc-seq-legend-active { opacity: 1; color: var(--fg); font-weight: 600; }
+      .sc-seq-legend-dim { opacity: .4; }
+      .sc-seq-dim { opacity: .15 !important; }
+      .sc-seq-highlight { opacity: 1 !important; box-shadow: 0 0 0 1px rgba(255,255,255,0.3); }
+      .sc-seq-layer.sc-seq-dim { opacity: .15 !important; }
+      .sc-seq-layer.sc-seq-highlight { opacity: 1 !important; }
+
+      .sc-table-wrap { overflow: auto; max-height: 520px; border: 1px solid var(--border); border-radius: 12px; }
+      .sc-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+      .sc-table th { text-align: left; padding: 8px 12px; background: var(--panel2); color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 1; }
+      .sc-table td { padding: 7px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: top; }
+      .sc-table-seq { color: var(--muted); font-variant-numeric: tabular-nums; width: 44px; cursor: pointer; }
+      .sc-table-seq:hover { color: var(--accent); }
+      .sc-table-tools { color: var(--fg); font-family: var(--mono); font-size: 11px; }
+      .sc-table-meta { color: var(--muted); font-size: 10px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+      .sc-table tbody tr:hover { background: rgba(255,255,255,0.02); }
+      .sc-table-clickable { cursor: pointer; transition: background .15s; }
+      .sc-row-expanded { background: var(--panel2); }
+      .sc-cell-active { background: var(--panel2); }
+      .sc-inline-detail { display: none; }
+      .sc-inline-detail.open { display: block; margin-top: 8px; border-top: 1px solid var(--border); padding-top: 8px; }
+      .sc-detail-loading { color: var(--muted); font-size: 11px; padding: 6px 0; }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <div class="list-panel">
+        <div class="list-head">
+          <span class="list-head-title">requests</span>
+          <button id="diff-btn" class="diff-btn" title="Turn on, then pick two requests to compare">Diff: off</button>
+        </div>
+        <div class="list" id="list"><div class="empty">Loading…</div></div>
+      </div>
+      <div class="detail" id="detail"><div class="empty">Select a request to view its trace.</div></div>
+    </div>
+    <details class="sc-section sc-collapsible" open id="sec-sequence">
+      <summary class="sc-title">Tool Call Sequence</summary>
+      <div id="tool-sequence"></div>
+    </details>
+    <details class="sc-section sc-collapsible" open id="sec-spans">
+      <summary class="sc-title">Span Details</summary>
+      <div id="span-details"></div>
+    </details>
+    <script>
+      const sessionId = decodeURIComponent(location.pathname.split("/")[2] || "");
+
+      // --- tool categories & icons (ported from evot-eval span-renderer) ---
+      const TOOL_CATEGORIES = {
+        read: { icon: "\u{1F4D6}", label: "Read" },
+        write: { icon: "\u270F\uFE0F", label: "Write" },
+        execute: { icon: "\u26A1", label: "Ran" },
+        search: { icon: "\u{1F50D}", label: "Searched" },
+        edit: { icon: "\u2702\uFE0F", label: "Edited" },
+        other: { icon: "\u2699", label: "" },
+      };
+      function getToolCategory(name) {
+        const l = (name || "").toLowerCase();
+        if (l.includes("bash") || l.includes("exec") || l === "run_command" || l.includes("shell")) return "execute";
+        if (l.includes("read") || l.includes("cat") || l.includes("view")) return "read";
+        if (l.includes("write") || l.includes("create")) return "write";
+        if (l.includes("edit") || l.includes("replace") || l.includes("patch")) return "edit";
+        if (l.includes("grep") || l.includes("search") || l.includes("find") || l.includes("glob")) return "search";
+        return "other";
+      }
+      function getToolSummary(name, input) {
+        const cat = getToolCategory(name);
+        const info = TOOL_CATEGORIES[cat];
+        const a = input || {};
+        let code = "";
+        if (cat === "execute") code = String(a.command || a.cmd || "").split("\n")[0].slice(0, 120);
+        else if (cat === "read" || cat === "write" || cat === "edit") code = a.file_path || a.path || "file";
+        else if (cat === "search") code = String(a.pattern || a.query || a.path || "").slice(0, 80);
+        else {
+          for (const k of Object.keys(a)) {
+            if (typeof a[k] === "string" && a[k].length < 120) { code = a[k]; break; }
+          }
+        }
+        return { icon: info.icon, prefix: info.label || name, code };
+      }
+
+      function esc(s) {
+        return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      }
+      function el(tag, cls, text) {
+        const n = document.createElement(tag);
+        if (cls) n.className = cls;
+        if (text != null) n.textContent = text;
+        return n;
+      }
+      function fmtToolInput(input) {
+        if (input == null) return "";
+        if (typeof input === "string") return input;
+        if (typeof input !== "object" || Array.isArray(input)) return JSON.stringify(input, null, 2);
+        const keys = Object.keys(input);
+        if (keys.length === 1 && typeof input[keys[0]] === "string") return input[keys[0]];
+        return keys.map(k => {
+          const v = input[k];
+          const s = typeof v === "string" ? v : JSON.stringify(v);
+          return s.includes("\n") ? `${k}:\n${s}` : `${k}: ${s}`;
+        }).join("\n");
+      }
+      function fmtDur(ms) {
+        if (!ms || ms <= 0) return "";
+        if (ms < 1000) return ms + "ms";
+        if (ms < 60000) return (ms / 1000).toFixed(1) + "s";
+        return (ms / 60000).toFixed(1) + "min";
+      }
+      function fmtTok(n) {
+        n = n || 0;
+        if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k";
+        return String(n);
+      }
+      // --- tool-call row: collapsed summary + expandable input/result ---
+      function renderToolCallRow(tc, result) {
+        const summary = getToolSummary(tc.name, tc.input);
+        const row = el("div", "tc-row");
+        const head = el("button", "tc-head");
+        const timing = result && result.duration_ms ? fmtDur(result.duration_ms) : "";
+        head.innerHTML =
+          `<span class="tc-icon">${summary.icon}</span>` +
+          `<span class="tc-prefix">${esc(summary.prefix)}</span>` +
+          (summary.code ? ` <code class="tc-code">${esc(summary.code)}</code>` : "") +
+          (result && result.is_error ? ' <span class="tc-err">err</span>' : "") +
+          (timing ? ` <span class="tc-time">${timing}</span>` : "") +
+          `<span class="tc-chevron">\u25B6</span>`;
+        const detail = el("div", "tc-detail");
+        detail.style.display = "none";
+
+        const inputBlock = el("div", "tc-section");
+        inputBlock.appendChild(el("div", "tc-section-label", `Input \u00B7 ${tc.name}`));
+        const ipre = el("pre"); ipre.textContent = fmtToolInput(tc.input);
+        inputBlock.appendChild(ipre);
+        detail.appendChild(inputBlock);
+
+        if (result) {
+          const resBlock = el("div", "tc-section");
+          const lines = result.content ? result.content.split("\n").length : 0;
+          const tokPart = result.result_tokens ? ` \u00B7 ${fmtTok(result.result_tokens)} tok` : "";
+          const rl = el("div", "tc-section-label");
+          rl.innerHTML = `Observations${lines ? ` \u00B7 ${lines} line${lines === 1 ? "" : "s"}` : ""}${tokPart}` +
+            (result.is_error ? ' <span class="tc-err">\u00B7 error</span>' : "");
+          resBlock.appendChild(rl);
+          if (result.content) { const rpre = el("pre"); rpre.textContent = result.content; resBlock.appendChild(rpre); }
+          else resBlock.appendChild(el("span", "muted", "(empty)"));
+          detail.appendChild(resBlock);
+        }
+
+        head.addEventListener("click", () => {
+          const open = detail.style.display === "none";
+          detail.style.display = open ? "" : "none";
+          row.classList.toggle("tc-open", open);
+          head.querySelector(".tc-chevron").textContent = open ? "\u25BC" : "\u25B6";
+        });
+        row.appendChild(head); row.appendChild(detail);
+        return row;
+      }
+
+      function renderBlock(blk) {
+        if (blk.type === "thinking") {
+          const c = el("div", "cb cb-thinking");
+          const h = el("div", "cb-h"); h.appendChild(el("span", "cb-label", "\u{1F4AD} thinking")); c.appendChild(h);
+          const pre = el("pre"); pre.textContent = blk.text; c.appendChild(pre);
+          return c;
+        }
+        if (blk.type === "text") {
+          const c = el("div", "cb cb-text");
+          const h = el("div", "cb-h"); h.appendChild(el("span", "cb-label", "\u{1F4AC} text")); c.appendChild(h);
+          const pre = el("pre"); pre.textContent = blk.text; c.appendChild(pre);
+          return c;
+        }
+        if (blk.type === "tool_use") {
+          return renderToolCallRow(blk, null);
+        }
+        if (blk.type === "tool_result") {
+          const c = el("div", "cb cb-text");
+          const h = el("div", "cb-h");
+          h.appendChild(el("span", "cb-label" + (blk.is_error ? " cb-err" : ""), blk.is_error ? "\u2699 tool result \u00B7 error" : "\u2699 tool result"));
+          c.appendChild(h);
+          const pre = el("pre"); pre.textContent = blk.content || "(empty)"; c.appendChild(pre);
+          return c;
+        }
+        return null;
+      }
+
+      function fmtNum(n) { return n == null ? "\u2014" : n.toLocaleString(); }
+
+      function card(label, value, sub) {
+        const c = el("div", "span-card");
+        c.appendChild(el("dt", null, label));
+        const dd = el("dd", null, value);
+        if (sub) { const s = el("small", null, " " + sub); dd.appendChild(s); }
+        c.appendChild(dd);
+        return c;
+      }
+
+      // Overview tab: headline metrics as cards.
+      function renderOverview(d) {
+        const root = el("div");
+        const cards = el("div", "span-cards");
+        cards.appendChild(card("model", d.model || "\u2014"));
+        cards.appendChild(card("duration", fmtDur(d.duration_ms) || "\u2014"));
+        cards.appendChild(card("input tokens", (d.input_tokens || 0).toLocaleString()));
+        cards.appendChild(card("output tokens", (d.output_tokens || 0).toLocaleString()));
+        if (d.cache_read) cards.appendChild(card("cache read", d.cache_read.toLocaleString()));
+        if (d.cache_write) cards.appendChild(card("cache write", d.cache_write.toLocaleString()));
+        cards.appendChild(card("stop reason", d.stop_reason || "\u2014"));
+        cards.appendChild(card("messages", (d.n_messages || 0).toLocaleString()));
+        cards.appendChild(card("tool calls", String((d.blocks || []).filter(b => b.type === "tool_use").length)));
+        if (d.context_window) cards.appendChild(card("context window", d.context_window.toLocaleString()));
+        if (d.system_prompt_tokens) cards.appendChild(card("system prompt", d.system_prompt_tokens.toLocaleString(), "tok"));
+        if (d.ttft_ms) cards.appendChild(card("time to 1st token", fmtDur(d.ttft_ms)));
+        root.appendChild(cards);
+        return root;
+      }
+
+      // Messages tab: two-section IO layout (INPUT / OUTPUT), with tool calls
+      // rendered inside OUTPUT in natural block order.
+      function ioSection(cls, title, meta) {
+        const sec = el("section", "io " + cls);
+        const head = el("div", "io-head");
+        head.appendChild(el("span", "io-title", title));
+        if (meta) head.appendChild(el("span", "io-meta", meta));
+        sec.appendChild(head);
+        return sec;
+      }
+
+      // Collapsible request-envelope fold (system / tools), eval-style.
+      function reqFold(title, metaText, fillBody) {
+        const det = el("details", "req-fold");
+        const sum = el("summary");
+        sum.innerHTML = `<span class="req-fold-title">${esc(title)}</span> <span class="req-fold-meta">${esc(metaText)}</span>`;
+        det.appendChild(sum);
+        const body = el("div", "req-fold-body");
+        fillBody(body);
+        det.appendChild(body);
+        return det;
+      }
+
+      // One tool schema: name + description + collapsible JSON Schema params.
+      function renderToolDef(t) {
+        const wrap = el("div", "tool-def");
+        wrap.appendChild(el("div", "tool-def-name", t.name));
+        if (t.description) wrap.appendChild(el("div", "tool-def-desc", t.description));
+        if (t.parameters && Object.keys(t.parameters).length) {
+          const det = el("details", "tool-def-params");
+          det.appendChild(el("summary", null, "parameters"));
+          const pre = el("pre"); pre.textContent = JSON.stringify(t.parameters, null, 2);
+          det.appendChild(pre);
+          wrap.appendChild(det);
+        }
+        return wrap;
+      }
+
+      function renderMessages(d) {
+        const root = el("div");
+
+        // Time badge: duration + context + token economics.
+        const totalCtx = (d.input_tokens || 0) + (d.cache_read || 0);
+        const cachePct = totalCtx > 0 ? Math.round((d.cache_read || 0) / totalCtx * 100) : 0;
+        let badge = `\u23F1 ${fmtDur(d.duration_ms) || "\u2014"} \u00B7 context ${fmtNum(totalCtx)} \u00B7 input ${fmtNum(d.input_tokens)} \u00B7 output ${fmtNum(d.output_tokens)}`;
+        if (d.cache_read) badge += ` \u00B7 cache ${fmtNum(d.cache_read)} (${cachePct}%)`;
+        root.appendChild(el("div", "span-time-badge", badge));
+
+        // INPUT section: request config + what this call is reacting to.
+        const input = ioSection("io-input", "\u{1F4E5} INPUT", `${d.n_messages || 0} msg \u00B7 \u2193 ${fmtTok(totalCtx)} tok`);
+        const params = [];
+        if (d.model) params.push(d.model);
+        if (d.system_prompt_tokens) params.push(`system ${fmtTok(d.system_prompt_tokens)} tok`);
+        if (d.context_window) params.push(`window ${fmtTok(d.context_window)}`);
+        input.appendChild(el("div", "io-params", params.join(" \u00B7 ")));
+        if (d.reacting_to) {
+          const r = el("div", "span-reacting");
+          r.innerHTML = "\u21B3 reacting to: ";
+          r.appendChild(document.createTextNode(d.reacting_to));
+          input.appendChild(r);
+        }
+        // System prompt + tool schemas sent to the model (collapsible folds).
+        if (d.system_prompt) {
+          const meta = `${fmtTok(d.system_prompt_tokens || 0)} tok`;
+          input.appendChild(reqFold("system", meta, body => {
+            const pre = el("pre", "req-fold-pre"); pre.textContent = d.system_prompt; body.appendChild(pre);
+          }));
+        }
+        if (d.tool_definitions && d.tool_definitions.length) {
+          const names = d.tool_definitions.map(t => t.name).join(", ");
+          input.appendChild(reqFold("tools", `${d.tool_definitions.length} \u00B7 ${names}`, body => {
+            for (const t of d.tool_definitions) body.appendChild(renderToolDef(t));
+          }));
+        }
+
+        // Split the reconstructed input context into conversation messages vs
+        // incoming tool results, mirroring how the array is sent to the model.
+        const inputMsgs = d.input_messages || [];
+        const ctxBlocks = inputMsgs.filter(b => b.type !== "tool_result");
+        const inResults = inputMsgs.filter(b => b.type === "tool_result");
+        if (ctxBlocks.length) {
+          input.appendChild(reqFold("context", `${ctxBlocks.length} message block${ctxBlocks.length === 1 ? "" : "s"}`, body => {
+            for (const b of ctxBlocks) { const node = renderBlock(b); if (node) body.appendChild(node); }
+          }));
+        }
+        root.appendChild(input);
+
+        // TOOL RESULTS section: observations fed into this call from the prior
+        // turn's tool calls. These are model input, not output.
+        if (inResults.length) {
+          const exec = ioSection("io-execution", "\u26A1 TOOL RESULTS", `${inResults.length} result${inResults.length === 1 ? "" : "s"}`);
+          const flow = el("div", "msg-flow");
+          for (const r of inResults) { const node = renderBlock(r); if (node) flow.appendChild(node); }
+          exec.appendChild(flow);
+          root.appendChild(exec);
+        }
+
+        // OUTPUT section: what the model generated this call — thinking, text,
+        // and tool calls in natural order. Tool calls carry no inline result;
+        // their results arrive in the next call's TOOL RESULTS section, exactly
+        // as the model sees them.
+        const toolUses = (d.blocks || []).filter(b => b.type === "tool_use");
+        const callsMeta = toolUses.length ? ` \u00B7 ${toolUses.length} call${toolUses.length === 1 ? "" : "s"}` : "";
+        const output = ioSection("io-output", "\u{1F4E4} OUTPUT", `\u2191 ${fmtTok(d.output_tokens)} tok${callsMeta} \u00B7 stop: ${d.stop_reason || "\u2014"}`);
+        const outFlow = el("div", "msg-flow");
+        if (d.error_message) {
+          const e = el("div", "cb cb-text");
+          const h = el("div", "cb-h"); h.appendChild(el("span", "cb-label cb-err", "\u26A0 error")); e.appendChild(h);
+          const pre = el("pre"); pre.textContent = d.error_message; e.appendChild(pre);
+          outFlow.appendChild(e);
+        }
+        const blocks = d.blocks || [];
+        for (const blk of blocks) { const node = renderBlock(blk); if (node) outFlow.appendChild(node); }
+        if (!blocks.length && !d.error_message) {
+          outFlow.appendChild(el("p", "muted", "No response captured."));
+        }
+        output.appendChild(outFlow);
+        root.appendChild(output);
+
+        return root;
+      }
+
+      const DETAIL_TABS = ["messages", "overview"];
+      let activeTab = "messages";
+
+      // --- Span diff (ported from eval): pick two requests, compare them ---
+      let diffMode = false;
+      let diffPicks = []; // up to 2 seqs, FIFO
+
+      function hashStr(s) {
+        let h = 0;
+        for (let i = 0; i < s.length; i++) { h = (h << 5) - h + s.charCodeAt(i); h |= 0; }
+        return String(h);
+      }
+      // Stable signature for a content block so diffs are position-independent
+      // (survives context growth between two spans).
+      function blockSig(b) {
+        if (!b || typeof b !== "object") return "s:" + String(b);
+        switch (b.type) {
+          case "tool_use": return b.id ? "tu:" + b.id : "tu:" + (b.name || "") + ":" + hashStr(JSON.stringify(b.input || ""));
+          case "tool_result": return b.tool_use_id ? "tr:" + b.tool_use_id : "tr:" + hashStr(b.content || "");
+          case "thinking": return "th:" + hashStr(b.text || "");
+          case "text": return "tx:" + hashStr(b.text || "");
+          default: return "o:" + hashStr(JSON.stringify(b));
+        }
+      }
+      // A span's comparable items are the INPUT messages it sent to the model
+      // (cumulative context), so the diff shows how context grew between two
+      // requests — not the disjoint per-turn outputs.
+      function spanItems(d) {
+        return (d.input_messages || []).map(m => ({ sig: blockSig(m), kind: m.type, role: m.role, mi: m.mi, blk: m }));
+      }
+
+      function toggleDiffMode() {
+        diffMode = !diffMode;
+        diffPicks = diffMode && activeSeq != null ? [activeSeq] : [];
+        const btn = document.getElementById("diff-btn");
+        btn.classList.toggle("on", diffMode);
+        btn.textContent = diffMode ? "Diff: pick 1 more" : "Diff: off";
+        markPicks();
+        const detailEl = document.getElementById("detail");
+        if (!diffMode) {
+          if (activeSeq != null) loadDetail(activeSeq);
+        } else {
+          detailEl.innerHTML = "";
+          detailEl.appendChild(el("div", "diff-hint", diffPicks.length
+            ? "Pick one more request from the list to compare."
+            : "Pick two requests from the list to compare."));
+        }
+      }
+
+      function markPicks() {
+        document.querySelectorAll(".trace-item").forEach(n => {
+          const seq = Number(n.dataset.seq);
+          n.classList.toggle("diff-pick", diffPicks.includes(seq));
+          if (diffMode) n.classList.remove("active");
+        });
+      }
+
+      function pickForDiff(seq) {
+        diffPicks = diffPicks.includes(seq) ? diffPicks.filter(s => s !== seq) : [...diffPicks, seq].slice(-2);
+        markPicks();
+        const btn = document.getElementById("diff-btn");
+        btn.textContent = diffPicks.length === 2 ? "Diff: on" : "Diff: pick 1 more";
+        const detailEl = document.getElementById("detail");
+        if (diffPicks.length === 2) {
+          renderDiff();
+        } else {
+          detailEl.innerHTML = "";
+          detailEl.appendChild(el("div", "diff-hint", "Pick one more request to compare."));
+        }
+      }
+
+      async function fetchSpan(seq) {
+        let d = detailCache.get(seq);
+        if (d) return d;
+        const r = await fetch(`/api/session/${encodeURIComponent(sessionId)}/events/${seq}`);
+        if (!r.ok) throw new Error("load failed");
+        d = await r.json();
+        detailCache.set(seq, d);
+        return d;
+      }
+
+      function idxOfSeq(seq) { return allSpans.findIndex(e => e.seq === seq); }
+
+      async function renderDiff() {
+        const detailEl = document.getElementById("detail");
+        const [sa, sb] = [...diffPicks].sort((x, y) => x - y);
+        detailEl.innerHTML = "";
+        detailEl.appendChild(el("div", "diff-hint", "Computing diff\u2026"));
+        let da, db;
+        try { [da, db] = await Promise.all([fetchSpan(sa), fetchSpan(sb)]); }
+        catch { detailEl.innerHTML = '<div class="diff-hint">Failed to load requests.</div>'; return; }
+        if (!diffMode || diffPicks.length !== 2) return; // state changed mid-fetch
+
+        const root = el("div", "span-detail");
+        const head = el("div", "diff-head");
+        head.appendChild(el("span", "diff-side diff-del", `\u2212 #${idxOfSeq(sa)} (seq ${sa})`));
+        head.appendChild(el("span", "diff-arrow", "\u2192"));
+        head.appendChild(el("span", "diff-side diff-add", `+ #${idxOfSeq(sb)} (seq ${sb})`));
+        root.appendChild(head);
+
+        // tabs reuse the same activeTab; messages = block diff, overview = metric diff
+        const tabs = el("div", "detail-tabs");
+        const content = el("div", "detail-tab-content");
+        const draw = () => {
+          content.innerHTML = "";
+          content.appendChild(activeTab === "overview" ? renderOverviewDiff(da, db) : renderMessagesDiff(da, db));
+        };
+        DETAIL_TABS.forEach(t => {
+          const btn = el("button", "detail-tab" + (t === activeTab ? " active" : ""), t);
+          btn.addEventListener("click", () => {
+            activeTab = t;
+            tabs.querySelectorAll(".detail-tab").forEach(b => b.classList.toggle("active", b.textContent === t));
+            draw();
+          });
+          tabs.appendChild(btn);
+        });
+        root.appendChild(tabs);
+        root.appendChild(content);
+        draw();
+        detailEl.innerHTML = "";
+        detailEl.appendChild(root);
+      }
+
+      // Content-block set diff: what B added / removed vs A.
+      function renderMessagesDiff(da, db) {
+        const a = spanItems(da), b = spanItems(db);
+        const aSigs = new Set(a.map(x => x.sig));
+        const bSigs = new Set(b.map(x => x.sig));
+        const added = b.filter(x => !aSigs.has(x.sig));
+        const removed = a.filter(x => !bSigs.has(x.sig));
+        const commonN = b.length - added.length;
+
+        const root = el("div");
+        const counts = el("div", "diff-counts");
+        counts.appendChild(el("span", "dc-add", `+${added.length} added`));
+        counts.appendChild(el("span", "dc-del", `\u2212${removed.length} removed`));
+        counts.appendChild(el("span", "dc-common", `${commonN} unchanged`));
+        root.appendChild(counts);
+        root.appendChild(diffSection("+ Added in B", added, "add"));
+        root.appendChild(diffSection("\u2212 Removed since A", removed, "del"));
+        return root;
+      }
+
+      function diffSection(title, items, kind) {
+        const sec = el("div", "diff-section");
+        sec.appendChild(el("div", "diff-section-title dt-" + kind, title));
+        if (!items.length) { sec.appendChild(el("p", "muted", kind === "add" ? "nothing new" : "nothing removed")); return sec; }
+        for (const item of items) {
+          const wrap = el("div", "diff-block db-" + kind);
+          const label = el("div", "diff-blabel");
+          label.appendChild(el("span", "mdb-idx", `msg[${item.mi}]`));
+          label.appendChild(el("span", "mdb-role msg-" + item.role, item.role));
+          wrap.appendChild(label);
+          const node = renderBlock(item.blk);
+          if (node) wrap.appendChild(node);
+          sec.appendChild(wrap);
+        }
+        return sec;
+      }
+
+      // Metric diff: side-by-side numbers with deltas.
+      function renderOverviewDiff(da, db) {
+        const rows = [
+          ["duration", da.duration_ms || 0, db.duration_ms || 0, fmtDur, false],
+          ["input tokens", da.input_tokens || 0, db.input_tokens || 0, fmtNum, false],
+          ["output tokens", da.output_tokens || 0, db.output_tokens || 0, fmtNum, false],
+          ["cache read", da.cache_read || 0, db.cache_read || 0, fmtNum, false],
+          ["context window", da.context_window || 0, db.context_window || 0, fmtNum, false],
+          ["messages", da.n_messages || 0, db.n_messages || 0, fmtNum, false],
+          ["tool calls", (da.blocks || []).filter(x => x.type === "tool_use").length, (db.blocks || []).filter(x => x.type === "tool_use").length, fmtNum, false],
+        ];
+        const tbl = el("table", "diff-metrics");
+        tbl.innerHTML = `<thead><tr><th>metric</th><th>#${idxOfSeq(da.seq)}</th><th>#${idxOfSeq(db.seq)}</th><th>\u0394</th></tr></thead>`;
+        const tb = el("tbody");
+        for (const [name, av, bv, fmt] of rows) {
+          const delta = bv - av;
+          const tr = el("tr");
+          tr.appendChild(el("td", "dm-name", name));
+          tr.appendChild(el("td", null, fmt(av) || "0"));
+          tr.appendChild(el("td", null, fmt(bv) || "0"));
+          // Format the magnitude (fmtDur returns "" for <=0, so always pass abs).
+          const mag = fmt(Math.abs(delta)) || String(Math.abs(delta));
+          const deltaTxt = delta === 0 ? "\u2014" : (delta > 0 ? "+" : "\u2212") + mag;
+          const dcell = el("td", "dm-delta " + (delta > 0 ? "up" : delta < 0 ? "down" : ""), deltaTxt);
+          tr.appendChild(dcell);
+          tb.appendChild(tr);
+        }
+        tbl.appendChild(tb);
+        return tbl;
+      }
+
+      function renderDetail(d) {
+        const root = el("div", "span-detail");
+
+        // Duration-bar timeline across all spans (click to jump).
+        const bar = renderDurationBar(d.seq);
+        if (bar) root.appendChild(bar);
+
+        // Tabs
+        const tabs = el("div", "detail-tabs");
+        const content = el("div", "detail-tab-content");
+        const draw = () => {
+          content.innerHTML = "";
+          content.appendChild(activeTab === "overview" ? renderOverview(d) : renderMessages(d));
+        };
+        DETAIL_TABS.forEach(t => {
+          const btn = el("button", "detail-tab" + (t === activeTab ? " active" : ""), t);
+          btn.addEventListener("click", () => {
+            activeTab = t;
+            tabs.querySelectorAll(".detail-tab").forEach(b => b.classList.toggle("active", b.textContent === t));
+            draw();
+          });
+          tabs.appendChild(btn);
+        });
+        root.appendChild(tabs);
+        root.appendChild(content);
+        draw();
+        return root;
+      }
+
+      // Proportional duration bar across all spans; clicking a segment opens it.
+      let allSpans = [];
+      function renderDurationBar(currentSeq) {
+        if (allSpans.length < 2) return null;
+        const total = allSpans.reduce((s, e) => s + Math.max(e.duration_ms || 0, 1), 0);
+        const bar = el("div", "dur-bar");
+        allSpans.forEach(e => {
+          const seg = el("div", "dur-seg" + (e.seq === currentSeq ? " active" : ""));
+          const pct = (Math.max(e.duration_ms || 0, 1) / total) * 100;
+          seg.style.width = pct + "%";
+          seg.title = `#${e.seq} \u00B7 ${fmtDur(e.duration_ms) || "<1ms"} \u00B7 ${e.n_tool_use} tools`;
+          seg.addEventListener("click", () => loadDetail(e.seq));
+          bar.appendChild(seg);
+        });
+        return bar;
+      }
+      const detailCache = new Map();
+      let activeSeq = null;
+
+      async function loadDetail(seq) {
+        if (diffMode) { pickForDiff(seq); return; }
+        activeSeq = seq;
+        document.querySelectorAll(".trace-item").forEach(n => {
+          n.classList.toggle("active", Number(n.dataset.seq) === seq);
+        });
+        const detailEl = document.getElementById("detail");
+        let d = detailCache.get(seq);
+        if (!d) {
+          detailEl.innerHTML = '<div class="empty">Loading\u2026</div>';
+          try {
+            const r = await fetch(`/api/session/${encodeURIComponent(sessionId)}/events/${seq}`);
+            if (!r.ok) { detailEl.innerHTML = '<div class="empty">Failed to load request.</div>'; return; }
+            d = await r.json();
+            detailCache.set(seq, d);
+          } catch {
+            detailEl.innerHTML = '<div class="empty">Failed to load request.</div>';
+            return;
+          }
+        }
+        detailEl.innerHTML = "";
+        detailEl.appendChild(renderDetail(d));
+      }
+
+      function renderList(spans) {
+        const listEl = document.getElementById("list");
+        if (!spans.length) {
+          listEl.innerHTML = '<div class="empty">No LLM requests recorded for this session yet.</div>';
+          return;
+        }
+        listEl.innerHTML = "";
+        spans.forEach((s, i) => {
+          const item = el("div", "trace-item");
+          item.dataset.seq = s.seq;
+          const top = el("div", "trace-item-top");
+          top.appendChild(el("span", "trace-seq", "#" + i));
+          if (s.model) top.appendChild(el("span", "trace-item-model", s.model));
+          const stopCls = s.error_message ? "error" : (s.stop_reason || "").toLowerCase();
+          const stop = el("span", "trace-stop " + stopCls, s.error_message ? "error" : (s.stop_reason || "\u2014"));
+          top.appendChild(stop);
+          item.appendChild(top);
+          if (s.preview) item.appendChild(el("p", "trace-preview", s.preview));
+          const meta = el("div", "trace-item-meta");
+          meta.appendChild(el("span", null, `${s.n_messages || 0} msg \u00B7 ${s.n_tool_use} tool${s.n_tool_use === 1 ? "" : "s"}`));
+          const dur = fmtDur(s.duration_ms);
+          meta.appendChild(el("span", null, `\u2193${fmtTok(s.input_tokens)} \u2191${fmtTok(s.output_tokens)}${dur ? " \u00B7 " + dur : ""}`));
+          item.appendChild(meta);
+          if (s.tool_names && s.tool_names.length) {
+            const chips = el("div", "trace-tools");
+            s.tool_names.slice(0, 6).forEach(n => chips.appendChild(el("span", "trace-tool-chip", n)));
+            if (s.tool_names.length > 6) chips.appendChild(el("span", "trace-tool-chip", `+${s.tool_names.length - 6}`));
+            item.appendChild(chips);
+          }
+          item.addEventListener("click", () => { if (diffMode) pickForDiff(s.seq); else loadDetail(s.seq); });
+          listEl.appendChild(item);
+        });
+      }
+
+      // --- Tool Call Sequence + Span Details (ported from eval compare) ---
+      const _toolColorMap = {
+        bash: "#66bb6a", shell: "#66bb6a", read: "#4fc3f7", read_file: "#4fc3f7",
+        grep: "#7986cb", glob: "#81d4fa", search: "#7986cb", edit: "#ffb74d", edit_file: "#ffb74d",
+        write: "#ce93d8", write_file: "#ce93d8", webfetch: "#26c6da", todowrite: "#90a4ae",
+        taskcreate: "#4db6ac", taskupdate: "#a1887f", skill: "#b48ead",
+      };
+      const _toolColorFallback = ["#ec407a", "#9ccc65", "#ff7043", "#7e57c2", "#26a69a", "#d4e157", "#ffee58", "#c62828", "#00897b", "#ffa000"];
+      let _toolFallbackIdx = 0;
+      function toolBlockColor(name) {
+        if (!name) return "#444";
+        const key = name.toLowerCase();
+        if (!_toolColorMap[key]) { _toolColorMap[key] = _toolColorFallback[_toolFallbackIdx % _toolColorFallback.length]; _toolFallbackIdx++; }
+        return _toolColorMap[key];
+      }
+
+      // Strip of colored cells, one per span, with a clickable legend filter.
+      // Layout: fixed label column + a shared horizontal-scroll area holding the
+      // ruler and the lane, so many spans overflow into a scrollbar rather than
+      // compressing to invisibility or widening the page.
+      function renderToolSequence(spans) {
+        const n = spans.length;
+        let html = '<div class="sc-sequence"><div class="sc-seq-grid">';
+        // fixed label column
+        html += '<div class="sc-seq-labels">';
+        html += '<div class="sc-seq-label sc-seq-label-ruler"></div>';
+        html += '<div class="sc-seq-label">tools</div>';
+        html += '</div>';
+        // shared horizontal scroll area
+        html += '<div class="sc-seq-scroll">';
+        // ruler track
+        html += '<div class="sc-seq-track sc-seq-ruler">';
+        for (let i = 0; i < n; i++) {
+          html += i % 5 === 0 ? `<div class="sc-seq-tick">${i}</div>` : '<div class="sc-seq-tick sc-seq-tick-minor"></div>';
+        }
+        html += '</div>';
+        // lane track
+        html += '<div class="sc-seq-track">';
+        spans.forEach((sp, i) => {
+          const names = sp.tool_names || [];
+          if (names.length === 0) {
+            html += `<div class="sc-seq-cell" style="background:#444" data-tool="" title="#${i} no tool"></div>`;
+          } else if (names.length === 1) {
+            html += `<div class="sc-seq-cell" style="background:${toolBlockColor(names[0])}" data-tool="${esc(names[0])}" data-seq="${sp.seq}" title="#${i} ${esc(names[0])}"></div>`;
+          } else {
+            html += `<div class="sc-seq-cell sc-seq-parallel" data-tools="${esc(names.join("|"))}" data-seq="${sp.seq}" title="#${i} ${esc(names.join(", "))} (parallel)">`;
+            for (const nm of names) html += `<div class="sc-seq-layer" style="background:${toolBlockColor(nm)}" data-tool="${esc(nm)}"></div>`;
+            html += '</div>';
+          }
+        });
+        html += '</div>';   // .sc-seq-track (lane)
+        html += '</div>';   // .sc-seq-scroll
+        html += '</div>';   // .sc-seq-grid
+        // legend
+        const allCalls = spans.flatMap(sp => sp.tool_names || []);
+        const counts = {};
+        for (const t of allCalls) counts[t] = (counts[t] || 0) + 1;
+        const unique = [...new Set(allCalls)].sort((a, b) => counts[b] - counts[a]);
+        html += '<div class="sc-seq-legend">';
+        for (const t of unique) {
+          const pct = allCalls.length ? Math.round((counts[t] / allCalls.length) * 100) : 0;
+          html += `<span class="sc-seq-legend-item" data-tool="${esc(t)}"><span class="sc-seq-legend-dot" style="background:${toolBlockColor(t)}"></span>${esc(t)} <span class="sc-seq-legend-pct">${counts[t]} (${pct}%)</span></span>`;
+        }
+        html += '</div></div>';
+        const root = document.getElementById("tool-sequence");
+        root.innerHTML = html;
+        // click a cell -> open that span in the detail viewer above
+        root.querySelectorAll(".sc-seq-cell[data-seq]").forEach(c => {
+          c.addEventListener("click", () => loadDetail(Number(c.dataset.seq)));
+        });
+        attachLegendFilter(root);
+      }
+
+      function attachLegendFilter(root) {
+        const seq = root.querySelector(".sc-sequence");
+        if (!seq) return;
+        const items = seq.querySelectorAll(".sc-seq-legend-item[data-tool]");
+        let active = null;
+        items.forEach(item => item.addEventListener("click", () => {
+          const tool = item.dataset.tool;
+          if (active === tool) {
+            active = null; seq.querySelectorAll(".sc-seq-cell,.sc-seq-layer").forEach(c => c.classList.remove("sc-seq-dim", "sc-seq-highlight"));
+            items.forEach(li => li.classList.remove("sc-seq-legend-active", "sc-seq-legend-dim"));
+          } else {
+            active = tool;
+            seq.querySelectorAll(".sc-seq-cell").forEach(c => {
+              const m = (c.dataset.tool || "") === tool || (c.dataset.tools || "").split("|").includes(tool);
+              c.classList.toggle("sc-seq-highlight", m);
+              c.classList.toggle("sc-seq-dim", !m && !c.classList.contains("sc-seq-empty"));
+            });
+            seq.querySelectorAll(".sc-seq-layer").forEach(c => {
+              const m = c.dataset.tool === tool;
+              c.classList.toggle("sc-seq-highlight", m); c.classList.toggle("sc-seq-dim", !m);
+            });
+            items.forEach(li => { li.classList.toggle("sc-seq-legend-active", li.dataset.tool === tool); li.classList.toggle("sc-seq-legend-dim", li.dataset.tool !== tool); });
+          }
+        }));
+      }
+
+      // Table of every span; click a row to expand its tool calls inline.
+      function renderSpanDetails(spans) {
+        let html = '<div class="sc-table-wrap"><table class="sc-table"><thead><tr><th class="sc-table-seq">#</th><th>span</th></tr></thead><tbody>';
+        spans.forEach((sp, i) => {
+          const tools = (sp.tool_names || []).join(", ") || "\u2014";
+          const dur = fmtDur(sp.duration_ms);
+          html += `<tr data-seq="${sp.seq}"><td class="sc-table-seq">${i}</td>` +
+            `<td class="sc-table-cell sc-table-clickable">` +
+            `<div class="sc-cell-summary"><div class="sc-table-tools">${esc(tools)}</div>` +
+            `<div class="sc-table-meta">${dur ? dur + " \u00B7 " : ""}\u2191${fmtTok(sp.output_tokens)}</div></div>` +
+            `<div class="sc-inline-detail"></div></td></tr>`;
+        });
+        html += '</tbody></table></div>';
+        const root = document.getElementById("span-details");
+        root.innerHTML = html;
+        root.querySelectorAll("tbody tr").forEach(row => {
+          const seq = Number(row.dataset.seq);
+          const cell = row.querySelector(".sc-table-clickable");
+          const detailEl = row.querySelector(".sc-inline-detail");
+          [row.querySelector(".sc-table-seq"), cell].forEach(t => t.addEventListener("click", async (e) => {
+            if (e.target.closest(".sc-inline-detail.open")) return;
+            if (row.classList.contains("sc-row-expanded")) {
+              row.classList.remove("sc-row-expanded"); cell.classList.remove("sc-cell-active");
+              detailEl.classList.remove("open"); detailEl.innerHTML = ""; return;
+            }
+            row.classList.add("sc-row-expanded"); cell.classList.add("sc-cell-active");
+            detailEl.classList.add("open");
+            detailEl.innerHTML = '<div class="sc-detail-loading">Loading\u2026</div>';
+            let d = detailCache.get(seq);
+            if (!d) {
+              try {
+                const r = await fetch(`/api/session/${encodeURIComponent(sessionId)}/events/${seq}`);
+                d = await r.json(); detailCache.set(seq, d);
+              } catch { detailEl.innerHTML = '<div class="sc-detail-loading">Failed to load.</div>'; return; }
+            }
+            detailEl.innerHTML = "";
+            const flow = el("div", "msg-flow");
+            const resById = new Map();
+            for (const rr of (d.tool_results || [])) resById.set(rr.tool_use_id, rr);
+            const blocks = d.blocks || [];
+            for (const blk of blocks) {
+              const node = blk.type === "tool_use"
+                ? renderToolCallRow(blk, resById.get(blk.id) || null)
+                : renderBlock(blk);
+              if (node) flow.appendChild(node);
+            }
+            if (!blocks.length) flow.appendChild(el("p", "muted", "No tool calls or text."));
+            detailEl.appendChild(flow);
+          }));
+        });
+      }
+
+      async function init() {
+        document.getElementById("diff-btn").addEventListener("click", toggleDiffMode);
+        try {
+          const r = await fetch(`/api/session/${encodeURIComponent(sessionId)}/events`);
+          if (!r.ok) { document.getElementById("list").innerHTML = '<div class="empty">Failed to load trace.</div>'; return; }
+          const spans = await r.json();
+          allSpans = spans;
+          renderList(spans);
+          if (spans.length) {
+            loadDetail(spans[0].seq);
+            renderToolSequence(spans);
+            renderSpanDetails(spans);
+          }
+        } catch {
+          document.getElementById("list").innerHTML = '<div class="empty">Failed to load trace.</div>';
+        }
+        postHeight();
+      }
+
+      // Report content height to the embedding dashboard so the iframe can grow
+      // to fit the sections below the viewer (no inner scroll truncation).
+      function postHeight() {
+        const h = document.documentElement.scrollHeight;
+        try { parent.postMessage({ type: "evot-trace-height", height: h }, "*"); } catch {}
+      }
+      window.addEventListener("load", postHeight);
+      document.addEventListener("click", () => setTimeout(postHeight, 60));
+      new MutationObserver(() => postHeight()).observe(document.body, { childList: true, subtree: true });
+      init();
+    </script>
+  </body>
+</html>

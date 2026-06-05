@@ -133,6 +133,14 @@ impl Session {
         self.meta.write().await.turns += 1;
     }
 
+    /// Accumulate billed token usage from a finished run into the session's
+    /// running totals. Persisted by the next `save()`.
+    pub async fn add_usage(&self, input: u64, output: u64) {
+        let mut meta = self.meta.write().await;
+        meta.total_input_tokens = meta.total_input_tokens.saturating_add(input);
+        meta.total_output_tokens = meta.total_output_tokens.saturating_add(output);
+    }
+
     /// Persist session meta (title, updated_at, context usage, etc.).
     pub async fn save(&self) -> Result<()> {
         let transcript = self.transcript.read().await;
@@ -148,6 +156,14 @@ impl Session {
             meta.context_budget = budget;
         }
         meta.message_count = transcript.iter().filter(|i| i.is_context_item()).count() as u32;
+        // Accurate span count = assistant LLM-call entries, matching the trace
+        // viewer. Transcript is already in memory, so this is cheap.
+        meta.span_count = Some(
+            transcript
+                .iter()
+                .filter(|i| matches!(i, TranscriptItem::Assistant { .. }))
+                .count() as u32,
+        );
         meta.updated_at = Utc::now().to_rfc3339();
         self.storage.save_session(meta.clone()).await
     }

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>evot Dashboard</title>
+    <meta name="description" content="evot Dashboard — monitor connected sessions and their working directories." />
+    <link rel="icon" href="/assets/logo.svg" type="image/svg+xml" />
+    <script type="module" crossorigin src="/assets/index.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // Resize the embedded session-trace iframe to fit its content height,
+      // so the Tool Call Sequence and Span Details sections below the viewer
+      // are fully visible instead of clipped by a fixed height.
+      window.addEventListener("message", function (e) {
+        var d = e && e.data;
+        if (!d || d.type !== "evot-trace-height") return;
+        var ifr = document.querySelector('iframe[title="Session trace"]');
+        if (ifr && d.height > 0) ifr.style.height = d.height + "px";
+      });
+    </script>
+  </body>
+</html>

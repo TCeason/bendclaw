@@ -26,6 +26,17 @@ pub struct SessionMeta {
     /// Context budget (window − system prompt) at last save.
     #[serde(default)]
     pub context_budget: usize,
+    /// Cumulative input tokens billed across all runs in this session.
+    #[serde(default)]
+    pub total_input_tokens: u64,
+    /// Cumulative output tokens billed across all runs in this session.
+    #[serde(default)]
+    pub total_output_tokens: u64,
+    /// Number of assistant LLM-call spans, matching the trace viewer's span
+    /// model. `None` for sessions persisted before this field existed; the
+    /// dashboard falls back to `turns` for those until the next save.
+    #[serde(default)]
+    pub span_count: Option<u32>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -43,6 +54,9 @@ impl SessionMeta {
             message_count: 0,
             context_tokens: 0,
             context_budget: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            span_count: None,
             created_at: now.clone(),
             updated_at: now,
         }

@@ -10,7 +10,7 @@ version = "0.1.0"
 evot-engine = { path = "src/engine", package = "evotengine" }
 anyhow = "1"
 async-trait = "0.1"
-axum = { version = "0.8", features = ["macros"] }
+axum = { version = "0.8", features = ["macros", "ws"] }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"

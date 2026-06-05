@@ -16,6 +16,8 @@ mod delivery_test;
 mod feishu_message_test;
 #[path = "feishu_sink_test.rs"]
 mod feishu_sink_test;
+#[path = "id_validation_test.rs"]
+mod id_validation_test;
 #[path = "manual_compact_llm_test.rs"]
 mod manual_compact_llm_test;
 #[path = "orchestrator_compact_test.rs"]

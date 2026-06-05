@@ -16,6 +16,7 @@ fn stats_llm_call_started_round_trip() {
         message_bytes: 1200,
         system_prompt_tokens: 300,
         tool_definition_tokens: 50,
+        ..Default::default()
     });
     let item = stats.to_item();
     assert!(matches!(&item, TranscriptItem::Stats { kind, .. } if kind == "llm_call_started"));

@@ -40,6 +40,27 @@ impl Server {
         let addr = format!("{host}:{port}");
         tracing::info!(stage = "server", status = "listening", addr = %addr);
 
+        // Auto-open mission control in browser
+        let url = format!("http://{addr}/");
+        let _ = std::thread::spawn(move || {
+            // Small delay to ensure server is ready
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("open").arg(&url).spawn();
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("cmd")
+                    .args(["/C", "start", &url])
+                    .spawn();
+            }
+        });
+
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
             .map_err(|e| EvotError::Run(format!("failed to bind {addr}: {e}")))?;
@@ -52,9 +73,10 @@ impl Server {
     }
 
     pub fn router(self: Arc<Self>) -> Router {
+        let dashboard = super::dashboard::dashboard_router(self.agent.clone());
         Router::new()
             .route(
-                "/",
+                "/chat",
                 get(|State(server): State<Arc<Server>>| async move { server.index().await }),
             )
             .route(
@@ -65,8 +87,9 @@ impl Server {
                     },
                 ),
             )
-            .layer(CorsLayer::permissive())
             .with_state(self)
+            .merge(dashboard)
+            .layer(CorsLayer::permissive())
     }
 
     async fn index(&self) -> Html<&'static str> {

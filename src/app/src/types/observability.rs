@@ -17,7 +17,7 @@ use super::transcript::TranscriptItem;
 // Stats structs — one per observability event kind
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LlmCallStartedStats {
     pub turn: usize,
     pub attempt: usize,
@@ -29,6 +29,20 @@ pub struct LlmCallStartedStats {
     pub system_prompt_tokens: usize,
     #[serde(default)]
     pub tool_definition_tokens: usize,
+    /// Full system prompt text sent to the model (for the trace messages view).
+    #[serde(default)]
+    pub system_prompt: String,
+    /// Tool schemas sent to the model (name, description, JSON Schema params).
+    #[serde(default)]
+    pub tool_definitions: Vec<ToolDef>,
+}
+
+/// A tool schema as sent to the model, persisted for the trace messages view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDef {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
