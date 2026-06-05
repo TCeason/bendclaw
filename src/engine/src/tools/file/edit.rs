@@ -5,9 +5,11 @@
 //!
 //! Matching strategy (tiered fallback):
 //! 1. Exact match
-//! 2. Unicode-normalized match (quotes + dashes + NBSP → ASCII, 1:1 char mapping)
+//! 2. Unicode-normalized match (quotes + dashes + Unicode spaces → ASCII, 1:1 char mapping)
 //! 3. Trailing-whitespace-insensitive line match
 //! 4. Full normalization (unicode + trailing ws combined)
+//! 5. NFKC-normalized line match (compatibility forms, e.g. full-width CJK
+//!    punctuation / Latin → ASCII; combined with unicode + trailing ws)
 
 use async_trait::async_trait;
 
@@ -177,7 +179,12 @@ impl AgentTool for EditFileTool {
             let start = rm.byte_offset;
             let end = start + rm.actual_old_text.len();
             let final_new_text = match rm.kind {
-                MatchKind::UnicodeNormalized | MatchKind::FullNormalized => {
+                // All tiers that fold curly quotes via `normalize_unicode`
+                // must re-apply the file's quote style to new_text, otherwise
+                // the replacement silently rewrites curly quotes to straight.
+                MatchKind::UnicodeNormalized
+                | MatchKind::FullNormalized
+                | MatchKind::NfkcNormalized => {
                     preserve_quote_style(old_text_lf, &rm.actual_old_text, new_text_lf)
                 }
                 _ => new_text_lf.clone(),
@@ -344,9 +351,10 @@ impl EditFileTool {
 //
 // Tiered fallback strategy:
 // 1. Exact match
-// 2. Unicode-normalized match (quotes + dashes + NBSP → ASCII)
+// 2. Unicode-normalized match (quotes + dashes + Unicode spaces → ASCII)
 // 3. Trailing-whitespace-insensitive line match
 // 4. Full normalization (unicode + trailing ws combined)
+// 5. NFKC-normalized line match (compatibility forms + unicode + trailing ws)
 //
 // All functions are pure — no IO, no side effects.
 
@@ -357,6 +365,7 @@ pub enum MatchKind {
     UnicodeNormalized,
     WhitespaceInsensitive,
     FullNormalized,
+    NfkcNormalized,
 }
 
 impl MatchKind {
@@ -367,6 +376,7 @@ impl MatchKind {
             Self::UnicodeNormalized => "unicode_normalized",
             Self::WhitespaceInsensitive => "whitespace_insensitive",
             Self::FullNormalized => "full_normalized",
+            Self::NfkcNormalized => "nfkc_normalized",
         }
     }
 }
@@ -440,6 +450,12 @@ pub fn resolve_unique_match(
 
     // Level 4: Full normalization (unicode + trailing ws combined)
     if let Some(result) = try_full_normalized(content_lf, old_text_lf) {
+        return result;
+    }
+
+    // Level 5: NFKC-normalized line match (compatibility forms — full-width
+    // CJK punctuation / Latin, combined with unicode + trailing ws).
+    if let Some(result) = try_nfkc_normalized(content_lf, old_text_lf) {
         return result;
     }
 
@@ -664,6 +680,57 @@ fn try_full_normalized(
     }
 }
 
+/// Level 5: NFKC compatibility normalization + unicode + trailing whitespace.
+///
+/// Handles compatibility forms that the 1:1 mapping in `normalize_unicode`
+/// cannot cover — e.g. full-width CJK punctuation/Latin (，：（）￥),
+/// ideographic spaces, and other NFKC-foldable characters. NFKC is not a
+/// length-preserving 1:1 mapping, so this works line-by-line and resolves the
+/// byte range from the original content (like Levels 3 and 4).
+fn try_nfkc_normalized(
+    content_lf: &str,
+    old_text_lf: &str,
+) -> Option<Result<ResolvedMatch, MatchError>> {
+    let old_lines: Vec<&str> = old_text_lf.lines().collect();
+    let content_spans = build_line_spans(content_lf);
+
+    if old_lines.is_empty() || content_spans.len() < old_lines.len() {
+        return None;
+    }
+
+    // Pre-normalize old_text lines: NFKC + unicode + trim trailing ws.
+    let norm_old_lines: Vec<String> = old_lines.iter().map(|l| normalize_nfkc_line(l)).collect();
+
+    let mut matches: Vec<usize> = Vec::new();
+    for i in 0..=content_spans.len() - norm_old_lines.len() {
+        let all_match = norm_old_lines.iter().enumerate().all(|(j, norm_old_line)| {
+            let span = &content_spans[i + j];
+            let content_line = &content_lf[span.start..span.content_end];
+            normalize_nfkc_line(content_line) == *norm_old_line
+        });
+        if all_match {
+            matches.push(i);
+        }
+    }
+
+    match matches.len() {
+        0 => None,
+        1 => {
+            let (byte_start, byte_end) =
+                line_match_byte_range(&content_spans, matches[0], old_lines.len(), old_text_lf);
+            let actual = content_lf[byte_start..byte_end].to_string();
+            Some(Ok(ResolvedMatch {
+                actual_old_text: actual,
+                byte_offset: byte_start,
+                kind: MatchKind::NfkcNormalized,
+            }))
+        }
+        _ => Some(Err(MatchError::NotUnique {
+            lines: matches.iter().map(|&i| i + 1).collect(),
+        })),
+    }
+}
+
 /// Try to find similar text in the file content for error hints.
 pub fn find_similar_text(content: &str, target: &str) -> Option<String> {
     let target_trimmed = target.trim();
@@ -742,7 +809,9 @@ pub fn strip_utf8_bom(content: &str) -> (&str, &str) {
 /// Each source char maps to exactly one output char. This invariant is relied
 /// upon by the matching code to map char indices between normalized and original.
 ///
-/// Covers: curly quotes, Unicode dashes/hyphens, NBSP.
+/// Covers: curly quotes, Unicode dashes/hyphens, and Unicode spaces (NBSP,
+/// narrow NBSP, the U+2000–U+200A range, medium math space, and the
+/// ideographic space U+3000). Every replacement maps one char to one char.
 pub fn normalize_unicode(text: &str) -> String {
     text.chars()
         .map(|c| match c {
@@ -753,11 +822,25 @@ pub fn normalize_unicode(text: &str) -> String {
             // Dashes/hyphens → -
             '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}'
             | '\u{2212}' => '-',
-            // NBSP → space
-            '\u{00A0}' => ' ',
+            // Unicode spaces → regular space (each is a single char → single space)
+            // NBSP, en/em quad range, narrow NBSP, medium math space, ideographic space
+            '\u{00A0}' | '\u{2000}'..='\u{200A}' | '\u{202F}' | '\u{205F}' | '\u{3000}' => ' ',
             other => other,
         })
         .collect()
+}
+
+/// Normalize a single line for NFKC-tier matching: apply NFKC compatibility
+/// normalization, then the 1:1 unicode folding, then strip trailing whitespace.
+///
+/// NFKC folds compatibility characters (full-width CJK punctuation/Latin,
+/// ligatures, etc.) into their canonical forms. It is *not* length-preserving,
+/// so callers must resolve byte ranges from the original content rather than
+/// mapping char indices.
+fn normalize_nfkc_line(line: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let nfkc: String = line.nfkc().collect();
+    normalize_unicode(&nfkc).trim_end().to_string()
 }
 
 /// Preserve the curly-quote style from the file when the match was

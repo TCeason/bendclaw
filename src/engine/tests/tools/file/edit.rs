@@ -613,3 +613,172 @@ async fn test_overlap_error_includes_indices() {
     assert!(err.contains("overlap"));
     let _ = std::fs::remove_file(tmp);
 }
+
+// ─── Wide Unicode space normalization tests ──────────────────────────────────
+
+#[test]
+fn ideographic_space_normalized_match() {
+    // Full-width (ideographic) space U+3000 in file, regular space in old_text
+    let content = "你好　世界\n";
+    let old = "你好 世界";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::UnicodeNormalized);
+    assert!(m.actual_old_text.contains('\u{3000}'));
+}
+
+#[test]
+fn narrow_nbsp_normalized_match() {
+    let content = "x\u{202F}y\n";
+    let old = "x y";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::UnicodeNormalized);
+    assert!(m.actual_old_text.contains('\u{202F}'));
+}
+
+#[test]
+fn en_quad_space_normalized_match() {
+    // U+2002 (en space) in file, regular space in old_text
+    let content = "a\u{2002}b\n";
+    let old = "a b";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::UnicodeNormalized);
+    assert!(m.actual_old_text.contains('\u{2002}'));
+}
+
+#[test]
+fn normalize_unicode_wide_spaces() {
+    let input = "a\u{2000}b\u{2009}c\u{202F}d\u{205F}e\u{3000}f";
+    assert_eq!(normalize_unicode(input), "a b c d e f");
+    // 1:1 char mapping invariant must hold.
+    assert_eq!(
+        input.chars().count(),
+        normalize_unicode(input).chars().count()
+    );
+}
+
+// ─── NFKC normalization (Level 5) tests ──────────────────────────────────────
+
+#[test]
+fn nfkc_fullwidth_cjk_comma_match() {
+    // Full-width comma U+FF0C in file, ASCII comma in old_text. NFKC folds it.
+    let content = "调用 foo，然后返回\n";
+    let old = "调用 foo,然后返回";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::NfkcNormalized);
+    // Replacement uses the actual file text (full-width comma preserved).
+    assert!(m.actual_old_text.contains('\u{FF0C}'));
+}
+
+#[test]
+fn nfkc_fullwidth_parens_match() {
+    // Full-width parens U+FF08 / U+FF09 in file, ASCII parens in old_text.
+    let content = "result （kb）\n";
+    let old = "result (kb)";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::NfkcNormalized);
+    assert!(m.actual_old_text.contains('\u{FF08}'));
+}
+
+#[test]
+fn nfkc_fullwidth_latin_match() {
+    // Full-width Latin letters U+FF21.. in file, ASCII in old_text.
+    let content = "变量ＡＢＣ\n";
+    let old = "变量ABC";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::NfkcNormalized);
+}
+
+#[test]
+fn nfkc_multiline_match() {
+    let content = "第一行：内容\n第二行（补充）\n";
+    let old = "第一行:内容\n第二行(补充)";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::NfkcNormalized);
+    assert!(m.actual_old_text.contains('\u{FF1A}'));
+    assert!(m.actual_old_text.contains('\u{FF08}'));
+}
+
+#[test]
+fn nfkc_kind_str() {
+    assert_eq!(MatchKind::NfkcNormalized.as_str(), "nfkc_normalized");
+}
+
+#[test]
+fn nfkc_ambiguous_reports_not_unique() {
+    // Two lines that both fold to the same NFKC form (both use full-width
+    // colon, so neither is an exact match) → must error, not silently edit
+    // the wrong one.
+    let content = "值：1\n值：1\n";
+    let old = "值:1";
+    let err = resolve_unique_match(content, old).unwrap_err();
+    match err {
+        MatchError::NotUnique { lines } => assert_eq!(lines, vec![1, 2]),
+        other => panic!("expected NotUnique, got {other:?}"),
+    }
+}
+
+#[test]
+fn nfkc_preserves_curly_quotes_in_new_text() {
+    // File has full-width parens AND curly quotes; old_text uses ASCII for
+    // both. NFKC tier matches, and new_text's straight quotes must be folded
+    // to the file's curly style (direction follows the same open/close
+    // heuristic the other tiers use).
+    let content = "说“你好”（hi）\n";
+    let old = "说\"你好\"(hi)";
+    let new = "说\"再见\"(bye)";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::NfkcNormalized);
+    // actual_old_text is the verbatim file slice — curly quotes preserved.
+    assert!(m.actual_old_text.contains('\u{201C}'));
+    let result = preserve_quote_style(old, &m.actual_old_text, new);
+    // Straight double-quotes in new_text were folded to curly; none remain.
+    assert!(!result.contains('"'));
+    assert!(result.contains('\u{201D}'));
+}
+
+#[test]
+fn exact_match_wins_over_nfkc() {
+    // When ASCII text exists verbatim, the exact tier must win even if a
+    // full-width variant also exists elsewhere. Guards tier ordering.
+    let content = "a,b\nc，d\n";
+    let old = "a,b";
+    let m = resolve_unique_match(content, old).unwrap();
+    assert_eq!(m.kind, MatchKind::Exact);
+    assert_eq!(m.actual_old_text, "a,b");
+}
+
+#[test]
+fn nfkc_no_match_returns_not_found() {
+    let content = "hello world\n";
+    let old = "不存在的内容";
+    let err = resolve_unique_match(content, old).unwrap_err();
+    assert!(matches!(err, MatchError::NotFound));
+}
+
+#[tokio::test]
+async fn test_edit_applies_nfkc_match() {
+    // End-to-end: full-width punctuation in file, ASCII in old_text.
+    let tmp = std::env::temp_dir().join("evot-test-nfkc-edit.txt");
+    let path = tmp.to_str().unwrap();
+    std::fs::write(&tmp, "标题：挑战（大 JSON）\n").unwrap();
+
+    let tool = EditFileTool::new();
+    let result = tool
+        .execute(
+            serde_json::json!({
+                "path": path,
+                "edits": [{
+                    "old_text": "标题:挑战(大 JSON)",
+                    "new_text": "标题：挑战（长跨度）"
+                }]
+            }),
+            ctx("edit"),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.details["match_kind"], "nfkc_normalized");
+    let content = std::fs::read_to_string(&tmp).unwrap();
+    assert!(content.contains("长跨度"));
+    let _ = std::fs::remove_file(tmp);
+}
