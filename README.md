@@ -9,6 +9,7 @@
 <p align="center">
   <a href="#benchmark">Benchmark</a> &middot;
   <a href="#-why-evot">Why</a> &middot;
+  <a href="#dashboard">Dashboard</a> &middot;
   <a href="#installation">Install</a> &middot;
   <a href="#quickstart">Quickstart</a> &middot;
   <a href="#development">Dev</a> &middot;
@@ -64,15 +65,27 @@ Evot maintains a reproducible eval pipeline that runs the same real-world tasks 
 
 ## 📢 News
 
+- **2026-06-05** [Dashboard] Built-in web dashboard — server metrics, connected sessions, per-session usage breakdown, tool call traces, and span details at a glance.
 - **2026-05-30** [Engine] Major refactor — four-pass compaction pipeline, pi-aligned tools with parallel execution, leaner core. Not backward-compatible; start a new session.
-- ~~**2026-05-17** [REPL] `/goal` — autonomous objectives, e.g. `/goal remove unwraps in Rust context compaction`.~~ *(removed — the agent loop handles multi-step tasks natively)*
 - **2026-05-11** [Skills] Built-in `opencli` — control the browser, use logged-in cookies, read Feishu/Lark messages, Twitter/X timelines, and more.
 - **2026-05-11** [Slim] Tool outputs now auto-compact, with token savings shown inline.
 - **2026-05-08** [REPL] `/harden` — stress-test plans and git changes before shipping. Inspired by [@cjzafir](https://x.com/cjzafir/status/2052110266566107321).
 - **2026-05-02** [Skills] Builtin skill support — `review` ships built-in, no install needed.
-- **2026-04-28** [Image] Resize, preserve through compaction, persist to disk.
-- **2026-04-23** [Search] Full-text session search — `/resume <query>` to find any past conversation.
-- **2026-04-18** [REPL] `/history` + `/goto` — time-travel through conversation context.
+
+## Dashboard
+
+Evot ships with a built-in web dashboard for real-time observability. Monitor server resource usage, view all connected sessions, and drill into individual session details — token usage, tool call sequences, and span-level traces.
+
+<table align="center">
+  <tr>
+    <td align="center"><strong>Overview — server metrics & sessions</strong></td>
+    <td align="center"><strong>Session detail — usage & tool traces</strong></td>
+  </tr>
+  <tr>
+    <td><a href=".github/assets/dashboard-overview.png"><img src=".github/assets/dashboard-overview.png" alt="evot dashboard — overview" width="480" height="300" /></a></td>
+    <td><a href=".github/assets/dashboard-session-detail.png"><img src=".github/assets/dashboard-session-detail.png" alt="evot dashboard — session detail" width="480" height="300" /></a></td>
+  </tr>
+</table>
 
 ---
 
