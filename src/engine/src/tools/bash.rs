@@ -18,8 +18,11 @@ use tokio::process::Command;
 pub struct BashTool {
     /// Working directory for commands
     pub cwd: Option<String>,
-    /// Max execution time per command
+    /// Default execution time per command when none is requested.
     pub timeout: Duration,
+    /// Hard ceiling on the per-command timeout. A model-requested `timeout`
+    /// is clamped to this; no command may exceed it.
+    pub max_timeout: Duration,
     /// Max output bytes to capture (prevents OOM on huge outputs)
     pub max_output_bytes: usize,
     /// Commands/patterns that are always blocked (e.g., "rm -rf /")
@@ -38,8 +41,9 @@ impl Default for BashTool {
     fn default() -> Self {
         Self {
             cwd: None,
-            timeout: Duration::from_secs(600), // 10 minutes
-            max_output_bytes: 256 * 1024,      // 256KB
+            timeout: Duration::from_secs(600),      // 10 minutes
+            max_timeout: Duration::from_secs(1800), // 30 minutes hard cap
+            max_output_bytes: 256 * 1024,           // 256KB
             deny_patterns: vec![
                 "rm -rf /".into(),
                 "rm -rf /*".into(),
@@ -66,6 +70,13 @@ impl BashTool {
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Set the hard ceiling on per-command timeout. Clamped so it is never
+    /// below the default timeout.
+    pub fn with_max_timeout(mut self, max_timeout: Duration) -> Self {
+        self.max_timeout = max_timeout;
         self
     }
 
@@ -189,7 +200,8 @@ impl AgentTool for BashTool {
     fn description(&self) -> &str {
         "Execute a bash command in the current working directory. Returns stdout and stderr. \
          Output is truncated to last 2000 lines or 50KB (whichever is hit first). \
-         If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds."
+         If truncated, full output is saved to a temp file. Optionally provide a timeout in \
+         seconds (defaults to 600, hard-capped at 1800)."
     }
 
     fn prompt_snippet(&self) -> Option<&str> {
@@ -206,7 +218,11 @@ impl AgentTool for BashTool {
                 },
                 "timeout": {
                     "type": "number",
-                    "description": "Timeout in seconds (optional, no default timeout)"
+                    "description": "Optional wall-clock timeout in seconds. Defaults to 600 and is hard-capped at 1800. Only raise it for a command you genuinely expect to run long (builds, test suites)."
+                },
+                "reason_to_increase_timeout": {
+                    "type": "string",
+                    "description": "ONLY fill this if you set `timeout` above the 600s default — explain why the command needs longer. Write exactly 'N/A' otherwise."
                 }
             },
             "required": ["command"]
@@ -226,7 +242,18 @@ impl AgentTool for BashTool {
         let command = params["command"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidArgs("missing 'command' parameter".into()))?;
-        let _timeout = params["timeout"].as_f64();
+        // A model-requested timeout overrides the default, clamped to
+        // [default, max_timeout]. Absent/zero/negative falls back to default.
+        let timeout = match params["timeout"].as_f64() {
+            Some(secs) if secs > 0.0 => {
+                // Clamp to [default, max] without risking a clamp() panic if a
+                // caller ever configured default > max.
+                Duration::from_secs_f64(secs)
+                    .min(self.max_timeout)
+                    .max(self.timeout)
+            }
+            _ => self.timeout,
+        };
 
         // Check deny patterns
         for pattern in &self.deny_patterns {
@@ -274,7 +301,6 @@ impl AgentTool for BashTool {
                 .map_err(|e| ToolError::Failed(format!("Sandbox setup failed: {e}")))?;
         }
 
-        let timeout = self.timeout;
         let max_bytes = self.max_output_bytes;
 
         // Spawn as a process group so we can kill the entire tree on timeout/cancel.

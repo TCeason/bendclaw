@@ -132,6 +132,12 @@ export function buildToolCall(
     kind: 'tool',
     text: `[${name.toUpperCase()}] ●${inputInfo}`,
   })
+  // Reason fields (why this call / why bypass a dedicated tool / why raise the
+  // timeout) render as ↳ lines regardless of whether a preview command exists,
+  // so the model's justification is always visible.
+  for (const line of formatReasonLines(args)) {
+    lines.push({ id: genId('tool'), kind: 'tool', text: `  ${line}` })
+  }
   // Detail: preview command takes priority, otherwise show args
   if (previewCommand) {
     const cmdLines = previewCommand.replace(/\r\n/g, '\n').split('\n')
@@ -763,15 +769,53 @@ function formatToolInputInfo(args: Record<string, unknown>, previewCommand?: str
     const lines = previewCommand.replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n').filter(Boolean)
     return lines.length > 1 ? ` · command · ${lines.length} lines` : ' · command'
   }
-  const entries = Object.entries(args ?? {}).filter(([k]) => k !== 'diff')
+  const entries = Object.entries(args ?? {}).filter(([k]) => k !== 'diff' && !isReasonKey(k))
   if (entries.length === 0) return ''
   return ` · ${entries.length} arg${entries.length === 1 ? '' : 's'}`
+}
+
+/** Reason-style fields the model fills to justify a call. Rendered separately
+ *  as ↳ lines and excluded from the generic arg list. */
+function isReasonKey(key: string): boolean {
+  return key === 'reason' || key.startsWith('reason_to_')
+}
+
+/** Human label for a reason field key. */
+function reasonLabel(key: string): string {
+  switch (key) {
+    case 'reason':
+      return 'reason'
+    case 'reason_to_increase_timeout':
+      return 'why longer timeout'
+    case 'reason_to_use_instead_of_read_file_tool':
+      return 'why not read'
+    case 'reason_to_use_instead_of_edit_file_tool':
+      return 'why not edit'
+    case 'reason_to_use_instead_of_glob_files_tool':
+      return 'why not glob'
+    default:
+      return key.replace(/^reason_to_/, 'why ').replace(/_/g, ' ')
+  }
+}
+
+/** Build ↳ lines for any reason fields present, skipping empty or 'N/A'. */
+function formatReasonLines(args: Record<string, unknown>): string[] {
+  if (!args || typeof args !== 'object') return []
+  const lines: string[] = []
+  for (const [k, v] of Object.entries(args)) {
+    if (!isReasonKey(k)) continue
+    if (typeof v !== 'string') continue
+    const val = v.trim()
+    if (val === '' || val === 'N/A') continue
+    lines.push(`↳ ${reasonLabel(k)}: ${truncate(val, 120)}`)
+  }
+  return lines
 }
 
 /** Format all args as key: value lines (matching Rust REPL's format_tool_input_lines). */
 function formatToolInputLines(args: Record<string, unknown>): string[] {
   if (!args || typeof args !== 'object') return []
-  const entries = Object.entries(args).filter(([k]) => k !== 'diff')
+  const entries = Object.entries(args).filter(([k]) => k !== 'diff' && !isReasonKey(k))
   if (entries.length === 0) return []
   const lines: string[] = []
   for (const [k, v] of entries) {

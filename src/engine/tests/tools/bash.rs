@@ -66,6 +66,53 @@ async fn test_bash_timeout() {
 }
 
 #[tokio::test]
+async fn test_bash_timeout_param_raises_ceiling() {
+    // Default 200ms would kill a 1s command, but a requested 10s timeout
+    // raises the ceiling so the command completes.
+    let tool = BashTool::new().with_timeout(std::time::Duration::from_millis(200));
+    let result = tool
+        .execute(
+            serde_json::json!({"command": "sleep 1; echo done", "timeout": 10}),
+            ctx("bash"),
+        )
+        .await
+        .expect("should succeed with raised timeout");
+    let text = result
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            Content::Text { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert!(text.contains("done"), "got: {text}");
+}
+
+#[tokio::test]
+async fn test_bash_timeout_param_clamped_to_max() {
+    // A huge requested timeout is clamped to max_timeout, so a never-ending
+    // command still times out promptly rather than running for the requested
+    // duration.
+    let tool = BashTool::new()
+        .with_timeout(std::time::Duration::from_millis(100))
+        .with_max_timeout(std::time::Duration::from_millis(300));
+    let start = std::time::Instant::now();
+    let result = tool
+        .execute(
+            serde_json::json!({"command": "sleep 30", "timeout": 9999}),
+            ctx("bash"),
+        )
+        .await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("timed out"));
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(5),
+        "clamp ignored: ran {:?}",
+        start.elapsed()
+    );
+}
+
+#[tokio::test]
 async fn test_bash_cancel() {
     let tool = BashTool::new();
     let cancel = CancellationToken::new();

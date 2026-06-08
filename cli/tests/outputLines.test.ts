@@ -118,6 +118,39 @@ describe('buildToolCall', () => {
     expect(all).toContain('    EOF')
     expect(all).not.toContain('ctrl+o to expand')
   })
+
+  test('renders reason as a ↳ line alongside a preview command', () => {
+    const lines = buildToolCall('bash', { reason: 'list project files' }, 'ls -la')
+    const all = lines.map(l => l.text).join('\n')
+    expect(all).toContain('↳ reason: list project files')
+    // Preview command still renders.
+    expect(all).toContain('❯ ls -la')
+  })
+
+  test('renders bash bypass and timeout reasons with friendly labels', () => {
+    const lines = buildToolCall(
+      'bash',
+      {
+        reason: 'run the build',
+        reason_to_increase_timeout: 'full release build is slow',
+        reason_to_use_instead_of_read_file_tool: 'N/A',
+      },
+      'cargo build --release',
+    )
+    const all = lines.map(l => l.text).join('\n')
+    expect(all).toContain('↳ reason: run the build')
+    expect(all).toContain('↳ why longer timeout: full release build is slow')
+    // 'N/A' reasons are omitted.
+    expect(all).not.toContain('why not read')
+  })
+
+  test('omits empty and N/A reasons, and does not double-count reason in arg summary', () => {
+    const lines = buildToolCall('grep', { pattern: 'foo', reason: '' })
+    const all = lines.map(l => l.text).join('\n')
+    expect(all).not.toContain('↳ reason:')
+    // reason is excluded from the generic arg count (only `pattern` remains).
+    expect(all).toContain('· 1 arg')
+  })
 })
 
 describe('buildToolResult', () => {
