@@ -1,5 +1,6 @@
 pub mod ask_user;
 pub mod bash;
+pub mod explore;
 pub mod file;
 pub mod guard;
 pub mod sandbox;
@@ -16,6 +17,8 @@ pub use ask_user::AskUserRequest;
 pub use ask_user::AskUserResponse;
 pub use ask_user::AskUserTool;
 pub use bash::BashTool;
+pub use explore::GlobTool;
+pub use explore::GrepTool;
 pub use file::EditFileTool;
 pub use file::ReadFileTool;
 pub use file::WriteFileTool;

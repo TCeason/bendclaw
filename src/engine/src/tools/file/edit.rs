@@ -78,6 +78,10 @@ impl AgentTool for EditFileTool {
         ]
     }
 
+    fn prefer_over(&self) -> Option<(&str, &str)> {
+        Some(("edit files", "sed or awk"))
+    }
+
     fn parameter_aliases(&self) -> Option<crate::tools::validation::AliasMap> {
         Some(&[("path", &["file_path", "filePath", "file"] as &[&str])])
     }

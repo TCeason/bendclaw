@@ -13,7 +13,7 @@ fn build_prompt(cwd: &str) -> String {
 fn base_prompt_contains_section_headers() {
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
     let prompt = build_prompt(&tmp.path().to_string_lossy());
-    assert!(prompt.contains("Guidelines:"));
+    assert!(prompt.contains("Using your tools:"));
     assert!(prompt.contains("Current working directory:"));
     assert!(prompt.contains("Git repository: no"));
     assert!(!prompt.contains("Project Instructions"));
@@ -141,7 +141,9 @@ fn git_repo_shows_branch_and_status() {
 fn sections_are_ordered_static_then_dynamic() {
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
     let prompt = build_prompt(&tmp.path().to_string_lossy());
-    let guidelines_pos = prompt.find("Guidelines:").expect("missing Guidelines:");
+    let guidelines_pos = prompt
+        .find("Using your tools:")
+        .expect("missing Using your tools:");
     let cwd_pos = prompt
         .find("Current working directory:")
         .expect("missing Current working directory:");
@@ -186,13 +188,67 @@ fn tool_set_drives_identity_list_and_guidelines() {
     assert!(prompt.contains("- read: Read file contents"));
     assert!(prompt.contains("- write: Create or overwrite files"));
 
-    // Guidelines section is assembled from each tool's own guidelines plus the
-    // shared trailer lines. The bash file-ops line comes first.
-    assert!(prompt.contains("Use bash for file operations like ls, rg, find"));
+    // Guidelines section opens with the framing principle, then per-tool
+    // "prefer this dedicated tool" lines, the bash fallback rule, mechanics,
+    // and the shared trailer.
+    assert!(prompt.contains("Do not run a bash command when a dedicated tool exists"));
+    assert!(
+        prompt.contains("To read or examine files, use `read` instead of cat, head, tail, or sed.")
+    );
+    assert!(prompt.contains("To edit files, use `edit` instead of sed or awk."));
+    assert!(prompt.contains(
+        "To create files, use `write` instead of cat with a heredoc or echo redirection."
+    ));
+    assert!(prompt.contains("fall back to bash only when necessary"));
     assert!(prompt.contains("Use edit for precise changes (edits[].oldText must match exactly)"));
     assert!(prompt.contains("Use write only for new files or complete rewrites."));
+    assert!(prompt.contains("run in parallel"));
     assert!(prompt.contains("Be concise in your responses"));
 
     // The legacy snake_case spelling must not leak back in.
     assert!(!prompt.contains("old_text"));
+}
+
+#[test]
+fn available_tools_list_uses_model_resolved_alias_names() {
+    use evot_engine::tools::GrepTool;
+    use evot_engine::tools::ReadFileTool;
+    let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let tools: Vec<Box<dyn evot_engine::AgentTool>> =
+        vec![Box::new(ReadFileTool::default()), Box::new(GrepTool::new())];
+
+    // Claude models are offered the capitalized aliases, so the advertised
+    // names in the prompt must match what the model can actually call.
+    let claude = SystemPrompt::with_tool_set_for_model(
+        &tmp.path().to_string_lossy(),
+        &tools,
+        "claude-opus-4-6",
+    )
+    .with_system()
+    .build();
+    assert!(claude.contains("- Read: "), "expected Read alias: {claude}");
+    assert!(claude.contains("- Grep: "), "expected Grep alias: {claude}");
+    assert!(!claude.contains("- read: "), "base name leaked: {claude}");
+    assert!(!claude.contains("- grep: "), "base name leaked: {claude}");
+    // The "prefer this tool" guidance must use the same alias the model sees.
+    assert!(
+        claude.contains("use `Read` instead of"),
+        "prefer line should use Read alias: {claude}"
+    );
+    assert!(
+        claude.contains("use `Grep` instead of"),
+        "prefer line should use Grep alias: {claude}"
+    );
+
+    // Non-Claude models keep the base names.
+    let other =
+        SystemPrompt::with_tool_set_for_model(&tmp.path().to_string_lossy(), &tools, "gpt-4o")
+            .with_system()
+            .build();
+    assert!(other.contains("- read: "), "expected base name: {other}");
+    assert!(other.contains("- grep: "), "expected base name: {other}");
+    assert!(
+        other.contains("use `read` instead of"),
+        "prefer line should use base name: {other}"
+    );
 }

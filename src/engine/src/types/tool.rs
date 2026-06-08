@@ -141,6 +141,15 @@ pub trait AgentTool: Send + Sync {
     fn prompt_guidelines(&self) -> Vec<&str> {
         Vec::new()
     }
+    /// "Prefer this dedicated tool" mapping for the system prompt's tool-usage
+    /// section, as `(action phrase, alternatives to avoid)`. The tool's own
+    /// name is filled in by the prompt builder using the model-resolved alias
+    /// (e.g. Claude sees `Grep`), so this returns only the surrounding text.
+    /// Rendered as: ``To {action}, use `{name}` instead of {alternatives}.``
+    /// `None` = the tool contributes no such line (e.g. bash, the fallback).
+    fn prefer_over(&self) -> Option<(&str, &str)> {
+        None
+    }
     /// Parameter alias mappings for input normalization.
     /// Returns canonical_name → accepted_alternatives pairs.
     /// Default: no aliases.

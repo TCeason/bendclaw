@@ -6,9 +6,11 @@ const DYNAMIC_BOUNDARY: &str = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
 
 const SYSTEM_SECTION: &str = r#""#;
 
-const USING_TOOLS_HEADER: &str = "Guidelines:";
-const BASH_FILE_OPS_GUIDELINE: &str = "Use bash for file operations like ls, rg, find";
+const USING_TOOLS_HEADER: &str = "Using your tools:";
+const USING_TOOLS_INTRO: &str = "Do not run a bash command when a dedicated tool exists for the task — dedicated tools are easier for the user to review and give you cleaner, structured results.";
+const BASH_FILE_OPS_GUIDELINE: &str = "Reserve bash for system commands and terminal operations that need a shell. When unsure and a dedicated tool exists, default to it and fall back to bash only when necessary.";
 const USING_TOOLS_TRAILER: &[&str] = &[
+    "When you make several tool calls with no dependencies between them, issue them in one response so they run in parallel; only sequence calls that depend on an earlier result.",
     "Be concise in your responses",
     "Show file paths clearly when working with files",
 ];
@@ -69,6 +71,10 @@ pub struct Section {
 pub struct SystemPrompt {
     cwd: String,
     has_bash: bool,
+    /// Pre-rendered "prefer this dedicated tool" lines, one per tool that
+    /// declares `prefer_over`, with the tool name already resolved to the
+    /// alias the target model sees.
+    prefer_lines: Vec<String>,
     tools_guidelines: Vec<String>,
     sections: Vec<Section>,
 }
@@ -78,11 +84,23 @@ impl SystemPrompt {
         Self::with_tool_set(cwd, &[])
     }
 
-    /// Construct a prompt whose identity "Available tools" list and guidelines
-    /// are derived from the given tools, matching the pi harness exactly:
-    /// a tool appears in "Available tools" only when it provides a snippet, and
-    /// the guidelines section is assembled in tool order with dedup.
+    /// Construct a prompt with tool names rendered using their base names.
+    /// Equivalent to [`with_tool_set_for_model`] with an empty model string.
     pub fn with_tool_set(cwd: &str, tools: &[Box<dyn evot_engine::AgentTool>]) -> Self {
+        Self::with_tool_set_for_model(cwd, tools, "")
+    }
+
+    /// Construct a prompt whose identity "Available tools" list is derived from
+    /// the given tools: a tool appears only when it provides a snippet, and its
+    /// name is rendered using the alias the target `model` actually sees (e.g.
+    /// Claude is offered `Grep`/`Glob`/`Read`, so the prompt must say the same
+    /// — otherwise the advertised name won't match the tool the model can call).
+    /// The guidelines section is assembled in tool order with dedup.
+    pub fn with_tool_set_for_model(
+        cwd: &str,
+        tools: &[Box<dyn evot_engine::AgentTool>],
+        model: &str,
+    ) -> Self {
         let mut text = String::from(IDENTITY_INTRO);
         let listed: Vec<&Box<dyn evot_engine::AgentTool>> = tools
             .iter()
@@ -92,7 +110,7 @@ impl SystemPrompt {
             text.push_str("\n\nAvailable tools:");
             for t in &listed {
                 if let Some(snippet) = t.prompt_snippet() {
-                    text.push_str(&format!("\n- {}: {}", t.name(), snippet));
+                    text.push_str(&format!("\n- {}: {}", t.resolve_name(model), snippet));
                 }
             }
             text.push_str("\n\n");
@@ -101,6 +119,17 @@ impl SystemPrompt {
         Self {
             cwd: cwd.to_string(),
             has_bash: tools.iter().any(|t| t.name() == "bash"),
+            prefer_lines: tools
+                .iter()
+                .filter_map(|t| {
+                    t.prefer_over().map(|(action, alternatives)| {
+                        format!(
+                            "To {action}, use `{}` instead of {alternatives}.",
+                            t.resolve_name(model)
+                        )
+                    })
+                })
+                .collect(),
             tools_guidelines: tools
                 .iter()
                 .flat_map(|t| {
@@ -136,20 +165,27 @@ impl SystemPrompt {
         self
     }
 
-    /// Append tool-use guidance assembled from the registered tools' own
-    /// `prompt_guidelines`, matching the pi harness ordering exactly:
-    /// the conditional bash file-ops line first, then per-tool guidelines in
-    /// tool order, then the shared trailer lines — all deduplicated.
+    /// Append tool-use guidance in the style of a short "Using your tools"
+    /// section: a framing principle, the per-tool "prefer this dedicated tool"
+    /// lines (rendered with model-resolved alias names), the bash fallback
+    /// rule, then per-tool mechanics and the shared trailer — all deduplicated.
     pub fn with_tool_guidance(mut self) -> Self {
         let mut seen = std::collections::HashSet::new();
-        let mut guidelines: Vec<String> = Vec::new();
-        let mut add = |g: &str| {
-            let g = g.trim();
-            if !g.is_empty() && seen.insert(g.to_string()) {
-                guidelines.push(g.to_string());
+        let mut lines: Vec<String> = vec![USING_TOOLS_HEADER.to_string()];
+        let mut add = |s: &str| {
+            let s = s.trim();
+            if !s.is_empty() && seen.insert(s.to_string()) {
+                lines.push(format!("- {s}"));
             }
         };
 
+        // Only frame the dedicated-vs-bash tradeoff when bash is present.
+        if self.has_bash {
+            add(USING_TOOLS_INTRO);
+        }
+        for line in &self.prefer_lines {
+            add(line);
+        }
         if self.has_bash {
             add(BASH_FILE_OPS_GUIDELINE);
         }
@@ -160,8 +196,6 @@ impl SystemPrompt {
             add(t);
         }
 
-        let mut lines = vec![USING_TOOLS_HEADER.to_string()];
-        lines.extend(guidelines.into_iter().map(|g| format!("- {g}")));
         self.sections.push(Section {
             name: "using_tools",
             text: lines.join("\n"),

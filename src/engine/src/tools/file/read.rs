@@ -57,7 +57,11 @@ impl AgentTool for ReadFileTool {
     }
 
     fn prompt_guidelines(&self) -> Vec<&str> {
-        vec!["Use read to examine files instead of cat or sed."]
+        Vec::new()
+    }
+
+    fn prefer_over(&self) -> Option<(&str, &str)> {
+        Some(("read or examine files", "cat, head, tail, or sed"))
     }
 
     fn parameter_aliases(&self) -> Option<crate::tools::validation::AliasMap> {

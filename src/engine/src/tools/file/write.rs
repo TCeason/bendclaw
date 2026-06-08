@@ -59,6 +59,10 @@ impl AgentTool for WriteFileTool {
         vec!["Use write only for new files or complete rewrites."]
     }
 
+    fn prefer_over(&self) -> Option<(&str, &str)> {
+        Some(("create files", "cat with a heredoc or echo redirection"))
+    }
+
     fn parameter_aliases(&self) -> Option<crate::tools::validation::AliasMap> {
         Some(&[("path", &["file_path", "filePath", "file"] as &[&str])])
     }

@@ -52,10 +52,17 @@ async fn test_matches_call_name_case_insensitive() {
 
 #[tokio::test]
 async fn test_readonly_tools_contains_only_safe_tools() {
-    let tools: Vec<Box<dyn evotengine::AgentTool>> = vec![Box::new(ReadFileTool::default())];
+    // Read-only mode now ships read plus the structured search tools.
+    let tools: Vec<Box<dyn evotengine::AgentTool>> = vec![
+        Box::new(ReadFileTool::default()),
+        Box::new(GrepTool::new()),
+        Box::new(GlobTool::new()),
+    ];
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert_eq!(names.len(), 1);
+    assert_eq!(names.len(), 3);
     assert!(names.contains(&"read"));
+    assert!(names.contains(&"grep"));
+    assert!(names.contains(&"glob"));
     // Must not contain mutating or execution tools
     assert!(!names.contains(&"bash"));
     assert!(!names.contains(&"edit"));

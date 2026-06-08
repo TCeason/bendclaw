@@ -24,7 +24,12 @@ pub(crate) fn build_tools(
     sandbox_dirs: Option<Vec<PathBuf>>,
 ) -> Vec<Box<dyn evot_engine::AgentTool>> {
     if matches!(mode, ToolMode::Readonly) {
-        return vec![Box::new(ReadFileTool::default())];
+        // Read-only mode: read + structured search, no mutation or shell.
+        return vec![
+            Box::new(ReadFileTool::default()),
+            Box::new(GrepTool::new()),
+            Box::new(GlobTool::new()),
+        ];
     }
 
     let mut t: Vec<Box<dyn evot_engine::AgentTool>> = Vec::new();
@@ -44,6 +49,10 @@ pub(crate) fn build_tools(
         t.push(Box::new(EditFileTool::new()));
         t.push(Box::new(WriteFileTool::new()));
     }
+
+    // Structured exploration tools — cut the "bash grep → re-read file" loop.
+    t.push(Box::new(GrepTool::new()));
+    t.push(Box::new(GlobTool::new()));
 
     // evot-specific tools, appended after the pi-aligned core set.
     if !matches!(mode, ToolMode::Headless) {
@@ -72,5 +81,7 @@ pub(crate) fn prompt_tools() -> Vec<Box<dyn evot_engine::AgentTool>> {
         Box::new(BashTool::default()),
         Box::new(EditFileTool::new()),
         Box::new(WriteFileTool::new()),
+        Box::new(GrepTool::new()),
+        Box::new(GlobTool::new()),
     ]
 }

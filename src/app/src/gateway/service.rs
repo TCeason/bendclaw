@@ -49,12 +49,14 @@ pub async fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
         .map_err(|e| EvotError::Run(format!("failed to get cwd: {e}")))?;
 
     let tools = crate::agent::tools::prompt_tools();
-    let (system_prompt_text, system_prompt_sections) = SystemPrompt::with_tool_set(&cwd, &tools)
-        .with_system()
-        .with_project_context()
-        .with_dynamic_boundary()
-        .with_today_date()
-        .build_with_sections();
+    let model = conf.active_llm().map(|l| l.model).unwrap_or_default();
+    let (system_prompt_text, system_prompt_sections) =
+        SystemPrompt::with_tool_set_for_model(&cwd, &tools, &model)
+            .with_system()
+            .with_project_context()
+            .with_dynamic_boundary()
+            .with_today_date()
+            .build_with_sections();
 
     let mut skills_dirs = Vec::new();
     if let Ok(global) = crate::conf::paths::skills_dir() {

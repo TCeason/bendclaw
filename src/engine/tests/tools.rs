@@ -2,6 +2,8 @@
 mod ask_user;
 #[path = "tools/bash.rs"]
 mod bash;
+#[path = "tools/explore.rs"]
+mod explore;
 #[path = "tools/file/mod.rs"]
 mod file;
 #[path = "tools/guard.rs"]
