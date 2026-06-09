@@ -8,6 +8,127 @@
     <link rel="icon" href="/assets/logo.svg" type="image/svg+xml" />
     <script type="module" crossorigin src="/assets/index.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index.css" />
+    <style>
+      /* Inline session search — injected into the "Connected sessions" section.
+         Independent of the compiled React bundle: when a query is active the
+         live card grid is hidden and these highlighted results take its place.
+         Styled with the dashboard's own theme variables so it blends in. */
+      #evot-search-bar {
+        margin: 0 0 20px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border: 1px solid hsl(var(--border));
+        border-radius: 10px;
+        background: hsl(var(--card));
+      }
+      #evot-search-bar .si-icon { color: hsl(var(--muted-foreground)); font-size: 14px; flex-shrink: 0; }
+      #evot-search-input {
+        flex: 1; border: none; background: transparent; outline: none;
+        color: hsl(var(--foreground)); font-size: 14px;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+      }
+      #evot-search-input::placeholder { color: hsl(var(--muted-foreground)); }
+      #evot-search-clear {
+        border: none; background: transparent; cursor: pointer;
+        color: hsl(var(--muted-foreground)); font-size: 16px; line-height: 1;
+        padding: 2px 6px; border-radius: 6px; display: none;
+      }
+      #evot-search-clear:hover { color: hsl(var(--foreground)); background: hsl(var(--secondary)); }
+      #evot-search-bar.has-query #evot-search-clear { display: block; }
+      #evot-search-count { font-size: 12px; color: hsl(var(--muted-foreground)); font-family: ui-monospace, monospace; }
+
+      /* Inline results grid — mirrors the dashboard's own card grid spacing. */
+      #evot-search-results {
+        display: grid; gap: 16px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      @media (min-width: 640px) { #evot-search-results { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+      @media (min-width: 1024px) { #evot-search-results { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+      #evot-search-results.empty { display: block; }
+      .evot-result-card {
+        display: block; text-decoration: none; padding: 20px;
+        border: 1px solid hsl(var(--border)); border-radius: 12px;
+        background: hsl(var(--card)); transition: border-color .15s, box-shadow .15s;
+      }
+      .evot-result-card:hover { border-color: hsl(var(--primary) / 0.4); box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+      .evot-result-card .rc-id { font-family: ui-monospace, monospace; font-size: 14px; font-weight: 600; color: hsl(var(--foreground)); }
+      .evot-result-card .rc-title { font-size: 13px; color: hsl(var(--foreground)); margin-top: 4px; }
+      .evot-result-card .rc-cwd { font-family: ui-monospace, monospace; font-size: 12px; color: hsl(var(--muted-foreground)); margin-top: 6px; word-break: break-all; }
+      .evot-result-card .rc-snippet {
+        font-size: 12px; color: hsl(var(--muted-foreground)); margin-top: 8px; line-height: 1.5;
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+      }
+      .evot-result-empty { padding: 40px; text-align: center; color: hsl(var(--muted-foreground)); font-size: 14px; }
+      mark.evot-hl { background: hsl(var(--primary) / 0.35); color: inherit; border-radius: 3px; padding: 0 1px; }
+
+      /* Manage mode: multi-select + bulk delete. */
+      #evot-manage-btn {
+        flex-shrink: 0; cursor: pointer;
+        border: 1px solid hsl(var(--border)); border-radius: 7px;
+        background: hsl(var(--card)); color: hsl(var(--muted-foreground));
+        font-size: 12px; line-height: 1; padding: 6px 11px;
+        transition: color .15s, border-color .15s, background .15s;
+      }
+      #evot-manage-btn:hover { color: hsl(var(--foreground)); border-color: hsl(var(--primary)); }
+      #evot-manage-btn.active { color: hsl(var(--primary-foreground)); background: hsl(var(--primary)); border-color: hsl(var(--primary)); }
+      #evot-manage-toolbar {
+        display: none; align-items: center; gap: 12px; flex-wrap: wrap;
+        margin-bottom: 14px; padding: 8px 12px;
+        border: 1px solid hsl(var(--border)); border-radius: 10px;
+        background: hsl(var(--secondary));
+      }
+      #evot-manage-toolbar.show { display: flex; }
+      #evot-manage-toolbar label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: hsl(var(--foreground)); cursor: pointer; }
+      #evot-manage-toolbar .emt-count { font-size: 12px; color: hsl(var(--muted-foreground)); font-family: ui-monospace, monospace; }
+      #evot-manage-toolbar .emt-spacer { flex: 1; }
+      #evot-delete-selected {
+        cursor: pointer; border: 1px solid hsl(var(--destructive, 0 72% 51%));
+        border-radius: 7px; background: transparent;
+        color: hsl(var(--destructive, 0 72% 51%));
+        font-size: 12px; line-height: 1; padding: 7px 13px;
+        transition: background .15s, color .15s;
+      }
+      #evot-delete-selected:hover:not(:disabled) { background: hsl(var(--destructive, 0 72% 51%)); color: #fff; }
+      #evot-delete-selected:disabled { opacity: .4; cursor: not-allowed; }
+      .evot-result-card.selectable { position: relative; }
+      .evot-result-card .rc-check {
+        position: absolute; top: 12px; right: 12px;
+        width: 18px; height: 18px; cursor: pointer; accent-color: hsl(var(--primary));
+      }
+      .evot-result-card.selected { border-color: hsl(var(--primary)); box-shadow: 0 0 0 1px hsl(var(--primary)); }
+
+      /* Copyable "evot --resume <id>" command on the session detail page. */
+      #evot-resume-cmd {
+        margin-top: 16px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border: 1px solid hsl(var(--border));
+        border-radius: 10px;
+        background: hsl(var(--secondary));
+        max-width: 100%;
+      }
+      #evot-resume-cmd code {
+        flex: 1; min-width: 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px; color: hsl(var(--foreground));
+        overflow-x: auto; white-space: nowrap;
+      }
+      #evot-resume-cmd .erc-prompt { color: hsl(var(--muted-foreground)); user-select: none; margin-right: 6px; }
+      #evot-resume-copy {
+        flex-shrink: 0; cursor: pointer;
+        border: 1px solid hsl(var(--border)); border-radius: 7px;
+        background: hsl(var(--card)); color: hsl(var(--muted-foreground));
+        font-size: 12px; line-height: 1; padding: 6px 11px;
+        display: inline-flex; align-items: center; gap: 5px;
+        transition: color .15s, border-color .15s, background .15s;
+      }
+      #evot-resume-copy:hover { color: hsl(var(--foreground)); border-color: hsl(var(--primary)); }
+      #evot-resume-copy.copied { color: hsl(var(--primary)); border-color: hsl(var(--primary)); }
+    </style>
   </head>
   <body>
     <div id="root"></div>
@@ -21,6 +142,461 @@
         var ifr = document.querySelector('iframe[title="Session trace"]');
         if (ifr && d.height > 0) ifr.style.height = d.height + "px";
       });
+    </script>
+    <script>
+      // Inline session search for the "Connected sessions" section.
+      //
+      // The card grid is owned by the compiled React bundle and re-renders from
+      // the /ws stream roughly every 2s, so we can't edit the component. Instead
+      // we inject a search bar into that section's header. While a query is
+      // active we hide React's live grid and render our own highlighted results
+      // (sourced from /api/sessions, which carries title, cwd, and a flattened
+      // search_text). A MutationObserver re-attaches the bar and re-applies the
+      // active query after each React re-render so it survives the 2s refresh.
+      (function () {
+        var sessions = [];
+        var query = "";
+        var fetchedAt = 0;
+        var hadFocus = false;
+        var manageMode = false;
+        var selected = {};
+
+        function escapeHtml(text) {
+          var d = document.createElement("div");
+          d.textContent = text == null ? "" : String(text);
+          return d.innerHTML;
+        }
+
+        // Escape text and query, then wrap each case-insensitive match in <mark>.
+        function highlight(text, q) {
+          var escaped = escapeHtml(text);
+          if (!q) return escaped;
+          var needle = escapeHtml(q).toLowerCase();
+          if (!needle) return escaped;
+          var lower = escaped.toLowerCase();
+          var out = "";
+          var pos = 0;
+          for (;;) {
+            var idx = lower.indexOf(needle, pos);
+            if (idx === -1) { out += escaped.slice(pos); break; }
+            out += escaped.slice(pos, idx);
+            out += '<mark class="evot-hl">' + escaped.slice(idx, idx + needle.length) + "</mark>";
+            pos = idx + needle.length;
+          }
+          return out;
+        }
+
+        // Substring match over search_text, ordered by match position so
+        // title/path hits (which appear first in search_text) rank highest.
+        function filterSessions(q) {
+          if (!q) return [];
+          var needle = q.toLowerCase();
+          return sessions
+            .map(function (s) { return { s: s, idx: (s.search_text || "").toLowerCase().indexOf(needle) }; })
+            .filter(function (m) { return m.idx !== -1; })
+            .sort(function (a, b) { return a.idx - b.idx; })
+            .map(function (m) { return m.s; });
+        }
+
+        // Context window around the first match, for the result snippet.
+        function snippetFor(source, q, width) {
+          width = width || 160;
+          var lower = source.toLowerCase();
+          var idx = lower.indexOf(q.toLowerCase());
+          if (idx === -1) return "";
+          var half = Math.floor((width - q.length) / 2);
+          var start = Math.max(0, idx - half);
+          var end = Math.min(source.length, idx + q.length + half);
+          var text = source.slice(start, end).replace(/\s+/g, " ").trim();
+          if (start > 0) text = "\u2026" + text;
+          if (end < source.length) text = text + "\u2026";
+          return highlight(text, q);
+        }
+        //__SEARCH_PART2__
+        // --- DOM wiring -----------------------------------------------------
+
+        // Locate the "Connected sessions" heading the React app renders.
+        function findHeading() {
+          var hs = document.querySelectorAll("h2");
+          for (var i = 0; i < hs.length; i++) {
+            if (hs[i].textContent.trim() === "Connected sessions") return hs[i];
+          }
+          return null;
+        }
+
+        // The live card grid is the element containing the session <a> links.
+        function findLiveGrid() {
+          var link = document.querySelector('#root a[href^="/sessions/"]');
+          if (!link) return null;
+          // Walk up to the grid container (the immediate flex/grid wrapper).
+          var el = link;
+          while (el && el.parentElement && el.parentElement.id !== "root") {
+            var cls = el.parentElement.className || "";
+            if (typeof cls === "string" && cls.indexOf("grid") !== -1) return el.parentElement;
+            el = el.parentElement;
+          }
+          return link.parentElement;
+        }
+
+        // Build (once) and return our search bar + results container, inserted
+        // right after the "Connected sessions" header block.
+        function ensureUi() {
+          var heading = findHeading();
+          if (!heading) return null;
+          // The header sits in a wrapper div; insert after that wrapper so the
+          // bar spans the full section width.
+          var headerBlock = heading.closest("div") || heading;
+          var bar = document.getElementById("evot-search-bar");
+          if (!bar) {
+            bar = document.createElement("div");
+            bar.id = "evot-search-bar";
+            bar.innerHTML =
+              '<span class="si-icon">\u2315</span>' +
+              '<input id="evot-search-input" type="text" autocomplete="off" ' +
+              'placeholder="Search sessions by id, path, or content\u2026" />' +
+              '<span id="evot-search-count"></span>' +
+              '<button id="evot-search-clear" title="Clear" aria-label="Clear search">\u00d7</button>' +
+              '<button id="evot-manage-btn" type="button" title="Select and delete sessions">Manage</button>';
+            var toolbar = document.createElement("div");
+            toolbar.id = "evot-manage-toolbar";
+            toolbar.innerHTML =
+              '<label><input type="checkbox" id="evot-select-all" /> Select all</label>' +
+              '<span class="emt-count" id="evot-sel-count">0 selected</span>' +
+              '<span class="emt-spacer"></span>' +
+              '<button id="evot-delete-selected" type="button" disabled>Delete selected</button>';
+            var results = document.createElement("div");
+            results.id = "evot-search-results";
+            results.style.display = "none";
+            headerBlock.insertAdjacentElement("afterend", bar);
+            bar.insertAdjacentElement("afterend", toolbar);
+            toolbar.insertAdjacentElement("afterend", results);
+            wireInputs();
+          }
+          return bar;
+        }
+
+        function wireInputs() {
+          var input = document.getElementById("evot-search-input");
+          var clear = document.getElementById("evot-search-clear");
+          input.addEventListener("focus", function () { hadFocus = true; });
+          input.addEventListener("blur", function () { hadFocus = false; });
+          input.addEventListener("input", function () {
+            query = input.value.trim();
+            if (query) ensureSessions();
+            runApply();
+          });
+          input.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") { input.value = ""; query = ""; runApply(); }
+          });
+          clear.addEventListener("click", function () {
+            input.value = ""; query = ""; runApply();
+            input.focus();
+          });
+          document.getElementById("evot-manage-btn").addEventListener("click", function () {
+            manageMode = !manageMode;
+            selected = {};
+            // Manage mode lists every session, so make sure we have the data.
+            if (manageMode) ensureSessions(true);
+            runApply();
+          });
+          document.getElementById("evot-select-all").addEventListener("change", function (e) {
+            var rows = currentRows();
+            if (e.target.checked) {
+              for (var i = 0; i < rows.length; i++) selected[rows[i].session_id] = true;
+            } else {
+              selected = {};
+            }
+            runApply();
+          });
+          document.getElementById("evot-delete-selected").addEventListener("click", deleteSelected);
+        }
+        //__SEARCH_PART3__
+        // Fetch the full session list (with search_text). Throttled to once per
+        // 5s unless `force` is set (e.g. entering manage mode or after a delete).
+        function ensureSessions(force) {
+          var now = Date.now();
+          if (!force && now - fetchedAt < 5000) return;
+          fetchedAt = now;
+          fetch("/api/sessions")
+            .then(function (r) { return r.ok ? r.json() : []; })
+            .then(function (data) { sessions = data || []; runApply(); })
+            .catch(function () {});
+        }
+
+        // Rows currently shown in our list: filtered by query, or all sessions
+        // when in manage mode with an empty query.
+        function currentRows() {
+          if (query) return filterSessions(query);
+          if (manageMode) return sessions.slice();
+          return [];
+        }
+
+        // Remove the given session cards from the live React grid immediately.
+        // The SPA re-renders from its own WebSocket data on a delay; since the
+        // sessions are gone server-side, React won't re-add them on its next
+        // push, so this just closes the visible lag without fighting React.
+        function pruneLiveCards(ids) {
+          for (var i = 0; i < ids.length; i++) {
+            var nodes = document.querySelectorAll(
+              '#root a[href="/sessions/' + (window.CSS && CSS.escape ? CSS.escape(ids[i]) : ids[i]) + '"]'
+            );
+            for (var j = 0; j < nodes.length; j++) {
+              if (nodes[j].parentElement) nodes[j].parentElement.removeChild(nodes[j]);
+            }
+          }
+        }
+
+        // Delete the checked sessions after a confirm, then refresh the list.
+        function deleteSelected() {
+          var ids = Object.keys(selected).filter(function (id) { return selected[id]; });
+          if (ids.length === 0) return;
+          var msg = "Delete " + ids.length + (ids.length === 1 ? " session" : " sessions") +
+            "? This cannot be undone.";
+          if (!window.confirm(msg)) return;
+          var btn = document.getElementById("evot-delete-selected");
+          if (btn) { btn.disabled = true; btn.textContent = "Deleting\u2026"; }
+          fetch("/api/sessions/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ids: ids }),
+          })
+            .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("delete failed")); })
+            .then(function (res) {
+              // Drop deleted ids locally for instant feedback, then re-fetch.
+              var removed = [];
+              if (res && Array.isArray(res.failed)) {
+                for (var i = 0; i < ids.length; i++) {
+                  if (res.failed.indexOf(ids[i]) === -1) {
+                    removed.push(ids[i]);
+                    sessions = sessions.filter(function (s) { return s.session_id !== ids[i]; });
+                  }
+                }
+                if (res.failed.length) window.alert(res.failed.length + " session(s) could not be deleted.");
+              }
+              // The live React grid is owned by the SPA and only refreshes from
+              // its WebSocket every ~2s; remove the deleted cards now so every
+              // view reflects the delete immediately instead of lagging.
+              pruneLiveCards(removed);
+              selected = {};
+              runApply();
+              ensureSessions(true);
+            })
+            .catch(function () {
+              window.alert("Delete request failed.");
+              runApply();
+            });
+        }
+
+        // Render one result card. In manage mode it carries a checkbox and
+        // suppresses navigation; otherwise it links to the SPA detail view.
+        function cardHtml(s) {
+          var title = s.title ? '<div class="rc-title">' + highlight(s.title, query) + "</div>" : "";
+          var snippet = snippetFor(s.search_text || "", query);
+          var inner =
+            '<div class="rc-id">' + highlight(s.session_id.slice(0, 8), query) + "</div>" +
+            title +
+            '<div class="rc-cwd">' + highlight(s.cwd || "", query) + "</div>" +
+            (snippet ? '<div class="rc-snippet">' + snippet + "</div>" : "");
+          if (manageMode) {
+            var isSel = !!selected[s.session_id];
+            return (
+              '<div class="evot-result-card selectable' + (isSel ? " selected" : "") +
+              '" data-id="' + escapeHtml(s.session_id) + '">' +
+              '<input type="checkbox" class="rc-check" data-id="' + escapeHtml(s.session_id) + '"' +
+              (isSel ? " checked" : "") + " />" +
+              inner +
+              "</div>"
+            );
+          }
+          return (
+            '<a class="evot-result-card" href="/sessions/' + escapeHtml(s.session_id) + '">' +
+            inner +
+            "</a>"
+          );
+        }
+
+        // Reflect current state into the DOM: toggle the live grid vs our own
+        // list, fill counts, render cards, and sync manage-mode controls.
+        function apply() {
+          var bar = ensureUi();
+          if (!bar) return;
+          var input = document.getElementById("evot-search-input");
+          if (input && input.value.trim() !== query) input.value = query;
+          // If React tore the bar out mid-typing, ensureUi rebuilt it; restore
+          // focus and put the caret at the end so typing isn't interrupted.
+          if (input && hadFocus && document.activeElement !== input) {
+            input.focus();
+            var end = input.value.length;
+            try { input.setSelectionRange(end, end); } catch (e) {}
+          }
+          var results = document.getElementById("evot-search-results");
+          var count = document.getElementById("evot-search-count");
+          var grid = findLiveGrid();
+          var manageBtn = document.getElementById("evot-manage-btn");
+          var toolbar = document.getElementById("evot-manage-toolbar");
+          bar.classList.toggle("has-query", !!query);
+          if (manageBtn) manageBtn.classList.toggle("active", manageMode);
+          if (toolbar) toolbar.classList.toggle("show", manageMode);
+
+          // Our own list is shown when there's a query OR manage mode is on.
+          var showOwnList = !!query || manageMode;
+          if (!showOwnList) {
+            // Restore the live React grid and its pagination/sort controls.
+            if (results) { results.style.display = "none"; results.innerHTML = ""; }
+            if (grid) grid.style.display = "";
+            if (count) count.textContent = "";
+            toggleListChrome(true);
+            return;
+          }
+
+          if (grid) grid.style.display = "none";
+          toggleListChrome(false);
+          var rows = currentRows();
+          if (count) count.textContent = rows.length + (rows.length === 1 ? " match" : " matches");
+          results.style.display = "";
+          if (rows.length === 0) {
+            results.classList.add("empty");
+            results.innerHTML = query
+              ? '<div class="evot-result-empty">No sessions match \u201c' + escapeHtml(query) + "\u201d</div>"
+              : '<div class="evot-result-empty">No sessions</div>';
+          } else {
+            results.classList.remove("empty");
+            results.innerHTML = rows.map(cardHtml).join("");
+            if (manageMode) wireCards(results, rows);
+          }
+          if (manageMode) syncToolbar(rows);
+        }
+
+        // Attach checkbox handlers to the freshly-rendered manage-mode cards.
+        function wireCards(container, rows) {
+          var checks = container.querySelectorAll(".rc-check");
+          for (var i = 0; i < checks.length; i++) {
+            checks[i].addEventListener("change", function (e) {
+              var id = e.target.getAttribute("data-id");
+              if (e.target.checked) selected[id] = true; else delete selected[id];
+              runApply();
+            });
+          }
+        }
+
+        // Sync the select-all checkbox, selected count, and delete button state.
+        function syncToolbar(rows) {
+          var selCount = Object.keys(selected).filter(function (id) { return selected[id]; }).length;
+          var label = document.getElementById("evot-sel-count");
+          if (label) label.textContent = selCount + " selected";
+          var del = document.getElementById("evot-delete-selected");
+          if (del) {
+            del.disabled = selCount === 0;
+            // Reset the label after a delete left it showing "Deleting\u2026".
+            del.textContent = "Delete selected";
+          }
+          var all = document.getElementById("evot-select-all");
+          if (all) {
+            var visibleSelected = rows.filter(function (s) { return selected[s.session_id]; }).length;
+            all.checked = rows.length > 0 && visibleSelected === rows.length;
+            all.indeterminate = visibleSelected > 0 && visibleSelected < rows.length;
+          }
+        }
+
+        // The React grid owns pagination (.evot-pagination) and sort controls
+        // (.evot-sort); they're meaningless over our filtered results, so hide
+        // them while a query is active and restore them when it clears.
+        function toggleListChrome(visible) {
+          var sel = ".evot-pagination, .evot-sort";
+          var nodes = document.querySelectorAll(sel);
+          for (var i = 0; i < nodes.length; i++) {
+            nodes[i].style.display = visible ? "" : "none";
+          }
+        }
+
+        // On a /sessions/{id} detail page, inject a copyable "evot --resume <id>"
+        // command into the header. Idempotent: skipped if already present for
+        // the current id, and removed when navigating away from a detail page.
+        function ensureResumeCommand() {
+          var m = location.pathname.match(/^\/sessions\/([^/]+)\/?$/);
+          var existing = document.getElementById("evot-resume-cmd");
+          if (!m) {
+            if (existing) existing.remove();
+            return;
+          }
+          var id = decodeURIComponent(m[1]);
+          if (existing) {
+            if (existing.getAttribute("data-id") === id) return;
+            existing.remove();
+          }
+          // The detail header renders the id in an <h1><code>; anchor off it.
+          var h1 = document.querySelector("#root main h1");
+          if (!h1) return;
+          var header = h1.closest("header") || h1.parentElement;
+          if (!header) return;
+          var cmd = "evot --resume " + id;
+          var box = document.createElement("div");
+          box.id = "evot-resume-cmd";
+          box.setAttribute("data-id", id);
+          box.innerHTML =
+            '<code><span class="erc-prompt">$</span>' + escapeHtml(cmd) + "</code>" +
+            '<button id="evot-resume-copy" type="button">\u29c9 Copy</button>';
+          header.insertAdjacentElement("afterend", box);
+          var btn = box.querySelector("#evot-resume-copy");
+          btn.addEventListener("click", function () {
+            copyText(cmd, btn);
+          });
+        }
+
+        function copyText(text, btn) {
+          function done() {
+            btn.classList.add("copied");
+            btn.textContent = "\u2713 Copied";
+            setTimeout(function () {
+              btn.classList.remove("copied");
+              btn.textContent = "\u29c9 Copy";
+            }, 1500);
+          }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(done).catch(function () { fallbackCopy(text, done); });
+          } else {
+            fallbackCopy(text, done);
+          }
+        }
+
+        function fallbackCopy(text, done) {
+          var ta = document.createElement("textarea");
+          ta.value = text;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand("copy"); done(); } catch (e) {}
+          document.body.removeChild(ta);
+        }
+
+        // Re-assert the search bar and active query after each React re-render.
+        // The bar is created once (ensureUi is idempotent); we just re-apply the
+        // current query so the live grid stays hidden while filtering.
+        //
+        // apply() mutates the DOM inside #root, which would re-trigger the
+        // observer, so we detach it around our own writes to avoid a render loop.
+        var raf = 0;
+        var observer = new MutationObserver(schedule);
+        function runApply() {
+          observer.disconnect();
+          try {
+            apply();
+            ensureResumeCommand();
+          } finally {
+            var root = document.getElementById("root");
+            if (root) observer.observe(root, { childList: true, subtree: true });
+          }
+        }
+        function schedule() {
+          if (raf) return;
+          raf = requestAnimationFrame(function () { raf = 0; if (document.getElementById("root")) runApply(); });
+        }
+        var root = document.getElementById("root");
+        if (root) observer.observe(root, { childList: true, subtree: true });
+        // Initial attempt once the SPA has mounted.
+        schedule();
+      })();
     </script>
   </body>
 </html>

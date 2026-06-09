@@ -20,11 +20,24 @@ use crate::gateway::channels::http::stream;
 
 const INDEX_HTML: &str = include_str!("static/index.html");
 
+/// Cap on sessions returned by `/api/sessions`. Matches the terminal resume
+/// pool size and keeps the full-text payload bounded.
+const SESSION_SEARCH_LIMIT: usize = 100;
+
+/// Cap on ids accepted per `/api/sessions/delete` call. Bounds the work a single
+/// request can trigger; the UI never selects more than the listed pool anyway.
+const MAX_DELETE_BATCH: usize = 200;
+
 #[derive(Deserialize)]
 struct ChatRequest {
     message: String,
     #[serde(default)]
     session_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct DeleteSessionsRequest {
+    ids: Vec<String>,
 }
 
 pub struct Server {
@@ -87,6 +100,19 @@ impl Server {
                     },
                 ),
             )
+            .route(
+                "/api/sessions",
+                get(|State(server): State<Arc<Server>>| async move { server.sessions().await }),
+            )
+            .route(
+                "/api/sessions/delete",
+                post(
+                    |State(server): State<Arc<Server>>,
+                     Json(req): Json<DeleteSessionsRequest>| async move {
+                        server.delete_sessions(req).await
+                    },
+                ),
+            )
             .with_state(self)
             .merge(dashboard)
             .layer(CorsLayer::permissive())
@@ -94,6 +120,66 @@ impl Server {
 
     async fn index(&self) -> Html<&'static str> {
         Html(INDEX_HTML)
+    }
+
+    /// Returns recent sessions, each with a flattened `search_text` field
+    /// (id, title, cwd, model plus transcript snippets) so the chat UI can do
+    /// client-side substring filtering and highlight matches, mirroring the
+    /// terminal `/resume` selector.
+    async fn sessions(&self) -> impl IntoResponse {
+        match self
+            .agent
+            .list_sessions_with_text(SESSION_SEARCH_LIMIT)
+            .await
+        {
+            Ok(sessions) => Json(sessions).into_response(),
+            Err(e) => {
+                tracing::warn!("chat: failed to list sessions with text: {e}");
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to list sessions",
+                )
+                    .into_response()
+            }
+        }
+    }
+
+    /// Deletes the given sessions and reports how many were removed. Invalid or
+    /// already-gone ids are skipped rather than failing the whole batch, so a
+    /// concurrent deletion or a stale client list cannot wedge the request. Any
+    /// active run for a session is aborted first so it cannot re-create the
+    /// session directory and leave zombie state behind.
+    async fn delete_sessions(&self, req: DeleteSessionsRequest) -> impl IntoResponse {
+        if req.ids.len() > MAX_DELETE_BATCH {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("too many ids: {} (max {MAX_DELETE_BATCH})", req.ids.len()),
+                })),
+            )
+                .into_response();
+        }
+        let mut deleted = 0usize;
+        let mut failed: Vec<String> = Vec::new();
+        for id in &req.ids {
+            // Stop an in-flight run before removing files, otherwise the run's
+            // next transcript write would recreate the directory.
+            self.agent.abort_run(id);
+            match self.agent.delete_session(id).await {
+                Ok(true) => deleted += 1,
+                Ok(false) => { /* already gone — treat as success, no-op */ }
+                Err(e) => {
+                    tracing::warn!(session_id = %id, "delete failed: {e}");
+                    failed.push(id.clone());
+                }
+            }
+        }
+        Json(serde_json::json!({
+            "deleted": deleted,
+            "requested": req.ids.len(),
+            "failed": failed,
+        }))
+        .into_response()
     }
 
     async fn chat(self: Arc<Self>, req: ChatRequest) -> impl IntoResponse {

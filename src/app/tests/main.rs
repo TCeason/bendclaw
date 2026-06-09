@@ -10,6 +10,8 @@ mod command_test;
 mod compact_test;
 #[path = "conf_load_test.rs"]
 mod conf_load_test;
+#[path = "dashboard_search_test.rs"]
+mod dashboard_search_test;
 #[path = "delivery_test.rs"]
 mod delivery_test;
 #[path = "feishu_message_test.rs"]

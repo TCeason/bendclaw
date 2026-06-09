@@ -349,6 +349,71 @@ body {
 }
 .send-btn:hover { background: #333; }
 .send-btn:disabled { background: #d1d5db; cursor: not-allowed; }
+
+/* Session search overlay */
+.search-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  z-index: 50;
+}
+.search-overlay.open { display: flex; }
+.search-panel {
+  background: #fff;
+  width: 100%;
+  max-width: 640px;
+  margin-top: 80px;
+  border-radius: 14px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+}
+.search-input {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 16px 18px;
+  font-size: 15px;
+  font-family: inherit;
+  outline: none;
+}
+.search-results { overflow-y: auto; padding: 6px; }
+.search-empty { padding: 24px; text-align: center; color: #9ca3af; font-size: 14px; }
+.search-item {
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.search-item:hover, .search-item.active { background: #f3f4f6; }
+.search-item .si-title { font-size: 14px; font-weight: 600; color: #111; }
+.search-item .si-meta {
+  font-size: 12px;
+  color: #9ca3af;
+  font-family: 'SF Mono', Monaco, monospace;
+  margin-top: 2px;
+}
+.search-item .si-snippet {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 4px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-item mark {
+  background: #fef08a;
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
 </style>
 </head>
 <body>
@@ -356,7 +421,23 @@ body {
 <div class="header">
   <h1>Evot</h1>
   <div class="actions">
+    <button class="btn-icon" onclick="openSearch()" title="Search sessions">⌕</button>
     <button class="btn-icon" onclick="newSession()" title="New session">+</button>
+  </div>
+</div>
+
+<div class="search-overlay" id="searchOverlay" onclick="onOverlayClick(event)">
+  <div class="search-panel">
+    <input
+      class="search-input"
+      id="searchInput"
+      type="text"
+      placeholder="Search sessions by title, path, or content…"
+      oninput="onSearchInput()"
+      onkeydown="onSearchKey(event)"
+      autocomplete="off"
+    />
+    <div class="search-results" id="searchResults"></div>
   </div>
 </div>
 
@@ -392,6 +473,9 @@ const input = document.getElementById('input');
 const sendBtn = document.getElementById('sendBtn');
 const welcome = document.getElementById('welcome');
 let isStreaming = false;
+// Tracks the resumed session so follow-up messages continue it. The backend
+// creates a fresh session when this is null.
+let currentSessionId = null;
 
 const toolIcons = {
   'Bash': '>_',
@@ -510,6 +594,7 @@ function renderSummaryGrid(data) {
 
 async function newSession() {
   await fetch('/api/new', { method: 'POST' });
+  currentSessionId = null;
   chat.innerHTML = `
     <div class="welcome" id="welcome">
       <h2>What can I do for you?</h2>
@@ -549,7 +634,7 @@ async function sendMessage() {
     const resp = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify({ message: text, session_id: currentSessionId }),
     });
 
     const reader = resp.body.getReader();
@@ -676,6 +761,149 @@ async function sendMessage() {
   input.focus();
   scrollToBottom();
 }
+
+// ── Session search ─────────────────────────────────────────────
+// Mirrors the terminal `/resume` selector: load sessions with full
+// search_text once, then filter client-side by case-insensitive substring
+// and highlight matches. Results are ordered by match position.
+const searchOverlay = document.getElementById('searchOverlay');
+const searchInput = document.getElementById('searchInput');
+const searchResults = document.getElementById('searchResults');
+let allSessions = [];
+let searchMatches = [];
+let searchActive = 0;
+
+async function openSearch() {
+  searchOverlay.classList.add('open');
+  searchInput.value = '';
+  searchInput.focus();
+  renderSearchResults('');
+  try {
+    const resp = await fetch('/api/sessions');
+    if (resp.ok) {
+      allSessions = await resp.json();
+      renderSearchResults(searchInput.value.trim());
+    }
+  } catch { /* offline — keep whatever we have */ }
+}
+
+function closeSearch() {
+  searchOverlay.classList.remove('open');
+}
+
+function onOverlayClick(e) {
+  if (e.target === searchOverlay) closeSearch();
+}
+
+function onSearchInput() {
+  searchActive = 0;
+  renderSearchResults(searchInput.value.trim());
+}
+
+function onSearchKey(e) {
+  if (e.key === 'Escape') { closeSearch(); return; }
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    searchActive = Math.min(searchActive + 1, searchMatches.length - 1);
+    paintActive();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    searchActive = Math.max(searchActive - 1, 0);
+    paintActive();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    const hit = searchMatches[searchActive];
+    if (hit) resumeSession(hit.session_id);
+  }
+}
+
+function paintActive() {
+  const items = searchResults.querySelectorAll('.search-item');
+  items.forEach((el, i) => el.classList.toggle('active', i === searchActive));
+  const el = items[searchActive];
+  if (el) el.scrollIntoView({ block: 'nearest' });
+}
+
+function renderSearchResults(query) {
+  searchMatches = filterSessions(allSessions, query);
+  if (searchMatches.length === 0) {
+    searchResults.innerHTML = `<div class="search-empty">${allSessions.length ? 'No matches' : 'No sessions yet'}</div>`;
+    return;
+  }
+  searchResults.innerHTML = searchMatches.map((s, i) => {
+    const title = s.title || '(untitled)';
+    const meta = `${s.session_id.slice(0, 8)} · ${s.cwd || ''}`;
+    const snippet = query ? snippetFor(s.search_text || '', query) : '';
+    return `
+      <div class="search-item${i === searchActive ? ' active' : ''}" onclick="resumeSession('${s.session_id}')">
+        <div class="si-title">${highlight(title, query)}</div>
+        <div class="si-meta">${highlight(meta, query)}</div>
+        ${snippet ? `<div class="si-snippet">${snippet}</div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+// Case-insensitive substring match against the flattened search_text, sorted
+// by match position so earlier (usually title/path) hits rank first.
+function filterSessions(sessions, query) {
+  if (!query) return sessions;
+  const q = query.toLowerCase();
+  return sessions
+    .map(s => ({ s, idx: (s.search_text || '').toLowerCase().indexOf(q) }))
+    .filter(m => m.idx !== -1)
+    .sort((a, b) => a.idx - b.idx)
+    .map(m => m.s);
+}
+
+// Extract a context window around the first match, like the resume snippet.
+function snippetFor(source, query, width = 120) {
+  const lower = source.toLowerCase();
+  const idx = lower.indexOf(query.toLowerCase());
+  if (idx === -1) return '';
+  const half = Math.floor((width - query.length) / 2);
+  const start = Math.max(0, idx - half);
+  const end = Math.min(source.length, idx + query.length + half);
+  let text = source.slice(start, end).replace(/\s+/g, ' ').trim();
+  if (start > 0) text = '…' + text;
+  if (end < source.length) text = text + '…';
+  return highlight(text, query);
+}
+
+// Escape then wrap every case-insensitive occurrence of query in <mark>.
+// The query is escaped too so it matches the already-escaped text (e.g. a
+// query containing < or & still highlights correctly).
+function highlight(text, query) {
+  const escaped = escapeHtml(text);
+  if (!query) return escaped;
+  const escapedQuery = escapeHtml(query);
+  const lowerText = escaped.toLowerCase();
+  const lowerQuery = escapedQuery.toLowerCase();
+  if (!lowerQuery) return escaped;
+  let out = '';
+  let pos = 0;
+  for (;;) {
+    const idx = lowerText.indexOf(lowerQuery, pos);
+    if (idx === -1) { out += escaped.slice(pos); break; }
+    out += escaped.slice(pos, idx);
+    out += '<mark>' + escaped.slice(idx, idx + lowerQuery.length) + '</mark>';
+    pos = idx + lowerQuery.length;
+  }
+  return out;
+}
+
+function resumeSession(sessionId) {
+  closeSearch();
+  currentSessionId = sessionId;
+  chat.innerHTML = `<div class="welcome"><h2>Session ${escapeHtml(sessionId.slice(0, 8))}</h2><p style="color:#9ca3af">Send a message to continue this session.</p></div>`;
+}
+
+document.addEventListener('keydown', (e) => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    searchOverlay.classList.contains('open') ? closeSearch() : openSearch();
+  }
+});
 
 input.focus();
 </script>
