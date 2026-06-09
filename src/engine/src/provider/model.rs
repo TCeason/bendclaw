@@ -299,9 +299,19 @@ pub struct ModelConfig {
     pub thinking_passback: ThinkingPassbackPolicy,
 }
 
+fn anthropic_context_window(id: &str) -> (u32, u32) {
+    match id.trim().to_ascii_lowercase().as_str() {
+        "claude-opus-4-6" | "claude-opus-4.6" | "claude-opus-4-7" | "claude-opus-4.7"
+        | "claude-opus-4-8" | "claude-opus-4.8" => (1_000_000, 128_000),
+        _ => (200_000, 8192),
+    }
+}
+
 fn openai_context_window(id: &str) -> u32 {
     match id.trim().to_ascii_lowercase().as_str() {
-        "gpt-5.5" => 400_000,
+        // gpt-5.5's Codex backend only serves ~272k usable input (matches pi-mono),
+        // not the advertised 400k.
+        "gpt-5.5" => 272_000,
         #[cfg(test)]
         "tiny-context" => 128,
         _ => 128_000,
@@ -323,15 +333,17 @@ impl ModelConfig {
 
     /// Create a new Anthropic model config.
     pub fn anthropic(id: impl Into<String>, name: impl Into<String>) -> Self {
+        let id = id.into();
+        let (context_window, max_tokens) = anthropic_context_window(&id);
         Self {
-            id: id.into(),
+            id,
             name: name.into(),
             api: ApiProtocol::AnthropicMessages,
             provider: "anthropic".into(),
             base_url: "https://api.anthropic.com".into(),
             reasoning: false,
-            context_window: 200_000,
-            max_tokens: 8192,
+            context_window,
+            max_tokens,
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: None,

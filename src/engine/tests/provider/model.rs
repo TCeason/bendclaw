@@ -20,12 +20,34 @@ fn model_config_openai() {
 }
 
 #[test]
-fn model_config_openai_gpt_5_5_uses_400k_context() {
+fn model_config_openai_gpt_5_5_uses_272k_context() {
+    // gpt-5.5's Codex backend serves ~272k usable context (matches pi-mono's
+    // industry value), not the advertised 400k.
     let config = ModelConfig::openai("gpt-5.5", "GPT-5.5");
-    assert_eq!(config.context_window, 400_000);
+    assert_eq!(config.context_window, 272_000);
 
     let local_config = ModelConfig::local("", "gpt-5.5");
-    assert_eq!(local_config.context_window, 400_000);
+    assert_eq!(local_config.context_window, 272_000);
+}
+
+#[test]
+fn model_config_anthropic_opus_4_6_4_7_4_8_use_1m_context() {
+    for id in [
+        "claude-opus-4-6",
+        "claude-opus-4.6",
+        "claude-opus-4-7",
+        "claude-opus-4.7",
+        "claude-opus-4-8",
+        "claude-opus-4.8",
+    ] {
+        let config = ModelConfig::anthropic(id, "Opus");
+        assert_eq!(config.context_window, 1_000_000, "{id}");
+        assert_eq!(config.max_tokens, 128_000, "{id}");
+    }
+
+    let older = ModelConfig::anthropic("claude-opus-4.5", "Opus 4.5");
+    assert_eq!(older.context_window, 200_000);
+    assert_eq!(older.max_tokens, 8192);
 }
 
 #[test]
