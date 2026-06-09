@@ -273,7 +273,13 @@ async fn before_prompt_skips_when_below_threshold() {
     let original_count = messages.len();
 
     let response = ctrl
-        .before_prompt(&mut messages, &model_id(), None, CancellationToken::new())
+        .before_prompt(
+            &mut messages,
+            &model_id(),
+            0,
+            None,
+            CancellationToken::new(),
+        )
         .await;
 
     assert_eq!(response.action, AfterResponseAction::Continue);
@@ -302,13 +308,76 @@ async fn before_prompt_compacts_when_over_threshold() {
     let original_count = messages.len();
 
     let response = ctrl
-        .before_prompt(&mut messages, &model_id(), None, CancellationToken::new())
+        .before_prompt(
+            &mut messages,
+            &model_id(),
+            0,
+            None,
+            CancellationToken::new(),
+        )
         .await;
 
     assert_eq!(response.action, AfterResponseAction::Continue);
     assert!(response.stats.is_some());
     assert!(!response.overflow_exhausted);
     assert!(messages.len() < original_count);
+}
+
+#[tokio::test]
+async fn before_prompt_uses_estimate_fallback_when_usage_missing() {
+    // Simulates a session where recent turns were errors carrying zero usage:
+    // latest_assistant_usage yields no input signal, so the pre-prompt check
+    // must fall back to the supplied estimate and still compact.
+    let config = config_small();
+    let mut ctrl = CompactionController::new(config);
+
+    let mut messages = vec![
+        user_msg(&varied_text(300)),
+        assistant_msg(&varied_text(300)),
+    ];
+    for _ in 0..20 {
+        messages.push(user_msg(&varied_text(300)));
+        messages.push(assistant_msg(&varied_text(300))); // zero usage
+    }
+    let original_count = messages.len();
+
+    // Estimate over the 8_000 threshold (window 10_000 - reserve 2_000).
+    let response = ctrl
+        .before_prompt(
+            &mut messages,
+            &model_id(),
+            9_000,
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+
+    assert_eq!(response.action, AfterResponseAction::Continue);
+    assert!(response.stats.is_some());
+    assert!(messages.len() < original_count);
+}
+
+#[tokio::test]
+async fn before_prompt_estimate_fallback_skips_below_threshold() {
+    let config = config_small();
+    let mut ctrl = CompactionController::new(config);
+
+    let mut messages = vec![user_msg("hello"), assistant_msg("hi")]; // zero usage
+    let original_count = messages.len();
+
+    let response = ctrl
+        .before_prompt(
+            &mut messages,
+            &model_id(),
+            1_000,
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+
+    assert_eq!(response.action, AfterResponseAction::Continue);
+    assert!(response.stats.is_none());
+    assert_eq!(messages.len(), original_count);
 }
 
 #[tokio::test]

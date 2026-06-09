@@ -116,23 +116,48 @@ impl CompactionController {
     /// Evaluate whether the context should be compacted *before* sending the
     /// next prompt to the provider.
     ///
-    /// This mirrors the post-response threshold check using the latest
-    /// assistant provider usage retained in the transcript. Returning `Skip`
-    /// when no assistant usage is available is intentional: without provider
-    /// usage, pre-prompt compaction would need a separate estimator and would
-    /// no longer share the same trigger semantics as post-response compaction.
+    /// Primary path: mirror the post-response threshold check using the latest
+    /// assistant provider usage retained in the transcript.
+    ///
+    /// Fallback path: when no usable provider usage is available (e.g. the last
+    /// turns were all errors with zero usage), fall back to the caller-supplied
+    /// `estimated_tokens` and compact on the threshold. Without this, a session
+    /// that hits repeated errors can never recover because every error turn
+    /// carries no usage and the pre-prompt check would skip forever. Mirrors
+    /// pi-mono's `_checkCompaction` error-estimate path.
     pub async fn before_prompt(
         &mut self,
         messages: &mut Vec<AgentMessage>,
         current_model: &ModelId,
+        estimated_tokens: usize,
         summarizer_ctx: Option<&SummarizerContext>,
         cancel: CancellationToken,
     ) -> CompactionResponse {
-        let Some(usage) = latest_assistant_usage(messages) else {
-            return CompactionResponse::skip();
-        };
-        self.after_response(messages, &usage, current_model, summarizer_ctx, cancel)
-            .await
+        if let Some(usage) = latest_assistant_usage(messages) {
+            // Prefer real provider usage when it carries an input signal.
+            if usage.input > 0 || usage.cache_read > 0 {
+                return self
+                    .after_response(messages, &usage, current_model, summarizer_ctx, cancel)
+                    .await;
+            }
+        }
+
+        // No usable usage — fall back to the local estimate for a threshold-only
+        // decision. Overflow detection requires real usage, so it is not
+        // attempted here.
+        if estimated_tokens > self.config.trigger_threshold() {
+            self.overflow_recovery_attempted = false;
+            let stats = self.run_compaction(messages, summarizer_ctx, cancel).await;
+            return CompactionResponse {
+                action: AfterResponseAction::Continue,
+                stats,
+                reason: Some(CompactReason::Threshold),
+                context_tokens: Some(estimated_tokens),
+                overflow_exhausted: false,
+            };
+        }
+
+        CompactionResponse::skip()
     }
 
     /// Force a compaction (e.g., manual trigger from user command).

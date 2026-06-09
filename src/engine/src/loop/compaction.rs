@@ -111,8 +111,16 @@ pub(super) async fn pre_prompt_compaction(
         model: config.model.clone(),
     };
 
+    let estimated_tokens = tracker.estimate_context_tokens(messages);
+
     let response = ctrl
-        .before_prompt(messages, &current_model, Some(&summarizer_ctx), cancel)
+        .before_prompt(
+            messages,
+            &current_model,
+            estimated_tokens,
+            Some(&summarizer_ctx),
+            cancel,
+        )
         .await;
 
     emit_compaction_events(ctrl, tracker, messages, &response, tx);
