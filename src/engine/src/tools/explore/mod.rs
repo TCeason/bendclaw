@@ -12,9 +12,11 @@
 
 mod glob;
 mod grep;
+mod search;
 
 pub use glob::GlobTool;
 pub use grep::GrepTool;
+pub use search::SearchTool;
 
 /// Max bytes of tool output before truncation (matches read/web_fetch caps).
 pub(crate) const MAX_OUTPUT_BYTES: usize = 50 * 1024;

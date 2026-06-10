@@ -29,6 +29,7 @@ pub(crate) fn build_tools(
             Box::new(ReadFileTool::default()),
             Box::new(GrepTool::new()),
             Box::new(GlobTool::new()),
+            Box::new(SearchTool::new()),
         ];
     }
 
@@ -53,6 +54,7 @@ pub(crate) fn build_tools(
     // Structured exploration tools — cut the "bash grep → re-read file" loop.
     t.push(Box::new(GrepTool::new()));
     t.push(Box::new(GlobTool::new()));
+    t.push(Box::new(SearchTool::new()));
 
     // evot-specific tools, appended after the pi-aligned core set.
     if !matches!(mode, ToolMode::Headless) {
@@ -83,5 +85,6 @@ pub(crate) fn prompt_tools() -> Vec<Box<dyn evot_engine::AgentTool>> {
         Box::new(WriteFileTool::new()),
         Box::new(GrepTool::new()),
         Box::new(GlobTool::new()),
+        Box::new(SearchTool::new()),
     ]
 }

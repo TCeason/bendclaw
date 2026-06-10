@@ -19,6 +19,7 @@ pub use ask_user::AskUserTool;
 pub use bash::BashTool;
 pub use explore::GlobTool;
 pub use explore::GrepTool;
+pub use explore::SearchTool;
 pub use file::EditFileTool;
 pub use file::ReadFileTool;
 pub use file::WriteFileTool;

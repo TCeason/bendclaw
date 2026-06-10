@@ -53,6 +53,7 @@ lru = "0.12"
 ignore = "0.4"
 globset = "0.4"
 grep = "0.4"
+rayon = "1.10"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

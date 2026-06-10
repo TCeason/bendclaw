@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use evotengine::tools::GlobTool;
 use evotengine::tools::GrepTool;
+use evotengine::tools::SearchTool;
 use evotengine::types::*;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
@@ -293,4 +294,310 @@ async fn glob_missing_pattern_errors() {
         .await
         .expect_err("should error");
     assert!(matches!(err, ToolError::InvalidArgs(_)));
+}
+
+// ---------------------------------------------------------------------------
+// search
+// ---------------------------------------------------------------------------
+
+/// A richer fixture with named definitions across files.
+fn search_fixture() -> TempDir {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::create_dir_all(root.join("tests")).unwrap();
+    std::fs::write(
+        root.join("src/auth.rs"),
+        "/// Authenticate a user against the credential store.\n\
+         pub fn authenticate_user(name: &str, password: &str) -> bool {\n\
+             let hash = hash_password(password);\n\
+             verify_credentials(name, &hash)\n\
+         }\n\
+         \n\
+         fn hash_password(p: &str) -> String {\n\
+             format!(\"hashed:{p}\")\n\
+         }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/config.rs"),
+        "/// Parse a TOML config file from disk.\n\
+         pub fn parse_config(path: &str) -> Config {\n\
+             let text = std::fs::read_to_string(path).unwrap();\n\
+             toml::from_str(&text).unwrap()\n\
+         }\n",
+    )
+    .unwrap();
+    // A test file referencing auth — should be down-ranked vs the real impl.
+    std::fs::write(
+        root.join("tests/auth_test.rs"),
+        "#[test]\n\
+         fn test_authenticate_user_works() {\n\
+             assert!(authenticate_user(\"a\", \"b\"));\n\
+             assert!(authenticate_user(\"c\", \"d\"));\n\
+         }\n",
+    )
+    .unwrap();
+    dir
+}
+
+#[tokio::test]
+async fn search_finds_definition_by_concept() {
+    let dir = search_fixture();
+    let tool = SearchTool::new();
+    let res = tool
+        .execute(
+            serde_json::json!({ "query": "authenticate user" }),
+            ctx_at(dir.path()),
+        )
+        .await
+        .expect("search ok");
+    let out = text_of(&res);
+    assert!(out.contains("src/auth.rs"), "got: {out}");
+    assert!(out.contains("defines `authenticate_user`"), "got: {out}");
+}
+
+#[tokio::test]
+async fn search_ranks_impl_above_test() {
+    let dir = search_fixture();
+    let tool = SearchTool::new();
+    let res = tool
+        .execute(
+            serde_json::json!({ "query": "authenticate user", "top_k": 5 }),
+            ctx_at(dir.path()),
+        )
+        .await
+        .expect("search ok");
+    let out = text_of(&res);
+    let impl_pos = out.find("src/auth.rs").expect("impl present");
+    // The noise penalty should keep the real impl ahead of the test file.
+    if let Some(test_pos) = out.find("auth_test.rs") {
+        assert!(impl_pos < test_pos, "impl should rank first; got: {out}");
+    }
+}
+
+#[tokio::test]
+async fn search_matches_identifier_stems() {
+    let dir = search_fixture();
+    let tool = SearchTool::new();
+    // "parse config" should surface `parse_config` via stem matching.
+    let res = tool
+        .execute(
+            serde_json::json!({ "query": "parse config" }),
+            ctx_at(dir.path()),
+        )
+        .await
+        .expect("search ok");
+    let out = text_of(&res);
+    assert!(out.contains("src/config.rs"), "got: {out}");
+    assert!(out.contains("defines `parse_config`"), "got: {out}");
+}
+
+#[tokio::test]
+async fn search_no_matches_reports_cleanly() {
+    let dir = search_fixture();
+    let tool = SearchTool::new();
+    let res = tool
+        .execute(
+            serde_json::json!({ "query": "zzzznonexistenttoken" }),
+            ctx_at(dir.path()),
+        )
+        .await
+        .expect("search ok");
+    assert_eq!(text_of(&res), "(no matches)");
+}
+
+#[tokio::test]
+async fn search_missing_query_errors() {
+    let dir = search_fixture();
+    let tool = SearchTool::new();
+    let err = tool
+        .execute(serde_json::json!({}), ctx_at(dir.path()))
+        .await
+        .expect_err("should error");
+    assert!(matches!(err, ToolError::InvalidArgs(_)));
+}
+
+#[tokio::test]
+async fn search_second_call_uses_cache() {
+    let dir = search_fixture();
+    let tool = SearchTool::new();
+    // First call builds + caches the index; second reuses it. Both must succeed
+    // and return the same top result for a deterministic query.
+    let q = serde_json::json!({ "query": "parse config" });
+    let a = tool
+        .execute(q.clone(), ctx_at(dir.path()))
+        .await
+        .expect("a");
+    let b = tool.execute(q, ctx_at(dir.path())).await.expect("b");
+    assert_eq!(text_of(&a), text_of(&b));
+}
+
+#[tokio::test]
+async fn search_reflects_file_modification() {
+    let dir = search_fixture();
+    let tool = SearchTool::new();
+    let cx = || ctx_at(dir.path());
+
+    // Prime the cache.
+    let _ = tool
+        .execute(serde_json::json!({ "query": "parse config" }), cx())
+        .await
+        .expect("initial search");
+
+    // A brand-new symbol is not yet indexed.
+    let before = text_of(
+        &tool
+            .execute(serde_json::json!({ "query": "reticulate splines" }), cx())
+            .await
+            .expect("search before edit"),
+    );
+    assert!(
+        !before.contains("reticulate_splines"),
+        "symbol should not exist yet: {before}"
+    );
+
+    // Modify an existing file to add the symbol (size changes -> detected).
+    std::fs::write(
+        dir.path().join("src/config.rs"),
+        "/// Parse a TOML config file from disk.\n\
+         pub fn parse_config(path: &str) -> Config {\n\
+             let text = std::fs::read_to_string(path).unwrap();\n\
+             toml::from_str(&text).unwrap()\n\
+         }\n\
+         \n\
+         pub fn reticulate_splines(count: usize) -> usize {\n\
+             count * 2\n\
+         }\n",
+    )
+    .unwrap();
+
+    let after = text_of(
+        &tool
+            .execute(serde_json::json!({ "query": "reticulate splines" }), cx())
+            .await
+            .expect("search after edit"),
+    );
+    assert!(
+        after.contains("defines `reticulate_splines`"),
+        "modified file should be re-indexed: {after}"
+    );
+}
+
+#[tokio::test]
+async fn search_reflects_new_file() {
+    let dir = search_fixture();
+    let tool = SearchTool::new();
+    let cx = || ctx_at(dir.path());
+
+    let _ = tool
+        .execute(serde_json::json!({ "query": "authenticate user" }), cx())
+        .await
+        .expect("prime cache");
+
+    // Add a new source file after the index was built.
+    std::fs::write(
+        dir.path().join("src/payments.rs"),
+        "/// Charge a customer card via the payment gateway.\n\
+         pub fn charge_payment(amount: u64) -> bool {\n\
+             amount > 0\n\
+         }\n",
+    )
+    .unwrap();
+
+    let out = text_of(
+        &tool
+            .execute(serde_json::json!({ "query": "charge payment" }), cx())
+            .await
+            .expect("search after add"),
+    );
+    assert!(
+        out.contains("defines `charge_payment`"),
+        "new file should be indexed: {out}"
+    );
+}
+
+#[tokio::test]
+async fn search_reflects_deleted_file() {
+    let dir = search_fixture();
+    let tool = SearchTool::new();
+    let cx = || ctx_at(dir.path());
+
+    let before = text_of(
+        &tool
+            .execute(serde_json::json!({ "query": "parse config" }), cx())
+            .await
+            .expect("prime cache"),
+    );
+    assert!(before.contains("src/config.rs"), "config present: {before}");
+
+    std::fs::remove_file(dir.path().join("src/config.rs")).unwrap();
+
+    let after = text_of(
+        &tool
+            .execute(serde_json::json!({ "query": "parse config" }), cx())
+            .await
+            .expect("search after delete"),
+    );
+    assert!(
+        !after.contains("src/config.rs"),
+        "deleted file must drop out of the index: {after}"
+    );
+}
+
+#[test]
+fn search_name_resolves_and_aliases_match() {
+    let tool = SearchTool::new();
+    // Canonical name is the same for every model.
+    assert_eq!(tool.name(), "semantic_code_search");
+    assert_eq!(tool.resolve_name("claude-opus-4-6"), "semantic_code_search");
+    assert_eq!(tool.resolve_name("gpt-4o"), "semantic_code_search");
+    // Legacy names a resumed session may have recorded still route here.
+    assert!(tool.matches_call_name("semantic_code_search"));
+    assert!(tool.matches_call_name("search"));
+    assert!(tool.matches_call_name("CodeSearch"));
+    assert!(!tool.matches_call_name("grep"));
+}
+
+/// Real-world smoke test against a large local checkout. Ignored by default
+/// (path-specific); run with:
+///   cargo test -p evotengine --test tools explore::search_databend_smoke -- --ignored --nocapture
+#[tokio::test]
+#[ignore]
+async fn search_databend_smoke() {
+    let root =
+        std::path::PathBuf::from(std::env::var("HOME").unwrap() + "/github/databendlabs/databend");
+    if !root.exists() {
+        eprintln!("skip: {} not found", root.display());
+        return;
+    }
+    let tool = SearchTool::new();
+
+    let t0 = std::time::Instant::now();
+    let res = tool
+        .execute(
+            serde_json::json!({ "query": "compaction segment merge", "top_k": 5 }),
+            ctx_at(&root),
+        )
+        .await
+        .expect("search ok");
+    let cold = t0.elapsed();
+
+    let t1 = std::time::Instant::now();
+    let _ = tool
+        .execute(
+            serde_json::json!({ "query": "http request handler", "top_k": 5 }),
+            ctx_at(&root),
+        )
+        .await
+        .expect("search ok");
+    let warm = t1.elapsed();
+
+    eprintln!(
+        "cold (build+query): {cold:?}\nwarm (query only): {warm:?}\n---\n{}",
+        text_of(&res)
+    );
+    assert!(text_of(&res).contains("compact"), "expected compaction hit");
+    // Warm query reuses the cache and should be far faster than the cold build.
+    assert!(warm < cold, "warm query should reuse cached index");
 }
