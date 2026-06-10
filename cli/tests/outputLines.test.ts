@@ -185,7 +185,7 @@ describe('buildToolResult', () => {
 
   test('compact JSON result shows shorter head with expand hint', () => {
     const result = JSON.stringify({ a: 1, b: 2, c: 3, d: 4, e: 5, f: 6 })
-    const lines = buildToolResult('web_fetch', {}, 'done', result)
+    const lines = buildToolResult('edit', {}, 'done', result)
     const all = lines.map(l => l.text).join('\n')
     expect(all).toContain('  {')
     expect(all).toContain('  ... (+')
