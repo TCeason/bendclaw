@@ -7,13 +7,16 @@
 </p>
 
 <p align="center">
+  <em>Every gain measured under a rigorous trace + eval framework — earned through relentless iteration, never guessed at.</em>
+</p>
+
+<p align="center">
   <a href="#benchmark">Benchmark</a> &middot;
-  <a href="#-why-evot">Why</a> &middot;
+  <a href="#why-is-evot-faster-and-cheaper">Why</a> &middot;
   <a href="#dashboard">Dashboard</a> &middot;
   <a href="#installation">Install</a> &middot;
   <a href="#quickstart">Quickstart</a> &middot;
-  <a href="#development">Dev</a> &middot;
-  <a href="#community">Community</a>
+  <a href="#development">Dev</a>
 </p>
 
 <p align="center">
@@ -22,7 +25,7 @@
 
 ## Benchmark
 
-Same task, same eval environment, different models. evot completes the work with fewer tokens, less time, and lower cost — across both frontier and open-source models.
+Same task, same eval environment, different models. evot completes the work with fewer tokens, less time, and lower cost — on both frontier and open-source models.
 
 <table align="center">
   <tr>
@@ -46,22 +49,17 @@ Same task, same eval environment, different models. evot completes the work with
 | DeepSeek V4 Pro | Time | 6m 10s | 16m 34s | **63% faster** |
 | DeepSeek V4 Pro | Input tokens | 42.9K | 133.8K | **68% fewer** |
 
-All agents produce correct, passing code. The difference is in how they manage context.
+All agents produce correct, passing code. The difference is how they manage context.
 
 ### Why is evot faster and cheaper?
 
-Evot's goal: **complete tasks fast and well, without wasting a single token.** Every design decision serves this — give the LLM less context, but higher quality context.
+Give the LLM less context, but higher-quality context. Where other agents call the LLM to summarize when context overflows — burning extra tokens and time — evot uses **zero LLM calls for context management**:
 
-Other agents accumulate everything and call the LLM to summarize when context overflows — extra tokens, extra latency. Evot uses **zero LLM calls for context management**:
-
-- **Algorithmic compaction** — a four-pass Rust pipeline (Reclaim → Shrink → Collapse → Evict) runs in microseconds between every turn. Images downgrade to path references; old turns collapse to one-line summaries.
+- **Algorithmic compaction** — a four-pass Rust pipeline (Reclaim → Shrink → Collapse → Evict) runs in microseconds between turns. Images downgrade to path references; old turns collapse to one-line summaries.
 - **Spill to disk** — large tool results write to disk with a short preview. The model re-reads on demand instead of carrying megabytes in context.
-- **Compaction markers** — structured metadata (files modified, conclusions, environment state) survives compaction. Progress is never lost.
+- **Compaction markers** — structured metadata (files modified, conclusions, environment state) survives compaction, so progress is never lost.
 
-Fewer tokens, higher signal density. Fast, high-quality task completion — no token wasted.
-
-**Quantitative benchmarking against the best.**
-Evot maintains a reproducible eval pipeline that runs the same real-world tasks against Claude Code and Codex (latest versions). Every engine change is validated against these baselines — token usage, cost, time, and task success rate must improve or hold. This ensures continuous improvement without regression.
+**Every gain is earned under a rigorous trace + eval framework, not guessed at.** Each engine change is measured against live traces and a reproducible benchmark pipeline — the same real-world tasks run against Claude Code and Codex (latest versions) — before it ships. Token usage, cost, time, and success rate must improve or hold. Relentless trial and iteration, where the numbers decide what stays. Continuous improvement, no regression.
 
 ## 📢 News
 
@@ -74,7 +72,7 @@ Evot maintains a reproducible eval pipeline that runs the same real-world tasks 
 
 ## Dashboard
 
-Evot ships with a built-in web dashboard for real-time observability. Monitor server resource usage, view all connected sessions, and drill into individual session details — token usage, tool call sequences, and span-level traces.
+Evot ships with a built-in web dashboard for real-time observability: server resource usage, all connected sessions, and per-session detail — token usage, tool call sequences, and span-level traces.
 
 <table align="center">
   <tr>
@@ -170,11 +168,6 @@ make setup        # install Rust toolchain, git hooks
 make test         # all tests (engine + CLI)
 make install      # compile standalone binary to ~/.evotai/bin/evot
 ```
-
-## Community
-
-- [**GitHub Issues**](https://github.com/evotai/evot/issues) — Bug reports / Feature
-- [**Twitter @Evot_AI**](https://twitter.com/Evot_AI) — Announcements
 
 ## License
 
