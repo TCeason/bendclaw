@@ -210,6 +210,35 @@ fn dashboard_shell_embeds_search() {
     assert!(html.contains("matchesTimeFilter"));
     assert!(html.contains("/api/favorites"));
     assert!(html.contains("/api/favorites/toggle"));
+    // Session detail page activity readout: summary cards plus scrollable,
+    // expandable activity rows backed by the activity API.
+    assert!(html.contains("evot-activity-panel"));
+    assert!(html.contains("Model"));
+    assert!(html.contains("Current Context"));
+    assert!(html.contains("LLM Calls"));
+    assert!(html.contains("eap-overview"));
+    assert!(html.contains("Token Usage"));
+    assert!(html.contains("Started At"));
+    assert!(html.contains("Last Message"));
+    assert!(html.contains("Total Tokens"));
+    assert!(html.contains("Input / Output"));
+    assert!(html.contains("model"));
+    assert!(html.contains("session_input_tokens"));
+    assert!(html.contains("session_output_tokens"));
+    assert!(html.contains("contextSpark"));
+    assert!(html.contains("Context trend across recent LLM calls"));
+    assert!(html.contains("Peak Context"));
+    assert!(html.contains("Context Compactions"));
+    assert!(!html.contains("Searches</span>"));
+    assert!(html.contains("eap-twist"));
+    assert!(html.contains("eap-filter"));
+    assert!(html.contains("Expand all"));
+    assert!(html.contains("Collapse all"));
+    assert!(html.contains("Trace details"));
+    assert!(html.contains("tool calls & trace"));
+    assert!(html.contains("hideNativeDetailRedundancy"));
+    assert!(html.contains("Activity"));
+    assert!(html.contains("/activity"));
 }
 
 /// The hand-written /chat page exposes the same search affordance.

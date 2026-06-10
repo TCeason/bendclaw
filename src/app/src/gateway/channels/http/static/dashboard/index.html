@@ -211,6 +211,105 @@
       }
       #evot-resume-copy:hover { color: hsl(var(--foreground)); border-color: hsl(var(--primary)); }
       #evot-resume-copy.copied { color: hsl(var(--primary)); border-color: hsl(var(--primary)); }
+
+      /* Session detail activity readout — compact terminal-style panel. */
+      #evot-activity-panel {
+        margin: 18px 0 22px; padding: 18px;
+        border: 1px solid hsl(var(--border)); border-radius: 16px;
+        background: linear-gradient(180deg, hsl(var(--card)), hsl(var(--card) / .92));
+        box-shadow: 0 12px 36px rgba(0,0,0,.18);
+      }
+      .eap-label { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 800; letter-spacing: .18em; color: hsl(var(--muted-foreground)); text-transform: uppercase; }
+      .eap-section { margin-top: 14px; padding: 14px; border: 1px solid hsl(var(--border)); border-radius: 14px; background: hsl(var(--background) / .28); }
+      .eap-section:first-child { margin-top: 0; }
+      .eap-overview-top { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 14px; margin-top: 12px; }
+      .eap-kv { min-width: 0; }
+      .eap-kv dt {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px; font-weight: 800; letter-spacing: .12em;
+        color: hsl(var(--muted-foreground)); text-transform: uppercase;
+      }
+      .eap-kv dd {
+        margin: 5px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: hsl(var(--foreground)); word-break: break-word;
+      }
+      .eap-hero-grid { margin-top: 14px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+      .eap-hero { padding: 12px; border-radius: 12px; border: 1px solid hsl(var(--border)); background: hsl(var(--card) / .7); min-width: 0; }
+      .eap-hero strong { display: block; font-size: 24px; line-height: 1; color: hsl(var(--foreground)); }
+      .eap-hero span { display: block; margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: hsl(var(--muted-foreground)); }
+      .eap-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+      .eap-context { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 24px; font-weight: 800; color: hsl(var(--foreground)); }
+      .eap-context small { font-size: 13px; color: hsl(var(--muted-foreground)); }
+      .eap-context-sub { margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap; }
+      .eap-pill { border: 1px solid hsl(var(--border)); border-radius: 999px; padding: 6px 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: hsl(var(--muted-foreground)); background: hsl(var(--card) / .55); }
+      .eap-pill strong { color: hsl(var(--foreground)); margin-left: 6px; }
+      .eap-bar { height: 12px; border-radius: 999px; background: hsl(var(--secondary)); overflow: hidden; border: 1px solid hsl(var(--border)); }
+      .eap-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #22c55e, #fde047, #ef4444); min-width: 2px; }
+      .eap-spark { height: 42px; margin: 12px 0 0; position: relative; overflow: hidden; opacity: .95; }
+      .eap-spark-label { margin-top: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: hsl(var(--muted-foreground)); letter-spacing: .08em; text-transform: uppercase; }
+      .eap-spark svg { width: 100%; height: 100%; display: block; }
+      .eap-spark .area { fill: url(#eapSparkFill); }
+      .eap-spark .line { fill: none; stroke: #4ade80; stroke-width: 1.4; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-linejoin: round; }
+      .eap-spark .glow { fill: none; stroke: #22c55e; stroke-width: 4; opacity: .16; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-linejoin: round; }
+      .eap-detail-grid { margin-top: 14px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: stretch; }
+      .eap-detail-grid .eap-section { margin-top: 0; }
+      .eap-metric-table { margin-top: 12px; display: grid; gap: 10px; }
+      .eap-metric-row { display: grid; grid-template-columns: 118px minmax(0, 1fr) auto; gap: 12px; align-items: center; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .eap-metric-row .name { color: hsl(var(--muted-foreground)); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+      .eap-metric-row .value { color: hsl(var(--foreground)); font-size: 14px; font-weight: 800; }
+      .eap-mini-bar { height: 8px; border-radius: 999px; background: hsl(var(--secondary)); overflow: hidden; border: 1px solid hsl(var(--border) / .7); }
+      .eap-mini-fill { height: 100%; border-radius: 999px; background: hsl(var(--primary)); min-width: 2px; }
+      .eap-mini-fill.muted { background: hsl(var(--muted-foreground) / .55); }
+      .eap-activity-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+      .eap-activity-meta { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: hsl(var(--muted-foreground)); }
+      .eap-activity { margin-top: 8px; }
+      .eap-toolbar { display: flex; align-items: center; gap: 8px; margin: 10px 0 10px; flex-wrap: wrap; }
+      .eap-toolbar select,
+      .eap-toolbar input {
+        height: 34px; border: 1px solid hsl(var(--border)); border-radius: 10px;
+        background: hsl(var(--background)); color: hsl(var(--foreground));
+        font-size: 12px; padding: 0 10px; outline: none;
+      }
+      .eap-toolbar input { flex: 1; min-width: 190px; }
+      .eap-tool-btn {
+        height: 34px; cursor: pointer; border: 1px solid hsl(var(--border)); border-radius: 10px;
+        background: hsl(var(--card)); color: hsl(var(--muted-foreground)); font-size: 12px; padding: 0 10px;
+      }
+      .eap-tool-btn:hover { color: hsl(var(--foreground)); border-color: hsl(var(--primary) / .55); }
+      .eap-list { max-height: 390px; overflow-y: auto; border: 1px solid hsl(var(--border)); border-radius: 12px; background: hsl(var(--background) / .38); }
+      .eap-row { border-bottom: 1px solid hsl(var(--border) / .55); }
+      .eap-row:last-child { border-bottom: none; }
+      .eap-row summary { cursor: pointer; list-style: none; display: grid; grid-template-columns: 18px 72px 96px minmax(0, 1fr); gap: 10px; align-items: center; padding: 8px 12px; }
+      .eap-row summary::-webkit-details-marker { display: none; }
+      .eap-row summary:hover { background: hsl(var(--secondary) / .45); }
+      .eap-twist { width: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: hsl(var(--muted-foreground)); }
+      .eap-twist::before { content: "▸"; }
+      .eap-row[open] .eap-twist::before { content: "▾"; color: hsl(var(--foreground)); }
+      .eap-time { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: hsl(var(--muted-foreground)); }
+      .eap-badge { justify-self: start; border-radius: 6px; padding: 3px 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 800; background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+      .eap-badge.tool { background: hsl(145 55% 20% / .9); color: #bbf7d0; }
+      .eap-badge.cache { background: hsl(52 80% 20% / .9); color: #fde68a; }
+      .eap-badge.complete, .eap-badge.done { background: hsl(205 65% 22% / .9); color: #bae6fd; }
+      .eap-badge.error { background: hsl(0 65% 24% / .9); color: #fecaca; }
+      .eap-title { min-width: 0; font-size: 14px; color: hsl(var(--foreground)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .eap-sub { color: hsl(var(--muted-foreground)); margin-left: 8px; }
+      .eap-detail { margin: 0; padding: 10px 14px 14px 206px; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.55; color: hsl(var(--muted-foreground)); }
+      .eap-trace { margin-top: 16px; border: 1px solid hsl(var(--border)); border-radius: 12px; background: hsl(var(--background) / .28); overflow: hidden; }
+      .eap-trace summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; padding: 12px 14px; color: hsl(var(--foreground)); font-weight: 700; }
+      .eap-trace summary::-webkit-details-marker { display: none; }
+      .eap-trace summary::before { content: "▸"; color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .eap-trace[open] summary::before { content: "▾"; color: hsl(var(--foreground)); }
+      .eap-trace-note { margin-left: auto; color: hsl(var(--muted-foreground)); font-size: 12px; font-weight: 400; }
+      .eap-trace iframe { width: 100%; height: 580px; border: 0; border-top: 1px solid hsl(var(--border)); background: transparent; }
+      @media (max-width: 720px) {
+        .eap-overview-top, .eap-hero-grid, .eap-detail-grid { grid-template-columns: 1fr; }
+        .eap-metric-row { grid-template-columns: 1fr auto; }
+        .eap-metric-row .eap-mini-bar { grid-column: 1 / -1; grid-row: 2; }
+        .eap-row summary { grid-template-columns: 16px 58px 82px minmax(0, 1fr); }
+        .eap-detail { padding-left: 12px; }
+        .eap-context { font-size: 18px; }
+      }
+      @media (min-width: 721px) and (max-width: 1180px) { .eap-hero-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     </style>
   </head>
   <body>
@@ -831,6 +930,252 @@
           });
         }
 
+        function ensureSessionActivity() {
+          var m = location.pathname.match(/^\/sessions\/([^/]+)\/?$/);
+          var existing = document.getElementById("evot-activity-panel");
+          if (!m) {
+            if (existing) existing.remove();
+            return;
+          }
+          var id = decodeURIComponent(m[1]);
+          if (existing && existing.getAttribute("data-id") === id) return;
+          if (existing) existing.remove();
+          var anchor = document.getElementById("evot-resume-cmd");
+          if (!anchor) return;
+          var panel = document.createElement("section");
+          panel.id = "evot-activity-panel";
+          panel.setAttribute("data-id", id);
+          panel.innerHTML = '<div class="eap-label">Activity</div><div class="evot-result-empty">Loading activity\u2026</div>';
+          anchor.insertAdjacentElement("afterend", panel);
+          fetch("/api/session/" + encodeURIComponent(id) + "/activity")
+            .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("activity failed")); })
+            .then(function (data) {
+              var current = document.getElementById("evot-activity-panel");
+              if (!current || current.getAttribute("data-id") !== id) return;
+              current.innerHTML = renderActivityPanel(data || { summary: {}, rows: [] });
+              wireActivityPanel(current, id);
+            })
+            .catch(function () {
+              var current = document.getElementById("evot-activity-panel");
+              if (current && current.getAttribute("data-id") === id) {
+                current.innerHTML = '<div class="evot-result-empty">Unable to load activity.</div>';
+              }
+            });
+        }
+
+        function formatCompactNumber(n) {
+          n = Number(n || 0);
+          if (n >= 1000000) return (n / 1000000).toFixed(n >= 10000000 ? 0 : 1).replace(/\.0$/, "") + "M";
+          if (n >= 1000) return (n / 1000).toFixed(n >= 100000 ? 0 : 1).replace(/\.0$/, "") + "k";
+          return String(n);
+        }
+
+        function formatFullNumber(n) {
+          return new Intl.NumberFormat().format(Number(n || 0));
+        }
+
+        function formatMs(ms) {
+          ms = Number(ms || 0);
+          if (ms >= 3600000) {
+            var h = Math.floor(ms / 3600000);
+            var m = Math.round((ms % 3600000) / 60000);
+            return h + "h" + (m > 0 ? " " + m + "m" : "");
+          }
+          if (ms >= 60000) return (ms / 60000).toFixed(1).replace(/\.0$/, "") + "m";
+          if (ms >= 1000) return (ms / 1000).toFixed(1).replace(/\.0$/, "") + "s";
+          return ms + "ms";
+        }
+
+        function metricRow(label, value, pct, muted) {
+          var width = Math.max(0, Math.min(100, Math.round(Number(pct || 0))));
+          return '<div class="eap-metric-row">' +
+            '<span class="name">' + escapeHtml(label) + '</span>' +
+            '<div class="eap-mini-bar"><div class="eap-mini-fill' + (muted ? ' muted' : '') + '" style="width:' + width + '%"></div></div>' +
+            '<span class="value">' + escapeHtml(value) + '</span>' +
+          '</div>';
+        }
+
+        function smoothPath(points) {
+          if (!points.length) return "";
+          if (points.length === 1) return "M" + points[0].x + " " + points[0].y;
+          var d = "M" + points[0].x + " " + points[0].y;
+          for (var i = 0; i < points.length - 1; i++) {
+            var p0 = points[Math.max(0, i - 1)];
+            var p1 = points[i];
+            var p2 = points[i + 1];
+            var p3 = points[Math.min(points.length - 1, i + 2)];
+            var cp1x = p1.x + (p2.x - p0.x) / 6;
+            var cp1y = p1.y + (p2.y - p0.y) / 6;
+            var cp2x = p2.x - (p3.x - p1.x) / 6;
+            var cp2y = p2.y - (p3.y - p1.y) / 6;
+            d += " C" + cp1x.toFixed(2) + " " + cp1y.toFixed(2) + "," + cp2x.toFixed(2) + " " + cp2y.toFixed(2) + "," + p2.x + " " + p2.y;
+          }
+          return d;
+        }
+
+        function contextSpark(rows) {
+          var values = (rows || []).filter(function (r) {
+            return r.kind === "complete" && r.detail && r.detail.usage;
+          }).map(function (r) {
+            var u = r.detail.usage || {};
+            return Number(u.input || 0) + Number(u.cache_read || 0);
+          }).filter(function (v) { return v > 0; }).slice(-48);
+          if (values.length < 2) return "";
+          var max = Math.max.apply(null, values);
+          var min = Math.min.apply(null, values);
+          var range = Math.max(1, max - min);
+          var points = values.map(function (v, i) {
+            var x = values.length === 1 ? 0 : (i / (values.length - 1)) * 100;
+            var y = 34 - ((v - min) / range) * 24;
+            return { x: x, y: y };
+          });
+          var line = smoothPath(points);
+          var area = line + " L100 38 L0 38 Z";
+          return '<div class="eap-spark-label">Context trend across recent LLM calls</div>' +
+            '<div class="eap-spark"><svg viewBox="0 0 100 42" preserveAspectRatio="none">' +
+              '<defs><linearGradient id="eapSparkFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#4ade80" stop-opacity="0.18"/><stop offset="100%" stop-color="#4ade80" stop-opacity="0"/></linearGradient></defs>' +
+              '<path class="area" d="' + area + '" />' +
+              '<path class="glow" d="' + line + '" />' +
+              '<path class="line" d="' + line + '" />' +
+            '</svg></div>';
+        }
+
+        function formatDateTime(iso) {
+          if (!iso) return "—";
+          var t = Date.parse(iso);
+          if (isNaN(t)) return "—";
+          return new Date(t).toLocaleString([], { dateStyle: "medium", timeStyle: "medium" });
+        }
+
+        function renderActivityPanel(data) {
+          var s = data.summary || {};
+          var rows = data.rows || [];
+          var pct = s.context_window ? Math.min(100, Math.round((Number(s.context_tokens || 0) / Number(s.context_window)) * 100)) : 0;
+          var rowHtml = rows.length ? rows.map(function (r) {
+            var detail = escapeHtml(JSON.stringify(r.detail == null ? {} : r.detail, null, 2));
+            return '<details class="eap-row" data-kind="' + escapeHtml(r.kind || "") + '">' +
+              '<summary>' +
+                '<span class="eap-twist" aria-hidden="true"></span>' +
+                '<span class="eap-time">+' + escapeHtml(formatMs(r.elapsed_ms)) + '</span>' +
+                '<span class="eap-badge ' + escapeHtml(r.kind || "") + '">' + escapeHtml(r.badge || "EVENT") + '</span>' +
+                '<span class="eap-title">' + escapeHtml(r.title || "") + '<span class="eap-sub">' + escapeHtml(r.subtitle || "") + '</span></span>' +
+              '</summary>' +
+              '<pre class="eap-detail">' + detail + '</pre>' +
+            '</details>';
+          }).join("") : '<div class="evot-result-empty">No activity recorded.</div>';
+          var totalTokens = Number(s.total_tokens || 0);
+          var inputPct = totalTokens ? (Number(s.session_input_tokens || 0) / totalTokens) * 100 : 0;
+          var outputPct = totalTokens ? (Number(s.session_output_tokens || 0) / totalTokens) * 100 : 0;
+          var cacheMax = Math.max(Number(s.cache_reads || 0), Number(s.cache_writes || 0), 1);
+          var inputOutputRatio = Number(s.session_output_tokens || 0) > 0
+            ? Math.round(Number(s.session_input_tokens || 0) / Number(s.session_output_tokens || 1)) + ':1'
+            : '—';
+          return '' +
+            '<section class="eap-section eap-overview">' +
+              '<div class="eap-label">Overview</div>' +
+              '<dl class="eap-overview-top">' +
+                '<div class="eap-kv"><dt>Model</dt><dd>' + escapeHtml(s.model || "—") + '</dd></div>' +
+                '<div class="eap-kv"><dt>Started At</dt><dd>' + escapeHtml(formatDateTime(s.started_at)) + '</dd></div>' +
+                '<div class="eap-kv"><dt>Last Message</dt><dd>' + escapeHtml(relTime(s.last_message_at) || "—") + '</dd></div>' +
+              '</dl>' +
+              '<div class="eap-hero-grid">' +
+                '<div class="eap-hero"><strong>' + escapeHtml(formatCompactNumber(s.total_tokens)) + '</strong><span>Total Tokens</span></div>' +
+                '<div class="eap-hero"><strong>' + escapeHtml(formatCompactNumber(s.llm_calls)) + '</strong><span>LLM Calls</span></div>' +
+                '<div class="eap-hero"><strong>' + escapeHtml(formatMs(s.elapsed_ms)) + '</strong><span>Duration</span></div>' +
+                '<div class="eap-hero"><strong>' + escapeHtml(formatCompactNumber(s.tools)) + ' / ' + escapeHtml(formatCompactNumber(s.turns)) + '</strong><span>Tools / Turns</span></div>' +
+              '</div>' +
+            '</section>' +
+            '<section class="eap-section eap-context-panel">' +
+              '<div class="eap-head"><div class="eap-label">Current Context</div><div class="eap-context">' + escapeHtml(formatCompactNumber(s.context_tokens)) + ' <small>/ ' + escapeHtml(formatCompactNumber(s.context_window || 0)) + '</small></div></div>' +
+              '<div class="eap-bar"><div class="eap-fill" style="width:' + pct + '%"></div></div>' +
+              '<div class="eap-context-sub">' +
+                '<span class="eap-pill">Used <strong>' + escapeHtml(String(pct)) + '%</strong></span>' +
+                '<span class="eap-pill">Peak Context <strong>' + escapeHtml(formatCompactNumber(s.peak_context)) + '</strong></span>' +
+                '<span class="eap-pill">Context Compactions <strong>' + escapeHtml(formatCompactNumber(s.compact)) + '</strong></span>' +
+              '</div>' +
+              contextSpark(rows) +
+            '</section>' +
+            '<div class="eap-detail-grid">' +
+              '<section class="eap-section">' +
+                '<div class="eap-label">Token Usage</div>' +
+                '<div class="eap-metric-table">' +
+                  metricRow('Input', formatCompactNumber(s.session_input_tokens), inputPct, false) +
+                  metricRow('Output', formatCompactNumber(s.session_output_tokens), outputPct, true) +
+                  metricRow('Input / Output', inputOutputRatio, 100, true) +
+                '</div>' +
+              '</section>' +
+              '<section class="eap-section">' +
+                '<div class="eap-label">Cache</div>' +
+                '<div class="eap-metric-table">' +
+                  metricRow('Hit Rate', String(s.cache_hit_percent || 0) + '%', Number(s.cache_hit_percent || 0), false) +
+                  metricRow('Reads', formatCompactNumber(s.cache_reads), (Number(s.cache_reads || 0) / cacheMax) * 100, true) +
+                  metricRow('Writes', formatCompactNumber(s.cache_writes), (Number(s.cache_writes || 0) / cacheMax) * 100, true) +
+                '</div>' +
+              '</section>' +
+            '</div>' +
+            '<div class="eap-activity"><div class="eap-activity-head"><div class="eap-label">Activity</div><div class="eap-activity-meta">' + escapeHtml(formatCompactNumber(s.tools)) + ' tools · ' + escapeHtml(formatCompactNumber(s.turns)) + ' turns</div></div>' +
+              '<div class="eap-toolbar">' +
+                '<select class="eap-filter" aria-label="Filter activity"><option value="all">All</option><option value="user">User</option><option value="tool">Tool</option><option value="tool_result">Result</option><option value="cache">Cache</option><option value="complete">Complete</option><option value="compact">Compact</option><option value="error">Error</option><option value="done">Done</option></select>' +
+                '<input class="eap-search" type="search" placeholder="Search activity…" />' +
+                '<button type="button" class="eap-tool-btn eap-expand">Expand all</button>' +
+                '<button type="button" class="eap-tool-btn eap-collapse">Collapse all</button>' +
+              '</div>' +
+              '<div class="eap-list">' + rowHtml + '</div>' +
+            '</div>' +
+            '<details class="eap-trace"><summary>Trace details <span class="eap-trace-note">raw spans, tool sequence, context diff</span></summary><div class="eap-trace-body"></div></details>';
+        }
+
+        function wireActivityPanel(panel, id) {
+          var filter = panel.querySelector(".eap-filter");
+          var search = panel.querySelector(".eap-search");
+          var expand = panel.querySelector(".eap-expand");
+          var collapse = panel.querySelector(".eap-collapse");
+          var trace = panel.querySelector(".eap-trace");
+          function applyActivityFilter() {
+            var kind = filter ? filter.value : "all";
+            var q = search ? search.value.trim().toLowerCase() : "";
+            var rows = panel.querySelectorAll(".eap-row");
+            for (var i = 0; i < rows.length; i++) {
+              var r = rows[i];
+              var okKind = kind === "all" || r.getAttribute("data-kind") === kind;
+              var okText = !q || (r.textContent || "").toLowerCase().indexOf(q) !== -1;
+              r.style.display = okKind && okText ? "" : "none";
+            }
+          }
+          if (filter) filter.addEventListener("change", applyActivityFilter);
+          if (search) search.addEventListener("input", applyActivityFilter);
+          if (expand) expand.addEventListener("click", function () {
+            var rows = panel.querySelectorAll(".eap-row");
+            for (var i = 0; i < rows.length; i++) if (rows[i].style.display !== "none") rows[i].open = true;
+          });
+          if (collapse) collapse.addEventListener("click", function () {
+            var rows = panel.querySelectorAll(".eap-row");
+            for (var i = 0; i < rows.length; i++) rows[i].open = false;
+          });
+          if (trace) trace.addEventListener("toggle", function () {
+            if (!trace.open) return;
+            var body = trace.querySelector(".eap-trace-body");
+            if (!body || body.querySelector("iframe")) return;
+            body.innerHTML = '<iframe src="/sessions/' + encodeURIComponent(id) + '/trace" title="Session trace"></iframe>';
+          });
+        }
+
+        function hideNativeDetailRedundancy() {
+          if (!location.pathname.match(/^\/sessions\/[^/]+\/?$/)) return;
+          var metas = document.querySelectorAll("#root main dl");
+          for (var m = 0; m < metas.length; m++) {
+            if (!metas[m].closest("#evot-activity-panel")) metas[m].style.display = "none";
+          }
+          var headings = document.querySelectorAll("#root h2");
+          for (var i = 0; i < headings.length; i++) {
+            var text = (headings[i].textContent || "").trim().toLowerCase();
+            if (text === "usage breakdown" || text === "tool calls & trace") {
+              var section = headings[i].closest("section") || headings[i].parentElement;
+              if (section) section.style.display = "none";
+            }
+          }
+        }
+
         function copyText(text, btn) {
           function done() {
             btn.classList.add("copied");
@@ -871,6 +1216,8 @@
           try {
             apply();
             ensureResumeCommand();
+            ensureSessionActivity();
+            hideNativeDetailRedundancy();
           } finally {
             var root = document.getElementById("root");
             if (root) observer.observe(root, { childList: true, subtree: true });

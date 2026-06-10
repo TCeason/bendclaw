@@ -38,6 +38,7 @@ pub fn dashboard_router(agent: Arc<Agent>) -> Router {
         // Session trace (per-LLM-call spans with tool calls)
         .route("/api/session/{id}/events", get(api_events))
         .route("/api/session/{id}/events/{seq}", get(api_event_detail))
+        .route("/api/session/{id}/activity", get(api_activity))
         // Live data streams
         .route("/ws", get(ws_sessions))
         .route("/ws/logs", get(ws_logs))
@@ -208,6 +209,15 @@ async fn api_event_detail(
         Some(detail) => Json(detail).into_response(),
         None => (axum::http::StatusCode::NOT_FOUND, "span not found").into_response(),
     }
+}
+
+async fn api_activity(
+    State(state): State<DashboardState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let meta = state.agent.storage().get_session(&id).await.ok().flatten();
+    let entries = load_entries(&state, &id).await;
+    Json(trace::project_activity(&entries, meta.as_ref())).into_response()
 }
 
 async fn trace_page() -> Html<&'static str> {

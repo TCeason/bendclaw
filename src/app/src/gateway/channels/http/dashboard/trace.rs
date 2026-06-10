@@ -8,6 +8,7 @@
 
 use serde::Serialize;
 
+use crate::types::SessionMeta;
 use crate::types::TranscriptEntry;
 use crate::types::TranscriptItem;
 use crate::types::TranscriptStats;
@@ -469,4 +470,346 @@ pub fn project_span_detail(entries: &[TranscriptEntry], seq: u64) -> Option<Span
         input_messages: build_input_blocks(entries, seq),
         error_message: error_message.clone(),
     })
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ActivitySummary {
+    pub started_at: String,
+    pub last_message_at: String,
+    pub model: String,
+    pub session_input_tokens: u64,
+    pub session_output_tokens: u64,
+    pub context_tokens: u64,
+    pub context_window: u64,
+    pub llm_calls: usize,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_reads: u64,
+    pub cache_writes: u64,
+    pub total_tokens: u64,
+    pub peak_context: u64,
+    pub tools: usize,
+    pub turns: u32,
+    pub searches: usize,
+    pub compact: usize,
+    pub cache_hit_percent: u64,
+    pub elapsed_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ActivityRow {
+    pub seq: u64,
+    pub elapsed_ms: u64,
+    pub kind: String,
+    pub badge: String,
+    pub title: String,
+    pub subtitle: String,
+    pub detail: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ActivityProjection {
+    pub summary: ActivitySummary,
+    pub rows: Vec<ActivityRow>,
+}
+
+fn entry_elapsed_ms(entries: &[TranscriptEntry], idx: usize) -> u64 {
+    let first = entries
+        .first()
+        .and_then(|e| chrono::DateTime::parse_from_rfc3339(&e.created_at).ok())
+        .map(|dt| dt.timestamp_millis());
+    let current = entries
+        .get(idx)
+        .and_then(|e| chrono::DateTime::parse_from_rfc3339(&e.created_at).ok())
+        .map(|dt| dt.timestamp_millis());
+    match (first, current) {
+        (Some(a), Some(b)) if b >= a => (b - a) as u64,
+        _ => 0,
+    }
+}
+
+fn json_value<T: Serialize>(value: &T) -> serde_json::Value {
+    match serde_json::to_value(value) {
+        Ok(v) => v,
+        Err(_) => serde_json::Value::Null,
+    }
+}
+
+fn compact_json_text(value: &serde_json::Value, max: usize) -> String {
+    let raw = match value {
+        serde_json::Value::String(s) => s.clone(),
+        _ => value.to_string(),
+    };
+    let text = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.chars().count() > max {
+        let truncated: String = text.chars().take(max).collect();
+        format!("{truncated}\u{2026}")
+    } else {
+        text
+    }
+}
+
+pub fn project_activity(
+    entries: &[TranscriptEntry],
+    meta: Option<&SessionMeta>,
+) -> ActivityProjection {
+    let spans = project_spans(entries);
+    let tools = spans.iter().map(|s| s.n_tool_use).sum::<usize>();
+    let searches = spans
+        .iter()
+        .flat_map(|s| s.tool_names.iter())
+        .filter(|name| name.to_ascii_lowercase().contains("search"))
+        .count();
+    let turns = entries.iter().map(|e| e.turn).max().unwrap_or_default();
+    let compact_items = entries
+        .iter()
+        .filter(|e| matches!(e.item, TranscriptItem::Compact { .. }))
+        .count();
+    let compact_started = entries
+        .iter()
+        .filter(|e| {
+            matches!(
+                TranscriptStats::try_from_item(&e.item),
+                Some(TranscriptStats::ContextCompactionStarted(_))
+            )
+        })
+        .count();
+    let compact_completed = entries
+        .iter()
+        .filter(|e| {
+            matches!(
+                TranscriptStats::try_from_item(&e.item),
+                Some(TranscriptStats::ContextCompactionCompleted(_))
+            )
+        })
+        .count();
+    let compact = compact_items.max(compact_started).max(compact_completed);
+
+    let mut total_input = 0u64;
+    let mut total_output = 0u64;
+    let mut total_cache_read = 0u64;
+    let mut total_cache_write = 0u64;
+    let mut context_tokens = 0u64;
+    let mut context_window = 0u64;
+    let mut peak_context = 0u64;
+    let mut elapsed_ms = 0u64;
+
+    for (idx, entry) in entries.iter().enumerate() {
+        elapsed_ms = elapsed_ms.max(entry_elapsed_ms(entries, idx));
+        match &entry.item {
+            TranscriptItem::Assistant { usage, .. } => {
+                total_input += usage.input;
+                total_output += usage.output;
+                total_cache_read += usage.cache_read;
+                total_cache_write += usage.cache_write;
+                context_tokens = usage.input.saturating_add(usage.cache_read);
+                peak_context = peak_context.max(context_tokens);
+            }
+            item => {
+                if let Some(TranscriptStats::LlmCallCompleted(s)) =
+                    TranscriptStats::try_from_item(item)
+                {
+                    context_window = context_window.max(s.context_window as u64);
+                    if s.context_window > 0 && context_tokens == 0 {
+                        context_tokens = s.usage.input.saturating_add(s.usage.cache_read);
+                        peak_context = peak_context.max(context_tokens);
+                    }
+                }
+            }
+        }
+    }
+
+    let cache_denominator = total_input
+        .saturating_add(total_cache_read)
+        .saturating_add(total_cache_write);
+    let cache_hit_percent = if cache_denominator == 0 {
+        0
+    } else {
+        total_cache_read.saturating_mul(100) / cache_denominator
+    };
+
+    let mut rows = Vec::new();
+    for (idx, entry) in entries.iter().enumerate() {
+        let elapsed = entry_elapsed_ms(entries, idx);
+        match &entry.item {
+            TranscriptItem::User { text, .. } => rows.push(ActivityRow {
+                seq: entry.seq,
+                elapsed_ms: elapsed,
+                kind: "user".into(),
+                badge: "USER".into(),
+                title: first_line_preview(text, 120),
+                subtitle: String::new(),
+                detail: json_value(&entry.item),
+            }),
+            TranscriptItem::Assistant {
+                text,
+                tool_calls,
+                stop_reason,
+                usage,
+                error_message,
+                ..
+            } => {
+                for call in tool_calls {
+                    rows.push(ActivityRow {
+                        seq: entry.seq,
+                        elapsed_ms: elapsed,
+                        kind: "tool".into(),
+                        badge: "TOOL".into(),
+                        title: call.name.clone(),
+                        subtitle: compact_json_text(&call.input, 110),
+                        detail: serde_json::json!({
+                            "id": call.id,
+                            "name": call.name,
+                            "input": call.input,
+                        }),
+                    });
+                }
+                let badge = if error_message.is_some() {
+                    "ERROR"
+                } else {
+                    "COMPLETE"
+                };
+                rows.push(ActivityRow {
+                    seq: entry.seq,
+                    elapsed_ms: elapsed,
+                    kind: if error_message.is_some() {
+                        "error"
+                    } else {
+                        "complete"
+                    }
+                    .into(),
+                    badge: badge.into(),
+                    title: if text.trim().is_empty() {
+                        format!("assistant \u{2192} {stop_reason}")
+                    } else {
+                        first_line_preview(text, 120)
+                    },
+                    subtitle: format!(
+                        "{} in / {} out{}",
+                        usage.input,
+                        usage.output,
+                        if usage.cache_read > 0 {
+                            " · cache hit"
+                        } else {
+                            ""
+                        }
+                    ),
+                    detail: json_value(&entry.item),
+                });
+            }
+            TranscriptItem::ToolResult {
+                tool_name,
+                content,
+                is_error,
+                ..
+            } => rows.push(ActivityRow {
+                seq: entry.seq,
+                elapsed_ms: elapsed,
+                kind: if *is_error { "error" } else { "tool_result" }.into(),
+                badge: if *is_error { "ERROR" } else { "RESULT" }.into(),
+                title: tool_name.clone(),
+                subtitle: first_line_preview(content, 120),
+                detail: json_value(&entry.item),
+            }),
+            TranscriptItem::Compact {
+                summary,
+                tokens_before,
+                tokens_after,
+                ..
+            } => rows.push(ActivityRow {
+                seq: entry.seq,
+                elapsed_ms: elapsed,
+                kind: "compact".into(),
+                badge: "COMPACT".into(),
+                title: format!("{tokens_before} \u{2192} {tokens_after} tokens"),
+                subtitle: first_line_preview(summary, 120),
+                detail: json_value(&entry.item),
+            }),
+            item => {
+                if let Some(stats) = TranscriptStats::try_from_item(item) {
+                    match stats {
+                        TranscriptStats::LlmCallCompleted(s) => {
+                            if s.usage.cache_read > 0 {
+                                rows.push(ActivityRow {
+                                    seq: entry.seq,
+                                    elapsed_ms: elapsed,
+                                    kind: "cache".into(),
+                                    badge: "CACHE".into(),
+                                    title: format!(
+                                        "cache hit: {} tokens served from prompt cache",
+                                        s.usage.cache_read
+                                    ),
+                                    subtitle: String::new(),
+                                    detail: json_value(item),
+                                });
+                            }
+                        }
+                        TranscriptStats::RunFinished(s) => rows.push(ActivityRow {
+                            seq: entry.seq,
+                            elapsed_ms: elapsed,
+                            kind: "done".into(),
+                            badge: "DONE".into(),
+                            title: format!("run complete · {} turns", s.turn_count),
+                            subtitle: format!("{} transcript entries", s.transcript_count),
+                            detail: json_value(item),
+                        }),
+                        TranscriptStats::ContextCompactionCompleted(_) => rows.push(ActivityRow {
+                            seq: entry.seq,
+                            elapsed_ms: elapsed,
+                            kind: "compact".into(),
+                            badge: "COMPACT".into(),
+                            title: "context compacted".into(),
+                            subtitle: String::new(),
+                            detail: json_value(item),
+                        }),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    let meta_input_tokens = meta.map(|m| m.total_input_tokens).unwrap_or_default();
+    let meta_output_tokens = meta.map(|m| m.total_output_tokens).unwrap_or_default();
+    let session_input_tokens = if meta_input_tokens > 0 {
+        meta_input_tokens
+    } else {
+        total_input
+            .saturating_add(total_cache_read)
+            .saturating_add(total_cache_write)
+    };
+    let session_output_tokens = if meta_output_tokens > 0 {
+        meta_output_tokens
+    } else {
+        total_output
+    };
+
+    ActivityProjection {
+        summary: ActivitySummary {
+            started_at: meta.map(|m| m.created_at.clone()).unwrap_or_default(),
+            last_message_at: meta.map(|m| m.updated_at.clone()).unwrap_or_default(),
+            model: meta.map(|m| m.model.clone()).unwrap_or_default(),
+            session_input_tokens,
+            session_output_tokens,
+            context_tokens,
+            context_window,
+            llm_calls: spans.len(),
+            input_tokens: total_input,
+            output_tokens: total_output,
+            cache_reads: total_cache_read,
+            cache_writes: total_cache_write,
+            total_tokens: session_input_tokens
+                .saturating_add(session_output_tokens)
+                .saturating_add(total_cache_read)
+                .saturating_add(total_cache_write),
+            peak_context,
+            tools,
+            turns,
+            searches,
+            compact,
+            cache_hit_percent,
+            elapsed_ms,
+        },
+        rows,
+    }
 }
