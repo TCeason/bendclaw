@@ -66,6 +66,39 @@ async fn search_text_includes_transcript_content() -> TestResult {
 }
 
 #[tokio::test]
+async fn search_text_includes_content_past_first_line() -> TestResult {
+    let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
+
+    let session = Session::new(
+        "search-sess-multiline".into(),
+        "/home/me/project".into(),
+        "test-model".into(),
+        storage.clone(),
+    )
+    .await?;
+
+    // A multi-line message whose keyword lives on a later line. The old
+    // first-line-only truncation dropped this; the flat search_text must now
+    // carry it so the UI can match and highlight it.
+    session
+        .write_items(vec![assistant(
+            "概述\n这是第二行\n关键词出现在这里：标准化流程\n收尾",
+        )])
+        .await?;
+
+    let rows = storage.list_sessions_with_text(10).await?;
+    let row = rows
+        .iter()
+        .find(|r| r.session.session_id == "search-sess-multiline")
+        .ok_or("session not returned")?;
+
+    assert!(row.search_text.contains("标准化流程"));
+    // Newlines are flattened to spaces so the body is one searchable line.
+    assert!(!row.search_text.contains('\n'));
+    Ok(())
+}
+
+#[tokio::test]
 async fn list_sessions_with_text_respects_limit() -> TestResult {
     let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
 

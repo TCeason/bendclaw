@@ -1,4 +1,11 @@
 //! Tool pair sanitization — ensures every tool call has a matching result and vice-versa.
+//!
+//! Anthropic-compatible providers require *adjacency*: a `tool_result` must
+//! correspond to a `tool_use` in the immediately preceding message. Loaded
+//! history can violate this — e.g. a run interrupted mid-tool-execution may have
+//! persisted a `tool_result` without its `tool_use`, or with another message
+//! between them. Such history is rejected with HTTP 400, so a global
+//! id-membership check is insufficient; placement must be validated.
 
 use std::collections::HashSet;
 
@@ -12,41 +19,83 @@ fn has_content(content: &[Content]) -> bool {
     })
 }
 
-/// Ensure every tool call has a matching tool result and vice-versa.
-/// Orphaned entries are removed.
+/// Remove tool calls and tool results that lack an adjacent matching partner.
+///
+/// A `tool_result` is valid only when the nearest preceding LLM message is an
+/// assistant message that still has an unconsumed `tool_use` with the same id.
+/// User messages reset the pairing; extension messages are skipped because they
+/// are dropped before the request is built. Each id is consumed once, so a
+/// duplicated result becomes an orphan. Orphaned `tool_use` blocks and orphaned
+/// results are removed; matched pairs pass through untouched.
 pub fn sanitize_tool_pairs(messages: Vec<AgentMessage>) -> Vec<AgentMessage> {
-    let mut call_ids: HashSet<String> = HashSet::new();
-    let mut result_ids: HashSet<String> = HashSet::new();
+    let len = messages.len();
 
-    for msg in &messages {
+    // Pass 1: classify by adjacency, tracking orphans per message instance.
+    //
+    // `available` holds the unconsumed tool_use ids of the current pending
+    // assistant message (`pending_idx`). A contiguous run of results draws from
+    // it; a user/assistant message or end of history flushes whatever remains as
+    // orphan calls of that assistant. Tracking by index (not by id) keeps
+    // classification correct even if an id is reused across turns.
+    let mut available: HashSet<String> = HashSet::new();
+    let mut pending_idx: Option<usize> = None;
+    let mut orphan_calls_at: Vec<HashSet<String>> = vec![HashSet::new(); len];
+    let mut result_valid: Vec<bool> = Vec::with_capacity(len);
+
+    for (idx, msg) in messages.iter().enumerate() {
         match msg {
             AgentMessage::Llm(Message::Assistant { content, .. }) => {
-                for c in content {
-                    if let Content::ToolCall { id, .. } = c {
-                        call_ids.insert(id.clone());
-                    }
+                if let Some(prev) = pending_idx.take() {
+                    orphan_calls_at[prev] = std::mem::take(&mut available);
                 }
+                available = content
+                    .iter()
+                    .filter_map(|c| match c {
+                        Content::ToolCall { id, .. } => Some(id.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                pending_idx = if available.is_empty() {
+                    None
+                } else {
+                    Some(idx)
+                };
+                result_valid.push(false);
             }
             AgentMessage::Llm(Message::ToolResult { tool_call_id, .. }) => {
-                result_ids.insert(tool_call_id.clone());
+                result_valid.push(available.remove(tool_call_id));
             }
-            _ => {}
+            AgentMessage::Llm(Message::User { .. }) => {
+                if let Some(prev) = pending_idx.take() {
+                    orphan_calls_at[prev] = std::mem::take(&mut available);
+                }
+                result_valid.push(false);
+            }
+            AgentMessage::Extension(_) => {
+                result_valid.push(false);
+            }
         }
     }
+    if let Some(prev) = pending_idx {
+        orphan_calls_at[prev] = available;
+    }
 
-    let orphan_calls: HashSet<String> = call_ids.difference(&result_ids).cloned().collect();
-    let orphan_results: HashSet<String> = result_ids.difference(&call_ids).cloned().collect();
+    let has_orphan_call = orphan_calls_at.iter().any(|ids| !ids.is_empty());
+    let has_invalid_result = result_valid.iter().zip(&messages).any(|(valid, msg)| {
+        matches!(msg, AgentMessage::Llm(Message::ToolResult { .. })) && !*valid
+    });
 
-    if orphan_calls.is_empty() && orphan_results.is_empty() {
+    if !has_orphan_call && !has_invalid_result {
         return messages;
     }
 
+    // Pass 2: drop misplaced results and orphaned tool calls.
     messages
         .into_iter()
-        .filter_map(|msg| match msg {
-            AgentMessage::Llm(Message::ToolResult {
-                ref tool_call_id, ..
-            }) if orphan_results.contains(tool_call_id) => None,
+        .zip(result_valid)
+        .enumerate()
+        .filter_map(|(idx, (msg, valid_result))| match msg {
+            AgentMessage::Llm(Message::ToolResult { .. }) if !valid_result => None,
 
             AgentMessage::Llm(Message::Assistant {
                 content,
@@ -58,11 +107,10 @@ pub fn sanitize_tool_pairs(messages: Vec<AgentMessage>) -> Vec<AgentMessage> {
                 error_message,
                 response_id,
             }) => {
+                let orphans = &orphan_calls_at[idx];
                 let filtered: Vec<Content> = content
                     .into_iter()
-                    .filter(
-                        |c| !matches!(c, Content::ToolCall { id, .. } if orphan_calls.contains(id)),
-                    )
+                    .filter(|c| !matches!(c, Content::ToolCall { id, .. } if orphans.contains(id)))
                     .collect();
                 if has_content(&filtered) {
                     Some(AgentMessage::Llm(Message::Assistant {

@@ -198,11 +198,16 @@
             .map(function (m) { return m.s; });
         }
 
-        // Context window around the first match, for the result snippet.
-        function snippetFor(source, q, width) {
+        // Context window around a match, for the result snippet. The card
+        // already shows id/title/cwd separately, so prefer a hit in the
+        // transcript body (everything after cwd in search_text) and only fall
+        // back to the first hit anywhere when the body has none.
+        function snippetFor(source, q, bodyStart, width) {
           width = width || 160;
           var lower = source.toLowerCase();
-          var idx = lower.indexOf(q.toLowerCase());
+          var needle = q.toLowerCase();
+          var idx = bodyStart > 0 ? lower.indexOf(needle, bodyStart) : -1;
+          if (idx === -1) idx = lower.indexOf(needle);
           if (idx === -1) return "";
           var half = Math.floor((width - q.length) / 2);
           var start = Math.max(0, idx - half);
@@ -211,6 +216,15 @@
           if (start > 0) text = "\u2026" + text;
           if (end < source.length) text = text + "\u2026";
           return highlight(text, q);
+        }
+
+        // Index in search_text where the transcript body begins: just past the
+        // cwd metadata field. Returns 0 when cwd is absent or not found.
+        function bodyStartOf(s) {
+          var cwd = s.cwd || "";
+          if (!cwd) return 0;
+          var i = (s.search_text || "").indexOf(cwd);
+          return i === -1 ? 0 : i + cwd.length;
         }
         //__SEARCH_PART2__
         // --- DOM wiring -----------------------------------------------------
@@ -391,7 +405,7 @@
         // suppresses navigation; otherwise it links to the SPA detail view.
         function cardHtml(s) {
           var title = s.title ? '<div class="rc-title">' + highlight(s.title, query) + "</div>" : "";
-          var snippet = snippetFor(s.search_text || "", query);
+          var snippet = snippetFor(s.search_text || "", query, bodyStartOf(s));
           var inner =
             '<div class="rc-id">' + highlight(s.session_id.slice(0, 8), query) + "</div>" +
             title +

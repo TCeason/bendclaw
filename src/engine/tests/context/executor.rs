@@ -232,3 +232,191 @@ fn sanitize_tool_pairs_removes_orphans() {
     });
     assert!(!has_tool_call);
 }
+
+fn is_tool_result(msg: &AgentMessage) -> bool {
+    matches!(msg, AgentMessage::Llm(Message::ToolResult { .. }))
+}
+
+fn count_tool_calls(messages: &[AgentMessage]) -> usize {
+    messages
+        .iter()
+        .filter_map(|m| match m {
+            AgentMessage::Llm(Message::Assistant { content, .. }) => Some(
+                content
+                    .iter()
+                    .filter(|c| matches!(c, Content::ToolCall { .. }))
+                    .count(),
+            ),
+            _ => None,
+        })
+        .sum()
+}
+
+#[test]
+fn sanitize_drops_tool_result_separated_from_its_call() {
+    // A crash mid-tool-execution can persist an "Interrupted." user message
+    // between the assistant tool_use and its tool_result. The id still exists
+    // globally, but the Anthropic-compatible API rejects the non-adjacent
+    // tool_result with HTTP 400. The sanitizer must drop it.
+    let messages = vec![
+        user_msg("hello"),
+        tool_call_msg("call_00", "read", "foo.rs"),
+        user_msg("Interrupted."),
+        tool_result_msg("call_00", "file contents"),
+        user_msg("continue"),
+    ];
+
+    let result = evotengine::sanitize_tool_pairs(messages);
+
+    // The misplaced tool_result is removed.
+    assert!(!result.iter().any(is_tool_result));
+    // The now-orphaned tool_use is removed too (its only block), dropping the
+    // assistant message entirely.
+    assert_eq!(count_tool_calls(&result), 0);
+}
+
+#[test]
+fn sanitize_keeps_adjacent_tool_pair() {
+    let messages = vec![
+        user_msg("hello"),
+        tool_call_msg("call_00", "read", "foo.rs"),
+        tool_result_msg("call_00", "file contents"),
+        assistant_msg("done"),
+    ];
+
+    let result = evotengine::sanitize_tool_pairs(messages.clone());
+
+    // Valid adjacency — nothing is removed.
+    assert_eq!(result.len(), messages.len());
+    assert_eq!(count_tool_calls(&result), 1);
+    assert_eq!(result.iter().filter(|m| is_tool_result(m)).count(), 1);
+}
+
+#[test]
+fn sanitize_drops_duplicate_tool_result() {
+    // Two results for the same call: only the adjacent one is valid; the
+    // duplicate is an orphan that providers reject.
+    let messages = vec![
+        user_msg("hello"),
+        tool_call_msg("call_00", "read", "foo.rs"),
+        tool_result_msg("call_00", "first"),
+        tool_result_msg("call_00", "duplicate"),
+        assistant_msg("done"),
+    ];
+
+    let result = evotengine::sanitize_tool_pairs(messages);
+
+    // Exactly one tool_result survives, alongside its matched call.
+    assert_eq!(result.iter().filter(|m| is_tool_result(m)).count(), 1);
+    assert_eq!(count_tool_calls(&result), 1);
+}
+
+fn multi_tool_call_msg(ids: &[&str]) -> AgentMessage {
+    AgentMessage::Llm(Message::Assistant {
+        content: ids
+            .iter()
+            .map(|id| Content::ToolCall {
+                id: id.to_string(),
+                name: "read".into(),
+                arguments: serde_json::json!({"path": "foo.rs"}),
+            })
+            .collect(),
+        stop_reason: StopReason::ToolUse,
+        model: "test".into(),
+        provider: "test".into(),
+        usage: Usage::default(),
+        timestamp: 0,
+        error_message: None,
+        response_id: None,
+    })
+}
+
+fn extension_msg() -> AgentMessage {
+    AgentMessage::Extension(evotengine::ExtensionMessage::new(
+        "note",
+        serde_json::json!({ "text": "ui-only" }),
+    ))
+}
+
+#[test]
+fn sanitize_keeps_parallel_tool_calls_with_all_results() {
+    // One assistant turn issues two calls; both results follow contiguously.
+    let messages = vec![
+        user_msg("hello"),
+        multi_tool_call_msg(&["call_a", "call_b"]),
+        tool_result_msg("call_a", "a"),
+        tool_result_msg("call_b", "b"),
+        assistant_msg("done"),
+    ];
+
+    let result = evotengine::sanitize_tool_pairs(messages.clone());
+
+    assert_eq!(result.len(), messages.len());
+    assert_eq!(count_tool_calls(&result), 2);
+    assert_eq!(result.iter().filter(|m| is_tool_result(m)).count(), 2);
+}
+
+#[test]
+fn sanitize_drops_only_unmatched_parallel_call() {
+    // Two parallel calls but only one result: the matched call/result survive,
+    // the unmatched call is stripped from the (otherwise kept) assistant message.
+    let messages = vec![
+        user_msg("hello"),
+        multi_tool_call_msg(&["call_a", "call_b"]),
+        tool_result_msg("call_a", "a"),
+        user_msg("next"),
+    ];
+
+    let result = evotengine::sanitize_tool_pairs(messages);
+
+    // call_b is removed; call_a and its result remain.
+    assert_eq!(count_tool_calls(&result), 1);
+    assert_eq!(result.iter().filter(|m| is_tool_result(m)).count(), 1);
+    let kept_call_a = result.iter().any(|m| match m {
+        AgentMessage::Llm(Message::Assistant { content, .. }) => content
+            .iter()
+            .any(|c| matches!(c, Content::ToolCall { id, .. } if id == "call_a")),
+        _ => false,
+    });
+    assert!(kept_call_a);
+}
+
+#[test]
+fn sanitize_extension_between_call_and_result_stays_valid() {
+    // Extension messages are dropped before the request is built, so they must
+    // not break adjacency between a call and its result.
+    let messages = vec![
+        user_msg("hello"),
+        tool_call_msg("call_00", "read", "foo.rs"),
+        extension_msg(),
+        tool_result_msg("call_00", "contents"),
+        assistant_msg("done"),
+    ];
+
+    let result = evotengine::sanitize_tool_pairs(messages.clone());
+
+    assert_eq!(result.len(), messages.len());
+    assert_eq!(count_tool_calls(&result), 1);
+    assert_eq!(result.iter().filter(|m| is_tool_result(m)).count(), 1);
+}
+
+#[test]
+fn sanitize_handles_reused_tool_call_id_across_turns() {
+    // A reused id: the first occurrence is matched, the second is a trailing
+    // orphan. Per-instance tracking must strip only the orphan, not assume the
+    // id is globally valid just because the earlier one matched.
+    let messages = vec![
+        user_msg("hello"),
+        tool_call_msg("call_x", "read", "foo.rs"),
+        tool_result_msg("call_x", "first"),
+        assistant_msg("thinking"),
+        tool_call_msg("call_x", "read", "bar.rs"),
+        // No result for the second call_x.
+    ];
+
+    let result = evotengine::sanitize_tool_pairs(messages);
+
+    // The first matched pair survives; the trailing orphan call is removed.
+    assert_eq!(count_tool_calls(&result), 1);
+    assert_eq!(result.iter().filter(|m| is_tool_result(m)).count(), 1);
+}
