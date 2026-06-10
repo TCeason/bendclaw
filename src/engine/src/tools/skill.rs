@@ -111,7 +111,11 @@ fn normalize_name(name: &str) -> &str {
 #[async_trait::async_trait]
 impl AgentTool for SkillTool {
     fn name(&self) -> &str {
-        "Skill"
+        "skill"
+    }
+
+    fn name_aliases(&self) -> Vec<(String, String)> {
+        vec![("claude".into(), "Skill".into())]
     }
 
     fn label(&self) -> &str {

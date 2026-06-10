@@ -51,7 +51,7 @@ impl AgentTool for SearchTool {
          identifier (e.g. \"where are retries handled\") and get back ranked function/class/struct \
          snippets with file paths and line ranges. No setup or index step is needed — the \
          workspace is indexed automatically on first use. Reach for this instead of guessing \
-         keywords for grep when exploring unfamiliar code; pair with `read` to view a full \
+         keywords for {{grep}} when exploring unfamiliar code; pair with {{read}} to view a full \
          definition once located. Searches the working directory by default."
     }
 
@@ -61,8 +61,8 @@ impl AgentTool for SearchTool {
 
     fn prompt_guidelines(&self) -> Vec<&str> {
         vec![
-            "Use `semantic_code_search` to explore unfamiliar code by concept or behavior; use \
-             `grep` for exact string or symbol-reference matches when you already know the term.",
+            "Use {{semantic_code_search}} to explore unfamiliar code by concept or behavior; use \
+             {{grep}} for exact string or symbol-reference matches when you already know the term.",
         ]
     }
 

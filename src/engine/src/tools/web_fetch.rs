@@ -39,7 +39,11 @@ impl Default for WebFetchTool {
 #[async_trait]
 impl AgentTool for WebFetchTool {
     fn name(&self) -> &str {
-        "WebFetch"
+        "web_fetch"
+    }
+
+    fn name_aliases(&self) -> Vec<(String, String)> {
+        vec![("claude".into(), "WebFetch".into())]
     }
 
     fn label(&self) -> &str {

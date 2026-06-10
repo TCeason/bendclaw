@@ -17,7 +17,7 @@ async fn test_full_tools_complete() {
     assert!(names.contains(&"edit"));
     assert!(names.contains(&"write"));
     assert!(names.contains(&"bash"));
-    assert!(names.contains(&"WebFetch"));
+    assert!(names.contains(&"web_fetch"));
 }
 
 #[tokio::test]

@@ -8,6 +8,8 @@ mod explore;
 mod file;
 #[path = "tools/guard.rs"]
 mod guard;
+#[path = "tools/naming.rs"]
+mod naming;
 #[path = "tools/skill.rs"]
 mod skill;
 #[path = "tools/spill.rs"]

@@ -79,7 +79,11 @@ impl AskUserTool {
 #[async_trait]
 impl AgentTool for AskUserTool {
     fn name(&self) -> &str {
-        "AskUser"
+        "ask_user"
+    }
+
+    fn name_aliases(&self) -> Vec<(String, String)> {
+        vec![("claude".into(), "AskUser".into())]
     }
 
     fn label(&self) -> &str {

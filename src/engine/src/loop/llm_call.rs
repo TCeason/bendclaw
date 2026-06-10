@@ -56,7 +56,11 @@ pub(super) async fn stream_assistant_response(
         .iter()
         .map(|t| ToolDefinition {
             name: t.resolve_name(&config.model),
-            description: t.description().to_string(),
+            description: crate::tools::resolve_tool_refs(
+                t.description(),
+                &context.tools,
+                &config.model,
+            ),
             parameters: t.parameters_schema(),
         })
         .collect();

@@ -135,7 +135,7 @@ impl SystemPrompt {
                 .flat_map(|t| {
                     t.prompt_guidelines()
                         .into_iter()
-                        .map(|g| g.to_string())
+                        .map(|g| evot_engine::tools::resolve_tool_refs(g, tools, model))
                         .collect::<Vec<_>>()
                 })
                 .collect(),

@@ -388,7 +388,7 @@ async fn invalid_json_rejected() {
 #[tokio::test]
 async fn tool_metadata() {
     let tool = make_tool(AskUserResponse::Skipped);
-    assert_eq!(tool.name(), "AskUser");
+    assert_eq!(tool.name(), "ask_user");
     assert_eq!(tool.label(), "Ask User");
     assert!(!tool.description().is_empty());
 
