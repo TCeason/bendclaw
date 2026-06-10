@@ -548,14 +548,15 @@ async fn search_reflects_deleted_file() {
 #[test]
 fn search_name_resolves_and_aliases_match() {
     let tool = SearchTool::new();
-    // Canonical name is the same for every model.
+    // Canonical snake_case name is used everywhere except Claude.
     assert_eq!(tool.name(), "semantic_code_search");
-    assert_eq!(tool.resolve_name("claude-opus-4-6"), "semantic_code_search");
     assert_eq!(tool.resolve_name("gpt-4o"), "semantic_code_search");
-    // Legacy names a resumed session may have recorded still route here.
+    // On Claude it presents the PascalCase name, matching the sibling explore
+    // tools (Read, Grep, Glob) so the tool list reads consistently.
+    assert_eq!(tool.resolve_name("claude-opus-4-6"), "SemanticCodeSearch");
+    // Both the canonical name and the Claude alias route back to this tool.
     assert!(tool.matches_call_name("semantic_code_search"));
-    assert!(tool.matches_call_name("search"));
-    assert!(tool.matches_call_name("CodeSearch"));
+    assert!(tool.matches_call_name("SemanticCodeSearch"));
     assert!(!tool.matches_call_name("grep"));
 }
 

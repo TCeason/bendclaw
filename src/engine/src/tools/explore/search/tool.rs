@@ -36,14 +36,10 @@ impl AgentTool for SearchTool {
     }
 
     fn name_aliases(&self) -> Vec<(String, String)> {
-        // Accept the older names as call aliases so any in-flight session that
-        // recorded them still resolves. `resolve_name` only swaps the presented
-        // name when the model pattern matches; everything else sees the
-        // canonical `semantic_code_search`.
-        vec![
-            ("search".into(), "search".into()),
-            ("codesearch".into(), "CodeSearch".into()),
-        ]
+        // Match the sibling explore tools' convention: present a PascalCase
+        // name on Claude (Read, Grep, Glob, ...) so the tool list reads
+        // consistently. The canonical snake_case name is used everywhere else.
+        vec![("claude".into(), "SemanticCodeSearch".into())]
     }
 
     fn label(&self) -> &str {
