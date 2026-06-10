@@ -671,6 +671,44 @@ impl Agent {
         storage.delete_session(session_id).await
     }
 
+    pub async fn list_favorites(&self) -> Result<Vec<String>> {
+        let storage = self.storage.read().clone();
+        storage.load_favorites().await
+    }
+
+    /// Remove deleted ids from the favorites document. Returns how many favorite
+    /// entries were pruned.
+    pub async fn remove_favorites(&self, session_ids: &[String]) -> Result<usize> {
+        let storage = self.storage.read().clone();
+        let ids = storage.load_favorites().await?;
+        let before = ids.len();
+        let kept: Vec<String> = ids
+            .into_iter()
+            .filter(|id| !session_ids.iter().any(|deleted| deleted == id))
+            .collect();
+        let removed = before.saturating_sub(kept.len());
+        if removed > 0 {
+            storage.save_favorites(kept).await?;
+        }
+        Ok(removed)
+    }
+
+    /// Toggle a session's favorite state, returning the new state (`true` =
+    /// now favorited). Persisted via the storage backend's favorites document.
+    pub async fn toggle_favorite(&self, session_id: &str) -> Result<bool> {
+        let storage = self.storage.read().clone();
+        let mut ids = storage.load_favorites().await?;
+        let now_favorited = if let Some(pos) = ids.iter().position(|id| id == session_id) {
+            ids.remove(pos);
+            false
+        } else {
+            ids.push(session_id.to_string());
+            true
+        };
+        storage.save_favorites(ids).await?;
+        Ok(now_favorited)
+    }
+
     pub async fn create_session(&self, source: &str) -> Result<SessionMeta> {
         let model = self.llm.read().model.clone();
         let storage = self.storage.read().clone();

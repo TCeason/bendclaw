@@ -22,4 +22,9 @@ pub trait Storage: Send + Sync {
 
     async fn load_variables(&self) -> Result<Vec<VariableRecord>>;
     async fn save_variables(&self, variables: Vec<VariableRecord>) -> Result<()>;
+
+    /// Session ids the user pinned as favorites in the dashboard. Stored
+    /// independently of session metadata so toggling never rewrites a session.
+    async fn load_favorites(&self) -> Result<Vec<String>>;
+    async fn save_favorites(&self, ids: Vec<String>) -> Result<()>;
 }

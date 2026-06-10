@@ -41,11 +41,9 @@
 
       /* Inline results grid — mirrors the dashboard's own card grid spacing. */
       #evot-search-results {
-        display: grid; gap: 16px;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        display: grid; gap: 14px;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
       }
-      @media (min-width: 640px) { #evot-search-results { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-      @media (min-width: 1024px) { #evot-search-results { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
       #evot-search-results.empty { display: block; }
       .evot-result-card {
         display: block; text-decoration: none; padding: 20px;
@@ -60,44 +58,129 @@
         font-size: 12px; color: hsl(var(--muted-foreground)); margin-top: 8px; line-height: 1.5;
         display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
       }
+      /* Query mode: a compact id line above the matched passage. */
+      .evot-result-card .rc-id-sm { font-size: 12px; font-weight: 600; color: hsl(var(--muted-foreground)); }
+      /* Show the full matched passage instead of clamping to 2 lines. */
+      .evot-result-card .rc-snippet-full {
+        margin-top: 8px; font-size: 13px; color: hsl(var(--foreground));
+        line-height: 1.6; display: block; -webkit-line-clamp: none; overflow: visible;
+        word-break: break-word; white-space: normal;
+      }
+      /* Clean Tailwind-style session card grid. Actions are always visible — no
+         hover dependency, no parent <a>, no fragile interaction with React's
+         re-rendered native cards. */
+      .evot-session-card {
+        position: relative; cursor: pointer; min-height: 168px;
+        display: flex; flex-direction: column; gap: 10px;
+        padding: 16px; border-radius: 16px;
+        border: 1px solid hsl(var(--border));
+        background: hsl(var(--card));
+        box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+        transition: border-color .15s, background .15s, transform .15s, box-shadow .15s;
+      }
+      .evot-session-card:hover {
+        border-color: hsl(var(--primary) / 0.45);
+        background: hsl(var(--card) / 0.96);
+        transform: translateY(-1px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+      }
+      .evot-session-card.favorited { border-color: hsl(45 90% 55% / 0.55); }
+      .esc-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+      .esc-select { display: inline-flex; padding-top: 2px; flex-shrink: 0; }
+      .esc-id {
+        min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px; font-weight: 700; color: hsl(var(--foreground));
+        letter-spacing: .01em;
+      }
+      .esc-star { color: #f5c518; margin-right: 6px; }
+      .esc-actions { display: inline-flex; gap: 6px; flex-shrink: 0; }
+      .esc-btn {
+        width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+        border-radius: 10px; border: 1px solid hsl(var(--border));
+        background: hsl(var(--secondary)); color: hsl(var(--muted-foreground));
+        cursor: pointer; font-size: 14px; line-height: 1;
+        transition: color .12s, background .12s, border-color .12s, transform .12s;
+      }
+      .esc-btn:hover { transform: translateY(-1px); color: hsl(var(--foreground)); border-color: hsl(var(--primary) / 0.55); }
+      .esc-fav.on { color: #f5c518; border-color: hsl(45 90% 55% / 0.7); background: hsl(45 90% 55% / 0.12); }
+      .esc-del:hover { color: #fff; background: hsl(var(--destructive, 0 72% 51%)); border-color: hsl(var(--destructive, 0 72% 51%)); }
+      .esc-title {
+        font-size: 14px; font-weight: 600; line-height: 1.35; color: hsl(var(--foreground));
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+      }
+      .esc-body {
+        font-size: 12px; line-height: 1.55; color: hsl(var(--muted-foreground));
+        word-break: break-word; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+      }
+      .esc-body.full { display: block; -webkit-line-clamp: none; color: hsl(var(--foreground)); }
+      .esc-meta {
+        margin-top: auto; padding-top: 10px; border-top: 1px solid hsl(var(--border) / 0.65);
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px; color: hsl(var(--muted-foreground));
+      }
+      #evot-session-pager {
+        margin: 22px 0 4px; display: flex; align-items: center; justify-content: center;
+        gap: 8px; flex-wrap: wrap;
+      }
+      .esp-btn {
+        min-width: 34px; height: 34px; padding: 0 11px;
+        border: 1px solid hsl(var(--border)); border-radius: 10px;
+        background: hsl(var(--card)); color: hsl(var(--muted-foreground));
+        cursor: pointer; font-size: 13px; line-height: 1;
+        transition: color .12s, border-color .12s, background .12s;
+      }
+      .esp-btn:hover:not(:disabled) { color: hsl(var(--foreground)); border-color: hsl(var(--primary) / 0.55); }
+      .esp-btn.active { color: hsl(var(--primary-foreground)); background: hsl(var(--primary)); border-color: hsl(var(--primary)); }
+      .esp-btn:disabled { opacity: .35; cursor: not-allowed; }
+      .esp-info { margin-left: 8px; font-size: 12px; color: hsl(var(--muted-foreground)); font-family: ui-monospace, monospace; }
+
       .evot-result-empty { padding: 40px; text-align: center; color: hsl(var(--muted-foreground)); font-size: 14px; }
       mark.evot-hl { background: hsl(var(--primary) / 0.35); color: inherit; border-radius: 3px; padding: 0 1px; }
 
-      /* Manage mode: multi-select + bulk delete. */
-      #evot-manage-btn {
-        flex-shrink: 0; cursor: pointer;
-        border: 1px solid hsl(var(--border)); border-radius: 7px;
-        background: hsl(var(--card)); color: hsl(var(--muted-foreground));
-        font-size: 12px; line-height: 1; padding: 6px 11px;
-        transition: color .15s, border-color .15s, background .15s;
-      }
-      #evot-manage-btn:hover { color: hsl(var(--foreground)); border-color: hsl(var(--primary)); }
-      #evot-manage-btn.active { color: hsl(var(--primary-foreground)); background: hsl(var(--primary)); border-color: hsl(var(--primary)); }
-      #evot-manage-toolbar {
-        display: none; align-items: center; gap: 12px; flex-wrap: wrap;
-        margin-bottom: 14px; padding: 8px 12px;
-        border: 1px solid hsl(var(--border)); border-radius: 10px;
+      /* Filter + cleanup toolbar. */
+      #evot-filter-toolbar {
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+        margin: 0 0 14px; padding: 10px 12px;
+        border: 1px solid hsl(var(--border)); border-radius: 12px;
         background: hsl(var(--secondary));
       }
-      #evot-manage-toolbar.show { display: flex; }
-      #evot-manage-toolbar label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: hsl(var(--foreground)); cursor: pointer; }
-      #evot-manage-toolbar .emt-count { font-size: 12px; color: hsl(var(--muted-foreground)); font-family: ui-monospace, monospace; }
-      #evot-manage-toolbar .emt-spacer { flex: 1; }
-      #evot-delete-selected {
+      #evot-filter-toolbar label { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: hsl(var(--foreground)); cursor: pointer; }
+      #evot-filter-toolbar select {
+        height: 32px; padding: 0 30px 0 10px;
+        border: 1px solid hsl(var(--border)); border-radius: 10px;
+        background: hsl(var(--card)); color: hsl(var(--foreground));
+        font-size: 13px; outline: none;
+      }
+      #evot-filter-toolbar .eft-count { font-size: 12px; color: hsl(var(--muted-foreground)); font-family: ui-monospace, monospace; }
+      #evot-filter-toolbar .eft-spacer { flex: 1; }
+      #evot-clean-selected {
         cursor: pointer; border: 1px solid hsl(var(--destructive, 0 72% 51%));
-        border-radius: 7px; background: transparent;
+        border-radius: 10px; background: transparent;
         color: hsl(var(--destructive, 0 72% 51%));
-        font-size: 12px; line-height: 1; padding: 7px 13px;
-        transition: background .15s, color .15s;
+        font-size: 12px; line-height: 1; padding: 8px 13px;
+        transition: background .15s, color .15s, opacity .15s;
       }
-      #evot-delete-selected:hover:not(:disabled) { background: hsl(var(--destructive, 0 72% 51%)); color: #fff; }
-      #evot-delete-selected:disabled { opacity: .4; cursor: not-allowed; }
-      .evot-result-card.selectable { position: relative; }
-      .evot-result-card .rc-check {
-        position: absolute; top: 12px; right: 12px;
-        width: 18px; height: 18px; cursor: pointer; accent-color: hsl(var(--primary));
+      #evot-clean-selected:hover:not(:disabled) { background: hsl(var(--destructive, 0 72% 51%)); color: #fff; }
+      #evot-clean-selected:disabled { opacity: .4; cursor: not-allowed; }
+      .esc-check {
+        width: 16px; height: 16px; cursor: pointer; accent-color: hsl(var(--primary));
       }
-      .evot-result-card.selected { border-color: hsl(var(--primary)); box-shadow: 0 0 0 1px hsl(var(--primary)); }
+      .evot-session-card.selected { border-color: hsl(var(--primary)); box-shadow: 0 0 0 1px hsl(var(--primary)); }
+
+      /* Takeover: while our own session grid is mounted we hide React's live
+         session cards and its pagination/sort chrome with persistent CSS rules.
+         React recreates its DOM nodes every ~2s and after deletes, so inline
+         display:none is not reliable. Target the React card links directly
+         (`glass-card`); our injected cards use `evot-result-card`, so they are
+         not affected. */
+      body.evot-takeover #root a.glass-card[href^="/sessions/"] {
+        display: none !important;
+      }
+      body.evot-takeover #root .evot-pagination,
+      body.evot-takeover #root .evot-sort {
+        display: none !important;
+      }
 
       /* Copyable "evot --resume <id>" command on the session detail page. */
       #evot-resume-cmd {
@@ -157,9 +240,16 @@
         var sessions = [];
         var query = "";
         var fetchedAt = 0;
+        var loaded = false;
         var hadFocus = false;
-        var manageMode = false;
         var selected = {};
+        var favorites = {};
+        var timeFilter = "all";
+        var currentPage = 1;
+        var pageSize = 16;
+        // Signature of the last grid render, so apply() can skip rebuilding the
+        // card DOM when nothing visible changed (see renderSignature).
+        var lastRenderSig = null;
 
         function escapeHtml(text) {
           var d = document.createElement("div");
@@ -226,6 +316,32 @@
           var i = (s.search_text || "").indexOf(cwd);
           return i === -1 ? 0 : i + cwd.length;
         }
+
+        // Compact relative time ("3h ago") from an ISO timestamp, for the card
+        // footer. Falls back to empty string on a missing/unparseable value.
+        function relTime(iso) {
+          if (!iso) return "";
+          var t = Date.parse(iso);
+          if (isNaN(t)) return "";
+          var s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+          if (s < 60) return s + "s ago";
+          var m = Math.floor(s / 60);
+          if (m < 60) return m + "m ago";
+          var h = Math.floor(m / 60);
+          if (h < 24) return h + "h ago";
+          return Math.floor(h / 24) + "d ago";
+        }
+
+        // Stable sort that floats favorited sessions to the top while preserving
+        // the incoming order within each group.
+        function favoriteFirst(rows) {
+          var fav = [];
+          var rest = [];
+          for (var i = 0; i < rows.length; i++) {
+            if (favorites[rows[i].session_id]) fav.push(rows[i]); else rest.push(rows[i]);
+          }
+          return fav.concat(rest);
+        }
         //__SEARCH_PART2__
         // --- DOM wiring -----------------------------------------------------
 
@@ -236,20 +352,6 @@
             if (hs[i].textContent.trim() === "Connected sessions") return hs[i];
           }
           return null;
-        }
-
-        // The live card grid is the element containing the session <a> links.
-        function findLiveGrid() {
-          var link = document.querySelector('#root a[href^="/sessions/"]');
-          if (!link) return null;
-          // Walk up to the grid container (the immediate flex/grid wrapper).
-          var el = link;
-          while (el && el.parentElement && el.parentElement.id !== "root") {
-            var cls = el.parentElement.className || "";
-            if (typeof cls === "string" && cls.indexOf("grid") !== -1) return el.parentElement;
-            el = el.parentElement;
-          }
-          return link.parentElement;
         }
 
         // Build (once) and return our search bar + results container, inserted
@@ -269,24 +371,100 @@
               '<input id="evot-search-input" type="text" autocomplete="off" ' +
               'placeholder="Search sessions by id, path, or content\u2026" />' +
               '<span id="evot-search-count"></span>' +
-              '<button id="evot-search-clear" title="Clear" aria-label="Clear search">\u00d7</button>' +
-              '<button id="evot-manage-btn" type="button" title="Select and delete sessions">Manage</button>';
+              '<button id="evot-search-clear" title="Clear" aria-label="Clear search">\u00d7</button>';
             var toolbar = document.createElement("div");
-            toolbar.id = "evot-manage-toolbar";
+            toolbar.id = "evot-filter-toolbar";
             toolbar.innerHTML =
-              '<label><input type="checkbox" id="evot-select-all" /> Select all</label>' +
-              '<span class="emt-count" id="evot-sel-count">0 selected</span>' +
-              '<span class="emt-spacer"></span>' +
-              '<button id="evot-delete-selected" type="button" disabled>Delete selected</button>';
+              '<label>Time <select id="evot-time-filter">' +
+              '<option value="all">All</option>' +
+              '<option value="today">Today</option>' +
+              '<option value="7d">Last 7 days</option>' +
+              '<option value="30d">Last 30 days</option>' +
+              '<option value="90d">Last 90 days</option>' +
+              '</select></label>' +
+              '<label><input type="checkbox" id="evot-select-filtered" /> Select filtered</label>' +
+              '<span class="eft-count" id="evot-sel-count">0 selected</span>' +
+              '<span class="eft-spacer"></span>' +
+              '<button id="evot-clean-selected" type="button" disabled>Clean selected</button>';
             var results = document.createElement("div");
             results.id = "evot-search-results";
             results.style.display = "none";
+            var pager = document.createElement("div");
+            pager.id = "evot-session-pager";
+            pager.style.display = "none";
+            // If React tore out our injected DOM and we are recreating it, force
+            // the next apply() to repopulate the fresh container even if the
+            // session data signature did not change.
+            lastRenderSig = null;
             headerBlock.insertAdjacentElement("afterend", bar);
             bar.insertAdjacentElement("afterend", toolbar);
             toolbar.insertAdjacentElement("afterend", results);
+            results.insertAdjacentElement("afterend", pager);
             wireInputs();
+            wireResultsDelegation(results);
+            wirePagerDelegation(pager);
           }
           return bar;
+        }
+
+        // One delegated click listener on the results container, wired once.
+        // Cards are re-rendered via innerHTML on every refresh, which would drop
+        // per-node listeners (and let a click fall through to the card's link,
+        // navigating to the detail page). Delegation survives those rebuilds.
+        function wireResultsDelegation(container) {
+          container.addEventListener("click", function (e) {
+            var fav = e.target.closest(".esc-fav");
+            if (fav && container.contains(fav)) {
+              e.preventDefault();
+              e.stopPropagation();
+              toggleFavorite(fav.getAttribute("data-id"));
+              return;
+            }
+            var del = e.target.closest(".esc-del");
+            if (del && container.contains(del)) {
+              e.preventDefault();
+              e.stopPropagation();
+              deleteOne(del.getAttribute("data-id"));
+              return;
+            }
+            var check = e.target.closest(".esc-check");
+            if (check && container.contains(check)) {
+              var id = check.getAttribute("data-id");
+              if (check.checked) selected[id] = true; else delete selected[id];
+              runApply();
+              return;
+            }
+            if (e.target.closest(".esc-select")) {
+              var box = e.target.closest(".esc-select").querySelector(".esc-check");
+              if (box) {
+                var bid = box.getAttribute("data-id");
+                box.checked = !box.checked;
+                if (box.checked) selected[bid] = true; else delete selected[bid];
+                runApply();
+              }
+              e.preventDefault();
+              e.stopPropagation();
+              return;
+            }
+            var card = e.target.closest(".evot-session-card");
+            if (card && container.contains(card)) {
+              var sid = card.getAttribute("data-id");
+              if (sid) location.href = "/sessions/" + encodeURIComponent(sid);
+            }
+          });
+        }
+
+        function wirePagerDelegation(container) {
+          container.addEventListener("click", function (e) {
+            var btn = e.target.closest(".esp-btn");
+            if (!btn || !container.contains(btn) || btn.disabled) return;
+            var page = parseInt(btn.getAttribute("data-page"), 10);
+            if (!isNaN(page) && page > 0) {
+              currentPage = page;
+              lastRenderSig = null;
+              runApply();
+            }
+          });
         }
 
         function wireInputs() {
@@ -296,144 +474,196 @@
           input.addEventListener("blur", function () { hadFocus = false; });
           input.addEventListener("input", function () {
             query = input.value.trim();
+            currentPage = 1;
+            selected = {};
             if (query) ensureSessions();
             runApply();
           });
           input.addEventListener("keydown", function (e) {
-            if (e.key === "Escape") { input.value = ""; query = ""; runApply(); }
+            if (e.key === "Escape") { input.value = ""; query = ""; currentPage = 1; selected = {}; runApply(); }
           });
           clear.addEventListener("click", function () {
-            input.value = ""; query = ""; runApply();
+            input.value = ""; query = ""; currentPage = 1; selected = {}; runApply();
             input.focus();
           });
-          document.getElementById("evot-manage-btn").addEventListener("click", function () {
-            manageMode = !manageMode;
+          document.getElementById("evot-time-filter").addEventListener("change", function (e) {
+            timeFilter = e.target.value || "all";
+            currentPage = 1;
             selected = {};
-            // Manage mode lists every session, so make sure we have the data.
-            if (manageMode) ensureSessions(true);
             runApply();
           });
-          document.getElementById("evot-select-all").addEventListener("change", function (e) {
+          document.getElementById("evot-select-filtered").addEventListener("change", function (e) {
             var rows = currentRows();
             if (e.target.checked) {
               for (var i = 0; i < rows.length; i++) selected[rows[i].session_id] = true;
             } else {
-              selected = {};
+              for (var j = 0; j < rows.length; j++) delete selected[rows[j].session_id];
             }
             runApply();
           });
-          document.getElementById("evot-delete-selected").addEventListener("click", deleteSelected);
+          document.getElementById("evot-clean-selected").addEventListener("click", cleanSelected);
         }
         //__SEARCH_PART3__
-        // Fetch the full session list (with search_text). Throttled to once per
-        // 5s unless `force` is set (e.g. entering manage mode or after a delete).
+        // Fetch the full session list (with search_text) and the favorites set.
+        // Throttled to once per 5s unless `force` is set (e.g. after a delete or
+        // a favorite toggle).
         function ensureSessions(force) {
           var now = Date.now();
           if (!force && now - fetchedAt < 5000) return;
           fetchedAt = now;
-          fetch("/api/sessions")
-            .then(function (r) { return r.ok ? r.json() : []; })
-            .then(function (data) { sessions = data || []; runApply(); })
-            .catch(function () {});
+          Promise.all([
+            fetch("/api/sessions").then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; }),
+            fetch("/api/favorites").then(function (r) { return r.ok ? r.json() : { ids: [] }; }).catch(function () { return { ids: [] }; }),
+          ]).then(function (out) {
+            sessions = out[0] || [];
+            var ids = (out[1] && out[1].ids) || [];
+            favorites = {};
+            for (var i = 0; i < ids.length; i++) favorites[ids[i]] = true;
+            loaded = true;
+            runApply();
+          });
         }
 
-        // Rows currently shown in our list: filtered by query, or all sessions
-        // when in manage mode with an empty query.
+        // Rows shown in our grid. We own the default view now, so with no query
+        // and not managing we list all fetched sessions (favorites first).
         function currentRows() {
-          if (query) return filterSessions(query);
-          if (manageMode) return sessions.slice();
-          return [];
+          var rows;
+          if (query) rows = filterSessions(query);
+          else rows = sessions.slice();
+          rows = rows.filter(matchesTimeFilter);
+          return favoriteFirst(rows);
         }
 
-        // Remove the given session cards from the live React grid immediately.
-        // The SPA re-renders from its own WebSocket data on a delay; since the
-        // sessions are gone server-side, React won't re-add them on its next
-        // push, so this just closes the visible lag without fighting React.
-        function pruneLiveCards(ids) {
-          for (var i = 0; i < ids.length; i++) {
-            var nodes = document.querySelectorAll(
-              '#root a[href="/sessions/' + (window.CSS && CSS.escape ? CSS.escape(ids[i]) : ids[i]) + '"]'
-            );
-            for (var j = 0; j < nodes.length; j++) {
-              if (nodes[j].parentElement) nodes[j].parentElement.removeChild(nodes[j]);
-            }
+        function matchesTimeFilter(s) {
+          if (timeFilter === "all") return true;
+          var raw = s.updated_at || s.created_at || "";
+          var t = Date.parse(raw);
+          if (isNaN(t)) return false;
+          var now = new Date();
+          if (timeFilter === "today") {
+            var d = new Date(t);
+            return d.getFullYear() === now.getFullYear() &&
+              d.getMonth() === now.getMonth() &&
+              d.getDate() === now.getDate();
           }
+          var days = timeFilter === "7d" ? 7 : timeFilter === "30d" ? 30 : timeFilter === "90d" ? 90 : 0;
+          return days > 0 && (Date.now() - t) <= days * 24 * 60 * 60 * 1000;
         }
 
-        // Delete the checked sessions after a confirm, then refresh the list.
-        function deleteSelected() {
+        // Clean selected sessions in batches, then force-refresh the list.
+        function cleanSelected() {
           var ids = Object.keys(selected).filter(function (id) { return selected[id]; });
           if (ids.length === 0) return;
-          var msg = "Delete " + ids.length + (ids.length === 1 ? " session" : " sessions") +
-            "? This cannot be undone.";
-          if (!window.confirm(msg)) return;
-          var btn = document.getElementById("evot-delete-selected");
-          if (btn) { btn.disabled = true; btn.textContent = "Deleting\u2026"; }
-          fetch("/api/sessions/delete", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ids: ids }),
-          })
-            .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("delete failed")); })
-            .then(function (res) {
-              // Drop deleted ids locally for instant feedback, then re-fetch.
-              var removed = [];
-              if (res && Array.isArray(res.failed)) {
-                for (var i = 0; i < ids.length; i++) {
-                  if (res.failed.indexOf(ids[i]) === -1) {
-                    removed.push(ids[i]);
-                    sessions = sessions.filter(function (s) { return s.session_id !== ids[i]; });
-                  }
-                }
-                if (res.failed.length) window.alert(res.failed.length + " session(s) could not be deleted.");
-              }
-              // The live React grid is owned by the SPA and only refreshes from
-              // its WebSocket every ~2s; remove the deleted cards now so every
-              // view reflects the delete immediately instead of lagging.
-              pruneLiveCards(removed);
+          var btn = document.getElementById("evot-clean-selected");
+          if (btn) { btn.disabled = true; btn.textContent = "Cleaning\u2026"; }
+          function batch(start) {
+            var chunk = ids.slice(start, start + 200);
+            if (chunk.length === 0) return Promise.resolve();
+            return fetch("/api/sessions/delete", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ids: chunk }),
+            })
+              .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("delete failed")); })
+              .then(function () { return batch(start + 200); });
+          }
+          batch(0)
+            .then(function () {
               selected = {};
+              sessions = sessions.filter(function (s) { return ids.indexOf(s.session_id) === -1; });
+              currentPage = 1;
               runApply();
               ensureSessions(true);
             })
             .catch(function () {
-              window.alert("Delete request failed.");
-              runApply();
+              window.alert("Clean request failed.");
+              ensureSessions(true);
             });
         }
 
-        // Render one result card. In manage mode it carries a checkbox and
-        // suppresses navigation; otherwise it links to the SPA detail view.
+        // Render one Tailwind-style session card. The whole card is clickable;
+        // action buttons are ordinary buttons and are always visible.
         function cardHtml(s) {
-          var title = s.title ? '<div class="rc-title">' + highlight(s.title, query) + "</div>" : "";
-          var snippet = snippetFor(s.search_text || "", query, bodyStartOf(s));
-          var inner =
-            '<div class="rc-id">' + highlight(s.session_id.slice(0, 8), query) + "</div>" +
-            title +
-            '<div class="rc-cwd">' + highlight(s.cwd || "", query) + "</div>" +
-            (snippet ? '<div class="rc-snippet">' + snippet + "</div>" : "");
-          if (manageMode) {
-            var isSel = !!selected[s.session_id];
-            return (
-              '<div class="evot-result-card selectable' + (isSel ? " selected" : "") +
-              '" data-id="' + escapeHtml(s.session_id) + '">' +
-              '<input type="checkbox" class="rc-check" data-id="' + escapeHtml(s.session_id) + '"' +
-              (isSel ? " checked" : "") + " />" +
-              inner +
-              "</div>"
-            );
+          var isFav = !!favorites[s.session_id];
+          var shortId = s.session_id.slice(0, 8);
+          var turns = (s.span_count != null ? s.span_count : (s.turns || 0));
+          var title = s.title || "(untitled)";
+          var body;
+          if (query) {
+            var snippet = snippetFor(s.search_text || "", query, bodyStartOf(s), 360);
+            body = '<div class="esc-body full">' + (snippet || highlight(title || s.cwd || "", query)) + "</div>";
+          } else {
+            body = '<div class="esc-title">' + escapeHtml(title) + "</div>" +
+              '<div class="esc-body">' + escapeHtml(s.cwd || "") + "</div>";
           }
+          var metaLeft = turns ? turns + (turns === 1 ? " turn" : " turns") : "0 turns";
+          var metaRight = relTime(s.updated_at) || "";
           return (
-            '<a class="evot-result-card" href="/sessions/' + escapeHtml(s.session_id) + '">' +
-            inner +
-            "</a>"
+            '<div class="evot-session-card' + (isFav ? " favorited" : "") + (selected[s.session_id] ? " selected" : "") + '" data-id="' + escapeHtml(s.session_id) + '">' +
+              '<div class="esc-top">' +
+                '<label class="esc-select" title="Select"><input type="checkbox" class="esc-check" data-id="' + escapeHtml(s.session_id) + '"' + (selected[s.session_id] ? " checked" : "") + ' /></label>' +
+                '<div class="esc-id">' + (isFav ? '<span class="esc-star">\u2605</span>' : "") + highlight(shortId, query) + "</div>" +
+                '<div class="esc-actions">' +
+                  '<button type="button" class="esc-btn esc-fav' + (isFav ? " on" : "") + '" data-id="' + escapeHtml(s.session_id) + '" title="Favorite">' + (isFav ? "\u2605" : "\u2606") + "</button>" +
+                  '<button type="button" class="esc-btn esc-del" data-id="' + escapeHtml(s.session_id) + '" title="Delete">\u{1F5D1}</button>' +
+                "</div>" +
+              "</div>" +
+              body +
+              '<div class="esc-meta"><span>' + escapeHtml(metaLeft) + "</span><span>" + escapeHtml(metaRight) + "</span></div>" +
+            "</div>"
           );
         }
 
-        // Reflect current state into the DOM: toggle the live grid vs our own
-        // list, fill counts, render cards, and sync manage-mode controls.
+        // Optimistically flip favorite state, persist, and re-sort. On failure
+        // we re-fetch to resync rather than guessing.
+        function toggleFavorite(id) {
+          if (!id) return;
+          if (favorites[id]) delete favorites[id]; else favorites[id] = true;
+          runApply();
+          fetch("/api/favorites/toggle", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: id }),
+          })
+            .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("toggle failed")); })
+            .then(function (res) {
+              if (res && typeof res.favorited === "boolean") {
+                if (res.favorited) favorites[id] = true; else delete favorites[id];
+                runApply();
+              }
+            })
+            .catch(function () { ensureSessions(true); });
+        }
+
+        // Delete one session immediately, then force-refresh the list.
+        function deleteOne(id) {
+          if (!id) return;
+          sessions = sessions.filter(function (s) { return s.session_id !== id; });
+          delete selected[id];
+          runApply();
+          fetch("/api/sessions/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ids: [id] }),
+          })
+            .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("delete failed")); })
+            .then(function () {
+              if (favorites[id]) delete favorites[id];
+              ensureSessions(true);
+            })
+            .catch(function () { ensureSessions(true); });
+        }
+
+        // Reflect current state into the DOM: fill counts, render cards, sync
+        // cleanup controls, and keep React's native grid hidden.
         function apply() {
           var bar = ensureUi();
-          if (!bar) return;
+          if (!bar) {
+            // Our section isn't on this view (e.g. a detail page); don't hide
+            // any React content here.
+            document.body.classList.remove("evot-takeover");
+            return;
+          }
           var input = document.getElementById("evot-search-input");
           if (input && input.value.trim() !== query) input.value = query;
           // If React tore the bar out mid-typing, ensureUi rebuilt it; restore
@@ -445,81 +675,125 @@
           }
           var results = document.getElementById("evot-search-results");
           var count = document.getElementById("evot-search-count");
-          var grid = findLiveGrid();
-          var manageBtn = document.getElementById("evot-manage-btn");
-          var toolbar = document.getElementById("evot-manage-toolbar");
           bar.classList.toggle("has-query", !!query);
-          if (manageBtn) manageBtn.classList.toggle("active", manageMode);
-          if (toolbar) toolbar.classList.toggle("show", manageMode);
 
-          // Our own list is shown when there's a query OR manage mode is on.
-          var showOwnList = !!query || manageMode;
-          if (!showOwnList) {
-            // Restore the live React grid and its pagination/sort controls.
-            if (results) { results.style.display = "none"; results.innerHTML = ""; }
-            if (grid) grid.style.display = "";
-            if (count) count.textContent = "";
-            toggleListChrome(true);
-            return;
+          // We own the grid by default now. Hide React's live cards + chrome via
+          // a persistent body class (see the .evot-takeover CSS). Also run an
+          // imperative fallback because the dashboard bundle is external and may
+          // briefly recreate nodes between observer ticks.
+          document.body.classList.add("evot-takeover");
+          hideReactSessionCards();
+
+          // Kick off the first load if the SPA mounted before we fetched.
+          if (!loaded) ensureSessions();
+
+          var allRows = currentRows();
+          var totalPages = Math.max(1, Math.ceil(allRows.length / pageSize));
+          if (currentPage > totalPages) currentPage = totalPages;
+          if (currentPage < 1) currentPage = 1;
+          var startIdx = (currentPage - 1) * pageSize;
+          var rows = allRows.slice(startIdx, startIdx + pageSize);
+          if (count) {
+            count.textContent = query
+              ? allRows.length + (allRows.length === 1 ? " match" : " matches")
+              : "";
           }
-
-          if (grid) grid.style.display = "none";
-          toggleListChrome(false);
-          var rows = currentRows();
-          if (count) count.textContent = rows.length + (rows.length === 1 ? " match" : " matches");
           results.style.display = "";
-          if (rows.length === 0) {
-            results.classList.add("empty");
-            results.innerHTML = query
-              ? '<div class="evot-result-empty">No sessions match \u201c' + escapeHtml(query) + "\u201d</div>"
-              : '<div class="evot-result-empty">No sessions</div>';
-          } else {
-            results.classList.remove("empty");
-            results.innerHTML = rows.map(cardHtml).join("");
-            if (manageMode) wireCards(results, rows);
+          var pager = document.getElementById("evot-session-pager");
+          if (pager) {
+            pager.style.display = allRows.length > pageSize ? "flex" : "none";
+            pager.innerHTML = renderPager(currentPage, totalPages, allRows.length, startIdx, rows.length);
           }
-          if (manageMode) syncToolbar(rows);
+          // Only rebuild the grid's innerHTML when the rendered content actually
+          // changes. React pushes a WebSocket snapshot every ~2s which fires our
+          // MutationObserver; rebuilding on every tick would destroy the card
+          // under the cursor (dropping its CSS :hover until the next mouse move)
+          // and replace freshly-clicked buttons mid-interaction. The signature
+          // captures everything the markup depends on.
+          var sig = renderSignature(rows);
+          if (sig !== lastRenderSig) {
+            lastRenderSig = sig;
+            if (rows.length === 0) {
+              results.classList.add("empty");
+              results.innerHTML = query
+                ? '<div class="evot-result-empty">No sessions match \u201c' + escapeHtml(query) + "\u201d</div>"
+                : '<div class="evot-result-empty">' + (loaded ? "No sessions" : "Loading\u2026") + "</div>";
+            } else {
+              results.classList.remove("empty");
+              results.innerHTML = rows.map(cardHtml).join("");
+            }
+          }
+          syncToolbar(allRows);
+          hideReactSessionCards();
         }
 
-        // Attach checkbox handlers to the freshly-rendered manage-mode cards.
-        function wireCards(container, rows) {
-          var checks = container.querySelectorAll(".rc-check");
-          for (var i = 0; i < checks.length; i++) {
-            checks[i].addEventListener("change", function (e) {
-              var id = e.target.getAttribute("data-id");
-              if (e.target.checked) selected[id] = true; else delete selected[id];
-              runApply();
-            });
+        function renderPager(page, totalPages, totalRows, startIdx, shown) {
+          if (totalRows <= pageSize) return "";
+          var html = "";
+          html += '<button type="button" class="esp-btn" data-page="' + (page - 1) + '"' + (page <= 1 ? " disabled" : "") + ">\u2190</button>";
+          var first = Math.max(1, page - 2);
+          var last = Math.min(totalPages, first + 4);
+          first = Math.max(1, last - 4);
+          if (first > 1) {
+            html += '<button type="button" class="esp-btn" data-page="1">1</button>';
+            if (first > 2) html += '<span class="esp-info">\u2026</span>';
+          }
+          for (var p = first; p <= last; p++) {
+            html += '<button type="button" class="esp-btn' + (p === page ? " active" : "") + '" data-page="' + p + '">' + p + "</button>";
+          }
+          if (last < totalPages) {
+            if (last < totalPages - 1) html += '<span class="esp-info">\u2026</span>';
+            html += '<button type="button" class="esp-btn" data-page="' + totalPages + '">' + totalPages + "</button>";
+          }
+          html += '<button type="button" class="esp-btn" data-page="' + (page + 1) + '"' + (page >= totalPages ? " disabled" : "") + ">\u2192</button>";
+          html += '<span class="esp-info">' + (startIdx + 1) + "-" + (startIdx + shown) + " / " + totalRows + "</span>";
+          return html;
+        }
+
+        // Imperative fallback for the takeover CSS: directly hide React's native
+        // session links. Our injected links do not use the `glass-card` class, so
+        // they are left untouched.
+        function hideReactSessionCards() {
+          var nodes = document.querySelectorAll('#root a.glass-card[href^="/sessions/"]');
+          for (var i = 0; i < nodes.length; i++) {
+            nodes[i].style.display = "none";
+            nodes[i].style.pointerEvents = "none";
           }
         }
 
-        // Sync the select-all checkbox, selected count, and delete button state.
+        // A compact string capturing everything cardHtml renders, so apply() can
+        // skip an innerHTML rebuild when nothing visible changed.
+        function renderSignature(rows) {
+          var parts = [query, timeFilter, String(currentPage)];
+          for (var i = 0; i < rows.length; i++) {
+            var s = rows[i];
+            parts.push(
+              s.session_id +
+              "|" + (favorites[s.session_id] ? 1 : 0) +
+              "|" + (selected[s.session_id] ? 1 : 0) +
+              "|" + (s.title || "") +
+              "|" + (s.updated_at || "") +
+              "|" + (s.span_count != null ? s.span_count : (s.turns || 0))
+            );
+          }
+          return parts.join("\n");
+        }
+
+        // Sync the filtered-selection checkbox, selected count, and clean button.
         function syncToolbar(rows) {
           var selCount = Object.keys(selected).filter(function (id) { return selected[id]; }).length;
           var label = document.getElementById("evot-sel-count");
           if (label) label.textContent = selCount + " selected";
-          var del = document.getElementById("evot-delete-selected");
+          var del = document.getElementById("evot-clean-selected");
           if (del) {
             del.disabled = selCount === 0;
-            // Reset the label after a delete left it showing "Deleting\u2026".
-            del.textContent = "Delete selected";
+            del.textContent = "Clean selected";
           }
-          var all = document.getElementById("evot-select-all");
+          var all = document.getElementById("evot-select-filtered");
           if (all) {
             var visibleSelected = rows.filter(function (s) { return selected[s.session_id]; }).length;
             all.checked = rows.length > 0 && visibleSelected === rows.length;
             all.indeterminate = visibleSelected > 0 && visibleSelected < rows.length;
-          }
-        }
-
-        // The React grid owns pagination (.evot-pagination) and sort controls
-        // (.evot-sort); they're meaningless over our filtered results, so hide
-        // them while a query is active and restore them when it clears.
-        function toggleListChrome(visible) {
-          var sel = ".evot-pagination, .evot-sort";
-          var nodes = document.querySelectorAll(sel);
-          for (var i = 0; i < nodes.length; i++) {
-            nodes[i].style.display = visible ? "" : "none";
           }
         }
 
@@ -610,6 +884,9 @@
         if (root) observer.observe(root, { childList: true, subtree: true });
         // Initial attempt once the SPA has mounted.
         schedule();
+        // Prefetch sessions + favorites so the grid is ready as soon as the
+        // "Connected sessions" heading mounts.
+        ensureSessions();
       })();
     </script>
   </body>

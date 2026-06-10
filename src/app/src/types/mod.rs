@@ -1,3 +1,4 @@
+mod favorites;
 mod id;
 pub mod metrics;
 pub mod observability;
@@ -6,6 +7,7 @@ mod session;
 mod transcript;
 pub mod variables;
 
+pub use favorites::*;
 pub use id::*;
 pub use metrics::*;
 pub use observability::*;

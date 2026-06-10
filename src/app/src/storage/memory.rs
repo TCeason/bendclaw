@@ -25,6 +25,7 @@ use crate::types::VariableRecord;
 pub struct MemoryStorage {
     sessions: Mutex<HashMap<String, SessionMeta>>,
     entries: Mutex<Vec<TranscriptEntry>>,
+    favorites: Mutex<Vec<String>>,
 }
 
 impl Default for MemoryStorage {
@@ -38,6 +39,7 @@ impl MemoryStorage {
         Self {
             sessions: Mutex::new(HashMap::new()),
             entries: Mutex::new(Vec::new()),
+            favorites: Mutex::new(Vec::new()),
         }
     }
 }
@@ -119,6 +121,22 @@ impl Storage for MemoryStorage {
     }
 
     async fn save_variables(&self, _variables: Vec<VariableRecord>) -> Result<()> {
+        Ok(())
+    }
+
+    async fn load_favorites(&self) -> Result<Vec<String>> {
+        Ok(self
+            .favorites
+            .lock()
+            .ok()
+            .map(|f| f.clone())
+            .unwrap_or_default())
+    }
+
+    async fn save_favorites(&self, ids: Vec<String>) -> Result<()> {
+        if let Ok(mut f) = self.favorites.lock() {
+            *f = ids;
+        }
         Ok(())
     }
 

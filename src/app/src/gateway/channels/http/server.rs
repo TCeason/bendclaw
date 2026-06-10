@@ -20,9 +20,10 @@ use crate::gateway::channels::http::stream;
 
 const INDEX_HTML: &str = include_str!("static/index.html");
 
-/// Cap on sessions returned by `/api/sessions`. Matches the terminal resume
-/// pool size and keeps the full-text payload bounded.
-const SESSION_SEARCH_LIMIT: usize = 100;
+/// `0` means no limit in the storage layer. The dashboard owns pagination, so
+/// `/api/sessions` should return every saved session rather than an arbitrary
+/// first page.
+const SESSION_SEARCH_LIMIT: usize = 0;
 
 /// Cap on ids accepted per `/api/sessions/delete` call. Bounds the work a single
 /// request can trigger; the UI never selects more than the listed pool anyway.
@@ -38,6 +39,11 @@ struct ChatRequest {
 #[derive(Deserialize)]
 struct DeleteSessionsRequest {
     ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct ToggleFavoriteRequest {
+    id: String,
 }
 
 pub struct Server {
@@ -113,6 +119,19 @@ impl Server {
                     },
                 ),
             )
+            .route(
+                "/api/favorites",
+                get(|State(server): State<Arc<Server>>| async move { server.favorites().await }),
+            )
+            .route(
+                "/api/favorites/toggle",
+                post(
+                    |State(server): State<Arc<Server>>,
+                     Json(req): Json<ToggleFavoriteRequest>| async move {
+                        server.toggle_favorite(req).await
+                    },
+                ),
+            )
             .with_state(self)
             .merge(dashboard)
             .layer(CorsLayer::permissive())
@@ -160,18 +179,30 @@ impl Server {
                 .into_response();
         }
         let mut deleted = 0usize;
+        let mut deleted_ids: Vec<String> = Vec::new();
         let mut failed: Vec<String> = Vec::new();
         for id in &req.ids {
             // Stop an in-flight run before removing files, otherwise the run's
             // next transcript write would recreate the directory.
             self.agent.abort_run(id);
             match self.agent.delete_session(id).await {
-                Ok(true) => deleted += 1,
-                Ok(false) => { /* already gone — treat as success, no-op */ }
+                Ok(true) => {
+                    deleted += 1;
+                    deleted_ids.push(id.clone());
+                }
+                Ok(false) => {
+                    // Already gone: still prune a stale favorite entry for this id.
+                    deleted_ids.push(id.clone());
+                }
                 Err(e) => {
                     tracing::warn!(session_id = %id, "delete failed: {e}");
                     failed.push(id.clone());
                 }
+            }
+        }
+        if !deleted_ids.is_empty() {
+            if let Err(e) = self.agent.remove_favorites(&deleted_ids).await {
+                tracing::warn!("failed to prune deleted sessions from favorites: {e}");
             }
         }
         Json(serde_json::json!({
@@ -180,6 +211,39 @@ impl Server {
             "failed": failed,
         }))
         .into_response()
+    }
+
+    /// Returns the set of favorited session ids so the dashboard can pin and
+    /// sort them on load.
+    async fn favorites(&self) -> impl IntoResponse {
+        match self.agent.list_favorites().await {
+            Ok(ids) => Json(serde_json::json!({ "ids": ids })).into_response(),
+            Err(e) => {
+                tracing::warn!("dashboard: failed to list favorites: {e}");
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to list favorites",
+                )
+                    .into_response()
+            }
+        }
+    }
+
+    /// Toggles a session's favorite state and reports the new value.
+    async fn toggle_favorite(&self, req: ToggleFavoriteRequest) -> impl IntoResponse {
+        match self.agent.toggle_favorite(&req.id).await {
+            Ok(favorited) => {
+                Json(serde_json::json!({ "id": req.id, "favorited": favorited })).into_response()
+            }
+            Err(e) => {
+                tracing::warn!(session_id = %req.id, "toggle favorite failed: {e}");
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to toggle favorite",
+                )
+                    .into_response()
+            }
+        }
     }
 
     async fn chat(self: Arc<Self>, req: ChatRequest) -> impl IntoResponse {

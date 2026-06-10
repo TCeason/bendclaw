@@ -122,6 +122,29 @@ async fn list_sessions_with_text_respects_limit() -> TestResult {
 }
 
 #[tokio::test]
+async fn favorites_persist_across_storage() -> TestResult {
+    let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
+
+    // Empty by default.
+    assert!(storage.load_favorites().await?.is_empty());
+
+    // Saving a set round-trips.
+    storage
+        .save_favorites(vec!["fav-a".into(), "fav-b".into()])
+        .await?;
+    let ids = storage.load_favorites().await?;
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains(&"fav-a".to_string()));
+    assert!(ids.contains(&"fav-b".to_string()));
+
+    // Overwrite replaces rather than appends.
+    storage.save_favorites(vec!["fav-c".into()]).await?;
+    let ids = storage.load_favorites().await?;
+    assert_eq!(ids, vec!["fav-c".to_string()]);
+    Ok(())
+}
+
+#[tokio::test]
 async fn delete_session_removes_only_target() -> TestResult {
     let storage: Arc<dyn evot::storage::Storage> = Arc::new(MemoryStorage::new());
 
@@ -165,16 +188,28 @@ fn dashboard_shell_embeds_search() {
     // Results link to the SPA session route and highlight matches.
     assert!(html.contains("/sessions/"));
     assert!(html.contains("evot-hl"));
-    // Pagination/sort controls are hidden while a query is active.
-    assert!(html.contains(".evot-pagination, .evot-sort"));
+    // React's live grid + pagination/sort chrome are hidden via the persistent
+    // takeover stylesheet rule while our own grid is mounted.
+    assert!(html.contains("evot-takeover"));
+    assert!(html.contains(".evot-pagination"));
     // Detail page exposes a copyable `evot --resume <id>` command.
     assert!(html.contains("evot-resume-cmd"));
     assert!(html.contains("evot --resume "));
-    // Manage mode: multi-select + confirmed bulk delete via the API.
-    assert!(html.contains("evot-manage-btn"));
-    assert!(html.contains("evot-delete-selected"));
     assert!(html.contains("/api/sessions/delete"));
-    assert!(html.contains("cannot be undone"));
+    // Default card grid: clean card markup with always-visible favorite/delete
+    // actions and the favorites API the dashboard pins and sorts against.
+    assert!(html.contains("evot-session-card"));
+    assert!(html.contains("esc-fav"));
+    assert!(html.contains("esc-del"));
+    assert!(html.contains("deleteOne"));
+    assert!(html.contains("evot-session-pager"));
+    assert!(html.contains("renderPager"));
+    assert!(html.contains("evot-time-filter"));
+    assert!(html.contains("evot-select-filtered"));
+    assert!(html.contains("evot-clean-selected"));
+    assert!(html.contains("matchesTimeFilter"));
+    assert!(html.contains("/api/favorites"));
+    assert!(html.contains("/api/favorites/toggle"));
 }
 
 /// The hand-written /chat page exposes the same search affordance.

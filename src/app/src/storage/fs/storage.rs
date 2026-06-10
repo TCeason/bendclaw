@@ -9,6 +9,7 @@ use crate::error::Result;
 use crate::search::collect_search_text;
 use crate::search::SessionWithText;
 use crate::storage::Storage;
+use crate::types::FavoritesDocument;
 use crate::types::ListSessions;
 use crate::types::ListTranscriptEntries;
 use crate::types::SessionMeta;
@@ -53,6 +54,10 @@ impl FsStorage {
 
     fn variables_path(&self) -> PathBuf {
         self.root_dir.join("variables.json")
+    }
+
+    fn favorites_path(&self) -> PathBuf {
+        self.root_dir.join("favorites.json")
     }
 
     async fn write_json<T: serde::Serialize>(&self, path: PathBuf, value: &T) -> Result<()> {
@@ -199,6 +204,21 @@ impl Storage for FsStorage {
             variables,
         };
         self.write_json(self.variables_path(), &doc).await
+    }
+
+    async fn load_favorites(&self) -> Result<Vec<String>> {
+        match self
+            .read_json::<FavoritesDocument>(&self.favorites_path())
+            .await?
+        {
+            Some(doc) => Ok(doc.ids),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    async fn save_favorites(&self, ids: Vec<String>) -> Result<()> {
+        let doc = FavoritesDocument { version: 1, ids };
+        self.write_json(self.favorites_path(), &doc).await
     }
 
     async fn list_sessions_with_text(&self, limit: usize) -> Result<Vec<SessionWithText>> {
