@@ -46,6 +46,8 @@ fn test_adaptive_thinking_sent_for_anthropic() {
     assert_eq!(body["thinking"]["type"], "adaptive");
     assert_eq!(body["thinking"]["display"], "summarized");
     assert!(body["thinking"].get("budget_tokens").is_none());
+    // Adaptive is bounded with medium effort (matches pi's default).
+    assert_eq!(body["output_config"]["effort"], "medium");
 }
 
 #[test]
@@ -58,6 +60,27 @@ fn test_non_off_thinking_sent_as_adaptive_for_anthropic() {
     assert_eq!(body["thinking"]["type"], "adaptive");
     assert_eq!(body["thinking"]["display"], "summarized");
     assert!(body["thinking"].get("budget_tokens").is_none());
+    assert_eq!(body["output_config"]["effort"], "high");
+}
+
+#[test]
+fn test_thinking_effort_levels_map_for_anthropic() {
+    let cases = [
+        (ThinkingLevel::Minimal, "low"),
+        (ThinkingLevel::Low, "low"),
+        (ThinkingLevel::Medium, "medium"),
+        (ThinkingLevel::High, "high"),
+        (ThinkingLevel::Adaptive, "medium"),
+    ];
+    for (level, expected) in cases {
+        let config = StreamConfigBuilder::anthropic().thinking(level).build();
+        let body = build_request_body(&config, false);
+        assert_eq!(
+            body["output_config"]["effort"], expected,
+            "level {level:?} should map to effort {expected}"
+        );
+        assert_eq!(body["thinking"]["type"], "adaptive");
+    }
 }
 
 #[test]
@@ -68,6 +91,8 @@ fn test_off_thinking_omits_anthropic_thinking() {
 
     let body = build_request_body(&config, false);
     assert!(body.get("thinking").is_none());
+    // No thinking block means no effort bound either.
+    assert!(body.get("output_config").is_none());
 }
 
 #[test]

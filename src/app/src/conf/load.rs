@@ -320,7 +320,9 @@ fn ensure_env_file(path: &Path) -> Result<()> {
 
 fn default_env_content() -> &'static str {
     r#"# EVOT_LLM_THINKING_LEVEL=adaptive
-# Anthropic: off disables thinking; all other levels use adaptive thinking.
+# Controls reasoning effort. Default: adaptive.
+# Anthropic: thinking is always adaptive; this sets output_config.effort.
+#   off disables thinking; minimal/low=low, medium/adaptive=medium, high=high effort.
 # OpenAI-compatible: adaptive/high=high, medium=medium, minimal/low=low.
 
 # EVOT_LLM_ANTHROPIC_API_KEY=

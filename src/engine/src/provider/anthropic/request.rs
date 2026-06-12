@@ -167,6 +167,12 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
             "type": "adaptive",
             "display": "summarized",
         });
+        // Bound adaptive thinking with an effort level so a single turn can't
+        // run away (e.g. tens of thousands of thinking tokens in one call).
+        // Mirrors pi's behavior, which always sends output_config.effort.
+        if let Some(effort) = thinking_effort(config.thinking_level) {
+            body["output_config"] = serde_json::json!({ "effort": effort });
+        }
     }
 
     if let Some(temp) = config.temperature {
@@ -174,6 +180,20 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
     }
 
     body
+}
+
+/// Map a thinking level to an Anthropic adaptive-thinking effort value.
+///
+/// Returns `None` only for `Off` (handled separately by omitting the thinking
+/// block entirely). `Adaptive` maps to `medium` to match pi's default and to
+/// keep a single turn from spending tens of thousands of thinking tokens.
+fn thinking_effort(level: ThinkingLevel) -> Option<&'static str> {
+    match level {
+        ThinkingLevel::Off => None,
+        ThinkingLevel::Minimal | ThinkingLevel::Low => Some("low"),
+        ThinkingLevel::Medium | ThinkingLevel::Adaptive => Some("medium"),
+        ThinkingLevel::High => Some("high"),
+    }
 }
 
 fn system_prompt_blocks(prompt: &str, cache_static: bool) -> Vec<serde_json::Value> {
