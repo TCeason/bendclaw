@@ -7,7 +7,12 @@ const DYNAMIC_BOUNDARY: &str = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
 const SYSTEM_SECTION: &str = r#""#;
 
 const USING_TOOLS_HEADER: &str = "Using your tools:";
-const PARALLEL_TOOL_CALLS: &str = "Batch independent tool calls. When several reads, greps, globs, or other read-only lookups do not depend on each other's results, issue them all in a single response so they run in parallel instead of one per turn. Only make calls in separate turns when a later call genuinely needs an earlier call's output. This is the default working style, not an exception.";
+// When bash is present but no dedicated exploration tools are registered (the
+// pi-aligned default coding set: read, bash, edit, write), point the model at
+// bash for search/listing instead of discouraging it. Matches pi's guidance.
+const BASH_EXPLORE_GUIDELINE: &str = "Use bash for file operations like ls, rg, find";
+// When dedicated exploration tools ARE present (e.g. read-only mode ships grep
+// and glob), frame the dedicated-vs-bash tradeoff the other way.
 const USING_TOOLS_INTRO: &str = "Do not run a bash command when a dedicated tool exists for the task — dedicated tools are easier for the user to review and give you cleaner, structured results.";
 const BASH_FILE_OPS_GUIDELINE: &str = "Reserve bash for system commands and terminal operations that need a shell. When unsure and a dedicated tool exists, default to it and fall back to bash only when necessary.";
 const USING_TOOLS_TRAILER: &[&str] = &[
@@ -71,6 +76,10 @@ pub struct Section {
 pub struct SystemPrompt {
     cwd: String,
     has_bash: bool,
+    /// Whether the tool set includes dedicated exploration tools (grep/glob/
+    /// semantic search). When false (the pi-aligned default coding set), the
+    /// prompt steers search through bash instead of discouraging it.
+    has_dedicated_search: bool,
     /// Pre-rendered "prefer this dedicated tool" lines, one per tool that
     /// declares `prefer_over`, with the tool name already resolved to the
     /// alias the target model sees.
@@ -119,6 +128,9 @@ impl SystemPrompt {
         Self {
             cwd: cwd.to_string(),
             has_bash: tools.iter().any(|t| t.name() == "bash"),
+            has_dedicated_search: tools
+                .iter()
+                .any(|t| matches!(t.name(), "grep" | "glob" | "semantic_code_search")),
             prefer_lines: tools
                 .iter()
                 .filter_map(|t| {
@@ -179,18 +191,19 @@ impl SystemPrompt {
             }
         };
 
-        // Parallel batching is the headline working style — list it first so it
-        // frames everything that follows, not buried among the trailer bullets.
-        add(PARALLEL_TOOL_CALLS);
-
-        // Only frame the dedicated-vs-bash tradeoff when bash is present.
-        if self.has_bash {
+        // File-exploration framing depends on whether dedicated search tools
+        // are registered, mirroring pi's system-prompt logic:
+        //   - no dedicated tools (default coding set): steer search to bash.
+        //   - dedicated tools present (read-only mode): prefer them over bash.
+        if self.has_bash && !self.has_dedicated_search {
+            add(BASH_EXPLORE_GUIDELINE);
+        } else if self.has_bash {
             add(USING_TOOLS_INTRO);
         }
         for line in &self.prefer_lines {
             add(line);
         }
-        if self.has_bash {
+        if self.has_bash && self.has_dedicated_search {
             add(BASH_FILE_OPS_GUIDELINE);
         }
         for g in &self.tools_guidelines {

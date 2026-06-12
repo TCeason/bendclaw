@@ -188,10 +188,18 @@ fn tool_set_drives_identity_list_and_guidelines() {
     assert!(prompt.contains("- read: Read file contents"));
     assert!(prompt.contains("- write: Create or overwrite files"));
 
-    // Guidelines section opens with the framing principle, then per-tool
-    // "prefer this dedicated tool" lines, the bash fallback rule, mechanics,
-    // and the shared trailer.
-    assert!(prompt.contains("Do not run a bash command when a dedicated tool exists"));
+    // With the pi-aligned default coding set (read/bash/edit/write and no
+    // dedicated search tools), file exploration is steered through bash rather
+    // than discouraged. Mirrors pi's "Use bash for file operations" guideline.
+    assert!(prompt.contains("Use bash for file operations like ls, rg, find"));
+    // The anti-bash framing only applies when dedicated search tools exist, so
+    // it must NOT appear here.
+    assert!(!prompt.contains("Do not run a bash command when a dedicated tool exists"));
+    assert!(!prompt.contains("fall back to bash only when necessary"));
+    // The removed parallel-batching guidance must not linger.
+    assert!(!prompt.contains("Batch independent tool calls"));
+
+    // Per-tool mechanics still come from each tool's own guidelines.
     assert!(
         prompt.contains("To read or examine files, use `read` instead of cat, head, tail, or sed.")
     );
@@ -199,25 +207,9 @@ fn tool_set_drives_identity_list_and_guidelines() {
     assert!(prompt.contains(
         "To create files, use `write` instead of cat with a heredoc or echo redirection."
     ));
-    assert!(prompt.contains("fall back to bash only when necessary"));
     assert!(prompt.contains("Use edit for precise changes (edits[].oldText must match exactly)"));
     assert!(prompt.contains("Use write only for new files or complete rewrites."));
-    assert!(prompt.contains("run in parallel"));
     assert!(prompt.contains("Be concise in your responses"));
-
-    // Parallel batching is the headline working style: it must lead the tool
-    // guidance, ahead of the bash-vs-dedicated framing.
-    let header_pos = prompt.find("Using your tools:").expect("missing header");
-    let parallel_pos = prompt
-        .find("Batch independent tool calls")
-        .expect("missing parallel guidance");
-    let bash_pos = prompt
-        .find("Do not run a bash command when a dedicated tool exists")
-        .expect("missing bash framing");
-    assert!(
-        header_pos < parallel_pos && parallel_pos < bash_pos,
-        "parallel guidance should lead the tool section (header={header_pos}, parallel={parallel_pos}, bash={bash_pos})"
-    );
 
     // The legacy snake_case spelling must not leak back in.
     assert!(!prompt.contains("old_text"));
@@ -265,4 +257,28 @@ fn available_tools_list_uses_model_resolved_alias_names() {
         other.contains("use `read` instead of"),
         "prefer line should use base name: {other}"
     );
+}
+
+#[test]
+fn dedicated_search_tools_flip_bash_framing() {
+    use evot_engine::tools::BashTool;
+    use evot_engine::tools::GrepTool;
+    use evot_engine::tools::ReadFileTool;
+    let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    // When dedicated search tools (grep) are present alongside bash, the prompt
+    // prefers them over bash — the opposite of the default coding set.
+    let tools: Vec<Box<dyn evot_engine::AgentTool>> = vec![
+        Box::new(ReadFileTool::default()),
+        Box::new(BashTool::default()),
+        Box::new(GrepTool::new()),
+    ];
+    let prompt = SystemPrompt::with_tool_set(&tmp.path().to_string_lossy(), &tools)
+        .with_system()
+        .build();
+
+    assert!(prompt.contains("Do not run a bash command when a dedicated tool exists"));
+    assert!(prompt.contains("fall back to bash only when necessary"));
+    // The bash-first exploration guideline must NOT appear when dedicated
+    // search tools are available.
+    assert!(!prompt.contains("Use bash for file operations like ls, rg, find"));
 }

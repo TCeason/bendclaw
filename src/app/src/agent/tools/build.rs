@@ -35,7 +35,10 @@ pub(crate) fn build_tools(
 
     let mut t: Vec<Box<dyn evot_engine::AgentTool>> = Vec::new();
 
-    // Core tool order mirrors the pi harness: read, bash, edit, write.
+    // Core tool set mirrors pi's createCodingTools / defaultActiveToolNames:
+    // read, bash, edit, write only. Searching and file-finding go through bash
+    // (rg/grep/find), matching pi's default coding mode where grep/find/ls are
+    // not registered as standalone tools.
     t.push(Box::new(ReadFileTool::default()));
 
     if allow_bash {
@@ -50,11 +53,6 @@ pub(crate) fn build_tools(
         t.push(Box::new(EditFileTool::new()));
         t.push(Box::new(WriteFileTool::new()));
     }
-
-    // Structured exploration tools — cut the "bash grep → re-read file" loop.
-    t.push(Box::new(GrepTool::new()));
-    t.push(Box::new(GlobTool::new()));
-    t.push(Box::new(SearchTool::new()));
 
     // evot-specific tools, appended after the pi-aligned core set.
     if !matches!(mode, ToolMode::Headless) {
@@ -75,16 +73,14 @@ pub(crate) fn build_tools(
 }
 
 /// Canonical tool set used to assemble the system prompt's tool list and
-/// guidelines at startup. Mirrors the core read/bash/edit/write set so the
-/// prompt advertises exactly the tools the agent ships with.
+/// guidelines at startup. Must stay in sync with the non-readonly set built by
+/// `build_tools` so the prompt advertises exactly the tools the agent ships
+/// with. Mirrors pi's default coding tools: read, bash, edit, write.
 pub(crate) fn prompt_tools() -> Vec<Box<dyn evot_engine::AgentTool>> {
     vec![
         Box::new(ReadFileTool::default()),
         Box::new(BashTool::default()),
         Box::new(EditFileTool::new()),
         Box::new(WriteFileTool::new()),
-        Box::new(GrepTool::new()),
-        Box::new(GlobTool::new()),
-        Box::new(SearchTool::new()),
     ]
 }
