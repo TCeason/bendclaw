@@ -63,6 +63,9 @@ impl AgentTool for SearchTool {
         vec![
             "Use {{semantic_code_search}} to explore unfamiliar code by concept or behavior; use \
              {{grep}} for exact string or symbol-reference matches when you already know the term.",
+            "Pick one of {{semantic_code_search}} or {{grep}} per target — do not run both for the \
+             same symbol or concept. If {{semantic_code_search}} already returned the location, go \
+             straight to {{read}} instead of re-searching with {{grep}}.",
         ]
     }
 

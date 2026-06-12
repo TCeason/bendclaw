@@ -7,10 +7,10 @@ const DYNAMIC_BOUNDARY: &str = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
 const SYSTEM_SECTION: &str = r#""#;
 
 const USING_TOOLS_HEADER: &str = "Using your tools:";
+const PARALLEL_TOOL_CALLS: &str = "Batch independent tool calls. When several reads, greps, globs, or other read-only lookups do not depend on each other's results, issue them all in a single response so they run in parallel instead of one per turn. Only make calls in separate turns when a later call genuinely needs an earlier call's output. This is the default working style, not an exception.";
 const USING_TOOLS_INTRO: &str = "Do not run a bash command when a dedicated tool exists for the task — dedicated tools are easier for the user to review and give you cleaner, structured results.";
 const BASH_FILE_OPS_GUIDELINE: &str = "Reserve bash for system commands and terminal operations that need a shell. When unsure and a dedicated tool exists, default to it and fall back to bash only when necessary.";
 const USING_TOOLS_TRAILER: &[&str] = &[
-    "When you make several tool calls with no dependencies between them, issue them in one response so they run in parallel; only sequence calls that depend on an earlier result.",
     "Be concise in your responses",
     "Show file paths clearly when working with files",
 ];
@@ -178,6 +178,10 @@ impl SystemPrompt {
                 lines.push(format!("- {s}"));
             }
         };
+
+        // Parallel batching is the headline working style — list it first so it
+        // frames everything that follows, not buried among the trailer bullets.
+        add(PARALLEL_TOOL_CALLS);
 
         // Only frame the dedicated-vs-bash tradeoff when bash is present.
         if self.has_bash {

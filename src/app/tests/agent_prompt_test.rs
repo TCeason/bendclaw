@@ -205,6 +205,20 @@ fn tool_set_drives_identity_list_and_guidelines() {
     assert!(prompt.contains("run in parallel"));
     assert!(prompt.contains("Be concise in your responses"));
 
+    // Parallel batching is the headline working style: it must lead the tool
+    // guidance, ahead of the bash-vs-dedicated framing.
+    let header_pos = prompt.find("Using your tools:").expect("missing header");
+    let parallel_pos = prompt
+        .find("Batch independent tool calls")
+        .expect("missing parallel guidance");
+    let bash_pos = prompt
+        .find("Do not run a bash command when a dedicated tool exists")
+        .expect("missing bash framing");
+    assert!(
+        header_pos < parallel_pos && parallel_pos < bash_pos,
+        "parallel guidance should lead the tool section (header={header_pos}, parallel={parallel_pos}, bash={bash_pos})"
+    );
+
     // The legacy snake_case spelling must not leak back in.
     assert!(!prompt.contains("old_text"));
 }
