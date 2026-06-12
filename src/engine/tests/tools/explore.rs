@@ -183,6 +183,84 @@ async fn grep_missing_pattern_errors() {
     assert!(matches!(err, ToolError::InvalidArgs(_)));
 }
 
+#[tokio::test]
+async fn grep_context_includes_surrounding_lines() {
+    let dir = fixture();
+    let tool = GrepTool::new();
+    // main.rs: line 1 `fn main() {`, line 2 `println!("hello")`, line 3 `}`.
+    let res = tool
+        .execute(
+            serde_json::json!({ "pattern": "println", "context": 1, "reason": "context" }),
+            ctx_at(dir.path()),
+        )
+        .await
+        .expect("grep ok");
+    let out = text_of(&res);
+    // The match line uses ':' and the context lines use '-' (ripgrep style).
+    assert!(out.contains("src/main.rs:2: "), "match line missing: {out}");
+    assert!(
+        out.contains("src/main.rs-1- "),
+        "before-context missing: {out}"
+    );
+    assert!(
+        out.contains("src/main.rs-3- "),
+        "after-context missing: {out}"
+    );
+}
+
+#[tokio::test]
+async fn grep_fixed_strings_matches_literally() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("f.txt"), "a.b.c\naxbxc\n").unwrap();
+    let tool = GrepTool::new();
+    // As a regex `a.b.c` would also match `axbxc`; fixed_strings must not.
+    let res = tool
+        .execute(
+            serde_json::json!({
+                "pattern": "a.b.c",
+                "fixed_strings": true,
+                "reason": "literal"
+            }),
+            ctx_at(dir.path()),
+        )
+        .await
+        .expect("grep ok");
+    let out = text_of(&res);
+    assert!(
+        out.contains("f.txt:1: a.b.c"),
+        "literal match missing: {out}"
+    );
+    assert!(!out.contains("axbxc"), "regex-style match leaked: {out}");
+}
+
+#[tokio::test]
+async fn grep_files_with_matches_lists_paths_only() {
+    let dir = fixture();
+    let tool = GrepTool::new();
+    let res = tool
+        .execute(
+            serde_json::json!({
+                "pattern": "fn ",
+                "files_with_matches": true,
+                "reason": "list files"
+            }),
+            ctx_at(dir.path()),
+        )
+        .await
+        .expect("grep ok");
+    let out = text_of(&res);
+    // Only bare paths, no line numbers or match text.
+    assert!(out.contains("src/main.rs"), "path missing: {out}");
+    assert!(out.contains("src/lib.rs"), "path missing: {out}");
+    assert!(!out.contains("src/main.rs:"), "line detail leaked: {out}");
+    // Each matching file should appear exactly once.
+    assert_eq!(
+        out.matches("src/main.rs").count(),
+        1,
+        "path duplicated: {out}"
+    );
+}
+
 // GLOB_TESTS
 
 #[tokio::test]

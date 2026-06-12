@@ -41,6 +41,9 @@ impl AgentTool for GrepTool {
         "Search file contents recursively for a regex pattern. Always returns line numbers; \
          output format is `path:line: matching text`. Respects .gitignore. There is no need to \
          use bash grep or rg — this tool already provides line numbers and is faster to scan. \
+         Use `context` to include surrounding lines (like grep -C) so you can read a match in \
+         place without a follow-up Read. Use `files_with_matches` to list only the matching file \
+         paths, and `fixed_strings` to match the pattern literally instead of as a regex. \
          Output is truncated to 200 matches or 50KB (whichever is hit first)."
     }
 
@@ -85,6 +88,18 @@ impl AgentTool for GrepTool {
                     "type": "boolean",
                     "description": "Case-insensitive search. Defaults to false."
                 },
+                "context": {
+                    "type": "number",
+                    "description": "Number of context lines to show before and after each match (like grep -C). Context lines use 'path-line- text' (hyphen) to distinguish them from match lines. Defaults to 0."
+                },
+                "fixed_strings": {
+                    "type": "boolean",
+                    "description": "Treat the pattern as a literal string instead of a regex (like grep -F). Useful for searching text with regex metacharacters. Defaults to false."
+                },
+                "files_with_matches": {
+                    "type": "boolean",
+                    "description": "List only the paths of files containing a match, one per line (like grep -l), instead of the matching lines. Defaults to false."
+                },
                 "reason": {
                     "type": "string",
                     "description": "Briefly explain why you chose this pattern and what you expect to find."
@@ -97,7 +112,21 @@ impl AgentTool for GrepTool {
     fn preview_command(&self, params: &serde_json::Value) -> Option<String> {
         let pattern = params["pattern"].as_str()?;
         let path = params["path"].as_str().unwrap_or(".");
-        Some(format!("grep -rn {pattern:?} {path}"))
+        let mut flags = String::from("-rn");
+        if params["ignore_case"].as_bool().unwrap_or(false) {
+            flags.push('i');
+        }
+        if params["fixed_strings"].as_bool().unwrap_or(false) {
+            flags.push('F');
+        }
+        if params["files_with_matches"].as_bool().unwrap_or(false) {
+            flags.push('l');
+        }
+        let context = match params["context"].as_u64() {
+            Some(n) if n > 0 => format!(" -C {n}"),
+            _ => String::new(),
+        };
+        Some(format!("grep {flags}{context} {pattern:?} {path}"))
     }
 
     async fn execute(
@@ -114,6 +143,9 @@ impl AgentTool for GrepTool {
         }
         let include = params["include"].as_str().map(str::to_string);
         let ignore_case = params["ignore_case"].as_bool().unwrap_or(false);
+        let fixed_strings = params["fixed_strings"].as_bool().unwrap_or(false);
+        let files_with_matches = params["files_with_matches"].as_bool().unwrap_or(false);
+        let context = params["context"].as_u64().unwrap_or(0) as usize;
 
         let search_root = ctx
             .path_guard
@@ -127,7 +159,12 @@ impl AgentTool for GrepTool {
             &search_root,
             &pattern,
             include.as_deref(),
-            ignore_case,
+            SearchOptions {
+                ignore_case,
+                fixed_strings,
+                files_with_matches,
+                context,
+            },
             &ctx,
         )
         .await?;
@@ -145,9 +182,22 @@ impl AgentTool for GrepTool {
 use std::path::Path;
 
 use grep::regex::RegexMatcher;
-use grep::searcher::sinks::UTF8;
 use grep::searcher::BinaryDetection;
+use grep::searcher::Searcher;
 use grep::searcher::SearcherBuilder;
+use grep::searcher::Sink;
+use grep::searcher::SinkContext;
+use grep::searcher::SinkContextKind;
+use grep::searcher::SinkMatch;
+
+/// Options controlling a single grep run.
+#[derive(Clone, Copy)]
+struct SearchOptions {
+    ignore_case: bool,
+    fixed_strings: bool,
+    files_with_matches: bool,
+    context: usize,
+}
 
 /// Gitignore-aware walk + ripgrep's own search engine, run off the async
 /// runtime. Using grep-searcher gives binary-file detection, encoding
@@ -156,11 +206,12 @@ async fn run_search(
     root: &Path,
     pattern: &str,
     include: Option<&str>,
-    ignore_case: bool,
+    opts: SearchOptions,
     ctx: &ToolContext,
 ) -> Result<String, ToolError> {
     let matcher = grep::regex::RegexMatcherBuilder::new()
-        .case_insensitive(ignore_case)
+        .case_insensitive(opts.ignore_case)
+        .fixed_strings(opts.fixed_strings)
         .build(pattern)
         .map_err(|e| ToolError::InvalidArgs(format!("invalid regex: {e}")))?;
 
@@ -176,7 +227,7 @@ async fn run_search(
     let root = root.to_path_buf();
     let cancel = ctx.cancel.clone();
     // Walking + reading files is blocking; run it off the async runtime.
-    tokio::task::spawn_blocking(move || search_tree(&root, &matcher, glob.as_ref(), &cancel))
+    tokio::task::spawn_blocking(move || search_tree(&root, &matcher, glob.as_ref(), opts, &cancel))
         .await
         .map_err(|e| ToolError::Failed(format!("search task panicked: {e}")))?
 }
@@ -185,10 +236,19 @@ fn search_tree(
     root: &Path,
     matcher: &RegexMatcher,
     glob: Option<&globset::GlobMatcher>,
+    opts: SearchOptions,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<String, ToolError> {
+    // -l mode reports paths only, so context lines are irrelevant there.
+    let context = if opts.files_with_matches {
+        0
+    } else {
+        opts.context
+    };
     let mut searcher = SearcherBuilder::new()
         .line_number(true)
+        .before_context(context)
+        .after_context(context)
         .binary_detection(BinaryDetection::quit(b'\x00'))
         .build();
 
@@ -222,15 +282,29 @@ fn search_tree(
             .to_string_lossy()
             .into_owned();
 
-        let mut hit_cap = false;
-        let sink = UTF8(|line_no, text| {
+        if opts.files_with_matches {
+            // -l: report the path once on the first match, then move on.
             if lines.len() >= MAX_MATCHES {
-                hit_cap = true;
-                return Ok(false); // stop searching this file
+                capped = true;
+                break 'outer;
             }
-            lines.push(format!("{}:{}: {}", rel, line_no, text.trim_end()));
-            Ok(true)
-        });
+            let mut matched = false;
+            let sink = FilesWithMatchesSink {
+                matched: &mut matched,
+            };
+            let _ = searcher.search_path(matcher, path, sink);
+            if matched {
+                lines.push(rel);
+            }
+            continue;
+        }
+
+        let mut hit_cap = false;
+        let sink = GrepSink {
+            rel: &rel,
+            lines: &mut lines,
+            hit_cap: &mut hit_cap,
+        };
         // Search errors (e.g. unreadable file) are non-fatal; skip the file.
         let _ = searcher.search_path(matcher, path, sink);
         if hit_cap {
@@ -249,4 +323,59 @@ fn search_tree(
         lines.join("\n"),
         ", refine the pattern for more",
     ))
+}
+
+/// Sink that emits `path:line: text` for matches and `path-line- text` for
+/// context lines (mirroring ripgrep's match/context separators), capping the
+/// total number of emitted lines at `MAX_MATCHES`.
+struct GrepSink<'a> {
+    rel: &'a str,
+    lines: &'a mut Vec<String>,
+    hit_cap: &'a mut bool,
+}
+
+impl GrepSink<'_> {
+    fn push(&mut self, sep: char, line_no: Option<u64>, bytes: &[u8]) -> bool {
+        if self.lines.len() >= MAX_MATCHES {
+            *self.hit_cap = true;
+            return false;
+        }
+        let text = String::from_utf8_lossy(bytes);
+        let text = text.trim_end();
+        match line_no {
+            Some(n) => self.lines.push(format!("{}{sep}{n}{sep} {text}", self.rel)),
+            None => self.lines.push(format!("{}{sep} {text}", self.rel)),
+        }
+        true
+    }
+}
+
+impl Sink for GrepSink<'_> {
+    type Error = std::io::Error;
+
+    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch) -> Result<bool, std::io::Error> {
+        Ok(self.push(':', mat.line_number(), mat.bytes()))
+    }
+
+    fn context(&mut self, _searcher: &Searcher, ctx: &SinkContext) -> Result<bool, std::io::Error> {
+        let sep = match ctx.kind() {
+            SinkContextKind::Before | SinkContextKind::After => '-',
+            SinkContextKind::Other => '-',
+        };
+        Ok(self.push(sep, ctx.line_number(), ctx.bytes()))
+    }
+}
+
+/// Sink for `-l` mode: flips a flag on the first match and stops the file scan.
+struct FilesWithMatchesSink<'a> {
+    matched: &'a mut bool,
+}
+
+impl Sink for FilesWithMatchesSink<'_> {
+    type Error = std::io::Error;
+
+    fn matched(&mut self, _searcher: &Searcher, _mat: &SinkMatch) -> Result<bool, std::io::Error> {
+        *self.matched = true;
+        Ok(false) // one match is enough; stop scanning this file
+    }
 }
