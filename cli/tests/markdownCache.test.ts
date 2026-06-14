@@ -5,6 +5,7 @@ import {
   getRenderCacheSize,
 } from '../src/render/markdown.js'
 import stripAnsi from 'strip-ansi'
+import { withColumns } from './helpers/stdout-columns.js'
 
 beforeEach(() => {
   clearRenderCache()
@@ -36,12 +37,12 @@ describe('renderMarkdownCached', () => {
   })
 
   test('terminal width is part of the cache key', () => {
-    const prev = process.stdout.columns
     const text = 'word '.repeat(20)
+    let restore = withColumns(40)
     try {
-      process.stdout.columns = 40
       const narrow = stripAnsi(renderMarkdownCached(text))
-      process.stdout.columns = 120
+      restore()
+      restore = withColumns(120)
       const wide = stripAnsi(renderMarkdownCached(text))
       clearRenderCache()
       const freshWide = stripAnsi(renderMarkdownCached(text))
@@ -49,7 +50,7 @@ describe('renderMarkdownCached', () => {
       expect(narrow.split('\n').length).toBeGreaterThan(wide.split('\n').length)
       expect(wide).toBe(freshWide)
     } finally {
-      process.stdout.columns = prev
+      restore()
     }
   })
 

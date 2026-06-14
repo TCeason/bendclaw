@@ -6,6 +6,7 @@ import chalk from 'chalk'
 import { marked, type Token } from 'marked'
 import stripAnsi from 'strip-ansi'
 import stringWidth from 'string-width'
+import { withColumns } from './helpers/stdout-columns.js'
 
 // Helper: render markdown and strip ANSI codes for assertion
 function render(md: string): string {
@@ -259,8 +260,7 @@ describe('renderMarkdown', () => {
   })
 
   test('aligns trailing SQL comments in fenced code blocks', () => {
-    const prev = process.stdout.columns
-    process.stdout.columns = 100
+    const restore = withColumns(100)
     try {
       const md = [
         '```sql',
@@ -281,13 +281,12 @@ describe('renderMarkdown', () => {
 
       expect(new Set(commentColumns).size).toBe(1)
     } finally {
-      process.stdout.columns = prev
+      restore()
     }
   })
 
   test('aligns standalone comments with nearby Python code indentation', () => {
-    const prev = process.stdout.columns
-    process.stdout.columns = 100
+    const restore = withColumns(100)
     try {
       const md = [
         '```python',
@@ -305,7 +304,7 @@ describe('renderMarkdown', () => {
       expect(result).toMatch(/^ {8}# span:$/m)
       expect(result).toMatch(/^ {8}# session_id: 自定义，非 OTel$/m)
     } finally {
-      process.stdout.columns = prev
+      restore()
     }
   })
 
@@ -923,19 +922,17 @@ describe('renderMarkdown', () => {
   })
 
   test('wraps very long plain lines', () => {
-    const prev = process.stdout.columns
-    process.stdout.columns = 40
+    const restore = withColumns(40)
     try {
       const result = render('INSERT ' + 'x'.repeat(80))
       expect(result.split('\n').length).toBeGreaterThan(1)
     } finally {
-      process.stdout.columns = prev
+      restore()
     }
   })
 
   test('keeps wrapped paragraph continuation flush with first line', () => {
-    const prev = process.stdout.columns
-    process.stdout.columns = 84
+    const restore = withColumns(84)
     try {
       const result = render('Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.')
       const lines = result.split('\n').filter(Boolean)
@@ -943,13 +940,12 @@ describe('renderMarkdown', () => {
       expect(lines.length).toBeGreaterThan(1)
       expect(lines.every(line => !line.startsWith(' '))).toBe(true)
     } finally {
-      process.stdout.columns = prev
+      restore()
     }
   })
 
   test('keeps list item continuation lines hanging indented', () => {
-    const prev = process.stdout.columns
-    process.stdout.columns = 42
+    const restore = withColumns(42)
     try {
       const result = render('- Check `cli/src/render/markdown.ts` with a very very very very long line')
         .replace(/\u200b/g, '')
@@ -960,7 +956,7 @@ describe('renderMarkdown', () => {
       expect(lines.slice(1).every(line => line.startsWith('  '))).toBe(true)
       expect(lines.slice(1).every(line => !line.startsWith('- '))).toBe(true)
     } finally {
-      process.stdout.columns = prev
+      restore()
     }
   })
 
@@ -1224,8 +1220,7 @@ describe('renderMarkdown', () => {
   })
 
   test('aligns trailing comments in tree-style directory listings', () => {
-    const prev = process.stdout.columns
-    process.stdout.columns = 120
+    const restore = withColumns(120)
     try {
       const tree = [
         'Directory',
@@ -1257,13 +1252,12 @@ describe('renderMarkdown', () => {
       expect(rendered).toContain('      ├── outputLines.test.ts')
       expect(rendered).toContain('      └── term-stream.test.ts')
     } finally {
-      process.stdout.columns = prev
+      restore()
     }
   })
 
   test('right-aligns trailing comment ends in tree-style directory listings', () => {
-    const prev = process.stdout.columns
-    process.stdout.columns = 120
+    const restore = withColumns(120)
     try {
       const tree = [
         '⏺ /Users/bohu/github/evotai/evot',
@@ -1303,7 +1297,7 @@ describe('renderMarkdown', () => {
       expect(new Set(commentEnds).size).toBe(1)
       expect(commentEnds[0]).toBeGreaterThanOrEqual(116)
     } finally {
-      process.stdout.columns = prev
+      restore()
     }
   })
 
@@ -1378,8 +1372,7 @@ describe('renderMarkdown', () => {
     // `<br>` to force bullet-style line breaks. Previously our renderer
     // dropped all html tokens, which glued the fragments together into one
     // long blob and word-wrapped anywhere.
-    const prev = process.stdout.columns
-    process.stdout.columns = 120
+    const restore = withColumns(120)
     try {
       const md = [
         '| 维度 | Rust |',
@@ -1400,7 +1393,7 @@ describe('renderMarkdown', () => {
       // And the literal `<br>` must not leak into the output.
       expect(result).not.toContain('<br>')
     } finally {
-      process.stdout.columns = prev
+      restore()
     }
   })
 
@@ -1409,8 +1402,7 @@ describe('renderMarkdown', () => {
     // the whole table to a `label: value` key-value fallback with `────`
     // row separators. CJK-heavy rows tripped this trigger routinely, so
     // legitimate tables silently turned into verbose lists.
-    const prev = process.stdout.columns
-    process.stdout.columns = 80
+    const restore = withColumns(80)
     try {
       const md = [
         '| 事件 | 触发点 | 行为 |',
@@ -1435,7 +1427,7 @@ describe('renderMarkdown', () => {
       expect(result).not.toMatch(/^事件:\s/m)
       expect(result).not.toMatch(/^触发点:\s/m)
     } finally {
-      process.stdout.columns = prev
+      restore()
     }
   })
 
