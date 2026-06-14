@@ -180,9 +180,14 @@ fn is_quota_exceeded(message: &str) -> bool {
 
 include!(concat!(env!("OUT_DIR"), "/user_agent.rs"));
 
-pub fn new_client() -> Result<reqwest::Client, ProviderError> {
+static SHARED_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+fn build_client() -> Result<reqwest::Client, ProviderError> {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .pool_max_idle_per_host(8)
+        .tcp_keepalive(Duration::from_secs(60))
         .build()
         .map_err(|e| {
             let mut detail = format!("Failed to build HTTP client: {e}");
@@ -194,4 +199,13 @@ pub fn new_client() -> Result<reqwest::Client, ProviderError> {
             }
             ProviderError::Other(detail)
         })
+}
+
+pub fn new_client() -> Result<reqwest::Client, ProviderError> {
+    if let Some(client) = SHARED_CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let client = build_client()?;
+    let _ = SHARED_CLIENT.set(client.clone());
+    Ok(SHARED_CLIENT.get().cloned().unwrap_or(client))
 }
