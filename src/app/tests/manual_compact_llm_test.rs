@@ -25,6 +25,7 @@ async fn manual_compact_uses_llm_summary() -> TestResult {
         base_url: "http://localhost".into(),
         models: vec!["gpt-4o".into()],
         compat_caps: Default::default(),
+        thinking_level: None,
     });
     config.llm.provider = "test".into();
 

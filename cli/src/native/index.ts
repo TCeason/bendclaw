@@ -58,6 +58,7 @@ export interface ConfigInfo {
   anthropicModel: string
   openaiModel: string
   availableModels: string[]
+  thinkingLevel: string
 }
 
 // ---------------------------------------------------------------------------

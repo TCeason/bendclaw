@@ -170,7 +170,7 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
         // Bound adaptive thinking with an effort level so a single turn can't
         // run away (e.g. tens of thousands of thinking tokens in one call).
         // Mirrors pi's behavior, which always sends output_config.effort.
-        if let Some(effort) = thinking_effort(config.thinking_level) {
+        if let Some(effort) = thinking_effort(config.thinking_level, config) {
             body["output_config"] = serde_json::json!({ "effort": effort });
         }
     }
@@ -187,12 +187,46 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
 /// Returns `None` only for `Off` (handled separately by omitting the thinking
 /// block entirely). `Adaptive` maps to `medium` to match pi's default and to
 /// keep a single turn from spending tens of thousands of thinking tokens.
-fn thinking_effort(level: ThinkingLevel) -> Option<&'static str> {
+///
+/// `Xhigh` has no fixed effort string: `"max"` is only valid on Opus 4.6 while
+/// Opus 4.7+/4.8 and Fable use `"xhigh"`. The exact value is resolved per model
+/// via [`ModelConfig::thinking_level_map`] (mirrors pi's `thinkingLevelMap`),
+/// falling back to `"xhigh"` when no model config is present.
+fn thinking_effort(level: ThinkingLevel, config: &StreamConfig) -> Option<&'static str> {
+    // Per-model override wins (e.g. xhigh -> "max" on Opus 4.6).
+    if let Some(mapped) = mapped_effort(level, config) {
+        return Some(mapped);
+    }
     match level {
         ThinkingLevel::Off => None,
         ThinkingLevel::Minimal | ThinkingLevel::Low => Some("low"),
         ThinkingLevel::Medium | ThinkingLevel::Adaptive => Some("medium"),
         ThinkingLevel::High => Some("high"),
+        // Default for the strongest level when the model declares no override.
+        ThinkingLevel::Xhigh => Some("xhigh"),
+    }
+}
+
+/// Look up a per-model effort override for `level`, returning a `'static` str
+/// for the known effort values Anthropic accepts.
+fn mapped_effort(level: ThinkingLevel, config: &StreamConfig) -> Option<&'static str> {
+    let key = match level {
+        ThinkingLevel::Off => return None,
+        ThinkingLevel::Minimal => "minimal",
+        ThinkingLevel::Low => "low",
+        ThinkingLevel::Medium => "medium",
+        ThinkingLevel::High => "high",
+        ThinkingLevel::Xhigh => "xhigh",
+        ThinkingLevel::Adaptive => "adaptive",
+    };
+    let mapped = config.model_config.as_ref()?.thinking_level_map.get(key)?;
+    match mapped.as_str() {
+        "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" => Some("high"),
+        "xhigh" => Some("xhigh"),
+        "max" => Some("max"),
+        _ => None,
     }
 }
 

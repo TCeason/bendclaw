@@ -297,14 +297,66 @@ pub struct ModelConfig {
     /// Whether prior thinking blocks must be passed back to the provider.
     #[serde(default)]
     pub thinking_passback: ThinkingPassbackPolicy,
+    /// Per-model overrides mapping an abstract [`ThinkingLevel`] to the exact
+    /// provider effort string. For example, Anthropic Opus 4.6 maps `xhigh` to
+    /// `"max"`, while Codex-backed GPT models map `adaptive` to their model
+    /// default reasoning effort. Keys are lowercase level names (e.g. "xhigh").
+    #[serde(default)]
+    pub thinking_level_map: HashMap<String, String>,
 }
 
 fn anthropic_context_window(id: &str) -> (u32, u32) {
-    match id.trim().to_ascii_lowercase().as_str() {
-        "claude-opus-4-6" | "claude-opus-4.6" | "claude-opus-4-7" | "claude-opus-4.7"
-        | "claude-opus-4-8" | "claude-opus-4.8" => (1_000_000, 128_000),
-        _ => (200_000, 8192),
+    // Opus 4.6 introduced the 1M-token context window; every newer Opus keeps
+    // it. Version-gating (rather than listing ids) means future Opus releases
+    // work without edits.
+    if let Some((family, major, minor)) = anthropic_model_version(id) {
+        if family == "opus" && (major, minor) >= (4, 6) {
+            return (1_000_000, 128_000);
+        }
     }
+    (200_000, 8192)
+}
+
+/// Default `thinking_level_map` for an Anthropic model id.
+///
+/// The map records only *exceptions* to the request builder's default, which
+/// already maps the `xhigh` level to `"xhigh"` effort. The one known exception
+/// is Opus 4.6, whose strongest tier is `"max"` rather than `"xhigh"`. Opus 4.7+
+/// and all other models use the default, so they need no entry — new models keep
+/// working without touching this table. Mirrors pi's per-model `thinkingLevelMap`.
+fn anthropic_thinking_level_map(id: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    if let Some((family, major, minor)) = anthropic_model_version(id) {
+        if family == "opus" && (major, minor) == (4, 6) {
+            map.insert("xhigh".into(), "max".into());
+        }
+    }
+    map
+}
+
+/// Parse an Anthropic model's family and `(major, minor)` version from ids using
+/// the modern `claude-<family>-<major>-<minor>` / `claude-<family>-<major>.<minor>`
+/// scheme (e.g. `claude-opus-4-6`, `claude-opus-4.6-20251101`).
+///
+/// A trailing date (8-digit run) is ignored, and a missing minor defaults to 0
+/// (e.g. `claude-opus-4` -> `(opus, 4, 0)`). A numeric component longer than two
+/// digits is treated as a date, not a version, so `claude-opus-4-20250514` parses
+/// as `(opus, 4, 0)`. Legacy ids that place the version before the family (e.g.
+/// `claude-3-opus`) yield no version and fall back to defaults — they predate the
+/// features gated here.
+fn anthropic_model_version(id: &str) -> Option<(&'static str, u32, u32)> {
+    let normalized = id.trim().to_ascii_lowercase();
+    let family = ["opus", "sonnet", "haiku"]
+        .into_iter()
+        .find(|f| normalized.contains(*f))?;
+    let after = normalized.split(family).nth(1)?;
+    // Short numeric component = version part; a longer run is a date suffix.
+    let mut parts = after
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|s| (1..=2).contains(&s.len()));
+    let major: u32 = parts.next()?.parse().ok()?;
+    let minor: u32 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    Some((family, major, minor))
 }
 
 fn openai_context_window(id: &str) -> u32 {
@@ -316,6 +368,27 @@ fn openai_context_window(id: &str) -> u32 {
         "tiny-context" => 128,
         _ => 128_000,
     }
+}
+
+/// Default `thinking_level_map` for native OpenAI/Codex-backed GPT models.
+///
+/// Codex model metadata has no `adaptive` effort. It resolves an unspecified
+/// effort to the model's default. Mirror that by mapping Evot's `adaptive` to
+/// the known default for GPT/Codex models, while allowing `xhigh` to pass
+/// through for models that advertise it.
+fn openai_thinking_level_map(id: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let normalized = id.trim().to_ascii_lowercase();
+    if normalized.starts_with("gpt-5") || normalized.starts_with("codex-") {
+        let default = if normalized == "gpt-5.4" {
+            "xhigh"
+        } else {
+            "medium"
+        };
+        map.insert("adaptive".into(), default.into());
+        map.insert("xhigh".into(), "xhigh".into());
+    }
+    map
 }
 
 impl ModelConfig {
@@ -335,6 +408,7 @@ impl ModelConfig {
     pub fn anthropic(id: impl Into<String>, name: impl Into<String>) -> Self {
         let id = id.into();
         let (context_window, max_tokens) = anthropic_context_window(&id);
+        let thinking_level_map = anthropic_thinking_level_map(&id);
         Self {
             id,
             name: name.into(),
@@ -348,6 +422,7 @@ impl ModelConfig {
             headers: HashMap::new(),
             compat: None,
             thinking_passback: ThinkingPassbackPolicy::default(),
+            thinking_level_map,
         }
     }
 
@@ -355,6 +430,7 @@ impl ModelConfig {
     pub fn openai(id: impl Into<String>, name: impl Into<String>) -> Self {
         let id = id.into();
         let context_window = openai_context_window(&id);
+        let thinking_level_map = openai_thinking_level_map(&id);
         Self {
             id,
             name: name.into(),
@@ -368,6 +444,7 @@ impl ModelConfig {
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::openai()),
             thinking_passback: ThinkingPassbackPolicy::default(),
+            thinking_level_map,
         }
     }
 
@@ -376,6 +453,7 @@ impl ModelConfig {
     pub fn local(base_url: impl Into<String>, model_id: impl Into<String>) -> Self {
         let id = model_id.into();
         let context_window = openai_context_window(&id);
+        let thinking_level_map = openai_thinking_level_map(&id);
         Self {
             id,
             name: "Local Model".into(),
@@ -389,6 +467,7 @@ impl ModelConfig {
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::default()),
             thinking_passback: ThinkingPassbackPolicy::default(),
+            thinking_level_map,
         }
     }
 
@@ -409,6 +488,7 @@ impl ModelConfig {
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::zai()),
             thinking_passback: ThinkingPassbackPolicy::default(),
+            thinking_level_map: HashMap::new(),
         }
     }
 
@@ -429,6 +509,7 @@ impl ModelConfig {
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::minimax()),
             thinking_passback: ThinkingPassbackPolicy::default(),
+            thinking_level_map: HashMap::new(),
         }
     }
 
@@ -449,6 +530,7 @@ impl ModelConfig {
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::xai()),
             thinking_passback: ThinkingPassbackPolicy::default(),
+            thinking_level_map: HashMap::new(),
         }
     }
 
@@ -469,6 +551,7 @@ impl ModelConfig {
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::groq()),
             thinking_passback: ThinkingPassbackPolicy::default(),
+            thinking_level_map: HashMap::new(),
         }
     }
 
@@ -489,6 +572,7 @@ impl ModelConfig {
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::deepseek()),
             thinking_passback: ThinkingPassbackPolicy::default(),
+            thinking_level_map: HashMap::new(),
         }
     }
 
@@ -509,6 +593,7 @@ impl ModelConfig {
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::mistral()),
             thinking_passback: ThinkingPassbackPolicy::default(),
+            thinking_level_map: HashMap::new(),
         }
     }
 }

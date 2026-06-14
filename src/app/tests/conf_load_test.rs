@@ -304,6 +304,7 @@ fn thinking_level_from_str_valid() -> TestResult {
     assert_eq!(thinking_level_from_str("low")?, ThinkingLevel::Low);
     assert_eq!(thinking_level_from_str("medium")?, ThinkingLevel::Medium);
     assert_eq!(thinking_level_from_str("high")?, ThinkingLevel::High);
+    assert_eq!(thinking_level_from_str("xhigh")?, ThinkingLevel::Xhigh);
     assert_eq!(
         thinking_level_from_str("adaptive")?,
         ThinkingLevel::Adaptive
@@ -389,6 +390,58 @@ fn load_config_thinking_level_from_env_file() -> TestResult {
 
     let config = result?;
     assert_eq!(config.llm.thinking_level, ThinkingLevel::High);
+    Ok(())
+}
+
+#[test]
+fn load_config_per_provider_thinking_level_from_env_file() -> TestResult {
+    let _guard = env_lock()
+        .lock()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    let temp = tempfile::tempdir()?;
+    let env_home = temp.path().join("home");
+    std::fs::create_dir_all(env_home.join(".evotai"))?;
+    std::fs::write(
+        env_home.join(".evotai").join("evot.env"),
+        concat!(
+            "EVOT_LLM_PROVIDER=anthropic\n",
+            "EVOT_LLM_THINKING_LEVEL=medium\n",
+            "EVOT_LLM_ANTHROPIC_API_KEY=test-key\n",
+            "EVOT_LLM_ANTHROPIC_BASE_URL=https://api.anthropic.com\n",
+            "EVOT_LLM_ANTHROPIC_MODEL=claude-opus-4-8\n",
+            "EVOT_LLM_ANTHROPIC_THINKING_LEVEL=xhigh\n",
+            "EVOT_LLM_DEEPSEEK_API_KEY=ds-key\n",
+            "EVOT_LLM_DEEPSEEK_BASE_URL=https://api.deepseek.com/v1\n",
+            "EVOT_LLM_DEEPSEEK_MODEL=deepseek-chat\n",
+        ),
+    )?;
+
+    let original_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &env_home);
+
+    let result = Config::load();
+
+    restore_env_var("HOME", original_home);
+
+    let config = result?;
+    // Global default stays medium.
+    assert_eq!(config.llm.thinking_level, ThinkingLevel::Medium);
+    // anthropic has a per-provider override.
+    assert_eq!(
+        config.providers["anthropic"].thinking_level,
+        Some(ThinkingLevel::Xhigh)
+    );
+    assert_eq!(
+        config.build_llm("anthropic", None)?.thinking_level,
+        ThinkingLevel::Xhigh
+    );
+    // deepseek has no override -> falls back to the global level.
+    assert_eq!(config.providers["deepseek"].thinking_level, None);
+    assert_eq!(
+        config.build_llm("deepseek", None)?.thinking_level,
+        ThinkingLevel::Medium
+    );
     Ok(())
 }
 
@@ -495,6 +548,7 @@ fn resolve_model_spec_by_model_name() -> TestResult {
             base_url: "https://api.anthropic.com".into(),
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
+            thinking_level: None,
         });
     config
         .providers
@@ -504,6 +558,7 @@ fn resolve_model_spec_by_model_name() -> TestResult {
             base_url: "https://api.deepseek.com".into(),
             models: vec!["deepseek-chat".into()],
             compat_caps: Default::default(),
+            thinking_level: None,
         });
 
     let (name, override_model) = config.resolve_model_spec("deepseek-chat")?;
@@ -533,6 +588,7 @@ fn with_model_sets_override() -> TestResult {
             base_url: "https://api.anthropic.com".into(),
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
+            thinking_level: None,
         });
 
     // provider:model sets override
@@ -560,6 +616,7 @@ fn with_model_none_is_noop() -> TestResult {
             base_url: "https://api.anthropic.com".into(),
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
+            thinking_level: None,
         });
     let config = config.with_model(None)?;
     assert_eq!(config.llm.provider, "");
@@ -586,6 +643,7 @@ fn validate_missing_api_key() {
             base_url: "https://api.anthropic.com".into(),
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
+            thinking_level: None,
         });
     config.llm.provider = "anthropic".into();
     let err = config.validate().unwrap_err();
@@ -603,6 +661,7 @@ fn validate_missing_base_url() {
             base_url: String::new(),
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
+            thinking_level: None,
         });
     config.llm.provider = "anthropic".into();
     let err = config.validate().unwrap_err();
@@ -620,6 +679,7 @@ fn validate_missing_model() {
             base_url: "https://api.anthropic.com".into(),
             models: Vec::new(),
             compat_caps: Default::default(),
+            thinking_level: None,
         });
     config.llm.provider = "anthropic".into();
     let err = config.validate().unwrap_err();
@@ -637,6 +697,7 @@ fn validate_model_override_bypasses_empty_profile_model() {
             base_url: "https://api.anthropic.com".into(),
             models: Vec::new(),
             compat_caps: Default::default(),
+            thinking_level: None,
         });
     config.llm.provider = "anthropic".into();
     config.llm.model_override = Some("override-model".into());
@@ -745,6 +806,7 @@ fn make_multi_provider_config() -> Config {
             base_url: "https://api.anthropic.com".into(),
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
+            thinking_level: None,
         });
     config
         .providers
@@ -754,6 +816,7 @@ fn make_multi_provider_config() -> Config {
             base_url: "https://api.openai.com/v1".into(),
             models: vec!["gpt-5.4".into()],
             compat_caps: Default::default(),
+            thinking_level: None,
         });
     config
         .providers
@@ -763,6 +826,7 @@ fn make_multi_provider_config() -> Config {
             base_url: "https://api.deepseek.com".into(),
             models: vec!["deepseek-chat".into()],
             compat_caps: Default::default(),
+            thinking_level: None,
         });
     config.llm.provider = "anthropic".into();
     config
@@ -867,6 +931,7 @@ fn set_provider_validates_incomplete_provider() {
             base_url: "https://api.anthropic.com".into(),
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
+            thinking_level: None,
         });
     config
         .providers
@@ -876,6 +941,7 @@ fn set_provider_validates_incomplete_provider() {
             base_url: "https://example.com".into(),
             models: vec!["some-model".into()],
             compat_caps: Default::default(),
+            thinking_level: None,
         });
 
     // Resolving the broken provider succeeds at spec level

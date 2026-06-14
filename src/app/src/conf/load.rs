@@ -55,6 +55,7 @@ struct ProviderSource {
     #[serde(default, deserialize_with = "deserialize_one_or_many")]
     model: Option<Vec<String>>,
     compat_caps: Option<CompatCaps>,
+    thinking_level: Option<String>,
 }
 
 /// Deserialize a TOML value as either a single string or an array of strings.
@@ -229,10 +230,17 @@ fn merge_provider_source(
         if let Some(compat_caps) = src.compat_caps {
             profile.compat_caps = compat_caps;
         }
+        if let Some(level) = src.thinking_level {
+            profile.thinking_level = Some(thinking_level_from_str(&level)?);
+        }
     } else {
         let protocol = match src.protocol {
             Some(p) => parse_protocol(&p)?,
             None => infer_protocol(&name),
+        };
+        let thinking_level = match src.thinking_level {
+            Some(level) => Some(thinking_level_from_str(&level)?),
+            None => None,
         };
         providers.insert(name, ProviderProfile {
             protocol,
@@ -240,6 +248,7 @@ fn merge_provider_source(
             base_url: src.base_url.unwrap_or_default(),
             models: src.model.unwrap_or_default(),
             compat_caps: src.compat_caps.unwrap_or_default(),
+            thinking_level,
         });
     }
     Ok(())
@@ -320,15 +329,21 @@ fn ensure_env_file(path: &Path) -> Result<()> {
 
 fn default_env_content() -> &'static str {
     r#"# EVOT_LLM_THINKING_LEVEL=adaptive
-# Controls reasoning effort. Default: adaptive.
+# Global reasoning effort. Default: adaptive. Applies to every provider unless
+# overridden per provider via EVOT_LLM_{PROVIDER}_THINKING_LEVEL below.
 # Anthropic: thinking is always adaptive; this sets output_config.effort.
 #   off disables thinking; minimal/low=low, medium/adaptive=medium, high=high effort.
-# OpenAI-compatible: adaptive/high=high, medium=medium, minimal/low=low.
+#   xhigh=strongest effort, resolved per model (Opus 4.6="max", Opus 4.7+/4.8/Fable="xhigh").
+# OpenAI-compatible: adaptive=model default when known (gpt-5.5=medium, gpt-5.4=xhigh),
+#   high=high, xhigh=xhigh for supported GPT models, medium=medium, minimal/low=low.
 
 # EVOT_LLM_ANTHROPIC_API_KEY=
 # EVOT_LLM_ANTHROPIC_BASE_URL=https://api.anthropic.com
 # EVOT_LLM_ANTHROPIC_MODEL=claude-sonnet-4-20250514
 # Multiple models: EVOT_LLM_ANTHROPIC_MODEL=claude-sonnet-4-6,claude-opus-4-6
+# Per-provider reasoning effort (overrides the global level above):
+# EVOT_LLM_ANTHROPIC_THINKING_LEVEL=xhigh
+# EVOT_LLM_DEEPSEEK_THINKING_LEVEL=off
 "#
 }
 
@@ -349,6 +364,7 @@ const PROVIDER_FIELDS: &[&str] = &[
     "_MODEL",
     "_PROTOCOL",
     "_COMPAT_CAPS",
+    "_THINKING_LEVEL",
 ];
 
 /// Non-LLM keys we still care about.
@@ -472,6 +488,7 @@ fn apply_provider_field(
             base_url: String::new(),
             models: Vec::new(),
             compat_caps: CompatCaps::default(),
+            thinking_level: None,
         });
     match field {
         "_API_KEY" => profile.api_key = value.to_string(),
@@ -485,6 +502,7 @@ fn apply_provider_field(
         }
         "_PROTOCOL" => profile.protocol = parse_protocol(value)?,
         "_COMPAT_CAPS" => profile.compat_caps = parse_compat_caps(value)?,
+        "_THINKING_LEVEL" => profile.thinking_level = Some(thinking_level_from_str(value)?),
         _ => {}
     }
     Ok(())

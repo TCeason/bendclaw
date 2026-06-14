@@ -207,7 +207,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   historyState = createHistoryState(entries)
 
   let configInfo: ConfigInfo | undefined
-  try { configInfo = agent.configInfo() } catch {}
+  const refreshConfigInfo = () => {
+    // Re-read backend config after a model switch so the footer reflects the
+    // new provider's effective thinking level (it can differ per provider).
+    try { configInfo = agent.configInfo() } catch {}
+  }
+  refreshConfigInfo()
 
   let preloadedSessions: SessionMeta[] = []
   if (shouldPreloadStartupSessions(opts)) {
@@ -269,6 +274,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       cacheReadTokens: appState.sessionTokens.cacheReadTokens,
       contextTokens: appState.sessionTokens.contextTokens,
       contextWindow: appState.sessionTokens.contextWindow,
+      thinkingLevel: configInfo?.thinkingLevel ?? '',
     }
   }
 
@@ -524,6 +530,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       if (model) {
         agent.model = model
+        refreshConfigInfo()
       }
       appState = { ...appState, sessionId: session.session_id, model: model || appState.model }
       const { messagesToOutputLines } = await import('../render/output.js')
@@ -1770,6 +1777,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         overlay = { kind: 'none' }
         agent.model = action.model
         syncProvider(agent, action.model, configInfo)
+        refreshConfigInfo()
         appState = { ...appState, model: action.model }
         commitLines([{ id: 'sys-model', kind: 'system', text: `  Model → ${action.model}` }])
         renderer.requestRender()

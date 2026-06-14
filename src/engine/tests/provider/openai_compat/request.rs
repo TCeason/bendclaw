@@ -7,15 +7,42 @@ use evotengine::types::*;
 use super::super::fixtures::stream_config::*;
 
 #[test]
-fn test_adaptive_thinking_maps_to_high_reasoning_effort() {
-    let model_config = ModelConfig::openai("gpt-5", "GPT-5");
+fn test_gpt_5_5_adaptive_thinking_maps_to_model_default_reasoning_effort() {
+    let model_config = ModelConfig::openai("gpt-5.5", "GPT-5.5");
     let config = StreamConfigBuilder::openai()
-        .model("gpt-5")
+        .model("gpt-5.5")
+        .model_config(model_config.clone())
         .thinking(ThinkingLevel::Adaptive)
         .build();
 
     let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
-    assert_eq!(body["reasoning_effort"], "high");
+    assert_eq!(body["reasoning_effort"], "medium");
+}
+
+#[test]
+fn test_gpt_5_4_adaptive_thinking_maps_to_model_default_reasoning_effort() {
+    let model_config = ModelConfig::openai("gpt-5.4", "GPT-5.4");
+    let config = StreamConfigBuilder::openai()
+        .model("gpt-5.4")
+        .model_config(model_config.clone())
+        .thinking(ThinkingLevel::Adaptive)
+        .build();
+
+    let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
+    assert_eq!(body["reasoning_effort"], "xhigh");
+}
+
+#[test]
+fn test_gpt_5_xhigh_thinking_maps_to_xhigh_reasoning_effort() {
+    let model_config = ModelConfig::openai("gpt-5.5", "GPT-5.5");
+    let config = StreamConfigBuilder::openai()
+        .model("gpt-5.5")
+        .model_config(model_config.clone())
+        .thinking(ThinkingLevel::Xhigh)
+        .build();
+
+    let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
+    assert_eq!(body["reasoning_effort"], "xhigh");
 }
 
 #[test]

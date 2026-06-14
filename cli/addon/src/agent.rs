@@ -6,6 +6,8 @@ use evot::agent::Agent;
 use evot::agent::ForkRequest;
 use evot::agent::QueryRequest;
 use evot::agent::ToolMode;
+use evot_engine::provider::ModelConfig;
+use evot_engine::ThinkingLevel;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use tokio::sync::mpsc as tokio_mpsc;
@@ -275,13 +277,14 @@ impl NapiAgent {
             .unwrap_or_default();
         let has_api_key = !llm.api_key.is_empty();
         let available = self.collect_models();
+        let thinking_level = display_thinking_level(&llm);
         let info = serde_json::json!({
             "provider": provider,
             "envPath": env_path,
             "hasApiKey": has_api_key,
             "baseUrl": llm.base_url,
             "availableModels": available,
-            "thinkingLevel": format!("{:?}", self.config.llm.thinking_level).to_lowercase(),
+            "thinkingLevel": thinking_level,
         });
         serde_json::to_string(&info).map_err(|e| Error::from_reason(format!("serialize: {e}")))
     }
@@ -382,4 +385,23 @@ impl NapiAgent {
     pub fn abort_run(&self, session_id: String) {
         self.agent.abort_run(&session_id);
     }
+}
+
+fn display_thinking_level(llm: &evot::conf::LlmConfig) -> String {
+    if llm.protocol == evot::conf::Protocol::OpenAi {
+        let model_config = ModelConfig::local("", &llm.model);
+        let key = match llm.thinking_level {
+            ThinkingLevel::Off => return "off".into(),
+            ThinkingLevel::Minimal => "minimal",
+            ThinkingLevel::Low => "low",
+            ThinkingLevel::Medium => "medium",
+            ThinkingLevel::High => "high",
+            ThinkingLevel::Xhigh => "xhigh",
+            ThinkingLevel::Adaptive => "adaptive",
+        };
+        if let Some(mapped) = model_config.thinking_level_map.get(key) {
+            return mapped.clone();
+        }
+    }
+    format!("{:?}", llm.thinking_level).to_lowercase()
 }

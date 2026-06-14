@@ -63,6 +63,10 @@ pub struct ProviderProfile {
     /// Available models; `models[0]` is the default.
     pub models: Vec<String>,
     pub compat_caps: CompatCaps,
+    /// Per-provider reasoning effort. When `None`, the global
+    /// [`LlmSelection::thinking_level`] applies. Lets each provider run at a
+    /// different effort (e.g. anthropic=xhigh, deepseek=off).
+    pub thinking_level: Option<ThinkingLevel>,
 }
 
 impl ProviderProfile {
@@ -169,7 +173,9 @@ impl Config {
             api_key: profile.api_key.clone(),
             base_url: profile.base_url.clone(),
             model: model_override.unwrap_or_else(|| profile.model().to_string()),
-            thinking_level: self.llm.thinking_level,
+            // Per-provider thinking level wins; otherwise fall back to the
+            // global selection.
+            thinking_level: profile.thinking_level.unwrap_or(self.llm.thinking_level),
             compat_caps: profile.compat_caps,
         })
     }
@@ -363,9 +369,10 @@ pub fn thinking_level_from_str(value: &str) -> Result<ThinkingLevel> {
         "low" => Ok(ThinkingLevel::Low),
         "medium" => Ok(ThinkingLevel::Medium),
         "high" => Ok(ThinkingLevel::High),
+        "xhigh" => Ok(ThinkingLevel::Xhigh),
         "adaptive" => Ok(ThinkingLevel::Adaptive),
         other => Err(EvotError::Conf(format!(
-            "unknown thinking level: {other} (valid: off, minimal, low, medium, high, adaptive)"
+            "unknown thinking level: {other} (valid: off, minimal, low, medium, high, xhigh, adaptive)"
         ))),
     }
 }

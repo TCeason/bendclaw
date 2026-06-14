@@ -65,6 +65,7 @@ async fn agent_create_session_persists_empty_repl_session() -> TestResult {
         base_url: "http://localhost".into(),
         models: vec!["test-model".into()],
         compat_caps: Default::default(),
+        thinking_level: None,
     });
     config.llm.provider = "test".into();
 

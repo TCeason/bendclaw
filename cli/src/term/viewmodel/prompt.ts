@@ -28,6 +28,8 @@ export interface PromptVMInput {
   cacheReadTokens: number
   contextTokens: number
   contextWindow: number
+  // Reasoning effort shown next to the model name. Empty string hides it.
+  thinkingLevel: string
 }
 
 const KNOWN_COMMANDS = new Set(
@@ -173,6 +175,11 @@ function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
   }
   if (input.model) {
     leftSpans.push(dim(` ${input.model}`))
+    // Reasoning effort indicator, aligned with pi's footer (model • level).
+    if (input.thinkingLevel) {
+      const label = input.thinkingLevel === 'off' ? 'thinking off' : input.thinkingLevel
+      leftSpans.push(dim(` • ${label}`))
+    }
   }
 
   // Right side (reserved for future use)

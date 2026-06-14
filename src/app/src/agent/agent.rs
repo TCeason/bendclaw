@@ -1008,6 +1008,7 @@ fn thinking_label(level: evot_engine::ThinkingLevel) -> &'static str {
         evot_engine::ThinkingLevel::Low => "low",
         evot_engine::ThinkingLevel::Medium => "medium",
         evot_engine::ThinkingLevel::High => "high",
+        evot_engine::ThinkingLevel::Xhigh => "xhigh",
         evot_engine::ThinkingLevel::Adaptive => "adaptive",
     }
 }

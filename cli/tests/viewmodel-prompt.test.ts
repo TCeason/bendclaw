@@ -33,6 +33,7 @@ function defaultInput(overrides?: Partial<PromptVMInput>): PromptVMInput {
     cacheReadTokens: 0,
     contextTokens: 0,
     contextWindow: 0,
+    thinkingLevel: '',
     ...overrides,
   }
 }
@@ -133,6 +134,31 @@ describe('buildPromptBlocks', () => {
     expect(result).not.toContain('↑408k')
     expect(result).not.toContain('↓1.1k')
     expect(result).not.toContain('R89k')
+  })
+
+  test('footer shows thinking level next to model when set', () => {
+    const result = renderPlain(defaultInput({
+      model: 'claude-opus-4-8',
+      thinkingLevel: 'xhigh',
+    }))
+    expect(result).toContain('claude-opus-4-8 • xhigh')
+  })
+
+  test('footer shows "thinking off" when level is off', () => {
+    const result = renderPlain(defaultInput({
+      model: 'claude-opus-4-8',
+      thinkingLevel: 'off',
+    }))
+    expect(result).toContain('claude-opus-4-8 • thinking off')
+  })
+
+  test('footer omits thinking indicator when level is empty', () => {
+    const result = renderPlain(defaultInput({
+      model: 'claude-sonnet',
+      thinkingLevel: '',
+    }))
+    expect(result).toContain('claude-sonnet')
+    expect(result).not.toContain('•')
   })
 
   test('cursor is rendered with inverse', () => {

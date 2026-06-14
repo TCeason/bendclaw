@@ -1,4 +1,5 @@
 use evotengine::provider::anthropic::request::*;
+use evotengine::provider::model::ModelConfig;
 use evotengine::provider::traits::*;
 use evotengine::types::*;
 
@@ -81,6 +82,79 @@ fn test_thinking_effort_levels_map_for_anthropic() {
         );
         assert_eq!(body["thinking"]["type"], "adaptive");
     }
+}
+
+#[test]
+fn test_xhigh_defaults_to_xhigh_effort_without_model_config() {
+    // With no model config, the strongest level falls back to "xhigh".
+    let config = StreamConfigBuilder::anthropic()
+        .thinking(ThinkingLevel::Xhigh)
+        .build();
+    let body = build_request_body(&config, false);
+    assert_eq!(body["output_config"]["effort"], "xhigh");
+    assert_eq!(body["thinking"]["type"], "adaptive");
+}
+
+#[test]
+fn test_xhigh_maps_to_max_on_opus_4_6() {
+    // Opus 4.6 only accepts "max" for the strongest effort.
+    let config = StreamConfigBuilder::anthropic()
+        .model("claude-opus-4-6")
+        .model_config(ModelConfig::anthropic("claude-opus-4-6", "Claude Opus 4.6"))
+        .thinking(ThinkingLevel::Xhigh)
+        .build();
+    let body = build_request_body(&config, false);
+    assert_eq!(
+        body["output_config"]["effort"], "max",
+        "Opus 4.6 xhigh should emit max"
+    );
+}
+
+#[test]
+fn test_xhigh_maps_to_xhigh_on_opus_4_8() {
+    // Opus 4.7+/4.8 use "xhigh" (max is invalid there).
+    let config = StreamConfigBuilder::anthropic()
+        .model("claude-opus-4-8")
+        .model_config(ModelConfig::anthropic("claude-opus-4-8", "Claude Opus 4.8"))
+        .thinking(ThinkingLevel::Xhigh)
+        .build();
+    let body = build_request_body(&config, false);
+    assert_eq!(
+        body["output_config"]["effort"], "xhigh",
+        "Opus 4.8 xhigh should emit xhigh"
+    );
+}
+
+#[test]
+fn test_xhigh_maps_to_max_on_date_suffixed_opus_4_6() {
+    // Real ids carry a date suffix; version parsing must still resolve 4.6.
+    let id = "claude-opus-4-6-20251101";
+    let config = StreamConfigBuilder::anthropic()
+        .model(id)
+        .model_config(ModelConfig::anthropic(id, "Claude Opus 4.6"))
+        .thinking(ThinkingLevel::Xhigh)
+        .build();
+    let body = build_request_body(&config, false);
+    assert_eq!(
+        body["output_config"]["effort"], "max",
+        "date-suffixed Opus 4.6 xhigh should still emit max"
+    );
+}
+
+#[test]
+fn test_xhigh_defaults_on_future_opus_via_version_gate() {
+    // A hypothetical newer Opus needs no table entry: it falls through to xhigh.
+    let id = "claude-opus-5-0";
+    let config = StreamConfigBuilder::anthropic()
+        .model(id)
+        .model_config(ModelConfig::anthropic(id, "Claude Opus 5"))
+        .thinking(ThinkingLevel::Xhigh)
+        .build();
+    let body = build_request_body(&config, false);
+    assert_eq!(
+        body["output_config"]["effort"], "xhigh",
+        "future Opus xhigh should default to xhigh"
+    );
 }
 
 #[test]

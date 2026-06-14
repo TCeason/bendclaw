@@ -31,6 +31,40 @@ fn model_config_openai_gpt_5_5_uses_272k_context() {
 }
 
 #[test]
+fn model_config_openai_gpt_reasoning_level_map_matches_codex_defaults() {
+    let gpt_5_5 = ModelConfig::openai("gpt-5.5", "GPT-5.5");
+    assert_eq!(
+        gpt_5_5
+            .thinking_level_map
+            .get("adaptive")
+            .map(String::as_str),
+        Some("medium")
+    );
+    assert_eq!(
+        gpt_5_5.thinking_level_map.get("xhigh").map(String::as_str),
+        Some("xhigh")
+    );
+
+    let gpt_5_4 = ModelConfig::openai("gpt-5.4", "GPT-5.4");
+    assert_eq!(
+        gpt_5_4
+            .thinking_level_map
+            .get("adaptive")
+            .map(String::as_str),
+        Some("xhigh")
+    );
+
+    let runtime_path = ModelConfig::local("", "gpt-5.5");
+    assert_eq!(
+        runtime_path
+            .thinking_level_map
+            .get("adaptive")
+            .map(String::as_str),
+        Some("medium")
+    );
+}
+
+#[test]
 fn model_config_anthropic_opus_4_6_4_7_4_8_use_1m_context() {
     for id in [
         "claude-opus-4-6",
@@ -48,6 +82,15 @@ fn model_config_anthropic_opus_4_6_4_7_4_8_use_1m_context() {
     let older = ModelConfig::anthropic("claude-opus-4.5", "Opus 4.5");
     assert_eq!(older.context_window, 200_000);
     assert_eq!(older.max_tokens, 8192);
+
+    // Real ids carry a date suffix; version parsing must still apply the gate.
+    let dated = ModelConfig::anthropic("claude-opus-4-6-20251101", "Opus 4.6");
+    assert_eq!(dated.context_window, 1_000_000);
+    assert_eq!(dated.max_tokens, 128_000);
+
+    // A future Opus is covered by the >= 4.6 version gate, no id list edit.
+    let future = ModelConfig::anthropic("claude-opus-5-0", "Opus 5");
+    assert_eq!(future.context_window, 1_000_000);
 }
 
 #[test]

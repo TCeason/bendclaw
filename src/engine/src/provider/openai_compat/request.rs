@@ -198,18 +198,40 @@ fn apply_reasoning_effort(
     config: &StreamConfig,
     compat: &OpenAiCompat,
 ) {
-    match config.thinking_level {
-        ThinkingLevel::Off => {}
-        level if compat.has_cap(CompatCaps::REASONING_EFFORT) => {
-            let effort = match level {
-                ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
-                ThinkingLevel::Medium => "medium",
-                ThinkingLevel::High | ThinkingLevel::Adaptive => "high",
-                ThinkingLevel::Off => unreachable!(),
-            };
-            body["reasoning_effort"] = serde_json::json!(effort);
-        }
-        _ => {}
+    if config.thinking_level == ThinkingLevel::Off || !compat.has_cap(CompatCaps::REASONING_EFFORT)
+    {
+        return;
+    }
+
+    let effort = match mapped_effort(config.thinking_level, config) {
+        Some(effort) => effort,
+        None => match config.thinking_level {
+            ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
+            ThinkingLevel::Medium => "medium",
+            ThinkingLevel::High | ThinkingLevel::Xhigh | ThinkingLevel::Adaptive => "high",
+            ThinkingLevel::Off => return,
+        },
+    };
+    body["reasoning_effort"] = serde_json::json!(effort);
+}
+
+fn mapped_effort(level: ThinkingLevel, config: &StreamConfig) -> Option<&'static str> {
+    let key = match level {
+        ThinkingLevel::Off => return None,
+        ThinkingLevel::Minimal => "minimal",
+        ThinkingLevel::Low => "low",
+        ThinkingLevel::Medium => "medium",
+        ThinkingLevel::High => "high",
+        ThinkingLevel::Xhigh => "xhigh",
+        ThinkingLevel::Adaptive => "adaptive",
+    };
+    let mapped = config.model_config.as_ref()?.thinking_level_map.get(key)?;
+    match mapped.as_str() {
+        "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" => Some("high"),
+        "xhigh" => Some("xhigh"),
+        _ => None,
     }
 }
 
