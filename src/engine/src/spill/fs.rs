@@ -34,26 +34,31 @@ impl FsSpill {
         path.starts_with(&self.dir)
     }
 
-    pub async fn spill(&self, req: SpillRequest) -> Result<Option<SpillRef>, SpillError> {
-        if req.text.len() <= self.threshold_bytes {
-            return Ok(None);
-        }
-
-        let safe_key = sanitize_key(&req.key);
+    /// Write `text` to a spill file unconditionally, ignoring the size
+    /// threshold. The caller decides when persistence is warranted (e.g. a
+    /// tool that already truncated its own displayed output). Reuses the same
+    /// key sanitization, directory handling, and preview logic as [`spill`].
+    pub async fn spill_text(&self, key: &str, text: &str) -> Result<SpillRef, SpillError> {
+        let safe_key = sanitize_key(key);
         let path = self.dir.join(format!("{safe_key}.txt"));
 
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        tokio::fs::write(&path, &req.text).await?;
+        tokio::fs::write(&path, text).await?;
 
-        let preview = make_preview(&req.text, self.preview_bytes);
-
-        Ok(Some(SpillRef {
-            size_bytes: req.text.len(),
+        Ok(SpillRef {
+            size_bytes: text.len(),
             path,
-            preview,
-        }))
+            preview: make_preview(text, self.preview_bytes),
+        })
+    }
+
+    pub async fn spill(&self, req: SpillRequest) -> Result<Option<SpillRef>, SpillError> {
+        if req.text.len() <= self.threshold_bytes {
+            return Ok(None);
+        }
+        Ok(Some(self.spill_text(&req.key, &req.text).await?))
     }
 }
 

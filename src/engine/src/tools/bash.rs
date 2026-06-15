@@ -408,9 +408,22 @@ impl AgentTool for BashTool {
                     if elapsed >= timeout {
                         kill_and_drain(&mut child, stdout_task, stderr_task).await;
 
-                        let summary = {
+                        let (summary, full_stdout) = {
                             let buf = stdout_buf.lock();
-                            tail_lines(&buf, TIMEOUT_SUMMARY_LINES, TIMEOUT_SUMMARY_BYTES)
+                            (
+                                tail_lines(&buf, TIMEOUT_SUMMARY_LINES, TIMEOUT_SUMMARY_BYTES),
+                                String::from_utf8_lossy(&buf).to_string(),
+                            )
+                        };
+                        // Persist the buffered output so the model can inspect
+                        // what ran before the timeout. Only worthwhile when it
+                        // exceeds the inline summary.
+                        let full_output_path = match &ctx.spill {
+                            Some(spill) if full_stdout.len() > summary.len() => {
+                                let key = format!("{}-bash-output", ctx.tool_call_id);
+                                spill.spill_text(&key, &full_stdout).await.ok()
+                            }
+                            _ => None,
                         };
                         let mut msg = format!(
                             "Command timed out after {}s",
@@ -419,6 +432,9 @@ impl AgentTool for BashTool {
                         if !summary.is_empty() {
                             msg.push_str("\nLast output:\n");
                             msg.push_str(&summary);
+                        }
+                        if let Some(spill_ref) = full_output_path {
+                            msg.push_str(&format!("\n\n[Full output saved to: {}]", spill_ref.path.display()));
                         }
                         return Err(ToolError::Failed(msg));
                     }
@@ -482,6 +498,14 @@ impl AgentTool for BashTool {
             String::from_utf8_lossy(&buf).to_string()
         };
 
+        // Preserve the untruncated output for spill before any display
+        // truncation discards the earlier portion.
+        let full_output = if stderr.is_empty() {
+            stdout.clone()
+        } else {
+            format!("STDOUT:\n{stdout}\nSTDERR:\n{stderr}")
+        };
+
         // Truncate individual long lines (e.g. binary/base64 blobs)
         stdout = truncate_long_lines(&stdout);
         stderr = truncate_long_lines(&stderr);
@@ -489,6 +513,29 @@ impl AgentTool for BashTool {
         // Tail-truncate: keep last 2000 lines / 50KB, discard earlier output
         let (stdout, stdout_truncated, stdout_total) = tail_truncate(&stdout);
         let (stderr, stderr_truncated, stderr_total) = tail_truncate(&stderr);
+
+        // When the display was truncated, persist the full retained output via
+        // the shared spill store so the model can Read it back. Reuses the same
+        // file/preview machinery as oversized tool results — no separate path.
+        let full_output_path = if stdout_truncated || stderr_truncated {
+            match &ctx.spill {
+                Some(spill) => {
+                    // Distinct key from the engine-level spill ({tool_call_id}.txt)
+                    // so a later oversized-result spill can't overwrite this file.
+                    let key = format!("{}-bash-output", ctx.tool_call_id);
+                    match spill.spill_text(&key, &full_output).await {
+                        Ok(spill_ref) => Some(spill_ref.path),
+                        Err(e) => {
+                            tracing::warn!("bash full-output spill failed: {e}");
+                            None
+                        }
+                    }
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
 
         // Slim: post-process output for token savings. Disabled commands and
         // `exit != 0` pass through untouched; the sandbox hint below still
@@ -564,6 +611,11 @@ impl AgentTool for BashTool {
             output
         };
 
+        let output = match &full_output_path {
+            Some(path) => format!("{output}\n\n[Full output saved to: {}]", path.display()),
+            None => output,
+        };
+
         // Return output even on failure — LLMs need error output to self-correct
         Ok(ToolResult {
             content: vec![Content::Text { text: output }],
@@ -571,6 +623,9 @@ impl AgentTool for BashTool {
                 "exit_code": exit_code,
                 "success": exit_code == 0,
                 "slim": slim_stats,
+                "full_output_path": full_output_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string()),
             }),
             retention: Retention::Normal,
         })

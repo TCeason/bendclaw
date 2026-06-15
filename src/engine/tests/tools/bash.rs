@@ -402,6 +402,73 @@ async fn test_bash_without_envs_variable_is_empty() {
     assert!(!text.contains("hello"));
 }
 
+fn ctx_with_spill(name: &str, dir: std::path::PathBuf) -> ToolContext {
+    ToolContext {
+        tool_call_id: "bash-cap".into(),
+        tool_name: name.into(),
+        cancel: CancellationToken::new(),
+        on_update: None,
+        on_progress: None,
+        cwd: std::path::PathBuf::new(),
+        path_guard: Arc::new(evotengine::PathGuard::open()),
+        spill: Some(Arc::new(evotengine::spill::FsSpill::new(dir))),
+    }
+}
+
+#[tokio::test]
+async fn test_bash_truncated_output_saved_to_file() {
+    let dir = std::env::temp_dir().join(format!("evot-bash-cap-{}", std::process::id()));
+    let tool = BashTool::new();
+    // Emit > 2000 lines so the displayed output is tail-truncated.
+    let result = tool
+        .execute(
+            serde_json::json!({"command": "seq 1 5000"}),
+            ctx_with_spill("bash", dir.clone()),
+        )
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("Full output saved to:"));
+
+    let path = result.details["full_output_path"]
+        .as_str()
+        .expect("full_output_path present");
+    // Distinct key from the engine-level spill so the two can't collide.
+    assert!(path.ends_with("-bash-output.txt"));
+    let saved = std::fs::read_to_string(path).unwrap();
+    // The full file must contain early output the tail-truncation dropped.
+    assert!(saved.starts_with("1\n2\n3\n"));
+    assert!(saved.contains("5000"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn test_bash_small_output_no_file() {
+    let dir = std::env::temp_dir().join(format!("evot-bash-nocap-{}", std::process::id()));
+    let tool = BashTool::new();
+    let result = tool
+        .execute(
+            serde_json::json!({"command": "echo hello"}),
+            ctx_with_spill("bash", dir.clone()),
+        )
+        .await
+        .unwrap();
+
+    let text = match &result.content[0] {
+        Content::Text { text } => text,
+        _ => panic!("expected text"),
+    };
+    assert!(!text.contains("Full output saved to:"));
+    assert!(result.details["full_output_path"].is_null());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn test_preview_command_single_line_short() {
     let tool = BashTool::new();
