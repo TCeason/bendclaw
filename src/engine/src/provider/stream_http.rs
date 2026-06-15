@@ -57,58 +57,17 @@ pub fn classify_response(response: &reqwest::Response) -> StreamResponseKind {
 
 /// Send a stream request, mapping transport errors to [`ProviderError::Network`].
 ///
-/// Retries connection-level failures (connection reset/refused/timeout, or a
-/// socket dropped during TLS setup) before any response has begun. These are
-/// transient — commonly caused by a flaky network or an HTTP proxy resetting a
-/// freshly-opened tunnel — and safe to retry because no response bytes have
-/// been received yet. Mirrors the request-level retry the pi agent performs.
+/// Transient connection failures map to [`ProviderError::Network`], which the
+/// agent loop's retry policy ([`crate::retry`]) treats as retryable. Retry
+/// lives there — a single place with exponential backoff + jitter — not here.
 pub async fn send_stream_request(
     builder: reqwest::RequestBuilder,
 ) -> Result<reqwest::Response, ProviderError> {
-    const MAX_ATTEMPTS: u32 = 5;
     let url = builder
         .try_clone()
         .and_then(|b| b.build().ok())
         .map(|r| r.url().to_string())
         .unwrap_or_default();
-
-    let mut attempt = 1;
-    loop {
-        // Clone for this attempt so the builder is preserved for any retry.
-        // If the body is not cloneable (e.g. a stream), fall back to sending
-        // the original once without retry.
-        let this_try = if attempt < MAX_ATTEMPTS {
-            builder.try_clone()
-        } else {
-            None
-        };
-        let send_builder = match this_try {
-            Some(b) => b,
-            None => {
-                return do_send(builder, &url).await;
-            }
-        };
-
-        match do_send(send_builder, &url).await {
-            Ok(resp) => return Ok(resp),
-            Err(e) => {
-                if attempt < MAX_ATTEMPTS && is_retryable_transport(&e) {
-                    // Backoff: 100ms, 200ms, 300ms, 400ms.
-                    let delay = std::time::Duration::from_millis(100 * attempt as u64);
-                    tokio::time::sleep(delay).await;
-                    attempt += 1;
-                    continue;
-                }
-                return Err(e);
-            }
-        }
-    }
-}
-
-async fn do_send(
-    builder: reqwest::RequestBuilder,
-    url: &str,
-) -> Result<reqwest::Response, ProviderError> {
     builder.send().await.map_err(|e| {
         let mut detail = format!("{e} (url: {url})");
         let mut source = std::error::Error::source(&e);
@@ -119,28 +78,6 @@ async fn do_send(
         }
         ProviderError::Network(detail)
     })
-}
-
-/// Whether a transport-level error is a transient connection failure that is
-/// safe to retry (no response has begun). Matches connection resets/refusals,
-/// timeouts, and TLS-handshake socket drops by inspecting the error chain.
-fn is_retryable_transport(err: &ProviderError) -> bool {
-    let ProviderError::Network(detail) = err else {
-        return false;
-    };
-    let d = detail.to_lowercase();
-    d.contains("connection reset")
-        || d.contains("econnreset")
-        || d.contains("connection refused")
-        || d.contains("econnrefused")
-        || d.contains("connection closed")
-        || d.contains("broken pipe")
-        || d.contains("timed out")
-        || d.contains("timeout")
-        || d.contains("socket disconnected")
-        || d.contains("before secure tls")
-        || d.contains("tunnel")
-        || d.contains("connect error")
 }
 
 /// Check the HTTP status code. Non-2xx responses are read and classified.
