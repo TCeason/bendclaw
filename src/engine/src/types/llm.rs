@@ -161,3 +161,19 @@ pub enum ThinkingLevel {
     #[default]
     Adaptive,
 }
+
+impl ThinkingLevel {
+    /// Canonical lowercase name, matching the serde representation and the keys
+    /// used in [`crate::provider::ModelConfig::thinking_level_map`].
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Xhigh => "xhigh",
+            Self::Adaptive => "adaptive",
+        }
+    }
+}

@@ -158,14 +158,32 @@ fn test_xhigh_defaults_on_future_opus_via_version_gate() {
 }
 
 #[test]
-fn test_off_thinking_omits_anthropic_thinking() {
+fn test_off_thinking_disables_anthropic_thinking() {
     let config = StreamConfigBuilder::anthropic()
         .thinking(ThinkingLevel::Off)
         .build();
 
     let body = build_request_body(&config, false);
+    // Off explicitly disables thinking (mirrors pi's `{ type: "disabled" }`)
+    // rather than omitting the field and falling back to the model default.
+    assert_eq!(body["thinking"]["type"], "disabled");
+    // Disabled thinking carries no effort bound.
+    assert!(body.get("output_config").is_none());
+}
+
+#[test]
+fn test_off_thinking_omitted_when_model_cannot_disable() {
+    // A model that maps `off` to None cannot have reasoning turned off, so the
+    // thinking field is omitted entirely instead of sending `disabled`.
+    let mut model_config = ModelConfig::anthropic("claude-fable-5", "Fable 5");
+    model_config.thinking_level_map.insert("off".into(), None);
+    let config = StreamConfigBuilder::anthropic()
+        .model_config(model_config)
+        .thinking(ThinkingLevel::Off)
+        .build();
+
+    let body = build_request_body(&config, false);
     assert!(body.get("thinking").is_none());
-    // No thinking block means no effort bound either.
     assert!(body.get("output_config").is_none());
 }
 

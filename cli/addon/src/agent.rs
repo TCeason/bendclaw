@@ -6,8 +6,6 @@ use evot::agent::Agent;
 use evot::agent::ForkRequest;
 use evot::agent::QueryRequest;
 use evot::agent::ToolMode;
-use evot_engine::provider::ModelConfig;
-use evot_engine::ThinkingLevel;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use tokio::sync::mpsc as tokio_mpsc;
@@ -321,6 +319,22 @@ impl NapiAgent {
             .map_err(|e| Error::from_reason(format!("invalid provider: {e}")))
     }
 
+    /// Advance the thinking level to the next tier the current model supports,
+    /// wrapping around. Returns the new level's display label, or `null` when
+    /// the model has no selectable reasoning levels.
+    #[napi]
+    pub fn cycle_thinking_level(&self) -> Option<String> {
+        self.agent.cycle_thinking_level()?;
+        Some(display_thinking_level(&self.agent.llm()))
+    }
+
+    /// Restore a persisted thinking level by its lowercase name (used when
+    /// resuming a session). Unknown or unsupported levels are ignored.
+    #[napi]
+    pub fn restore_thinking_level(&self, level: String) {
+        self.agent.restore_thinking_level(&level);
+    }
+
     /// Set execution limits (max turns, tokens, duration).
     #[napi]
     pub fn set_limits(
@@ -387,21 +401,25 @@ impl NapiAgent {
     }
 }
 
+/// Footer label for the active reasoning effort, mirroring pi's footer:
+/// the abstract level name (`off`/`low`/`medium`/`high`/`xhigh`) is shown
+/// verbatim — it is never translated through the model's
+/// `thinking_level_map` (so Opus 4.6 reads `xhigh`, not `max`).
+///
+/// Returns an empty string when the model honors no selectable reasoning
+/// effort (e.g. an OpenAI-compatible provider without the reasoning-effort
+/// capability), which tells the footer to omit the indicator — the same gate
+/// pi applies via `model.reasoning`.
 fn display_thinking_level(llm: &evot::conf::LlmConfig) -> String {
-    if llm.protocol == evot::conf::Protocol::OpenAi {
-        let model_config = ModelConfig::local("", &llm.model);
-        let key = match llm.thinking_level {
-            ThinkingLevel::Off => return "off".into(),
-            ThinkingLevel::Minimal => "minimal",
-            ThinkingLevel::Low => "low",
-            ThinkingLevel::Medium => "medium",
-            ThinkingLevel::High => "high",
-            ThinkingLevel::Xhigh => "xhigh",
-            ThinkingLevel::Adaptive => "adaptive",
-        };
-        if let Some(mapped) = model_config.thinking_level_map.get(key) {
-            return mapped.clone();
-        }
+    let model_config = evot::agent::run::runtime::build_model_config(
+        llm.protocol.clone(),
+        &llm.provider,
+        &llm.model,
+        Some(&llm.base_url),
+        llm.compat_caps,
+    );
+    if model_config.supported_thinking_levels().is_empty() {
+        return String::new();
     }
-    format!("{:?}", llm.thinking_level).to_lowercase()
+    llm.thinking_level.as_str().to_string()
 }

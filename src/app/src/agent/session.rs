@@ -106,6 +106,12 @@ impl Session {
         self.meta.write().await.model = model;
     }
 
+    /// Set the session's persisted thinking level (lowercase level name, or
+    /// `None` when the model has no selectable level). Persisted by `save()`.
+    pub async fn set_thinking_level(&self, level: Option<String>) {
+        self.meta.write().await.thinking_level = level;
+    }
+
     /// Append items to the transcript and persist them (append-only).
     pub async fn write_items(&self, items: Vec<TranscriptItem>) -> Result<()> {
         if items.is_empty() {

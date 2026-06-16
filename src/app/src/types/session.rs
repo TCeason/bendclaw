@@ -13,6 +13,12 @@ pub struct SessionMeta {
     pub session_id: String,
     pub cwd: String,
     pub model: String,
+    /// Reasoning effort active for this session, as a lowercase level name
+    /// (e.g. `"high"`). `None` for sessions created before this field existed
+    /// or whose model has no selectable thinking level; callers fall back to
+    /// the agent's configured default.
+    #[serde(default)]
+    pub thinking_level: Option<String>,
     pub title: Option<String>,
     #[serde(default)]
     pub source: String,
@@ -48,6 +54,7 @@ impl SessionMeta {
             session_id,
             cwd,
             model,
+            thinking_level: None,
             title: None,
             source: String::new(),
             turns: 0,

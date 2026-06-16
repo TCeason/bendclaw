@@ -292,6 +292,56 @@ impl Agent {
         *self.llm.write() = llm;
     }
 
+    /// Set the active thinking level for the current provider.
+    pub fn set_thinking_level(&self, level: evot_engine::ThinkingLevel) {
+        self.llm.write().thinking_level = level;
+    }
+
+    /// Restore a thinking level from its persisted lowercase name (e.g. when
+    /// resuming a session). Unknown names and levels the current model does not
+    /// support are ignored, leaving the configured default in place.
+    pub fn restore_thinking_level(&self, name: &str) {
+        let Ok(level) = crate::conf::thinking_level_from_str(name) else {
+            return;
+        };
+        if self.supported_thinking_levels().contains(&level) {
+            self.set_thinking_level(level);
+        }
+    }
+
+    /// Thinking levels the current model can cycle through, in ascending order
+    /// of effort. Empty when the model does not honor a reasoning effort (e.g.
+    /// an OpenAI-compatible provider without the reasoning-effort capability).
+    pub fn supported_thinking_levels(&self) -> Vec<evot_engine::ThinkingLevel> {
+        let llm = self.llm.read();
+        super::run::runtime::build_model_config(
+            llm.protocol.clone(),
+            &llm.provider,
+            &llm.model,
+            Some(&llm.base_url),
+            llm.compat_caps,
+        )
+        .supported_thinking_levels()
+    }
+
+    /// Advance the thinking level to the next supported tier, wrapping around.
+    /// Returns the new level, or `None` when the model has no selectable levels.
+    pub fn cycle_thinking_level(&self) -> Option<evot_engine::ThinkingLevel> {
+        let levels = self.supported_thinking_levels();
+        if levels.is_empty() {
+            return None;
+        }
+        let current = self.llm.read().thinking_level;
+        let next_index = levels
+            .iter()
+            .position(|l| *l == current)
+            .map(|i| (i + 1) % levels.len())
+            .unwrap_or(0);
+        let next = levels[next_index];
+        self.set_thinking_level(next);
+        Some(next)
+    }
+
     /// Set the active model by spec (e.g. "deepseek-chat" or "openrouter:google/gemini-2.5-pro").
     /// Resolves provider+model from config. Falls back to just updating the model name.
     pub fn set_model_by_spec(&self, config: &Config, spec: &str) {
@@ -839,6 +889,7 @@ impl Agent {
         source: &str,
     ) -> Result<Arc<Session>> {
         let model = self.llm.read().model.clone();
+        let thinking_level = self.persisted_thinking_level();
         let storage = self.storage.read().clone();
         let session = match session_id {
             Some(id) => match Session::open(id, storage.clone()).await? {
@@ -862,8 +913,27 @@ impl Agent {
                 Session::new_with_source(id, self.cwd.clone(), model, source, storage).await?
             }
         };
+        // Mirror the live model selection: every run stamps the session with the
+        // agent's current reasoning effort so it survives restarts (persisted by
+        // the run's final `save()`).
+        session.set_thinking_level(thinking_level).await;
 
         Ok(session)
+    }
+
+    /// The session-facing label for the agent's current thinking level, or
+    /// `None` when the level is not a selectable tier for the active model
+    /// (e.g. the `Adaptive` default, or a config-set level the model rejects).
+    /// Gating on membership keeps persistence symmetric with
+    /// [`Self::restore_thinking_level`]: only values that can be restored are
+    /// ever written, so the session never carries inert data.
+    fn persisted_thinking_level(&self) -> Option<String> {
+        let level = self.llm.read().thinking_level;
+        if self.supported_thinking_levels().contains(&level) {
+            Some(level.as_str().to_string())
+        } else {
+            None
+        }
     }
 
     async fn build_turn(

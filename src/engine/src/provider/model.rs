@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::ThinkingLevel;
+
 /// Which API protocol a model uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -279,8 +281,6 @@ pub struct ModelConfig {
     pub provider: String,
     /// Base URL for API requests (without trailing slash).
     pub base_url: String,
-    /// Whether this model supports reasoning/thinking.
-    pub reasoning: bool,
     /// Context window size in tokens.
     pub context_window: u32,
     /// Default max output tokens.
@@ -297,12 +297,17 @@ pub struct ModelConfig {
     /// Whether prior thinking blocks must be passed back to the provider.
     #[serde(default)]
     pub thinking_passback: ThinkingPassbackPolicy,
-    /// Per-model overrides mapping an abstract [`ThinkingLevel`] to the exact
-    /// provider effort string. For example, Anthropic Opus 4.6 maps `xhigh` to
-    /// `"max"`, while Codex-backed GPT models map `adaptive` to their model
-    /// default reasoning effort. Keys are lowercase level names (e.g. "xhigh").
+    /// Per-model overrides for the abstract [`ThinkingLevel`] tiers. Keys are
+    /// lowercase level names (e.g. `"xhigh"`), and the value encodes three
+    /// states (mirroring pi's `thinkingLevelMap`):
+    ///
+    /// - `Some(effort)` — the level is supported and maps to this exact
+    ///   provider effort string (e.g. Opus 4.6 maps `xhigh` to `"max"`).
+    /// - `None` — the level is explicitly *unsupported* for this model and is
+    ///   omitted from the cycle (e.g. `gpt-5.5-pro` drops `off`/`low`).
+    /// - key absent — the level uses the protocol's default behavior.
     #[serde(default)]
-    pub thinking_level_map: HashMap<String, String>,
+    pub thinking_level_map: HashMap<String, Option<String>>,
 }
 
 fn anthropic_context_window(id: &str) -> (u32, u32) {
@@ -324,11 +329,11 @@ fn anthropic_context_window(id: &str) -> (u32, u32) {
 /// is Opus 4.6, whose strongest tier is `"max"` rather than `"xhigh"`. Opus 4.7+
 /// and all other models use the default, so they need no entry — new models keep
 /// working without touching this table. Mirrors pi's per-model `thinkingLevelMap`.
-fn anthropic_thinking_level_map(id: &str) -> HashMap<String, String> {
+fn anthropic_thinking_level_map(id: &str) -> HashMap<String, Option<String>> {
     let mut map = HashMap::new();
     if let Some((family, major, minor)) = anthropic_model_version(id) {
         if family == "opus" && (major, minor) == (4, 6) {
-            map.insert("xhigh".into(), "max".into());
+            map.insert("xhigh".into(), Some("max".into()));
         }
     }
     map
@@ -375,8 +380,9 @@ fn openai_context_window(id: &str) -> u32 {
 /// Codex model metadata has no `adaptive` effort. It resolves an unspecified
 /// effort to the model's default. Mirror that by mapping Evot's `adaptive` to
 /// the known default for GPT/Codex models, while allowing `xhigh` to pass
-/// through for models that advertise it.
-fn openai_thinking_level_map(id: &str) -> HashMap<String, String> {
+/// through for models that advertise it. Per-model tiers that the API rejects
+/// are mapped to `None` so they drop out of the selectable cycle.
+fn openai_thinking_level_map(id: &str) -> HashMap<String, Option<String>> {
     let mut map = HashMap::new();
     let normalized = id.trim().to_ascii_lowercase();
     if normalized.starts_with("gpt-5") || normalized.starts_with("codex-") {
@@ -385,13 +391,90 @@ fn openai_thinking_level_map(id: &str) -> HashMap<String, String> {
         } else {
             "medium"
         };
-        map.insert("adaptive".into(), default.into());
-        map.insert("xhigh".into(), "xhigh".into());
+        map.insert("adaptive".into(), Some(default.into()));
+        map.insert("xhigh".into(), Some("xhigh".into()));
+        // gpt-5.5-pro rejects the lowest tiers; medium is its floor. gpt-5.5
+        // (non-pro) drops only `minimal`. Values mirror pi's per-model
+        // `thinkingLevelMap` so the unsupported tiers match upstream exactly.
+        if normalized.ends_with("gpt-5.5-pro") {
+            map.insert("off".into(), None);
+            map.insert("minimal".into(), None);
+            map.insert("low".into(), None);
+        } else if normalized == "gpt-5.5" {
+            map.insert("minimal".into(), None);
+        }
     }
     map
 }
 
 impl ModelConfig {
+    /// Thinking levels a user can cycle through for this model, in ascending
+    /// order of effort.
+    ///
+    /// The ramp is `off → low → medium → high → xhigh`, filtered by
+    /// [`Self::level_selectable`] so that per-model overrides in
+    /// [`Self::thinking_level_map`] (a `None` value) remove unsupported tiers.
+    ///
+    /// OpenAI-compatible models only honor a reasoning effort when the provider
+    /// advertises [`CompatCaps::REASONING_EFFORT`]; without it the effort is
+    /// inert and the list is empty. `Minimal` and `Adaptive` are never offered:
+    /// they alias other tiers and would be redundant stops in the cycle.
+    pub fn supported_thinking_levels(&self) -> Vec<ThinkingLevel> {
+        use crate::ThinkingLevel::*;
+        if self.api == ApiProtocol::OpenAiCompletions && !self.honors_reasoning_effort() {
+            return Vec::new();
+        }
+        [Off, Low, Medium, High, Xhigh]
+            .into_iter()
+            .filter(|level| self.level_selectable(*level))
+            .collect()
+    }
+
+    /// Whether the OpenAI-compatible provider sends a `reasoning_effort` field
+    /// at all. Always true for the Anthropic/Bedrock protocols.
+    fn honors_reasoning_effort(&self) -> bool {
+        match self.api {
+            ApiProtocol::AnthropicMessages | ApiProtocol::BedrockConverseStream => true,
+            ApiProtocol::OpenAiCompletions => self
+                .compat
+                .as_ref()
+                .map(|c| c.caps.contains(CompatCaps::REASONING_EFFORT))
+                .unwrap_or(false),
+        }
+    }
+
+    /// Whether `level` is offered in the cycle for this model, per
+    /// [`Self::thinking_level_map`]:
+    ///
+    /// - value `Some(effort)` — supported (explicit effort mapping).
+    /// - value `None` — explicitly unsupported.
+    /// - key absent — protocol default: every tier is selectable except
+    ///   `xhigh` on OpenAI, which collapses onto `high` unless mapped.
+    fn level_selectable(&self, level: ThinkingLevel) -> bool {
+        match self.thinking_level_map.get(level.as_str()) {
+            Some(Some(_)) => true,
+            Some(None) => false,
+            None => level != ThinkingLevel::Xhigh || self.api != ApiProtocol::OpenAiCompletions,
+        }
+    }
+
+    /// The explicit per-model effort string for `level`, if the model maps one
+    /// (e.g. `xhigh` → `"max"` on Opus 4.6). `None` means "no override" — the
+    /// caller applies its protocol default. Shared by the request builders so
+    /// the mapping lives in exactly one place.
+    pub fn thinking_effort_override(&self, level: ThinkingLevel) -> Option<&str> {
+        self.thinking_level_map.get(level.as_str())?.as_deref()
+    }
+
+    /// Whether the `off` level can be expressed to the provider. `false` only
+    /// when the model maps `off` to `None` in its [`Self::thinking_level_map`],
+    /// meaning reasoning cannot be turned off for this model (mirrors pi's
+    /// `thinkingLevelMap?.off !== null` gate). Callers that would otherwise emit
+    /// a "disable thinking" request should omit the field instead.
+    pub fn can_disable_thinking(&self) -> bool {
+        !matches!(self.thinking_level_map.get("off"), Some(None))
+    }
+
     pub fn apply_inferred_capabilities(&mut self) {
         if self.api == ApiProtocol::AnthropicMessages && self.requires_tool_use_thinking_passback()
         {
@@ -415,7 +498,6 @@ impl ModelConfig {
             api: ApiProtocol::AnthropicMessages,
             provider: "anthropic".into(),
             base_url: "https://api.anthropic.com".into(),
-            reasoning: false,
             context_window,
             max_tokens,
             cost: CostConfig::default(),
@@ -437,7 +519,6 @@ impl ModelConfig {
             api: ApiProtocol::OpenAiCompletions,
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
-            reasoning: false,
             context_window,
             max_tokens: 4096,
             cost: CostConfig::default(),
@@ -460,7 +541,6 @@ impl ModelConfig {
             api: ApiProtocol::OpenAiCompletions,
             provider: "local".into(),
             base_url: base_url.into(),
-            reasoning: false,
             context_window,
             max_tokens: 4096,
             cost: CostConfig::default(),
@@ -481,7 +561,6 @@ impl ModelConfig {
             api: ApiProtocol::OpenAiCompletions,
             provider: "zai".into(),
             base_url: "https://api.z.ai/api/paas/v4".into(),
-            reasoning: false,
             context_window: 128_000,
             max_tokens: 4096,
             cost: CostConfig::default(),
@@ -502,7 +581,6 @@ impl ModelConfig {
             api: ApiProtocol::OpenAiCompletions,
             provider: "minimax".into(),
             base_url: "https://api.minimaxi.chat/v1".into(),
-            reasoning: false,
             context_window: 1_000_000,
             max_tokens: 4096,
             cost: CostConfig::default(),
@@ -523,7 +601,6 @@ impl ModelConfig {
             api: ApiProtocol::OpenAiCompletions,
             provider: "xai".into(),
             base_url: "https://api.x.ai/v1".into(),
-            reasoning: false,
             context_window: 131_072,
             max_tokens: 4096,
             cost: CostConfig::default(),
@@ -544,7 +621,6 @@ impl ModelConfig {
             api: ApiProtocol::OpenAiCompletions,
             provider: "groq".into(),
             base_url: "https://api.groq.com/openai/v1".into(),
-            reasoning: false,
             context_window: 128_000,
             max_tokens: 4096,
             cost: CostConfig::default(),
@@ -565,7 +641,6 @@ impl ModelConfig {
             api: ApiProtocol::OpenAiCompletions,
             provider: "deepseek".into(),
             base_url: "https://api.deepseek.com/v1".into(),
-            reasoning: false,
             context_window: 128_000,
             max_tokens: 4096,
             cost: CostConfig::default(),
@@ -586,7 +661,6 @@ impl ModelConfig {
             api: ApiProtocol::OpenAiCompletions,
             provider: "mistral".into(),
             base_url: "https://api.mistral.ai/v1".into(),
-            reasoning: false,
             context_window: 128_000,
             max_tokens: 4096,
             cost: CostConfig::default(),

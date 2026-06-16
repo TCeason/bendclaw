@@ -928,20 +928,27 @@ fn compact_record_from_result(result: &crate::types::CompactionResult) -> Option
     crate::agent::run::observability::compact_record_from_result(result)
 }
 
-pub(crate) fn build_agent(
-    options: EngineOptions,
-    prior_messages: Vec<evot_engine::AgentMessage>,
-) -> evot_engine::Agent {
-    use evot_engine::provider::AnthropicProvider;
+/// Build the engine [`ModelConfig`] for a given protocol/provider/model.
+///
+/// Shared by [`build_agent`] (per-turn provider construction), the application
+/// [`Agent`](crate::agent::Agent), and the NAPI addon's footer rendering so the
+/// set of selectable thinking levels matches exactly what the provider will
+/// honor at request time.
+pub fn build_model_config(
+    protocol: Protocol,
+    provider: &str,
+    model: &str,
+    base_url: Option<&str>,
+    compat_caps: evot_engine::provider::CompatCaps,
+) -> evot_engine::provider::ModelConfig {
     use evot_engine::provider::ModelConfig;
     use evot_engine::provider::OpenAiCompat;
-    use evot_engine::provider::OpenAiCompatProvider;
 
-    let mut model_config = match options.protocol {
-        Protocol::Anthropic => ModelConfig::anthropic(&options.model, &options.model),
+    let mut model_config = match protocol {
+        Protocol::Anthropic => ModelConfig::anthropic(model, model),
         Protocol::OpenAi => {
-            let mut mc = ModelConfig::local("", &options.model);
-            mc.compat = Some(match options.provider.as_str() {
+            let mut mc = ModelConfig::local("", model);
+            mc.compat = Some(match provider {
                 "openai" => OpenAiCompat::openai(),
                 "deepseek" => OpenAiCompat::deepseek(),
                 "xai" => OpenAiCompat::xai(),
@@ -956,17 +963,35 @@ pub(crate) fn build_agent(
             mc
         }
     };
-    if let Some(base_url) = &options.base_url {
-        model_config.base_url = base_url.clone();
+    if let Some(base_url) = base_url {
+        model_config.base_url = base_url.to_string();
     }
 
     model_config.apply_inferred_capabilities();
 
-    if options.protocol == Protocol::OpenAi {
+    if protocol == Protocol::OpenAi {
         if let Some(compat) = &mut model_config.compat {
-            compat.caps |= options.compat_caps;
+            compat.caps |= compat_caps;
         }
     }
+
+    model_config
+}
+
+pub(crate) fn build_agent(
+    options: EngineOptions,
+    prior_messages: Vec<evot_engine::AgentMessage>,
+) -> evot_engine::Agent {
+    use evot_engine::provider::AnthropicProvider;
+    use evot_engine::provider::OpenAiCompatProvider;
+
+    let model_config = build_model_config(
+        options.protocol.clone(),
+        &options.provider,
+        &options.model,
+        options.base_url.as_deref(),
+        options.compat_caps,
+    );
 
     let provider_agent = match (options.provider_override, &options.protocol) {
         (Some(provider), _) => evot_engine::Agent::new(provider),

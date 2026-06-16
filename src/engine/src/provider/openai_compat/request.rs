@@ -203,7 +203,11 @@ fn apply_reasoning_effort(
         return;
     }
 
-    let effort = match mapped_effort(config.thinking_level, config) {
+    let effort = match config
+        .model_config
+        .as_ref()
+        .and_then(|mc| mc.thinking_effort_override(config.thinking_level))
+    {
         Some(effort) => effort,
         None => match config.thinking_level {
             ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
@@ -213,26 +217,6 @@ fn apply_reasoning_effort(
         },
     };
     body["reasoning_effort"] = serde_json::json!(effort);
-}
-
-fn mapped_effort(level: ThinkingLevel, config: &StreamConfig) -> Option<&'static str> {
-    let key = match level {
-        ThinkingLevel::Off => return None,
-        ThinkingLevel::Minimal => "minimal",
-        ThinkingLevel::Low => "low",
-        ThinkingLevel::Medium => "medium",
-        ThinkingLevel::High => "high",
-        ThinkingLevel::Xhigh => "xhigh",
-        ThinkingLevel::Adaptive => "adaptive",
-    };
-    let mapped = config.model_config.as_ref()?.thinking_level_map.get(key)?;
-    match mapped.as_str() {
-        "low" => Some("low"),
-        "medium" => Some("medium"),
-        "high" => Some("high"),
-        "xhigh" => Some("xhigh"),
-        _ => None,
-    }
 }
 
 fn tool_result_images_as_user_content(tool_name: &str, content: &[Content]) -> Vec<Content> {

@@ -32,34 +32,27 @@ fn model_config_openai_gpt_5_5_uses_272k_context() {
 
 #[test]
 fn model_config_openai_gpt_reasoning_level_map_matches_codex_defaults() {
+    use evotengine::ThinkingLevel;
+
     let gpt_5_5 = ModelConfig::openai("gpt-5.5", "GPT-5.5");
     assert_eq!(
-        gpt_5_5
-            .thinking_level_map
-            .get("adaptive")
-            .map(String::as_str),
+        gpt_5_5.thinking_effort_override(ThinkingLevel::Adaptive),
         Some("medium")
     );
     assert_eq!(
-        gpt_5_5.thinking_level_map.get("xhigh").map(String::as_str),
+        gpt_5_5.thinking_effort_override(ThinkingLevel::Xhigh),
         Some("xhigh")
     );
 
     let gpt_5_4 = ModelConfig::openai("gpt-5.4", "GPT-5.4");
     assert_eq!(
-        gpt_5_4
-            .thinking_level_map
-            .get("adaptive")
-            .map(String::as_str),
+        gpt_5_4.thinking_effort_override(ThinkingLevel::Adaptive),
         Some("xhigh")
     );
 
     let runtime_path = ModelConfig::local("", "gpt-5.5");
     assert_eq!(
-        runtime_path
-            .thinking_level_map
-            .get("adaptive")
-            .map(String::as_str),
+        runtime_path.thinking_effort_override(ThinkingLevel::Adaptive),
         Some("medium")
     );
 }
@@ -185,4 +178,95 @@ fn cost_config_default() {
     let cost = CostConfig::default();
     assert_eq!(cost.input_per_million, 0.0);
     assert_eq!(cost.output_per_million, 0.0);
+}
+
+#[test]
+fn supported_thinking_levels_anthropic_offers_full_ramp() {
+    use evotengine::ThinkingLevel::*;
+    let config = ModelConfig::anthropic("claude-opus-4-6", "Opus 4.6");
+    assert_eq!(config.supported_thinking_levels(), vec![
+        Off, Low, Medium, High, Xhigh
+    ]);
+}
+
+#[test]
+fn supported_thinking_levels_openai_with_effort_includes_xhigh_when_mapped() {
+    use evotengine::ThinkingLevel::*;
+    // GPT-5 family advertises reasoning effort and maps xhigh explicitly.
+    let config = ModelConfig::openai("gpt-5.5", "GPT-5.5");
+    assert!(config
+        .compat
+        .as_ref()
+        .unwrap()
+        .caps
+        .contains(CompatCaps::REASONING_EFFORT));
+    assert_eq!(config.supported_thinking_levels(), vec![
+        Off, Low, Medium, High, Xhigh
+    ]);
+}
+
+#[test]
+fn supported_thinking_levels_openai_without_xhigh_map_stops_at_high() {
+    use evotengine::ThinkingLevel::*;
+    // A bare OpenAI-completions model with reasoning effort but no xhigh map
+    // entry should not offer xhigh (it would collapse onto high).
+    let mut config = ModelConfig::local("", "some-reasoner");
+    config.thinking_level_map.clear();
+    if let Some(compat) = &mut config.compat {
+        compat.caps |= CompatCaps::REASONING_EFFORT;
+    }
+    assert_eq!(config.supported_thinking_levels(), vec![
+        Off, Low, Medium, High
+    ]);
+}
+
+#[test]
+fn supported_thinking_levels_openai_without_effort_capability_is_empty() {
+    // deepseek's OpenAI-compat profile lacks REASONING_EFFORT, so the reasoning
+    // effort field is inert and no levels should be selectable.
+    let mut config = ModelConfig::local("", "deepseek-chat");
+    config.compat = Some(OpenAiCompat::deepseek());
+    assert!(!config
+        .compat
+        .as_ref()
+        .unwrap()
+        .caps
+        .contains(CompatCaps::REASONING_EFFORT));
+    assert!(config.supported_thinking_levels().is_empty());
+}
+
+#[test]
+fn supported_thinking_levels_gpt_5_5_pro_drops_off_minimal_low() {
+    use evotengine::ThinkingLevel::*;
+    // gpt-5.5-pro maps off/minimal/low to None (unsupported); medium is its
+    // floor. Matches pi's per-model thinkingLevelMap exactly.
+    let config = ModelConfig::openai("gpt-5.5-pro", "GPT-5.5 Pro");
+    assert_eq!(config.supported_thinking_levels(), vec![
+        Medium, High, Xhigh
+    ]);
+}
+
+#[test]
+fn supported_thinking_levels_gpt_5_5_drops_minimal_only() {
+    use evotengine::ThinkingLevel::*;
+    // gpt-5.5 (non-pro) drops only `minimal`; minimal is never in the ramp
+    // anyway, so the full off..xhigh cycle remains.
+    let config = ModelConfig::openai("gpt-5.5", "GPT-5.5");
+    assert_eq!(config.supported_thinking_levels(), vec![
+        Off, Low, Medium, High, Xhigh
+    ]);
+}
+
+#[test]
+fn thinking_effort_override_distinguishes_unsupported_from_default() {
+    use evotengine::ThinkingLevel;
+    // gpt-5.5-pro: `low` is explicitly unsupported (None), `xhigh` maps to a
+    // concrete effort, and `high` has no entry (protocol default).
+    let config = ModelConfig::openai("gpt-5.5-pro", "GPT-5.5 Pro");
+    assert_eq!(config.thinking_effort_override(ThinkingLevel::Low), None);
+    assert_eq!(
+        config.thinking_effort_override(ThinkingLevel::Xhigh),
+        Some("xhigh")
+    );
+    assert_eq!(config.thinking_effort_override(ThinkingLevel::High), None);
 }

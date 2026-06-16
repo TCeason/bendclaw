@@ -173,6 +173,13 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
         if let Some(effort) = thinking_effort(config.thinking_level, config) {
             body["output_config"] = serde_json::json!({ "effort": effort });
         }
+    } else if thinking_off_disables(config) {
+        // Off explicitly disables thinking rather than omitting the field, so a
+        // reasoning model is told not to think this turn instead of falling back
+        // to its API default. Mirrors pi's `{ type: "disabled" }`. Models that
+        // map `off` to `None` in their thinking_level_map cannot be disabled, so
+        // the field is omitted for them.
+        body["thinking"] = serde_json::json!({ "type": "disabled" });
     }
 
     if let Some(temp) = config.temperature {
@@ -192,9 +199,13 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
 /// Opus 4.7+/4.8 and Fable use `"xhigh"`. The exact value is resolved per model
 /// via [`ModelConfig::thinking_level_map`] (mirrors pi's `thinkingLevelMap`),
 /// falling back to `"xhigh"` when no model config is present.
-fn thinking_effort(level: ThinkingLevel, config: &StreamConfig) -> Option<&'static str> {
+fn thinking_effort(level: ThinkingLevel, config: &StreamConfig) -> Option<&str> {
     // Per-model override wins (e.g. xhigh -> "max" on Opus 4.6).
-    if let Some(mapped) = mapped_effort(level, config) {
+    if let Some(mapped) = config
+        .model_config
+        .as_ref()
+        .and_then(|mc| mc.thinking_effort_override(level))
+    {
         return Some(mapped);
     }
     match level {
@@ -207,27 +218,17 @@ fn thinking_effort(level: ThinkingLevel, config: &StreamConfig) -> Option<&'stat
     }
 }
 
-/// Look up a per-model effort override for `level`, returning a `'static` str
-/// for the known effort values Anthropic accepts.
-fn mapped_effort(level: ThinkingLevel, config: &StreamConfig) -> Option<&'static str> {
-    let key = match level {
-        ThinkingLevel::Off => return None,
-        ThinkingLevel::Minimal => "minimal",
-        ThinkingLevel::Low => "low",
-        ThinkingLevel::Medium => "medium",
-        ThinkingLevel::High => "high",
-        ThinkingLevel::Xhigh => "xhigh",
-        ThinkingLevel::Adaptive => "adaptive",
-    };
-    let mapped = config.model_config.as_ref()?.thinking_level_map.get(key)?;
-    match mapped.as_str() {
-        "low" => Some("low"),
-        "medium" => Some("medium"),
-        "high" => Some("high"),
-        "xhigh" => Some("xhigh"),
-        "max" => Some("max"),
-        _ => None,
-    }
+/// Whether an `Off` level should emit `{"type": "disabled"}` rather than omit
+/// the thinking field. True unless the model explicitly marks `off` as
+/// unsupported (maps it to `None`), in which case reasoning cannot be turned
+/// off and the field is omitted. With no model config, default to disabling
+/// (mirrors pi, where an absent `thinkingLevelMap.off` still sends `disabled`).
+fn thinking_off_disables(config: &StreamConfig) -> bool {
+    config
+        .model_config
+        .as_ref()
+        .map(|mc| mc.can_disable_thinking())
+        .unwrap_or(true)
 }
 
 fn system_prompt_blocks(prompt: &str, cache_static: bool) -> Vec<serde_json::Value> {

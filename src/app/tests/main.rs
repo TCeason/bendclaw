@@ -1,5 +1,7 @@
 #[path = "agent_prompt_test.rs"]
 mod agent_prompt_test;
+#[path = "agent_thinking_test.rs"]
+mod agent_thinking_test;
 #[path = "agent_variable_test.rs"]
 mod agent_variable_test;
 #[path = "auto_compact_test.rs"]

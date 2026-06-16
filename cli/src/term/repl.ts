@@ -469,6 +469,24 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     renderer.fullRedraw()
   }
 
+  /** Cycle the model's reasoning effort (Shift+Tab) and reflect it in the footer. */
+  function cycleThinkingLevel(): void {
+    let level: string | null
+    try {
+      level = agent.cycleThinkingLevel()
+    } catch {
+      return
+    }
+    if (level === null) {
+      commitLines([{ id: 'sys-think', kind: 'system', text: '  This model has no selectable thinking level' }])
+      return
+    }
+    refreshConfigInfo()
+    const label = level === 'off' ? 'off' : level
+    commitLines([{ id: 'sys-think', kind: 'system', text: `  Thinking level → ${label}` }])
+    renderer.requestRender()
+  }
+
   function setTerminalTitle(suffix?: string) {
     if (titleFrozen) return
     const dirName = agent.cwd.split('/').pop() || agent.cwd
@@ -522,14 +540,26 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     try {
       const transcript = await agent.loadTranscript(session.session_id)
       sessionId = session.session_id
-      // Ensure we have the model — fetch from storage if missing
+      // Fields may be missing when the caller passes a partial SessionMeta
+      // (e.g. the resume selector only knows the id); fetch the full record.
       let model = session.model
-      if (!model) {
+      let thinkingLevel = session.thinking_level
+      if (!model || thinkingLevel === undefined) {
         const full = await agent.findSession(session.session_id)
-        if (full?.model) model = full.model
+        if (full) {
+          if (!model) model = full.model
+          if (thinkingLevel === undefined) thinkingLevel = full.thinking_level
+        }
       }
       if (model) {
         agent.model = model
+      }
+      // Restore the session's reasoning effort so a resumed conversation keeps
+      // the level it was last run with (no-op for non-reasoning models).
+      if (thinkingLevel) {
+        agent.restoreThinkingLevel(thinkingLevel)
+      }
+      if (model || thinkingLevel) {
         refreshConfigInfo()
       }
       appState = { ...appState, sessionId: session.session_id, model: model || appState.model }
@@ -1072,6 +1102,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       case 'alt-enter': {
         editor = insertNewline(editor)
         renderer.requestRender()
+        break
+      }
+      case 'shift-tab': {
+        cycleThinkingLevel()
         break
       }
       case 'tab': {

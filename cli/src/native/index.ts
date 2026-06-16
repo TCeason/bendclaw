@@ -26,6 +26,7 @@ export interface SessionMeta {
   session_id: string
   title: string
   model: string
+  thinking_level: string | null
   cwd: string
   source: string
   turns: number
@@ -246,6 +247,20 @@ export class Agent {
 
   setProvider(provider: string): void {
     this.raw.setProvider(provider)
+  }
+
+  /**
+   * Advance the thinking level to the next tier the current model supports,
+   * wrapping around. Returns the new level's display label, or null when the
+   * model has no selectable reasoning levels.
+   */
+  cycleThinkingLevel(): string | null {
+    return this.raw.cycleThinkingLevel()
+  }
+
+  /** Restore a persisted thinking level by its lowercase name (used on resume). */
+  restoreThinkingLevel(level: string): void {
+    this.raw.restoreThinkingLevel(level)
   }
 
   setLimits(maxTurns?: number, maxTokens?: number, maxDurationSecs?: number): void {
