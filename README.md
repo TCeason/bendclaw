@@ -63,12 +63,12 @@ Give the LLM less context, but higher-quality context. Where other agents call t
 
 ## 📢 News
 
+- **2026-06-16** [REPL] Shift+Tab cycles the model's reasoning effort — footer shows the active level, and the choice persists per session across resumes.
 - **2026-06-05** [Dashboard] Built-in web dashboard — server metrics, connected sessions, per-session usage breakdown, tool call traces, and span details at a glance.
 - **2026-05-30** [Engine] Major refactor — four-pass compaction pipeline, pi-aligned tools with parallel execution, leaner core. Not backward-compatible; start a new session.
 - **2026-05-11** [Skills] Built-in `opencli` — control the browser, use logged-in cookies, read Feishu/Lark messages, Twitter/X timelines, and more.
 - **2026-05-11** [Slim] Tool outputs now auto-compact, with token savings shown inline.
 - **2026-05-08** [REPL] `/harden` — stress-test plans and git changes before shipping. Inspired by [@cjzafir](https://x.com/cjzafir/status/2052110266566107321).
-- **2026-05-02** [Skills] Builtin skill support — `review` ships built-in, no install needed.
 
 ## Dashboard
 
