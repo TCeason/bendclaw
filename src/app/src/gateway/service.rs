@@ -53,6 +53,8 @@ pub async fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
     let (system_prompt_text, system_prompt_sections) =
         SystemPrompt::with_tool_set_for_model(&cwd, &tools, &model)
             .with_system()
+            .with_output_format()
+            .with_output_efficiency()
             .with_project_context()
             .with_dynamic_boundary()
             .with_today_date()

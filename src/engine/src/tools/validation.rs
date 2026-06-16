@@ -305,12 +305,18 @@ fn try_coerce(val: &Value, expected: &str) -> CoerceResult {
             _ => CoerceResult::Mismatch,
         },
         "array" => {
+            // A JSON-array string (`["a","b"]`) parses straight through.
             if let Ok(v) = serde_json::from_str::<Value>(s) {
                 if v.is_array() {
                     return CoerceResult::Ok(v);
                 }
             }
-            CoerceResult::Mismatch
+            // Otherwise wrap a bare scalar string as a single-element array.
+            // Tools taking array params (glob patterns/paths, grep includes)
+            // already accept the one-item form via their own normalization, so
+            // repairing "model passed one string" here avoids a false rejection
+            // before the call ever reaches the tool.
+            CoerceResult::Ok(Value::Array(vec![Value::String(s.to_string())]))
         }
         "object" => {
             if let Ok(v) = serde_json::from_str::<Value>(s) {

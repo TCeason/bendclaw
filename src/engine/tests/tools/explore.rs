@@ -264,6 +264,182 @@ async fn grep_files_with_matches_lists_paths_only() {
 // GLOB_TESTS
 
 #[tokio::test]
+async fn grep_gitignore_false_searches_ignored_files() {
+    let dir = fixture();
+    let tool = GrepTool::new();
+    // The fixture writes target/generated.rs (gitignored) containing
+    // `hello_generated`. Default search hides it; gitignore:false surfaces it.
+    let hidden = tool
+        .execute(
+            serde_json::json!({ "pattern": "hello_generated", "reason": "default" }),
+            ctx_at(dir.path()),
+        )
+        .await
+        .expect("grep ok");
+    assert_eq!(
+        text_of(&hidden),
+        "(no matches)",
+        "ignored file leaked by default"
+    );
+
+    let shown = tool
+        .execute(
+            serde_json::json!({
+                "pattern": "hello_generated",
+                "gitignore": false,
+                "reason": "search ignored"
+            }),
+            ctx_at(dir.path()),
+        )
+        .await
+        .expect("grep ok");
+    assert!(
+        text_of(&shown).contains("generated.rs:1:"),
+        "ignored file not surfaced with gitignore=false: {}",
+        text_of(&shown)
+    );
+}
+
+#[tokio::test]
+async fn grep_include_accepts_array() {
+    let dir = fixture();
+    let tool = GrepTool::new();
+    // 'hello' appears in README.md and src/main.rs; restrict to both globs.
+    let res = tool
+        .execute(
+            serde_json::json!({
+                "pattern": "hello",
+                "include": ["*.md", "*.rs"],
+                "reason": "union of globs"
+            }),
+            ctx_at(dir.path()),
+        )
+        .await
+        .expect("grep ok");
+    let out = text_of(&res);
+    assert!(out.contains("README.md:"), "md missing: {out}");
+    assert!(out.contains("src/main.rs:"), "rs missing: {out}");
+}
+
+#[tokio::test]
+async fn grep_multiline_matches_across_lines() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("a.txt"), "start\nfoo\nbar\nend\n").unwrap();
+    let tool = GrepTool::new();
+    // `(?s)foo.*bar` only matches when '.' crosses newlines (multiline on).
+    let res = tool
+        .execute(
+            serde_json::json!({
+                "pattern": "(?s)foo.*bar",
+                "multiline": true,
+                "reason": "cross-line"
+            }),
+            ctx_at(dir.path()),
+        )
+        .await
+        .expect("grep ok");
+    let out = text_of(&res);
+    assert!(out.contains("a.txt:"), "multiline match missing: {out}");
+}
+
+#[tokio::test]
+async fn grep_skip_paginates() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // One file, three matching lines.
+    std::fs::write(dir.path().join("f.txt"), "hit 1\nhit 2\nhit 3\n").unwrap();
+    let tool = GrepTool::new();
+    let res = tool
+        .execute(
+            serde_json::json!({ "pattern": "hit", "skip": 2, "reason": "paginate" }),
+            ctx_at(dir.path()),
+        )
+        .await
+        .expect("grep ok");
+    let out = text_of(&res);
+    // First two matches skipped; only line 3 remains.
+    assert!(out.contains("f.txt:3:"), "expected third match: {out}");
+    assert!(!out.contains("f.txt:1:"), "first match not skipped: {out}");
+    assert!(!out.contains("f.txt:2:"), "second match not skipped: {out}");
+}
+
+#[tokio::test]
+async fn glob_gitignore_false_finds_ignored() {
+    let dir = fixture();
+    let tool = GlobTool::new();
+    // target/generated.rs is gitignored; default hides it, gitignore:false shows.
+    let res = tool
+        .execute(
+            serde_json::json!({
+                "pattern": ["**/*.rs"],
+                "gitignore": false,
+                "reason": "include ignored"
+            }),
+            ctx_at(dir.path()),
+        )
+        .await
+        .expect("glob ok");
+    assert!(
+        text_of(&res).contains("generated.rs"),
+        "ignored file not surfaced: {}",
+        text_of(&res)
+    );
+}
+
+#[tokio::test]
+async fn glob_hidden_toggle() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join(".secret.txt"), "x").unwrap();
+    std::fs::write(dir.path().join("plain.txt"), "y").unwrap();
+    let tool = GlobTool::new();
+
+    let without = tool
+        .execute(
+            serde_json::json!({ "pattern": ["*.txt"], "reason": "default" }),
+            ctx_at(dir.path()),
+        )
+        .await
+        .expect("glob ok");
+    assert!(
+        !text_of(&without).contains(".secret.txt"),
+        "hidden leaked by default"
+    );
+
+    let with = tool
+        .execute(
+            serde_json::json!({ "pattern": ["*.txt"], "hidden": true, "reason": "show hidden" }),
+            ctx_at(dir.path()),
+        )
+        .await
+        .expect("glob ok");
+    assert!(
+        text_of(&with).contains(".secret.txt"),
+        "hidden file missing with hidden=true: {}",
+        text_of(&with)
+    );
+}
+
+#[tokio::test]
+async fn glob_sorts_by_mtime_newest_first() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // Write old first, then new after a real delay, so new.rs has a later mtime.
+    std::fs::write(dir.path().join("old.rs"), "a").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(dir.path().join("new.rs"), "b").unwrap();
+    let tool = GlobTool::new();
+    let res = tool
+        .execute(
+            serde_json::json!({ "pattern": ["*.rs"], "reason": "recency" }),
+            ctx_at(dir.path()),
+        )
+        .await
+        .expect("glob ok");
+    let out = text_of(&res);
+    let new_pos = out.find("new.rs").expect("new.rs present");
+    let old_pos = out.find("old.rs").expect("old.rs present");
+    assert!(new_pos < old_pos, "newest should sort first: {out}");
+}
+
+#[tokio::test]
 async fn glob_finds_by_pattern() {
     let dir = fixture();
     let tool = GlobTool::new();

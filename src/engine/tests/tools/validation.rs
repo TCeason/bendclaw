@@ -114,6 +114,22 @@ fn coerce_string_to_array() {
 }
 
 #[test]
+fn coerce_bare_string_to_single_element_array() {
+    // A bare scalar string (not JSON-array syntax) is wrapped as a one-element
+    // array, matching how glob/grep normalize a single pattern/path. This is
+    // the path the model hits when it calls glob with `pattern: "**/*.rs"`
+    // instead of `["**/*.rs"]`.
+    let schema = json!({
+        "type": "object",
+        "properties": { "pattern": { "type": "array", "items": { "type": "string" } } },
+        "required": ["pattern"]
+    });
+    let input = json!({ "pattern": "**/*recluster*" });
+    let result = validate_and_coerce("glob", &schema, &input).unwrap();
+    assert_eq!(result["pattern"], json!(["**/*recluster*"]));
+}
+
+#[test]
 fn coerce_string_to_number() {
     let schema = json!({
         "type": "object",

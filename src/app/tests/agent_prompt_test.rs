@@ -209,7 +209,10 @@ fn tool_set_drives_identity_list_and_guidelines() {
     ));
     assert!(prompt.contains("Use edit for precise changes (edits[].oldText must match exactly)"));
     assert!(prompt.contains("Use write only for new files or complete rewrites."));
-    assert!(prompt.contains("Be concise in your responses"));
+    // The tool-guidance trailer still renders. (Concise guidance moved to the
+    // dedicated output-efficiency section, added separately by the gateway
+    // build chain rather than `with_system`.)
+    assert!(prompt.contains("Show file paths clearly when working with files"));
 
     // The legacy snake_case spelling must not leak back in.
     assert!(!prompt.contains("old_text"));
@@ -281,4 +284,28 @@ fn dedicated_search_tools_flip_bash_framing() {
     // The bash-first exploration guideline must NOT appear when dedicated
     // search tools are available.
     assert!(!prompt.contains("Use bash for file operations like ls, rg, find"));
+}
+
+#[test]
+fn output_sections_are_opt_in_by_name() {
+    let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let cwd = tmp.path().to_string_lossy();
+    let names = |sections: &[evot::agent::prompt::Section]| {
+        sections.iter().map(|s| s.name).collect::<Vec<_>>()
+    };
+
+    // The default `with_system` chain does not carry the output sections.
+    let (_, base) = SystemPrompt::new(&cwd).with_system().build_with_sections();
+    assert!(!names(&base).contains(&"output_format"));
+    assert!(!names(&base).contains(&"output_efficiency"));
+
+    // Each builder method contributes exactly its named section. Asserting on
+    // the section name (the structural contract) rather than the prose keeps
+    // this stable when the wording is tuned.
+    let (_, with) = SystemPrompt::new(&cwd)
+        .with_output_format()
+        .with_output_efficiency()
+        .build_with_sections();
+    assert!(names(&with).contains(&"output_format"));
+    assert!(names(&with).contains(&"output_efficiency"));
 }
