@@ -35,27 +35,11 @@ pub(crate) fn build_tools(
 
     let mut t: Vec<Box<dyn evot_engine::AgentTool>> = Vec::new();
 
-    // Core tool set: read, bash, edit, write, plus the dedicated explore tools.
-    // grep and glob are builtin everywhere; semantic_code_search is added in all
-    // modes except Headless. The explore tools run in-process on ripgrep/fd's
-    // own engines (parallel, gitignore-aware) and give the model line-numbered,
-    // structured output it can act on without re-reading files — strictly better
-    // than shelling out to bash grep/find.
+    // Core coding set: read, bash, edit, write. The dedicated explore tools
+    // (grep, glob, semantic_code_search) are currently unregistered here —
+    // search and file-finding go through bash (rg/grep/find). They remain
+    // available in Readonly mode above, which has no shell.
     t.push(Box::new(ReadFileTool::default()));
-
-    // grep and glob are builtin in every mode: they run in-process on
-    // ripgrep/fd's own engines (parallel, gitignore-aware) and add no startup
-    // cost, so even short-lived Headless requests benefit from line-numbered,
-    // structured search/find instead of shelling out to bash rg/find.
-    t.push(Box::new(GrepTool::new()));
-    t.push(Box::new(GlobTool::new()));
-
-    // Semantic code search is gated out of Headless: it builds a full index of
-    // the (possibly unknown, large) repo on first use, which isn't worth it for
-    // oneshot/API requests.
-    if !matches!(mode, ToolMode::Headless) {
-        t.push(Box::new(SearchTool::new()));
-    }
 
     if allow_bash {
         t.push(build_bash_tool(envs, sandbox_dirs));
@@ -90,13 +74,11 @@ pub(crate) fn build_tools(
 
 /// Canonical tool set used to assemble the system prompt's tool list and
 /// guidelines at startup for the gateway, which runs in Headless mode. Must
-/// stay in sync with the Headless set built by `build_tools`: read, grep, glob,
-/// bash, edit, write (no semantic_code_search, no webfetch, no ask).
+/// stay in sync with the Headless set built by `build_tools`: read, bash,
+/// edit, write (no explore tools, no webfetch, no ask).
 pub(crate) fn prompt_tools() -> Vec<Box<dyn evot_engine::AgentTool>> {
     vec![
         Box::new(ReadFileTool::default()),
-        Box::new(GrepTool::new()),
-        Box::new(GlobTool::new()),
         Box::new(BashTool::default()),
         Box::new(EditFileTool::new()),
         Box::new(WriteFileTool::new()),
