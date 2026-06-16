@@ -11,6 +11,7 @@
 </p>
 
 <p align="center">
+  <a href="#-news">News</a> &middot;
   <a href="#benchmark">Benchmark</a> &middot;
   <a href="#why-is-evot-faster-and-cheaper">Why</a> &middot;
   <a href="#dashboard">Dashboard</a> &middot;
@@ -19,9 +20,12 @@
   <a href="#development">Dev</a>
 </p>
 
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/0c089005-51db-48da-977e-6339b5fb9093"></video>
-</p>
+## 📢 News
+
+- **2026-06-16** [REPL] Shift+Tab cycles reasoning effort; persisted per session.
+- **2026-06-05** [Dashboard] Built-in web dashboard — server metrics, sessions, usage, and tool traces.
+- **2026-05-30** [Engine] Major refactor — four-pass compaction, pi-aligned parallel tools, leaner core.
+- **2026-05-11** [Skills] Built-in `opencli` — browser control, logged-in cookies, Feishu/Lark, Twitter/X.
 
 ## Benchmark
 
@@ -60,15 +64,6 @@ Give the LLM less context, but higher-quality context. Where other agents call t
 - **Compaction markers** — structured metadata (files modified, conclusions, environment state) survives compaction, so progress is never lost.
 
 **Every gain is earned under a rigorous trace + eval framework, not guessed at.** Each engine change is measured against live traces and a reproducible benchmark pipeline — the same real-world tasks run against Claude Code and Codex (latest versions) — before it ships. Token usage, cost, time, and success rate must improve or hold. Relentless trial and iteration, where the numbers decide what stays. Continuous improvement, no regression.
-
-## 📢 News
-
-- **2026-06-16** [REPL] Shift+Tab cycles reasoning effort; persisted per session.
-- **2026-06-05** [Dashboard] Built-in web dashboard — server metrics, connected sessions, per-session usage breakdown, tool call traces, and span details at a glance.
-- **2026-05-30** [Engine] Major refactor — four-pass compaction pipeline, pi-aligned tools with parallel execution, leaner core. Not backward-compatible; start a new session.
-- **2026-05-11** [Skills] Built-in `opencli` — control the browser, use logged-in cookies, read Feishu/Lark messages, Twitter/X timelines, and more.
-- **2026-05-11** [Slim] Tool outputs now auto-compact, with token savings shown inline.
-- **2026-05-08** [REPL] `/harden` — stress-test plans and git changes before shipping. Inspired by [@cjzafir](https://x.com/cjzafir/status/2052110266566107321).
 
 ## Dashboard
 
@@ -143,9 +138,11 @@ EVOT_LLM_ANTHROPIC_MODEL=claude-opus-4-6
 evot                                          # interactive REPL
 evot -p "summarize today's PRs"               # one-shot task
 evot -p "review this" -f ./src/main.rs        # attach file context
-evot -p "continue work" -c                   # continue latest session in cwd
+evot -p "continue work" -c                    # continue latest session in cwd
 evot -p "continue work" -r my-session         # resume or create session
 ```
+
+> In the REPL: `/help` lists commands, Shift+Tab cycles the reasoning effort.
 
 <details>
 <summary><b>CLI flags & options</b></summary>
@@ -153,10 +150,12 @@ evot -p "continue work" -r my-session         # resume or create session
 | Flag | Description |
 |------|-------------|
 | `-p, --prompt` | Run a single prompt and exit |
-| `-f, --file <path>` | Attach file/directory context |
+| `-f, --file <path>` | Attach file/directory context (repeatable) |
 | `-c, --continue` | Continue the latest session in the current directory |
 | `-r, --resume <id>` | Resume or create a session |
 | `--model <model>` | Override the configured model |
+| `--env-file <path>` | Path to a custom `evot.env` |
+| `--skills <dir>` | Add a skills directory (repeatable) |
 | `--verbose` | Enable info-level logging |
 
 </details>
