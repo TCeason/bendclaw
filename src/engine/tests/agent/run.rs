@@ -1927,6 +1927,129 @@ async fn test_compaction_after_tool_use_waits_for_tool_results() {
 }
 
 #[tokio::test]
+async fn test_non_overflow_error_compacts_on_estimate() {
+    use evotengine::context::ContextConfig;
+
+    // Provider whose agent call fails with a non-overflow "overloaded" error
+    // carrying zero usage. The error response has no usable token counts, so the
+    // post-response path must fall back to the local estimate and compact.
+    //
+    // Summarizer calls (identified by the summarization system prompt) succeed,
+    // so the estimate-driven compaction can actually run.
+    struct OverloadedProvider;
+
+    #[async_trait::async_trait]
+    impl StreamProvider for OverloadedProvider {
+        async fn stream(
+            &self,
+            config: StreamConfig,
+            tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+            cancel: tokio_util::sync::CancellationToken,
+        ) -> Result<StreamOutcome, ProviderError> {
+            if cancel.is_cancelled() {
+                return Err(ProviderError::Cancelled);
+            }
+            let _ = tx.send(StreamEvent::Start);
+
+            // Summarizer calls succeed so compaction can complete.
+            if config
+                .system_prompt
+                .starts_with("You are a context summarization")
+            {
+                let message = Message::Assistant {
+                    content: vec![Content::Text {
+                        text: "summary".into(),
+                    }],
+                    stop_reason: StopReason::Stop,
+                    model: "mock".into(),
+                    provider: "mock".into(),
+                    usage: Usage::default(),
+                    timestamp: 3,
+                    error_message: None,
+                    response_id: None,
+                };
+                let _ = tx.send(StreamEvent::Done {
+                    message: message.clone(),
+                });
+                return Ok(StreamOutcome::complete(message));
+            }
+
+            // Agent call: non-overflow error with zero usage.
+            let message = Message::Assistant {
+                content: vec![Content::Text {
+                    text: String::new(),
+                }],
+                stop_reason: StopReason::Error,
+                model: "mock".into(),
+                provider: "mock".into(),
+                usage: Usage::default(),
+                timestamp: 1,
+                error_message: Some(
+                    "API error: Our servers are currently overloaded. Please try again later."
+                        .into(),
+                ),
+                response_id: None,
+            };
+            let _ = tx.send(StreamEvent::Error {
+                message: message.clone(),
+            });
+            Ok(StreamOutcome::complete(message))
+        }
+    }
+
+    let mut config = make_config(MockProvider::text("unused"));
+    config.provider = std::sync::Arc::new(OverloadedProvider);
+    // Disable retry so the overloaded error reaches the compaction path as a
+    // terminal error response (isolates the estimate fallback under test).
+    config.retry_policy = evotengine::RetryPolicy::disabled();
+    config.context_config = Some(ContextConfig {
+        max_context_tokens: 1_000,
+        system_prompt_tokens: 0,
+        keep_recent: 1,
+        keep_first: 1,
+        tool_output_max_lines: 50,
+    });
+
+    // Start with empty history so pre-prompt compaction cannot fire. The large
+    // prompt alone pushes the post-response estimate over the ~875 threshold
+    // (window 1_000 - reserve 125), so any compaction must come from the
+    // post-response error fallback.
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: Vec::new(),
+        tools: vec![],
+        cwd: std::path::PathBuf::new(),
+        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+        prompt_cache_key: None,
+    };
+
+    let prompt = AgentMessage::Llm(Message::user(format!(
+        "trigger overload {}",
+        "x".repeat(4_000)
+    )));
+    let (tx, rx) = mpsc::unbounded_channel();
+    let cancel = CancellationToken::new();
+
+    agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
+    let events = collect_events(rx);
+
+    // History started empty, so pre-prompt compaction cannot fire — any
+    // compaction here is necessarily the post-response error fallback. (Driver
+    // emits compaction events before the terminal Error event, so event order
+    // is not a reliable discriminator; the empty-history setup is.)
+    assert!(
+        events.iter().any(|e| matches!(e, AgentEvent::Error { .. })),
+        "expected an error event"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::ContextCompactionEnd { .. })),
+        "expected estimate-based compaction to run after a non-overflow error"
+    );
+}
+
+#[tokio::test]
 async fn test_llm_call_start_carries_budget_and_window() {
     use evotengine::context::ContextConfig;
 

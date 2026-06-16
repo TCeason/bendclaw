@@ -130,6 +130,29 @@ fn classify_sse_overloaded_error() {
 }
 
 #[test]
+fn classify_overloaded_message_without_status() {
+    // Plain-text "overloaded" wording (no 529 status) routes to Overloaded.
+    let err = ProviderError::classify(500, "Our servers are currently overloaded", None);
+    assert!(matches!(err, ProviderError::Overloaded(_)));
+    assert!(evotengine::retry::should_retry(&err));
+}
+
+#[test]
+fn overloaded_api_message_is_retryable() {
+    // Even when surfaced as a bare Api error, overloaded wording retries.
+    let err = ProviderError::Api(
+        "API error: Our servers are currently overloaded. Please try again later.".into(),
+    );
+    assert!(evotengine::retry::should_retry(&err));
+}
+
+#[test]
+fn try_again_later_is_retryable() {
+    let err = ProviderError::Api("The model is busy, please try again later.".into());
+    assert!(evotengine::retry::should_retry(&err));
+}
+
+#[test]
 fn stream_interrupted_api_error_is_retryable() {
     let err = ProviderError::Api(
         r#"{"type":"error","error":{"type":"api_error","message":"Stream interrupted. Please retry."}}"#

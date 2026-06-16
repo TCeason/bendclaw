@@ -145,6 +145,25 @@ impl CompactionController {
         // No usable usage — fall back to the local estimate for a threshold-only
         // decision. Overflow detection requires real usage, so it is not
         // attempted here.
+        self.compact_on_estimate(messages, estimated_tokens, summarizer_ctx, cancel)
+            .await
+    }
+
+    /// Estimate-based threshold compaction.
+    ///
+    /// Used when no reliable provider usage is available — either before the
+    /// first prompt of a near-full resumed session, or after a non-overflow
+    /// provider error whose response carries no usable token counts. Mirrors
+    /// pi-mono's `_checkCompaction` error-estimate path: compact on the
+    /// threshold using the caller-supplied estimate. Overflow detection is not
+    /// attempted here because it requires real usage.
+    pub async fn compact_on_estimate(
+        &mut self,
+        messages: &mut Vec<AgentMessage>,
+        estimated_tokens: usize,
+        summarizer_ctx: Option<&SummarizerContext>,
+        cancel: CancellationToken,
+    ) -> CompactionResponse {
         if estimated_tokens > self.config.trigger_threshold() {
             self.overflow_recovery_attempted = false;
             let stats = self.run_compaction(messages, summarizer_ctx, cancel).await;

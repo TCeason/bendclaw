@@ -57,9 +57,24 @@ pub(super) async fn post_response_compaction(
             &usage,
             &current_model,
             Some(&summarizer_ctx),
-            cancel,
+            cancel.clone(),
         )
         .await;
+
+    // A non-overflow provider error (e.g. "overloaded", 5xx) carries no usable
+    // token counts, so the trigger skips it. Fall back to a local estimate so a
+    // near-full session can still compact before the next attempt instead of
+    // staying stuck over budget. Mirrors pi-mono's `_checkCompaction` Case 2.
+    let response = if response.action == AfterResponseAction::Continue
+        && response.stats.is_none()
+        && is_non_overflow_error(assistant_message)
+    {
+        let estimated_tokens = tracker.estimate_context_tokens(messages);
+        ctrl.compact_on_estimate(messages, estimated_tokens, Some(&summarizer_ctx), cancel)
+            .await
+    } else {
+        response
+    };
 
     emit_compaction_events(ctrl, tracker, messages, &response, tx);
 
@@ -183,6 +198,21 @@ fn latest_assistant_provider(messages: &[AgentMessage]) -> Option<String> {
         }
     }
     None
+}
+
+/// Whether the response is a provider error that is *not* a context overflow.
+///
+/// Overflow errors are handled by the trigger's dedicated compact-and-retry
+/// path. Other errors (overloaded, 5xx, network) carry no usable usage, so the
+/// caller falls back to an estimate-based threshold compaction.
+fn is_non_overflow_error(message: &Message) -> bool {
+    matches!(
+        message,
+        Message::Assistant { stop_reason: StopReason::Error, error_message, .. }
+            if !error_message
+                .as_deref()
+                .is_some_and(crate::provider::error::is_context_overflow_message)
+    )
 }
 
 fn usage_snapshot_from_message(message: &Message) -> Option<UsageSnapshot> {

@@ -437,3 +437,47 @@ async fn overflow_exhausted_signals_after_second_overflow() {
     assert!(second.overflow_exhausted);
     assert!(second.stats.is_none());
 }
+
+#[tokio::test]
+async fn compact_on_estimate_compacts_when_over_threshold() {
+    // Mirrors the post-response fallback for a non-overflow error: no usable
+    // usage, so the controller compacts purely on the supplied estimate.
+    let config = config_small();
+    let mut ctrl = CompactionController::new(config);
+
+    let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];
+    for _ in 0..20 {
+        messages.push(user_msg(&big_text(300)));
+        messages.push(assistant_msg(&big_text(300)));
+    }
+    messages.push(user_msg("recent"));
+    messages.push(assistant_msg("recent answer"));
+    let original_count = messages.len();
+
+    // Estimate over the 8_000 threshold (window 10_000 - reserve 2_000).
+    let response = ctrl
+        .compact_on_estimate(&mut messages, 9_000, None, CancellationToken::new())
+        .await;
+
+    assert_eq!(response.action, AfterResponseAction::Continue);
+    assert!(response.stats.is_some());
+    assert!(!response.overflow_exhausted);
+    assert!(messages.len() < original_count);
+}
+
+#[tokio::test]
+async fn compact_on_estimate_skips_below_threshold() {
+    let config = config_small();
+    let mut ctrl = CompactionController::new(config);
+
+    let mut messages = vec![user_msg("hello"), assistant_msg("hi")];
+    let original_count = messages.len();
+
+    let response = ctrl
+        .compact_on_estimate(&mut messages, 1_000, None, CancellationToken::new())
+        .await;
+
+    assert_eq!(response.action, AfterResponseAction::Continue);
+    assert!(response.stats.is_none());
+    assert_eq!(messages.len(), original_count);
+}

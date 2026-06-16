@@ -80,6 +80,8 @@ pub fn should_retry(error: &ProviderError) -> bool {
 fn is_retryable_api_message(message: &str) -> bool {
     let lower = message.to_lowercase();
     lower.contains("rate limit")
+        || lower.contains("overloaded")
+        || lower.contains("try again")
         || lower.contains("temporarily unavailable")
         || lower.contains("timeout")
         || lower.contains("timed out")
