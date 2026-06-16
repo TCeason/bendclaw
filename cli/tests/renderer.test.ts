@@ -165,6 +165,63 @@ describe('TermRenderer', () => {
     })
   })
 
+  describe('off-viewport change (streaming markdown reflow)', () => {
+    // Root cause of the "jump to previous conversation" bug: while streaming,
+    // markdown re-renders the whole accumulated text each frame and reflows
+    // earlier lines (table realign, list renumber). When a reflowed line has
+    // scrolled above the visible viewport, the old code emitted CLEAR_SCREEN
+    // and repainted from the top of the frame, visibly jumping the view.
+    const CLEAR_SCREEN = '\x1b[2J\x1b[H\x1b[3J'
+
+    test('changing a line above the viewport does not clear the screen', async () => {
+      const { renderer, stdout } = createRenderer()
+      stdout.rows = 10
+      renderer.init()
+      const history = Array.from({ length: 30 }, (_, i) => `hist ${i}`)
+      let lines = [...history, 's0', 's1', 's2', 's3']
+      renderer.setRenderCallback(() => lines)
+      await renderFrame(renderer)
+
+      // Append more streamed lines so the viewport scrolls well past history.
+      lines = [...history, 's0', 's1', 's2', 's3', 's4', 's5']
+      await renderFrame(renderer)
+
+      // Now reflow an early line that is above the viewport, while appending one.
+      stdout.clear()
+      const reflowed = [...history]
+      reflowed[5] = 'hist 5 REFLOWED'
+      lines = [...reflowed, 's0', 's1', 's2', 's3', 's4', 's5', 's6']
+      await renderFrame(renderer)
+
+      const out = stdout.output
+      expect(out).not.toContain(CLEAR_SCREEN)
+      // Latest streamed line stays visible.
+      expect(out).toContain('s6')
+      renderer.destroy()
+    })
+
+    test('in-place repaint keeps the newest content visible', async () => {
+      const { renderer, stdout } = createRenderer()
+      stdout.rows = 6
+      renderer.init()
+      const history = Array.from({ length: 20 }, (_, i) => `h${i}`)
+      let lines = [...history, 'a', 'b', 'c']
+      renderer.setRenderCallback(() => lines)
+      await renderFrame(renderer)
+
+      stdout.clear()
+      const reflowed = [...history]
+      reflowed[0] = 'h0-changed'
+      lines = [...reflowed, 'a', 'b', 'c', 'd']
+      await renderFrame(renderer)
+
+      const out = stdout.output
+      expect(out).not.toContain(CLEAR_SCREEN)
+      expect(out).toContain('d')
+      renderer.destroy()
+    })
+  })
+
   describe('freezeLines', () => {
     test('frozen lines are not redrawn on next frame', async () => {
       const { renderer, stdout } = createRenderer()

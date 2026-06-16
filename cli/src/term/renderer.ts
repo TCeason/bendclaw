@@ -288,7 +288,7 @@ export class TermRenderer {
         let buffer = SYNC_START
         const targetRow = Math.max(0, newLines.length - 1)
         if (targetRow < prevViewportTop) {
-          fullRender(true)
+          this.repaintVisible(newLines, width, height, cursorPos, prevViewportTop)
           return
         }
         const lineDiff = computeLineDiff(targetRow)
@@ -297,7 +297,7 @@ export class TermRenderer {
         buffer += '\r'
         const extraLines = this.previousLines.length - newLines.length
         if (extraLines > height) {
-          fullRender(true)
+          this.repaintVisible(newLines, width, height, cursorPos, prevViewportTop)
           return
         }
         if (extraLines > 0) buffer += '\x1b[1B'
@@ -317,9 +317,14 @@ export class TermRenderer {
       return
     }
 
-    // First changed line is above viewport — need full redraw
+    // First changed line is above the visible viewport. The line has already
+    // scrolled into the terminal's hardware scrollback and can't be addressed,
+    // so a CLEAR_SCREEN full redraw would jump the view to the top of the frame
+    // and wipe scrollback. Instead, refresh only the visible window in place —
+    // this is the common streaming case where growing markdown reflows an
+    // earlier line (table realign, list renumber, fence close).
     if (firstChanged < prevViewportTop) {
-      fullRender(true)
+      this.repaintVisible(newLines, width, height, cursorPos, prevViewportTop)
       return
     }
 
@@ -379,6 +384,63 @@ export class TermRenderer {
     this.hardwareCursorRow = finalCursorRow
     this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length)
     this.previousViewportTop = Math.max(prevViewportTop, finalCursorRow - height + 1)
+    this.previousLines = newLines
+    this.previousWidth = width
+    this.previousHeight = height
+    this.positionHardwareCursor(cursorPos, newLines.length)
+  }
+
+  /**
+   * Repaint only the currently visible viewport window in place, without
+   * emitting CLEAR_SCREEN. Used when content above the viewport changed (e.g.
+   * streaming markdown reflowed an earlier line that has already scrolled into
+   * hardware scrollback). A full CLEAR_SCREEN redraw would jump the view to the
+   * top of the frame and wipe scrollback; this keeps the view anchored at the
+   * bottom and leaves frozen scrollback untouched.
+   */
+  private repaintVisible(
+    newLines: string[],
+    width: number,
+    height: number,
+    cursorPos: { row: number; col: number } | null,
+    prevViewportTop: number,
+  ): void {
+    // Bottom-anchor the viewport on the new content so the latest output stays
+    // visible — the same place the user is already looking.
+    const viewportTop = Math.max(0, newLines.length - height)
+    const viewportBottom = Math.max(viewportTop, newLines.length - 1)
+    const printedCount = newLines.length === 0 ? 0 : viewportBottom - viewportTop + 1
+
+    // How many physical rows held content before this repaint, so we can clear
+    // any that the shorter new window leaves stale.
+    const prevVisibleRows = Math.min(height, Math.max(0, this.previousLines.length - prevViewportTop))
+
+    let buffer = SYNC_START
+    // Move the hardware cursor up to the top of the visible window.
+    const currentScreenRow = this.hardwareCursorRow - prevViewportTop
+    if (currentScreenRow > 0) buffer += `\x1b[${currentScreenRow}A`
+    else if (currentScreenRow < 0) buffer += `\x1b[${-currentScreenRow}B`
+    buffer += '\r'
+
+    for (let i = viewportTop; i <= viewportBottom && i < newLines.length; i++) {
+      if (i > viewportTop) buffer += '\r\n'
+      buffer += CLEAR_LINE
+      buffer += newLines[i]
+    }
+
+    // Clear any rows below the new content that still show stale output.
+    const extraToClear = Math.max(0, prevVisibleRows - printedCount)
+    for (let i = 0; i < extraToClear; i++) {
+      buffer += `\r\n${CLEAR_LINE}`
+    }
+    if (extraToClear > 0) buffer += `\x1b[${extraToClear}A`
+
+    buffer += SYNC_END
+    this.write(buffer)
+
+    this.hardwareCursorRow = viewportBottom
+    this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length)
+    this.previousViewportTop = viewportTop
     this.previousLines = newLines
     this.previousWidth = width
     this.previousHeight = height
