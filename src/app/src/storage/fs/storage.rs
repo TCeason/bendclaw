@@ -96,12 +96,13 @@ impl FsStorage {
     async fn read_jsonl<T: serde::de::DeserializeOwned>(&self, path: &Path) -> Result<Vec<T>> {
         match fs::read_to_string(path).await {
             Ok(content) => {
-                let mut values = Vec::new();
-                for line in content.lines() {
-                    if !line.trim().is_empty() {
-                        values.push(serde_json::from_str(line)?);
-                    }
-                }
+                // Skip blank and unparseable lines rather than failing the whole
+                // read — one bad entry must not make an entire session unloadable.
+                let values = content
+                    .lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .filter_map(|line| serde_json::from_str(line).ok())
+                    .collect();
                 Ok(values)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),

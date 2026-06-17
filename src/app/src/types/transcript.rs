@@ -126,9 +126,19 @@ pub enum TranscriptItem {
         #[serde(default)]
         tool_calls: Vec<ToolCallRecord>,
         stop_reason: String,
+        // The fields below (usage/model/provider/timestamp) may be absent in
+        // transcripts written by older schema versions, which only persisted
+        // text/tool_calls/stop_reason. Default them rather than failing the
+        // whole session load — read_jsonl aborts the entire transcript on one
+        // unparseable line, and that error propagates all the way to channel
+        // callers (e.g. the feishu bot resuming a session).
+        #[serde(default)]
         usage: UsageSummary,
+        #[serde(default)]
         model: String,
+        #[serde(default)]
         provider: String,
+        #[serde(default)]
         timestamp: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         error_message: Option<String>,
