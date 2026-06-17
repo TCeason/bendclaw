@@ -66,8 +66,8 @@ function buildSpillEventLines(event: Record<string, unknown>, toolName?: string)
   if (durationMs !== undefined) bits.push(formatDuration(durationMs))
   if (toolName) bits.push(toolName)
   return [
-    { id: `spill-${Date.now()}-0`, kind: 'verbose', text: `[SPILL] ${kind === 'read' ? '↩' : '↪'} ${bits.join(' · ')}` },
-    ...(path ? [{ id: `spill-${Date.now()}-1`, kind: 'verbose' as const, text: `  ${path}` }] : []),
+    { id: `spill-${Date.now()}-0`, kind: 'verbose', text: `  ${kind === 'read' ? '↩' : '↪'} ${bits.join(' · ')}` },
+    ...(path ? [{ id: `spill-${Date.now()}-1`, kind: 'verbose' as const, text: `    ${path}` }] : []),
   ]
 }
 

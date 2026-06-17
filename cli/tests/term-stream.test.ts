@@ -315,7 +315,7 @@ describe('term stream machine', () => {
       },
     }, { termRows: 24 })
     const text = update.commitLines.map(l => l.text).join('\n')
-    expect(text).toContain('[SPILL] \u21aa 117.2 KB written \u00b7 3.9 KB preview \u00b7 bash')
+    expect(text).toContain('\u21aa 117.2 KB written \u00b7 3.9 KB preview \u00b7 bash')
     expect(text).toContain('/tmp/spill.txt')
     expect(update.state.toolProgress).toBe('')
   })
@@ -329,7 +329,7 @@ describe('term stream machine', () => {
       },
     } as any, true)
     const text = lines.map(l => l.text).join('\n')
-    expect(text).toContain('[SPILL] \u21a9 2.0 KB read \u00b7 12ms \u00b7 read_file')
+    expect(text).toContain('\u21a9 2.0 KB read \u00b7 12ms \u00b7 read_file')
     expect(text).toContain('/tmp/tool-results/spill.txt')
     expect(text).not.toContain('__evot_spill_event__')
   })
