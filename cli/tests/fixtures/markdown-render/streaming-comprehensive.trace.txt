@@ -565,17 +565,6 @@ Block:
 Block:
 --- end markdown golden asst-57 ---
 
---- markdown golden asst-58 ---
-[raw markdown]
-$$
-\sum_{i=1}^{n} i = \frac{n(n+1)}{2}
-$$
-
-[rendered lines]
-  ∑ᵢ₌₁ⁿ i = (n(n+1))⁄2
---- end markdown golden asst-58 ---
---- end markdown golden asst-58 ---
-
 --- markdown golden asst-61 ---
 [raw markdown]
 ## Horizontal rules

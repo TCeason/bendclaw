@@ -150,11 +150,11 @@ describe('term stream machine', () => {
     expect(flushed.lines[0]?.text).toContain('After tool')
   })
 
-  test('line-by-line fallback keeps open math blocks pending', () => {
+  test('line-by-line fallback holds incomplete trailing block pending', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
-    const text = 'Intro\n\n$$\n' + Array.from({ length: 12 }, (_, i) => `x_${i} = ${i}`).join('\n')
+    const text = 'Intro\n\n```\n' + Array.from({ length: 12 }, (_, i) => `x_${i} = ${i}`).join('\n')
 
     const update = reduceRunEvent(state, {
       kind: 'assistant_delta',

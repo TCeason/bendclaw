@@ -14,47 +14,6 @@ function configureMarked(): void {
         return undefined as unknown as Tokens.Del
       },
     },
-    extensions: [
-      // Display math: $$...$$  (block-level)
-      {
-        name: 'displayMath',
-        level: 'block',
-        start(src: string) {
-          return src.match(/\$\$/)?.index
-        },
-        tokenizer(src: string) {
-          const match = src.match(/^\$\$([\s\S]+?)\$\$/)
-          if (match) {
-            return {
-              type: 'displayMath',
-              raw: match[0],
-              text: match[1].trim(),
-            }
-          }
-          return undefined
-        },
-      },
-      // Inline math: $...$  (inline-level)
-      {
-        name: 'inlineMath',
-        level: 'inline',
-        start(src: string) {
-          return src.match(/\$/)?.index
-        },
-        tokenizer(src: string) {
-          // Match $...$ but not $$, and not $followed-by-space or space-before$
-          const match = src.match(/^\$([^\s$][^$]*?[^\s$])\$|^\$([^\s$])\$/)
-          if (match) {
-            return {
-              type: 'inlineMath',
-              raw: match[0],
-              text: match[1] ?? match[2],
-            }
-          }
-          return undefined
-        },
-      },
-    ],
   })
 }
 
@@ -67,7 +26,7 @@ function configureMarked(): void {
 // Covers the majority of short assistant responses that are plain sentences.
 // Ordered-list pattern requires `N. ` (digit + dot + space) to avoid
 // misinterpreting bare "2." as a list item.
-const MD_SYNTAX_RE = /[#*`|[>\-_~$]|\n\n|^\d+\. |\n\d+\. /
+const MD_SYNTAX_RE = /[#*`|[>\-_~]|\n\n|^\d+\. |\n\d+\. /
 
 function hasMarkdownSyntax(s: string): boolean {
   return MD_SYNTAX_RE.test(s)
