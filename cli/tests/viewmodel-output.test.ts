@@ -158,6 +158,17 @@ describe('buildOutputBlocks', () => {
     expect(result).toContain('\x1b[31m')
   })
 
+  test('long error wraps instead of truncating', () => {
+    const msg = '  rate_limit_error: You have reached your usage limit for this period. Your quota will be refreshed in the next period. Upgrade to get more at the console.'
+    const result = renderPlainWithColumns([{ id: 'e1', kind: 'error', text: msg }], 72)
+    expect(result).not.toContain('…')
+    expect(result.replace(/\n\s*/g, '')).toContain('console.')
+    const lines = result.split('\n').filter(l => l.length > 0)
+    expect(lines.length).toBeGreaterThan(1)
+    // Wrapped continuations keep the 2-space indent.
+    expect(lines[1]!.startsWith('  ')).toBe(true)
+  })
+
   test('run_summary is dim', () => {
     const result = render([{ id: 'r1', kind: 'run_summary', text: '  3 turns · 1.2k tokens' }])
     expect(result).toContain('\x1b[38;2;119;119;119m')

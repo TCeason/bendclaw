@@ -78,9 +78,23 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
         blocks.push(buildVerboseBlock(ol.text))
         break
 
-      case 'error':
-        blocks.push(block([line(colored(ol.text, 'red'))]))
+      case 'error': {
+        const cols = initialContext.columns
+        // Preserve the 2-space indent used by LLM-error body lines so wrapped
+        // continuations align under the first line.
+        const indentMatch = ol.text.match(/^(\s*)/)
+        const indent = indentMatch ? indentMatch[1]! : ''
+        const avail = cols ? Math.max(1, cols - indent.length) : 0
+        const body = ol.text.slice(indent.length)
+        if (avail > 0 && stringWidth(body) > avail) {
+          const chunks = wrapTextByWidth(body, avail)
+          const errLines = chunks.map(c => line(colored(`${indent}${body.slice(c.start, c.end)}`, 'red')))
+          blocks.push(block(errLines))
+        } else {
+          blocks.push(block([line(colored(ol.text, 'red'))]))
+        }
         break
+      }
 
       case 'system':
         blocks.push(block(ol.text.split('\n').map(l => line(dim(l)))))

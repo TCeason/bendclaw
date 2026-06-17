@@ -342,7 +342,7 @@ export function buildLlmCard(text: string): OutputLine[] {
     lines.push({ id: genId('tool'), kind: 'tool', text: `  ${mark}${meta ? ` · ${meta}` : ''}` })
   }
   for (const b of body) {
-    lines.push({ id: genId('tool-res'), kind: 'error', text: `  ${truncate(b, 200)}` })
+    lines.push({ id: genId('tool-res'), kind: 'error', text: `  ${b}` })
   }
   return lines
 }
