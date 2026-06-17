@@ -542,6 +542,23 @@ describe('term stream machine', () => {
     expect(text).toContain('rate limited')
   })
 
+  test('llm error card and following error event do not duplicate the message', () => {
+    const msg = 'API error: HTTP 520: error code: 520'
+    let state = createStreamMachineState(createInitialState('claude-opus-4-6', '/tmp'), createSpinnerState())
+    const u1 = reduceRunEvent(state, {
+      kind: 'llm_call_completed',
+      payload: { model: 'claude-opus-4-6', turn: 5, error: msg, metrics: { duration_ms: 43800 } },
+    }, { termRows: 24 })
+    state = u1.state
+    const u2 = reduceRunEvent(state, { kind: 'error', payload: { message: msg } }, { termRows: 24 })
+    const tui = [...u1.commitLines, ...u2.commitLines].map(l => l.text).join('\n')
+    // Message shows exactly once in the TUI (the llm card), and the redundant
+    // standalone error line is routed to screen.log instead.
+    expect((tui.match(/HTTP 520: error code: 520/g) ?? []).length).toBe(1)
+    expect(tui).toContain('✦ llm  claude-opus-4-6')
+    expect(u2.writeLines.some(l => l.text.includes('HTTP 520'))).toBe(true)
+  })
+
   test('run_summary is visible in commitLines', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()

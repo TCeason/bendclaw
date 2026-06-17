@@ -24,6 +24,9 @@ export interface StreamMachineState {
   prefixEmitted: boolean
   assistantCommitted: boolean
   activeLlmCall: boolean
+  /** Last error message surfaced via an LLM error card, so a following
+   *  `error` event carrying the same text doesn't render it twice. */
+  lastLlmErrorMessage: string | null
 }
 
 export interface StreamContext {
@@ -92,6 +95,7 @@ export function createStreamMachineState(appState: AppState, spinnerState: Spinn
     prefixEmitted: false,
     assistantCommitted: false,
     activeLlmCall: false,
+    lastLlmErrorMessage: null,
   }
 }
 
@@ -104,6 +108,9 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
   let rerenderStatus = false
   let suppressToolStarted = false
   let suppressToolFinished = false
+  // Tracks an LLM error message surfaced as a card this tick (or carried from a
+  // prior tick via state), so a following `error` event won't duplicate it.
+  let capturedLlmError: string | null = prev.lastLlmErrorMessage
 
   function mergeFlushExpanded(flushed: { expandedLines?: OutputLine[] }) {
     if (flushed.expandedLines) {
@@ -116,8 +123,15 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
   // screen.log. The exceptions are LLM errors and retries, which render as
   // tool-style cards in the TUI so the user always sees them.
   const routeVerbose = (text: string, target: { commit: OutputLine[]; write: OutputLine[] }) => {
-    if (isVisibleLlmEvent(text)) target.commit.push(...buildLlmCard(text))
-    else target.write.push(...buildVerboseEvent(text))
+    if (isVisibleLlmEvent(text)) {
+      target.commit.push(...buildLlmCard(text))
+      // Remember the error message (the `    error     <msg>` tail) so a
+      // following `error` event with the same text isn't rendered twice.
+      const m = text.match(/\n\s*error\s+(.+)$/s)
+      if (text.includes('✗') && m) capturedLlmError = m[1]!.trim()
+    } else {
+      target.write.push(...buildVerboseEvent(text))
+    }
   }
 
   if (event.kind === 'llm_call_started' || event.kind === 'llm_call_retry' || event.kind === 'api_retry' || event.kind === 'context_compaction_started') {
@@ -283,7 +297,13 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     commitLines.push(...flushed.lines)
     mergeFlushExpanded(flushed)
     writeLines.push(...flushed.lines)
-    commitLines.push(...buildError((p.message as string) ?? 'Unknown error'))
+    const message = (p.message as string) ?? 'Unknown error'
+    // Skip the standalone `Error:` line if an LLM error card already showed
+    // this same message (the provider error surfaces via both events).
+    const alreadyShown = capturedLlmError != null &&
+      (message.trim() === capturedLlmError || message.includes(capturedLlmError) || capturedLlmError.includes(message.trim()))
+    if (alreadyShown) writeLines.push(...buildError(message))
+    else commitLines.push(...buildError(message))
   }
 
   if (event.kind === 'run_finished') {
@@ -295,7 +315,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
   }
 
   return {
-    state,
+    state: { ...state, lastLlmErrorMessage: capturedLlmError },
     commitLines,
     expandedCommitLines,
     writeLines,
