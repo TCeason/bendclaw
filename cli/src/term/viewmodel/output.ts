@@ -60,7 +60,7 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
 
       case 'thinking_summary': {
         blocks.push(block([
-          line(colored('[REASONING]', 'cyan', { bold: true }), colored(' ✓', 'cyan', { bold: true }), dim(` ${ol.text}`)),
+          line(colored('✻', 'cyan', { bold: true }), bold(' thinking'), dim(`  · ${ol.text}`)),
         ], 1))
         break
       }
