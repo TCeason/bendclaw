@@ -210,7 +210,7 @@ fn is_quota_exceeded(message: &str) -> bool {
         || lower.contains("insufficient_quota")
         || lower.contains("out of budget")
         || lower.contains("available balance")
-        || lower.contains("usage limit reached")
+        || lower.contains("usage limit") // Kimi: "reached your usage limit for this period"
         || lower.contains("billing")
 }
 

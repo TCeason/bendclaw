@@ -82,6 +82,25 @@ fn classify_rate_limit_with_retry_after() {
 }
 
 #[test]
+fn classify_quota_exhausted_429_is_not_retryable() {
+    // A 429 that signals exhausted quota (vs. transient rate limiting) must not
+    // retry: the quota only refreshes next billing period, so retrying just
+    // hammers the same error. Kimi's wording is the regression case here.
+    let kimi = "rate_limit_error: You've reached your usage limit for this period. \
+        Your quota will be refreshed in the next period. Upgrade to get more.";
+    let err = ProviderError::classify(429, kimi, None);
+    assert!(matches!(err, ProviderError::Other(_)));
+    assert!(!evotengine::retry::should_retry(&err));
+
+    // Other quota phrasings stay non-retryable too.
+    for msg in ["insufficient_quota", "quota exceeded", "out of budget"] {
+        let err = ProviderError::classify(429, msg, None);
+        assert!(matches!(err, ProviderError::Other(_)), "{msg}");
+        assert!(!evotengine::retry::should_retry(&err), "{msg}");
+    }
+}
+
+#[test]
 fn retry_policy_default_matches_claude_style_backoff_budget() {
     let policy = evotengine::RetryPolicy::default();
     assert_eq!(policy.max_retries(), 10);
