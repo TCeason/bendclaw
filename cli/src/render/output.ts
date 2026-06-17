@@ -45,7 +45,9 @@ function toolPrimaryArg(name: string, args: Record<string, unknown>, previewComm
   const path = (args?.path ?? args?.file ?? args?.file_path) as string | undefined
   if (path) return path
   const pattern = (args?.pattern ?? args?.query ?? args?.url) as string | undefined
-  if (pattern) return truncate(String(pattern), 160)
+  // Show the full value — the viewmodel wraps the card arg to terminal width,
+  // so the tail is never lost. Newlines collapse to a single logical line.
+  if (pattern) return String(pattern).replace(/\r?\n/g, ' ').trim()
   return ''
 }
 
