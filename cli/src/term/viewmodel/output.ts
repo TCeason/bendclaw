@@ -99,6 +99,7 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
 }
 
 function buildToolBlock(text: string): ViewBlock {
+  // Goal/Todo checklist headers keep their `[BADGE]` form.
   const badgeMatch = text.match(/^\[([^\]]+)\]\s*(.*)$/)
   if (badgeMatch) {
     const badge = badgeMatch[1]!
@@ -116,6 +117,34 @@ function buildToolBlock(text: string): ViewBlock {
 
     return block([line(...spans)], 1)
   }
+
+  // Tool “card” header: `<glyph> <name>  <arg>  <✓|✗> <dur·info>`.
+  // The glyph starts the line (sub-lines are indented), so a leading glyph
+  // unambiguously marks the card. Paint: glyph cyan (red on error), name
+  // bold, arg dim, ✓ green / ✗ red, trailing meta dim.
+  const cardMatch = text.match(/^([⌘◫⌕⊕✎·]) (.+)$/u)
+  if (cardMatch) {
+    const glyph = cardMatch[1]!
+    const rest = cardMatch[2]!
+    const markIdx = rest.search(/[✓✗]/u)
+    const isError = rest.includes('✗')
+    const head = markIdx >= 0 ? rest.slice(0, markIdx).trimEnd() : rest.trimEnd()
+    const markTail = markIdx >= 0 ? rest.slice(markIdx) : ''
+    // head = `name  arg` (two-space separator before the primary arg)
+    const sep = head.indexOf('  ')
+    const name = sep < 0 ? head : head.slice(0, sep)
+    const arg = sep < 0 ? '' : head.slice(sep + 2)
+    const spans = [colored(glyph, isError ? 'red' : 'cyan', { bold: true }), bold(` ${name}`)]
+    if (arg) spans.push(dim(`  ${arg}`))
+    if (markTail) {
+      const mark = markTail[0]!
+      const tail = markTail.slice(1)
+      spans.push(colored(` ${mark}`, isError ? 'red' : 'green', { bold: true }))
+      if (tail.trim()) spans.push(dim(tail))
+    }
+    return block([line(...spans)], 1)
+  }
+
   if (text.startsWith('  ')) {
     const trimmed = text.trimStart()
     if (/^[{}\[\],]/.test(trimmed) || /^"[^"\\]*(?:\\.[^"\\]*)*"\s*:/.test(trimmed)) {

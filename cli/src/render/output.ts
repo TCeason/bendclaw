@@ -14,6 +14,41 @@ import { truncate, humanTokens, formatDuration, renderBar, toolResultLines, padR
 import type { RunStats, SlimStats, UIMessage } from '../term/app/types.js'
 
 // ---------------------------------------------------------------------------
+// Tool presentation — icon + primary-arg per tool, in the spirit of
+// pi-thinking-steps' semantic glyphs. The status (✓ / ✗ + duration) is
+// rendered inline on the same line at finish time, so a tool reads as a
+// single “card” line followed only by its real output.
+// ---------------------------------------------------------------------------
+
+interface ToolGlyph { icon: string }
+
+/** Map an engine tool name to a compact glyph. Unknown tools fall back to `·`. */
+function toolGlyph(name: string): ToolGlyph {
+  switch (name.toLowerCase()) {
+    case 'bash': return { icon: '⌘' }
+    case 'read': case 'read_code': return { icon: '◫' }
+    case 'grep': case 'glob': case 'find': case 'search': return { icon: '⌕' }
+    case 'web_fetch': case 'webfetch': return { icon: '⊕' }
+    case 'edit': case 'file_edit': case 'write': case 'file_write': return { icon: '✎' }
+    default: return { icon: '·' }
+  }
+}
+
+/** The single most useful argument to show beside the tool name. */
+function toolPrimaryArg(name: string, args: Record<string, unknown>, previewCommand?: string): string {
+  const n = name.toLowerCase()
+  if (n === 'bash') {
+    const cmd = (previewCommand ?? (args?.command as string) ?? '').replace(/\r?\n/g, ' ').trim()
+    return cmd
+  }
+  const path = (args?.path ?? args?.file ?? args?.file_path) as string | undefined
+  if (path) return path
+  const pattern = (args?.pattern ?? args?.query ?? args?.url) as string | undefined
+  if (pattern) return String(pattern)
+  return ''
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -125,35 +160,18 @@ export function buildToolCall(
 ): OutputLine[] {
   if (name === 'update_goal_tasks' || name === 'TodoWrite') return buildGoalTaskCall(name, args)
 
+  // Regular tools render as a single "card" line at finish time
+  // (see buildToolResult). The running state is shown by the spinner
+  // (“Executing [TOOL]…”) and live progress in the dynamic zone, so we don't
+  // commit a separate start line that would duplicate the finished card.
+  // Reason fields are the one exception: the model's justification for the
+  // call should be visible up-front, before the tool completes.
   const lines: OutputLine[] = []
-  const inputInfo = formatToolInputInfo(args, previewCommand)
-  lines.push({
-    id: genId('tool'),
-    kind: 'tool',
-    text: `[${name.toUpperCase()}] ●${inputInfo}`,
-  })
-  // Reason fields (why this call / why bypass a dedicated tool / why raise the
-  // timeout) render as ↳ lines regardless of whether a preview command exists,
-  // so the model's justification is always visible.
   for (const line of formatReasonLines(args)) {
     lines.push({ id: genId('tool'), kind: 'tool', text: `  ${line}` })
   }
-  // Detail: preview command takes priority, otherwise show args
-  if (previewCommand) {
-    const cmdLines = previewCommand.replace(/\r\n/g, '\n').split('\n')
-    const visible = expanded ? cmdLines : cmdLines.slice(0, 3)
-    lines.push({ id: genId('tool'), kind: 'tool', text: `  ❯ ${visible[0] ?? ''}` })
-    for (let i = 1; i < visible.length; i++) {
-      lines.push({ id: genId('tool'), kind: 'tool', text: `    ${visible[i]}` })
-    }
-    if (!expanded && cmdLines.length > visible.length) {
-      lines.push({ id: genId('tool'), kind: 'tool', text: `    ... (+${cmdLines.length - visible.length} lines, ctrl+o to expand)` })
-    }
-  } else {
-    for (const line of formatToolInputLines(args)) {
-      lines.push({ id: genId('tool'), kind: 'tool', text: `  ${line}` })
-    }
-  }
+  void previewCommand
+  void expanded
   return lines
 }
 
@@ -174,12 +192,16 @@ export function buildToolResult(
   }
 
   const dur = durationMs !== undefined ? ` · ${formatDuration(durationMs)}` : ''
-  const badge = name.toUpperCase()
+  const glyph = toolGlyph(name).icon
+  const primary = toolPrimaryArg(name, args, undefined)
   const resultInfo = result ? formatToolResultInfo(result) : ''
   const slimSuffix = formatSlimSuffix(slim)
-  const label = isError
-    ? `[${badge}] ✗${dur}${resultInfo}${slimSuffix}`
-    : `[${badge}] ✓${dur}${resultInfo}${slimSuffix}`
+  const statusMark = isError ? '✗' : '✓'
+  // Single "card" line: `<icon> <name>  <primary-arg>  <mark> <dur·info>`
+  // The icon + status mark carry success/failure; the viewmodel paints them.
+  const namePart = `${glyph} ${name}`
+  const argPart = primary ? `  ${primary}` : ''
+  const label = `${namePart}${argPart}  ${statusMark}${dur}${resultInfo}${slimSuffix}`
   lines.push({
     id: genId('tool'),
     kind: 'tool',
@@ -764,16 +786,6 @@ function formatToolResultContent(content: string): string {
   return JSON.stringify(parsed, null, 2)
 }
 
-function formatToolInputInfo(args: Record<string, unknown>, previewCommand?: string): string {
-  if (previewCommand) {
-    const lines = previewCommand.replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n').filter(Boolean)
-    return lines.length > 1 ? ` · command · ${lines.length} lines` : ' · command'
-  }
-  const entries = Object.entries(args ?? {}).filter(([k]) => k !== 'diff' && !isReasonKey(k))
-  if (entries.length === 0) return ''
-  return ` · ${entries.length} arg${entries.length === 1 ? '' : 's'}`
-}
-
 /** Reason-style fields the model fills to justify a call. Rendered separately
  *  as ↳ lines and excluded from the generic arg list. */
 function isReasonKey(key: string): boolean {
@@ -810,38 +822,4 @@ function formatReasonLines(args: Record<string, unknown>): string[] {
     lines.push(`↳ ${reasonLabel(k)}: ${truncate(val, 120)}`)
   }
   return lines
-}
-
-/** Format all args as key: value lines (matching Rust REPL's format_tool_input_lines). */
-function formatToolInputLines(args: Record<string, unknown>): string[] {
-  if (!args || typeof args !== 'object') return []
-  const entries = Object.entries(args).filter(([k]) => k !== 'diff' && !isReasonKey(k))
-  if (entries.length === 0) return []
-  const lines: string[] = []
-  for (const [k, v] of entries) {
-    if (typeof v === 'string') {
-      lines.push(`${k}: ${truncate(v, 120)}`)
-    } else {
-      const formatted = formatJsonValue(v)
-      const formattedLines = formatted.split('\n')
-      if (formatted.includes('\n')) {
-        lines.push(`${k}:`)
-        for (const line of formattedLines.slice(0, 12)) {
-          lines.push(`  ${line}`)
-        }
-        const total = formattedLines.length
-        if (total > 12) lines.push(`  ... (+${total - 12} lines)`)
-      } else {
-        lines.push(`${k}: ${truncate(formatted, 120)}`)
-      }
-    }
-  }
-  return lines
-}
-
-function formatJsonValue(value: unknown): string {
-  if (Array.isArray(value) || (value && typeof value === 'object')) {
-    return JSON.stringify(value, null, 2)
-  }
-  return String(value)
 }

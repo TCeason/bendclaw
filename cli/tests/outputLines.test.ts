@@ -71,17 +71,12 @@ describe('buildAssistantLines', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildToolCall', () => {
-  test('compact bash preview shows head and expand hint', () => {
-    const preview = ['python3 << EOF', 'import json', 'print(1)', 'print(2)', 'EOF'].join('\n')
+  test('regular tool call emits no start line (card renders at finish)', () => {
+    const preview = ['python3 << EOF', 'import json', 'print(1)'].join('\n')
     const lines = buildToolCall('bash', {}, preview)
-    const all = lines.map(l => l.text).join('\n')
-
-    expect(all).toContain('command · 5 lines')
-    expect(all).toContain('  ❯ python3 << EOF')
-    expect(all).toContain('    import json')
-    expect(all).toContain('    print(1)')
-    expect(all).not.toContain('    print(2)')
-    expect(all).toContain('... (+2 lines, ctrl+o to expand)')
+    // The persistent tool line is the finished card; the start commit is empty
+    // (running state is shown by the spinner + live progress).
+    expect(lines).toHaveLength(0)
   })
 
   test('renders goal task updates as a compact goal block', () => {
@@ -109,22 +104,13 @@ describe('buildToolCall', () => {
     expect(all).not.toContain('UPDATE_GOAL_TASKS')
   })
 
-  test('expanded bash preview shows full command', () => {
-    const preview = ['python3 << EOF', 'import json', 'print(1)', 'print(2)', 'EOF'].join('\n')
-    const lines = buildToolCall('bash', {}, preview, true)
-    const all = lines.map(l => l.text).join('\n')
-
-    expect(all).toContain('    print(2)')
-    expect(all).toContain('    EOF')
-    expect(all).not.toContain('ctrl+o to expand')
-  })
-
-  test('renders reason as a ↳ line alongside a preview command', () => {
+  test('regular tool call still surfaces reason lines up-front', () => {
     const lines = buildToolCall('bash', { reason: 'list project files' }, 'ls -la')
     const all = lines.map(l => l.text).join('\n')
     expect(all).toContain('↳ reason: list project files')
-    // Preview command still renders.
-    expect(all).toContain('❯ ls -la')
+    // The command itself is no longer shown on the start line — it appears on
+    // the finished card instead.
+    expect(all).not.toContain('❯ ls -la')
   })
 
   test('renders bash bypass and timeout reasons with friendly labels', () => {
@@ -144,37 +130,38 @@ describe('buildToolCall', () => {
     expect(all).not.toContain('why not read')
   })
 
-  test('omits empty and N/A reasons, and does not double-count reason in arg summary', () => {
+  test('omits empty and N/A reasons from the call line', () => {
     const lines = buildToolCall('grep', { pattern: 'foo', reason: '' })
     const all = lines.map(l => l.text).join('\n')
     expect(all).not.toContain('↳ reason:')
-    // reason is excluded from the generic arg count (only `pattern` remains).
-    expect(all).toContain('· 1 arg')
+    // No generic arg summary on the start line anymore.
+    expect(all).not.toContain('1 arg')
   })
 })
 
 describe('buildToolResult', () => {
-  test('creates tool badge with uppercase name, status dot, and duration', () => {
+  test('creates tool card with glyph, name, status mark, and duration', () => {
     const lines = buildToolResult('bash', { command: 'ls -la' }, 'done', undefined, 42)
     expect(lines.length).toBeGreaterThanOrEqual(1)
     expect(lines[0]!.kind).toBe('tool')
-    expect(lines[0]!.text).toContain('[BASH]')
+    expect(lines[0]!.text).toContain('⌘ bash')
+    expect(lines[0]!.text).toContain('ls -la')
     expect(lines[0]!.text).toContain('✓')
     expect(lines[0]!.text).not.toContain('completed')
     expect(lines[0]!.text).toContain('42ms')
   })
 
-  test('creates error tool badge', () => {
+  test('creates error tool card', () => {
     const lines = buildToolResult('bash', { command: 'fail' }, 'error', 'command not found', 10)
-    expect(lines[0]!.text).toContain('[BASH]')
+    expect(lines[0]!.text).toContain('⌘ bash')
     expect(lines[0]!.text).toContain('✗')
     expect(lines[0]!.text).not.toContain('failed')
     expect(lines.some((l) => l.kind === 'error')).toBe(true)
   })
 
-  test('pretty prints JSON result and summarizes it in the badge', () => {
+  test('pretty prints JSON result and summarizes it in the card', () => {
     const lines = buildToolResult('web_fetch', {}, 'done', '{"status":"ok","items":[1,2]}', undefined, true)
-    expect(lines[0]!.text).toContain('[WEB_FETCH]')
+    expect(lines[0]!.text).toContain('⊕ web_fetch')
     expect(lines[0]!.text).toContain('JSON')
     expect(lines[0]!.text).toContain('2 keys')
     const all = lines.map(l => l.text).join('\n')

@@ -593,16 +593,25 @@ describe('term stream machine', () => {
   })
 
   test('build tool start/finish lines', () => {
+    // Regular tools emit no start line (the card renders at finish); reason
+    // fields are the only thing surfaced up-front.
     const started = buildToolStartedLines({
       kind: 'tool_started',
       payload: { tool_name: 'bash', args: { command: 'ls' } },
     })
-    expect(started.length).toBeGreaterThan(0)
+    expect(started).toHaveLength(0)
+
+    const startedWithReason = buildToolStartedLines({
+      kind: 'tool_started',
+      payload: { tool_name: 'bash', args: { command: 'ls', reason: 'list files' } },
+    })
+    expect(startedWithReason.length).toBeGreaterThan(0)
 
     const finished = buildToolFinishedLines({
       kind: 'tool_finished',
       payload: { tool_name: 'bash', args: { command: 'ls' }, is_error: false, content: 'ok', duration_ms: 10 },
     })
     expect(finished.length).toBeGreaterThan(0)
+    expect(finished[0]!.text).toContain('⌘ bash')
   })
 })

@@ -300,9 +300,9 @@ export function toolResultLines(content: string, isError: boolean, toolName?: st
 
   const summarize = (): string => {
     if (!content.trim()) {
-      return isError ? 'Result: tool returned an error' : 'Result: completed'
+      return isError ? 'tool returned an error' : 'completed'
     }
-    return `Result: ${summarizeInline(content, 160)}`
+    return summarizeInline(content, 160)
   }
 
   const normalized = content.replace(/\r\n/g, '\n')

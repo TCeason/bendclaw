@@ -81,7 +81,8 @@ describe('tool result slim suffix', () => {
       { filter: 'tail', original: 20000, slimmed: 4000 },
     )
     const text = headerText(lines)
-    expect(text.startsWith('[BASH] ✗')).toBe(true)
+    expect(text.startsWith('⌘ bash')).toBe(true)
+    expect(text.includes('✗')).toBe(true)
     expect(text.includes('· slim(tail) ~5.0k→~1.0k tok −80%')).toBe(true)
   })
 })
