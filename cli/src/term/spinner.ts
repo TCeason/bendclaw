@@ -18,6 +18,25 @@ const SLOW_THRESHOLD_MS = 8000
 
 export type SpinnerPhase = 'thinking' | 'executing'
 
+/**
+ * Map a tool name to a human action label shown on the spinner while it runs.
+ * Grouped into verbs that mirror the tool-card glyphs (read/search/edit/...).
+ * Unknown tools fall back to a generic "Working".
+ */
+export function toolActionLabel(toolName: string): string {
+  switch (toolName.toLowerCase()) {
+    case 'read': case 'read_code': return 'Reading'
+    case 'grep': case 'glob': case 'find': case 'search': case 'semantic_code_search': return 'Searching'
+    case 'edit': case 'file_edit': case 'write': case 'file_write': return 'Editing'
+    case 'bash': return 'Running'
+    case 'web_fetch': case 'webfetch': return 'Fetching'
+    case 'update_goal_tasks': case 'todowrite': return 'Planning'
+    case 'skill': return 'Loading skill'
+    case 'ask_user': case 'askuser': return 'Waiting for you'
+    default: return 'Working'
+  }
+}
+
 export interface SpinnerState {
   frame: number
   phase: SpinnerPhase
@@ -82,12 +101,12 @@ export function formatSpinnerLine(state: SpinnerState, now: number, stats?: Spin
   const char = SPINNER_FRAMES[state.frame]!
 
   const isTool = state.phase === 'executing'
-  const tool = state.toolName ? ` [${state.toolName.toUpperCase()}]` : ''
+  const action = state.toolName ? toolActionLabel(state.toolName) : 'Working'
   let label: string
   if (slow) {
-    label = isTool ? `Executing${tool} slow…` : 'LLM slow…'
+    label = isTool ? `${action} slow…` : 'LLM slow…'
   } else {
-    label = isTool ? `Executing${tool}…` : 'Thinking…'
+    label = isTool ? `${action}…` : 'Thinking…'
   }
 
   const status = formatFixedDuration(elapsed)

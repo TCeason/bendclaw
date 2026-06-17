@@ -131,10 +131,28 @@ describe('formatSpinnerLine', () => {
     expect(line).toContain('Thinking…')
   })
 
-  test('contains Executing label when executing', () => {
+  test('contains action label when executing', () => {
     const state = setSpinnerPhase(createSpinnerState(), 'executing', 'bash')
     const line = stripAnsi(formatSpinnerLine(state, Date.now()))
-    expect(line).toContain('Executing [BASH]…')
+    expect(line).toContain('Running…')
+  })
+
+  test('maps tool names to action verbs', () => {
+    const cases: [string, string][] = [
+      ['read', 'Reading…'],
+      ['grep', 'Searching…'],
+      ['edit', 'Editing…'],
+      ['web_fetch', 'Fetching…'],
+      ['update_goal_tasks', 'Planning…'],
+      ['skill', 'Loading skill…'],
+      ['ask_user', 'Waiting for you…'],
+      ['some_unknown_tool', 'Working…'],
+    ]
+    for (const [tool, label] of cases) {
+      const state = setSpinnerPhase(createSpinnerState(), 'executing', tool)
+      const line = stripAnsi(formatSpinnerLine(state, Date.now()))
+      expect(line).toContain(label)
+    }
   })
 
   test('contains slow label after threshold', () => {
@@ -144,7 +162,7 @@ describe('formatSpinnerLine', () => {
     expect(line).toContain('LLM slow…')
   })
 
-  test('contains Executing slow label', () => {
+  test('contains action slow label', () => {
     const now = Date.now()
     const state = {
       ...createSpinnerState(),
@@ -153,7 +171,7 @@ describe('formatSpinnerLine', () => {
       toolName: 'bash',
     }
     const line = stripAnsi(formatSpinnerLine(state, now))
-    expect(line).toContain('Executing [BASH] slow…')
+    expect(line).toContain('Running slow…')
   })
 
   test('contains duration', () => {
