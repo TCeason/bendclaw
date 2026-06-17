@@ -93,44 +93,9 @@ fn calculate_context_tokens(usage: &UsageSnapshot) -> usize {
 }
 
 /// Match provider error messages that indicate context overflow.
+///
+/// Delegates to the single source of truth in the provider error module so the
+/// trigger, the HTTP classifier, and the retry policy never drift apart.
 fn is_context_overflow(error_message: &str) -> bool {
-    static PATTERNS: &[&str] = &[
-        // Anthropic
-        "prompt is too long",
-        "request_too_large",
-        "request exceeds the maximum size",
-        // OpenAI
-        "exceeds the context window",
-        "exceeds the model's maximum context length",
-        // Google
-        "exceeds the maximum number of tokens allowed",
-        "input token count",
-        // xAI
-        "maximum prompt length is",
-        // Groq
-        "reduce the length of the messages",
-        // OpenRouter
-        "maximum context length is",
-        // Together AI
-        "is longer than the model's context length",
-        // llama.cpp
-        "exceeds the available context size",
-        // LM Studio
-        "greater than the context length",
-        // Poolside
-        "exceeds the maximum allowed input length",
-        // GitHub Copilot
-        "prompt token count of",
-        // MiniMax
-        "context window exceeds limit",
-        // Kimi
-        "exceeded model token limit",
-        // Mistral
-        "too large for model with",
-        // Cerebras (status code only, but sometimes has body)
-        "request too large",
-    ];
-
-    let lower = error_message.to_lowercase();
-    PATTERNS.iter().any(|p| lower.contains(p))
+    crate::provider::error::is_context_overflow_message(error_message)
 }

@@ -127,27 +127,68 @@ pub async fn classify_eventsource_error(error: reqwest_eventsource::Error) -> Pr
 // Context overflow detection
 // ---------------------------------------------------------------------------
 
+/// Substrings that indicate a context-overflow error, across every supported
+/// provider. This is the single source of truth for overflow detection — the
+/// HTTP classifier, the SSE/JSON error paths, the retry policy, and the
+/// compaction trigger all route through [`is_context_overflow_message`] rather
+/// than maintaining their own copies.
+///
+/// Each entry documents the provider whose error wording it matches.
 const OVERFLOW_PHRASES: &[&str] = &[
-    "prompt is too long",                 // Anthropic
-    "input is too long",                  // AWS Bedrock
-    "exceeds the context window",         // OpenAI (Completions & Responses)
-    "exceeds the maximum",                // Google Gemini
-    "maximum prompt length",              // xAI
-    "reduce the length of the messages",  // Groq
-    "maximum context length",             // OpenRouter
-    "exceeds the limit of",               // GitHub Copilot
-    "exceeds the available context size", // llama.cpp
-    "greater than the context length",    // LM Studio
-    "context window exceeds limit",       // MiniMax
-    "exceeded model token limit",         // Kimi
-    "context length exceeded",            // Generic
-    "context_length_exceeded",            // Generic (underscore variant)
-    "too many tokens",                    // Generic
-    "token limit exceeded",               // Generic
+    "prompt is too long",                           // Anthropic (token overflow)
+    "request_too_large",                            // Anthropic (HTTP 413 byte-size)
+    "request too large",                            // Anthropic / Cerebras variant
+    "request exceeds the maximum size",             // Anthropic
+    "input is too long",                            // AWS Bedrock
+    "exceeds the context window",                   // OpenAI (Completions & Responses)
+    "maximum context length",                       // OpenAI / OpenRouter / LiteLLM
+    "exceeds the maximum number of tokens allowed", // Google Gemini
+    "input token count",                            // Google Gemini
+    "maximum prompt length",                        // xAI (Grok)
+    "reduce the length of the messages",            // Groq
+    "exceeds the maximum allowed input length",     // OpenRouter / Poolside
+    "is longer than the model's context length",    // Together AI
+    "exceeds the limit of",                         // GitHub Copilot
+    "prompt token count of",                        // GitHub Copilot
+    "exceeds the available context size",           // llama.cpp
+    "greater than the context length",              // LM Studio
+    "context window exceeds limit",                 // MiniMax
+    "exceeded model token limit",                   // Kimi
+    "too large for model with",                     // Mistral
+    "model_context_window_exceeded",                // z.ai
+    "prompt too long; exceeded",                    // Ollama
+    "context length exceeded",                      // Generic
+    "context_length_exceeded",                      // Generic (underscore variant)
+    "too many tokens",                              // Generic
+    "token limit exceeded",                         // Generic
 ];
 
+/// Substrings that indicate a *non*-overflow error even though they may also
+/// contain an overflow phrase. Checked first so transient errors are never
+/// misclassified as overflow.
+///
+/// Example: a throttling message like "Too many tokens, please wait before
+/// trying again" matches the `too many tokens` overflow phrase, but is really a
+/// rate-limit error that should be retried, not compacted.
+const NON_OVERFLOW_PHRASES: &[&str] = &[
+    "rate limit",        // Generic rate limiting
+    "too many requests", // Generic HTTP 429 style
+    "throttl",           // AWS Bedrock / generic throttling
+];
+
+/// Whether an error message indicates a context overflow.
+///
+/// Non-overflow wording (rate limits, throttling) is excluded first so a
+/// transient error that happens to contain an overflow phrase is not
+/// misclassified.
 pub fn is_context_overflow_message(message: &str) -> bool {
     let lower = message.to_lowercase();
+    if NON_OVERFLOW_PHRASES
+        .iter()
+        .any(|phrase| lower.contains(phrase))
+    {
+        return false;
+    }
     OVERFLOW_PHRASES.iter().any(|phrase| lower.contains(phrase))
 }
 

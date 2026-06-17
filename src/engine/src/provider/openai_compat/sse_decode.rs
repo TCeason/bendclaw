@@ -9,6 +9,7 @@ use tracing::debug;
 
 use super::request::ToolCallBuffer;
 use super::types::*;
+use crate::provider::error::classify_sse_error_event;
 use crate::provider::error::ProviderError;
 use crate::provider::model::OpenAiCompat;
 use crate::provider::model::ThinkingFormat;
@@ -152,7 +153,7 @@ fn process_sse_chunk(
             err.message.clone()
         };
         debug!("OpenAI stream error: {}", msg);
-        return Err(ProviderError::Api(msg));
+        return Err(classify_sse_error_event(&msg));
     }
 
     // Capture response id and model from the first chunk

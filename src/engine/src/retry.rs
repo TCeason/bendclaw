@@ -72,7 +72,13 @@ pub fn should_retry(error: &ProviderError) -> bool {
         ProviderError::RateLimited { .. }
         | ProviderError::Network(_)
         | ProviderError::Overloaded(_) => true,
-        ProviderError::Api(message) => is_retryable_api_message(message),
+        // A bare Api error that is really a context overflow must never retry,
+        // even if its wording also contains a transient phrase like "try again".
+        // Overflow is handled by compaction, not retry.
+        ProviderError::Api(message) => {
+            !crate::provider::error::is_context_overflow_message(message)
+                && is_retryable_api_message(message)
+        }
         _ => false,
     }
 }

@@ -144,6 +144,41 @@ async fn openai_sse_inline_error() {
 }
 
 // ---------------------------------------------------------------------------
+// SSE streaming — inline overflow error chunk
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn openai_sse_inline_overflow_error() {
+    let sse = openai_sse::body(vec![
+        format!(
+            "data: {}",
+            serde_json::json!({
+                "choices": [],
+                "error": {
+                    "message": "Your input exceeds the context window of this model. \
+                                 Please adjust your input and try again."
+                }
+            })
+        ),
+        openai_sse::done(),
+    ]);
+
+    let err = run_provider_sse(&OpenAiCompatProvider, openai_config(), &sse, 200)
+        .await
+        .unwrap_err();
+
+    // Inline overflow errors must classify as ContextOverflow so the agent loop
+    // triggers compaction instead of retrying transiently ("try again").
+    assert!(
+        matches!(
+            err,
+            evotengine::provider::ProviderError::ContextOverflow { .. }
+        ),
+        "expected ContextOverflow, got {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // HTTP error — 429 rate limit
 // ---------------------------------------------------------------------------
 

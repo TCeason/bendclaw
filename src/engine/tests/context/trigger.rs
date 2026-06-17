@@ -177,3 +177,44 @@ fn below_threshold_is_skip() {
     };
     assert_eq!(evaluate(&input, &config), TriggerDecision::Skip);
 }
+
+#[test]
+fn overflow_with_try_again_wording_still_triggers() {
+    // Regression: an overflow error whose text also contains "try again" must
+    // route to Overflow (compact-and-retry), not be skipped. The trigger shares
+    // the provider error classifier, so this stays consistent with retry logic.
+    let config = default_config();
+    let mut usage = make_usage(0, 0, StopReason::Error);
+    usage.error_message = Some(
+        "Your input exceeds the context window of this model. \
+         Please adjust your input and try again."
+            .into(),
+    );
+    let input = TriggerInput {
+        usage: Some(usage),
+        current_model: model_id(),
+        last_compaction_ts: None,
+        overflow_recovery_attempted: false,
+    };
+    assert!(matches!(
+        evaluate(&input, &config),
+        TriggerDecision::Overflow { .. }
+    ));
+}
+
+#[test]
+fn throttling_error_is_not_overflow() {
+    // "too many tokens" throttling wording must NOT be treated as overflow.
+    let config = default_config();
+    let mut usage = make_usage(0, 0, StopReason::Error);
+    usage.error_message =
+        Some("ThrottlingException: Too many tokens, please wait before trying again.".into());
+    let input = TriggerInput {
+        usage: Some(usage),
+        current_model: model_id(),
+        last_compaction_ts: None,
+        overflow_recovery_attempted: false,
+    };
+    // Error stop reason that is not overflow -> Skip (no usable usage data).
+    assert_eq!(evaluate(&input, &config), TriggerDecision::Skip);
+}

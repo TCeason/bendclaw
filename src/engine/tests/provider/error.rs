@@ -194,3 +194,30 @@ fn classify_422_not_retryable() {
     assert!(matches!(err, ProviderError::Other(_)));
     assert!(!evotengine::retry::should_retry(&err));
 }
+
+#[test]
+fn overflow_message_with_try_again_is_not_retryable() {
+    // Regression: an overflow error whose wording also contains a transient
+    // phrase ("try again") must NOT retry — it is handled by compaction.
+    let msg = "Your input exceeds the context window of this model. \
+               Please adjust your input and try again.";
+    assert!(is_context_overflow_message(msg));
+    let err = ProviderError::Api(msg.into());
+    assert!(!evotengine::retry::should_retry(&err));
+}
+
+#[test]
+fn throttling_with_too_many_tokens_is_not_overflow() {
+    // Bedrock-style throttling contains the "too many tokens" overflow phrase
+    // but is a rate-limit error — the non-overflow exclusion must win.
+    let msg = "ThrottlingException: Too many tokens, please wait before trying again.";
+    assert!(!is_context_overflow_message(msg));
+}
+
+#[test]
+fn rate_limit_wording_is_not_overflow() {
+    assert!(!is_context_overflow_message(
+        "Rate limit reached: too many tokens per minute"
+    ));
+    assert!(!is_context_overflow_message("429 too many requests"));
+}
