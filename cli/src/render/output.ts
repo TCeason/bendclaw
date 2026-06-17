@@ -38,10 +38,9 @@ function toolGlyph(name: string): ToolGlyph {
 function toolPrimaryArg(name: string, args: Record<string, unknown>, previewCommand?: string): string {
   const n = name.toLowerCase()
   if (n === 'bash') {
-    const cmd = (previewCommand ?? (args?.command as string) ?? '').replace(/\r?\n/g, ' ').trim()
-    // Cap with a clean ellipsis so long commands don't get hard-cut mid-word
-    // by the terminal (losing the tail with no indication).
-    return truncate(cmd, 160)
+    // Show the full command — the viewmodel wraps it to terminal width so the
+    // tail is never lost. Newlines collapse to spaces for a single logical line.
+    return (previewCommand ?? (args?.command as string) ?? '').replace(/\r?\n/g, ' ').trim()
   }
   const path = (args?.path ?? args?.file ?? args?.file_path) as string | undefined
   if (path) return path

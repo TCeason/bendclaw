@@ -1,4 +1,5 @@
 import type { OutputLine } from '../../render/output.js'
+import stringWidth from 'string-width'
 import { line, block, plain, dim, bold, colored, type ViewBlock, type StyledLine } from './types.js'
 import { wrapTextByWidth } from './prompt.js'
 
@@ -66,7 +67,7 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
       }
 
       case 'tool':
-        blocks.push(buildToolBlock(ol.text))
+        blocks.push(buildToolBlock(ol.text, initialContext.columns))
         break
 
       case 'tool_result':
@@ -98,9 +99,11 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
   return blocks
 }
 
-function buildToolBlock(text: string): ViewBlock {
+function buildToolBlock(text: string, columns?: number): ViewBlock {
   // Tool call line: `<glyph> <name>  <arg>` (no status mark — status lives on
-  // the subordinate line below). Paint glyph cyan, name bold, arg dim.
+  // the subordinate line below). Paint glyph cyan, name bold, arg dim. When the
+  // line exceeds the terminal width, wrap the arg onto continuation lines so the
+  // full command is always visible (the tail is never truncated).
   const cardMatch = text.match(/^([⌘◫⌕⊕✎·✦◇]) (.+)$/u)
   if (cardMatch) {
     const glyph = cardMatch[1]!
@@ -108,9 +111,23 @@ function buildToolBlock(text: string): ViewBlock {
     const sep = rest.indexOf('  ')
     const name = sep < 0 ? rest : rest.slice(0, sep)
     const arg = sep < 0 ? '' : rest.slice(sep + 2)
-    const spans = [colored(glyph, 'cyan', { bold: true }), bold(` ${name}`)]
-    if (arg) spans.push(dim(`  ${arg}`))
-    return block([line(...spans)], 1)
+    if (!arg) {
+      return block([line(colored(glyph, 'cyan', { bold: true }), bold(` ${name}`))], 1)
+    }
+    // Prefix is `<glyph> <name>  ` — continuation lines indent to align under arg.
+    const prefixWidth = stringWidth(`${glyph} ${name}  `)
+    const avail = columns ? Math.max(1, columns - prefixWidth) : 0
+    if (avail > 0 && stringWidth(arg) > avail) {
+      const chunks = wrapTextByWidth(arg, avail)
+      const pad = ' '.repeat(prefixWidth)
+      const lines: StyledLine[] = chunks.map((c, k) =>
+        k === 0
+          ? line(colored(glyph, 'cyan', { bold: true }), bold(` ${name}`), dim(`  ${arg.slice(c.start, c.end)}`))
+          : line(dim(`${pad}${arg.slice(c.start, c.end)}`)),
+      )
+      return block(lines, 1)
+    }
+    return block([line(colored(glyph, 'cyan', { bold: true }), bold(` ${name}`), dim(`  ${arg}`))], 1)
   }
 
   // Subordinate status line under a call: `  ✓ · 0.6s · 2 lines` /

@@ -68,6 +68,18 @@ describe('buildOutputBlocks', () => {
     expect(lines[toolIdx - 1]).toBe('')
   })
 
+  test('long tool command wraps instead of truncating', () => {
+    const cmd = 'cd /Users/bohu/github/evotai/evot && rg -n "first_line|before_turn|after_turn" src/ --glob "*.rs" | head -20'
+    const result = renderPlainWithColumns([{ id: 't1', kind: 'tool', text: `⌘ bash  ${cmd}` }], 72)
+    // No ellipsis truncation — the full command survives across wrapped lines.
+    expect(result).not.toContain('…')
+    expect(result.replace(/\n\s*/g, '')).toContain('head -20')
+    // Continuation lines are indented to align under the arg (after `⌘ bash  `).
+    const lines = result.split('\n').filter(l => l.length > 0)
+    expect(lines.length).toBeGreaterThan(1)
+    expect(lines[1]!.startsWith('        ')).toBe(true)
+  })
+
   test('tool detail lines have no margin', () => {
     const result = renderPlain([
       { id: 't1', kind: 'tool', text: '⌘ bash  ls -la' },
