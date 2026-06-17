@@ -538,6 +538,20 @@ describe('renderMarkdown', () => {
     expect(result).not.toContain('```')
   })
 
+  test('keeps consecutive SQL statements inside one fence', () => {
+    // Two `ALTER ... ;` statements: the trailing semicolon on the first must
+    // not trip the "code completed" heuristic into closing the fence early and
+    // wrapping the second statement in its own block. ALTER/MERGE/TRUNCATE are
+    // recognised as code keywords so they are never mistaken for prose.
+    const result = render('```sql\nALTER TASK t_etl RESUME;\nALTER TASK t_ingest RESUME;\n```后续说明。')
+      .replace(/\u200b/g, '')
+
+    expect(result).toContain('ALTER TASK t_etl RESUME;')
+    expect(result).toContain('ALTER TASK t_ingest RESUME;')
+    expect(result).toContain('后续说明。')
+    expect(result).not.toContain('```')
+  })
+
   test('splits fence close glued to following heading', () => {
     const result = render('```json\n{\n  "id": "tr-abc"\n}\n```### 5.1 API')
       .replace(/\u200b/g, '')

@@ -12,7 +12,7 @@ const CODE_FENCE_RE = /^( {0,3})(`{3,}|~{3,})(.*)$/
 // the glued case so `#include`/`#1` don't collide.
 const MARKDOWN_BOUNDARY_RE = /^([ \t]{0,3})?(#{1,6}(?:\s|$)|#{2,6}(?=[^#\s])|(?:\*\*|__)|(?:[-*+]\s)|(?:\d+\.\s)|>\s|\|.*\||-{3,}\s*$)/
 const CODE_LIKE_START_RE = /^[\[{(}\]),;]|^\/\/|^#\s*include\b/
-const CODE_KEYWORD_RE = /^(return|if|else|for|while|switch|case|break|continue|try|catch|finally|throw|await|async|const|let|var|function|class|def|import|export|from|SELECT|CREATE|INSERT|UPDATE|DELETE|WITH|WHERE|ORDER|GROUP|LIMIT|DROP|SET)\b/i
+const CODE_KEYWORD_RE = /^(return|if|else|for|while|switch|case|break|continue|try|catch|finally|throw|await|async|const|let|var|function|class|def|import|export|from|SELECT|CREATE|INSERT|UPDATE|DELETE|WITH|WHERE|ORDER|GROUP|LIMIT|DROP|SET|ALTER|MERGE|TRUNCATE)\b/i
 const SQL_KEYWORD_RE = /^(SELECT|CREATE|INSERT|UPDATE|DELETE|WITH|ALTER|DROP|SET|MERGE|TRUNCATE)\b/i
 const CODE_ASSIGNMENT_RE = /^[\w$.'"`-]+\s*[:=]/
 const CODE_BLOCK_START_RE = /^(try\s*\(|while\s*\(|for\s*\(|if\s*\(|class\s+\w|def\s+\w|function\s+\w|val\s+\w|const\s+\w|let\s+\w|var\s+\w|from\s+\w+(?:\.\w+)*\s+import\b|import\s+\w+(?:\.\w+)*(?:\s+as\s+\w+)?$)\b/i
