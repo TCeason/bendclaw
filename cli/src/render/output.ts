@@ -201,18 +201,15 @@ export function buildToolResult(
 
   const resultInfo = result ? formatToolResultInfo(result) : ''
   const slimSuffix = formatSlimSuffix(slim)
-  // Subordinate status line under the call line: `  ✓ · 0.6s · 2 lines`.
-  // The call line above already carries the glyph + command, so the result
-  // block only needs the status mark, duration, and a short result summary.
-  // The viewmodel paints ✓ green / ✗ red; the rest is dim.
+  // The status line is appended at the END (after diff/output) so a tool reads
+  // top-to-bottom: command → output → closing status. Built here, pushed last.
   const mark = isError ? '✗' : '✓'
   const dur = durationMs !== undefined ? ` · ${formatDuration(durationMs)}` : ''
-  const statusLine = `  ${mark}${dur}${resultInfo}${slimSuffix}`
-  lines.push({
+  const statusLine: OutputLine = {
     id: genId('tool'),
     kind: 'tool',
-    text: statusLine,
-  })
+    text: `  ${mark}${dur}${resultInfo}${slimSuffix}`,
+  }
 
   // Diff (for write/edit tools)
   const diff = args?.diff as string | undefined
@@ -271,6 +268,8 @@ export function buildToolResult(
     }
   }
 
+  // Closing status line, after the output.
+  lines.push(statusLine)
   return lines
 }
 

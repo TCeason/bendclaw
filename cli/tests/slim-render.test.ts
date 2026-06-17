@@ -7,8 +7,10 @@ beforeEach(() => {
 })
 
 function headerText(lines: { kind: string; text: string }[]): string {
-  const header = lines.find((l) => l.kind === 'tool')
-  if (!header) throw new Error('no tool header line')
+  // The status line (carrying the slim suffix) now closes the block, so match
+  // it by its ✓/✗ mark rather than assuming it's first.
+  const header = lines.find((l) => l.kind === 'tool' && /^\s*[✓✗]/u.test(l.text))
+  if (!header) throw new Error('no tool status line')
   return header.text
 }
 

@@ -144,31 +144,33 @@ describe('buildToolCall', () => {
 })
 
 describe('buildToolResult', () => {
-  test('emits a subordinate status line with mark and duration', () => {
+  test('emits a closing status line with mark and duration', () => {
     const lines = buildToolResult('bash', { command: 'ls -la' }, 'done', undefined, 42)
     expect(lines.length).toBeGreaterThanOrEqual(1)
-    expect(lines[0]!.kind).toBe('tool')
-    // Result is a subordinate block: indented status line, no glyph/command
-    // (those live on the call line above).
-    expect(lines[0]!.text).toMatch(/^ {2}✓/)
-    expect(lines[0]!.text).toContain('42ms')
-    expect(lines[0]!.text).not.toContain('⌘ bash')
-    expect(lines[0]!.text).not.toContain('completed')
+    // Status closes the block (after the output), indented, no glyph/command.
+    const status = lines[lines.length - 1]!
+    expect(status.kind).toBe('tool')
+    expect(status.text).toMatch(/^ {2}✓/)
+    expect(status.text).toContain('42ms')
+    expect(status.text).not.toContain('⌘ bash')
+    expect(status.text).not.toContain('completed')
   })
 
   test('error result status line uses ✗', () => {
     const lines = buildToolResult('bash', { command: 'fail' }, 'error', 'command not found', 10)
-    expect(lines[0]!.text).toMatch(/^ {2}✗/)
-    expect(lines[0]!.text).not.toContain('failed')
+    const status = lines[lines.length - 1]!
+    expect(status.text).toMatch(/^ {2}✗/)
+    expect(status.text).not.toContain('failed')
     expect(lines.some((l) => l.kind === 'error')).toBe(true)
   })
 
   test('pretty prints JSON result body (status line no longer labels shape)', () => {
     const lines = buildToolResult('web_fetch', {}, 'done', '{"status":"ok","items":[1,2]}', undefined, true)
-    expect(lines[0]!.text).toMatch(/^ {2}✓/)
-    // Shape labels ("JSON · N keys") removed — the body below conveys it.
-    expect(lines[0]!.text).not.toContain('JSON')
-    expect(lines[0]!.text).not.toContain('keys')
+    const status = lines[lines.length - 1]!
+    expect(status.text).toMatch(/^ {2}✓/)
+    // Shape labels ("JSON · N keys") removed — the body above conveys it.
+    expect(status.text).not.toContain('JSON')
+    expect(status.text).not.toContain('keys')
     const all = lines.map(l => l.text).join('\n')
     expect(all).toContain('  {')
     expect(all).toContain('    "status": "ok"')
