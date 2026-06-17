@@ -279,7 +279,7 @@ export function buildToolProgress(name: string, text: string, expanded?: boolean
   const total = progressLines.length
   const visible = expanded ? progressLines : progressLines.slice(-5)
   const hidden = expanded ? 0 : Math.max(0, total - visible.length)
-  const header = `[${name.toUpperCase()}] ● · ${total} ${total === 1 ? 'line' : 'lines'}`
+  const header = `${toolGlyph(name).icon} ${name}  · ${total} ${total === 1 ? 'line' : 'lines'}`
   const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: header }]
   for (const l of visible) {
     lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${l}` })

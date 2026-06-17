@@ -212,9 +212,9 @@ describe('buildToolResult', () => {
     expect(all).toContain('ctrl+o to collapse')
   })
 
-  test('creates progress badge and preserves progress details', () => {
+  test('creates progress card header and preserves progress details', () => {
     const lines = buildToolProgress('bash', 'line1\nline2\nline3')
-    expect(lines[0]!.text).toBe('[BASH] ● · 3 lines')
+    expect(lines[0]!.text).toBe('⌘ bash  · 3 lines')
     expect(lines.map(l => l.text).join('\n')).toContain('  line3')
   })
 
