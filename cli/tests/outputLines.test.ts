@@ -94,14 +94,14 @@ describe('buildToolCall', () => {
 
     const started = buildToolCall('update_goal_tasks', args)
     const startedText = started.map(l => l.text).join('\n')
-    expect(startedText).toContain('[GOAL] ▷ · 1/3 completed')
+    expect(startedText).toContain('◇ plan  · 1/3 completed')
     expect(startedText).toContain('  ☑ #1 Audit current code')
     expect(startedText).toContain('  ▷ #2 Simplify coordinator')
     expect(startedText).toContain('  · #3 Add tests')
 
     const finished = buildToolResult('update_goal_tasks', args, 'done', 'ignored')
     const all = finished.map(l => l.text).join('\n')
-    expect(all).toContain('[GOAL] ☑ · 1/3 completed')
+    expect(all).toContain('◇ plan  · 1/3 completed')
     expect(all).toContain('  ☑ #1 Audit current code · done in 150.0s')
     expect(all).toContain('  ▷ #2 Simplify coordinator')
     expect(all).toContain('  · #3 Add tests')

@@ -120,7 +120,7 @@ function buildToolBlock(text: string): ViewBlock {
 
   // Tool call line: `<glyph> <name>  <arg>` (no status mark — status lives on
   // the subordinate line below). Paint glyph cyan, name bold, arg dim.
-  const cardMatch = text.match(/^([⌘◫⌕⊕✎·✦]) (.+)$/u)
+  const cardMatch = text.match(/^([⌘◫⌕⊕✎·✦◇]) (.+)$/u)
   if (cardMatch) {
     const glyph = cardMatch[1]!
     const rest = cardMatch[2]!.trimEnd()

@@ -676,10 +676,10 @@ export class AssistantStreamBuffer {
 // ---------------------------------------------------------------------------
 
 function buildGoalTaskCall(name: string, args: Record<string, unknown>): OutputLine[] {
-  const badge = name === 'TodoWrite' ? 'TODOWRITE' : 'GOAL'
+  const label = name === 'TodoWrite' ? 'todo' : 'plan'
   const tasks = readGoalTasks(args)
   const summary = summarizeGoalTasks(tasks)
-  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `[${badge}] ▷ · ${summary}` }]
+  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `◇ ${label}  · ${summary}` }]
   for (const task of tasks) {
     lines.push({ id: genId('tool'), kind: 'tool', text: `  ${goalTaskSymbol(task.status)} #${task.id} ${task.title}` })
   }
@@ -687,10 +687,10 @@ function buildGoalTaskCall(name: string, args: Record<string, unknown>): OutputL
 }
 
 function buildGoalTaskResult(name: string, args: Record<string, unknown>, result?: string): OutputLine[] {
-  const badge = name === 'TodoWrite' ? 'TODOWRITE' : 'GOAL'
+  const label = name === 'TodoWrite' ? 'todo' : 'plan'
   const tasks = readGoalTasks(args)
   const summary = summarizeGoalTasks(tasks, result)
-  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `[${badge}] ☑ · ${summary}` }]
+  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `◇ ${label}  · ${summary}` }]
   for (const task of tasks) {
     lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${goalTaskSymbol(task.status)} #${task.id} ${task.title}${goalTaskDuration(task)}` })
   }
