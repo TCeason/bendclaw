@@ -317,15 +317,22 @@ export class TermRenderer {
       return
     }
 
-    // First changed line is above the visible viewport. The line has already
-    // scrolled into the terminal's hardware scrollback and can't be addressed,
-    // so a CLEAR_SCREEN full redraw would jump the view to the top of the frame
-    // and wipe scrollback. Instead, refresh only the visible window in place —
-    // this is the common streaming case where growing markdown reflows an
-    // earlier line (table realign, list renumber, fence close).
+    // First changed line scrolled into hardware scrollback, which no escape
+    // sequence can repaint. CLEAR_SCREEN would wipe real scrollback and jump
+    // the view; an in-place bottom repaint drops the rows between the old and
+    // new viewport tops when the frame grows (streaming markdown reflowing an
+    // earlier line while appending). Clamp to the addressable viewport and fall
+    // through to the normal differential path: it scrolls off-screen rows into
+    // real scrollback as the frame grows and repaints in place otherwise.
     if (firstChanged < prevViewportTop) {
-      this.repaintVisible(newLines, width, height, cursorPos, prevViewportTop)
-      return
+      firstChanged = prevViewportTop
+      if (firstChanged > lastChanged) {
+        this.previousLines = newLines
+        this.previousWidth = width
+        this.previousHeight = height
+        this.previousViewportTop = prevViewportTop
+        return
+      }
     }
 
     // --- Build differential update buffer ---
