@@ -99,25 +99,6 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
 }
 
 function buildToolBlock(text: string): ViewBlock {
-  // Goal/Todo checklist headers keep their `[BADGE]` form.
-  const badgeMatch = text.match(/^\[([^\]]+)\]\s*(.*)$/)
-  if (badgeMatch) {
-    const badge = badgeMatch[1]!
-    const rest = badgeMatch[2] ?? ''
-    const statusMatch = rest.match(/^([●✓✗])\s*(.*)$/)
-    const spans = [colored(`[${badge}]`, 'cyan', { bold: true })]
-
-    if (statusMatch) {
-      spans.push(colored(` ${statusMatch[1]}`, 'cyan', { bold: true }))
-      const tail = statusMatch[2] ?? ''
-      if (tail) spans.push(dim(tail.startsWith(' ') ? tail : ` ${tail}`))
-    } else if (rest) {
-      spans.push(dim(` ${rest}`))
-    }
-
-    return block([line(...spans)], 1)
-  }
-
   // Tool call line: `<glyph> <name>  <arg>` (no status mark — status lives on
   // the subordinate line below). Paint glyph cyan, name bold, arg dim.
   const cardMatch = text.match(/^([⌘◫⌕⊕✎·✦◇]) (.+)$/u)

@@ -58,24 +58,24 @@ describe('buildOutputBlocks', () => {
     expect(emptyBetween.length).toBe(0)
   })
 
-  test('tool badge has marginTop=1', () => {
+  test('tool card has marginTop=1', () => {
     const result = renderPlain([
       { id: 'a1', kind: 'assistant', text: 'text' },
-      { id: 't1', kind: 'tool', text: '[bash] ●' },
+      { id: 't1', kind: 'tool', text: '⌘ bash  ls -la' },
     ])
     const lines = result.split('\n')
-    const toolIdx = lines.findIndex(l => l.includes('[bash]'))
+    const toolIdx = lines.findIndex(l => l.includes('bash'))
     expect(lines[toolIdx - 1]).toBe('')
   })
 
   test('tool detail lines have no margin', () => {
     const result = renderPlain([
-      { id: 't1', kind: 'tool', text: '[bash] ●' },
-      { id: 't2', kind: 'tool', text: '  ls -la' },
+      { id: 't1', kind: 'tool', text: '⌘ bash  ls -la' },
+      { id: 't2', kind: 'tool_result', text: '  output' },
     ])
     const lines = result.split('\n')
-    const detailIdx = lines.findIndex(l => l.includes('ls -la'))
-    expect(lines[detailIdx - 1]).toContain('[bash]')
+    const detailIdx = lines.findIndex(l => l.includes('output'))
+    expect(lines[detailIdx - 1]).toContain('bash')
   })
 
   test('verbose badge has marginTop=1', () => {
@@ -99,35 +99,25 @@ describe('buildOutputBlocks', () => {
     expect(result).not.toContain('\x1b[31m')
   })
 
-  test('tool badge and status symbol use one unified color', () => {
-    const result = render([{ id: 't1', kind: 'tool', text: '[bash] ✓ · 1.2s' }])
+  test('tool card glyph uses unified color', () => {
+    const result = render([{ id: 't1', kind: 'tool', text: '⌘ bash  ls -la' }])
     expect(result).toContain('\x1b[36m')
     expect(result).not.toContain('\x1b[32m')
   })
 
-  test('tool failed symbol also uses unified color', () => {
-    const result = render([{ id: 't1', kind: 'tool', text: '[bash] ✗ · exit=1' }])
-    expect(result).toContain('\x1b[36m')
-    expect(result).not.toContain('\x1b[31m')
+  test('tool status line ok mark uses green', () => {
+    const result = render([{ id: 't1', kind: 'tool', text: '  ✓ · 1.2s' }])
+    expect(result).toContain('\x1b[32m')
   })
 
-  test('tool running symbol also uses unified color', () => {
-    const result = render([{ id: 't1', kind: 'tool', text: '[bash] ● · command' }])
-    expect(result).toContain('\x1b[36m')
-    expect(result).not.toContain('\x1b[33m')
+  test('tool status line fail mark uses red', () => {
+    const result = render([{ id: 't1', kind: 'tool', text: '  ✗ · exit 1' }])
+    expect(result).toContain('\x1b[31m')
   })
 
-  test('tool skipped text no longer changes tool color', () => {
-    const result = render([{ id: 't1', kind: 'tool', text: '[bash] ● · skipped · cached' }])
-    expect(result).toContain('\x1b[36m')
-    expect(result).not.toContain('\x1b[33m')
-    expect(result).not.toContain('\x1b[90m')
-  })
-
-  test('tool cancelled text no longer changes tool color', () => {
-    const result = render([{ id: 't1', kind: 'tool', text: '[bash] ● · cancelled' }])
-    expect(result).toContain('\x1b[36m')
-    expect(result).not.toContain('\x1b[33m')
+  test('tool status line retry mark uses yellow', () => {
+    const result = render([{ id: 't1', kind: 'tool', text: '  ↻ · retrying' }])
+    expect(result).toContain('\x1b[33m')
   })
 
   test('JSON result body is not dimmed', () => {
