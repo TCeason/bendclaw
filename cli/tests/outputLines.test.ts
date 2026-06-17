@@ -163,11 +163,12 @@ describe('buildToolResult', () => {
     expect(lines.some((l) => l.kind === 'error')).toBe(true)
   })
 
-  test('pretty prints JSON result and summarizes it on the status line', () => {
+  test('pretty prints JSON result body (status line no longer labels shape)', () => {
     const lines = buildToolResult('web_fetch', {}, 'done', '{"status":"ok","items":[1,2]}', undefined, true)
     expect(lines[0]!.text).toMatch(/^ {2}✓/)
-    expect(lines[0]!.text).toContain('JSON')
-    expect(lines[0]!.text).toContain('2 keys')
+    // Shape labels ("JSON · N keys") removed — the body below conveys it.
+    expect(lines[0]!.text).not.toContain('JSON')
+    expect(lines[0]!.text).not.toContain('keys')
     const all = lines.map(l => l.text).join('\n')
     expect(all).toContain('  {')
     expect(all).toContain('    "status": "ok"')

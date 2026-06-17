@@ -775,12 +775,9 @@ function parseJsonResult(content: string): unknown | undefined {
 
 function formatToolResultInfo(content: string): string {
   const bytes = Buffer.byteLength(content, 'utf-8')
-  const parsed = parseJsonResult(content)
-  if (parsed !== undefined) {
-    if (Array.isArray(parsed)) return ` · JSON · ${parsed.length} items · ${humanBytes(bytes)}`
-    if (parsed && typeof parsed === 'object') return ` · JSON · ${Object.keys(parsed).length} keys · ${humanBytes(bytes)}`
-    return ` · JSON · ${humanBytes(bytes)}`
-  }
+  // The result body (or its head/tail) is rendered right below this line, so
+  // we don't restate its shape ("JSON · N keys"). Keep only what the body
+  // doesn't already convey: how many lines and how big.
   const lineCount = content.replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n').length
   return lineCount > 1 ? ` · ${lineCount} lines · ${humanBytes(bytes)}` : ` · ${humanBytes(bytes)}`
 }
