@@ -167,8 +167,8 @@ describe('term stream machine', () => {
     expect(state.streamingText).toBe(text)
   })
 
-  test('verbose mode: no duplicate commits across llm_call_completed and assistant_completed', () => {
-    const appState = { ...createInitialState('model', '/tmp'), verbose: true }
+  test('no duplicate commits across llm_call_completed and assistant_completed', () => {
+    const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
     const allCommitted: OutputLine[] = []
@@ -414,7 +414,7 @@ describe('term stream machine', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     const state = {
-      ...createStreamMachineState({ ...appState, verbose: true }, spinner),
+      ...createStreamMachineState(appState, spinner),
       toolProgress: 'line 1\nline 2',
       lastToolProgress: 'line 1\nline 2',
     }
@@ -430,7 +430,7 @@ describe('term stream machine', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     const state = {
-      ...createStreamMachineState({ ...appState, verbose: true }, spinner),
+      ...createStreamMachineState(appState, spinner),
       toolProgress: 'line 1\nline 2',
       lastToolProgress: 'line 1\nline 2',
     }
@@ -442,10 +442,10 @@ describe('term stream machine', () => {
     expect(update.state.lastToolProgress).toBe('')
   })
 
-  test('llm retry emits visible backoff line in verbose mode', () => {
+  test('llm retry renders as a visible card with backoff and error', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
-    const state = createStreamMachineState({ ...appState, verbose: true }, spinner)
+    const state = createStreamMachineState(appState, spinner)
     const update = reduceRunEvent(state, {
       kind: 'llm_call_retry',
       payload: {
@@ -456,14 +456,15 @@ describe('term stream machine', () => {
       },
     }, { termRows: 24 })
     const text = update.commitLines.map(l => l.text).join('\n')
-    expect(text).toContain('[LLM] \u21bb \u00b7 retrying in 1 second \u00b7 attempt 1/3')
+    expect(text).toContain('✦ llm  retry')
+    expect(text).toContain('\u21bb \u00b7 retrying in 1 second \u00b7 attempt 1/3')
     expect(text).toContain('network error')
   })
 
-  test('verbose off: llm events route to writeLines, not commitLines', () => {
+  test('llm stats route to writeLines (screen.log only), not commitLines', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
-    let state = createStreamMachineState({ ...appState, verbose: false }, spinner)
+    let state = createStreamMachineState(appState, spinner)
 
     const started = reduceRunEvent(state, {
       kind: 'llm_call_started',
@@ -489,7 +490,7 @@ describe('term stream machine', () => {
   test('llm_call_completed sets footer context tokens from real usage', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
-    let state = createStreamMachineState({ ...appState, verbose: false }, spinner)
+    let state = createStreamMachineState(appState, spinner)
 
     // Pre-call estimate lands first via llm_call_started.
     state = reduceRunEvent(state, {
@@ -515,7 +516,7 @@ describe('term stream machine', () => {
   test('llm_call_completed without usage keeps prior context tokens', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
-    let state = createStreamMachineState({ ...appState, verbose: false }, spinner)
+    let state = createStreamMachineState(appState, spinner)
     state = reduceRunEvent(state, {
       kind: 'llm_call_started',
       payload: { model: 'test', messages: [], estimated_context_tokens: 7000, context_window: 160000 },
@@ -528,23 +529,23 @@ describe('term stream machine', () => {
     expect(completed.state.appState.currentRunStats.contextTokens).toBe(7000)
   })
 
-  test('verbose off: llm retry still surfaces in commitLines', () => {
+  test('llm retry surfaces in commitLines as a card', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
-    const state = createStreamMachineState({ ...appState, verbose: false }, spinner)
+    const state = createStreamMachineState(appState, spinner)
     const update = reduceRunEvent(state, {
       kind: 'llm_call_retry',
       payload: { attempt: 1, max_retries: 3, retry_delay_ms: 500, error: 'rate limited' },
     }, { termRows: 24 })
     const text = update.commitLines.map(l => l.text).join('\n')
-    expect(text).toContain('[LLM] \u21bb')
+    expect(text).toContain('✦ llm  retry')
     expect(text).toContain('rate limited')
   })
 
-  test('verbose off: run_summary is visible in commitLines', () => {
+  test('run_summary is visible in commitLines', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
-    const state = createStreamMachineState({ ...appState, verbose: false }, spinner)
+    const state = createStreamMachineState(appState, spinner)
     const update = reduceRunEvent(state, {
       kind: 'run_finished',
       payload: {},
@@ -593,25 +594,30 @@ describe('term stream machine', () => {
   })
 
   test('build tool start/finish lines', () => {
-    // Regular tools emit no start line (the card renders at finish); reason
-    // fields are the only thing surfaced up-front.
+    // Regular tools emit a call line at start (glyph + command, visible while
+    // executing); the finish step appends a subordinate status line + output.
     const started = buildToolStartedLines({
       kind: 'tool_started',
       payload: { tool_name: 'bash', args: { command: 'ls' } },
     })
-    expect(started).toHaveLength(0)
+    const startCard = started[started.length - 1]!
+    expect(startCard.text).toContain('⌘ bash')
+    expect(startCard.text).toContain('ls')
+    expect(startCard.text).not.toContain('✓')
 
     const startedWithReason = buildToolStartedLines({
       kind: 'tool_started',
       payload: { tool_name: 'bash', args: { command: 'ls', reason: 'list files' } },
     })
-    expect(startedWithReason.length).toBeGreaterThan(0)
+    expect(startedWithReason.some(l => l.text.includes('reason: list files'))).toBe(true)
 
     const finished = buildToolFinishedLines({
       kind: 'tool_finished',
       payload: { tool_name: 'bash', args: { command: 'ls' }, is_error: false, content: 'ok', duration_ms: 10 },
     })
-    expect(finished.length).toBeGreaterThan(0)
-    expect(finished[0]!.text).toContain('⌘ bash')
+    // Status line is the first tool line: indented ✓, no glyph/command.
+    const statusLine = finished.find(l => l.kind === 'tool')!
+    expect(statusLine.text).toMatch(/^ {2}✓/)
+    expect(statusLine.text).not.toContain('⌘ bash')
   })
 })

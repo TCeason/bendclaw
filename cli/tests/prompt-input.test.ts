@@ -24,7 +24,6 @@ function defaultPromptVM(overrides?: Partial<PromptVMInput>): PromptVMInput {
     cursorCol: 0,
     active: true,
     model: 'test-model',
-    verbose: false,
     planning: false,
     logMode: false,
     queuedMessages: [],

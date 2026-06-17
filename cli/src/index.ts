@@ -48,7 +48,6 @@ async function main() {
       const { startRepl } = await import('./term/repl.js')
       await startRepl({
         agent,
-        verbose: opts.verbose,
         resumeSessionId: opts.resume,
         continueLatest: opts.continueLatest,
         serverPort: opts.port,

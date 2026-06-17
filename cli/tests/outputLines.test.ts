@@ -71,12 +71,16 @@ describe('buildAssistantLines', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildToolCall', () => {
-  test('regular tool call emits no start line (card renders at finish)', () => {
-    const preview = ['python3 << EOF', 'import json', 'print(1)'].join('\n')
-    const lines = buildToolCall('bash', {}, preview)
-    // The persistent tool line is the finished card; the start commit is empty
-    // (running state is shown by the spinner + live progress).
-    expect(lines).toHaveLength(0)
+  test('regular tool call emits a call line with glyph and command (no status mark)', () => {
+    const preview = 'python3 -c "print(1)"'
+    const lines = buildToolCall('bash', { command: preview }, preview)
+    const card = lines[lines.length - 1]!
+    expect(card.kind).toBe('tool')
+    expect(card.text).toContain('⌘ bash')
+    expect(card.text).toContain(preview)
+    // No status mark on the call line — status is on the result line below.
+    expect(card.text).not.toContain('✓')
+    expect(card.text).not.toContain('✗')
   })
 
   test('renders goal task updates as a compact goal block', () => {
@@ -140,28 +144,28 @@ describe('buildToolCall', () => {
 })
 
 describe('buildToolResult', () => {
-  test('creates tool card with glyph, name, status mark, and duration', () => {
+  test('emits a subordinate status line with mark and duration', () => {
     const lines = buildToolResult('bash', { command: 'ls -la' }, 'done', undefined, 42)
     expect(lines.length).toBeGreaterThanOrEqual(1)
     expect(lines[0]!.kind).toBe('tool')
-    expect(lines[0]!.text).toContain('⌘ bash')
-    expect(lines[0]!.text).toContain('ls -la')
-    expect(lines[0]!.text).toContain('✓')
-    expect(lines[0]!.text).not.toContain('completed')
+    // Result is a subordinate block: indented status line, no glyph/command
+    // (those live on the call line above).
+    expect(lines[0]!.text).toMatch(/^ {2}✓/)
     expect(lines[0]!.text).toContain('42ms')
+    expect(lines[0]!.text).not.toContain('⌘ bash')
+    expect(lines[0]!.text).not.toContain('completed')
   })
 
-  test('creates error tool card', () => {
+  test('error result status line uses ✗', () => {
     const lines = buildToolResult('bash', { command: 'fail' }, 'error', 'command not found', 10)
-    expect(lines[0]!.text).toContain('⌘ bash')
-    expect(lines[0]!.text).toContain('✗')
+    expect(lines[0]!.text).toMatch(/^ {2}✗/)
     expect(lines[0]!.text).not.toContain('failed')
     expect(lines.some((l) => l.kind === 'error')).toBe(true)
   })
 
-  test('pretty prints JSON result and summarizes it in the card', () => {
+  test('pretty prints JSON result and summarizes it on the status line', () => {
     const lines = buildToolResult('web_fetch', {}, 'done', '{"status":"ok","items":[1,2]}', undefined, true)
-    expect(lines[0]!.text).toContain('⊕ web_fetch')
+    expect(lines[0]!.text).toMatch(/^ {2}✓/)
     expect(lines[0]!.text).toContain('JSON')
     expect(lines[0]!.text).toContain('2 keys')
     const all = lines.map(l => l.text).join('\n')

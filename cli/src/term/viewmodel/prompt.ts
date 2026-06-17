@@ -9,7 +9,6 @@ export interface PromptVMInput {
   cursorCol: number
   active: boolean
   model: string
-  verbose: boolean
   planning: boolean
   logMode: boolean
   queuedMessages: string[]
@@ -136,7 +135,7 @@ export function buildPromptBlocks(input: PromptVMInput): ViewBlock[] {
 }
 
 function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
-  // Single line: [plan][verbose] cwd (branch) context: N% (used/window) model
+  // Single line: [plan] cwd (branch) context: N% (used/window) model
   const leftSpans: StyledSpan[] = []
 
   if (input.logMode) {
@@ -144,9 +143,6 @@ function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
   }
   if (input.planning) {
     leftSpans.push(dim('[plan] '))
-  }
-  if (input.verbose) {
-    leftSpans.push(dim('[verbose] '))
   }
 
   // cwd + branch

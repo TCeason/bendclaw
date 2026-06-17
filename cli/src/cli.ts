@@ -9,7 +9,6 @@ export interface CliOptions {
   continueLatest: boolean
   envFile?: string
   outputFormat: 'text' | 'stream-json'
-  verbose: boolean
   maxTurns: number
   maxTokens: number
   maxDuration: number
@@ -22,7 +21,6 @@ export async function parseArgs(argv: string[]): Promise<CliOptions> {
   const opts: CliOptions = {
     command: 'repl',
     outputFormat: 'text',
-    verbose: false,
     continueLatest: false,
     maxTurns: 512,
     maxTokens: 100_000_000,
@@ -69,8 +67,6 @@ export async function parseArgs(argv: string[]): Promise<CliOptions> {
     if (arg === '--max-duration' && argv[i + 1]) { opts.maxDuration = parseIntArg(argv[++i], '--max-duration'); continue }
     if (arg === '--append-system-prompt' && argv[i + 1]) { opts.appendSystemPrompt = argv[++i]; continue }
     if (arg === '--skills' && argv[i + 1]) { opts.skillsDirs.push(argv[++i]); continue }
-
-    if (arg === '--verbose') { opts.verbose = true; continue }
 
     if (arg === '--version' || arg === '-v') {
       const { version } = await import('./native/index.js')
@@ -120,7 +116,6 @@ export async function printHelp() {
   console.log('  --max-duration <secs>  Max duration (default: 3600)')
   console.log('  --append-system-prompt <text>')
   console.log('  --skills <dir>         Skills directory (repeatable)')
-  console.log('  --verbose              Verbose output')
   console.log('  --version, -v          Show version')
   console.log('  --update               Update evot to latest version')
   console.log('  --help, -h             Show this help')

@@ -48,6 +48,14 @@ function toolPrimaryArg(name: string, args: Record<string, unknown>, previewComm
   return ''
 }
 
+/** Tool call line text: `<glyph> <name>  <primary-arg>`. The viewmodel paints
+ *  the glyph and parts; status (✓/✗) lives on the subordinate result line. */
+function toolCallText(name: string, args: Record<string, unknown>, previewCommand?: string): string {
+  const glyph = toolGlyph(name).icon
+  const primary = toolPrimaryArg(name, args, previewCommand)
+  return primary ? `${glyph} ${name}  ${primary}` : `${glyph} ${name}`
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -156,22 +164,22 @@ export function buildToolCall(
   name: string,
   args: Record<string, unknown>,
   previewCommand?: string,
-  expanded?: boolean,
 ): OutputLine[] {
   if (name === 'update_goal_tasks' || name === 'TodoWrite') return buildGoalTaskCall(name, args)
 
-  // Regular tools render as a single "card" line at finish time
-  // (see buildToolResult). The running state is shown by the spinner
-  // (“Executing [TOOL]…”) and live progress in the dynamic zone, so we don't
-  // commit a separate start line that would duplicate the finished card.
-  // Reason fields are the one exception: the model's justification for the
-  // call should be visible up-front, before the tool completes.
+  // Reason fields surface the model's justification up-front.
   const lines: OutputLine[] = []
   for (const line of formatReasonLines(args)) {
     lines.push({ id: genId('tool'), kind: 'tool', text: `  ${line}` })
   }
-  void previewCommand
-  void expanded
+  // Call line: `<glyph> <name>  <primary-arg>` — shown the moment the tool
+  // starts so the running command is visible. The result block (status mark +
+  // duration + output) is appended below by buildToolResult on finish.
+  lines.push({
+    id: genId('tool'),
+    kind: 'tool',
+    text: toolCallText(name, args, previewCommand),
+  })
   return lines
 }
 
@@ -191,21 +199,19 @@ export function buildToolResult(
     return buildGoalTaskResult(name, args, result)
   }
 
-  const dur = durationMs !== undefined ? ` · ${formatDuration(durationMs)}` : ''
-  const glyph = toolGlyph(name).icon
-  const primary = toolPrimaryArg(name, args, undefined)
   const resultInfo = result ? formatToolResultInfo(result) : ''
   const slimSuffix = formatSlimSuffix(slim)
-  const statusMark = isError ? '✗' : '✓'
-  // Single "card" line: `<icon> <name>  <primary-arg>  <mark> <dur·info>`
-  // The icon + status mark carry success/failure; the viewmodel paints them.
-  const namePart = `${glyph} ${name}`
-  const argPart = primary ? `  ${primary}` : ''
-  const label = `${namePart}${argPart}  ${statusMark}${dur}${resultInfo}${slimSuffix}`
+  // Subordinate status line under the call line: `  ✓ · 0.6s · 2 lines`.
+  // The call line above already carries the glyph + command, so the result
+  // block only needs the status mark, duration, and a short result summary.
+  // The viewmodel paints ✓ green / ✗ red; the rest is dim.
+  const mark = isError ? '✗' : '✓'
+  const dur = durationMs !== undefined ? ` · ${formatDuration(durationMs)}` : ''
+  const statusLine = `  ${mark}${dur}${resultInfo}${slimSuffix}`
   lines.push({
     id: genId('tool'),
     kind: 'tool',
-    text: label,
+    text: statusLine,
   })
 
   // Diff (for write/edit tools)
@@ -222,7 +228,7 @@ export function buildToolResult(
   if (result) {
     if (name === 'Read' || name === 'read_code') {
       if (isError) {
-        // Show error content for failed reads
+        // Show error content for failed reads.
         const resultLines = toolResultLines(result, isError, name, expanded)
         for (const rl of resultLines) {
           lines.push({
@@ -231,16 +237,9 @@ export function buildToolResult(
             text: `  ${rl}`,
           })
         }
-      } else {
-        // Just show size, no content
-        const size = Buffer.byteLength(result, 'utf-8')
-        const humanSize = size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KB` : `${(size / (1024 * 1024)).toFixed(1)} MB`
-        lines.push({
-          id: genId('tool-res'),
-          kind: 'tool_result',
-          text: `  ${humanSize} read`,
-        })
       }
+      // Successful reads show no body: the status line already carries the
+      // size (e.g. `✓ · 12ms · 1.2 KB`), so a separate size line would repeat it.
     } else {
       const formattedResult = formatToolResultContent(result)
       const resultLines = toolResultLines(formattedResult, isError, name, expanded)
@@ -301,6 +300,49 @@ export function buildVerboseEvent(eventText: string): OutputLine[] {
     kind: 'verbose' as const,
     text: line,
   }))
+}
+
+/** True for LLM events that must always reach the TUI (errors and retries),
+ *  as opposed to per-call stats that only belong in screen.log. */
+export function isVisibleLlmEvent(text: string): boolean {
+  return /^\[LLM\]\s+[↻✗]/u.test(text)
+}
+
+/**
+ * Render a visible LLM event (error / retry) as a tool-style card so it reads
+ * like any other tool in the stream:
+ *   ✦ llm  <model|retry>
+ *     ✗|↻ · <meta>
+ *     <error message>
+ * Falls back to plain verbose lines if the text isn't in the expected shape.
+ */
+export function buildLlmCard(text: string): OutputLine[] {
+  const rawLines = text.split('\n')
+  const head = (rawLines[0] ?? '').match(/^\[LLM\]\s+([↻✗])\s*·?\s*(.*)$/u)
+  if (!head) return buildVerboseEvent(text)
+  const mark = head[1]!
+  const rest = (head[2] ?? '').trim()
+  const isRetry = mark === '↻'
+  // Body: drop the `    error     ` label, keep the message text.
+  const body = rawLines.slice(1)
+    .map((l) => l.replace(/^\s*error\s+/u, '').trim())
+    .filter((l) => l.length > 0)
+
+  const lines: OutputLine[] = []
+  if (isRetry) {
+    lines.push({ id: genId('tool'), kind: 'tool', text: '✦ llm  retry' })
+    lines.push({ id: genId('tool'), kind: 'tool', text: `  ${mark} · ${rest}` })
+  } else {
+    const parts = rest.split(' · ')
+    const model = parts[0] ?? 'unknown'
+    const meta = parts.slice(1).join(' · ')
+    lines.push({ id: genId('tool'), kind: 'tool', text: `✦ llm  ${model}` })
+    lines.push({ id: genId('tool'), kind: 'tool', text: `  ${mark}${meta ? ` · ${meta}` : ''}` })
+  }
+  for (const b of body) {
+    lines.push({ id: genId('tool-res'), kind: 'error', text: `  ${truncate(b, 200)}` })
+  }
+  return lines
 }
 
 
@@ -488,10 +530,11 @@ export function messagesToOutputLines(messages: UIMessage[]): OutputLine[] {
     if (msg.role === 'user') {
       lines.push(...buildUserMessage(msg.text))
     } else if (msg.role === 'assistant') {
-      // Verbose events (LLM calls, compaction) before tool calls
+      // Replay only the LLM errors/retries (as cards), matching live behavior.
+      // Per-call stats live in screen.log, not the TUI.
       if (msg.verboseEvents) {
         for (const evt of msg.verboseEvents) {
-          lines.push(...buildVerboseEvent(evt.text))
+          if (isVisibleLlmEvent(evt.text)) lines.push(...buildLlmCard(evt.text))
         }
       }
       // Tool calls: show call + result

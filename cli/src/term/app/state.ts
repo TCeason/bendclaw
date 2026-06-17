@@ -16,7 +16,6 @@ export interface AppState {
   model: string
   cwd: string
   error: string | null
-  verbose: boolean
   currentStreamText: string
   currentThinkingText: string
   activeToolCalls: Map<string, UIToolCall>
@@ -74,7 +73,6 @@ export function createInitialState(model: string, cwd: string): AppState {
     model,
     cwd,
     error: null,
-    verbose: false,
     currentStreamText: '',
     currentThinkingText: '',
     activeToolCalls: new Map(),

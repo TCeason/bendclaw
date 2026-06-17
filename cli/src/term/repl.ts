@@ -99,7 +99,6 @@ const SPINNER_INTERVAL_MS = 100
 
 export interface ReplOptions {
   agent: Agent
-  verbose?: boolean
   resumeSessionId?: string
   continueLatest?: boolean
   serverPort?: number
@@ -136,7 +135,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   let appState: AppState = {
     ...createInitialState(agent.model, agent.cwd),
-    verbose: opts.verbose ?? false,
   }
   let spinnerState = createSpinnerState()
   let editor: EditorState = createEditorState()
@@ -255,7 +253,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       cursorCol: editor.cursorCol,
       active: overlay.kind === 'none',
       model: appState.model,
-      verbose: appState.verbose,
       planning,
       logMode: logMode !== null,
       queuedMessages: [],
@@ -438,13 +435,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   function commitToolStarted(event: import('../native/index.js').RunEvent): void {
-    const compact = buildToolStartedLines(event)
-    const exp = buildToolStartedLines(event, true)
-    compactLines.push(...compact)
-    expandedLines.push(...exp)
-    const visible = expanded ? exp : compact
-    const context = outputContextFor(compactLines.slice(0, -compact.length))
-    const blocks = buildOutputBlocks(visible, context)
+    // The call line has no compact/expanded variants, so build it once and
+    // append to both histories to keep them aligned.
+    const callLines = buildToolStartedLines(event)
+    compactLines.push(...callLines)
+    expandedLines.push(...callLines)
+    const context = outputContextFor(compactLines.slice(0, -callLines.length))
+    const blocks = buildOutputBlocks(callLines, context)
     const rendered = blocksToLines(blocks)
     screenLog.logLines(rendered)
     renderer.requestRender()
@@ -777,9 +774,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           }
         }
 
-        // writeLines are log-only: verbose events produced while verbose is
-        // off. Render them with the same formatting pipeline so screen.log
-        // still captures LLM/COMPACT/SPILL observability for post-hoc debug.
+        // writeLines are log-only: LLM/COMPACT/SPILL stats that don't render in
+        // the TUI. Run them through the same formatting pipeline so screen.log
+        // still captures the observability detail for post-hoc debug.
         if (update.writeLines.length > 0) {
           const blocks = buildOutputBlocks(update.writeLines, { columns: renderer.termCols })
           const rendered = blocksToLines(blocks)
@@ -968,22 +965,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         commitLines([{ id: 'sys-log', kind: 'system', text: text ?? `  Log: ${logPath}` }])
       }
       else commitLines([{ id: 'sys-log', kind: 'system', text: '  No active screen log.' }])
-      renderer.requestRender()
-      return
-    }
-
-    // Allow toggling verbose mid-run so users can flip detail level without
-    // interrupting the agent. Mirrors the idle-mode /verbose handler: update
-    // both the appState snapshot and the live streamMachine so the next
-    // reduceRunEvent sees the new flag.
-    if (trimmed === '/verbose' || trimmed === '/v') {
-      const next = !appState.verbose
-      appState = { ...appState, verbose: next }
-      if (streamMachine) {
-        streamMachine = { ...streamMachine, appState: { ...streamMachine.appState, verbose: next } }
-      }
-      commitLines([{ id: 'sys-v', kind: 'system', text: `  verbose: ${next ? 'on' : 'off'}` }])
-      clearAll()
       renderer.requestRender()
       return
     }
@@ -1332,7 +1313,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         streamMachine = null; stopSpinner()
       }
       sessionId = null
-      appState = { ...createInitialState(appState.model, agent.cwd), verbose: appState.verbose }
+      appState = { ...createInitialState(appState.model, agent.cwd) }
       gitInfo.setCwd(agent.cwd)
       renderer.clearScreen()
       compactLines.length = 0
@@ -1349,7 +1330,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       // Start and bind a fresh empty session so /resume can see it immediately.
       const newSession = await agent.createSession()
       sessionId = newSession.session_id
-      appState = { ...createInitialState(newSession.model || appState.model, agent.cwd), verbose: appState.verbose, sessionId }
+      appState = { ...createInitialState(newSession.model || appState.model, agent.cwd), sessionId }
       gitInfo.setCwd(agent.cwd)
       renderer.clearScreen()
       compactLines.length = 0

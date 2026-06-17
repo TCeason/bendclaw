@@ -51,15 +51,6 @@ export function handleSlashCommand(text: string, ctx: CommandContext): CommandRe
     case '/help':
       return { ...baseResult(ctx), overlay: { kind: 'help' } }
 
-    case '/verbose': {
-      const appState = { ...ctx.appState, verbose: !ctx.appState.verbose }
-      return {
-        ...baseResult(ctx),
-        appState,
-        systemLines: [{ id: 'sys-v', kind: 'system', text: `  verbose: ${appState.verbose ? 'on' : 'off'}` }],
-      }
-    }
-
     case '/new':
       return { ...baseResult(ctx), newSession: true }
 

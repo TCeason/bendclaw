@@ -1,4 +1,4 @@
-import { buildError, buildRunSummary, buildToolCall, buildToolProgress, buildToolResult, buildVerboseEvent, buildAssistantLines, buildThinkingSummary, type OutputLine } from '../../render/output.js'
+import { buildError, buildRunSummary, buildToolCall, buildToolProgress, buildToolResult, buildVerboseEvent, buildLlmCard, isVisibleLlmEvent, buildAssistantLines, buildThinkingSummary, type OutputLine } from '../../render/output.js'
 import { formatDuration } from '../../render/format.js'
 import { setSpinnerPhase, type SpinnerState } from '../spinner.js'
 import { applyEvent } from './reducer.js'
@@ -112,14 +112,12 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     }
   }
 
-  // Verbose events (LLM / COMPACT / SPILL) are always produced; the `verbose`
-  // flag only controls whether they land in the TUI or only in screen.log.
-  // Error and retry events are force-visible so the user always sees them.
-  const verboseOn = prev.appState.verbose
-  const pickVerboseTarget = (kind: string): OutputLine[] => {
-    if (verboseOn) return commitLines
-    if (kind === 'llm_retry' || kind === 'llm_error') return commitLines
-    return writeLines
+  // LLM / COMPACT / SPILL stats are always produced but only belong in
+  // screen.log. The exceptions are LLM errors and retries, which render as
+  // tool-style cards in the TUI so the user always sees them.
+  const routeVerbose = (text: string, target: { commit: OutputLine[]; write: OutputLine[] }) => {
+    if (isVisibleLlmEvent(text)) target.commit.push(...buildLlmCard(text))
+    else target.write.push(...buildVerboseEvent(text))
   }
 
   if (event.kind === 'llm_call_started' || event.kind === 'llm_call_retry' || event.kind === 'api_retry' || event.kind === 'context_compaction_started') {
@@ -129,9 +127,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     mergeFlushExpanded(flushed)
     const newEvents = state.appState.verboseEvents.slice(prev.appState.verboseEvents.length)
     for (const evt of newEvents) {
-      const verboseLines = buildVerboseEvent(evt.text)
-      const target = pickVerboseTarget(evt.kind)
-      target.push(...verboseLines)
+      routeVerbose(evt.text, { commit: commitLines, write: writeLines })
     }
   }
 
@@ -210,25 +206,8 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     commitLines.push(...flushed.lines)
     mergeFlushExpanded(flushed)
     const newEvents = state.appState.verboseEvents.slice(prev.appState.verboseEvents.length)
-    const hasForceVisible = newEvents.some(evt =>
-      /^[↻✗]\s+LLM\b/.test(evt.text) || /^\[LLM\]\s+[↻✗]/.test(evt.text)
-    )
-    let hasExpanded = false
     for (const evt of newEvents) {
-      const verboseLines = buildVerboseEvent(evt.text)
-      const forceVisible = /^[↻✗]\s+LLM\b/.test(evt.text) || /^\[LLM\]\s+[↻✗]/.test(evt.text)
-      const target = verboseOn || forceVisible ? commitLines : writeLines
-      target.push(...verboseLines)
-      if (evt.expandedText) hasExpanded = true
-    }
-    if (hasExpanded && (verboseOn || hasForceVisible)) {
-      const baseExpanded = flushed.expandedLines ?? flushed.lines
-      if (!expandedCommitLines) expandedCommitLines = []
-      expandedCommitLines = [...baseExpanded]
-      for (const evt of newEvents) {
-        const expLines = buildVerboseEvent(evt.expandedText ?? evt.text)
-        expandedCommitLines.push(...expLines)
-      }
+      routeVerbose(evt.text, { commit: commitLines, write: writeLines })
     }
   }
 
@@ -351,11 +330,11 @@ export function buildToolFinishedLines(event: RunEvent, expanded?: boolean): Out
   return buildToolResult(toolName, mergedArgs, status, p.content as string | undefined, p.duration_ms as number | undefined, expanded, slim)
 }
 
-export function buildToolStartedLines(event: RunEvent, expanded?: boolean): OutputLine[] {
+export function buildToolStartedLines(event: RunEvent): OutputLine[] {
   const p = (event.payload ?? {}) as Record<string, any>
   const toolName = (p.tool_name as string) ?? 'unknown'
   const previewCommand = p.preview_command as string | undefined
-  return buildToolCall(toolName, (p.args as Record<string, unknown>) ?? {}, previewCommand, expanded)
+  return buildToolCall(toolName, (p.args as Record<string, unknown>) ?? {}, previewCommand)
 }
 
 export function buildToolProgressLines(event: RunEvent, expanded?: boolean): OutputLine[] {

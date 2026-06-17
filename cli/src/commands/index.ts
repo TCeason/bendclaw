@@ -26,7 +26,6 @@ export const COMMANDS: SlashCommand[] = [
 
 /** Hidden commands — recognised but not shown in /help or ghost hints */
 export const HIDDEN_COMMANDS: SlashCommand[] = [
-  { name: '/verbose', aliases: ['/v'], description: 'Toggle verbose mode', handler: 'builtin' },
   { name: '/exit', aliases: ['/quit', '/q'], description: 'Exit the REPL', handler: 'builtin' },
   { name: '/act', description: 'Return to normal action mode', handler: 'builtin' },
   { name: '/done', description: 'Exit log/plan mode', handler: 'builtin' },

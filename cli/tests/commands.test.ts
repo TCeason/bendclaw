@@ -71,11 +71,6 @@ describe('resolveCommand', () => {
     expect(result).toEqual({ kind: 'resolved', name: '/help', args: '' })
   })
 
-  test('resolves /v alias to /verbose', () => {
-    const result = resolveCommand('/v')
-    expect(result).toEqual({ kind: 'resolved', name: '/verbose', args: '' })
-  })
-
   test('handles extra whitespace in args', () => {
     const result = resolveCommand('/resume   abc123')
     expect(result).toEqual({ kind: 'resolved', name: '/resume', args: 'abc123' })

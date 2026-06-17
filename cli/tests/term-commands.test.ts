@@ -19,11 +19,6 @@ describe('term commands', () => {
     expect(result.overlay?.kind).toBe('help')
   })
 
-  test('/verbose toggles flag', () => {
-    const result = handleSlashCommand('/verbose', mkCtx())
-    expect(result.appState.verbose).toBe(true)
-  })
-
   test('/plan toggles planning', () => {
     const result = handleSlashCommand('/plan', mkCtx())
     expect(result.planning).toBe(true)

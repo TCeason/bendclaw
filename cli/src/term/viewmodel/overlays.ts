@@ -48,7 +48,6 @@ function buildHelpBlocks(columns: number): ViewBlock[] {
     ['/env', 'Manage variables'],
     ['/skill', 'Manage skills'],
     ['/update', 'Update evot'],
-    ['/verbose', 'Toggle verbose mode'],
     ['/clear', 'Clear session context'],
     ['/exit', 'Exit'],
   ]

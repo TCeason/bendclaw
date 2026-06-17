@@ -15,7 +15,6 @@ function defaultInput(overrides?: Partial<PromptVMInput>): PromptVMInput {
     cursorCol: 0,
     active: true,
     model: 'claude-sonnet',
-    verbose: true,
     planning: false,
     logMode: false,
     queuedMessages: [],
@@ -83,16 +82,6 @@ describe('buildPromptBlocks', () => {
   test('shows [log] when logMode', () => {
     const result = renderPlain(defaultInput({ logMode: true }))
     expect(result).toContain('[log]')
-  })
-
-  test('shows [verbose] when verbose is on', () => {
-    const result = renderPlain(defaultInput({ verbose: true }))
-    expect(result).toContain('[verbose]')
-  })
-
-  test('no [verbose] when verbose is off', () => {
-    const result = renderPlain(defaultInput({ verbose: false }))
-    expect(result).not.toContain('[verbose]')
   })
 
   test('shows exit hint', () => {
