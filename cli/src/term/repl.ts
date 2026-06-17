@@ -339,7 +339,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         const MAX_LINE_WIDTH = 120
         const visible = allThinkLines.slice(-MAX_THINKING_PREVIEW)
         const thinkStyled: StyledLine[] = [
-          { spans: [{ text: '[REASONING]', fg: 'cyan' as const, bold: true }, { text: ` ${totalLines} lines...`, dim: true }] },
+          { spans: [{ text: '✻', fg: 'cyan' as const, bold: true }, { text: ' thinking', bold: true }, { text: `  · ${totalLines} lines…`, dim: true }] },
         ]
         for (const l of visible) {
           const truncated = l.length > MAX_LINE_WIDTH ? l.slice(0, MAX_LINE_WIDTH - 1) + '\u2026' : l
