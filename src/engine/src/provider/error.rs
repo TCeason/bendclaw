@@ -222,12 +222,34 @@ include!(concat!(env!("OUT_DIR"), "/user_agent.rs"));
 
 static SHARED_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
 
+/// Per-read timeout for streaming responses.
+///
+/// `read_timeout` resets after every successful read, so it only fires when a
+/// connection goes silent — not during long-running work where the provider
+/// keeps sending data (Anthropic/OpenAI emit periodic `ping`/delta frames while
+/// thinking). This is what recovers a half-open TCP connection after the
+/// machine sleeps or loses network: the stalled read fails with a timeout,
+/// which `stream_http` maps to [`ProviderError::Network`] and the retry policy
+/// then reconnects. Without it a half-open socket can hang for the OS TCP
+/// timeout (~2 h on macOS), leaving the UI stuck on "thinking".
+const STREAM_READ_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Timeout for the connect phase only (TCP + TLS handshake).
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
 fn build_client() -> Result<reqwest::Client, ProviderError> {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(STREAM_READ_TIMEOUT)
         .pool_idle_timeout(Duration::from_secs(90))
         .pool_max_idle_per_host(8)
+        // TCP keepalive idle/interval/retries. The interval and retry count
+        // matter on macOS, whose defaults probe only after ~2 h; an explicit
+        // short interval lets the OS surface a dead peer well before that.
         .tcp_keepalive(Duration::from_secs(60))
+        .tcp_keepalive_interval(Duration::from_secs(15))
+        .tcp_keepalive_retries(3)
         .build()
         .map_err(|e| {
             let mut detail = format!("Failed to build HTTP client: {e}");

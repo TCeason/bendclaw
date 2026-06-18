@@ -989,11 +989,65 @@ function preserveBoxDrawingBlocks(text: string): string {
 // when normalization breaks. Strip them before the lexer sees the input so
 // the renderer never displays `<system-reminder>…</system-reminder>` blocks
 // verbatim. Matches claudecode's stripPromptXMLTags behavior.
-const STRIPPED_PROMPT_TAGS_RE =
-  /<(system-reminder|commit_analysis|context|function_analysis|pr_analysis)>[\s\S]*?<\/\1>\n?/g
+//
+// Two guards keep this from eating legitimate content when the assistant is
+// *discussing* these tags (e.g. an analysis of how prompts inject
+// `<system-reminder>` blocks):
+//   1. Line-anchored: a genuine leaked envelope occupies whole lines — the
+//      opening tag begins a line and the closing tag ends one. Inline
+//      mentions (`<system-reminder>` in prose, or wrapped in backticks) and
+//      table cells never match because the tag sits mid-line.
+//   2. Fence-aware (see stripPromptXMLTags): tags written inside fenced code
+//      blocks are left verbatim. Without this, a lazy match from an in-prose
+//      tag could span into a code fence's closing tag and delete everything
+//      in between — including unrelated tables and headings.
+const STRIPPED_PROMPT_TAG_NAMES = 'system-reminder|commit_analysis|context|function_analysis|pr_analysis'
+const STRIPPED_PROMPT_TAGS_RE = new RegExp(
+  `^[ \\t]*<(${STRIPPED_PROMPT_TAG_NAMES})>[\\s\\S]*?<\\/\\1>[ \\t]*$\\n?`,
+  'gm',
+)
+const STRIPPED_PROMPT_TAG_PRESENT_RE = new RegExp(`<(?:${STRIPPED_PROMPT_TAG_NAMES})>`)
 
 function stripPromptXMLTags(content: string): string {
-  return content.replace(STRIPPED_PROMPT_TAGS_RE, '')
+  if (!STRIPPED_PROMPT_TAG_PRESENT_RE.test(content)) return content
+
+  // Split into fenced / non-fenced regions so tags inside code blocks survive,
+  // then apply the line-anchored stripper only to prose regions.
+  const lines = content.split('\n')
+  const out: string[] = []
+  let buffer: string[] = []
+  let inFence = false
+  let fenceMarker = ''
+  const flushBuffer = (): void => {
+    if (buffer.length === 0) return
+    out.push(buffer.join('\n').replace(STRIPPED_PROMPT_TAGS_RE, ''))
+    buffer = []
+  }
+
+  for (const line of lines) {
+    const fenceMatch = CODE_FENCE_RE.exec(line)
+    if (fenceMatch) {
+      const marker = fenceMatch[2]!
+      if (!inFence) {
+        flushBuffer()
+        inFence = true
+        fenceMarker = marker
+      } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
+        inFence = false
+        fenceMarker = ''
+      }
+      out.push(line)
+      continue
+    }
+    if (inFence) {
+      out.push(line)
+    } else {
+      buffer.push(line)
+    }
+  }
+  flushBuffer()
+
+  return out.join('\n')
 }
 
 // Opening code fence (```lang) glued to the end of preceding prose on the

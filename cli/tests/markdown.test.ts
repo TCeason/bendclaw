@@ -1488,6 +1488,48 @@ describe('renderMarkdown', () => {
     expect(result).not.toContain('hidden')
     expect(result).not.toContain('commit_analysis')
   })
+
+  test('keeps inline prose mentions of reminder tags and the content after them', () => {
+    // Regression: a lazy global strip used to match from an in-prose
+    // `<system-reminder>` mention to a later `</system-reminder>` and delete
+    // everything in between — including unrelated tables and trailing prose.
+    const md = [
+      '核心区别：skill 菜单作为 `<system-reminder>` 消息注入对话。',
+      '',
+      '| 方面 | Claude Code | evot |',
+      '|---|---|---|',
+      '| 菜单位置 | `<system-reminder>` 消息 | 工具 description |',
+      '| 截断策略 | 动态预算 | 固定 250 字 |',
+      '',
+      '然后把菜单从工具描述里删掉。',
+    ].join('\n')
+    const result = render(md).replace(/\u200b/g, '')
+    expect(result).toContain('核心区别')
+    expect(result).toContain('菜单位置')
+    expect(result).toContain('截断策略')
+    expect(result).toContain('然后把菜单从工具描述里删掉')
+    // The inline tag mention is preserved (not stripped as an envelope).
+    expect(result).toContain('<system-reminder>')
+  })
+
+  test('does not strip reminder tags inside fenced code blocks', () => {
+    const md = [
+      '示例：',
+      '',
+      '```',
+      '<system-reminder>',
+      'The following skills are available:',
+      '</system-reminder>',
+      '```',
+      '',
+      '后续说明。',
+    ].join('\n')
+    const result = render(md)
+    expect(result).toContain('<system-reminder>')
+    expect(result).toContain('The following skills are available:')
+    expect(result).toContain('</system-reminder>')
+    expect(result).toContain('后续说明')
+  })
 })
 
 describe('formatToken', () => {
