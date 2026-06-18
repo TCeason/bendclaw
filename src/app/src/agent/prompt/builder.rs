@@ -1,10 +1,10 @@
 use std::path::Path;
-use std::process::Command;
 
 const PROJECT_CONTEXT_FILES: &[&str] = &["EVOT.md", "CLAUDE.md", "AGENTS.md"];
-const DYNAMIC_BOUNDARY: &str = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
 
-const SYSTEM_SECTION: &str = r#""#;
+/// Marks where the cacheable static prefix ends and per-turn content begins.
+/// Prompt-cache aware providers split the system prompt here.
+const DYNAMIC_BOUNDARY: &str = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
 
 const USING_TOOLS_HEADER: &str = "Using your tools:";
 // When bash is present but no dedicated exploration tools are registered (the
@@ -23,18 +23,11 @@ const IDENTITY_INTRO: &str =
 const IDENTITY_OUTRO: &str =
     "In addition to the tools above, you may have access to other custom tools depending on the project.";
 
-const TONE_AND_STYLE_SECTION: &str = r#""#;
-
 const OUTPUT_FORMAT_SECTION: &str = "\
 Your responses render as GitHub-flavored markdown in a terminal. Use code \
 blocks for code and commands, and reference locations as `path:line`. Avoid \
 LaTeX math delimiters ($, $$) the terminal cannot render — use plain text or \
 Unicode.";
-
-const LANGUAGE_SECTION: &str = "\
-Respond in the same language the user writes in. If the user switches \
-languages, follow the switch. Technical terms, code, identifiers, file paths, \
-and command names stay in their original form — never translate them.";
 
 const OUTPUT_EFFICIENCY_SECTION: &str = "\
 Be concise in prose, not in evidence. Keep explanations short, but never trim \
@@ -46,36 +39,6 @@ you won't pursue.\n\
 - Report results plainly: if tests fail, show the output; if a step was \
 skipped, say so; when something is done and verified, state it without hedging.";
 
-const CLARIFYING_QUESTIONS_SECTION: &str = r#""#;
-
-const CONTEXT_MANAGEMENT_SECTION: &str = r#""#;
-
-const EXECUTING_ACTIONS_SECTION: &str = r#""#;
-
-const AGENT_BEHAVIOR_SECTION: &str = r#""#;
-
-/// Builder for assembling the system prompt.
-///
-/// ```ignore
-/// let prompt = SystemPrompt::new("/path/to/project")
-///     .with_system_guidance()
-///     .with_agent_behavior()
-///     .with_tool_guidance()
-///     .with_tone_and_style()
-///     .with_output_format()
-///     .with_clarifying_questions()
-///     .with_output_efficiency()
-///     .with_context_management()
-///     .with_environment_static()
-///     .with_tools()
-///     .with_project_context()
-///     .with_dynamic_boundary()
-///     .with_today_date()
-///     .with_git()
-///     .with_memory()
-///     .with_append("Be concise.")
-///     .build();
-/// ```
 /// A named section of the system prompt.
 ///
 /// Preserved through the builder so callers (including prompt-dump tooling) can
@@ -103,14 +66,26 @@ pub struct SystemPrompt {
 }
 
 impl SystemPrompt {
-    pub fn new(cwd: &str) -> Self {
-        Self::with_tool_set(cwd, &[])
-    }
-
-    /// Construct a prompt with tool names rendered using their base names.
-    /// Equivalent to [`with_tool_set_for_model`] with an empty model string.
-    pub fn with_tool_set(cwd: &str, tools: &[Box<dyn evot_engine::AgentTool>]) -> Self {
-        Self::with_tool_set_for_model(cwd, tools, "")
+    /// Build the static system-prompt base used for every turn.
+    ///
+    /// This is the process-constant prefix: tool-aware identity, output rules,
+    /// project context, then the cache boundary and date. Per-turn content
+    /// (mode, sandbox, variables) is appended separately by
+    /// [`super::dynamic_sections`] and lands after the boundary.
+    pub fn base(
+        cwd: &str,
+        tools: &[Box<dyn evot_engine::AgentTool>],
+        model: &str,
+    ) -> (String, Vec<Section>) {
+        Self::with_tool_set_for_model(cwd, tools, model)
+            .with_tool_guidance()
+            .with_environment_static()
+            .with_output_format()
+            .with_output_efficiency()
+            .with_project_context()
+            .with_dynamic_boundary()
+            .with_today_date()
+            .build_with_sections()
     }
 
     /// Construct a prompt whose identity "Available tools" list is derived from
@@ -172,25 +147,6 @@ impl SystemPrompt {
         }
     }
 
-    /// Append system/runtime guidance: user-visible text, permission mode,
-    /// system tags, prompt injection, and context compression.
-    pub fn with_system_guidance(mut self) -> Self {
-        self.sections.push(Section {
-            name: "system",
-            text: SYSTEM_SECTION.into(),
-        });
-        self
-    }
-
-    /// Append agent behavior guidelines: task execution, code style, and action bias.
-    pub fn with_agent_behavior(mut self) -> Self {
-        self.sections.push(Section {
-            name: "agent_behavior",
-            text: AGENT_BEHAVIOR_SECTION.into(),
-        });
-        self
-    }
-
     /// Append tool-use guidance in the style of a short "Using your tools"
     /// section: a framing principle, the per-tool "prefer this dedicated tool"
     /// lines (rendered with model-resolved alias names), the bash fallback
@@ -234,38 +190,11 @@ impl SystemPrompt {
         self
     }
 
-    /// Append tone guidance: concise, direct, no tool narration.
-    pub fn with_tone_and_style(mut self) -> Self {
-        self.sections.push(Section {
-            name: "tone_and_style",
-            text: TONE_AND_STYLE_SECTION.into(),
-        });
-        self
-    }
-
     /// Append output formatting guidance for terminal markdown rendering.
     pub fn with_output_format(mut self) -> Self {
         self.sections.push(Section {
             name: "output_format",
             text: OUTPUT_FORMAT_SECTION.into(),
-        });
-        self
-    }
-
-    /// Append the response-language guideline.
-    pub fn with_language(mut self) -> Self {
-        self.sections.push(Section {
-            name: "language",
-            text: LANGUAGE_SECTION.into(),
-        });
-        self
-    }
-
-    /// Append the static/dynamic prompt boundary marker used by prompt-cache aware providers.
-    pub fn with_dynamic_boundary(mut self) -> Self {
-        self.sections.push(Section {
-            name: "dynamic_boundary",
-            text: DYNAMIC_BOUNDARY.into(),
         });
         self
     }
@@ -279,34 +208,16 @@ impl SystemPrompt {
         self
     }
 
-    /// Append clarifying-question guidance.
-    pub fn with_clarifying_questions(mut self) -> Self {
+    /// Append the static/dynamic prompt boundary marker used by prompt-cache aware providers.
+    pub fn with_dynamic_boundary(mut self) -> Self {
         self.sections.push(Section {
-            name: "clarifying_questions",
-            text: CLARIFYING_QUESTIONS_SECTION.into(),
+            name: "dynamic_boundary",
+            text: DYNAMIC_BOUNDARY.into(),
         });
         self
     }
 
-    /// Append context management guidance for compacted tool results.
-    pub fn with_context_management(mut self) -> Self {
-        self.sections.push(Section {
-            name: "context_management",
-            text: CONTEXT_MANAGEMENT_SECTION.into(),
-        });
-        self
-    }
-
-    /// Append guidance on executing actions with care.
-    pub fn with_executing_actions(mut self) -> Self {
-        self.sections.push(Section {
-            name: "executing_actions",
-            text: EXECUTING_ACTIONS_SECTION.into(),
-        });
-        self
-    }
-
-    /// Append stable environment info: working dir, platform, shell, OS version.
+    /// Append the stable working-directory line.
     pub fn with_environment_static(mut self) -> Self {
         self.sections.push(Section {
             name: "environment",
@@ -315,45 +226,13 @@ impl SystemPrompt {
         self
     }
 
-    /// Append dynamic date info.
+    /// Append the current date. Added after the dynamic boundary so the daily
+    /// change does not bust the prompt cache.
     pub fn with_today_date(mut self) -> Self {
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
         self.sections.push(Section {
             name: "date",
             text: format!("Current date: {today}"),
-        });
-        self
-    }
-
-    /// Append environment info.
-    pub fn with_environment(self) -> Self {
-        self.with_environment_static().with_today_date()
-    }
-
-    /// Append the standard static guidance plus environment info (excluding date).
-    /// Date should be added after the dynamic boundary to avoid busting prompt cache daily.
-    pub fn with_system(self) -> Self {
-        self.with_tool_guidance().with_environment_static()
-    }
-
-    /// Append git repository info: branch, default branch, user, status, recent commits.
-    pub fn with_git(mut self) -> Self {
-        let is_git = is_git_repo(&self.cwd);
-
-        let mut lines = vec![format!(
-            "Git repository: {}",
-            if is_git { "yes" } else { "no" }
-        )];
-
-        if is_git {
-            if let Some(git_info) = collect_git_info(&self.cwd) {
-                lines.push(git_info);
-            }
-        }
-
-        self.sections.push(Section {
-            name: "git",
-            text: format!("# Git\n\n{}", lines.join("\n")),
         });
         self
     }
@@ -382,23 +261,9 @@ impl SystemPrompt {
         self
     }
 
-    /// Append arbitrary text (e.g. user-supplied `--append-system-prompt`).
-    pub fn with_append(mut self, text: &str) -> Self {
-        self.sections.push(Section {
-            name: "append",
-            text: text.to_string(),
-        });
-        self
-    }
-
     /// Consume the builder and produce the final prompt string.
     pub fn build(self) -> String {
-        self.sections
-            .into_iter()
-            .map(|s| s.text)
-            .filter(|t| !t.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n\n")
+        self.build_with_sections().0
     }
 
     /// Consume the builder and return both the joined prompt string and the
@@ -416,90 +281,4 @@ impl SystemPrompt {
             .join("\n\n");
         (text, sections)
     }
-}
-
-// ---------------------------------------------------------------------------
-// System helpers
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Git helpers
-// ---------------------------------------------------------------------------
-
-fn is_git_repo(cwd: &str) -> bool {
-    Command::new("git")
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .current_dir(cwd)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-fn collect_git_info(cwd: &str) -> Option<String> {
-    let branch = run_git(cwd, &["branch", "--show-current"]).unwrap_or_default();
-    let default_branch = detect_default_branch(cwd);
-    let user = run_git(cwd, &["config", "user.name"]);
-    let log = run_git(cwd, &["log", "--oneline", "-n", "5"]);
-
-    let mut parts = Vec::new();
-
-    if !branch.is_empty() {
-        parts.push(format!("Current branch: {branch}"));
-    }
-    if let Some(main) = default_branch {
-        parts.push(format!("Default branch: {main}"));
-    }
-    if let Some(u) = user {
-        parts.push(format!("Git user: {u}"));
-    }
-    if let Some(l) = log {
-        parts.push(format!("Recent commits:\n{l}"));
-    }
-
-    if parts.is_empty() {
-        return None;
-    }
-    Some(parts.join("\n"))
-}
-
-fn detect_default_branch(cwd: &str) -> Option<String> {
-    if let Some(remote_head) = run_git(cwd, &["symbolic-ref", "refs/remotes/origin/HEAD"]) {
-        return remote_head
-            .strip_prefix("refs/remotes/origin/")
-            .map(String::from);
-    }
-    for candidate in &["main", "master"] {
-        let exists = Command::new("git")
-            .args([
-                "show-ref",
-                "--verify",
-                "--quiet",
-                &format!("refs/heads/{candidate}"),
-            ])
-            .current_dir(cwd)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if exists {
-            return Some((*candidate).to_string());
-        }
-    }
-    None
-}
-
-fn run_git(cwd: &str, args: &[&str]) -> Option<String> {
-    Command::new("git")
-        .args(["--no-optional-locks"])
-        .args(args)
-        .current_dir(cwd)
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty())
 }

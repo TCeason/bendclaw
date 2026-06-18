@@ -101,6 +101,104 @@ async fn open_session_returns_none_for_missing() -> TestResult {
     Ok(())
 }
 
+/// A missing API key must NOT block startup: the agent constructs fine and a
+/// session can be created. The failure is deferred to query time, where it is
+/// surfaced as a visible error event pointing the user at settings.
+#[tokio::test]
+async fn missing_api_key_defers_to_query_time() -> TestResult {
+    let dir = TempDir::new()?;
+    let mut config = evot::conf::Config::new(dir.path().to_path_buf());
+    config
+        .providers
+        .insert("anthropic".into(), ProviderProfile {
+            protocol: Protocol::Anthropic,
+            api_key: "".into(), // <- the key the dashboard has not set yet
+            base_url: "http://localhost".into(),
+            models: vec!["claude-sonnet".into()],
+            compat_caps: Default::default(),
+            thinking_level: None,
+        });
+    config.llm.provider = "anthropic".into();
+
+    // Construction must succeed despite the empty key (no startup gate).
+    let agent = Agent::new(&config, "/work")?;
+    let session = agent.create_session("repl").await?;
+    let loaded = agent
+        .load_session(&session.session_id)
+        .await?
+        .ok_or_else(|| missing_error("missing session"))?;
+
+    // The error appears at query time as a visible Error event, not a panic
+    // or a silent finish.
+    let outcome = agent
+        .submit_to_session(QueryRequest::text("hello"), loaded)
+        .await?;
+    let mut run = match outcome {
+        SubmitOutcome::Run(run) => run,
+        SubmitOutcome::Command(message) => {
+            return Err(missing_error(&format!("unexpected command: {message}")).into())
+        }
+    };
+
+    let mut error_message = None;
+    while let Some(event) = run.next().await {
+        if let RunEventPayload::Error { message } = event.payload {
+            error_message = Some(message);
+        }
+    }
+
+    let message = error_message.ok_or_else(|| missing_error("expected an error event"))?;
+    assert!(
+        message.contains("API key") && message.contains("anthropic"),
+        "error should name the missing key and provider: {message}"
+    );
+    Ok(())
+}
+
+/// Fresh-install path: no providers configured at all (the default env file is
+/// fully commented out). The agent must still construct and the failure must
+/// surface at query time as a visible error pointing at configuration — not a
+/// startup crash or a `provider '' not found` panic.
+#[tokio::test]
+async fn no_provider_configured_defers_to_query_time() -> TestResult {
+    let dir = TempDir::new()?;
+    // Config::new leaves `providers` empty and `llm.provider` blank, exactly
+    // like a brand-new install before any key is entered.
+    let config = evot::conf::Config::new(dir.path().to_path_buf());
+
+    // Construction must succeed despite zero providers (no startup gate).
+    let agent = Agent::new(&config, "/work")?;
+    let session = agent.create_session("repl").await?;
+    let loaded = agent
+        .load_session(&session.session_id)
+        .await?
+        .ok_or_else(|| missing_error("missing session"))?;
+
+    let outcome = agent
+        .submit_to_session(QueryRequest::text("hello"), loaded)
+        .await?;
+    let mut run = match outcome {
+        SubmitOutcome::Run(run) => run,
+        SubmitOutcome::Command(message) => {
+            return Err(missing_error(&format!("unexpected command: {message}")).into())
+        }
+    };
+
+    let mut error_message = None;
+    while let Some(event) = run.next().await {
+        if let RunEventPayload::Error { message } = event.payload {
+            error_message = Some(message);
+        }
+    }
+
+    let message = error_message.ok_or_else(|| missing_error("expected an error event"))?;
+    assert!(
+        message.contains("provider"),
+        "error should point at provider configuration: {message}"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn round_trip_session_with_transcript() -> TestResult {
     let dir = TempDir::new()?;

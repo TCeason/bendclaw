@@ -9,12 +9,12 @@ use crate::error::EvotError;
 use crate::error::Result;
 
 pub async fn start(conf: Config) -> Result<()> {
-    let llm = conf.active_llm()?;
+    let llm = conf.active_llm().ok();
     tracing::info!(
         id = ?conf.id,
         env_file = %conf.env_file_path.display(),
-        provider = %llm.provider,
-        model = %llm.model,
+        provider = %llm.as_ref().map(|l| l.provider.as_str()).unwrap_or("unconfigured"),
+        model = %llm.as_ref().map(|l| l.model.as_str()).unwrap_or("unconfigured"),
         storage = ?conf.storage.backend,
         storage_root = %conf.storage.fs.root_dir.display(),
         skills_dirs = ?conf.skills_dirs,
@@ -31,7 +31,7 @@ pub async fn start(conf: Config) -> Result<()> {
     print_banner(&conf, &channel_handles)?;
 
     // HTTP channel (blocking)
-    super::channels::http::Server::new(agent)
+    super::channels::http::Server::new(agent, conf.clone())
         .start(conf.server.host.clone(), conf.server.port)
         .await?;
 
@@ -50,16 +50,7 @@ pub async fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
 
     let tools = crate::agent::tools::prompt_tools();
     let model = conf.active_llm().map(|l| l.model).unwrap_or_default();
-    let (system_prompt_text, system_prompt_sections) =
-        SystemPrompt::with_tool_set_for_model(&cwd, &tools, &model)
-            .with_system()
-            .with_output_format()
-            .with_output_efficiency()
-            .with_language()
-            .with_project_context()
-            .with_dynamic_boundary()
-            .with_today_date()
-            .build_with_sections();
+    let (system_prompt_text, system_prompt_sections) = SystemPrompt::base(&cwd, &tools, &model);
 
     let mut skills_dirs = Vec::new();
     if let Ok(global) = crate::conf::paths::skills_dir() {
@@ -83,7 +74,7 @@ pub async fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
 }
 
 fn print_banner(conf: &Config, channel_handles: &[tokio::task::JoinHandle<()>]) -> Result<()> {
-    let llm = conf.active_llm()?;
+    let llm = conf.active_llm().ok();
     let addr = format!("{}:{}", conf.server.host, conf.server.port);
     let storage_backend = match conf.storage.backend {
         crate::conf::StorageBackend::Fs => "fs",
@@ -98,10 +89,24 @@ fn print_banner(conf: &Config, channel_handles: &[tokio::task::JoinHandle<()>]) 
     eprintln!("  evot server");
     eprintln!("  ───────────────────────────────────");
     eprintln!("  address:  http://{addr}");
-    eprintln!("  provider: {}", llm.provider);
-    eprintln!("  model:    {}", llm.model);
-    if !llm.base_url.is_empty() {
-        eprintln!("  base_url: {}", llm.base_url);
+    eprintln!(
+        "  provider: {}",
+        llm.as_ref()
+            .map(|l| l.provider.as_str())
+            .unwrap_or("unconfigured")
+    );
+    eprintln!(
+        "  model:    {}",
+        llm.as_ref()
+            .map(|l| l.model.as_str())
+            .unwrap_or("unconfigured")
+    );
+    if let Some(base_url) = llm
+        .as_ref()
+        .map(|l| l.base_url.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        eprintln!("  base_url: {base_url}");
     }
     eprintln!("  storage:  {storage_backend} ({storage_target})");
     if !channel_handles.is_empty() {

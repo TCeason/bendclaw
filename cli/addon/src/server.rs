@@ -16,9 +16,6 @@ fn load_config(
     if let Some(p) = port {
         config = config.with_port(p);
     }
-    config
-        .validate()
-        .map_err(|e| Error::from_reason(format!("config validation: {e}")))?;
     Ok(config)
 }
 
@@ -71,7 +68,7 @@ pub async fn start_server_background(
         channels.push("feishu");
     }
 
-    let server = evot::gateway::channels::http::Server::new(agent);
+    let server = evot::gateway::channels::http::Server::new(agent, config.clone());
     tokio::spawn(async move {
         let _ = axum::serve(listener, server.router()).await;
     });

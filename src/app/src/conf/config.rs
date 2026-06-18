@@ -112,6 +112,24 @@ pub struct LlmConfig {
     pub compat_caps: CompatCaps,
 }
 
+impl LlmConfig {
+    /// An unresolved placeholder used when no provider/key is configured yet
+    /// (e.g. a fresh install). Lets the agent construct and the server start;
+    /// the missing configuration is surfaced at query time instead of blocking
+    /// startup.
+    pub fn unconfigured() -> Self {
+        Self {
+            provider: String::new(),
+            protocol: Protocol::Anthropic,
+            api_key: String::new(),
+            base_url: String::new(),
+            model: String::new(),
+            thinking_level: ThinkingLevel::default(),
+            compat_caps: CompatCaps::default(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------

@@ -178,6 +178,13 @@ async fn run_loop(args: ExecuteRunArgs, tx: mpsc::UnboundedSender<RunEvent>, con
                     session_id = %session_id,
                     error = %e,
                 );
+                // Surface the failure to the caller instead of ending the run
+                // silently — e.g. a missing API key must be visible in the UI.
+                let _ = tx.send(RunEventContext::new(&run_id, &session_id, 0).event(
+                    RunEventPayload::Error {
+                        message: e.to_string(),
+                    },
+                ));
                 None
             }
         };

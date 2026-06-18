@@ -37,9 +37,6 @@ impl NapiAgent {
             .map_err(|e| Error::from_reason(format!("config load failed: {e}")))?
             .with_model(model)
             .map_err(|e| Error::from_reason(format!("config model: {e}")))?;
-        config
-            .validate()
-            .map_err(|e| Error::from_reason(format!("config validation: {e}")))?;
 
         let agent = evot::gateway::service::build_agent(&config)
             .await

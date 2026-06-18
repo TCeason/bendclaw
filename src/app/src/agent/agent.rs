@@ -15,6 +15,9 @@ use super::session::Session;
 use super::tools::build_tools;
 use super::tools::ToolMode;
 use super::variables::Variables;
+use crate::agent::prompt::dynamic_sections;
+use crate::agent::prompt::DynamicContext;
+use crate::agent::prompt::PromptMode;
 use crate::agent::prompt::Section;
 use crate::conf::Config;
 use crate::conf::LlmConfig;
@@ -123,8 +126,6 @@ pub enum SubmitOutcome {
 // Agent
 // ---------------------------------------------------------------------------
 
-const PLANNING_MODE_PROMPT: &str = include_str!("prompt/prompts/plan.md");
-
 struct ActiveRun {
     run_id: String,
     handle: RunControl,
@@ -162,7 +163,11 @@ impl Agent {
     fn new_inner(config: &Config, cwd: String, storage: Arc<dyn Storage>) -> Result<Self> {
         let system_prompt = format!("You are a helpful assistant. Working directory: {cwd}");
         Ok(Self {
-            llm: RwLock::new(config.active_llm()?),
+            llm: RwLock::new(
+                config
+                    .active_llm()
+                    .unwrap_or_else(|_| LlmConfig::unconfigured()),
+            ),
             system_prompt: RwLock::new(system_prompt),
             system_prompt_sections: RwLock::new(Vec::new()),
             limits: RwLock::new(ExecutionLimits::default()),
@@ -789,45 +794,17 @@ impl Agent {
     fn build_system_prompt(&self, mode: &ToolMode) -> (String, Vec<Section>) {
         let mut sections = self.system_prompt_sections.read().clone();
 
-        if matches!(mode, ToolMode::Planning { .. }) {
-            sections.push(Section {
-                name: "planning_mode",
-                text: PLANNING_MODE_PROMPT.to_string(),
-            });
-        }
-
-        if let Some(vars) = self.variables.read().as_ref() {
-            let names = vars.variable_names();
-            if !names.is_empty() {
-                let text = format!(
-                    "Available variables: {}\n\n\
-                     These variables are automatically available in all bash commands \
-                     as environment variables. Use $VAR_NAME to reference them.\n\
-                     Do not print, echo, or expose variable values.",
-                    names.join(", ")
-                );
-                sections.push(Section {
-                    name: "variables",
-                    text,
-                });
-            }
-        }
-
-        if self.sandbox.enabled {
-            sections.push(Section {
-                name: "sandbox",
-                text: "# Sandbox Mode\n\
-                       You are running in a sandboxed environment with OS-level filesystem restrictions.\n\
-                       - File access is restricted to the project workspace and explicitly allowed directories.\n\
-                       - The user's home directory ($HOME) is NOT accessible except for allowed paths.\n\
-                       - Do NOT attempt to install packages (pip install, brew install, curl | sh, etc.) — \
-                       they will fail with \"Operation not permitted\".\n\
-                       - Do NOT retry commands that fail with permission errors — the restriction is \
-                       enforced by the kernel and cannot be bypassed.\n\
-                       - Use only tools and binaries already available on PATH."
-                    .to_string(),
-            });
-        }
+        let ctx = DynamicContext {
+            mode: prompt_mode(mode),
+            sandbox: self.sandbox.enabled,
+            variables: self
+                .variables
+                .read()
+                .as_ref()
+                .map(|v| v.variable_names())
+                .unwrap_or_default(),
+        };
+        sections.extend(dynamic_sections(&ctx));
 
         let text = sections
             .iter()
@@ -944,6 +921,22 @@ impl Agent {
         input: Vec<evot_engine::Content>,
     ) -> Result<runtime::TurnInput> {
         let llm = self.llm.read().clone();
+        if llm.provider.is_empty() {
+            return Err(EvotError::Conf(
+                "No LLM provider configured. Add one in the dashboard settings \
+                 or set EVOT_LLM_PROVIDER and the matching EVOT_LLM_*_API_KEY \
+                 in your env file."
+                    .to_string(),
+            ));
+        }
+        if llm.api_key.trim().is_empty() {
+            return Err(EvotError::Conf(format!(
+                "No API key set for provider '{}'. Add it in the dashboard settings \
+                 or set EVOT_LLM_{}_API_KEY in your env file.",
+                llm.provider,
+                llm.provider.to_uppercase().replace('-', "_"),
+            )));
+        }
         let (system_prompt, sections) = self.build_system_prompt(mode);
         let envs = self
             .variables()
@@ -1068,6 +1061,17 @@ fn mode_label(mode: &ToolMode) -> &'static str {
         ToolMode::Headless => "Headless",
         ToolMode::Planning { .. } => "Planning",
         ToolMode::Readonly => "Readonly",
+    }
+}
+
+/// Distil the runtime [`ToolMode`] into the prompt-layer [`PromptMode`],
+/// dropping the ask-user callbacks the prompt layer has no use for.
+fn prompt_mode(mode: &ToolMode) -> PromptMode {
+    match mode {
+        ToolMode::Interactive { .. } => PromptMode::Interactive,
+        ToolMode::Planning { .. } => PromptMode::Planning,
+        ToolMode::Headless => PromptMode::Headless,
+        ToolMode::Readonly => PromptMode::Readonly,
     }
 }
 

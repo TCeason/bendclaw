@@ -8,17 +8,21 @@ use axum::routing::get;
 use axum::routing::post;
 use axum::Json;
 use axum::Router;
+use parking_lot::RwLock;
 use serde::Deserialize;
 use tower_http::cors::CorsLayer;
 
 use crate::agent::Agent;
 use crate::agent::QueryRequest;
 use crate::agent::SubmitOutcome;
+use crate::conf::Config;
+use crate::conf::SettingsUpdate;
 use crate::error::EvotError;
 use crate::error::Result;
 use crate::gateway::channels::http::stream;
 
 const INDEX_HTML: &str = include_str!("static/index.html");
+const SETTINGS_HTML: &str = include_str!("static/settings/index.html");
 
 /// `0` means no limit in the storage layer. The dashboard owns pagination, so
 /// `/api/sessions` should return every saved session rather than an arbitrary
@@ -48,11 +52,17 @@ struct ToggleFavoriteRequest {
 
 pub struct Server {
     agent: Arc<Agent>,
+    /// The live, mutable runtime config. Shared so the settings API can read a
+    /// masked snapshot and apply edits in place, then persist to the env file.
+    config: Arc<RwLock<Config>>,
 }
 
 impl Server {
-    pub fn new(agent: Arc<Agent>) -> Arc<Self> {
-        Arc::new(Self { agent })
+    pub fn new(agent: Arc<Agent>, config: Config) -> Arc<Self> {
+        Arc::new(Self {
+            agent,
+            config: Arc::new(RwLock::new(config)),
+        })
     }
 
     pub async fn start(self: Arc<Self>, host: String, port: u16) -> Result<()> {
@@ -132,6 +142,20 @@ impl Server {
                     },
                 ),
             )
+            .route(
+                "/settings",
+                get(|| async { Html(SETTINGS_HTML) }),
+            )
+            .route(
+                "/api/settings",
+                get(|State(server): State<Arc<Server>>| async move { server.get_settings() })
+                    .post(
+                        |State(server): State<Arc<Server>>,
+                         Json(req): Json<SettingsUpdate>| async move {
+                            server.update_settings(req)
+                        },
+                    ),
+            )
             .with_state(self)
             .merge(dashboard)
             .layer(CorsLayer::permissive())
@@ -139,6 +163,76 @@ impl Server {
 
     async fn index(&self) -> Html<&'static str> {
         Html(INDEX_HTML)
+    }
+
+    /// Returns the current LLM provider + Feishu config with secrets masked, so
+    /// the settings page can render the form without ever exposing raw keys.
+    ///
+    /// Reloads from the env file on disk first, so the page reflects edits made
+    /// outside the dashboard (e.g. a hand-edited `evot.env`) rather than a stale
+    /// in-memory snapshot. This also keeps the next save's "leave blank to keep"
+    /// behavior anchored to the real on-disk secrets.
+    fn get_settings(&self) -> impl IntoResponse {
+        if let Err(e) = self.reload_config_from_disk() {
+            // Fall back to the in-memory config rather than failing the page; a
+            // transient read error shouldn't blank out the settings UI.
+            tracing::warn!("settings: reload from disk failed, serving cached config: {e}");
+        }
+        let snapshot = crate::conf::settings_snapshot(&self.config.read());
+        Json(snapshot)
+    }
+
+    /// Re-read the env file from disk and replace the shared config. Uses the
+    /// path the process was started with so a custom `--env-file` is honored.
+    fn reload_config_from_disk(&self) -> Result<()> {
+        let env_path = self.config.read().env_file_path.clone();
+        let path_arg = env_path.to_str();
+        let fresh = Config::load_with_env_file(path_arg)?;
+        *self.config.write() = fresh;
+        Ok(())
+    }
+
+    /// Validate, persist to the env file, and hot-apply a settings update.
+    ///
+    /// LLM changes take effect on the next message (the agent's `LlmConfig` is
+    /// rebuilt here). Feishu changes are persisted but require a restart to
+    /// re-spawn the channel; the response carries `feishu_restart_required` so
+    /// the UI can surface that.
+    fn update_settings(&self, update: SettingsUpdate) -> impl IntoResponse {
+        let feishu_changed = update.feishu.is_some();
+        match self.apply_and_persist(update) {
+            Ok(()) => (
+                axum::http::StatusCode::OK,
+                Json(serde_json::json!({
+                    "ok": true,
+                    "feishu_restart_required": feishu_changed,
+                    "settings": crate::conf::settings_snapshot(&self.config.read()),
+                })),
+            )
+                .into_response(),
+            Err(e) => (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+            )
+                .into_response(),
+        }
+    }
+
+    /// Apply the update to the shared config, persist it to the env file, and
+    /// push the rebuilt active LLM into the running agent. Holds the config
+    /// write lock for the whole operation so concurrent edits cannot interleave.
+    fn apply_and_persist(&self, update: SettingsUpdate) -> Result<()> {
+        let mut config = self.config.write();
+        crate::conf::apply_settings(&mut config, &update)?;
+        // Surface resolution errors (e.g. missing key) before writing the file.
+        let llm = config.active_llm()?;
+        let env_path = config.env_file_path.clone();
+        // Generate the managed block from the resolved config so secrets and
+        // every field live inside it — the block is the single source of truth.
+        let groups = crate::conf::config_to_env_groups(&config);
+        crate::conf::env_writer::write_grouped(&env_path, &groups)?;
+        self.agent.set_llm(llm);
+        Ok(())
     }
 
     /// Returns recent sessions, each with a flattened `search_text` field

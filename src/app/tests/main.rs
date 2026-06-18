@@ -38,6 +38,8 @@ mod session_locator_test;
 mod session_observability_test;
 #[path = "session_test.rs"]
 mod session_test;
+#[path = "settings_test.rs"]
+mod settings_test;
 #[path = "skill_loader_test.rs"]
 mod skill_loader_test;
 #[path = "storage_memory_test.rs"]
