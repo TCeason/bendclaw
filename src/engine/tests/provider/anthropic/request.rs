@@ -554,3 +554,43 @@ fn test_empty_assistant_preserved_as_placeholder() {
     let assistant_content = msgs[1]["content"].as_array().unwrap();
     assert_eq!(assistant_content[0]["text"], "[empty response]");
 }
+
+// ---------------------------------------------------------------------------
+// build_messages_url
+// ---------------------------------------------------------------------------
+
+#[test]
+fn messages_url_appends_v1_for_bare_base() {
+    assert_eq!(
+        build_messages_url("https://api.anthropic.com"),
+        "https://api.anthropic.com/v1/messages"
+    );
+}
+
+#[test]
+fn messages_url_trims_trailing_slash() {
+    assert_eq!(
+        build_messages_url("https://api.anthropic.com/"),
+        "https://api.anthropic.com/v1/messages"
+    );
+}
+
+#[test]
+fn messages_url_does_not_double_v1_suffix() {
+    assert_eq!(
+        build_messages_url("https://gateway.example.com/anthropic/v1"),
+        "https://gateway.example.com/anthropic/v1/messages"
+    );
+    assert_eq!(
+        build_messages_url("https://gateway.example.com/anthropic/v1/"),
+        "https://gateway.example.com/anthropic/v1/messages"
+    );
+}
+
+#[test]
+fn messages_url_keeps_v1_only_at_path_end() {
+    assert_eq!(
+        build_messages_url("https://example.com/v1/proxy"),
+        "https://example.com/v1/proxy/v1/messages"
+    );
+}

@@ -5,6 +5,17 @@ use crate::types::*;
 
 const DYNAMIC_BOUNDARY: &str = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
 
+/// Build the Anthropic Messages API URL, avoiding a doubled `/v1` when the
+/// base already ends in `/v1`.
+pub fn build_messages_url(base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    if trimmed.ends_with("/v1") {
+        format!("{trimmed}/messages")
+    } else {
+        format!("{trimmed}/v1/messages")
+    }
+}
+
 pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::Value {
     let mut messages: Vec<serde_json::Value> = Vec::new();
 

@@ -34,7 +34,7 @@ impl StreamProvider for AnthropicProvider {
             .unwrap_or_else(|| "https://api.anthropic.com".into());
 
         let is_custom = base_url != "https://api.anthropic.com";
-        let url = format!("{}/v1/messages", base_url);
+        let url = request::build_messages_url(&base_url);
 
         let body = request::build_request_body(&config, is_oauth);
         debug!(

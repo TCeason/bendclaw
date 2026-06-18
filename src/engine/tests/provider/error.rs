@@ -240,3 +240,92 @@ fn rate_limit_wording_is_not_overflow() {
     ));
     assert!(!is_context_overflow_message("429 too many requests"));
 }
+
+// ---------------------------------------------------------------------------
+// format_transport_detail
+// ---------------------------------------------------------------------------
+
+use std::error::Error;
+use std::fmt;
+
+#[derive(Debug)]
+struct FakeError {
+    msg: String,
+    source: Option<Box<FakeError>>,
+}
+
+impl fmt::Display for FakeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.msg)
+    }
+}
+
+impl Error for FakeError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.source
+            .as_ref()
+            .map(|s| s.as_ref() as &(dyn Error + 'static))
+    }
+}
+
+#[test]
+fn transport_detail_appends_url_when_missing() {
+    let err = FakeError {
+        msg: "connection reset".into(),
+        source: None,
+    };
+    let detail = format_transport_detail(&err, Some("https://example.com/v1/messages"));
+    assert_eq!(
+        detail,
+        "connection reset (url: https://example.com/v1/messages)"
+    );
+}
+
+#[test]
+fn transport_detail_does_not_duplicate_url_already_present() {
+    let url = "https://example.com/v1/messages";
+    let err = FakeError {
+        msg: format!("error sending request for url ({url})"),
+        source: None,
+    };
+    let detail = format_transport_detail(&err, Some(url));
+    assert_eq!(detail.matches(url).count(), 1);
+}
+
+#[test]
+fn transport_detail_skips_repeated_source_text() {
+    let inner = FakeError {
+        msg: "peer closed connection without sending TLS close_notify".into(),
+        source: None,
+    };
+    let middle = FakeError {
+        msg: "peer closed connection without sending TLS close_notify".into(),
+        source: Some(Box::new(inner)),
+    };
+    let outer = FakeError {
+        msg: "client error (SendRequest): peer closed connection without sending TLS close_notify"
+            .into(),
+        source: Some(Box::new(middle)),
+    };
+    let detail = format_transport_detail(&outer, Some("https://example.com/v1/messages"));
+    assert_eq!(
+        detail
+            .matches("peer closed connection without sending TLS close_notify")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn transport_detail_keeps_distinct_source_causes() {
+    let inner = FakeError {
+        msg: "dns lookup failed".into(),
+        source: None,
+    };
+    let outer = FakeError {
+        msg: "connect error".into(),
+        source: Some(Box::new(inner)),
+    };
+    let detail = format_transport_detail(&outer, None);
+    assert_eq!(detail, "connect error -> dns lookup failed");
+}

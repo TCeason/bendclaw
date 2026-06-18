@@ -66,14 +66,10 @@ impl StreamProvider for BedrockProvider {
         }
 
         let response = request.json(&body).send().await.map_err(|e| {
-            let mut detail = format!("{e} (url: {url})");
-            let mut source = std::error::Error::source(&e);
-            while let Some(cause) = source {
-                detail.push_str(" -> ");
-                detail.push_str(&cause.to_string());
-                source = cause.source();
-            }
-            ProviderError::Network(detail)
+            ProviderError::Network(crate::provider::error::format_transport_detail(
+                &e,
+                Some(&url),
+            ))
         })?;
 
         if !response.status().is_success() {

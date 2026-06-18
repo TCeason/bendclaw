@@ -110,14 +110,7 @@ pub async fn classify_eventsource_error(error: reqwest_eventsource::Error) -> Pr
             }
         }
         reqwest_eventsource::Error::Transport(e) => {
-            let mut detail = e.to_string();
-            let mut source = std::error::Error::source(&e);
-            while let Some(cause) = source {
-                detail.push_str(" -> ");
-                detail.push_str(&cause.to_string());
-                source = cause.source();
-            }
-            ProviderError::Network(detail)
+            ProviderError::Network(format_transport_detail(&e, e.url().map(|u| u.as_str())))
         }
         other => ProviderError::Other(other.to_string()),
     }
@@ -212,6 +205,34 @@ fn is_quota_exceeded(message: &str) -> bool {
         || lower.contains("available balance")
         || lower.contains("usage limit") // Kimi: "reached your usage limit for this period"
         || lower.contains("billing")
+}
+
+// ---------------------------------------------------------------------------
+// Transport error formatting
+// ---------------------------------------------------------------------------
+
+/// Build a de-duplicated transport error detail: appends the URL and each
+/// source-chain cause only when not already present in the message.
+pub fn format_transport_detail(error: &dyn std::error::Error, url: Option<&str>) -> String {
+    let mut detail = error.to_string();
+
+    if let Some(url) = url {
+        if !url.is_empty() && !detail.contains(url) {
+            detail.push_str(&format!(" (url: {url})"));
+        }
+    }
+
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let text = cause.to_string();
+        if !text.is_empty() && !detail.contains(&text) {
+            detail.push_str(" -> ");
+            detail.push_str(&text);
+        }
+        source = cause.source();
+    }
+
+    detail
 }
 
 // ---------------------------------------------------------------------------
