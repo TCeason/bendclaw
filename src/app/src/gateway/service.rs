@@ -55,6 +55,7 @@ pub async fn build_agent(conf: &Config) -> Result<Arc<Agent>> {
             .with_system()
             .with_output_format()
             .with_output_efficiency()
+            .with_language()
             .with_project_context()
             .with_dynamic_boundary()
             .with_today_date()

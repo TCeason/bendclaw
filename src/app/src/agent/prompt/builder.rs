@@ -31,6 +31,11 @@ blocks for code and commands, and reference locations as `path:line`. Avoid \
 LaTeX math delimiters ($, $$) the terminal cannot render — use plain text or \
 Unicode.";
 
+const LANGUAGE_SECTION: &str = "\
+Respond in the same language the user writes in. If the user switches \
+languages, follow the switch. Technical terms, code, identifiers, file paths, \
+and command names stay in their original form — never translate them.";
+
 const OUTPUT_EFFICIENCY_SECTION: &str = "\
 Be concise in prose, not in evidence. Keep explanations short, but never trim \
 the test output, verification, or blocking detail that proves your work.\n\
@@ -243,6 +248,15 @@ impl SystemPrompt {
         self.sections.push(Section {
             name: "output_format",
             text: OUTPUT_FORMAT_SECTION.into(),
+        });
+        self
+    }
+
+    /// Append the response-language guideline.
+    pub fn with_language(mut self) -> Self {
+        self.sections.push(Section {
+            name: "language",
+            text: LANGUAGE_SECTION.into(),
         });
         self
     }
