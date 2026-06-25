@@ -188,11 +188,54 @@ fn test_off_thinking_omitted_when_model_cannot_disable() {
 }
 
 #[test]
-fn test_anthropic_default_max_tokens_matches_claude_code() {
-    let config = StreamConfigBuilder::anthropic().no_max_tokens().build();
+fn test_anthropic_max_tokens_falls_back_to_model_config() {
+    // No explicit max_tokens: use the model's configured budget (8192 for a
+    // standard Claude model) rather than an oversized constant. OpenRouter
+    // reserves credit from this value, so 128000 can 402 on limited keys.
+    let config = StreamConfigBuilder::anthropic()
+        .no_max_tokens()
+        .model_config(ModelConfig::anthropic(
+            "claude-sonnet-4-20250514",
+            "Claude Sonnet 4",
+        ))
+        .build();
+
+    let body = build_request_body(&config, false);
+    assert_eq!(body["max_tokens"], 8192);
+}
+
+#[test]
+fn test_anthropic_max_tokens_uses_large_budget_for_supported_model() {
+    // Opus 4.6+ genuinely supports a 128000 output budget, so the fallback
+    // should honor it when the model config advertises it.
+    let config = StreamConfigBuilder::anthropic()
+        .no_max_tokens()
+        .model_config(ModelConfig::anthropic("claude-opus-4-6", "Claude Opus 4.6"))
+        .build();
 
     let body = build_request_body(&config, false);
     assert_eq!(body["max_tokens"], 128000);
+}
+
+#[test]
+fn test_anthropic_explicit_max_tokens_wins() {
+    let config = StreamConfigBuilder::anthropic()
+        .max_tokens(4096)
+        .model_config(ModelConfig::anthropic("claude-opus-4-6", "Claude Opus 4.6"))
+        .build();
+
+    let body = build_request_body(&config, false);
+    assert_eq!(body["max_tokens"], 4096);
+}
+
+#[test]
+fn test_anthropic_max_tokens_default_without_model_config() {
+    // No max_tokens and no model config: fall back to a conservative default
+    // (8192) instead of the previous oversized 128000 constant.
+    let config = StreamConfigBuilder::anthropic().no_max_tokens().build();
+
+    let body = build_request_body(&config, false);
+    assert_eq!(body["max_tokens"], 8192);
 }
 
 // ---------------------------------------------------------------------------

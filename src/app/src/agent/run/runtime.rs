@@ -60,6 +60,8 @@ pub struct EngineOptions {
     pub tools: Vec<Box<dyn evot_engine::AgentTool>>,
     pub thinking_level: evot_engine::ThinkingLevel,
     pub compat_caps: evot_engine::provider::CompatCaps,
+    pub context_window: Option<u32>,
+    pub max_tokens: Option<u32>,
     pub cwd: std::path::PathBuf,
     pub path_guard: std::sync::Arc<evot_engine::PathGuard>,
     pub spill_dir: Option<std::path::PathBuf>,
@@ -947,6 +949,8 @@ pub fn build_model_config(
     model: &str,
     base_url: Option<&str>,
     compat_caps: evot_engine::provider::CompatCaps,
+    context_window: Option<u32>,
+    max_tokens: Option<u32>,
 ) -> evot_engine::provider::ModelConfig {
     use evot_engine::provider::ModelConfig;
     use evot_engine::provider::OpenAiCompat;
@@ -973,6 +977,12 @@ pub fn build_model_config(
     if let Some(base_url) = base_url {
         model_config.base_url = base_url.to_string();
     }
+    if let Some(context_window) = context_window {
+        model_config.context_window = context_window;
+    }
+    if let Some(max_tokens) = max_tokens {
+        model_config.max_tokens = max_tokens;
+    }
 
     model_config.apply_inferred_capabilities();
 
@@ -998,6 +1008,8 @@ pub(crate) fn build_agent(
         &options.model,
         options.base_url.as_deref(),
         options.compat_caps,
+        options.context_window,
+        options.max_tokens,
     );
 
     let provider_agent = match (options.provider_override, &options.protocol) {

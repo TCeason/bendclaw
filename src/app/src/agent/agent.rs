@@ -325,6 +325,8 @@ impl Agent {
             &llm.model,
             Some(&llm.base_url),
             llm.compat_caps,
+            llm.context_window,
+            llm.max_tokens,
         )
         .supported_thinking_levels()
     }
@@ -978,6 +980,8 @@ impl Agent {
                 tools,
                 thinking_level: llm.thinking_level,
                 compat_caps: llm.compat_caps,
+                context_window: llm.context_window,
+                max_tokens: llm.max_tokens,
                 cwd: cwd_path.to_path_buf(),
                 path_guard: sandbox_rt.path_guard,
                 spill_dir: self

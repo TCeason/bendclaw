@@ -67,6 +67,8 @@ pub struct ProviderProfile {
     /// [`LlmSelection::thinking_level`] applies. Lets each provider run at a
     /// different effort (e.g. anthropic=xhigh, deepseek=off).
     pub thinking_level: Option<ThinkingLevel>,
+    pub context_window: Option<u32>,
+    pub max_tokens: Option<u32>,
 }
 
 impl ProviderProfile {
@@ -110,6 +112,8 @@ pub struct LlmConfig {
     pub model: String,
     pub thinking_level: ThinkingLevel,
     pub compat_caps: CompatCaps,
+    pub context_window: Option<u32>,
+    pub max_tokens: Option<u32>,
 }
 
 impl LlmConfig {
@@ -126,6 +130,8 @@ impl LlmConfig {
             model: String::new(),
             thinking_level: ThinkingLevel::default(),
             compat_caps: CompatCaps::default(),
+            context_window: None,
+            max_tokens: None,
         }
     }
 }
@@ -195,6 +201,8 @@ impl Config {
             // global selection.
             thinking_level: profile.thinking_level.unwrap_or(self.llm.thinking_level),
             compat_caps: profile.compat_caps,
+            context_window: profile.context_window,
+            max_tokens: profile.max_tokens,
         })
     }
 

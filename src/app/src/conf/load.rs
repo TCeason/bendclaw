@@ -56,6 +56,8 @@ struct ProviderSource {
     model: Option<Vec<String>>,
     compat_caps: Option<CompatCaps>,
     thinking_level: Option<String>,
+    context_window: Option<u32>,
+    max_tokens: Option<u32>,
 }
 
 /// Deserialize a TOML value as either a single string or an array of strings.
@@ -233,6 +235,12 @@ fn merge_provider_source(
         if let Some(level) = src.thinking_level {
             profile.thinking_level = Some(thinking_level_from_str(&level)?);
         }
+        if let Some(context_window) = src.context_window {
+            profile.context_window = Some(context_window);
+        }
+        if let Some(max_tokens) = src.max_tokens {
+            profile.max_tokens = Some(max_tokens);
+        }
     } else {
         let protocol = match src.protocol {
             Some(p) => parse_protocol(&p)?,
@@ -249,6 +257,8 @@ fn merge_provider_source(
             models: src.model.unwrap_or_default(),
             compat_caps: src.compat_caps.unwrap_or_default(),
             thinking_level,
+            context_window: src.context_window,
+            max_tokens: src.max_tokens,
         });
     }
     Ok(())
@@ -365,6 +375,8 @@ const PROVIDER_FIELDS: &[&str] = &[
     "_PROTOCOL",
     "_COMPAT_CAPS",
     "_THINKING_LEVEL",
+    "_CONTEXT_WINDOW",
+    "_MAX_TOKENS",
 ];
 
 /// Non-LLM keys we still care about.
@@ -489,6 +501,8 @@ fn apply_provider_field(
             models: Vec::new(),
             compat_caps: CompatCaps::default(),
             thinking_level: None,
+            context_window: None,
+            max_tokens: None,
         });
     match field {
         "_API_KEY" => profile.api_key = value.to_string(),
@@ -503,9 +517,31 @@ fn apply_provider_field(
         "_PROTOCOL" => profile.protocol = parse_protocol(value)?,
         "_COMPAT_CAPS" => profile.compat_caps = parse_compat_caps(value)?,
         "_THINKING_LEVEL" => profile.thinking_level = Some(thinking_level_from_str(value)?),
+        "_CONTEXT_WINDOW" => profile.context_window = Some(parse_token_count(name, field, value)?),
+        "_MAX_TOKENS" => profile.max_tokens = Some(parse_token_count(name, field, value)?),
         _ => {}
     }
     Ok(())
+}
+
+/// Parse a positive token-count field (context window / max tokens).
+fn parse_token_count(name: &str, field: &str, value: &str) -> Result<u32> {
+    let parsed: u32 = value.trim().parse().map_err(|_| {
+        EvotError::Conf(format!(
+            "EVOT_LLM_{}{} must be a positive integer, got '{}'",
+            name.to_uppercase().replace('-', "_"),
+            field,
+            value
+        ))
+    })?;
+    if parsed == 0 {
+        return Err(EvotError::Conf(format!(
+            "EVOT_LLM_{}{} must be greater than 0",
+            name.to_uppercase().replace('-', "_"),
+            field
+        )));
+    }
+    Ok(parsed)
 }
 
 // ---------------------------------------------------------------------------

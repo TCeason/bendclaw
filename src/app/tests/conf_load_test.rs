@@ -446,6 +446,86 @@ fn load_config_per_provider_thinking_level_from_env_file() -> TestResult {
 }
 
 #[test]
+fn load_config_context_window_and_max_tokens_from_env_file() -> TestResult {
+    let _guard = env_lock()
+        .lock()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    let temp = tempfile::tempdir()?;
+    let env_home = temp.path().join("home");
+    std::fs::create_dir_all(env_home.join(".evotai"))?;
+    std::fs::write(
+        env_home.join(".evotai").join("evot.env"),
+        concat!(
+            "EVOT_LLM_PROVIDER=openrouter\n",
+            "EVOT_LLM_OPENROUTER_API_KEY=or-key\n",
+            "EVOT_LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1\n",
+            "EVOT_LLM_OPENROUTER_PROTOCOL=openai\n",
+            "EVOT_LLM_OPENROUTER_MODEL=google/gemini-2.5-pro\n",
+            "EVOT_LLM_OPENROUTER_CONTEXT_WINDOW=1000000\n",
+            "EVOT_LLM_OPENROUTER_MAX_TOKENS=32000\n",
+            // A provider without overrides falls back to None.
+            "EVOT_LLM_DEEPSEEK_API_KEY=ds-key\n",
+            "EVOT_LLM_DEEPSEEK_BASE_URL=https://api.deepseek.com/v1\n",
+            "EVOT_LLM_DEEPSEEK_MODEL=deepseek-chat\n",
+        ),
+    )?;
+
+    let original_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &env_home);
+
+    let result = Config::load();
+
+    restore_env_var("HOME", original_home);
+
+    let config = result?;
+    assert_eq!(
+        config.providers["openrouter"].context_window,
+        Some(1_000_000)
+    );
+    assert_eq!(config.providers["openrouter"].max_tokens, Some(32_000));
+    let llm = config.build_llm("openrouter", None)?;
+    assert_eq!(llm.context_window, Some(1_000_000));
+    assert_eq!(llm.max_tokens, Some(32_000));
+    // No overrides set -> None, engine uses inferred defaults.
+    assert_eq!(config.providers["deepseek"].context_window, None);
+    assert_eq!(config.providers["deepseek"].max_tokens, None);
+    Ok(())
+}
+
+#[test]
+fn load_config_rejects_invalid_max_tokens() -> TestResult {
+    let _guard = env_lock()
+        .lock()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    let temp = tempfile::tempdir()?;
+    let env_home = temp.path().join("home");
+    std::fs::create_dir_all(env_home.join(".evotai"))?;
+    std::fs::write(
+        env_home.join(".evotai").join("evot.env"),
+        concat!(
+            "EVOT_LLM_PROVIDER=openrouter\n",
+            "EVOT_LLM_OPENROUTER_API_KEY=or-key\n",
+            "EVOT_LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1\n",
+            "EVOT_LLM_OPENROUTER_MODEL=google/gemini-2.5-pro\n",
+            "EVOT_LLM_OPENROUTER_MAX_TOKENS=not-a-number\n",
+        ),
+    )?;
+
+    let original_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &env_home);
+
+    let result = Config::load();
+
+    restore_env_var("HOME", original_home);
+
+    let err = result.expect_err("invalid max tokens should fail to load");
+    assert!(format!("{err}").contains("MAX_TOKENS"));
+    Ok(())
+}
+
+#[test]
 fn load_config_thinking_level_env_overrides_toml() -> TestResult {
     let _guard = env_lock()
         .lock()
@@ -549,6 +629,8 @@ fn resolve_model_spec_by_model_name() -> TestResult {
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
             thinking_level: None,
+            context_window: None,
+            max_tokens: None,
         });
     config
         .providers
@@ -559,6 +641,8 @@ fn resolve_model_spec_by_model_name() -> TestResult {
             models: vec!["deepseek-chat".into()],
             compat_caps: Default::default(),
             thinking_level: None,
+            context_window: None,
+            max_tokens: None,
         });
 
     let (name, override_model) = config.resolve_model_spec("deepseek-chat")?;
@@ -589,6 +673,8 @@ fn with_model_sets_override() -> TestResult {
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
             thinking_level: None,
+            context_window: None,
+            max_tokens: None,
         });
 
     // provider:model sets override
@@ -617,6 +703,8 @@ fn with_model_none_is_noop() -> TestResult {
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
             thinking_level: None,
+            context_window: None,
+            max_tokens: None,
         });
     let config = config.with_model(None)?;
     assert_eq!(config.llm.provider, "");
@@ -644,6 +732,8 @@ fn validate_missing_api_key() {
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
             thinking_level: None,
+            context_window: None,
+            max_tokens: None,
         });
     config.llm.provider = "anthropic".into();
     let err = config.validate().unwrap_err();
@@ -662,6 +752,8 @@ fn validate_missing_base_url() {
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
             thinking_level: None,
+            context_window: None,
+            max_tokens: None,
         });
     config.llm.provider = "anthropic".into();
     let err = config.validate().unwrap_err();
@@ -680,6 +772,8 @@ fn validate_missing_model() {
             models: Vec::new(),
             compat_caps: Default::default(),
             thinking_level: None,
+            context_window: None,
+            max_tokens: None,
         });
     config.llm.provider = "anthropic".into();
     let err = config.validate().unwrap_err();
@@ -698,6 +792,8 @@ fn validate_model_override_bypasses_empty_profile_model() {
             models: Vec::new(),
             compat_caps: Default::default(),
             thinking_level: None,
+            context_window: None,
+            max_tokens: None,
         });
     config.llm.provider = "anthropic".into();
     config.llm.model_override = Some("override-model".into());
@@ -807,6 +903,8 @@ fn make_multi_provider_config() -> Config {
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
             thinking_level: None,
+            context_window: None,
+            max_tokens: None,
         });
     config
         .providers
@@ -817,6 +915,8 @@ fn make_multi_provider_config() -> Config {
             models: vec!["gpt-5.4".into()],
             compat_caps: Default::default(),
             thinking_level: None,
+            context_window: None,
+            max_tokens: None,
         });
     config
         .providers
@@ -827,6 +927,8 @@ fn make_multi_provider_config() -> Config {
             models: vec!["deepseek-chat".into()],
             compat_caps: Default::default(),
             thinking_level: None,
+            context_window: None,
+            max_tokens: None,
         });
     config.llm.provider = "anthropic".into();
     config
@@ -850,6 +952,8 @@ fn resolve_llm_config(
         model: model_override.unwrap_or_else(|| profile.model().to_string()),
         thinking_level: config.llm.thinking_level,
         compat_caps: Default::default(),
+        context_window: None,
+        max_tokens: None,
     })
 }
 
@@ -932,6 +1036,8 @@ fn set_provider_validates_incomplete_provider() {
             models: vec!["claude-sonnet-4-20250514".into()],
             compat_caps: Default::default(),
             thinking_level: None,
+            context_window: None,
+            max_tokens: None,
         });
     config
         .providers
@@ -942,6 +1048,8 @@ fn set_provider_validates_incomplete_provider() {
             models: vec!["some-model".into()],
             compat_caps: Default::default(),
             thinking_level: None,
+            context_window: None,
+            max_tokens: None,
         });
 
     // Resolving the broken provider succeeds at spec level

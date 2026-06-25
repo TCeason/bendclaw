@@ -92,6 +92,15 @@ pub fn config_to_env_groups(config: &Config) -> Vec<EnvGroup> {
         if let Some(level) = p.thinking_level {
             g.push(format!("EVOT_LLM_{seg}_THINKING_LEVEL"), level.as_str());
         }
+        if let Some(context_window) = p.context_window {
+            g.push(
+                format!("EVOT_LLM_{seg}_CONTEXT_WINDOW"),
+                context_window.to_string(),
+            );
+        }
+        if let Some(max_tokens) = p.max_tokens {
+            g.push(format!("EVOT_LLM_{seg}_MAX_TOKENS"), max_tokens.to_string());
+        }
         groups.push(g);
     }
 
@@ -143,6 +152,8 @@ pub fn apply_settings(config: &mut Config, update: &SettingsUpdate) -> Result<()
             None => existing.map(|e| e.api_key.clone()).unwrap_or_default(),
         };
         let compat_caps = existing.map(|e| e.compat_caps).unwrap_or(CompatCaps::NONE);
+        let context_window = existing.and_then(|e| e.context_window);
+        let max_tokens = existing.and_then(|e| e.max_tokens);
         let models: Vec<String> = p
             .models
             .iter()
@@ -156,6 +167,8 @@ pub fn apply_settings(config: &mut Config, update: &SettingsUpdate) -> Result<()
             models,
             compat_caps,
             thinking_level,
+            context_window,
+            max_tokens,
         });
     }
 

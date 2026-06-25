@@ -26,6 +26,8 @@ async fn manual_compact_uses_llm_summary() -> TestResult {
         models: vec!["gpt-4o".into()],
         compat_caps: Default::default(),
         thinking_level: None,
+        context_window: None,
+        max_tokens: None,
     });
     config.llm.provider = "test".into();
 

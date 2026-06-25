@@ -27,6 +27,8 @@ async fn auto_compaction_persists_structured_compact_item() -> TestResult {
         models: vec!["gpt-4o".into()],
         compat_caps: Default::default(),
         thinking_level: None,
+        context_window: None,
+        max_tokens: None,
     });
     config.llm.provider = "test".into();
 

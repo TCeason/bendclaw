@@ -66,6 +66,8 @@ async fn agent_create_session_persists_empty_repl_session() -> TestResult {
         models: vec!["test-model".into()],
         compat_caps: Default::default(),
         thinking_level: None,
+        context_window: None,
+        max_tokens: None,
     });
     config.llm.provider = "test".into();
 
@@ -117,6 +119,8 @@ async fn missing_api_key_defers_to_query_time() -> TestResult {
             models: vec!["claude-sonnet".into()],
             compat_caps: Default::default(),
             thinking_level: None,
+            context_window: None,
+            max_tokens: None,
         });
     config.llm.provider = "anthropic".into();
 

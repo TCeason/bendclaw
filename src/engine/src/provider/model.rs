@@ -542,7 +542,7 @@ impl ModelConfig {
             provider: "local".into(),
             base_url: base_url.into(),
             context_window,
-            max_tokens: 4096,
+            max_tokens: 16384,
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::default()),
