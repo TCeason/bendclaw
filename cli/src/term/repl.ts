@@ -154,6 +154,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let lastPendingText = ''
   let lastPendingRendered = ''
   let expanded = false
+  // Rendered-history cache — see buildFrame. Committed history is append-only
+  // (or fully cleared), so it changes far less often than the spinner and
+  // streaming deltas that drive most renders. Caching the flattened ANSI lines
+  // keeps per-frame cost at O(pending + prompt) instead of O(total history),
+  // which is what made keystroke echo lag while a task was running.
+  let cachedHistoryLines: string[] = []
+  let historyCacheDirty = true
+  let historyCacheExpanded = false
+  let historyCacheColumns = -1
   const compactLines: OutputLine[] = []
   const expandedLines: OutputLine[] = []
   let lastProgressLineCount = 0
@@ -319,10 +328,20 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       blocks.push({ lines: banner.split('\n').map(l => ({ spans: [{ text: l }] })), marginTop: 0 })
     }
 
-    // 2. History (committed output lines)
+    // 2. History (committed output lines) — cached. Rebuild only when history
+    // mutates (dirty flag), the view mode toggles, or the terminal width
+    // changes; otherwise reuse the previously flattened ANSI lines so the
+    // high-frequency spinner/delta/keystroke renders skip the full rebuild.
     const historyLines = expanded ? expandedLines : compactLines
     if (historyLines.length > 0) {
-      blocks.push(...buildOutputBlocks(historyLines, { columns: renderer.termCols }))
+      const cols = renderer.termCols
+      if (historyCacheDirty || historyCacheExpanded !== expanded || historyCacheColumns !== cols) {
+        cachedHistoryLines = blocksToLines(buildOutputBlocks(historyLines, { columns: cols }))
+        historyCacheDirty = false
+        historyCacheExpanded = expanded
+        historyCacheColumns = cols
+      }
+      blocks.push({ lines: cachedHistoryLines.map(l => ({ spans: [{ text: l }] })), marginTop: 0 })
     }
 
     // 3. Thinking text preview (shown during reasoning phase before text arrives)
@@ -406,6 +425,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (outputLines.length === 0) return
     compactLines.push(...outputLines)
     expandedLines.push(...outputLines)
+    historyCacheDirty = true
     // Log for tracing
     const visible = expanded ? expandedLines.slice(-outputLines.length) : outputLines
     const context = outputContextFor(compactLines.slice(0, -outputLines.length))
@@ -423,6 +443,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (flushed.expandedLines) {
       compactLines.push(...flushed.lines)
       expandedLines.push(...flushed.expandedLines)
+      historyCacheDirty = true
       const visible = expanded ? flushed.expandedLines : flushed.lines
       const context = outputContextFor(compactLines.slice(0, -flushed.lines.length))
       const blocks = buildOutputBlocks(visible, context)
@@ -440,6 +461,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const callLines = buildToolStartedLines(event)
     compactLines.push(...callLines)
     expandedLines.push(...callLines)
+    historyCacheDirty = true
     const context = outputContextFor(compactLines.slice(0, -callLines.length))
     const blocks = buildOutputBlocks(callLines, context)
     const rendered = blocksToLines(blocks)
@@ -452,6 +474,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const exp = buildToolFinishedLines(event, true)
     compactLines.push(...compact)
     expandedLines.push(...exp)
+    historyCacheDirty = true
     const visible = expanded ? exp : compact
     const context = outputContextFor(compactLines.slice(0, -compact.length))
     const blocks = buildOutputBlocks(visible, context)
@@ -566,6 +589,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       renderer.clearScreen()
       compactLines.length = 0
       expandedLines.length = 0
+      historyCacheDirty = true
       commitLines(messagesToOutputLines(messages))
       commitLines([
         { id: 'sys-resumed-gap', kind: 'system', text: '' },
@@ -728,6 +752,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             if (newLines.length > 0) {
               const expandedProgress = buildToolProgressLines({ ...event, payload: { ...(event.payload ?? {}), text: newLines.join('\n') } }, true)
               expandedLines.push(...expandedProgress)
+              historyCacheDirty = true
               renderer.requestRender()
             }
           }
@@ -745,6 +770,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             if (completeNewLines.length > 0) {
               const thinkingOutputLines = buildThinkingLines(completeNewLines.join('\n'))
               expandedLines.push(...thinkingOutputLines)
+              historyCacheDirty = true
               renderer.requestRender()
             }
           }
@@ -762,6 +788,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             const exp = update.expandedCommitLines
             compactLines.push(...compact)
             expandedLines.push(...exp)
+            historyCacheDirty = true
             const visible = expanded ? exp : compact
             const context = outputContextFor(compactLines.slice(0, -compact.length))
             const blocks = buildOutputBlocks(visible, context)
@@ -1304,6 +1331,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       renderer.clearScreen()
       compactLines.length = 0
       expandedLines.length = 0
+      historyCacheDirty = true
     }
     if (result.clearContext) {
       // Abort any in-flight streaming and clear local context view without switching sessions.
@@ -1318,6 +1346,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       renderer.clearScreen()
       compactLines.length = 0
       expandedLines.length = 0
+      historyCacheDirty = true
       try { preloadedSessions = await agent.listSessions(20) } catch {}
     }
     if (result.newSession) {
@@ -1335,6 +1364,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       renderer.clearScreen()
       compactLines.length = 0
       expandedLines.length = 0
+      historyCacheDirty = true
       try { preloadedSessions = await agent.listSessions(20) } catch { preloadedSessions = [newSession] }
       commitLines([{ id: 'sys-new-session', kind: 'system', text: chalk.dim(`  new session ${sessionId.slice(0, 8)}`) }])
     }
