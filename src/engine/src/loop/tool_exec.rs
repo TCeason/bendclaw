@@ -26,6 +26,7 @@ pub(super) async fn execute_tool_calls(
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
+    idle_clock: Option<&crate::context::IdleClock>,
 ) -> ToolExecutionResult {
     match strategy {
         ToolExecutionStrategy::Sequential => {
@@ -38,6 +39,7 @@ pub(super) async fn execute_tool_calls(
                 cwd,
                 path_guard,
                 spill,
+                idle_clock,
             )
             .await
         }
@@ -51,6 +53,7 @@ pub(super) async fn execute_tool_calls(
                 cwd,
                 path_guard,
                 spill,
+                idle_clock,
             )
             .await
         }
@@ -59,8 +62,10 @@ pub(super) async fn execute_tool_calls(
             let mut steering_messages: Option<Vec<AgentMessage>> = None;
 
             for (batch_idx, batch) in tool_calls.chunks(*size).enumerate() {
-                let batch_result =
-                    execute_batch(tools, batch, tx, cancel, None, cwd, path_guard, spill).await;
+                let batch_result = execute_batch(
+                    tools, batch, tx, cancel, None, cwd, path_guard, spill, idle_clock,
+                )
+                .await;
                 results.extend(batch_result.tool_results);
 
                 // Check steering between batches
@@ -99,13 +104,16 @@ async fn execute_sequential(
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
+    idle_clock: Option<&crate::context::IdleClock>,
 ) -> ToolExecutionResult {
     let mut results: Vec<Message> = Vec::new();
     let mut steering_messages: Option<Vec<AgentMessage>> = None;
 
     for (index, (id, name, args)) in tool_calls.iter().enumerate() {
-        let (msg, _is_error) =
-            execute_single_tool(tools, id, name, args, tx, cancel, cwd, path_guard, spill).await;
+        let (msg, _is_error) = execute_single_tool(
+            tools, id, name, args, tx, cancel, cwd, path_guard, spill, idle_clock,
+        )
+        .await;
         results.push(msg);
 
         // Check for steering — skip remaining tools if user interrupted
@@ -138,13 +146,16 @@ async fn execute_batch(
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
+    idle_clock: Option<&crate::context::IdleClock>,
 ) -> ToolExecutionResult {
     use futures::future::join_all;
 
     let futures: Vec<_> = tool_calls
         .iter()
         .map(|(id, name, args)| {
-            execute_single_tool(tools, id, name, args, tx, cancel, cwd, path_guard, spill)
+            execute_single_tool(
+                tools, id, name, args, tx, cancel, cwd, path_guard, spill, idle_clock,
+            )
         })
         .collect();
 
@@ -182,6 +193,7 @@ async fn execute_single_tool(
     cwd: &std::path::Path,
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
+    idle_clock: Option<&crate::context::IdleClock>,
 ) -> (Message, bool) {
     let tool = tools.iter().find(|t| t.matches_call_name(name));
 
@@ -236,6 +248,7 @@ async fn execute_single_tool(
         cwd: cwd.to_path_buf(),
         path_guard: path_guard.clone(),
         spill: spill.clone(),
+        idle_clock: idle_clock.cloned(),
     };
 
     let (result, is_error) = match tool {

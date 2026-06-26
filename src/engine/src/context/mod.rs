@@ -40,6 +40,8 @@ pub use tracking::ContextConfig;
 pub use tracking::ContextTracker;
 pub use tracking::ExecutionLimits;
 pub use tracking::ExecutionTracker;
+pub use tracking::IdleClock;
+pub use tracking::IdlePause;
 
 /// Milliseconds since UNIX epoch, or 0 if the system clock is unavailable.
 pub fn now_ms() -> u64 {

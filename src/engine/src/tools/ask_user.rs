@@ -162,14 +162,21 @@ impl AgentTool for AskUserTool {
     async fn execute(
         &self,
         params: serde_json::Value,
-        _ctx: ToolContext,
+        ctx: ToolContext,
     ) -> Result<ToolResult, ToolError> {
         let request: AskUserRequest =
             serde_json::from_value(params).map_err(|e| ToolError::InvalidArgs(e.to_string()))?;
 
         validate_request(&request)?;
 
-        let response = (self.ask_fn)(request).await.map_err(ToolError::Failed)?;
+        // Waiting on the user is not the agent's own work: pause the idle clock
+        // so this interval is excluded from the execution duration limit. The
+        // guard records the elapsed time on drop, covering completion, error,
+        // and cancellation alike.
+        let response = {
+            let _idle = ctx.idle_clock.as_ref().map(|c| c.pause());
+            (self.ask_fn)(request).await.map_err(ToolError::Failed)?
+        };
 
         let text = match &response {
             AskUserResponse::Answered(answers) => {

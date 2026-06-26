@@ -433,6 +433,7 @@ async fn run_loop(
 
             let mut tool_results = Vec::new();
             if has_tool_calls {
+                let idle_clock = tracker.as_ref().map(|t| t.idle_clock());
                 let execution = execute_tool_calls(
                     &context.tools,
                     &tool_calls,
@@ -443,6 +444,7 @@ async fn run_loop(
                     &context.cwd,
                     &context.path_guard,
                     &config.spill,
+                    idle_clock.as_ref(),
                 )
                 .await;
 
