@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
@@ -38,11 +39,7 @@ pub(crate) async fn decode_sse_stream(
             async move { stream_http::drive_sse_response(response, sse_tx, sse_cancel).await },
         );
 
-    let mut content: Vec<Content> = Vec::new();
-    let mut tool_input_buffers: HashMap<usize, String> = HashMap::new();
-    let mut usage = Usage::default();
-    let mut stop_reason = StopReason::Stop;
-    let mut response_id: Option<String> = None;
+    let mut state = AnthropicSseState::default();
 
     let _ = tx.send(StreamEvent::Start);
 
@@ -55,15 +52,7 @@ pub(crate) async fn decode_sse_stream(
                 match event {
                     None => break,
                     Some(sse) => {
-                        if process_sse_event(
-                            &sse,
-                            &tx,
-                            &mut content,
-                            &mut tool_input_buffers,
-                            &mut usage,
-                            &mut stop_reason,
-                            &mut response_id,
-                        )? {
+                        if process_sse_event(&sse, &tx, &mut state)? {
                             break;
                         }
                     }
@@ -76,33 +65,47 @@ pub(crate) async fn decode_sse_stream(
     // If the driver errored (e.g. network disconnect mid-stream), always
     // propagate — partial content is incomplete and must not be used.
     if let Ok(Err(e)) = sse_handle.await {
-        debug!("SSE driver error (content_len={}): {e}", content.len());
+        debug!(
+            "SSE driver error (content_len={}): {e}",
+            state.content.len()
+        );
         return Err(ProviderError::Network(e));
     }
 
+    // Match pi/Anthropic semantics: once a message_start was observed, the
+    // stream is only complete after message_stop. A clean socket EOF without
+    // message_stop is still an interrupted stream; using partial content would
+    // persist half-written assistant markdown as a normal `stop` response.
+    if state.saw_message_start && !state.saw_message_stop {
+        return Err(ProviderError::Network(
+            "Anthropic stream ended before message_stop".into(),
+        ));
+    }
+
     // Detect empty response: no content and no usage from provider
-    if content.is_empty() && usage.input == 0 && usage.output == 0 {
+    if state.content.is_empty() && state.usage.input == 0 && state.usage.output == 0 {
         return Err(ProviderError::Api(
             "Empty response from provider (no content, no usage)".into(),
         ));
     }
 
-    let has_tool_calls = content
+    let has_tool_calls = state
+        .content
         .iter()
         .any(|c| matches!(c, Content::ToolCall { .. }));
     if has_tool_calls {
-        stop_reason = StopReason::ToolUse;
+        state.stop_reason = StopReason::ToolUse;
     }
 
     let message = Message::Assistant {
-        content,
-        stop_reason,
+        content: state.content,
+        stop_reason: state.stop_reason,
         model: config.model.clone(),
         provider: "anthropic".into(),
-        usage,
+        usage: state.usage,
         timestamp: now_ms(),
         error_message: None,
-        response_id,
+        response_id: state.response_id,
     };
 
     let _ = tx.send(StreamEvent::Done {
@@ -112,149 +115,191 @@ pub(crate) async fn decode_sse_stream(
     Ok(StreamOutcome::from(message))
 }
 
-/// Process a single SSE event. Returns `true` when Anthropic sent `message_stop`.
+struct AnthropicSseState {
+    content: Vec<Content>,
+    tool_input_buffers: HashMap<usize, String>,
+    usage: Usage,
+    stop_reason: StopReason,
+    response_id: Option<String>,
+    saw_message_start: bool,
+    saw_message_stop: bool,
+}
+
+impl Default for AnthropicSseState {
+    fn default() -> Self {
+        Self {
+            content: Vec::new(),
+            tool_input_buffers: HashMap::new(),
+            usage: Usage::default(),
+            stop_reason: StopReason::Stop,
+            response_id: None,
+            saw_message_start: false,
+            saw_message_stop: false,
+        }
+    }
+}
+
+fn parse_event_data<T: DeserializeOwned>(sse: &SseEvent) -> Result<T, ProviderError> {
+    serde_json::from_str::<T>(&sse.data).map_err(|e| {
+        ProviderError::Api(format!(
+            "Could not parse Anthropic SSE event {}: {}; data={}",
+            sse.event, e, sse.data
+        ))
+    })
+}
+
+fn map_stop_reason(reason: &str) -> Result<StopReason, ProviderError> {
+    match reason {
+        "end_turn" => Ok(StopReason::Stop),
+        "max_tokens" => Ok(StopReason::Length),
+        "tool_use" => Ok(StopReason::ToolUse),
+        // Mirrors pi: pause_turn/stop_sequence are safe stop-like terminal
+        // reasons here. We do not configure stop sequences, so seeing one is
+        // unusual but still provider-terminal rather than stream-corrupt.
+        "pause_turn" | "stop_sequence" => Ok(StopReason::Stop),
+        // Safety/refusal terminal reasons should not be silently reported as a
+        // successful stop.
+        "refusal" | "sensitive" => Ok(StopReason::Error),
+        other => Err(ProviderError::Api(format!(
+            "Unhandled Anthropic stop reason: {other}"
+        ))),
+    }
+}
+
 fn process_sse_event(
     sse: &SseEvent,
     tx: &mpsc::UnboundedSender<StreamEvent>,
-    content: &mut Vec<Content>,
-    tool_input_buffers: &mut HashMap<usize, String>,
-    usage: &mut Usage,
-    stop_reason: &mut StopReason,
-    response_id: &mut Option<String>,
+    state: &mut AnthropicSseState,
 ) -> Result<bool, ProviderError> {
     match sse.event.as_str() {
         "message_start" => {
-            if let Ok(data) = serde_json::from_str::<AnthropicMessageStart>(&sse.data) {
-                usage.input = data.message.usage.input_tokens;
-                usage.cache_read = data.message.usage.cache_read_input_tokens;
-                usage.cache_write = data.message.usage.cache_creation_input_tokens;
-                if let Some(id) = data.message.id {
-                    if !id.is_empty() {
-                        *response_id = Some(id);
-                    }
+            state.saw_message_start = true;
+            let data = parse_event_data::<AnthropicMessageStart>(sse)?;
+            state.usage.input = data.message.usage.input_tokens;
+            state.usage.cache_read = data.message.usage.cache_read_input_tokens;
+            state.usage.cache_write = data.message.usage.cache_creation_input_tokens;
+            if let Some(id) = data.message.id {
+                if !id.is_empty() {
+                    state.response_id = Some(id);
                 }
             }
         }
         "content_block_start" => {
-            if let Ok(data) = serde_json::from_str::<AnthropicContentBlockStart>(&sse.data) {
-                let idx = data.index as usize;
-                match data.content_block {
-                    AnthropicContentBlock::Text { .. } => {
-                        while content.len() <= idx {
-                            content.push(Content::Text {
-                                text: String::new(),
-                            });
-                        }
-                    }
-                    AnthropicContentBlock::Thinking { .. } => {
-                        while content.len() <= idx {
-                            content.push(Content::Thinking {
-                                thinking: String::new(),
-                                signature: None,
-                            });
-                        }
-                    }
-                    AnthropicContentBlock::ToolUse { id, name, .. } => {
-                        while content.len() <= idx {
-                            content.push(Content::ToolCall {
-                                id: id.clone(),
-                                name: name.clone(),
-                                arguments: serde_json::Value::Object(Default::default()),
-                            });
-                        }
-                        let _ = tx.send(StreamEvent::ToolCallStart {
-                            content_index: idx,
-                            id,
-                            name,
+            let data = parse_event_data::<AnthropicContentBlockStart>(sse)?;
+            let idx = data.index as usize;
+            match data.content_block {
+                AnthropicContentBlock::Text { .. } => {
+                    while state.content.len() <= idx {
+                        state.content.push(Content::Text {
+                            text: String::new(),
                         });
                     }
+                }
+                AnthropicContentBlock::Thinking { .. } => {
+                    while state.content.len() <= idx {
+                        state.content.push(Content::Thinking {
+                            thinking: String::new(),
+                            signature: None,
+                        });
+                    }
+                }
+                AnthropicContentBlock::ToolUse { id, name, .. } => {
+                    while state.content.len() <= idx {
+                        state.content.push(Content::ToolCall {
+                            id: id.clone(),
+                            name: name.clone(),
+                            arguments: serde_json::Value::Object(Default::default()),
+                        });
+                    }
+                    let _ = tx.send(StreamEvent::ToolCallStart {
+                        content_index: idx,
+                        id,
+                        name,
+                    });
                 }
             }
         }
         "content_block_delta" => {
-            if let Ok(data) = serde_json::from_str::<AnthropicContentBlockDelta>(&sse.data) {
-                let idx = data.index as usize;
-                match data.delta {
-                    AnthropicDelta::TextDelta { text } => {
-                        if let Some(Content::Text { text: ref mut t }) = content.get_mut(idx) {
-                            t.push_str(&text);
-                        }
-                        let _ = tx.send(StreamEvent::TextDelta {
-                            content_index: idx,
-                            delta: text,
-                        });
+            let data = parse_event_data::<AnthropicContentBlockDelta>(sse)?;
+            let idx = data.index as usize;
+            match data.delta {
+                AnthropicDelta::TextDelta { text } => {
+                    if let Some(Content::Text { text: ref mut t }) = state.content.get_mut(idx) {
+                        t.push_str(&text);
                     }
-                    AnthropicDelta::ThinkingDelta { thinking } => {
-                        if let Some(Content::Thinking {
-                            thinking: ref mut t,
-                            ..
-                        }) = content.get_mut(idx)
-                        {
-                            t.push_str(&thinking);
-                        }
-                        let _ = tx.send(StreamEvent::ThinkingDelta {
-                            content_index: idx,
-                            delta: thinking,
-                        });
+                    let _ = tx.send(StreamEvent::TextDelta {
+                        content_index: idx,
+                        delta: text,
+                    });
+                }
+                AnthropicDelta::ThinkingDelta { thinking } => {
+                    if let Some(Content::Thinking {
+                        thinking: ref mut t,
+                        ..
+                    }) = state.content.get_mut(idx)
+                    {
+                        t.push_str(&thinking);
                     }
-                    AnthropicDelta::InputJsonDelta { partial_json } => {
-                        tool_input_buffers
-                            .entry(idx)
-                            .or_default()
-                            .push_str(&partial_json);
-                        let _ = tx.send(StreamEvent::ToolCallDelta {
-                            content_index: idx,
-                            delta: partial_json,
-                        });
-                    }
-                    AnthropicDelta::SignatureDelta { signature } => {
-                        if let Some(Content::Thinking {
-                            signature: ref mut s,
-                            ..
-                        }) = content.get_mut(idx)
-                        {
-                            *s = Some(signature);
-                        }
+                    let _ = tx.send(StreamEvent::ThinkingDelta {
+                        content_index: idx,
+                        delta: thinking,
+                    });
+                }
+                AnthropicDelta::InputJsonDelta { partial_json } => {
+                    state
+                        .tool_input_buffers
+                        .entry(idx)
+                        .or_default()
+                        .push_str(&partial_json);
+                    let _ = tx.send(StreamEvent::ToolCallDelta {
+                        content_index: idx,
+                        delta: partial_json,
+                    });
+                }
+                AnthropicDelta::SignatureDelta { signature } => {
+                    if let Some(Content::Thinking {
+                        signature: ref mut s,
+                        ..
+                    }) = state.content.get_mut(idx)
+                    {
+                        *s = Some(signature);
                     }
                 }
             }
         }
         "content_block_stop" => {
-            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&sse.data) {
-                let idx = data["index"].as_u64().unwrap_or(0) as usize;
-                if let Some(input) = tool_input_buffers.remove(&idx) {
-                    if let Some(Content::ToolCall { arguments, .. }) = content.get_mut(idx) {
-                        match serde_json::from_str(&input) {
-                            Ok(parsed) => *arguments = parsed,
-                            Err(e) => debug!("Failed to parse tool call JSON: {} ({})", input, e),
-                        }
+            let data = parse_event_data::<serde_json::Value>(sse)?;
+            let idx = data["index"].as_u64().unwrap_or(0) as usize;
+            if let Some(input) = state.tool_input_buffers.remove(&idx) {
+                if let Some(Content::ToolCall { arguments, .. }) = state.content.get_mut(idx) {
+                    match serde_json::from_str(&input) {
+                        Ok(parsed) => *arguments = parsed,
+                        Err(e) => debug!("Failed to parse tool call JSON: {} ({})", input, e),
                     }
                 }
-                let _ = tx.send(StreamEvent::ToolCallEnd { content_index: idx });
             }
+            let _ = tx.send(StreamEvent::ToolCallEnd { content_index: idx });
         }
         "message_delta" => {
-            if let Ok(data) = serde_json::from_str::<AnthropicMessageDelta>(&sse.data) {
-                let stop_reason_value = data.delta.stop_reason.as_deref();
-                *stop_reason = match stop_reason_value {
-                    Some("tool_use") => StopReason::ToolUse,
-                    Some("max_tokens") => StopReason::Length,
-                    _ => StopReason::Stop,
-                };
-                usage.output = data.usage.output_tokens;
-                // Only override cache fields when the delta actually carries
-                // them — Anthropic's SSE spec only guarantees `output_tokens`
-                // in `message_delta.usage`, so a missing field (decoded as 0)
-                // must not clobber values captured from `message_start`.
-                if data.usage.cache_read_input_tokens > 0 {
-                    usage.cache_read = data.usage.cache_read_input_tokens;
-                }
-                if data.usage.cache_creation_input_tokens > 0 {
-                    usage.cache_write = data.usage.cache_creation_input_tokens;
-                }
+            let data = parse_event_data::<AnthropicMessageDelta>(sse)?;
+            if let Some(reason) = data.delta.stop_reason.as_deref() {
+                state.stop_reason = map_stop_reason(reason)?;
+            }
+            state.usage.output = data.usage.output_tokens;
+            // Only override cache fields when the delta actually carries
+            // them — Anthropic's SSE spec only guarantees `output_tokens`
+            // in `message_delta.usage`, so a missing field (decoded as 0)
+            // must not clobber values captured from `message_start`.
+            if data.usage.cache_read_input_tokens > 0 {
+                state.usage.cache_read = data.usage.cache_read_input_tokens;
+            }
+            if data.usage.cache_creation_input_tokens > 0 {
+                state.usage.cache_write = data.usage.cache_creation_input_tokens;
             }
         }
         "message_stop" => {
+            let _ = parse_event_data::<serde_json::Value>(sse)?;
+            state.saw_message_stop = true;
             return Ok(true);
         }
         "ping" | "message" => {}

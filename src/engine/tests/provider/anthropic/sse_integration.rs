@@ -57,9 +57,88 @@ async fn anthropic_sse_text_response() {
     assert!(events.iter().any(|e| matches!(e, StreamEvent::Done { .. })));
 }
 
-// ---------------------------------------------------------------------------
-// SSE streaming — tool call
-// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn anthropic_sse_stream_without_message_stop_errors() {
+    let sse = anthropic_sse::body(vec![
+        anthropic_sse::message_start(100, 0),
+        anthropic_sse::text_block_start(0),
+        anthropic_sse::text_delta(0, "partial `"),
+        anthropic_sse::block_stop(0),
+        anthropic_sse::message_delta("end_turn", 3),
+    ]);
+
+    let config = StreamConfigBuilder::anthropic().cache_disabled().build();
+    let result = run_provider_sse_outcome(&AnthropicProvider, config, &sse, 200).await;
+    let Err(err) = result else {
+        panic!("Expected interrupted stream error");
+    };
+    assert!(err.to_string().contains("message_stop"));
+}
+
+#[tokio::test]
+async fn anthropic_sse_max_tokens_maps_to_length() {
+    let sse = anthropic_sse::body(vec![
+        anthropic_sse::message_start(100, 0),
+        anthropic_sse::text_block_start(0),
+        anthropic_sse::text_delta(0, "partial"),
+        anthropic_sse::block_stop(0),
+        anthropic_sse::message_delta("max_tokens", 3),
+        anthropic_sse::message_stop(),
+    ]);
+
+    let config = StreamConfigBuilder::anthropic().cache_disabled().build();
+    let result = run_provider_sse(&AnthropicProvider, config, &sse, 200).await;
+    let Ok((msg, _events)) = result else {
+        panic!("Expected successful length response");
+    };
+
+    match &msg {
+        Message::Assistant { stop_reason, .. } => {
+            assert_eq!(*stop_reason, StopReason::Length);
+        }
+        _ => panic!("Expected Assistant message"),
+    }
+}
+
+#[tokio::test]
+async fn anthropic_sse_malformed_known_event_errors() {
+    let sse = anthropic_sse::body(vec![
+        anthropic_sse::message_start(100, 0),
+        anthropic_sse::text_block_start(0),
+        anthropic_sse::text_delta(0, "Hello"),
+        anthropic_sse::block_stop(0),
+        "event: message_delta\ndata: {bad json".to_string(),
+        anthropic_sse::message_stop(),
+    ]);
+
+    let config = StreamConfigBuilder::anthropic().cache_disabled().build();
+    let result = run_provider_sse_outcome(&AnthropicProvider, config, &sse, 200).await;
+    let Err(err) = result else {
+        panic!("Expected malformed SSE event error");
+    };
+    assert!(err
+        .to_string()
+        .contains("Could not parse Anthropic SSE event"));
+}
+
+#[tokio::test]
+async fn anthropic_sse_unknown_stop_reason_errors() {
+    let sse = anthropic_sse::body(vec![
+        anthropic_sse::message_start(100, 0),
+        anthropic_sse::text_block_start(0),
+        anthropic_sse::text_delta(0, "Hello"),
+        anthropic_sse::block_stop(0),
+        anthropic_sse::message_delta("new_reason", 3),
+        anthropic_sse::message_stop(),
+    ]);
+
+    let config = StreamConfigBuilder::anthropic().cache_disabled().build();
+    let result = run_provider_sse_outcome(&AnthropicProvider, config, &sse, 200).await;
+    let Err(err) = result else {
+        panic!("Expected unknown stop reason error");
+    };
+    assert!(err.to_string().contains("Unhandled Anthropic stop reason"));
+}
 
 #[tokio::test]
 async fn anthropic_sse_tool_call() {
