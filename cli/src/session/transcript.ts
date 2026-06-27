@@ -54,7 +54,7 @@ export function transcriptToMessages(items: RawItem[]): UIMessage[] {
 
       const toolCalls = buildToolCalls(item.tool_calls ?? [], toolResults)
 
-      let text = item.text ?? ''
+      const text = repairThinkingSplitText(item.text ?? '', item.thinking)
 
       messages.push({
         id: `transcript-assistant-${idx++}`,
@@ -77,6 +77,27 @@ export function transcriptToMessages(items: RawItem[]): UIMessage[] {
   }
 
   return messages
+}
+
+function repairThinkingSplitText(text: string, thinking: string | undefined): string {
+  if (!text || !thinking) return text
+
+  // Older transcripts flattened assistant content into separate `text` and
+  // `thinking` buckets, losing content-block order. Some Anthropic-compatible
+  // proxies misclassify visible prose that mentions `<think>` as a later
+  // thinking block, leaving `text` ending at an unmatched backtick and
+  // `thinking` starting with the matching backtick. Re-join only this narrow
+  // signature so genuine hidden reasoning stays hidden on resume.
+  const textTrimmed = text.trimEnd()
+  const thinkingTrimmed = thinking.trimStart()
+  if (!textTrimmed.endsWith('`') || !thinkingTrimmed.startsWith('`')) return text
+
+  const leftBackticks = (textTrimmed.match(/`/g) ?? []).length
+  const rightBackticks = (thinkingTrimmed.match(/`/g) ?? []).length
+  if ((leftBackticks + rightBackticks) % 2 !== 0) return text
+
+  const right = thinking.slice(thinking.length - thinkingTrimmed.length)
+  return `${text}${right}`
 }
 
 // ---------------------------------------------------------------------------

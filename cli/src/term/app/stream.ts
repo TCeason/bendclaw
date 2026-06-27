@@ -146,37 +146,8 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
   }
 
   if (event.kind === 'assistant_delta') {
-    const thinkingDelta = p.thinking_delta as string | undefined
-    if (thinkingDelta) {
-      state = {
-        ...state,
-        streamingThinkingText: state.streamingThinkingText + thinkingDelta,
-        pendingThinkingText: state.streamingThinkingText + thinkingDelta,
-        thinkingTokenCount: state.thinkingTokenCount + 1,
-        spinnerState: {
-          ...state.spinnerState,
-          lastTokenAt: Date.now(),
-          streaming: true,
-          tokenCount: state.spinnerState.tokenCount + 1,
-        },
-      }
-      rerenderStatus = true
-    }
-
-    const delta = p.delta as string | undefined
-    if (delta) {
-      // When first text delta arrives after thinking, flush thinking content
-      if (state.streamingThinkingText) {
-        const thinkingDurationMs = Date.now() - state.spinnerState.phaseStartedAt
-        const compactLines = buildThinkingSummary(state.streamingThinkingText, thinkingDurationMs)
-        const expLines = buildThinkingSummary(state.streamingThinkingText, thinkingDurationMs, true)
-        commitLines.push(...compactLines)
-        if (!expandedCommitLines) expandedCommitLines = []
-        expandedCommitLines.push(...expLines)
-        state = { ...state, streamingThinkingText: '', pendingThinkingText: '' }
-      }
-
-      state = { ...state, streamingText: state.streamingText + delta }
+    const appendVisibleTextDelta = (textDelta: string) => {
+      state = { ...state, streamingText: state.streamingText + textDelta }
       if (!state.prefixEmitted) {
         const trimmed = state.streamingText.replace(/^[\n\r]+/, '')
         if (trimmed.length > 0) {
@@ -197,6 +168,53 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
       // Update pendingText for the viewport's streaming display.
       state = { ...state, pendingText: state.streamingText }
       rerenderStatus = true
+    }
+
+    const flushThinkingBeforeText = () => {
+      if (!state.streamingThinkingText) return
+      const thinkingDurationMs = Date.now() - state.spinnerState.phaseStartedAt
+      const compactLines = buildThinkingSummary(state.streamingThinkingText, thinkingDurationMs)
+      const expLines = buildThinkingSummary(state.streamingThinkingText, thinkingDurationMs, true)
+      commitLines.push(...compactLines)
+      if (!expandedCommitLines) expandedCommitLines = []
+      expandedCommitLines.push(...expLines)
+      state = { ...state, streamingThinkingText: '', pendingThinkingText: '' }
+    }
+
+    const thinkingDelta = p.thinking_delta as string | undefined
+    if (thinkingDelta) {
+      // Anthropic/pi preserves content blocks by index. Our public
+      // AssistantDelta event currently drops that index, so the TUI only knows
+      // whether visible text has already started. A thinking delta after text
+      // has begun is almost certainly an upstream/proxy block-classification
+      // glitch (seen with prose that literally mentions `<think>`); treating it
+      // as hidden reasoning would tear the visible markdown in half. Preserve
+      // it as assistant text instead.
+      const visibleTextStarted = state.prefixEmitted || state.streamingText.replace(/^[\n\r]+/, '').length > 0
+      if (visibleTextStarted) {
+        appendVisibleTextDelta(thinkingDelta)
+      } else {
+        state = {
+          ...state,
+          streamingThinkingText: state.streamingThinkingText + thinkingDelta,
+          pendingThinkingText: state.streamingThinkingText + thinkingDelta,
+          thinkingTokenCount: state.thinkingTokenCount + 1,
+          spinnerState: {
+            ...state.spinnerState,
+            lastTokenAt: Date.now(),
+            streaming: true,
+            tokenCount: state.spinnerState.tokenCount + 1,
+          },
+        }
+        rerenderStatus = true
+      }
+    }
+
+    const delta = p.delta as string | undefined
+    if (delta) {
+      // When first text delta arrives after thinking, flush thinking content
+      flushThinkingBeforeText()
+      appendVisibleTextDelta(delta)
     }
   }
 

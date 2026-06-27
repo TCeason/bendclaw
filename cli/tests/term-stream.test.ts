@@ -291,6 +291,56 @@ describe('term stream machine', () => {
     expect((allAssistant.match(/After tool/g) || []).length).toBe(1)
   })
 
+  test('thinking deltas after visible text are preserved as assistant text', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+
+    let update = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { delta: '每条都停在 `' },
+    }, { termRows: 24 })
+    state = update.state
+
+    update = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { thinking_delta: '` 里的推理中途:\n- 第 1 题' },
+    }, { termRows: 24 })
+    state = update.state
+
+    expect(state.pendingThinkingText).toBe('')
+    expect(state.streamingThinkingText).toBe('')
+    expect(state.streamingText).toContain('里的推理中途')
+
+    const flushed = flushStreaming(state)
+    const assistantText = flushed.lines.filter(l => l.kind === 'assistant').map(l => l.text).join('\n')
+    expect(flushed.lines.some(l => l.kind === 'thinking_summary')).toBe(false)
+    expect(assistantText).toContain('每条都停在')
+    expect(assistantText).toContain('里的推理中途')
+  })
+
+  test('thinking before visible text still commits as thinking summary', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+
+    let update = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { thinking_delta: 'internal reasoning\nline 2' },
+    }, { termRows: 24 })
+    state = update.state
+
+    update = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { delta: 'final answer' },
+    }, { termRows: 24 })
+    state = update.state
+
+    expect(update.commitLines.some(l => l.kind === 'thinking_summary')).toBe(true)
+    expect(state.pendingThinkingText).toBe('')
+    expect(state.streamingText).toBe('final answer')
+  })
+
   test('tool progress updates state', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
