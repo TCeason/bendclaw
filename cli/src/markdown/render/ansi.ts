@@ -501,7 +501,13 @@ export function formatToken(
             : depth === 4 ? theme.h4
               : depth === 5 ? theme.h5
                 : theme.h6
-      return style.paint(text) + EOL
+      // Soft-wrap over-wide headings the same way paragraphs are wrapped.
+      // Models sometimes glue an entire paragraph onto a heading line with no
+      // newline (`## title<prose…>`), which the lexer parses as one giant
+      // heading. Without wrapping it overruns the terminal and gets visually
+      // truncated. wrapAnsi (via wrapParagraph) preserves the heading styling
+      // across the inserted line breaks.
+      return wrapParagraph(style.paint(text)) + EOL
     }
     case 'hr': {
       // Match claudecode: literal `---` (three dashes) instead of a full-width

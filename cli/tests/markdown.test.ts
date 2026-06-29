@@ -945,6 +945,25 @@ describe('renderMarkdown', () => {
     }
   })
 
+  test('soft-wraps an over-wide heading instead of overrunning the terminal', () => {
+    // Models sometimes glue an entire paragraph onto a heading line with no
+    // newline, so the lexer parses one giant h2. Without wrapping it overruns
+    // the terminal width and gets visually truncated. Every wrapped line must
+    // stay within the content width (columns - SAFETY_MARGIN).
+    const columns = 100
+    const restore = withColumns(columns)
+    try {
+      const heading = '## 用这个 demo 的真实任务来说demo 里有个任务（我从 data/teacher_sft.jsonl 和 data/teacher_rl.jsonl 里读出来的真实数据）很长很长的一段文字需要换行处理才行。'
+      const lines = render(heading).split('\n').filter(Boolean)
+      expect(lines.length).toBeGreaterThan(1)
+      for (const line of lines) {
+        expect(stringWidth(line)).toBeLessThanOrEqual(columns - 4)
+      }
+    } finally {
+      restore()
+    }
+  })
+
   test('keeps wrapped paragraph continuation flush with first line', () => {
     const restore = withColumns(84)
     try {
