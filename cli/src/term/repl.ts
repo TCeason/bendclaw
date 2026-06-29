@@ -23,6 +23,7 @@ import {
   type StyledLine,
   type ViewBlock,
 } from './viewmodel/index.js'
+import { HistoryRenderCache } from './viewmodel/history-cache.js'
 import {
   createEditorState,
   getEditorText,
@@ -154,15 +155,19 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let lastPendingText = ''
   let lastPendingRendered = ''
   let expanded = false
-  // Rendered-history cache — see buildFrame. Committed history is append-only
-  // (or fully cleared), so it changes far less often than the spinner and
-  // streaming deltas that drive most renders. Caching the flattened ANSI lines
-  // keeps per-frame cost at O(pending + prompt) instead of O(total history),
-  // which is what made keystroke echo lag while a task was running.
-  let cachedHistoryLines: string[] = []
-  let historyCacheDirty = true
-  let historyCacheExpanded = false
-  let historyCacheColumns = -1
+  // Rendered-history cache — see HistoryRenderCache. Committed history is
+  // append-only (or fully cleared), never mutated in place, so the flattened
+  // ANSI lines are extended incrementally instead of re-flattened every frame.
+  // A full rebuild over a long session takes 5–14 ms, which is what made the
+  // just-sent message and keystroke echo visibly stall as the conversation
+  // grew. Compact and expanded views each get their own cache because their
+  // source arrays are appended independently (expanded-only progress/thinking).
+  const compactHistoryCache = new HistoryRenderCache()
+  const expandedHistoryCache = new HistoryRenderCache()
+  function resetHistoryCache() {
+    compactHistoryCache.reset()
+    expandedHistoryCache.reset()
+  }
   const compactLines: OutputLine[] = []
   const expandedLines: OutputLine[] = []
   let lastProgressLineCount = 0
@@ -328,19 +333,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       blocks.push({ lines: banner.split('\n').map(l => ({ spans: [{ text: l }] })), marginTop: 0 })
     }
 
-    // 2. History (committed output lines) — cached. Rebuild only when history
-    // mutates (dirty flag), the view mode toggles, or the terminal width
-    // changes; otherwise reuse the previously flattened ANSI lines so the
-    // high-frequency spinner/delta/keystroke renders skip the full rebuild.
-    const historyLines = expanded ? expandedLines : compactLines
-    if (historyLines.length > 0) {
-      const cols = renderer.termCols
-      if (historyCacheDirty || historyCacheExpanded !== expanded || historyCacheColumns !== cols) {
-        cachedHistoryLines = blocksToLines(buildOutputBlocks(historyLines, { columns: cols }))
-        historyCacheDirty = false
-        historyCacheExpanded = expanded
-        historyCacheColumns = cols
-      }
+    // 2. History (committed output lines) — incrementally cached so the
+    // high-frequency spinner/delta/keystroke renders skip re-flattening the
+    // whole transcript. The cache extends in place on append and rebuilds only
+    // on reset (clear/replace), width change, or shrink. See HistoryRenderCache.
+    const cols = renderer.termCols
+    const cache = expanded ? expandedHistoryCache : compactHistoryCache
+    const cachedHistoryLines = cache.sync(expanded ? expandedLines : compactLines, cols)
+    if (cachedHistoryLines.length > 0) {
       blocks.push({ lines: cachedHistoryLines.map(l => ({ spans: [{ text: l }] })), marginTop: 0 })
     }
 
@@ -425,7 +425,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (outputLines.length === 0) return
     compactLines.push(...outputLines)
     expandedLines.push(...outputLines)
-    historyCacheDirty = true
+    // Pure append: the incremental history cache detects the growth by line
+    // count, so no dirty flag is needed (which would force a full rebuild).
     // Log for tracing
     const visible = expanded ? expandedLines.slice(-outputLines.length) : outputLines
     const context = outputContextFor(compactLines.slice(0, -outputLines.length))
@@ -443,7 +444,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (flushed.expandedLines) {
       compactLines.push(...flushed.lines)
       expandedLines.push(...flushed.expandedLines)
-      historyCacheDirty = true
       const visible = expanded ? flushed.expandedLines : flushed.lines
       const context = outputContextFor(compactLines.slice(0, -flushed.lines.length))
       const blocks = buildOutputBlocks(visible, context)
@@ -461,7 +461,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const callLines = buildToolStartedLines(event)
     compactLines.push(...callLines)
     expandedLines.push(...callLines)
-    historyCacheDirty = true
     const context = outputContextFor(compactLines.slice(0, -callLines.length))
     const blocks = buildOutputBlocks(callLines, context)
     const rendered = blocksToLines(blocks)
@@ -474,7 +473,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const exp = buildToolFinishedLines(event, true)
     compactLines.push(...compact)
     expandedLines.push(...exp)
-    historyCacheDirty = true
     const visible = expanded ? exp : compact
     const context = outputContextFor(compactLines.slice(0, -compact.length))
     const blocks = buildOutputBlocks(visible, context)
@@ -589,7 +587,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       renderer.clearScreen()
       compactLines.length = 0
       expandedLines.length = 0
-      historyCacheDirty = true
+      resetHistoryCache()
       commitLines(messagesToOutputLines(messages))
       commitLines([
         { id: 'sys-resumed-gap', kind: 'system', text: '' },
@@ -752,7 +750,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             if (newLines.length > 0) {
               const expandedProgress = buildToolProgressLines({ ...event, payload: { ...(event.payload ?? {}), text: newLines.join('\n') } }, true)
               expandedLines.push(...expandedProgress)
-              historyCacheDirty = true
               renderer.requestRender()
             }
           }
@@ -770,7 +767,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             if (completeNewLines.length > 0) {
               const thinkingOutputLines = buildThinkingLines(completeNewLines.join('\n'))
               expandedLines.push(...thinkingOutputLines)
-              historyCacheDirty = true
               renderer.requestRender()
             }
           }
@@ -788,7 +784,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             const exp = update.expandedCommitLines
             compactLines.push(...compact)
             expandedLines.push(...exp)
-            historyCacheDirty = true
             const visible = expanded ? exp : compact
             const context = outputContextFor(compactLines.slice(0, -compact.length))
             const blocks = buildOutputBlocks(visible, context)
@@ -1331,7 +1326,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       renderer.clearScreen()
       compactLines.length = 0
       expandedLines.length = 0
-      historyCacheDirty = true
+      resetHistoryCache()
     }
     if (result.clearContext) {
       // Abort any in-flight streaming and clear local context view without switching sessions.
@@ -1346,7 +1341,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       renderer.clearScreen()
       compactLines.length = 0
       expandedLines.length = 0
-      historyCacheDirty = true
+      resetHistoryCache()
       try { preloadedSessions = await agent.listSessions(20) } catch {}
     }
     if (result.newSession) {
@@ -1364,7 +1359,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       renderer.clearScreen()
       compactLines.length = 0
       expandedLines.length = 0
-      historyCacheDirty = true
+      resetHistoryCache()
       try { preloadedSessions = await agent.listSessions(20) } catch { preloadedSessions = [newSession] }
       commitLines([{ id: 'sys-new-session', kind: 'system', text: chalk.dim(`  new session ${sessionId.slice(0, 8)}`) }])
     }
