@@ -408,7 +408,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // 8. Prompt
     blocks.push(...buildPromptBlocks(getPromptVM()))
 
-    return { lines: blocksToLines(blocks), preserveScrollback: isLoading }
+    return { lines: blocksToLines(blocks) }
   }
 
   renderer.setRenderCallback(buildFrame)
@@ -484,7 +484,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   /** Toggle expanded view and redraw. */
   function toggleExpanded(): void {
     expanded = !expanded
-    renderer.fullRedraw()
+    // Plain differential render, not fullRedraw: the width is unchanged, only
+    // the line content swaps (compact <-> expanded). A CLEAR_SCREEN full redraw
+    // blanks the whole screen and flickers on every Ctrl+O; the diff renderer
+    // is already flicker-free via synchronized output (DEC 2026).
+    renderer.requestRender()
   }
 
   /** Cycle the model's reasoning effort (Shift+Tab) and reflect it in the footer. */

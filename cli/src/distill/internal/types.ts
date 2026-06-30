@@ -102,6 +102,9 @@ export interface DistillOptions {
   /** Tool whitelist for SFT normalization. Default: read/write/edit/bash. */
   tools: string[]
   emit: ('sft' | 'rl')[]
+  /** Skip the Solver: validate solvability via the builder's reference patch
+   *  and emit only RL rows. Much faster when SFT trajectories aren't needed. */
+  rlOnly?: boolean
   repeats: number
   keepFail: boolean
   maxConcurrency: number

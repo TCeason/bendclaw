@@ -98,7 +98,7 @@ export class Reporter {
 
   private emit(id: string, tag: string, detail = '', terminal = true): void {
     const parts = [tag, detail].filter(Boolean).join(' ')
-    this.line(`│  ${parts}`, terminal)
+    this.line(`│ ${id} ${parts}`, terminal)
   }
 
   private line(text: string, terminal: boolean): void {

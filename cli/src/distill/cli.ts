@@ -44,6 +44,8 @@ Options:
   --model <spec>         teacher model
   --env-file <path>      evot.env path
   --emit <sft,rl>        what to produce (default: sft,rl)
+  --rl-only              skip the Solver: prove solvability via a bounded
+                         reference solve and emit RL rows only (faster; no SFT)
   --repeats <n>          attempts per task (default: 1)
   --target-turns <n>     target solver turns for task difficulty (default: 8;
                          not a hard runtime limit)
@@ -81,6 +83,7 @@ function parseDistillArgs(argv: string[]): DistillOptions {
     else if (a === '--env-file' && argv[i + 1]) opts.envFile = argv[++i]
     else if (a === '--tools' && argv[i + 1]) opts.tools = argv[++i].split(',').map((s) => s.trim())
     else if (a === '--emit' && argv[i + 1]) opts.emit = argv[++i].split(',').map((s) => s.trim()) as ('sft' | 'rl')[]
+    else if (a === '--rl-only') { opts.rlOnly = true; opts.emit = ['rl'] }
     else if (a === '--repeats' && argv[i + 1]) opts.repeats = parsePositiveInt(argv[++i], '--repeats')
     else if (a === '--keep-fail') opts.keepFail = true
     else if (a === '--target-turns' && argv[i + 1]) opts.targetTurns = parsePositiveInt(argv[++i], '--target-turns')

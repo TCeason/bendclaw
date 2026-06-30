@@ -20,9 +20,8 @@ import { importEvents } from './importer.js'
 import { proposeTasks, loadTasks } from './proposer.js'
 import { runAgent } from './runner.js'
 import { materialize, runSetup } from './workspace.js'
-import { captureDiff, changedPaths, gitInit, runVerifierDetailed, selfCheck } from './verifier.js'
+import { captureDiff, changedPaths, gitInit, gitResetHard, runVerifierDetailed, selfCheck } from './verifier.js'
 import { Reporter } from './progress.js'
-// captureDiff is reserved for future feedback/gold-diff emission.
 void captureDiff
 
 const WORKSPACE_RULE = `The current working directory is the workspace root. Use workspace-relative paths only, e.g. app.py, tests/test_app.py, mkdir -p tests. Never use absolute paths, home-directory paths, or temporary-directory paths.`
@@ -65,9 +64,10 @@ export async function orchestrate(opts: DistillOptions, deps: OrchestrateDeps): 
 
   let ok = 0
   let dropped = 0
-  // In verbose mode, run serially so each task's block stays contiguous;
-  // interleaved box-drawing from parallel tasks would be unreadable.
-  const concurrency = opts.verbosity === 'verbose' ? 1 : opts.maxConcurrency
+  // Verbose output may interleave under concurrency, but task ids/stages are
+  // logged per line and the full run log is written to disk. Do not serialize
+  // verbose runs: that makes dataset generation unnecessarily slow.
+  const concurrency = opts.maxConcurrency
   await pool(tasks, concurrency, async (task) => {
     reporter.taskStart(task.id)
     for (let attempt = 0; attempt < opts.repeats; attempt++) {
@@ -223,10 +223,55 @@ async function runOne(
     await cp(ws, frozen, { recursive: true, filter: (s) => !s.includes('/.git') })
 
     // Solver: solve on the frozen workspace.
-    reporter.stage(task.id, 'solver')
     const solverSystem = task.protectedPaths?.length
       ? `${SOLVER_SYSTEM}\nProtected paths (do not edit): ${task.protectedPaths.join(', ')}`
       : SOLVER_SYSTEM
+
+    // --rl-only: the Solver's *trajectory* isn't needed (no SFT), only proof the
+    // task is solvable. Run a bounded reference solve (capped near the
+    // difficulty target, not the full 25 turns), verify it passes, capture its
+    // diff as the reference patch, then reset to the frozen base. This keeps the
+    // solvability gate (so the RL pool can't fill with unsolvable tasks) while
+    // cutting the most expensive part of generation.
+    if (opts.rlOnly) {
+      reporter.stage(task.id, 'reference')
+      const refTurns = Math.max(4, (task.targetTurns ?? opts.targetTurns) * 2)
+      const solve = await runAgent({
+        cwd: ws,
+        prompt: task.prompt,
+        model: opts.model,
+        envFile: opts.envFile,
+        systemPrompt: solverSystem,
+        limits: { maxTurns: refTurns },
+        timeoutSec: opts.perTaskTimeout,
+        evotBin: deps.evotBin,
+        onEvent,
+        onDebug,
+      })
+      reporter.stage(task.id, 'verify')
+      const verify = runVerifierDetailed(task.verifier, ws)
+      if (!verify.passed) {
+        const tail = verify.output.replace(/\s+/g, ' ').trim().slice(-120)
+        return drop(`reference solve did not pass verifier (exit ${verify.exitCode})${tail ? `: …${tail}` : ''}`)
+      }
+      if (task.protectedPaths?.length) {
+        const touched = changedPaths(ws).filter((p) => matchesProtected(p, task.protectedPaths!))
+        if (touched.length) {
+          return drop(`reference solve modified protected path: ${touched.slice(0, 3).join(', ')}`)
+        }
+      }
+      // Store the proven solution as the reference patch, then restore the frozen
+      // base so the RL task ships its unsolved starting state.
+      const patch = captureDiff(ws)
+      if (patch.trim()) task.referencePatch = patch
+      gitResetHard(ws)
+      await bundle.addRl(task, frozen)
+      reporter.stage(task.id, 'emit', 'rl=1')
+      return { ok: true, reason: '' }
+    }
+
+    // Solver: solve on the frozen workspace.
+    reporter.stage(task.id, 'solver')
     const solve = await runAgent({
       cwd: ws,
       prompt: task.prompt,

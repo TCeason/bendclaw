@@ -12,9 +12,11 @@
 
 import { spawnSync } from 'node:child_process'
 import { writeFile, rm } from 'node:fs/promises'
+import { writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { TaskSpec, Verifier } from './types.js'
 import { workspaceEnv } from './env.js'
+import { gitignoreLines } from './artifacts.js'
 
 /** Run the verifier command in `cwd`. Returns whether it passed. */
 export function runVerifier(v: Verifier, cwd: string, timeoutSec = 300): boolean {
@@ -75,11 +77,28 @@ export async function selfCheck(
   return { baseFails, referencePasses, ok: baseFails && referencePasses }
 }
 
-/** Initialize a git repo in `cwd` so patches can be applied/reverted. */
+/** Initialize a git repo in `cwd` so patches can be applied/reverted.
+ *
+ * Transient artifacts (bytecode caches, venvs, node_modules) are written to
+ * .git/info/exclude *before* the base commit, so running the verifier (which
+ * compiles/installs into the workspace) never makes them show up as changes.
+ * This is the workspace-scaffold equivalent of a real project's .gitignore,
+ * and it keeps changedPaths/captureDiff/gitResetHard correct without any of
+ * them having to special-case build output. */
 export function gitInit(cwd: string): void {
   git(cwd, ['init', '-q'])
+  mkdirSync(join(cwd, '.git', 'info'), { recursive: true })
+  writeFileSync(join(cwd, '.git', 'info', 'exclude'), gitignoreLines().join('\n') + '\n')
   git(cwd, ['add', '-A'])
   git(cwd, ['-c', 'user.email=d@e.f', '-c', 'user.name=distill', 'commit', '-qm', 'base'])
+}
+
+/** Hard-reset the workspace back to the base commit (drop all solver edits and
+ *  untracked files). Used by --rl-only to restore the frozen state after a
+ *  reference solve produced the solvability proof. */
+export function gitResetHard(cwd: string): void {
+  git(cwd, ['reset', '-q', '--hard', 'HEAD'])
+  git(cwd, ['clean', '-qfdx'])
 }
 
 /** Capture the Solver's changes as a clean unified diff against the base commit. */

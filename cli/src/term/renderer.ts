@@ -33,8 +33,6 @@ const WRAP = '\x1b[?7h'     // Re-enable auto-wrap
 
 export interface RenderFrame {
   lines: string[]
-  /** Avoid emitting hardware scroll (CRLF past the viewport) for this frame. */
-  preserveScrollback?: boolean
 }
 
 /** Zero-width marker embedded in rendered output to indicate cursor position for IME. */
@@ -203,7 +201,6 @@ export class TermRenderer {
     // Get new frame from callback
     const raw = this.renderCallback()
     const newLines = Array.isArray(raw) ? raw : raw.lines
-    const preserveScrollback = !Array.isArray(raw) && raw.preserveScrollback === true
     const cursorPos = this.extractCursorPosition(newLines, height)
 
     // --- Full render helper ---
@@ -343,16 +340,11 @@ export class TermRenderer {
     const prevViewportBottom = prevViewportTop + height - 1
     const moveTargetRow = appendStart ? firstChanged - 1 : firstChanged
 
-    // If target is below visible viewport, scroll down. During streaming we
-    // avoid hardware scrollback movement so an in-progress terminal selection
-    // is not pushed upward by continued rendering; repaint the visible window
-    // in place instead. The append fast path can also scroll via its leading
-    // CRLF even when moveTargetRow is still the old last visible row.
-    const appendWouldScroll = appendStart && firstChanged > prevViewportBottom
-    if (preserveScrollback && (moveTargetRow > prevViewportBottom || appendWouldScroll)) {
-      this.repaintVisible(newLines, width, height, cursorPos, prevViewportTop)
-      return
-    }
+    // If target is below visible viewport, scroll down. Use a normal hardware
+    // scroll (CRLF) so completed output settles into the terminal's real
+    // scrollback — selection and scrollback stay consistent. This matches pi's
+    // renderer; an in-place repaint here would desync the on-screen window from
+    // the terminal's scrollback and make a selection jump on scroll.
     if (moveTargetRow > prevViewportBottom) {
       const currentScreenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - prevViewportTop))
       const moveToBottom = height - 1 - currentScreenRow

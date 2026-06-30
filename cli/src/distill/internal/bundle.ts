@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto'
 import { cp, mkdir, readFile, readdir, rm, writeFile, stat, chmod } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { RlRow, SftRow, TaskSpec } from './types.js'
+import { isTransientPath } from './artifacts.js'
 
 export class Bundle {
   private sftRows: SftRow[] = []
@@ -49,7 +50,7 @@ export class Bundle {
     await mkdir(wsAbs, { recursive: true })
     await cp(workspaceDir, wsAbs, {
       recursive: true,
-      filter: (src) => !isExcludedWorkspacePath(src),
+      filter: (src) => !isTransientPath(src),
     })
 
     if (task.referencePatch) {
@@ -186,16 +187,6 @@ export class Bundle {
     }
     return out
   }
-}
-
-function isExcludedWorkspacePath(src: string): boolean {
-  return (
-    src.includes('/.git') ||
-    src.includes('/node_modules') ||
-    src.includes('/.venv') ||
-    src.includes('/__pycache__') ||
-    src.includes('/.pytest_cache')
-  )
 }
 
 async function writeExecutionContract(task: TaskSpec, bundledWorkspace: string): Promise<Record<string, unknown>> {

@@ -121,25 +121,6 @@ describe('TermRenderer', () => {
       renderer.destroy()
     })
 
-    test('preserveScrollback repaints visible window instead of hardware-scrolling on append', async () => {
-      const { renderer, stdout } = createRenderer()
-      stdout.rows = 3
-      renderer.init()
-      let lines = ['a', 'b', 'c']
-      renderer.setRenderCallback(() => ({ lines, preserveScrollback: true }))
-      await renderFrame(renderer)
-
-      stdout.clear()
-      lines = ['a', 'b', 'c', 'd']
-      await renderFrame(renderer)
-
-      expect(stdout.output).toContain('\x1b[2A')
-      expect(stdout.output).toContain('b')
-      expect(stdout.output).toContain('c')
-      expect(stdout.output).toContain('d')
-      renderer.destroy()
-    })
-
     test('changed middle line only redraws that line', async () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()
