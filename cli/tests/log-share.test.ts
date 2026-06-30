@@ -103,7 +103,6 @@ describe('validateAndImport', () => {
     writeFileSync(join(tmpDir, 'logs', `${SID}.log`), 'log data')
     writeFileSync(join(tmpDir, 'logs', `${SID}.screen.log`), 'screen data')
     writeFileSync(join(tmpDir, 'logs', `${SID}.markdown.log`), '--- markdown trace asst-1 ---\n')
-    writeFileSync(join(tmpDir, 'logs', `${SID}.markdown.jsonl`), '{"raw":"# title"}\n')
 
     const targetDir = join(tmpdir(), `evot-test-target-${Date.now()}`)
     mkdirSync(targetDir, { recursive: true })
@@ -117,7 +116,6 @@ describe('validateAndImport', () => {
     expect(existsSync(join(targetDir, 'logs', `${SID}.log`))).toBe(true)
     expect(existsSync(join(targetDir, 'logs', `${SID}.screen.log`))).toBe(true)
     expect(existsSync(join(targetDir, 'logs', `${SID}.markdown.log`))).toBe(true)
-    expect(existsSync(join(targetDir, 'logs', `${SID}.markdown.jsonl`))).toBe(true)
 
     rmSync(targetDir, { recursive: true, force: true })
   })
@@ -168,7 +166,7 @@ describe('collectFiles', () => {
     }
   })
 
-  test('includes markdown render jsonl when present', () => {
+  test('includes markdown trace log when present', () => {
     const sessionDir = join(evotDir, 'sessions', SID)
     const logsDir = join(evotDir, 'logs')
     mkdirSync(sessionDir, { recursive: true })
@@ -176,14 +174,14 @@ describe('collectFiles', () => {
     created.push(sessionDir)
 
     writeFileSync(join(sessionDir, 'session.json'), '{}')
-    writeFileSync(join(logsDir, `${SID}.markdown.jsonl`), '{"raw":"# title"}\n')
+    writeFileSync(join(logsDir, `${SID}.markdown.log`), '--- markdown trace asst-1 ---\n')
 
     try {
       const files = collectFiles(SID)
       expect(files).toContain(`sessions/${SID}/session.json`)
-      expect(files).toContain(`logs/${SID}.markdown.jsonl`)
+      expect(files).toContain(`logs/${SID}.markdown.log`)
     } finally {
-      rmSync(join(logsDir, `${SID}.markdown.jsonl`), { force: true })
+      rmSync(join(logsDir, `${SID}.markdown.log`), { force: true })
     }
   })
 })

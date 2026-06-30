@@ -961,11 +961,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     commitLines([{ id, kind: 'system', text }])
   }
 
-  function formatLogPaths(logPath: string | null, markdownPath: string | null, markdownJsonlPath: string | null): string | null {
+  function formatLogPaths(logPath: string | null, markdownPath: string | null): string | null {
     if (!logPath) return null
     const lines = [`  Log: ${logPath}`]
     if (markdownPath) lines.push(`  Markdown: ${markdownPath}`)
-    if (markdownJsonlPath) lines.push(`  Markdown JSONL: ${markdownJsonlPath}`)
     return lines.join('\n')
   }
 
@@ -983,7 +982,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const logPath = screenLog.filePath
       const markdownPath = screenLog.markdownTraceFilePath
       if (logPath) {
-        const text = formatLogPaths(logPath, screenLog.markdownTraceFilePath, screenLog.markdownRenderTraceFilePath)
+        const text = formatLogPaths(logPath, markdownPath)
         commitLines([{ id: 'sys-log', kind: 'system', text: text ?? `  Log: ${logPath}` }])
       }
       else commitLines([{ id: 'sys-log', kind: 'system', text: '  No active screen log.' }])
@@ -1691,16 +1690,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     } else if (!query) {
       const logPath = screenLog.filePath
       const markdownPath = screenLog.markdownTraceFilePath
-      const markdownJsonlPath = screenLog.markdownRenderTraceFilePath
       if (logPath) {
-        const text = formatLogPaths(logPath, markdownPath, markdownJsonlPath)
+        const text = formatLogPaths(logPath, markdownPath)
         commitLines([{ id: 'sys-log', kind: 'system', text: text ?? `  Log: ${logPath}` }])
       }
       else if (sid) {
         const text = formatLogPaths(
           join(logDir, `${sid}.screen.log`),
           join(logDir, `${sid}.markdown.log`),
-          join(logDir, `${sid}.markdown.jsonl`),
         )
         commitLines([{ id: 'sys-log', kind: 'system', text: text ?? `  Log: ${join(logDir, `${sid}.screen.log`)}` }])
       }
@@ -1716,7 +1713,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         '',
         `Screen log file to analyze:\n${logPath}`,
         `Raw markdown trace, if present:\n${join(logDir, `${sid}.markdown.log`)}`,
-        `Markdown render JSONL trace, if present:\n${join(logDir, `${sid}.markdown.jsonl`)}`,
         '',
         'Rules:',
         '- Read relevant log sections before answering; do not guess',
