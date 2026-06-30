@@ -8,7 +8,16 @@ import { createAgent, parseArgs } from './cli.js'
 import { runPrompt } from './prompt.js'
 
 async function main() {
-  const opts = await parseArgs(process.argv.slice(2))
+  // `distill` has its own arg parser and subcommand surface; dispatch before
+  // the REPL/prompt arg parsing so its flags don't collide.
+  const rawArgs = process.argv.slice(2)
+  if (rawArgs[0] === 'distill') {
+    const { runDistill } = await import('./distill/index.js')
+    await runDistill(rawArgs.slice(1))
+    return
+  }
+
+  const opts = await parseArgs(rawArgs)
 
   switch (opts.command) {
     case 'serve':

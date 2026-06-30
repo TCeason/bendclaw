@@ -100,6 +100,7 @@ export async function printHelp() {
   console.log('Commands:')
   console.log('  (default)              Interactive REPL')
   console.log('  serve                  Start HTTP server')
+  console.log('  distill                Generate SFT/RL dataset (teacher distillation)')
   console.log('  update                 Update evot to latest version')
   console.log()
   console.log('Options:')
