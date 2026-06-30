@@ -329,8 +329,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
     // 1. Banner
     const banner = currentBannerText()
-    if (banner) {
-      blocks.push({ lines: banner.split('\n').map(l => ({ spans: [{ text: l }] })), marginTop: 0 })
+    const bannerLines = banner ? banner.split('\n') : []
+    if (bannerLines.length > 0) {
+      blocks.push({ lines: bannerLines.map(l => ({ spans: [{ text: l }] })), marginTop: 0 })
     }
 
     // 2. History (committed output lines) — incrementally cached so the
@@ -340,7 +341,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const cols = renderer.termCols
     const cache = expanded ? expandedHistoryCache : compactHistoryCache
     const cachedHistoryLines = cache.sync(expanded ? expandedLines : compactLines, cols)
+    let stablePrefixLines = 0
     if (cachedHistoryLines.length > 0) {
+      stablePrefixLines = bannerLines.length + cachedHistoryLines.length
       blocks.push({ lines: cachedHistoryLines.map(l => ({ spans: [{ text: l }] })), marginTop: 0 })
     }
 
@@ -408,7 +411,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // 8. Prompt
     blocks.push(...buildPromptBlocks(getPromptVM()))
 
-    return { lines: blocksToLines(blocks) }
+    return { lines: blocksToLines(blocks), stablePrefixLines }
   }
 
   renderer.setRenderCallback(buildFrame)
