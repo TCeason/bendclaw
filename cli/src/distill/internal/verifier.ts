@@ -96,6 +96,22 @@ export function captureDiff(cwd: string): string {
   return diff.stdout ?? ''
 }
 
+/** List workspace-relative paths the Solver changed since the base commit
+ *  (staged + unstaged + untracked). Used to enforce protected paths. */
+export function changedPaths(cwd: string): string[] {
+  spawnSync('git', ['-C', cwd, 'add', '-A'], { encoding: 'utf8' })
+  const r = spawnSync(
+    'git',
+    ['-C', cwd, 'diff', '--no-ext-diff', '--no-color', '--name-only', '--cached', 'HEAD'],
+    { encoding: 'utf8' },
+  )
+  if (r.status !== 0) return []
+  return (r.stdout ?? '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+}
+
 function git(cwd: string, args: string[]): boolean {
   const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8' })
   return r.status === 0

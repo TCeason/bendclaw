@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { materialize, runSetup } from '../src/distill/internal/workspace.js'
-import { gitInit, selfCheck, runVerifier, runVerifierDetailed } from '../src/distill/internal/verifier.js'
+import { gitInit, selfCheck, runVerifier, runVerifierDetailed, changedPaths } from '../src/distill/internal/verifier.js'
 import type { TaskSpec } from '../src/distill/internal/types.js'
 
 test('materialize inline writes nested files', async () => {
@@ -217,3 +217,32 @@ test('runSetup installs pytest when the verifier uses it, even without requireme
 function hasGit(): boolean {
   return spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0
 }
+
+test('changedPaths reports files the solver edited since the base commit', async () => {
+  if (!hasGit()) return
+  const dst = await mkdtemp(join(tmpdir(), 'changed-'))
+  try {
+    const task: TaskSpec = {
+      id: 'cp1',
+      prompt: '',
+      answer: '',
+      workspace: {
+        source: 'inline',
+        files: { 'app.py': 'x = 1\n', 'verify/test_app.py': 'def test():\n    assert True\n' },
+      },
+      verifier: { checkCommand: 'true' },
+    }
+    await materialize(task, dst)
+    gitInit(dst)
+    // No edits yet.
+    expect(changedPaths(dst)).toEqual([])
+    // Solver edits both a source file and a protected test file.
+    await writeFile(join(dst, 'app.py'), 'x = 2\n')
+    await writeFile(join(dst, 'verify/test_app.py'), 'def test():\n    assert 1 == 1\n')
+    const changed = changedPaths(dst)
+    expect(changed).toContain('app.py')
+    expect(changed).toContain('verify/test_app.py')
+  } finally {
+    await rm(dst, { recursive: true, force: true })
+  }
+})

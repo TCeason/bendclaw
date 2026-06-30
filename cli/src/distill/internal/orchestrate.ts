@@ -20,7 +20,7 @@ import { importEvents } from './importer.js'
 import { proposeTasks, loadTasks } from './proposer.js'
 import { runAgent } from './runner.js'
 import { materialize, runSetup } from './workspace.js'
-import { captureDiff, gitInit, runVerifierDetailed, selfCheck } from './verifier.js'
+import { captureDiff, changedPaths, gitInit, runVerifierDetailed, selfCheck } from './verifier.js'
 import { Reporter } from './progress.js'
 // captureDiff is reserved for future feedback/gold-diff emission.
 void captureDiff
@@ -171,6 +171,7 @@ async function runOne(
   // importer scrubs against, leaking host paths into the data. Resolve up front
   // so the agent and the importer agree on one canonical path.
   const ws = await realpath(await mkdtemp(join(parent, `evot-distill-${task.id}-`)))
+  let frozen: string | null = null
   const onEvent = (ev: { kind: string; payload: Record<string, unknown> }) =>
     reporter.agentEvent(task.id, ev.kind, ev.payload)
   const onDebug = (msg: string) => reporter.debug(task.id, msg)
@@ -216,7 +217,7 @@ async function runOne(
 
     // Snapshot the frozen initial workspace NOW, before the Solver mutates it.
     // This is the RL task's starting state (no solver edits, no .git).
-    const frozen = await realpath(await mkdtemp(join(parent, `evot-frozen-${task.id}-`)))
+    frozen = await realpath(await mkdtemp(join(parent, `evot-frozen-${task.id}-`)))
     await rm(frozen, { recursive: true, force: true })
     await mkdir(frozen, { recursive: true })
     await cp(ws, frozen, { recursive: true, filter: (s) => !s.includes('/.git') })
@@ -239,7 +240,6 @@ async function runOne(
       onDebug,
     })
     if (!solve.finished) {
-      await rm(frozen, { recursive: true, force: true }).catch(() => {})
       return drop(solve.error || 'solver did not finish')
     }
 
@@ -248,9 +248,19 @@ async function runOne(
     const verify = runVerifierDetailed(task.verifier, ws)
     if (!verify.passed) {
       reporter.debug(task.id, `verifier exit=${verify.exitCode}: ${verify.output.slice(0, 300)}`)
-      await rm(frozen, { recursive: true, force: true }).catch(() => {})
       const tail = verify.output.replace(/\s+/g, ' ').trim().slice(-120)
       return drop(`verifier failed (exit ${verify.exitCode})${tail ? `: …${tail}` : ''}`)
+    }
+
+    // Integrity gate: a passing verifier is worthless if the solver reached it
+    // by editing the very files the grader depends on. The solver is only told
+    // not to touch protected paths; enforce it here against the base commit so
+    // a tampered task is dropped rather than poisoning the dataset.
+    if (task.protectedPaths?.length) {
+      const touched = changedPaths(ws).filter((p) => matchesProtected(p, task.protectedPaths!))
+      if (touched.length) {
+        return drop(`solver modified protected path: ${touched.slice(0, 3).join(', ')}`)
+      }
     }
 
     // Emit SFT rows from the solver trajectory.
@@ -275,10 +285,15 @@ async function runOne(
     if (opts.emit.includes('rl')) {
       await bundle.addRl(task, frozen)
     }
-    await rm(frozen, { recursive: true, force: true }).catch(() => {})
 
     return { ok: true, reason: '' }
+  } catch (e) {
+    // Any unexpected throw (materialize/cp/git failure, etc.) must drop this one
+    // task, never propagate — otherwise pool()'s Promise.all rejects and aborts
+    // every other in-flight task, discarding the whole batch's work.
+    return drop(`unexpected: ${String(e).slice(0, 120)}`)
   } finally {
+    if (frozen) await rm(frozen, { recursive: true, force: true }).catch(() => {})
     await rm(ws, { recursive: true, force: true }).catch(() => {})
   }
 }
@@ -286,6 +301,22 @@ async function runOne(
 /** A dropped task result with its reason. */
 function drop(reason: string): { ok: false; reason: string } {
   return { ok: false, reason }
+}
+
+/** Match a changed workspace-relative path against a task's protected globs.
+ *  Supports the common forms authors use: exact paths, `dir/` prefixes, and
+ *  trailing `**` (and `dir/**`). Anchored, so `verify/**` does not match
+ *  `unverify/x`. */
+function matchesProtected(path: string, patterns: string[]): boolean {
+  const p = path.replace(/^\.\//, '').replace(/^\/+/, '')
+  for (const raw of patterns) {
+    const pat = raw.replace(/^\.\//, '').replace(/^\/+/, '')
+    if (pat === p) return true
+    const base = pat.replace(/\/?\*\*?$/, '').replace(/\/$/, '')
+    if (!base) continue
+    if (p === base || p.startsWith(base + '/')) return true
+  }
+  return false
 }
 
 /** Run `fn` over `items` with at most `limit` in flight. */
