@@ -166,14 +166,16 @@ describe('TermRenderer', () => {
   })
 
   describe('off-viewport change (streaming markdown reflow)', () => {
-    // Root cause of the "jump to previous conversation" bug: while streaming,
-    // markdown re-renders the whole accumulated text each frame and reflows
-    // earlier lines (table realign, list renumber). When a reflowed line has
-    // scrolled above the visible viewport, the old code emitted CLEAR_SCREEN
-    // and repainted from the top of the frame, visibly jumping the view.
+    // When streaming, markdown re-renders the whole accumulated text each frame
+    // and reflows earlier lines (table realign, list renumber). When a reflowed
+    // line has scrolled above the visible viewport, no escape sequence can
+    // address it, so the renderer falls back to a full redraw (matching pi's
+    // renderer). A prior attempt to repaint in place instead desynced the
+    // on-screen window from the terminal's real scrollback and made text
+    // selections jump on scroll.
     const CLEAR_SCREEN = '\x1b[2J\x1b[H\x1b[3J'
 
-    test('changing a line above the viewport does not clear the screen', async () => {
+    test('changing a line above the viewport triggers a full redraw', async () => {
       const { renderer, stdout } = createRenderer()
       stdout.rows = 10
       renderer.init()
@@ -187,6 +189,8 @@ describe('TermRenderer', () => {
       await renderFrame(renderer)
 
       // Now reflow an early line that is above the viewport, while appending one.
+      // A differential update can't address rows already in scrollback, so the
+      // renderer falls back to a full redraw (matching pi's renderer).
       stdout.clear()
       const reflowed = [...history]
       reflowed[5] = 'hist 5 REFLOWED'
@@ -194,13 +198,14 @@ describe('TermRenderer', () => {
       await renderFrame(renderer)
 
       const out = stdout.output
-      expect(out).not.toContain(CLEAR_SCREEN)
-      // Latest streamed line stays visible.
+      expect(out).toContain(CLEAR_SCREEN)
+      // The reflowed line and the latest streamed line are both rendered.
+      expect(out).toContain('hist 5 REFLOWED')
       expect(out).toContain('s6')
       renderer.destroy()
     })
 
-    test('in-place repaint keeps the newest content visible', async () => {
+    test('full redraw keeps the newest content visible', async () => {
       const { renderer, stdout } = createRenderer()
       stdout.rows = 6
       renderer.init()
@@ -216,7 +221,7 @@ describe('TermRenderer', () => {
       await renderFrame(renderer)
 
       const out = stdout.output
-      expect(out).not.toContain(CLEAR_SCREEN)
+      expect(out).toContain(CLEAR_SCREEN)
       expect(out).toContain('d')
       renderer.destroy()
     })

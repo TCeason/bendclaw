@@ -245,7 +245,7 @@ export class TermRenderer {
     const previousBufferLength = this.previousHeight > 0
       ? this.previousViewportTop + this.previousHeight
       : height
-    let prevViewportTop = this.previousViewportTop
+    let prevViewportTop = heightChanged ? Math.max(0, previousBufferLength - height) : this.previousViewportTop
     let viewportTop = prevViewportTop
     let hardwareCursorRow = this.hardwareCursorRow
 
@@ -286,26 +286,30 @@ export class TermRenderer {
     if (firstChanged >= newLines.length) {
       if (this.previousLines.length > newLines.length) {
         let buffer = SYNC_START
+        // Move to end of new content (clamp to 0 for empty content)
         const targetRow = Math.max(0, newLines.length - 1)
         if (targetRow < prevViewportTop) {
-          this.repaintVisible(newLines, width, height, cursorPos, prevViewportTop)
+          fullRender(true)
           return
         }
         const lineDiff = computeLineDiff(targetRow)
         if (lineDiff > 0) buffer += `\x1b[${lineDiff}B`
         else if (lineDiff < 0) buffer += `\x1b[${-lineDiff}A`
         buffer += '\r'
+        // Clear extra lines without scrolling
         const extraLines = this.previousLines.length - newLines.length
         if (extraLines > height) {
-          this.repaintVisible(newLines, width, height, cursorPos, prevViewportTop)
+          fullRender(true)
           return
         }
-        if (extraLines > 0) buffer += '\x1b[1B'
+        const clearStartOffset = newLines.length === 0 ? 0 : 1
+        if (extraLines > 0 && clearStartOffset > 0) buffer += `\x1b[${clearStartOffset}B`
         for (let i = 0; i < extraLines; i++) {
           buffer += `\r${CLEAR_LINE}`
           if (i < extraLines - 1) buffer += '\x1b[1B'
         }
-        if (extraLines > 0) buffer += `\x1b[${extraLines}A`
+        const moveBack = Math.max(0, extraLines - 1 + clearStartOffset)
+        if (moveBack > 0) buffer += `\x1b[${moveBack}A`
         buffer += SYNC_END
         this.write(buffer)
         this.hardwareCursorRow = targetRow
@@ -317,22 +321,13 @@ export class TermRenderer {
       return
     }
 
-    // First changed line scrolled into hardware scrollback, which no escape
-    // sequence can repaint. CLEAR_SCREEN would wipe real scrollback and jump
-    // the view; an in-place bottom repaint drops the rows between the old and
-    // new viewport tops when the frame grows (streaming markdown reflowing an
-    // earlier line while appending). Clamp to the addressable viewport and fall
-    // through to the normal differential path: it scrolls off-screen rows into
-    // real scrollback as the frame grows and repaints in place otherwise.
+    // Differential rendering can only touch what was actually visible. If the
+    // first changed line is above the previous viewport (e.g. a compact<->
+    // expanded toggle reflows the whole history), a full redraw is required —
+    // an in-place diff would corrupt the screen. This matches pi's renderer.
     if (firstChanged < prevViewportTop) {
-      firstChanged = prevViewportTop
-      if (firstChanged > lastChanged) {
-        this.previousLines = newLines
-        this.previousWidth = width
-        this.previousHeight = height
-        this.previousViewportTop = prevViewportTop
-        return
-      }
+      fullRender(true)
+      return
     }
 
     // --- Build differential update buffer ---
@@ -395,63 +390,6 @@ export class TermRenderer {
     this.hardwareCursorRow = finalCursorRow
     this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length)
     this.previousViewportTop = Math.max(prevViewportTop, finalCursorRow - height + 1)
-    this.previousLines = newLines
-    this.previousWidth = width
-    this.previousHeight = height
-    this.positionHardwareCursor(cursorPos, newLines.length)
-  }
-
-  /**
-   * Repaint only the currently visible viewport window in place, without
-   * emitting CLEAR_SCREEN. Used when content above the viewport changed (e.g.
-   * streaming markdown reflowed an earlier line that has already scrolled into
-   * hardware scrollback). A full CLEAR_SCREEN redraw would jump the view to the
-   * top of the frame and wipe scrollback; this keeps the view anchored at the
-   * bottom and leaves frozen scrollback untouched.
-   */
-  private repaintVisible(
-    newLines: string[],
-    width: number,
-    height: number,
-    cursorPos: { row: number; col: number } | null,
-    prevViewportTop: number,
-  ): void {
-    // Bottom-anchor the viewport on the new content so the latest output stays
-    // visible — the same place the user is already looking.
-    const viewportTop = Math.max(0, newLines.length - height)
-    const viewportBottom = Math.max(viewportTop, newLines.length - 1)
-    const printedCount = newLines.length === 0 ? 0 : viewportBottom - viewportTop + 1
-
-    // How many physical rows held content before this repaint, so we can clear
-    // any that the shorter new window leaves stale.
-    const prevVisibleRows = Math.min(height, Math.max(0, this.previousLines.length - prevViewportTop))
-
-    let buffer = SYNC_START
-    // Move the hardware cursor up to the top of the visible window.
-    const currentScreenRow = this.hardwareCursorRow - prevViewportTop
-    if (currentScreenRow > 0) buffer += `\x1b[${currentScreenRow}A`
-    else if (currentScreenRow < 0) buffer += `\x1b[${-currentScreenRow}B`
-    buffer += '\r'
-
-    for (let i = viewportTop; i <= viewportBottom && i < newLines.length; i++) {
-      if (i > viewportTop) buffer += '\r\n'
-      buffer += CLEAR_LINE
-      buffer += newLines[i]
-    }
-
-    // Clear any rows below the new content that still show stale output.
-    const extraToClear = Math.max(0, prevVisibleRows - printedCount)
-    for (let i = 0; i < extraToClear; i++) {
-      buffer += `\r\n${CLEAR_LINE}`
-    }
-    if (extraToClear > 0) buffer += `\x1b[${extraToClear}A`
-
-    buffer += SYNC_END
-    this.write(buffer)
-
-    this.hardwareCursorRow = viewportBottom
-    this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length)
-    this.previousViewportTop = viewportTop
     this.previousLines = newLines
     this.previousWidth = width
     this.previousHeight = height

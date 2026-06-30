@@ -484,11 +484,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   /** Toggle expanded view and redraw. */
   function toggleExpanded(): void {
     expanded = !expanded
-    // Plain differential render, not fullRedraw: the width is unchanged, only
-    // the line content swaps (compact <-> expanded). A CLEAR_SCREEN full redraw
-    // blanks the whole screen and flickers on every Ctrl+O; the diff renderer
-    // is already flicker-free via synchronized output (DEC 2026).
-    renderer.requestRender()
+    // Full redraw, not a plain diff: toggling compact<->expanded reflows the
+    // entire history (most lines change and the total line count shifts). The
+    // differential renderer clamps changes above the viewport instead of
+    // falling back to a full redraw, so an in-place diff corrupts the screen on
+    // a swap this large. CLEAR_SCREEN flickers but renders correctly.
+    renderer.fullRedraw()
   }
 
   /** Cycle the model's reasoning effort (Shift+Tab) and reflect it in the footer. */
