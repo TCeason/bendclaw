@@ -408,7 +408,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // 8. Prompt
     blocks.push(...buildPromptBlocks(getPromptVM()))
 
-    return { lines: blocksToLines(blocks) }
+    return { lines: blocksToLines(blocks), preserveScrollback: isLoading }
   }
 
   renderer.setRenderCallback(buildFrame)
