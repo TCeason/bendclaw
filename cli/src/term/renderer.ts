@@ -33,13 +33,6 @@ const WRAP = '\x1b[?7h'     // Re-enable auto-wrap
 
 export interface RenderFrame {
   lines: string[]
-  /**
-   * Number of top lines in `lines` that are stable and may be frozen out of
-   * the actively diffed viewport. Frozen lines are left in the terminal buffer
-   * and never rewritten, so users can select/copy them while the prompt,
-   * spinner, and streaming text continue to update below.
-   */
-  stablePrefixLines?: number
 }
 
 /** Zero-width marker embedded in rendered output to indicate cursor position for IME. */
@@ -54,7 +47,6 @@ export interface TermRendererOptions {
 export class TermRenderer {
   private stdout: NodeJS.WriteStream
   private previousLines: string[] = []
-  private frozenLines: string[] = []
   private previousWidth = 0
   private previousHeight = 0
   private hardwareCursorRow = 0
@@ -119,7 +111,6 @@ export class TermRenderer {
     if (this.destroyed) return
     if (force) {
       this.previousLines = []
-      this.frozenLines = []
       this.previousWidth = -1
       this.previousHeight = -1
       this.hardwareCursorRow = 0
@@ -154,10 +145,8 @@ export class TermRenderer {
    */
   freezeLines(count: number): void {
     if (count <= 0 || count > this.previousLines.length) return
-    const frozen = this.previousLines.slice(0, count)
     // The frozen lines are already rendered on screen at their current position.
     // We just need to adjust our tracking so we no longer diff them.
-    this.frozenLines.push(...frozen)
     this.previousLines = this.previousLines.slice(count)
     // Adjust cursor tracking: the hardware cursor row is relative to the
     // full buffer, so subtract the frozen lines.
@@ -172,7 +161,6 @@ export class TermRenderer {
   clearScreen(): void {
     this.write(SYNC_START + CLEAR_SCREEN + SYNC_END)
     this.previousLines = []
-    this.frozenLines = []
     this.hardwareCursorRow = 0
     this.maxLinesRendered = 0
     this.previousViewportTop = 0
@@ -200,16 +188,6 @@ export class TermRenderer {
     this.requestRender(true)
   }
 
-  private resetDiffState(): void {
-    this.previousLines = []
-    this.frozenLines = []
-    this.hardwareCursorRow = 0
-    this.maxLinesRendered = 0
-    this.previousViewportTop = 0
-    this.previousWidth = 0
-    this.previousHeight = 0
-  }
-
   // --- Private: core render ---
 
   private doRender(): void {
@@ -220,41 +198,10 @@ export class TermRenderer {
     const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width
     const heightChanged = this.previousHeight !== 0 && this.previousHeight !== height
 
-    // Get new frame from callback. Callers return the full logical frame;
-    // frozenLines tracks the stable prefix that is already in the terminal
-    // buffer and should be sliced out before diffing the active viewport.
+    // Get new frame from callback
     const raw = this.renderCallback()
-    const frameLines = Array.isArray(raw) ? raw : raw.lines
-    const stablePrefixLines = Array.isArray(raw)
-      ? 0
-      : clampStablePrefix(raw.stablePrefixLines, frameLines.length)
-
-    let forceClear = false
-    if ((widthChanged || heightChanged) && this.frozenLines.length > 0) {
-      this.resetDiffState()
-      forceClear = true
-    }
-    if (this.frozenLines.length > 0) {
-      const frozenPrefixChanged = stablePrefixLines < this.frozenLines.length
-        || !prefixEquals(frameLines, this.frozenLines)
-      if (frozenPrefixChanged) {
-        this.resetDiffState()
-        forceClear = true
-      }
-    }
-
-    const frozenCount = this.frozenLines.length
-    const newLines = frameLines.slice(frozenCount)
+    const newLines = Array.isArray(raw) ? raw : raw.lines
     const cursorPos = this.extractCursorPosition(newLines, height)
-
-    const freezeRenderedStablePrefix = (): void => {
-      const toFreeze = Math.min(
-        Math.max(0, stablePrefixLines - this.frozenLines.length),
-        this.previousViewportTop,
-        this.previousLines.length,
-      )
-      if (toFreeze > 0) this.freezeLines(toFreeze)
-    }
 
     // --- Full render helper ---
     const fullRender = (clear: boolean): void => {
@@ -274,12 +221,6 @@ export class TermRenderer {
       this.previousWidth = width
       this.previousHeight = height
       this.positionHardwareCursor(cursorPos, newLines.length)
-      freezeRenderedStablePrefix()
-    }
-
-    if (forceClear) {
-      fullRender(true)
-      return
     }
 
     // First render
@@ -338,7 +279,6 @@ export class TermRenderer {
     if (firstChanged === -1) {
       this.previousViewportTop = prevViewportTop
       this.previousHeight = height
-      freezeRenderedStablePrefix()
       return
     }
 
@@ -374,7 +314,6 @@ export class TermRenderer {
       this.previousWidth = width
       this.previousHeight = height
       this.previousViewportTop = prevViewportTop
-      freezeRenderedStablePrefix()
       return
     }
 
@@ -456,7 +395,6 @@ export class TermRenderer {
     this.previousWidth = width
     this.previousHeight = height
     this.positionHardwareCursor(cursorPos, newLines.length)
-    freezeRenderedStablePrefix()
   }
 
   /**
@@ -566,17 +504,4 @@ function safeDimension(n: number | undefined, fallback: number): number {
 
 function stripAnsiVisibleWidth(text: string): number {
   return stringWidth(stripAnsi(text))
-}
-
-function clampStablePrefix(value: number | undefined, lineCount: number): number {
-  if (value === undefined || !Number.isFinite(value)) return 0
-  return Math.max(0, Math.min(Math.floor(value), lineCount))
-}
-
-function prefixEquals(lines: string[], prefix: string[]): boolean {
-  if (prefix.length > lines.length) return false
-  for (let i = 0; i < prefix.length; i++) {
-    if (lines[i] !== prefix[i]) return false
-  }
-  return true
 }
