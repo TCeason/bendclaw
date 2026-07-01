@@ -9,7 +9,8 @@
 
 import { version } from '../native/index.js'
 import { orchestrate } from './internal/orchestrate.js'
-import type { DistillOptions } from './internal/types.js'
+import { isDifficulty } from './internal/difficulty.js'
+import type { DistillOptions, Difficulty } from './internal/types.js'
 
 export async function runDistill(argv: string[]): Promise<void> {
   if (argv.includes('--help') || argv.includes('-h')) {
@@ -47,8 +48,9 @@ Options:
   --rl-only              skip the Solver: prove solvability via a bounded
                          reference solve and emit RL rows only (faster; no SFT)
   --repeats <n>          attempts per task (default: 1)
-  --target-turns <n>     target solver turns for task difficulty (default: 8;
-                         not a hard runtime limit)
+  --difficulty <tier>    task difficulty: L2|L4|L6|L8|L16|mixed (default: L2).
+                         A complexity label (higher = more complex); 'mixed'
+                         spreads tasks evenly across all tiers.
   --max-concurrency <n>  parallel tasks (default: 2)
   --per-task-timeout <s> per-task wall-clock cap (default: 600)
   --workspace-root <dir> parent dir for temporary Builder/Solver workspaces
@@ -68,7 +70,7 @@ function parseDistillArgs(argv: string[]): DistillOptions {
     keepFail: false,
     maxConcurrency: 2,
     perTaskTimeout: 600,
-    targetTurns: 8,
+    difficulty: 'L2',
     verbosity: 'normal',
   }
   for (let i = 0; i < argv.length; i++) {
@@ -86,7 +88,7 @@ function parseDistillArgs(argv: string[]): DistillOptions {
     else if (a === '--rl-only') { opts.rlOnly = true; opts.emit = ['rl'] }
     else if (a === '--repeats' && argv[i + 1]) opts.repeats = parsePositiveInt(argv[++i], '--repeats')
     else if (a === '--keep-fail') opts.keepFail = true
-    else if (a === '--target-turns' && argv[i + 1]) opts.targetTurns = parsePositiveInt(argv[++i], '--target-turns')
+    else if (a === '--difficulty' && argv[i + 1]) opts.difficulty = parseDifficulty(argv[++i])
     else if (a === '--max-concurrency' && argv[i + 1]) opts.maxConcurrency = parsePositiveInt(argv[++i], '--max-concurrency')
     else if (a === '--per-task-timeout' && argv[i + 1]) opts.perTaskTimeout = parsePositiveInt(argv[++i], '--per-task-timeout')
     else if (a === '--workspace-root' && argv[i + 1]) opts.workspaceRoot = argv[++i]
@@ -107,4 +109,11 @@ function parsePositiveInt(raw: string, flag: string): number {
     process.exit(1)
   }
   return n
+}
+
+/** Parse the --difficulty flag: a known tier or 'mixed'. */
+function parseDifficulty(raw: string): Difficulty | 'mixed' {
+  if (raw === 'mixed' || isDifficulty(raw)) return raw
+  console.error(`distill: --difficulty must be one of L2|L4|L6|L8|L16|mixed, got "${raw}"`)
+  process.exit(1)
 }

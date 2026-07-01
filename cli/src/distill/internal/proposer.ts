@@ -12,7 +12,8 @@
 
 import { readFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
-import type { DomainSpec, TaskSpec } from './types.js'
+import type { Difficulty, DomainSpec, TaskSpec } from './types.js'
+import { DIFFICULTY_GUIDANCE, summarizePlan } from './difficulty.js'
 import { runAgent } from './runner.js'
 
 interface ProposerReporter {
@@ -32,6 +33,7 @@ Each element must use this shape:
 {
   "prompt": "concise solver task, including API behavior and edge cases",
   "answer": "one-line description of the success state",
+  "difficulty": "one of L2 | L4 | L6 | L8 | L16 (complexity tier from the plan)",
   "workspace": {
     "source":"agent_scaffold",
     "builderPrompt":"create only the unsolved BASE project; include requirements.txt and smoke tests, but do not solve the task and do not install/run anything",
@@ -50,22 +52,28 @@ Strict rules:
 - The base project must NOT already satisfy the verifier.
 - Keep tasks offline, deterministic, and workspace-relative. Never use absolute paths, /workspace, /tmp, or home paths.`
 
-/** Drive evot to author `domain.n` tasks. Never throws; returns [] on failure. */
+/** Drive evot to author tasks following `difficulties` (one tier per task).
+ *  Never throws; returns [] on failure. */
 export async function proposeTasks(
   domain: DomainSpec,
   evotBin: string,
   proposerCwd: string,
-  targetTurns: number,
+  difficulties: Difficulty[],
   model?: string,
   envFile?: string,
   reporter?: ProposerReporter,
 ): Promise<TaskSpec[]> {
+  const n = difficulties.length
+  if (n === 0) return []
   const types = domain.taskTypes?.length ? ` Task types: ${domain.taskTypes.join(', ')}.` : ''
-  const prompt = `Domain: ${domain.domain}.${types} Author ${domain.n} varied tasks as a JSON array following the system instructions. Target difficulty: each task should usually require about ${targetTurns} solver turns for a competent coding agent. This is a difficulty target, not a hard limit.`
+  const plan = difficulties
+    .map((d, i) => `  ${i + 1}. ${d} — ${DIFFICULTY_GUIDANCE[d]}`)
+    .join('\n')
+  const prompt = `Domain: ${domain.domain}.${types} Author ${n} varied tasks as a JSON array following the system instructions. Author exactly one task per line of this difficulty plan, in order, and set each task's "difficulty" field to the given tier:\n${plan}`
 
   const maxAttempts = 3
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    reporter?.phase?.(`proposer attempt ${attempt}/${maxAttempts} for domain: ${domain.domain}`)
+    reporter?.phase?.(`proposer attempt ${attempt}/${maxAttempts} for domain: ${domain.domain} [${summarizePlan(difficulties)}]`)
     const res = await runAgent({
       cwd: proposerCwd,
       prompt,
@@ -81,14 +89,23 @@ export async function proposeTasks(
     const text = lastAssistantText(res.events)
     const specs = parseTaskArray(text).map((s) => withDefaults(s, 'evot_auto'))
     const valid = specs.map(canonicalizeAutoTask).filter((t): t is TaskSpec => validateAutoTask(t) === null)
-    if (valid.length > 0) return valid.slice(0, domain.n)
+    if (valid.length > 0) return assignDifficulties(valid.slice(0, n), difficulties)
 
     const reason = proposerFailureReason(res.events, res.error, text)
     reporter?.phase?.(`proposer attempt ${attempt}/${maxAttempts} failed: ${reason}`)
   }
 
-  reporter?.phase?.(`proposer fallback: generated ${domain.n} deterministic task(s) for domain: ${domain.domain}`)
-  return fallbackTasks(domain).slice(0, domain.n).map((t) => withDefaults(t, 'evot_fallback'))
+  reporter?.phase?.(`proposer fallback: generated ${n} deterministic task(s) for domain: ${domain.domain}`)
+  return assignDifficulties(
+    fallbackTasks(domain).slice(0, n).map((t) => withDefaults(t, 'evot_fallback')),
+    difficulties,
+  )
+}
+
+/** Stamp each task with its planned tier, overriding any self-reported value so
+ *  the emitted distribution matches the requested plan exactly. */
+function assignDifficulties(tasks: TaskSpec[], plan: Difficulty[]): TaskSpec[] {
+  return tasks.map((t, i) => ({ ...t, difficulty: plan[i] ?? t.difficulty }))
 }
 
 /** Load curated TaskSpecs from a JSONL file. */
@@ -310,7 +327,7 @@ function withDefaults(raw: Partial<TaskSpec> & Record<string, any>, source: stri
     referencePatch: raw.referencePatch ?? raw.reference_patch,
     protectedPaths: raw.protectedPaths ?? raw.protected_paths,
     limits: raw.limits,
-    targetTurns: raw.targetTurns ?? raw.target_turns,
+    difficulty: raw.difficulty,
     split: raw.split ?? 'train',
     source,
   }

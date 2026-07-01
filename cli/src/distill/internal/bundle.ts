@@ -24,6 +24,7 @@ export class Bundle {
   private sftRows: SftRow[] = []
   private rlRows: RlRow[] = []
   private sources: Record<string, number> = {}
+  private difficulties: Record<string, number> = {}
   private workspaceRels: string[] = []
   // Whether any task's verifier uses pytest, so the one shared dataset env
   // installs the harness exactly once (not per workspace).
@@ -61,6 +62,7 @@ export class Bundle {
 
     const src = task.source ?? 'evot_auto'
     this.sources[src] = (this.sources[src] ?? 0) + 1
+    if (task.difficulty) this.difficulties[task.difficulty] = (this.difficulties[task.difficulty] ?? 0) + 1
     if (/\bpytest\b/.test(task.verifier.checkCommand)) this.needsPytest = true
     const execution = await writeExecutionContract(task, wsAbs)
 
@@ -72,7 +74,7 @@ export class Bundle {
         task_type: 'teacher_rl',
         tool_policy: 'required',
         source: src,
-        target_turns: task.targetTurns,
+        difficulty: task.difficulty,
         workspace: wsRel,
         setup: [],
         prepare: 'scripts/prepare.sh',
@@ -121,6 +123,7 @@ export class Bundle {
         workspaces: Object.keys(workspaces).length,
       },
       sources: this.sources,
+      difficulties: this.difficulties,
       ...(scripts ? { scripts } : {}),
       files,
       workspaces,

@@ -17,6 +17,7 @@ function task(id: string): TaskSpec {
     answer: 'paginated',
     workspace: { source: 'inline', files: {}, setup: ['pip install -e .'] },
     verifier: { checkCommand: 'pytest -q', expectedExitCode: 0 },
+    difficulty: 'L4',
     source: 'evot_auto',
   }
 }
@@ -40,6 +41,7 @@ test('writes bundle with relative workspace paths and manifest', async () => {
     const rlBody = await readFile(join(out, 'teacher_rl.jsonl'), 'utf8')
     const rlRow = JSON.parse(rlBody.trim())
     expect(rlRow.metadata.workspace).toBe('workspaces/teacher_t1')
+    expect(rlRow.metadata.difficulty).toBe('L4')
     expect(rlRow.metadata.verifier.check_command).toBe('bash .evot/verify.sh && echo VERIFY_PASS')
     expect(rlRow.metadata.verifier.check_contains).toEqual(['VERIFY_PASS'])
     expect(rlRow.metadata.verifier.type).toBe('bash')
@@ -75,6 +77,7 @@ test('writes bundle with relative workspace paths and manifest', async () => {
     expect(manifest.schema).toBe('evot.distill.bundle.v1')
     expect(manifest.counts).toEqual({ sft_rows: 1, rl_rows: 1, workspaces: 1 })
     expect(manifest.sources).toEqual({ evot_auto: 1 })
+    expect(manifest.difficulties).toEqual({ L4: 1 })
     expect(manifest.scripts).toEqual({ prepare: 'scripts/prepare.sh' })
     expect(manifest.teacher_model).toBe('test-model')
     expect(manifest.files['teacher_rl.jsonl'].sha256).toMatch(/^[0-9a-f]{64}$/)

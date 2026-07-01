@@ -18,6 +18,7 @@ import type { DistillOptions, TaskSpec } from './types.js'
 import { Bundle } from './bundle.js'
 import { importEvents } from './importer.js'
 import { proposeTasks, loadTasks } from './proposer.js'
+import { difficultyPlan, summarizePlan } from './difficulty.js'
 import { runAgent } from './runner.js'
 import { materialize, runSetup } from './workspace.js'
 import { captureDiff, changedPaths, gitInit, gitResetHard, runVerifierDetailed, selfCheck } from './verifier.js'
@@ -100,25 +101,20 @@ async function collectTasks(
   const tasks: TaskSpec[] = []
   if (opts.tasksFile) {
     reporter.phase(`loading tasks from ${opts.tasksFile}`)
-    const loaded = (await loadTasks(opts.tasksFile)).map((t) => ({
-      ...t,
-      targetTurns: t.targetTurns ?? opts.targetTurns,
-    }))
+    const loaded = await loadTasks(opts.tasksFile)
     reporter.phase(`loaded ${loaded.length} task(s)`)
     tasks.push(...loaded)
   }
   if (opts.auto) {
     const domains = await resolveDomains(opts)
     for (const d of domains) {
-      reporter.phase(`proposing ${d.n} task(s) for domain: ${d.domain}`)
+      const plan = difficultyPlan(d.n, opts.difficulty)
+      reporter.phase(`proposing ${d.n} task(s) for domain: ${d.domain} [${summarizePlan(plan)}]`)
       await mkdir(workspaceRoot, { recursive: true })
       const proposerDir = join(workspaceRoot, '_proposer')
       await mkdir(proposerDir, { recursive: true })
       const proposerCwd = await realpath(proposerDir)
-      const proposed = (await proposeTasks(d, evotBin, proposerCwd, opts.targetTurns, opts.model, opts.envFile, reporter)).map((t) => ({
-        ...t,
-        targetTurns: t.targetTurns ?? opts.targetTurns,
-      }))
+      const proposed = await proposeTasks(d, evotBin, proposerCwd, plan, opts.model, opts.envFile, reporter)
       reporter.phase(`proposed ${proposed.length} task(s)`)
       tasks.push(...proposed)
     }
@@ -228,21 +224,19 @@ async function runOne(
       : SOLVER_SYSTEM
 
     // --rl-only: the Solver's *trajectory* isn't needed (no SFT), only proof the
-    // task is solvable. Run a bounded reference solve (capped near the
-    // difficulty target, not the full 25 turns), verify it passes, capture its
-    // diff as the reference patch, then reset to the frozen base. This keeps the
-    // solvability gate (so the RL pool can't fill with unsolvable tasks) while
-    // cutting the most expensive part of generation.
+    // task is solvable. Run a bounded reference solve, verify it passes, capture
+    // its diff as the reference patch, then reset to the frozen base. This keeps
+    // the solvability gate (so the RL pool can't fill with unsolvable tasks)
+    // while cutting the most expensive part of generation.
     if (opts.rlOnly) {
       reporter.stage(task.id, 'reference')
-      const refTurns = Math.max(4, (task.targetTurns ?? opts.targetTurns) * 2)
       const solve = await runAgent({
         cwd: ws,
         prompt: task.prompt,
         model: opts.model,
         envFile: opts.envFile,
         systemPrompt: solverSystem,
-        limits: { maxTurns: refTurns },
+        limits: task.limits ?? { maxTurns: 25 },
         timeoutSec: opts.perTaskTimeout,
         evotBin: deps.evotBin,
         onEvent,
@@ -319,7 +313,7 @@ async function runOne(
           teacher_model: opts.model,
           verified: true,
           task_id: task.id,
-          target_turns: task.targetTurns ?? opts.targetTurns,
+          difficulty: task.difficulty,
         },
       })
       reporter.stage(task.id, 'emit', `sft=${rows.length}`)

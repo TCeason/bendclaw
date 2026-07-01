@@ -53,13 +53,14 @@ printf '%s\n' '{"kind":"run_finished","payload":{}}'
       { domain: 'python flask backend', n: 2 },
       fake,
       dir,
-      8,
+      ['L2', 'L4'],
       undefined,
       undefined,
       { phaseEvent: () => {}, phase: (m) => seen.push(m) },
     )
     expect(tasks.length).toBe(2)
     expect(tasks.every((t) => t.source === 'evot_fallback')).toBe(true)
+    expect(tasks.map((t) => t.difficulty)).toEqual(['L2', 'L4'])
     expect(seen.filter((m) => m.includes('proposer attempt')).length).toBeGreaterThanOrEqual(3)
     expect(seen.some((m) => m.includes('proposer fallback'))).toBe(true)
   } finally {

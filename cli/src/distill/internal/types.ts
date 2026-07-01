@@ -20,10 +20,16 @@ export interface RunLimits {
   maxDuration?: number
 }
 
+/** Coarse difficulty label: a complexity tier, not a runtime limit. The number
+ *  in each name is an ordinal level (higher = more complex). See ./difficulty.ts. */
+export type Difficulty = 'L2' | 'L4' | 'L6' | 'L8' | 'L16'
+
 export interface DomainSpec {
   domain: string
   taskTypes?: string[]
   n: number
+  /** Per-task difficulty plan (length n) the proposer should author against. */
+  difficulties?: Difficulty[]
   limits?: { solver?: RunLimits; builder?: RunLimits }
 }
 
@@ -49,8 +55,8 @@ export interface TaskSpec {
   /** Paths the Solver must not touch (e.g. tests the verifier depends on). */
   protectedPaths?: string[]
   limits?: RunLimits
-  /** Target difficulty in expected solver turns; not a hard cap. */
-  targetTurns?: number
+  /** Coarse difficulty label (complexity tier, see difficulty.ts). Not a runtime limit. */
+  difficulty?: Difficulty
   split?: 'train' | 'eval' | 'probe'
   /** Provenance: "evot_auto" | "curated". */
   source?: string
@@ -109,8 +115,9 @@ export interface DistillOptions {
   keepFail: boolean
   maxConcurrency: number
   perTaskTimeout: number
-  /** Target solver turns used for task difficulty, not a hard run cap. Default: 8. */
-  targetTurns: number
+  /** Difficulty tier to author. 'mixed' spreads tasks evenly across all tiers.
+   *  Default: 'L2'. A complexity label only; imposes no runtime limit. */
+  difficulty: Difficulty | 'mixed'
   /** Parent directory for temporary Builder/Solver workspaces. Default: <out>/.distill-work. */
   workspaceRoot?: string
   /** Output detail level. Default: normal. */
