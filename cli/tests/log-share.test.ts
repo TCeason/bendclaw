@@ -21,6 +21,18 @@ describe('toDownloadUrl', () => {
       .toBe('http://tmpfiles.org/dl/99/file.bin')
   })
 
+  test('inserts /dl/ for alphanumeric ids (tmpfiles.org current format)', () => {
+    // tmpfiles.org switched from numeric to alphanumeric ids; the download
+    // variant must still be produced or /log dl fetches the HTML viewer page.
+    expect(toDownloadUrl('https://tmpfiles.org/wywHXeSghysu/evot-log.bin'))
+      .toBe('https://tmpfiles.org/dl/wywHXeSghysu/evot-log.bin')
+  })
+
+  test('does not double-insert /dl/ when already a download URL', () => {
+    expect(toDownloadUrl('https://tmpfiles.org/dl/wywHXeSghysu/evot-log.bin'))
+      .toBe('https://tmpfiles.org/dl/wywHXeSghysu/evot-log.bin')
+  })
+
   test('returns other URLs unchanged', () => {
     expect(toDownloadUrl('https://example.com/file.bin'))
       .toBe('https://example.com/file.bin')

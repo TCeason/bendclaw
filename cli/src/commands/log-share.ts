@@ -206,9 +206,14 @@ function listFilesRecursive(dir: string, prefix = ''): string[] {
 
 /** Convert tmpfiles.org URL to its download variant (insert /dl/) */
 function toDownloadUrl(url: string): string {
-  // https://tmpfiles.org/12345/file.bin → https://tmpfiles.org/dl/12345/file.bin
-  const m = url.match(/^(https?:\/\/tmpfiles\.org)\/([\d]+\/.+)$/)
-  if (m) {
+  // https://tmpfiles.org/<id>/file.bin → https://tmpfiles.org/dl/<id>/file.bin
+  // The id was once purely numeric but tmpfiles.org now issues alphanumeric
+  // ids (e.g. /wywHXeSghysu/). A numeric-only match left the URL unchanged, so
+  // /log dl fetched the HTML viewer page instead of the raw payload and
+  // decryption failed. Match any non-empty id segment, but don't double-insert
+  // /dl/ if it is already present.
+  const m = url.match(/^(https?:\/\/tmpfiles\.org)\/([^/]+\/.+)$/)
+  if (m && !m[2]!.startsWith('dl/')) {
     return `${m[1]}/dl/${m[2]}`
   }
   return url
