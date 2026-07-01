@@ -225,6 +225,54 @@ describe('TermRenderer', () => {
       expect(out).toContain('d')
       renderer.destroy()
     })
+
+    // A change confined entirely above the viewport, with the frame's total line
+    // count unchanged, leaves the visible region byte-for-byte identical. The
+    // only differences are in scrollback, which no escape sequence can address
+    // without a destructive clear+reprint. Emitting that clear is what made the
+    // screen "jump" to the top on an off-screen banner update or early markdown
+    // reflow. The renderer must adopt the new lines silently and NOT redraw.
+    test('off-viewport change with unchanged line count does not redraw', async () => {
+      const { renderer, stdout } = createRenderer()
+      stdout.rows = 10
+      renderer.init()
+      let banner = 'banner: main'
+      const history = Array.from({ length: 200 }, (_, i) => `hist ${i}`)
+      renderer.setRenderCallback(() => [banner, ...history])
+      await renderFrame(renderer)
+
+      // The banner sits at row 0, far above the viewport. Changing it (e.g. a
+      // git branch switch or update notice) must not clear the screen.
+      stdout.clear()
+      banner = 'banner: feature-branch'
+      await renderFrame(renderer)
+
+      const out = stdout.output
+      expect(out).not.toContain(CLEAR_SCREEN)
+      // Nothing visible changed, so no line content is reprinted either.
+      expect(out).not.toContain('feature-branch')
+      renderer.destroy()
+    })
+
+    test('off-viewport early reflow (count unchanged) does not redraw', async () => {
+      const { renderer, stdout } = createRenderer()
+      stdout.rows = 10
+      renderer.init()
+      const history = Array.from({ length: 8 }, (_, i) => `H${i}`)
+      let pending = Array.from({ length: 12 }, (_, i) => `P${i}`)
+      renderer.setRenderCallback(() => [...history, ...pending])
+      await renderFrame(renderer)
+
+      // Reflow an early pending line that has scrolled above the viewport, with
+      // no change to the total line count (in-place table realign / renumber).
+      stdout.clear()
+      pending = [...pending]
+      pending[1] = 'P1-REFLOWED'
+      await renderFrame(renderer)
+
+      expect(stdout.output).not.toContain(CLEAR_SCREEN)
+      renderer.destroy()
+    })
   })
 
   describe('freezeLines', () => {

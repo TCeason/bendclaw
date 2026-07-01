@@ -322,10 +322,26 @@ export class TermRenderer {
     }
 
     // Differential rendering can only touch what was actually visible. If the
-    // first changed line is above the previous viewport (e.g. a compact<->
-    // expanded toggle reflows the whole history), a full redraw is required —
-    // an in-place diff would corrupt the screen. This matches pi's renderer.
+    // first changed line is above the previous viewport, we normally can't
+    // address those rows, so a full redraw is required (matching pi's renderer).
     if (firstChanged < prevViewportTop) {
+      // But when EVERY change sits above the viewport and the frame neither grew
+      // nor shrank, the visible region is byte-for-byte identical to what's
+      // already on screen — the only differences are in scrollback. Emitting a
+      // full-screen clear+reprint here is what made the screen "jump" to the
+      // top on an off-screen banner update (git branch / update notice) or an
+      // early markdown reflow. Since the committed history those rows hold is
+      // immutable, adopt the new lines silently and leave the screen untouched.
+      if (lastChanged < prevViewportTop && newLines.length === this.previousLines.length) {
+        this.previousLines = newLines
+        this.previousWidth = width
+        this.previousHeight = height
+        this.previousViewportTop = prevViewportTop
+        this.positionHardwareCursor(cursorPos, newLines.length)
+        return
+      }
+      // Some changed rows are visible (or the frame resized) — only a full
+      // redraw keeps the visible viewport and scrollback consistent.
       fullRender(true)
       return
     }
