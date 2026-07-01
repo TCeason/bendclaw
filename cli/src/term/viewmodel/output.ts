@@ -8,12 +8,40 @@ export interface OutputContext {
   columns?: number
 }
 
+// OSC 133 semantic zone markers (the shell-integration protocol). Wrapping each
+// committed user/assistant message in a zone lets supporting terminals (iTerm2,
+// WezTerm, Kitty, Ghostty, VSCode) jump between messages and select/copy a whole
+// message as one block instead of hand-dragging across wrapped lines.
+// Unsupported terminals ignore the sequences, and strip-ansi removes them, so
+// line-width math is unaffected. Mirrors pi's user/assistant message components:
+// first line gets 133;A (zone start), last line gets 133;B + 133;C (zone end).
+//
+// Boundaries come from per-line flags (zoneStart/zoneEnd) set by the message
+// builders, not from inspecting neighbor lines. This keeps marker placement
+// purely local so the incremental history cache (which flattens one commit at a
+// time) produces byte-identical output to a full rebuild.
+const OSC133_ZONE_START = '\x1b]133;A\x07'
+const OSC133_ZONE_END = '\x1b]133;B\x07\x1b]133;C\x07'
+
+function prependZoneMarker(b: ViewBlock): void {
+  const first = b.lines[0]
+  if (first) first.spans.unshift(plain(OSC133_ZONE_START))
+}
+
+function appendZoneMarker(b: ViewBlock): void {
+  const last = b.lines[b.lines.length - 1]
+  if (last) last.spans.push(plain(OSC133_ZONE_END))
+}
+
 export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | string = {}): ViewBlock[] {
   const blocks: ViewBlock[] = []
   const initialContext: OutputContext = typeof context === 'string' ? { prevKind: context } : context
   let prevKind: string | undefined = initialContext.prevKind
 
   for (const ol of lines) {
+    // Track which blocks this line produces so zone markers attach to its
+    // first/last rendered line without disturbing the rest.
+    const blockStart = blocks.length
     let nextPrevKind: string | undefined = ol.kind
     switch (ol.kind) {
       case 'user': {
@@ -108,6 +136,13 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
         break
     }
     prevKind = nextPrevKind
+
+    // Attach OSC 133 zone markers from this line's own flags. Purely local, so
+    // it is invariant to how the history is sliced across cache appends.
+    if (blocks.length > blockStart) {
+      if (ol.zoneStart) prependZoneMarker(blocks[blockStart]!)
+      if (ol.zoneEnd) appendZoneMarker(blocks[blocks.length - 1]!)
+    }
   }
 
   return blocks

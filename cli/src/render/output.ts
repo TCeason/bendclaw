@@ -73,6 +73,12 @@ export interface OutputLine {
   /** Visual spacer inserted between streamed markdown chunks. It creates a
    *  blank line but must not start a new assistant message marker. */
   isContinuationSpacer?: boolean
+  /** First line of a committed user/assistant message: gets an OSC 133 zone
+   *  start marker so terminals can select/copy the whole message. */
+  zoneStart?: boolean
+  /** Last line of a committed user/assistant message: gets the OSC 133 zone
+   *  end marker. */
+  zoneEnd?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -96,7 +102,7 @@ export function resetIdCounter(): void {
 
 export function buildUserMessage(text: string): OutputLine[] {
   if (!text) return []
-  return [{ id: genId('user'), kind: 'user', text }]
+  return [{ id: genId('user'), kind: 'user', text, zoneStart: true, zoneEnd: true }]
 }
 
 export function buildAssistantLines(markdownText: string): OutputLine[] {
@@ -104,11 +110,16 @@ export function buildAssistantLines(markdownText: string): OutputLine[] {
   const rendered = renderMarkdown(markdownText)
   if (!rendered || !rendered.trim()) return []
   const cleaned = rendered.replace(/^\n+/, '').replace(/\n+$/, '')
-  return cleaned.split('\n').map((line) => ({
+  const parts = cleaned.split('\n')
+  return parts.map((line, i) => ({
     id: genId('asst'),
     kind: 'assistant' as const,
     text: line,
     rawMarkdown: markdownText,
+    // Wrap the whole assistant message in one OSC 133 zone (first line starts,
+    // last line ends) so it selects/copies as a single block.
+    zoneStart: i === 0,
+    zoneEnd: i === parts.length - 1,
   }))
 }
 

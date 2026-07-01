@@ -1,9 +1,12 @@
 import { describe, test, expect, beforeAll } from 'bun:test'
 import { buildOutputBlocks } from '../src/term/viewmodel/output.js'
 import { blocksToLines, styledLineToAnsi, line, colored, dim } from '../src/term/viewmodel/types.js'
-import type { OutputLine } from '../src/render/output.js'
+import { buildUserMessage, buildAssistantLines, type OutputLine } from '../src/render/output.js'
 import stripAnsi from 'strip-ansi'
 import chalk from 'chalk'
+
+const OSC133_ZONE_START = '\x1b]133;A\x07'
+const OSC133_ZONE_END = '\x1b]133;B\x07\x1b]133;C\x07'
 
 beforeAll(() => {
   chalk.level = 3
@@ -197,5 +200,53 @@ describe('buildOutputBlocks', () => {
     expect(lines[0]).toContain('❯ ' + '你'.repeat(10))
     expect(lines[1]).toContain('  ' + '你'.repeat(10))
     expect(lines[2]).toContain('  ' + '你'.repeat(5))
+  })
+})
+
+describe('OSC 133 semantic zone markers', () => {
+  test('a user message is wrapped in one balanced zone', () => {
+    const raw = render(buildUserMessage('hello there'))
+    expect(raw).toContain(OSC133_ZONE_START)
+    expect(raw).toContain(OSC133_ZONE_END)
+    // Exactly one zone (one start, one end) for a single message.
+    expect(raw.split(OSC133_ZONE_START).length - 1).toBe(1)
+    expect(raw.split(OSC133_ZONE_END).length - 1).toBe(1)
+    // The start marker precedes the visible prompt glyph.
+    expect(raw.indexOf(OSC133_ZONE_START)).toBeLessThan(raw.indexOf('❯'))
+  })
+
+  test('a multi-line assistant message has exactly one zone spanning all lines', () => {
+    const raw = render(buildAssistantLines('line one\n\nline two\n\nline three'))
+    expect(raw.split(OSC133_ZONE_START).length - 1).toBe(1)
+    expect(raw.split(OSC133_ZONE_END).length - 1).toBe(1)
+    // Start comes before the first content, end after the last.
+    expect(raw.indexOf(OSC133_ZONE_START)).toBeLessThan(raw.indexOf('line one'))
+    expect(raw.indexOf('line three')).toBeLessThan(raw.indexOf(OSC133_ZONE_END))
+  })
+
+  test('markers are stripped by strip-ansi so line widths are unaffected', () => {
+    const withMarkers = render(buildUserMessage('hello'))
+    const plain = stripAnsi(withMarkers)
+    expect(plain).not.toContain('133')
+    expect(plain).toContain('❯ hello')
+  })
+
+  test('non-message kinds (tool, system) get no zone markers', () => {
+    const raw = render([
+      { id: 't1', kind: 'tool', text: '⌘ bash  ls' },
+      { id: 's1', kind: 'system', text: 'note' },
+    ])
+    expect(raw).not.toContain(OSC133_ZONE_START)
+    expect(raw).not.toContain(OSC133_ZONE_END)
+  })
+
+  test('consecutive user and assistant messages form separate zones', () => {
+    const raw = render([
+      ...buildUserMessage('question'),
+      ...buildAssistantLines('answer line 1\n\nanswer line 2'),
+    ])
+    // Two messages => two zones.
+    expect(raw.split(OSC133_ZONE_START).length - 1).toBe(2)
+    expect(raw.split(OSC133_ZONE_END).length - 1).toBe(2)
   })
 })
