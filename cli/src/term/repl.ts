@@ -89,7 +89,7 @@ import {
   resolveSessionByPrefix,
   selectSessionPool,
 } from './app/resume.js'
-import { findPreviousSession, shouldPreloadStartupSessions } from './app/session-view.js'
+import { findPreviousSession, shouldPreloadStartupSessions, selectResumeMessages, resumeElidedLine } from './app/session-view.js'
 import { handleSelectorControl } from './app/selector-control.js'
 import { decideReplControl, type ReplControlAction } from './app/repl-control.js'
 import { extractAtPrefix, completeAtFile } from '../commands/file-completion.js'
@@ -593,7 +593,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       compactLines.length = 0
       expandedLines.length = 0
       resetHistoryCache()
-      commitLines(messagesToOutputLines(messages))
+      // Only render the most recent messages to scrollback. Rendering the whole
+      // transcript re-runs markdown (marked lex + ANSI + table align) per
+      // message, which is O(total) and reaches ~500ms on very long sessions.
+      // The hidden messages stay in the model's context (the backend restores
+      // it by session_id independently of this display transcript), so this
+      // only trims what's painted, not what the model remembers.
+      const { shown, hidden } = selectResumeMessages(messages)
+      if (hidden > 0) commitLines([resumeElidedLine(hidden)])
+      commitLines(messagesToOutputLines(shown))
       commitLines([
         { id: 'sys-resumed-gap', kind: 'system', text: '' },
         { id: 'sys-resumed', kind: 'system', text: chalk.dim(`  resumed session ${session.session_id.slice(0, 8)}`) },

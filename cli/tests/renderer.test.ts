@@ -273,6 +273,81 @@ describe('TermRenderer', () => {
       expect(stdout.output).not.toContain(CLEAR_SCREEN)
       renderer.destroy()
     })
+
+    // The real-world jump: an async banner GROWS a line mid-session (update
+    // notice / release notes arrive). The banner sits at row 0, long scrolled
+    // above the viewport, so the visible region is byte-identical — only its
+    // buffer indices shifted by +1. A common-suffix match proves the viewport
+    // is unchanged, so the renderer adopts silently instead of clearing.
+    test('off-viewport line-count GROWTH with identical viewport does not redraw', async () => {
+      const { renderer, stdout } = createRenderer()
+      stdout.rows = 10
+      renderer.init()
+      let banner = ['banner']
+      const history = Array.from({ length: 200 }, (_, i) => `hist ${i}`)
+      renderer.setRenderCallback(() => [...banner, ...history])
+      await renderFrame(renderer)
+
+      // Banner grows from 1 line to 2 (async update notice). Visible rows are
+      // the tail of history, unchanged.
+      stdout.clear()
+      banner = ['banner', 'New version available']
+      await renderFrame(renderer)
+
+      const out = stdout.output
+      expect(out).not.toContain(CLEAR_SCREEN)
+      // The grown banner line is off-screen, so it is never printed.
+      expect(out).not.toContain('New version available')
+      renderer.destroy()
+    })
+
+    // Same for a SHRINK: an off-screen banner line disappears. Buffer indices
+    // shift by -1 but the viewport is identical, so no clear.
+    test('off-viewport line-count SHRINK with identical viewport does not redraw', async () => {
+      const { renderer, stdout } = createRenderer()
+      stdout.rows = 10
+      renderer.init()
+      let banner = ['banner', 'transient notice']
+      const history = Array.from({ length: 200 }, (_, i) => `hist ${i}`)
+      renderer.setRenderCallback(() => [...banner, ...history])
+      await renderFrame(renderer)
+
+      stdout.clear()
+      banner = ['banner']
+      await renderFrame(renderer)
+
+      expect(stdout.output).not.toContain(CLEAR_SCREEN)
+      renderer.destroy()
+    })
+
+    // A change that only reaches PART of the viewport, with the line count
+    // unchanged, repaints just the visible rows — the unaddressable scrollback
+    // above is left stale (invisible) rather than triggering a full clear.
+    test('partial-viewport reach (count unchanged) repaints visible rows without clearing', async () => {
+      const { renderer, stdout } = createRenderer()
+      stdout.rows = 10
+      renderer.init()
+      const history = Array.from({ length: 8 }, (_, i) => `H${i}`)
+      // 12 pending: with rows=10 and 20 total lines, viewportTop = 10.
+      let pending = Array.from({ length: 12 }, (_, i) => `P${i}`)
+      renderer.setRenderCallback(() => [...history, ...pending])
+      await renderFrame(renderer)
+
+      // Change a line that spans from above the viewport (index 9, off-screen)
+      // to inside it (index 11, visible). Count unchanged.
+      stdout.clear()
+      pending = [...pending]
+      pending[1] = 'P1-off'   // buffer index 9 — above viewport
+      pending[3] = 'P3-vis'   // buffer index 11 — inside viewport
+      await renderFrame(renderer)
+
+      const out = stdout.output
+      expect(out).not.toContain(CLEAR_SCREEN)
+      // The visible changed row is repainted; the off-screen one is not.
+      expect(out).toContain('P3-vis')
+      expect(out).not.toContain('P1-off')
+      renderer.destroy()
+    })
   })
 
   describe('freezeLines', () => {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { findPreviousSession, previousSessionLine, shouldPreloadStartupSessions } from '../src/term/app/session-view.js'
+import { findPreviousSession, previousSessionLine, shouldPreloadStartupSessions, selectResumeMessages, resumeElidedLine, RESUME_DISPLAY_LIMIT } from '../src/term/app/session-view.js'
 import type { SessionMeta } from '../src/native/index.js'
+import type { UIMessage } from '../src/term/app/types.js'
 
 describe('repl session view helpers', () => {
   const sessions: SessionMeta[] = [
@@ -32,5 +33,47 @@ describe('repl session view helpers', () => {
   test('previousSessionLine truncates long title', () => {
     const line = previousSessionLine({ session_id: sessions[0]!.session_id, title: 'x'.repeat(41) } as any)
     expect(line.text).toContain(`${'x'.repeat(39)}…`)
+  })
+
+  const makeMessages = (n: number): UIMessage[] =>
+    Array.from({ length: n }, (_, i) => ({ id: `m${i}`, role: i % 2 === 0 ? 'user' : 'assistant', text: `msg ${i}`, timestamp: 0 } as UIMessage))
+
+  test('selectResumeMessages returns all when under the limit', () => {
+    const msgs = makeMessages(10)
+    const { shown, hidden } = selectResumeMessages(msgs)
+    expect(hidden).toBe(0)
+    expect(shown).toBe(msgs)
+  })
+
+  test('selectResumeMessages keeps only the most recent when over the limit', () => {
+    const msgs = makeMessages(200)
+    const { shown, hidden } = selectResumeMessages(msgs)
+    expect(hidden).toBe(200 - RESUME_DISPLAY_LIMIT)
+    expect(shown.length).toBe(RESUME_DISPLAY_LIMIT)
+    // Keeps the tail, not the head.
+    expect(shown[0]!.id).toBe(`m${200 - RESUME_DISPLAY_LIMIT}`)
+    expect(shown[shown.length - 1]!.id).toBe('m199')
+  })
+
+  test('selectResumeMessages respects a custom limit', () => {
+    const { shown, hidden } = selectResumeMessages(makeMessages(50), 10)
+    expect(hidden).toBe(40)
+    expect(shown.length).toBe(10)
+    expect(shown[0]!.id).toBe('m40')
+  })
+
+  test('selectResumeMessages at exactly the limit hides nothing', () => {
+    const { shown, hidden } = selectResumeMessages(makeMessages(RESUME_DISPLAY_LIMIT))
+    expect(hidden).toBe(0)
+    expect(shown.length).toBe(RESUME_DISPLAY_LIMIT)
+  })
+
+  test('resumeElidedLine reports the hidden count and pluralizes', () => {
+    const many = resumeElidedLine(120)
+    expect(many.kind).toBe('system')
+    expect(many.id).toBe('sys-resumed-elided')
+    expect(many.text).toContain('120 earlier messages hidden')
+    expect(many.text).toContain(`latest ${RESUME_DISPLAY_LIMIT}`)
+    expect(resumeElidedLine(1).text).toContain('1 earlier message hidden')
   })
 })

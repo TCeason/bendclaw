@@ -1,5 +1,9 @@
 import type { SessionMeta } from '../../native/index.js'
 import type { OutputLine } from '../../render/output.js'
+import type { UIMessage } from './types.js'
+
+/** Default number of most-recent messages painted to scrollback on resume. */
+export const RESUME_DISPLAY_LIMIT = 80
 
 export function shouldPreloadStartupSessions(opts: { continueLatest?: boolean; resumeSessionId?: string }): boolean {
   return Boolean(opts.continueLatest || opts.resumeSessionId)
@@ -19,5 +23,33 @@ export function previousSessionLine(session: SessionMeta): OutputLine {
     id: `prev-session-${session.session_id}`,
     kind: 'system',
     text: `  previous session: ${tag}${short} · /resume ${session.session_id.slice(0, 8)}`,
+  }
+}
+
+/**
+ * Select which messages to paint on resume. Rendering the whole transcript
+ * re-runs markdown per message (O(total), ~500ms on very long sessions), so we
+ * keep only the most recent `limit`. Hidden messages stay in the model's
+ * context — the backend restores it by session_id, independent of this display
+ * transcript — so this trims what's painted, not what the model remembers.
+ */
+export function selectResumeMessages(
+  messages: UIMessage[],
+  limit: number = RESUME_DISPLAY_LIMIT,
+): { shown: UIMessage[]; hidden: number } {
+  const hidden = Math.max(0, messages.length - limit)
+  return {
+    shown: hidden > 0 ? messages.slice(-limit) : messages,
+    hidden,
+  }
+}
+
+/** System notice shown above the resumed transcript when older messages are hidden. */
+export function resumeElidedLine(hidden: number, limit: number = RESUME_DISPLAY_LIMIT): OutputLine {
+  const plural = hidden === 1 ? '' : 's'
+  return {
+    id: 'sys-resumed-elided',
+    kind: 'system',
+    text: `  … ${hidden} earlier message${plural} hidden (still in context) · showing the latest ${limit}`,
   }
 }

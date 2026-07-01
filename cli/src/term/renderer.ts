@@ -321,29 +321,36 @@ export class TermRenderer {
       return
     }
 
-    // Differential rendering can only touch what was actually visible. If the
-    // first changed line is above the previous viewport, we normally can't
-    // address those rows, so a full redraw is required (matching pi's renderer).
     if (firstChanged < prevViewportTop) {
-      // But when EVERY change sits above the viewport and the frame neither grew
-      // nor shrank, the visible region is byte-for-byte identical to what's
-      // already on screen — the only differences are in scrollback. Emitting a
-      // full-screen clear+reprint here is what made the screen "jump" to the
-      // top on an off-screen banner update (git branch / update notice) or an
-      // early markdown reflow. Since the committed history those rows hold is
-      // immutable, adopt the new lines silently and leave the screen untouched.
-      if (lastChanged < prevViewportTop && newLines.length === this.previousLines.length) {
+      const delta = newLines.length - this.previousLines.length
+
+      let commonSuffix = 0
+      const maxSuffix = Math.min(newLines.length, this.previousLines.length)
+      while (
+        commonSuffix < maxSuffix &&
+        newLines[newLines.length - 1 - commonSuffix] ===
+          this.previousLines[this.previousLines.length - 1 - commonSuffix]
+      ) {
+        commonSuffix++
+      }
+      const visibleCount = this.previousLines.length - prevViewportTop
+      if (commonSuffix >= visibleCount) {
         this.previousLines = newLines
         this.previousWidth = width
         this.previousHeight = height
-        this.previousViewportTop = prevViewportTop
+        this.hardwareCursorRow = Math.max(0, this.hardwareCursorRow + delta)
+        this.previousViewportTop = Math.max(0, prevViewportTop + delta)
+        this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length)
         this.positionHardwareCursor(cursorPos, newLines.length)
         return
       }
-      // Some changed rows are visible (or the frame resized) — only a full
-      // redraw keeps the visible viewport and scrollback consistent.
-      fullRender(true)
-      return
+
+      if (delta === 0) {
+        firstChanged = prevViewportTop
+      } else {
+        fullRender(true)
+        return
+      }
     }
 
     // --- Build differential update buffer ---
