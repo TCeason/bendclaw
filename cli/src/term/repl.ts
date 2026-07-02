@@ -376,11 +376,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         lastPendingRendered = renderMarkdownCached(pendingText)
       }
       const mdLines = lastPendingRendered.split('\n')
-      // Block-commit drains completed blocks into history mid-stream, so the
-      // pending tail is a continuation of an already-dotted assistant message.
-      // Only draw the ⏺ block marker when no part of this message has committed
-      // yet; otherwise use the 2-space continuation prefix so the tail lines up
-      // under the committed blocks without a second dot.
+      // The whole message streams in place here. After a rare overflow drain
+      // (drainOverflowBlocks), leading blocks have already committed to history,
+      // so the tail is a continuation: use the 2-space prefix instead of a
+      // second ⏺ dot. Normal replies never commit mid-stream, so they keep the
+      // ⏺ marker for the life of the stream.
       const isContinuation = streamMachine?.assistantCommitted ?? false
       const styledLines = mdLines.map((l, i) => {
         if (i === 0 && !isContinuation) return { spans: [{ text: '\u23fa ', fg: 'cyan' as const }, { text: l }] }

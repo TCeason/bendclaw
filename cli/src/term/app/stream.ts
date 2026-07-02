@@ -25,88 +25,69 @@ function isInsidePipeTable(text: string): boolean {
 }
 
 /**
- * Commit completed markdown blocks from the streaming buffer to scrollback,
- * keeping only the still-forming tail in `streamingText` (the dynamic zone).
+ * Overflow safety valve for the streaming dynamic zone.
  *
- * This is the core of streaming smoothness: without it, every delta re-lexes
- * and re-renders the entire accumulated response (O(n²) for a long answer,
- * hundreds of ms per frame). By draining finished blocks into the committed
- * history — which the incremental HistoryRenderCache flattens once and never
- * touches again — per-frame cost drops to O(pending tail).
+ * The whole in-progress assistant message normally stays in the dynamic zone
+ * and is re-rendered in place each delta (matching pi's single growing
+ * component). Re-rendering the full pending text costs ~0.3ms, so there is no
+ * performance reason to commit paragraphs early — and doing so made streaming
+ * choppy: each paragraph boundary drained the dynamic zone into scrollback,
+ * emptied it for a frame, then refilled it, so the spinner/prompt below jumped
+ * up and back down on every `\n\n`.
  *
- * Boundaries come from findStreamingCommitPoint (paragraph/heading/closed-fence
- * boundaries, never mid code-fence or mid-table). For long plain prose with no
- * markdown boundary, findNaturalPlainTextCommitPoint commits complete leading
- * lines. As a last resort, when the pending tail grows past a fraction of the
- * viewport, force-split at the last safe newline so structural content flows
- * into scrollback instead of ballooning the re-rendered dynamic zone.
+ * This function only acts when the pending message would grow taller than the
+ * viewport: it commits leading blocks (at a markdown-safe boundary, else a
+ * complete-line boundary) to scrollback so the tail keeps fitting on screen.
+ * It never splits inside an open code fence, math block, or building table.
  *
  * Mutates nothing; returns the updated state and any lines to commit.
  */
-function commitCompletedBlocks(
+function drainOverflowBlocks(
   state: StreamMachineState,
   termRows: number,
 ): { state: StreamMachineState; lines: OutputLine[] } {
   const lines: OutputLine[] = []
 
-  // 1. Commit at a markdown-safe boundary, or (for long boundary-free prose)
-  //    at complete leading lines.
-  const mathBlockOpen = isInsideOpenMathBlock(state.streamingText)
-  const markdownCommitPoint = findStreamingCommitPoint(state.streamingText)
-  const naturalCommitPoint =
-    markdownCommitPoint > 0 || mathBlockOpen
+  // Keep the whole in-progress message in the dynamic zone (re-rendered in
+  // place each delta, matching pi's single growing component) UNLESS it would
+  // grow taller than the visible viewport. Reserve a few rows below for tool
+  // progress, spinner, and prompt so those stay on screen.
+  //
+  // This is deliberately rare: normal multi-paragraph replies never trip it, so
+  // there is no per-paragraph "commit → dynamic zone empties → refills" jump
+  // that made streaming feel choppy. Re-rendering the full pending text every
+  // delta costs ~0.3ms, so there is nothing to optimize away by committing early.
+  const overflowThreshold = Math.max(8, termRows - 6)
+  const pendingLineCount = state.streamingText.split('\n').length
+  if (pendingLineCount <= overflowThreshold) return { state, lines }
+
+  const markdownSplitAt = findStreamingCommitPoint(state.streamingText)
+  const naturalSplitAt =
+    markdownSplitAt > 0 || isInsideOpenMathBlock(state.streamingText)
       ? 0
       : findNaturalPlainTextCommitPoint(state.streamingText, termRows)
-  const commitPoint = markdownCommitPoint || naturalCommitPoint
-  if (commitPoint > 0 && commitPoint <= state.streamingText.length) {
-    const completed = state.streamingText.slice(0, commitPoint)
-    const pending = state.streamingText.slice(commitPoint)
-    const built = buildAssistantLines(completed)
-    if (built.length > 0) {
-      // A markdown-boundary commit that continues an already-committed block
-      // needs a spacer so the next chunk isn't tagged as a fresh assistant
-      // message (which would draw a second leading dot).
-      if (markdownCommitPoint > 0 && state.assistantCommitted) {
-        lines.push(assistantContinuationSpacer())
-      }
-      lines.push(...built)
-      state = { ...state, streamingText: pending, assistantCommitted: true }
-    }
+  let splitAt = markdownSplitAt || naturalSplitAt
+  // Last resort: commit at the last newline so structural markdown (lists,
+  // headings, blockquotes) doesn't accumulate in the dynamic zone. Skip when
+  // inside an open math block, an open code fence, or a building pipe table —
+  // splitting there commits a partial block and tears the rendering.
+  if (
+    splitAt <= 0 &&
+    !isInsideOpenMathBlock(state.streamingText) &&
+    !isInsideOpenCodeFence(state.streamingText) &&
+    !isInsidePipeTable(state.streamingText)
+  ) {
+    const lastNl = state.streamingText.lastIndexOf('\n')
+    if (lastNl > 0) splitAt = lastNl + 1
   }
-
-  // 2. Force-split an over-tall pending tail so it flows into scrollback
-  //    instead of re-rendering in the dynamic zone every delta.
-  const pendingLineCount = state.streamingText.split('\n').length
-  const forceThreshold = Math.max(4, Math.floor(termRows / 3))
-  if (pendingLineCount > forceThreshold) {
-    const markdownSplitAt = findStreamingCommitPoint(state.streamingText)
-    const naturalSplitAt =
-      markdownSplitAt > 0 || isInsideOpenMathBlock(state.streamingText)
-        ? 0
-        : findNaturalPlainTextCommitPoint(state.streamingText, termRows)
-    let splitAt = markdownSplitAt || naturalSplitAt
-    // Last resort: commit at the last newline so structural markdown (lists,
-    // headings, blockquotes) doesn't accumulate in the dynamic zone. Skip when
-    // inside an open math block, an open code fence, or a building pipe table —
-    // splitting there commits a partial block and tears the rendering.
-    if (
-      splitAt <= 0 &&
-      !isInsideOpenMathBlock(state.streamingText) &&
-      !isInsideOpenCodeFence(state.streamingText) &&
-      !isInsidePipeTable(state.streamingText)
-    ) {
-      const lastNl = state.streamingText.lastIndexOf('\n')
-      if (lastNl > 0) splitAt = lastNl + 1
-    }
-    if (splitAt > 0 && splitAt < state.streamingText.length) {
-      const chunk = state.streamingText.slice(0, splitAt)
-      const rest = state.streamingText.slice(splitAt)
-      const built = buildAssistantLines(chunk)
-      if (built.length > 0) {
-        if (state.assistantCommitted) lines.push(assistantContinuationSpacer())
-        lines.push(...built)
-        state = { ...state, streamingText: rest, assistantCommitted: true }
-      }
+  if (splitAt > 0 && splitAt < state.streamingText.length) {
+    const chunk = state.streamingText.slice(0, splitAt)
+    const rest = state.streamingText.slice(splitAt)
+    const built = buildAssistantLines(chunk)
+    if (built.length > 0) {
+      if (state.assistantCommitted) lines.push(assistantContinuationSpacer())
+      lines.push(...built)
+      state = { ...state, streamingText: rest, assistantCommitted: true }
     }
   }
 
@@ -273,20 +254,20 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
         },
       }
 
-      // Drain completed markdown blocks into scrollback so only the forming
-      // tail stays in the re-rendered dynamic zone (keeps per-frame cost at
-      // O(pending tail) instead of O(whole response)).
-      const committed = commitCompletedBlocks(state, ctx.termRows)
-      state = committed.state
-      if (committed.lines.length > 0) {
-        commitLines.push(...committed.lines)
+      // Keep the whole in-progress message in the dynamic zone so it grows in
+      // place (matching pi). Only drain to scrollback if it would overflow the
+      // viewport height — normal replies never trip this, so there is no
+      // per-paragraph zone-empties-and-refills jump.
+      const drained = drainOverflowBlocks(state, ctx.termRows)
+      state = drained.state
+      if (drained.lines.length > 0) {
+        commitLines.push(...drained.lines)
         if (!expandedCommitLines) expandedCommitLines = []
-        expandedCommitLines.push(...committed.lines)
+        expandedCommitLines.push(...drained.lines)
       }
 
-      // pendingText mirrors the still-forming tail for the viewport's
-      // streaming display (set after block-commit trims what already landed
-      // in scrollback).
+      // pendingText mirrors the still-forming message for the viewport's
+      // streaming display (set after any overflow drain trims the head).
       state = { ...state, pendingText: state.streamingText }
       rerenderStatus = true
     }

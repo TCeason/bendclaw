@@ -5,7 +5,7 @@ import { createStreamMachineState, reduceRunEvent, flushStreaming, buildToolStar
 import type { OutputLine } from '../src/render/output.js'
 
 describe('term stream machine', () => {
-  test('assistant delta commits completed blocks and holds the forming tail', () => {
+  test('assistant delta keeps the whole message in the dynamic zone (no mid-stream commit)', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
@@ -16,12 +16,12 @@ describe('term stream machine', () => {
     }, { termRows: 24 })
 
     state = update.state
-    // Block-commit: the completed paragraph "hello" drains to scrollback so the
-    // dynamic zone only re-renders the still-forming tail ("world").
-    const committed = update.commitLines.filter(l => l.kind === 'assistant').map(l => l.text).join('\n')
-    expect(committed).toContain('hello')
-    expect(state.streamingText).toBe('world')
-    expect(state.pendingText).toBe('world')
+    // Plan A: the message streams in place. A completed paragraph is NOT drained
+    // to scrollback mid-stream (that caused the dynamic zone to empty/refill and
+    // the spinner below to jump). Everything stays in the pending text.
+    expect(update.commitLines.length).toBe(0)
+    expect(state.streamingText).toBe('hello\n\nworld')
+    expect(state.pendingText).toBe('hello\n\nworld')
   })
 
   test('assistant delta without complete block does not commit', () => {
@@ -62,7 +62,7 @@ describe('term stream machine', () => {
     expect(state.pendingText).toBe('')
   })
 
-  test('no duplicate commit: each block committed exactly once across the stream', () => {
+  test('no mid-stream commit: whole message flushed once at assistant_completed', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
@@ -77,10 +77,9 @@ describe('term stream machine', () => {
       for (const line of update.commitLines) allCommitted.push(line.text)
     }
 
-    // Block-commit drains the completed first paragraph mid-stream; the
-    // forming tail stays pending until the turn ends.
-    expect(allCommitted.join('\n')).toContain('Hello world')
-    expect(state.streamingText).toBe('Second paragraph.')
+    // Plan A: nothing commits mid-stream; the full message stays pending.
+    expect(allCommitted.length).toBe(0)
+    expect(state.streamingText).toBe('Hello world.\n\nSecond paragraph.')
 
     const update = reduceRunEvent(state, {
       kind: 'assistant_completed',
@@ -92,8 +91,7 @@ describe('term stream machine', () => {
     const fullText = allCommitted.join('\n')
     expect(fullText).toContain('Hello world')
     expect(fullText).toContain('Second paragraph')
-    // Each block appears exactly once — no double-commit between the mid-stream
-    // block-commit and the final flush.
+    // Each block appears exactly once — flushed only at the turn boundary.
     expect((fullText.match(/Hello world/g) || []).length).toBe(1)
     expect((fullText.match(/Second paragraph/g) || []).length).toBe(1)
 
@@ -101,26 +99,65 @@ describe('term stream machine', () => {
     expect(final.lines.length).toBe(0)
   })
 
-  test('pendingText tracks the forming tail after block-commit', () => {
+  test('pendingText mirrors the whole streaming message', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
-    const text = Array.from({ length: 9 }, (_, i) => `plain line ${i}`).join('\n')
+    // Short multi-paragraph reply that fits the viewport: stays fully pending.
+    const text = 'Para one.\n\nPara two.\n\nPara three.'
 
     const update = reduceRunEvent(state, {
       kind: 'assistant_delta',
       payload: { delta: text },
-    }, { termRows: 18 })
+    }, { termRows: 24 })
 
     state = update.state
-    // Long boundary-free prose exceeds the force threshold, so complete leading
-    // lines commit and only the tail stays in streamingText/pendingText.
-    const committed = update.commitLines.filter(l => l.kind === 'assistant').map(l => l.text)
-    expect(committed.length).toBeGreaterThan(0)
-    expect(state.streamingText.length).toBeLessThan(text.length)
-    expect(state.pendingText).toBe(state.streamingText)
-    // committed head + pending tail reconstructs the original text.
-    expect(committed.join('\n') + '\n' + state.streamingText).toBe(text)
+    expect(update.commitLines.length).toBe(0)
+    expect(state.streamingText).toBe(text)
+    expect(state.pendingText).toBe(text)
+  })
+
+  test('streaming a multi-paragraph reply never commits or empties the dynamic zone mid-stream', () => {
+    // Regression for streaming jank: the whole message must stream in place so
+    // the dynamic zone never drains-and-refills at paragraph boundaries (which
+    // made the spinner/prompt below jump up and back down on every \n\n).
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+    const full = [
+      'First paragraph explaining the setup.',
+      '## Section',
+      'Second paragraph with **bold** and some detail that runs on a while.',
+      '- point one\n- point two',
+      'Final wrap-up sentence.',
+    ].join('\n\n')
+
+    const deltas: string[] = []
+    for (let i = 0; i < full.length; i += 5) deltas.push(full.slice(i, i + 5))
+
+    let midStreamCommits = 0
+    let emptyPendingFrames = 0
+    let prevPendingLen = 0
+    for (const d of deltas) {
+      const update = reduceRunEvent(state, {
+        kind: 'assistant_delta',
+        payload: { delta: d },
+      }, { termRows: 40 })
+      state = update.state
+      midStreamCommits += update.commitLines.filter(l => l.kind === 'assistant' && l.text).length
+      if (state.pendingText.length === 0 && prevPendingLen > 0) emptyPendingFrames++
+      prevPendingLen = state.pendingText.length
+    }
+
+    expect(midStreamCommits).toBe(0)
+    expect(emptyPendingFrames).toBe(0)
+    expect(state.pendingText).toBe(full)
+
+    // Everything flushes once at the turn boundary.
+    const done = reduceRunEvent(state, { kind: 'assistant_completed', payload: {} }, { termRows: 40 })
+    const flushed = done.commitLines.filter(l => l.kind === 'assistant').map(l => l.text).join('\n')
+    expect(flushed).toContain('First paragraph')
+    expect(flushed).toContain('Final wrap-up')
   })
 
   test('flushStreaming after tool_started produces clean assistant block', () => {
@@ -160,10 +197,12 @@ describe('term stream machine', () => {
     expect(flushed.lines[0]?.text).toContain('After tool')
   })
 
-  test('open code fence stays pending, preceding prose commits', () => {
+  test('overflow drain: preceding prose commits, open code fence stays pending', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
+    // 15 lines at termRows 18 exceeds the overflow threshold (max(8, 18-6)=12),
+    // so the safety valve drains leading blocks to keep the tail on screen.
     const text = 'Intro\n\n```\n' + Array.from({ length: 12 }, (_, i) => `x_${i} = ${i}`).join('\n')
 
     const update = reduceRunEvent(state, {
@@ -179,6 +218,24 @@ describe('term stream machine', () => {
     expect(committed).not.toContain('x_0')
     expect(state.streamingText.startsWith('```')).toBe(true)
     expect(state.streamingText).toContain('x_11 = 11')
+  })
+
+  test('short message with an open code fence stays fully pending (no overflow)', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+    // Well under the overflow threshold: the whole thing streams in place.
+    const text = 'Intro\n\n```\nx_0 = 0\nx_1 = 1'
+
+    const update = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { delta: text },
+    }, { termRows: 24 })
+
+    state = update.state
+    expect(update.commitLines.length).toBe(0)
+    expect(state.streamingText).toBe(text)
+    expect(state.pendingText).toBe(text)
   })
 
   test('no duplicate commits across llm_call_completed and assistant_completed', () => {
