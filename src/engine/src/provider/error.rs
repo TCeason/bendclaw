@@ -211,10 +211,24 @@ fn is_quota_exceeded(message: &str) -> bool {
 // Transport error formatting
 // ---------------------------------------------------------------------------
 
-/// Build a de-duplicated transport error detail: appends the URL and each
-/// source-chain cause only when not already present in the message.
+/// Build a concise, human-readable transport error string.
+///
+/// reqwest wraps a transport failure in several layers (`error sending request
+/// for url (...)` -> `client error (SendRequest)` -> `connection error` -> root
+/// cause). Concatenating the whole chain produces a long, repetitive line, and
+/// some crates (notably rustls) append a docs.rs manual link to their `Display`
+/// output. Users only need the root cause plus the URL, so surface the deepest
+/// cause, strip any docs.rs reference, and append the request URL.
 pub fn format_transport_detail(error: &dyn std::error::Error, url: Option<&str>) -> String {
-    let mut detail = error.to_string();
+    let mut root: &dyn std::error::Error = error;
+    while let Some(cause) = root.source() {
+        root = cause;
+    }
+
+    let mut detail = strip_doc_reference(&root.to_string());
+    if detail.is_empty() {
+        detail = strip_doc_reference(&error.to_string());
+    }
 
     if let Some(url) = url {
         if !url.is_empty() && !detail.contains(url) {
@@ -222,17 +236,18 @@ pub fn format_transport_detail(error: &dyn std::error::Error, url: Option<&str>)
         }
     }
 
-    let mut source = error.source();
-    while let Some(cause) = source {
-        let text = cause.to_string();
-        if !text.is_empty() && !detail.contains(&text) {
-            detail.push_str(" -> ");
-            detail.push_str(&text);
-        }
-        source = cause.source();
-    }
-
     detail
+}
+
+/// Strip a trailing docs.rs documentation link that some crates (notably
+/// rustls) append to their `Display` output, e.g. "peer closed connection
+/// without sending TLS close_notify: https://docs.rs/rustls/latest/...". It is
+/// noise for users and only bloats the error line.
+fn strip_doc_reference(text: &str) -> String {
+    match text.find(": https://docs.rs/") {
+        Some(idx) => text[..idx].trim_end().to_string(),
+        None => text.to_string(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -273,14 +288,10 @@ fn build_client() -> Result<reqwest::Client, ProviderError> {
         .tcp_keepalive_retries(3)
         .build()
         .map_err(|e| {
-            let mut detail = format!("Failed to build HTTP client: {e}");
-            let mut source = std::error::Error::source(&e);
-            while let Some(cause) = source {
-                detail.push_str(" -> ");
-                detail.push_str(&cause.to_string());
-                source = cause.source();
-            }
-            ProviderError::Other(detail)
+            ProviderError::Other(format!(
+                "Failed to build HTTP client: {}",
+                format_transport_detail(&e, None)
+            ))
         })
 }
 

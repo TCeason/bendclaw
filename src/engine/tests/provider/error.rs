@@ -317,7 +317,9 @@ fn transport_detail_skips_repeated_source_text() {
 }
 
 #[test]
-fn transport_detail_keeps_distinct_source_causes() {
+fn transport_detail_surfaces_root_cause_from_chain() {
+    // reqwest nests the real failure at the bottom of the source chain. Surface
+    // only the deepest cause instead of concatenating every wrapper layer.
     let inner = FakeError {
         msg: "dns lookup failed".into(),
         source: None,
@@ -327,5 +329,22 @@ fn transport_detail_keeps_distinct_source_causes() {
         source: Some(Box::new(inner)),
     };
     let detail = format_transport_detail(&outer, None);
-    assert_eq!(detail, "connect error -> dns lookup failed");
+    assert_eq!(detail, "dns lookup failed");
+}
+
+#[test]
+fn transport_detail_strips_docs_rs_reference() {
+    // rustls appends a docs.rs manual link to its Display output; it is noise
+    // for users and must be trimmed.
+    let err = FakeError {
+        msg: "peer closed connection without sending TLS close_notify: \
+              https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof"
+            .into(),
+        source: None,
+    };
+    let detail = format_transport_detail(&err, Some("https://example.com/v1/messages"));
+    assert_eq!(
+        detail,
+        "peer closed connection without sending TLS close_notify (url: https://example.com/v1/messages)"
+    );
 }
