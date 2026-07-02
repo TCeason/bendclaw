@@ -11,11 +11,45 @@ import {
 } from 'fs'
 import type { ForkedAgent } from '../native/index.js'
 
-const SKILLS_DIRS = [
-  join(homedir(), '.evotai', 'skills'),
-  join(homedir(), '.claude', 'skills'),
-]
-const SKILLS_DIR = SKILLS_DIRS[0]!
+// Install target: the global ~/.evotai/skills dir. `/skill install` and
+// `/skill remove` always operate here; EVOT_SKILLS_DIRS entries are
+// read-only externally-managed dirs (e.g. a git checkout the user upgrades
+// themselves), so we never install into or delete from them.
+const SKILLS_DIR = join(homedir(), '.evotai', 'skills')
+
+/**
+ * Expand a leading `~` to the user's home directory. Mirrors the Rust
+ * `paths::expand_home_path` used when the engine parses EVOT_SKILLS_DIRS.
+ */
+function expandHome(dir: string): string {
+  if (dir === '~') return homedir()
+  if (dir.startsWith('~/')) return join(homedir(), dir.slice(2))
+  return dir
+}
+
+/**
+ * Resolve the ordered list of skill directories to scan, matching the engine's
+ * precedence (see gateway/service.rs + conf/load.rs):
+ *   1. global ~/.evotai/skills
+ *   2. EVOT_SKILLS_DIRS entries (colon-separated, `~` expanded)
+ *   3. ~/.claude/skills
+ *
+ * Keeping this in sync with the Rust side ensures `/skill list` and the banner
+ * show exactly the skills the agent actually loads.
+ */
+export function resolveSkillsDirs(env: NodeJS.ProcessEnv = process.env): string[] {
+  const dirs = [join(homedir(), '.evotai', 'skills')]
+  const extra = env.EVOT_SKILLS_DIRS
+  if (extra) {
+    for (const part of extra.split(':')) {
+      const trimmed = part.trim()
+      if (trimmed) dirs.push(expandHome(trimmed))
+    }
+  }
+  dirs.push(join(homedir(), '.claude', 'skills'))
+  // De-dup while preserving order (a user may repeat the global dir).
+  return [...new Set(dirs)]
+}
 
 // ---------------------------------------------------------------------------
 // /skill list
@@ -37,7 +71,7 @@ export function skillListFromDirs(dirs: string[]): string {
 }
 
 export function skillList(): string {
-  return skillListFromDirs(SKILLS_DIRS)
+  return skillListFromDirs(resolveSkillsDirs())
 }
 
 // ---------------------------------------------------------------------------

@@ -3,7 +3,8 @@ import { mkdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { resolveCommand, isSlashCommand, buildHardenPrompt } from '../src/commands/index.js'
-import { skillListFromDirs } from '../src/commands/skill.js'
+import { skillListFromDirs, resolveSkillsDirs } from '../src/commands/skill.js'
+import { homedir } from 'os'
 
 describe('isSlashCommand', () => {
   test('recognizes slash commands', () => {
@@ -128,5 +129,45 @@ describe('skillListFromDirs', () => {
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
+  })
+})
+
+describe('resolveSkillsDirs', () => {
+  const evotaiDir = join(homedir(), '.evotai', 'skills')
+  const claudeDir = join(homedir(), '.claude', 'skills')
+
+  test('defaults to global + claude dirs when EVOT_SKILLS_DIRS is unset', () => {
+    expect(resolveSkillsDirs({})).toEqual([evotaiDir, claudeDir])
+  })
+
+  test('inserts EVOT_SKILLS_DIRS entries between global and claude, in order', () => {
+    expect(resolveSkillsDirs({ EVOT_SKILLS_DIRS: '/abs/one:/abs/two' })).toEqual([
+      evotaiDir,
+      '/abs/one',
+      '/abs/two',
+      claudeDir,
+    ])
+  })
+
+  test('expands a leading ~ in EVOT_SKILLS_DIRS entries', () => {
+    expect(resolveSkillsDirs({ EVOT_SKILLS_DIRS: '~/work/skills' })).toEqual([
+      evotaiDir,
+      join(homedir(), 'work', 'skills'),
+      claudeDir,
+    ])
+  })
+
+  test('trims whitespace and skips empty segments', () => {
+    expect(resolveSkillsDirs({ EVOT_SKILLS_DIRS: ' /a : : /b ' })).toEqual([
+      evotaiDir,
+      '/a',
+      '/b',
+      claudeDir,
+    ])
+  })
+
+  test('de-duplicates while preserving order', () => {
+    // Repeating the global dir must not produce a duplicate entry.
+    expect(resolveSkillsDirs({ EVOT_SKILLS_DIRS: evotaiDir })).toEqual([evotaiDir, claudeDir])
   })
 })
