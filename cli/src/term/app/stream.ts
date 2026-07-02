@@ -4,6 +4,114 @@ import { setSpinnerPhase, type SpinnerState } from '../spinner.js'
 import { applyEvent } from './reducer.js'
 import type { AppState } from './state.js'
 import type { RunEvent } from '../../native/index.js'
+import { findStreamingCommitPoint, findNaturalPlainTextCommitPoint, isInsideOpenMathBlock, isInsideOpenCodeFence } from '../../markdown/streaming/commit.js'
+
+// Detect pipe tables: two or more consecutive lines matching `| ... |`.
+// Splitting mid-table produces broken rendering, so the force-split path
+// leaves a building table in the pending tail until a safe boundary appears.
+const PIPE_TABLE_LINE_RE = /^\s*\|.*\|\s*$/
+function isInsidePipeTable(text: string): boolean {
+  const lines = text.split('\n')
+  let tableLines = 0
+  for (const l of lines) {
+    if (PIPE_TABLE_LINE_RE.test(l)) {
+      tableLines++
+      if (tableLines >= 2) return true
+    } else if (l.trim()) {
+      tableLines = 0
+    }
+  }
+  return false
+}
+
+/**
+ * Commit completed markdown blocks from the streaming buffer to scrollback,
+ * keeping only the still-forming tail in `streamingText` (the dynamic zone).
+ *
+ * This is the core of streaming smoothness: without it, every delta re-lexes
+ * and re-renders the entire accumulated response (O(n²) for a long answer,
+ * hundreds of ms per frame). By draining finished blocks into the committed
+ * history — which the incremental HistoryRenderCache flattens once and never
+ * touches again — per-frame cost drops to O(pending tail).
+ *
+ * Boundaries come from findStreamingCommitPoint (paragraph/heading/closed-fence
+ * boundaries, never mid code-fence or mid-table). For long plain prose with no
+ * markdown boundary, findNaturalPlainTextCommitPoint commits complete leading
+ * lines. As a last resort, when the pending tail grows past a fraction of the
+ * viewport, force-split at the last safe newline so structural content flows
+ * into scrollback instead of ballooning the re-rendered dynamic zone.
+ *
+ * Mutates nothing; returns the updated state and any lines to commit.
+ */
+function commitCompletedBlocks(
+  state: StreamMachineState,
+  termRows: number,
+): { state: StreamMachineState; lines: OutputLine[] } {
+  const lines: OutputLine[] = []
+
+  // 1. Commit at a markdown-safe boundary, or (for long boundary-free prose)
+  //    at complete leading lines.
+  const mathBlockOpen = isInsideOpenMathBlock(state.streamingText)
+  const markdownCommitPoint = findStreamingCommitPoint(state.streamingText)
+  const naturalCommitPoint =
+    markdownCommitPoint > 0 || mathBlockOpen
+      ? 0
+      : findNaturalPlainTextCommitPoint(state.streamingText, termRows)
+  const commitPoint = markdownCommitPoint || naturalCommitPoint
+  if (commitPoint > 0 && commitPoint <= state.streamingText.length) {
+    const completed = state.streamingText.slice(0, commitPoint)
+    const pending = state.streamingText.slice(commitPoint)
+    const built = buildAssistantLines(completed)
+    if (built.length > 0) {
+      // A markdown-boundary commit that continues an already-committed block
+      // needs a spacer so the next chunk isn't tagged as a fresh assistant
+      // message (which would draw a second leading dot).
+      if (markdownCommitPoint > 0 && state.assistantCommitted) {
+        lines.push(assistantContinuationSpacer())
+      }
+      lines.push(...built)
+      state = { ...state, streamingText: pending, assistantCommitted: true }
+    }
+  }
+
+  // 2. Force-split an over-tall pending tail so it flows into scrollback
+  //    instead of re-rendering in the dynamic zone every delta.
+  const pendingLineCount = state.streamingText.split('\n').length
+  const forceThreshold = Math.max(4, Math.floor(termRows / 3))
+  if (pendingLineCount > forceThreshold) {
+    const markdownSplitAt = findStreamingCommitPoint(state.streamingText)
+    const naturalSplitAt =
+      markdownSplitAt > 0 || isInsideOpenMathBlock(state.streamingText)
+        ? 0
+        : findNaturalPlainTextCommitPoint(state.streamingText, termRows)
+    let splitAt = markdownSplitAt || naturalSplitAt
+    // Last resort: commit at the last newline so structural markdown (lists,
+    // headings, blockquotes) doesn't accumulate in the dynamic zone. Skip when
+    // inside an open math block, an open code fence, or a building pipe table —
+    // splitting there commits a partial block and tears the rendering.
+    if (
+      splitAt <= 0 &&
+      !isInsideOpenMathBlock(state.streamingText) &&
+      !isInsideOpenCodeFence(state.streamingText) &&
+      !isInsidePipeTable(state.streamingText)
+    ) {
+      const lastNl = state.streamingText.lastIndexOf('\n')
+      if (lastNl > 0) splitAt = lastNl + 1
+    }
+    if (splitAt > 0 && splitAt < state.streamingText.length) {
+      const chunk = state.streamingText.slice(0, splitAt)
+      const rest = state.streamingText.slice(splitAt)
+      const built = buildAssistantLines(chunk)
+      if (built.length > 0) {
+        if (state.assistantCommitted) lines.push(assistantContinuationSpacer())
+        lines.push(...built)
+        state = { ...state, streamingText: rest, assistantCommitted: true }
+      }
+    }
+  }
+
+  return { state, lines }
+}
 
 let sepId = 0
 
@@ -165,7 +273,20 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
         },
       }
 
-      // Update pendingText for the viewport's streaming display.
+      // Drain completed markdown blocks into scrollback so only the forming
+      // tail stays in the re-rendered dynamic zone (keeps per-frame cost at
+      // O(pending tail) instead of O(whole response)).
+      const committed = commitCompletedBlocks(state, ctx.termRows)
+      state = committed.state
+      if (committed.lines.length > 0) {
+        commitLines.push(...committed.lines)
+        if (!expandedCommitLines) expandedCommitLines = []
+        expandedCommitLines.push(...committed.lines)
+      }
+
+      // pendingText mirrors the still-forming tail for the viewport's
+      // streaming display (set after block-commit trims what already landed
+      // in scrollback).
       state = { ...state, pendingText: state.streamingText }
       rerenderStatus = true
     }

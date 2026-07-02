@@ -1551,6 +1551,114 @@ describe('renderMarkdown', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// GFM task-list checkboxes
+// ---------------------------------------------------------------------------
+
+describe('task-list checkboxes', () => {
+  test('renders unchecked and checked boxes in an unordered list', () => {
+    const result = stripAnsi(renderMarkdown('- [ ] todo item\n- [x] done item\n- normal item'))
+    expect(result).toContain('- [ ] todo item')
+    expect(result).toContain('- [x] done item')
+    // Non-task items keep a plain bullet with no checkbox.
+    expect(result).toContain('- normal item')
+    expect(result).not.toContain('- [ ] normal')
+  })
+
+  test('renders checkboxes in an ordered list', () => {
+    const result = stripAnsi(renderMarkdown('1. [ ] numbered todo\n2. [x] numbered done'))
+    expect(result).toContain('1. [ ] numbered todo')
+    expect(result).toContain('2. [x] numbered done')
+  })
+
+  test('renders checkboxes in nested lists', () => {
+    const result = stripAnsi(renderMarkdown('- [ ] outer\n  - [x] nested done\n  - nested normal'))
+    expect(result).toContain('- [ ] outer')
+    expect(result).toContain('- [x] nested done')
+    expect(result).toContain('- nested normal')
+  })
+
+  test('wrapped task item aligns continuation under the text', () => {
+    const restore = withColumns(40)
+    try {
+      const md = '- [x] alpha beta gamma delta epsilon zeta eta theta iota'
+      const lines = stripAnsi(renderMarkdown(md)).split('\n')
+      expect(lines.length).toBeGreaterThan(1)
+      expect(lines[0]).toMatch(/^- \[x\] /)
+      // Continuation lines indent to the "- [x] " prefix width (6 columns).
+      // wrapAnsi preserves the break space, so allow an optional extra space.
+      expect(lines[1]).toMatch(/^ {6}/)
+      expect(lines[1].trim().length).toBeGreaterThan(0)
+    } finally {
+      restore()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Nested inline style continuity
+//
+// When an inline token (strong/em/codespan/link) closes, it emits its own ANSI
+// close code (22/23/24/39 — never a full \x1b[0m reset). We rely on chalk to
+// re-open the surrounding style so text after the nested token keeps the outer
+// heading/blockquote/emphasis styling. These tests lock that behaviour so a
+// theme change or a stray full-reset can't silently strip styling mid-line.
+// ---------------------------------------------------------------------------
+
+describe('nested inline style continuity', () => {
+  function renderColored(md: string): string {
+    const prevLevel = chalk.level
+    chalk.level = 3
+    try {
+      return renderMarkdown(md)
+    } finally {
+      chalk.level = prevLevel
+    }
+  }
+
+  test('inline content never emits a full reset (\\x1b[0m)', () => {
+    const samples = [
+      '# Title with **STRONG** word',
+      '# Run `npm test` before commit',
+      '## See [docs](https://x.com) now',
+      '### Note *emphasis* here',
+      '> quote with **bold** and more',
+      '> quote with *emphasis* and more text',
+      'text ***both*** tail',
+    ]
+    for (const md of samples) {
+      const out = renderColored(md)
+      expect(out).not.toContain('\x1b[0m')
+    }
+  })
+
+  test('italic reopens after a nested em closes inside a blockquote', () => {
+    const out = renderColored('> quote with *emphasis* and more text')
+    // The nested em closes with \x1b[23m; the trailing text must be re-wrapped
+    // in \x1b[3m so it stays italic.
+    expect(out).toContain('\x1b[23m\x1b[3m')
+    // Sanity: visible text is intact.
+    expect(stripAnsi(out)).toContain('quote with emphasis and more text')
+  })
+
+  test('heading keeps bold/italic/underline open across a nested codespan', () => {
+    const out = renderColored('# Run `npm test` before commit')
+    // h1 opens bold+italic+underline; codespan only toggles the foreground
+    // colour (39 close), so bold/italic/underline stay open for the tail.
+    expect(out.startsWith('\x1b[1m\x1b[3m\x1b[4m')).toBe(true)
+    expect(out).toContain('\x1b[39m')
+    expect(out).not.toContain('\x1b[0m')
+    expect(stripAnsi(out)).toBe('Run npm test before commit')
+  })
+
+  test('bold survives after a nested strong closes in a heading', () => {
+    const out = renderColored('# Title with **STRONG** word')
+    // strong closes bold with \x1b[22m; chalk re-opens \x1b[1m for ' word'.
+    expect(out).toContain('\x1b[22m\x1b[1m')
+    expect(stripAnsi(out)).toBe('Title with STRONG word')
+  })
+})
+
 describe('formatToken', () => {
   test('renders paragraph token', () => {
     const token = lexFirst('hello world')

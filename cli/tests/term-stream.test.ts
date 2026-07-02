@@ -5,7 +5,7 @@ import { createStreamMachineState, reduceRunEvent, flushStreaming, buildToolStar
 import type { OutputLine } from '../src/render/output.js'
 
 describe('term stream machine', () => {
-  test('assistant delta accumulates text without committing', () => {
+  test('assistant delta commits completed blocks and holds the forming tail', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
@@ -16,10 +16,12 @@ describe('term stream machine', () => {
     }, { termRows: 24 })
 
     state = update.state
-    // New architecture: no mid-stream commits, text accumulates
-    expect(update.commitLines.length).toBe(0)
-    expect(state.streamingText).toBe('hello\n\nworld')
-    expect(state.pendingText).toBe('hello\n\nworld')
+    // Block-commit: the completed paragraph "hello" drains to scrollback so the
+    // dynamic zone only re-renders the still-forming tail ("world").
+    const committed = update.commitLines.filter(l => l.kind === 'assistant').map(l => l.text).join('\n')
+    expect(committed).toContain('hello')
+    expect(state.streamingText).toBe('world')
+    expect(state.pendingText).toBe('world')
   })
 
   test('assistant delta without complete block does not commit', () => {
@@ -60,7 +62,7 @@ describe('term stream machine', () => {
     expect(state.pendingText).toBe('')
   })
 
-  test('no duplicate commit: all text flushed once at assistant_completed', () => {
+  test('no duplicate commit: each block committed exactly once across the stream', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
@@ -75,8 +77,10 @@ describe('term stream machine', () => {
       for (const line of update.commitLines) allCommitted.push(line.text)
     }
 
-    // No mid-stream commits in new architecture
-    expect(allCommitted.length).toBe(0)
+    // Block-commit drains the completed first paragraph mid-stream; the
+    // forming tail stays pending until the turn ends.
+    expect(allCommitted.join('\n')).toContain('Hello world')
+    expect(state.streamingText).toBe('Second paragraph.')
 
     const update = reduceRunEvent(state, {
       kind: 'assistant_completed',
@@ -88,6 +92,8 @@ describe('term stream machine', () => {
     const fullText = allCommitted.join('\n')
     expect(fullText).toContain('Hello world')
     expect(fullText).toContain('Second paragraph')
+    // Each block appears exactly once — no double-commit between the mid-stream
+    // block-commit and the final flush.
     expect((fullText.match(/Hello world/g) || []).length).toBe(1)
     expect((fullText.match(/Second paragraph/g) || []).length).toBe(1)
 
@@ -95,7 +101,7 @@ describe('term stream machine', () => {
     expect(final.lines.length).toBe(0)
   })
 
-  test('pendingText tracks streamingText for viewport rendering', () => {
+  test('pendingText tracks the forming tail after block-commit', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
@@ -107,10 +113,14 @@ describe('term stream machine', () => {
     }, { termRows: 18 })
 
     state = update.state
-    // All text stays in streamingText, pendingText mirrors it
-    expect(state.streamingText).toBe(text)
-    expect(state.pendingText).toBe(text)
-    expect(update.commitLines.length).toBe(0)
+    // Long boundary-free prose exceeds the force threshold, so complete leading
+    // lines commit and only the tail stays in streamingText/pendingText.
+    const committed = update.commitLines.filter(l => l.kind === 'assistant').map(l => l.text)
+    expect(committed.length).toBeGreaterThan(0)
+    expect(state.streamingText.length).toBeLessThan(text.length)
+    expect(state.pendingText).toBe(state.streamingText)
+    // committed head + pending tail reconstructs the original text.
+    expect(committed.join('\n') + '\n' + state.streamingText).toBe(text)
   })
 
   test('flushStreaming after tool_started produces clean assistant block', () => {
@@ -150,7 +160,7 @@ describe('term stream machine', () => {
     expect(flushed.lines[0]?.text).toContain('After tool')
   })
 
-  test('line-by-line fallback holds incomplete trailing block pending', () => {
+  test('open code fence stays pending, preceding prose commits', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
@@ -162,9 +172,13 @@ describe('term stream machine', () => {
     }, { termRows: 18 })
 
     state = update.state
-    // No mid-stream commits
-    expect(update.commitLines.length).toBe(0)
-    expect(state.streamingText).toBe(text)
+    // The completed "Intro" paragraph commits; the still-open fence is held
+    // pending in full so it never gets split into a torn code block.
+    const committed = update.commitLines.filter(l => l.kind === 'assistant').map(l => l.text).join('\n')
+    expect(committed).toContain('Intro')
+    expect(committed).not.toContain('x_0')
+    expect(state.streamingText.startsWith('```')).toBe(true)
+    expect(state.streamingText).toContain('x_11 = 11')
   })
 
   test('no duplicate commits across llm_call_completed and assistant_completed', () => {
@@ -310,10 +324,13 @@ describe('term stream machine', () => {
 
     expect(state.pendingThinkingText).toBe('')
     expect(state.streamingThinkingText).toBe('')
-    expect(state.streamingText).toContain('里的推理中途')
+    // The glitchy thinking delta is preserved as assistant text. Block-commit
+    // may drain a completed paragraph mid-stream, so check committed + pending.
+    const committedSoFar = update.commitLines.filter(l => l.kind === 'assistant').map(l => l.text).join('\n')
+    expect(committedSoFar + '\n' + state.streamingText).toContain('里的推理中途')
 
     const flushed = flushStreaming(state)
-    const assistantText = flushed.lines.filter(l => l.kind === 'assistant').map(l => l.text).join('\n')
+    const assistantText = [committedSoFar, ...flushed.lines.filter(l => l.kind === 'assistant').map(l => l.text)].join('\n')
     expect(flushed.lines.some(l => l.kind === 'thinking_summary')).toBe(false)
     expect(assistantText).toContain('每条都停在')
     expect(assistantText).toContain('里的推理中途')

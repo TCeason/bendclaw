@@ -583,9 +583,15 @@ export function formatToken(
         const marker = orderedListNumber === null
           ? '-'
           : `${getListNumber(listDepth, orderedListNumber)}.`
+        // GFM task-list checkbox: marked sets task/checked on the list_item and
+        // strips the `[ ]`/`[x]` from the item text. Re-emit it after the bullet
+        // so todo state survives rendering (matches pi's TUI behaviour).
+        const listItem = parent as Tokens.ListItem
+        const checkbox = listItem.task ? `[${listItem.checked ? 'x' : ' '}] ` : ''
+        const prefix = `${marker} ${checkbox}`
         const depthPad = '  '.repeat(Math.max(0, listDepth - 1))
-        const firstIndent = `${depthPad}${marker} `
-        const restIndent = `${depthPad}${' '.repeat(terminalDisplayWidth(marker) + 1)}`
+        const firstIndent = `${depthPad}${prefix}`
+        const restIndent = `${depthPad}${' '.repeat(terminalDisplayWidth(prefix))}`
         const inner = token.tokens
           ? token.tokens.map(t => formatToken(t, listDepth, orderedListNumber, token, theme)).join('')
           : linkifyIssueRefs(applyPangu(token.text))

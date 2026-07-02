@@ -376,8 +376,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         lastPendingRendered = renderMarkdownCached(pendingText)
       }
       const mdLines = lastPendingRendered.split('\n')
+      // Block-commit drains completed blocks into history mid-stream, so the
+      // pending tail is a continuation of an already-dotted assistant message.
+      // Only draw the ⏺ block marker when no part of this message has committed
+      // yet; otherwise use the 2-space continuation prefix so the tail lines up
+      // under the committed blocks without a second dot.
+      const isContinuation = streamMachine?.assistantCommitted ?? false
       const styledLines = mdLines.map((l, i) => {
-        if (i === 0) return { spans: [{ text: '\u23fa ', fg: 'cyan' as const }, { text: l }] }
+        if (i === 0 && !isContinuation) return { spans: [{ text: '\u23fa ', fg: 'cyan' as const }, { text: l }] }
         return { spans: [{ text: `  ${l}` }] }
       })
       blocks.push({ lines: styledLines, marginTop: 1 })
