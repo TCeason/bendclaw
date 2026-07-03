@@ -490,12 +490,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   /** Toggle expanded view and redraw. */
   function toggleExpanded(): void {
     expanded = !expanded
-    // Full redraw, not a plain diff: toggling compact<->expanded reflows the
-    // entire history (most lines change and the total line count shifts). The
-    // differential renderer clamps changes above the viewport instead of
-    // falling back to a full redraw, so an in-place diff corrupts the screen on
-    // a swap this large. CLEAR_SCREEN flickers but renders correctly.
-    renderer.fullRedraw()
+    // Differential render, not a forced clear. When the content being toggled
+    // (e.g. the tool output you just ran) sits in the viewport, the renderer
+    // repaints in place from the first changed line down, so the view stays
+    // put instead of clearing and re-anchoring to the bottom (which is what
+    // made the screen jump). A swap large enough to change history above the
+    // viewport still falls back to a full redraw via the renderer's own
+    // off-viewport guard. Mirrors pi, which toggles with requestRender().
+    renderer.requestRender()
   }
 
   /** Cycle the model's reasoning effort (Shift+Tab) and reflect it in the footer. */

@@ -348,6 +348,33 @@ describe('TermRenderer', () => {
       expect(out).not.toContain('P1-off')
       renderer.destroy()
     })
+
+    // Ctrl+O expand: a tool block in the viewport grows from compact to
+    // expanded with the prompt below it. The change starts inside the viewport,
+    // so the renderer repaints in place from the first changed row down and
+    // scrolls the prompt naturally — no CLEAR_SCREEN, no jump to the top.
+    test('expanding in-viewport content grows in place without clearing', async () => {
+      const { renderer, stdout } = createRenderer()
+      stdout.rows = 12
+      renderer.init()
+      // Small transcript that fits entirely on screen: a couple of history
+      // lines, a compact tool card, then the prompt.
+      let lines = ['h0', 'h1', 'tool ✓ 2 lines', 'prompt']
+      renderer.setRenderCallback(() => lines)
+      await renderFrame(renderer)
+
+      // Ctrl+O expands the tool card into its full output. The card and prompt
+      // are all visible, so this must NOT clear the screen.
+      stdout.clear()
+      lines = ['h0', 'h1', 'tool ✓ 2 lines', '  out line 1', '  out line 2', '  out line 3', 'prompt']
+      await renderFrame(renderer)
+
+      const out = stdout.output
+      expect(out).not.toContain(CLEAR_SCREEN)
+      expect(out).toContain('out line 3')
+      expect(out).toContain('prompt')
+      renderer.destroy()
+    })
   })
 
   describe('freezeLines', () => {
