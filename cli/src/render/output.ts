@@ -235,43 +235,32 @@ export function buildToolResult(
     })
   }
 
-  // Tool result content (head/tail truncated)
+  // Tool result content. Collapsed view is a single `... (+N lines, ctrl+o to
+  // expand)` hint; ctrl+o expands to the full body. This applies uniformly to
+  // every tool, including Read: previously successful reads rendered no body
+  // (the status line's size was considered enough), but that left Read as the
+  // only tool whose output couldn't be expanded. Now Read collapses/expands
+  // like the rest.
   if (result) {
-    if (name === 'Read' || name === 'read_code') {
-      if (isError) {
-        // Show error content for failed reads.
-        const resultLines = toolResultLines(result, isError, name, expanded)
-        for (const rl of resultLines) {
-          lines.push({
-            id: genId('tool-res'),
-            kind: 'error',
-            text: `  ${rl}`,
-          })
-        }
-      }
-      // Successful reads show no body: the status line already carries the
-      // size (e.g. `✓ · 12ms · 1.2 KB`), so a separate size line would repeat it.
-    } else {
-      const formattedResult = formatToolResultContent(result)
-      const resultLines = toolResultLines(formattedResult, isError, name, expanded)
-      for (const rl of resultLines) {
-        lines.push({
-          id: genId('tool-res'),
-          kind: isError ? 'error' : 'tool_result',
-          text: `  ${rl}`,
-        })
-      }
-      // Show a collapse hint under expanded multiline results. The collapsed
-      // view no longer previews content lines: toolResultLines() returns a
-      // single `... (+N lines, ctrl+o to expand)` hint, so no extra expand hint
-      // is appended here.
-      if (expanded && resultLines.length > 1) {
-        lines.push({
-          id: genId('tool-hint'),
-          kind: 'tool_result',
-          text: '  \x1b[2m(ctrl+o to collapse)\x1b[0m',
-        })
-      }
+    const formattedResult = formatToolResultContent(result)
+    const resultLines = toolResultLines(formattedResult, isError, name, expanded)
+    for (const rl of resultLines) {
+      lines.push({
+        id: genId('tool-res'),
+        kind: isError ? 'error' : 'tool_result',
+        text: `  ${rl}`,
+      })
+    }
+    // Show a collapse hint under expanded multiline results. The collapsed
+    // view no longer previews content lines: toolResultLines() returns a
+    // single `... (+N lines, ctrl+o to expand)` hint, so no extra expand hint
+    // is appended here.
+    if (expanded && resultLines.length > 1) {
+      lines.push({
+        id: genId('tool-hint'),
+        kind: 'tool_result',
+        text: '  \x1b[2m(ctrl+o to collapse)\x1b[0m',
+      })
     }
   }
 

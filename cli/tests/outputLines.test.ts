@@ -200,6 +200,24 @@ describe('buildToolResult', () => {
     expect(all).not.toContain('match 0')
   })
 
+  test('Read collapses to an expand hint and expands to full content', () => {
+    // Regression: successful reads used to render no body at all, leaving Read
+    // as the only tool whose output couldn't be expanded with ctrl+o. It now
+    // collapses/expands like bash/search.
+    const result = Array.from({ length: 93 }, (_, i) => `line ${i}`).join('\n')
+    const collapsed = buildToolResult('Read', { path: 'a.ts' }, 'done', result, 0)
+    const collapsedBody = collapsed.filter(l => l.kind === 'tool_result')
+    expect(collapsedBody).toHaveLength(1)
+    expect(collapsedBody[0]!.text).toContain('... (+93 lines, ctrl+o to expand)')
+    expect(collapsed.map(l => l.text).join('\n')).not.toContain('line 0')
+
+    const expanded = buildToolResult('Read', { path: 'a.ts' }, 'done', result, 0, true)
+    const all = expanded.map(l => l.text).join('\n')
+    expect(all).toContain('line 0')
+    expect(all).toContain('line 92')
+    expect(all).toContain('ctrl+o to collapse')
+  })
+
   test('expanded multiline result shows collapse hint', () => {
     const result = Array.from({ length: 7 }, (_, i) => `line ${i}`).join('\n')
     const lines = buildToolResult('bash', {}, 'done', result, undefined, true)
