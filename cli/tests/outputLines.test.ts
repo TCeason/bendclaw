@@ -176,24 +176,28 @@ describe('buildToolResult', () => {
     expect(all).toContain('    "items": [')
   })
 
-  test('compact JSON result shows shorter head with expand hint', () => {
-    const result = JSON.stringify({ a: 1, b: 2, c: 3, d: 4, e: 5, f: 6 })
+  test('collapsed multiline result shows only the expand hint, no content preview', () => {
+    const result = JSON.stringify({ a: 1, b: 2, c: 3, d: 4, e: 5, f: 6 }, null, 2)
     const lines = buildToolResult('edit', {}, 'done', result)
-    const all = lines.map(l => l.text).join('\n')
-    expect(all).toContain('  {')
-    expect(all).toContain('  ... (+')
-    expect(all).toContain('ctrl+o to expand')
-    expect(lines.filter(l => l.kind === 'tool_result' && !l.text.includes('ctrl+o'))).toHaveLength(5)
+    const bodyLines = lines.filter(l => l.kind === 'tool_result')
+    // Collapsed view: a single hint line carrying the full line count, no
+    // previewed content rows.
+    expect(bodyLines).toHaveLength(1)
+    expect(bodyLines[0]!.text).toContain('ctrl+o to expand')
+    expect(bodyLines[0]!.text).toMatch(/\.\.\. \(\+\d+ lines, ctrl\+o to expand\)/)
+    // No JSON body line leaked into the collapsed card.
+    expect(bodyLines.some(l => l.text.includes('"status"') || l.text.trim() === '{')).toBe(false)
   })
 
-  test('compact search result shows fewer lines by default', () => {
+  test('collapsed search result hint counts every line (no head preview)', () => {
     const result = Array.from({ length: 8 }, (_, i) => `match ${i}`).join('\n')
     const lines = buildToolResult('search', {}, 'done', result)
+    const bodyLines = lines.filter(l => l.kind === 'tool_result')
+    expect(bodyLines).toHaveLength(1)
+    expect(bodyLines[0]!.text).toContain('... (+8 lines, ctrl+o to expand)')
+    // No match rows previewed in the collapsed view.
     const all = lines.map(l => l.text).join('\n')
-    expect(all).toContain('match 0')
-    expect(all).toContain('match 4')
-    expect(all).not.toContain('match 5')
-    expect(all).toContain('... (+3 lines, ctrl+o to expand)')
+    expect(all).not.toContain('match 0')
   })
 
   test('expanded multiline result shows collapse hint', () => {

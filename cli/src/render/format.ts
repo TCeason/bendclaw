@@ -290,10 +290,7 @@ export function summarizeInline(value: string, maxChars: number): string {
   return truncate(collapsed, maxChars)
 }
 
-export function toolResultLines(content: string, isError: boolean, toolName?: string, expanded?: boolean): string[] {
-  const DEFAULT_LINES = 3
-  const COMPACT_TOOLS = new Set(['Grep', 'grep', 'Glob', 'glob', 'WebFetch', 'web_fetch', 'Bash'])
-  const TAIL_LINES = toolName && COMPACT_TOOLS.has(toolName) ? DEFAULT_LINES : 5
+export function toolResultLines(content: string, isError: boolean, _toolName?: string, expanded?: boolean): string[] {
   const MAX_LINE_WIDTH = 256
 
   const capLine = (l: string) => l.length <= MAX_LINE_WIDTH ? l : truncateHeadTail(l, MAX_LINE_WIDTH)
@@ -311,12 +308,12 @@ export function toolResultLines(content: string, isError: boolean, toolName?: st
     if (!trimmed) return [summarize()]
     const allLines = trimmed.split('\n')
     if (expanded) return allLines.map(capLine)
-    if (allLines.length > TAIL_LINES) {
-      const omitted = allLines.length - TAIL_LINES
-      const result: string[] = []
-      result.push(...allLines.slice(0, TAIL_LINES).map(capLine))
-      result.push(`... (+${omitted} lines, ctrl+o to expand)`)
-      return result
+    // Collapsed view: don't preview any content lines. A tool result (bash,
+    // read, search, ...) is often long and noisy, so the default card shows
+    // only a single hint with the full line count; ctrl+o expands it. A
+    // single-line result has nothing to collapse, so it's shown inline.
+    if (allLines.length > 1) {
+      return [`... (+${allLines.length} lines, ctrl+o to expand)`]
     }
     return allLines.map(capLine)
   }

@@ -261,23 +261,16 @@ export function buildToolResult(
           text: `  ${rl}`,
         })
       }
-      // Show expand/collapse hint for multiline results.
+      // Show a collapse hint under expanded multiline results. The collapsed
+      // view no longer previews content lines: toolResultLines() returns a
+      // single `... (+N lines, ctrl+o to expand)` hint, so no extra expand hint
+      // is appended here.
       if (expanded && resultLines.length > 1) {
         lines.push({
           id: genId('tool-hint'),
           kind: 'tool_result',
           text: '  \x1b[2m(ctrl+o to collapse)\x1b[0m',
         })
-      }
-      if (!expanded) {
-        const allLines = formattedResult.replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n')
-        if (allLines.length > 5 && !resultLines.some(l => l.includes('ctrl+o to expand'))) {
-          lines.push({
-            id: genId('tool-hint'),
-            kind: 'tool_result',
-            text: '  \x1b[2m(ctrl+o to expand)\x1b[0m',
-          })
-        }
       }
     }
   }
