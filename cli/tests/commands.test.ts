@@ -67,6 +67,21 @@ describe('resolveCommand', () => {
     expect(result).toEqual({ kind: 'unknown' })
   })
 
+  test('resolves /copy command', () => {
+    const result = resolveCommand('/copy')
+    expect(result).toEqual({ kind: 'resolved', name: '/copy', args: '' })
+    expect(isSlashCommand('/copy')).toBe(true)
+  })
+
+  test('/c is ambiguous between /copy and /clear', () => {
+    const result = resolveCommand('/c')
+    expect(result.kind).toBe('ambiguous')
+    if (result.kind === 'ambiguous') {
+      expect(result.candidates).toContain('/copy')
+      expect(result.candidates).toContain('/clear')
+    }
+  })
+
   test('is case insensitive', () => {
     const result = resolveCommand('/HELP')
     expect(result).toEqual({ kind: 'resolved', name: '/help', args: '' })

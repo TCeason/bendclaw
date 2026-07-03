@@ -1,10 +1,9 @@
 import stripAnsi from 'strip-ansi'
 import stringWidth from 'string-width'
-import wrapAnsi from 'wrap-ansi'
+import { wrapTextWithAnsi } from '../../render/wrap.js'
 
 const EOL = '\n'
 const SAFETY_MARGIN = 4
-const MAX_RENDER_WIDTH = 140
 const CODE_FENCE_RE = /^( {0,3})(`{3,}|~{3,})(.*)$/
 // Heading matches `#{1,6}` followed by either whitespace/EOL (classic ATX)
 // OR a non-hash, non-space character (glued form we still want to recognise,
@@ -30,13 +29,6 @@ function safeTerminalColumns(): number {
 
 function terminalContentWidth(): number {
   const columns = safeTerminalColumns()
-  return Math.max(20, Math.min(columns - SAFETY_MARGIN, MAX_RENDER_WIDTH))
-}
-
-/** Terminal width for tables — no MAX_RENDER_WIDTH cap so wide tables
- *  can use the full terminal on large screens. */
-function terminalTableWidth(): number {
-  const columns = safeTerminalColumns()
   return Math.max(20, columns - SAFETY_MARGIN)
 }
 
@@ -51,18 +43,16 @@ function wrapDisplayTextWithIndent(
     .split(EOL)
     .flatMap(line => {
       if (!line || BOX_DRAWING_RE.test(stripAnsi(line))) return [line]
-      return wrapAnsi(line, innerWidth, { hard: true, trim: false, wordWrap: true }).split('\n')
+      return wrapTextWithAnsi(line, innerWidth)
     })
     .map((line, index) => `${index === 0 ? firstIndent : restIndent}${line}`)
     .join(EOL)
 }
 
 /**
- * Soft-wrap a paragraph to fit the terminal width. Skips lines that contain
- * Unicode box-drawing characters — those are structural tree/diagram art and
- * must not be reflowed. Compare with claudecode, which never wraps inside
- * formatToken and relies on Ink/Yoga for layout; we wrap here because the CLI
- * writes ANSI strings directly.
+ * Soft-wrap a paragraph to fit the terminal width via the shared
+ * ANSI-aware primitive. Skips lines containing Unicode box-drawing characters
+ * — those are structural tree/diagram art and must not be reflowed.
  */
 function wrapParagraph(text: string, width = terminalContentWidth()): string {
   return text
@@ -70,7 +60,7 @@ function wrapParagraph(text: string, width = terminalContentWidth()): string {
     .flatMap(line => {
       if (!line || BOX_DRAWING_RE.test(stripAnsi(line))) return [line]
       if (terminalDisplayWidth(line) <= width) return [line]
-      return wrapAnsi(line, width, { hard: true, trim: false, wordWrap: true }).split('\n')
+      return wrapTextWithAnsi(line, width)
     })
     .join(EOL)
 }
@@ -1257,13 +1247,11 @@ function prepareMarkdownForLex(text: string): string {
 export {
   EOL,
   SAFETY_MARGIN,
-  MAX_RENDER_WIDTH,
   CODE_FENCE_RE,
   BOX_DRAWING_RE,
   MD_TABLE_SEP_RE,
   terminalDisplayWidth,
   terminalContentWidth,
-  terminalTableWidth,
   wrapDisplayTextWithIndent,
   wrapParagraph,
   looksLikeMarkdownBoundary,

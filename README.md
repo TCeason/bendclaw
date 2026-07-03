@@ -22,11 +22,11 @@
 
 ## 📢 News
 
+- **2026-07-03** [REPL] `/copy` — copy the last agent message's Markdown source to the clipboard.
 - **2026-06-30** [Distill] `evot distill` — generate verified SFT/RL datasets by driving evot as a teacher.
 - **2026-06-16** [REPL] Shift+Tab cycles reasoning effort; persisted per session.
 - **2026-06-05** [Dashboard] Built-in web dashboard — server metrics, sessions, usage, and tool traces.
 - **2026-05-30** [Engine] Major refactor — four-pass compaction, pi-aligned parallel tools, leaner core.
-- **2026-05-11** [Skills] Built-in `opencli` — browser control, logged-in cookies, Feishu/Lark, Twitter/X.
 
 ## Benchmark
 

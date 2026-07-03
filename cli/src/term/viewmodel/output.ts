@@ -2,6 +2,7 @@ import type { OutputLine } from '../../render/output.js'
 import stringWidth from 'string-width'
 import { line, block, plain, dim, bold, colored, type ViewBlock, type StyledLine } from './types.js'
 import { wrapTextByWidth } from './prompt.js'
+import { wrapTextWithAnsi } from '../../render/wrap.js'
 
 export interface OutputContext {
   prevKind?: string
@@ -74,9 +75,19 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
         }
         const isBlockStart = prevKind !== 'assistant'
         const dot = isBlockStart ? colored('⏺ ', 'cyan') : plain('  ')
-        blocks.push(block([
-          line(dot, plain(ol.text)),
-        ], isBlockStart ? 1 : 0))
+        // Wrap at render-time width (prefix is 2 cols) so committed assistant
+        // text reflows on resize instead of being truncated by the renderer.
+        const cols = initialContext.columns
+        const avail = cols ? Math.max(1, cols - 2) : 0
+        if (avail > 0 && stringWidth(ol.text) > avail) {
+          const wrapped = wrapTextWithAnsi(ol.text, avail)
+          const asstLines = wrapped.map((w, k) =>
+            k === 0 ? line(dot, plain(w)) : line(plain('  '), plain(w)),
+          )
+          blocks.push(block(asstLines, isBlockStart ? 1 : 0))
+        } else {
+          blocks.push(block([line(dot, plain(ol.text))], isBlockStart ? 1 : 0))
+        }
         break
       }
 
@@ -195,11 +206,30 @@ function buildToolBlock(text: string, columns?: number): ViewBlock {
   if (text.startsWith('  ')) {
     const trimmed = text.trimStart()
     if (/^[{}\[\],]/.test(trimmed) || /^"[^"\\]*(?:\\.[^"\\]*)*"\s*:/.test(trimmed)) {
-      return block([line(plain(text))])
+      return block(wrapToolLines(text, columns).map(l => line(plain(l))))
     }
-    return block([line(dim(text))])
+    return block(wrapToolLines(text, columns).map(l => line(dim(l))))
   }
-  return block([line(plain(text))])
+  return block(wrapToolLines(text, columns).map(l => line(plain(l))))
+}
+
+/**
+ * Split a tool-output blob into physical lines and soft-wrap each to the
+ * terminal width via the shared ANSI-aware primitive. This is what keeps
+ * multi-line diffs and JSON output from being hard-truncated by the renderer
+ * (which runs with auto-wrap off).
+ */
+function wrapToolLines(text: string, columns?: number): string[] {
+  const width = columns ? Math.max(1, columns) : 0
+  const out: string[] = []
+  for (const physical of text.split('\n')) {
+    if (width <= 0 || stringWidth(physical) <= width) {
+      out.push(physical)
+      continue
+    }
+    for (const wrapped of wrapTextWithAnsi(physical, width)) out.push(wrapped)
+  }
+  return out
 }
 
 function buildVerboseBlock(text: string): ViewBlock {

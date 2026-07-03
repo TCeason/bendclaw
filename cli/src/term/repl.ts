@@ -1442,6 +1442,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       runQuery(subject)
     } else if (name === '/skill') {
       await handleSkillCommand(args)
+    } else if (name === '/copy') {
+      await handleCopyCommand()
     } else if (name === '/update') {
       await handleUpdateCommand()
     } else if (name === '/act' || name === '/done') {
@@ -1567,6 +1569,27 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       commitLines([{ id: 'sys-env-del', kind: 'system', text: `  deleted: ${key}` }])
     } else {
       commitLines([{ id: 'sys-env-err', kind: 'system', text: '  Usage: /env [set K=V | del K]' }])
+    }
+  }
+
+  async function handleCopyCommand() {
+    // Scan committed history back-to-front for the most recent assistant
+    // message and copy its raw markdown source (not the ANSI-rendered form).
+    let raw: string | undefined
+    for (let i = compactLines.length - 1; i >= 0; i--) {
+      const l = compactLines[i]!
+      if (l.kind === 'assistant' && l.rawMarkdown) { raw = l.rawMarkdown; break }
+    }
+    if (!raw || !raw.trim()) {
+      commitLines([{ id: 'sys-copy', kind: 'system', text: '  No agent messages to copy yet.' }])
+      return
+    }
+    try {
+      const { copyToClipboard } = await import('../render/clipboard.js')
+      await copyToClipboard(raw)
+      commitLines([{ id: 'sys-copy', kind: 'system', text: '  Copied last agent message (Markdown source) to clipboard' }])
+    } catch (err: any) {
+      commitLines([{ id: 'sys-copy-err', kind: 'system', text: chalk.red(`  Copy failed: ${err?.message ?? err}`) }])
     }
   }
 

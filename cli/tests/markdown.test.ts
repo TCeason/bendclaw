@@ -1586,7 +1586,7 @@ describe('task-list checkboxes', () => {
       expect(lines.length).toBeGreaterThan(1)
       expect(lines[0]).toMatch(/^- \[x\] /)
       // Continuation lines indent to the "- [x] " prefix width (6 columns).
-      // wrapAnsi preserves the break space, so allow an optional extra space.
+      // The wrap primitive preserves the break space, so allow an optional extra space.
       expect(lines[1]).toMatch(/^ {6}/)
       expect(lines[1].trim().length).toBeGreaterThan(0)
     } finally {

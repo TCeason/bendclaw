@@ -2,7 +2,9 @@ import { describe, test, expect, beforeAll } from 'bun:test'
 import { buildOutputBlocks } from '../src/term/viewmodel/output.js'
 import { blocksToLines, styledLineToAnsi, line, colored, dim } from '../src/term/viewmodel/types.js'
 import { buildUserMessage, buildAssistantLines, type OutputLine } from '../src/render/output.js'
+import { colorizeUnifiedDiff } from '../src/render/diff.js'
 import stripAnsi from 'strip-ansi'
+import stringWidth from 'string-width'
 import chalk from 'chalk'
 
 const OSC133_ZONE_START = '\x1b]133;A\x07'
@@ -83,6 +85,19 @@ describe('buildOutputBlocks', () => {
     expect(lines[1]!.startsWith('        ')).toBe(true)
   })
 
+  test('long diff line wraps instead of truncating', () => {
+    const longAdded = 'x'.repeat(200)
+    const diff = `@@ -1,1 +1,1 @@\n-short old line\n+${longAdded}`
+    const colored = colorizeUnifiedDiff(diff)
+    const result = renderPlainWithColumns([{ id: 'd1', kind: 'tool', text: colored }], 40)
+    // The full added content survives across wrapped lines (no truncation).
+    expect(result.replace(/\n/g, '')).toContain(longAdded)
+    // Every rendered line fits within the terminal width.
+    for (const l of result.split('\n')) {
+      expect(stringWidth(l)).toBeLessThanOrEqual(40)
+    }
+  })
+
   test('tool detail lines have no margin', () => {
     const result = renderPlain([
       { id: 't1', kind: 'tool', text: '⌘ bash  ls -la' },
@@ -149,6 +164,22 @@ describe('buildOutputBlocks', () => {
 
     expect(result).toContain('⏺ Intro\n\n  Long paragraph')
     expect(result).not.toContain('⏺ Long paragraph')
+  })
+
+  test('long assistant line reflows on resize instead of truncating', () => {
+    const longText = 'reflow '.repeat(30).trim()
+    // Committed assistant text must wrap to the current render width (prefix
+    // is 2 cols) so a terminal shrink reflows rather than truncates.
+    const result = renderPlainWithColumns([{ id: 'a1', kind: 'assistant', text: longText }], 40)
+    for (const l of result.split('\n')) {
+      expect(stringWidth(l)).toBeLessThanOrEqual(40)
+    }
+    // Full content survives across wrapped lines.
+    expect(result.replace(/\n\s*/g, ' ')).toContain(longText)
+    // Continuation lines align under the text (2-space indent).
+    const lines = result.split('\n').filter(l => l.length > 0)
+    expect(lines.length).toBeGreaterThan(1)
+    expect(lines[1]!.startsWith('  ')).toBe(true)
   })
 
   test('system lines are dim', () => {

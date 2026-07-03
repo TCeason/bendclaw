@@ -54,12 +54,6 @@ export interface Theme {
   thinkBorder: Style
   thinkText: Style
 
-  // Diff (kept for compatibility)
-  addedBg: [number, number, number]
-  removedBg: [number, number, number]
-  addedWord: [number, number, number]
-  removedWord: [number, number, number]
-
   // Legacy aliases kept for existing call sites
   heading: string
   inlineCode: string
@@ -109,11 +103,6 @@ function darkTheme(): Theme {
     thinkBorder: style(s => gray(s)),
     thinkText: style(s => dimGray.italic(s)),
 
-    addedBg: [2, 40, 0],
-    removedBg: [61, 1, 0],
-    addedWord: [4, 71, 0],
-    removedWord: [92, 2, 0],
-
     heading: '#c0c0c0',
     inlineCode: '#5fb3b3',
     linkColor: 'blue',
@@ -157,11 +146,6 @@ function lightTheme(): Theme {
     hr: style(s => gray(s)),
     thinkBorder: style(s => gray(s)),
     thinkText: style(s => dimGray.italic(s)),
-
-    addedBg: [210, 255, 210],
-    removedBg: [255, 220, 220],
-    addedWord: [170, 235, 170],
-    removedWord: [255, 185, 185],
 
     heading: '#333333',
     inlineCode: '#0d7d7d',

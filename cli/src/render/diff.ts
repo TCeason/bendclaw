@@ -1,11 +1,13 @@
 /**
- * Diff rendering — structured diff with line numbers, background colors,
- * and word-level highlighting (inspired by Claude Code's StructuredDiffFallback).
+ * Diff rendering — foreground-colored structured diff with line numbers and
+ * word-level highlighting. Aligned with pi's TUI diff component: removed lines
+ * red, added lines green, context dim, with inverse on changed tokens for
+ * single-line edits. Long lines wrap via the shared ANSI-aware primitive so
+ * nothing is truncated (the renderer runs with auto-wrap off).
  */
 
-import chalk, { type ChalkInstance } from 'chalk'
+import chalk from 'chalk'
 import { structuredPatch, diffWordsWithSpace } from 'diff'
-import { getTheme } from './theme.js'
 
 export interface DiffResult {
   text: string
@@ -13,37 +15,17 @@ export interface DiffResult {
   linesRemoved: number
 }
 
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
-
-// Colors adapted to dark/light theme:
-// - Line bg: very muted tint (solid bar across full terminal width)
-// - Word bg: slightly brighter to highlight changed words
-// - Context lines: dim, no background
-function getStyle() {
-  const t = getTheme()
-  return {
-    addedBg:     chalk.bgRgb(...t.addedBg),
-    removedBg:   chalk.bgRgb(...t.removedBg),
-    addedWord:   chalk.bgRgb(...t.addedWord),
-    removedWord: chalk.bgRgb(...t.removedWord),
-    context:     chalk.dim,
-    gutter:      chalk.gray,
-    ellipsis:    chalk.dim,
-  }
+// Foreground styles — no full-width background bars, so wrapped continuation
+// lines stay clean and match pi's look.
+const style = {
+  added: chalk.green,
+  removed: chalk.red,
+  context: chalk.dim,
+  ellipsis: chalk.dim,
+  inverse: (s: string) => `\x1b[7m${s}\x1b[27m`,
 }
 
-const DEFAULT_WIDTH = 80
 const WORD_DIFF_THRESHOLD = 0.4
-
-function safeCount(n: number): number {
-  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
-}
-
-function safeWidth(n: number | undefined): number {
-  return n != null && Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_WIDTH
-}
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -65,8 +47,6 @@ interface DiffLine {
  */
 export function formatDiff(oldText: string, newText: string, filename = ''): DiffResult {
   const patch = structuredPatch(filename, filename, oldText, newText, '', '', { context: 3 })
-  const width = safeWidth(process.stdout.columns)
-  const style = getStyle()
   let linesAdded = 0
   let linesRemoved = 0
   const output: string[] = []
@@ -79,7 +59,7 @@ export function formatDiff(oldText: string, newText: string, filename = ''): Dif
     for (const line of lines) {
       if (line.type === 'add') linesAdded++
       if (line.type === 'remove') linesRemoved++
-      output.push(renderLine(line, numWidth, width, style))
+      output.push(renderLine(line, numWidth))
     }
   }
 
@@ -87,13 +67,11 @@ export function formatDiff(oldText: string, newText: string, filename = ''): Dif
 }
 
 /**
- * Colorize a pre-computed unified diff string (from Rust engine).
+ * Colorize a pre-computed unified diff string (from the Rust engine).
  */
 export function colorizeUnifiedDiff(diff: string): string {
   const raw = diff.split('\n')
   const body = raw.filter(l => !l.startsWith('---') && !l.startsWith('+++'))
-  const width = safeWidth(process.stdout.columns)
-  const style = getStyle()
   const output: string[] = []
 
   // Group lines by hunk
@@ -123,7 +101,7 @@ export function colorizeUnifiedDiff(diff: string): string {
     const lines = buildDiffLines(hunk.lines, startLine)
     const numW = gutterWidth(lines)
     for (const line of lines) {
-      output.push(renderLine(line, numW, width, style))
+      output.push(renderLine(line, numW))
     }
   }
 
@@ -204,40 +182,32 @@ function assignLineNumbers(
 }
 
 /**
- * Render one line as a solid colored bar spanning the full terminal width.
- * Gutter (line number + sigil) and content share the same background color
- * for visual continuity — matching Claude Code's diff rendering.
+ * Render one diff line: `<num> <sigil> <code>` in the line's foreground color.
+ * Single-line edits get inverse highlighting on changed tokens. No background
+ * bars and no padding, so the shared wrapper can reflow long lines cleanly.
  */
-function renderLine(line: DiffLine, numWidth: number, termWidth: number, style: ReturnType<typeof getStyle>): string {
+function renderLine(line: DiffLine, numWidth: number): string {
   const num = String(line.lineNum).padStart(numWidth)
   const sigil = line.type === 'add' ? '+' : line.type === 'remove' ? '-' : ' '
   const gutterStr = `${num} ${sigil}`
-  const gutterLen = numWidth + 2 // num + space + sigil
 
   if (line.type === 'context') {
-    // Context: dim gutter + dim code, no background, no padding
     return style.context(gutterStr + line.code)
   }
 
-  const bg = line.type === 'add' ? style.addedBg : style.removedBg
-  const contentLen = gutterLen + line.code.length
-  const padding = safeCount(termWidth - contentLen)
+  const paint = line.type === 'add' ? style.added : style.removed
 
-  // Try word-level diff — changed words get brighter bg, rest gets line bg
+  // Word-level diff for single-line edits: inverse the changed tokens.
   if (line.paired) {
-    const wbg = line.type === 'add' ? style.addedWord : style.removedWord
-    const wd = wordDiff(line, wbg, bg)
-    if (wd !== null) {
-      return bg(style.gutter(gutterStr)) + wd + bg(' '.repeat(padding))
-    }
+    const body = wordDiff(line)
+    if (body !== null) return paint(gutterStr) + body
   }
 
-  // Whole line: single bg() call wrapping gutter + code + padding
-  return bg(style.gutter(gutterStr) + line.code + ' '.repeat(padding))
+  return paint(gutterStr + line.code)
 }
 
-/** Word-level diff. Returns null if change ratio too high. */
-function wordDiff(line: DiffLine, wordBg: ChalkInstance, lineBg: ChalkInstance): string | null {
+/** Word-level diff. Returns the painted line body, or null if too different. */
+function wordDiff(line: DiffLine): string | null {
   if (!line.paired) return null
   const oldText = line.type === 'remove' ? line.code : line.paired.code
   const newText = line.type === 'remove' ? line.paired.code : line.code
@@ -248,17 +218,16 @@ function wordDiff(line: DiffLine, wordBg: ChalkInstance, lineBg: ChalkInstance):
   const changedLen = parts.filter(p => p.added || p.removed).reduce((s, p) => s + p.value.length, 0)
   if (changedLen / totalLen > WORD_DIFF_THRESHOLD) return null
 
+  const paint = line.type === 'add' ? style.added : style.removed
   const segs: string[] = []
   for (const p of parts) {
     if (line.type === 'add') {
       if (p.removed) continue
-      segs.push(p.added ? wordBg(p.value) : lineBg(p.value))
+      segs.push(p.added ? paint(style.inverse(p.value)) : paint(p.value))
     } else {
       if (p.added) continue
-      segs.push(p.removed ? wordBg(p.value) : lineBg(p.value))
+      segs.push(p.removed ? paint(style.inverse(p.value)) : paint(p.value))
     }
   }
   return segs.join('')
 }
-
-

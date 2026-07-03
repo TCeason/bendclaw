@@ -21,6 +21,7 @@ export const COMMANDS: SlashCommand[] = [
   { name: '/plan', description: 'Enter planning mode', handler: 'builtin' },
   { name: '/harden', description: 'Stress-test the previous plan or current changes', usage: '/harden [plan | changes | arch | subject]', handler: 'builtin' },
   { name: '/skill', description: 'Manage skills', usage: '/skill [list | install <source> | remove <name>]', handler: 'builtin' },
+  { name: '/copy', description: 'Copy last agent message (Markdown source) to clipboard', handler: 'builtin' },
   { name: '/clear', description: 'Clear session context', handler: 'builtin' },
 ]
 

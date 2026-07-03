@@ -1,14 +1,13 @@
 import chalk from 'chalk'
 import type { Token, Tokens } from 'marked'
 import stripAnsi from 'strip-ansi'
-import stringWidth from 'string-width'
-import wrapAnsi from 'wrap-ansi'
+import { wrapTextWithAnsi } from '../../render/wrap.js'
 import {
   EOL,
   SAFETY_MARGIN,
   BOX_DRAWING_RE,
   terminalDisplayWidth,
-  terminalTableWidth,
+  terminalContentWidth,
   wrapDisplayTextWithIndent,
   wrapParagraph,
 } from '../normalize/index.js'
@@ -207,7 +206,6 @@ interface TrailingCodeComment {
 
 const SQL_START_RE = /^(SELECT|CREATE|INSERT|UPDATE|DELETE|WITH|ALTER|DROP|MERGE|TRUNCATE)\b/i
 const DIAGRAM_ARROW_RE = /(?:[-=]{2,}>|<[-=]{2,}|[→←↑↓↗↘↙↖▲▼▶◀])/
-const DIAGRAM_BOX_SIDE_RE = /[│├└┌]/
 const DIAGRAM_BORDER_OR_SIDE_RE = /[┌└│][─┴┬\s]/
 const PLAIN_DIAGRAM_LANGUAGE = '__plain_diagram__'
 const DIAGRAM_BRANCH_MARKER_RE = /[├└]─►/g
@@ -505,7 +503,7 @@ export function formatToken(
       // Models sometimes glue an entire paragraph onto a heading line with no
       // newline (`## title<prose…>`), which the lexer parses as one giant
       // heading. Without wrapping it overruns the terminal and gets visually
-      // truncated. wrapAnsi (via wrapParagraph) preserves the heading styling
+      // truncated. wrapParagraph preserves the heading styling
       // across the inserted line breaks.
       return wrapParagraph(style.paint(text)) + EOL
     }
@@ -610,7 +608,7 @@ export function formatToken(
     case 'table': {
       const tableToken = token as Tokens.Table
       const numCols = tableToken.header.length
-      const termWidth = terminalTableWidth()
+      const termWidth = terminalContentWidth()
       const MIN_COL = 3
 
       // --- helpers ---
@@ -651,14 +649,11 @@ export function formatToken(
       const totalIdeal = idealWidths.reduce((s, w) => s + w, 0)
       const totalMin = minWidths.reduce((s, w) => s + w, 0)
 
-      // Track whether columns are narrower than longest words (needs hard wrap)
-      let needsHardWrap = false
       let colWidths: number[]
       if (totalIdeal <= available) {
         colWidths = idealWidths
       } else if (totalMin > available) {
         // Table wider than terminal at minimum widths — shrink proportionally
-        needsHardWrap = true
         const scaleFactor = available / totalMin
         colWidths = minWidths.map(w => Math.max(Math.floor(w * scaleFactor), MIN_COL))
       } else {
@@ -675,16 +670,11 @@ export function formatToken(
         }
       }
 
-      // --- ANSI-aware word wrap (CJK-safe) ---
+      // --- ANSI-aware word wrap (CJK-safe) via the shared primitive ---
       function wrapCell(text: string, width: number): string[] {
         if (width <= 0) return [text]
         const trimmed = text.trimEnd()
-        const wrapped = wrapAnsi(trimmed, width, {
-          hard: needsHardWrap,
-          trim: false,
-          wordWrap: true,
-        })
-        const lines = wrapped.split('\n').filter(line => line.length > 0)
+        const lines = wrapTextWithAnsi(trimmed, width).filter(line => line.length > 0)
         return lines.length > 0 ? lines : ['']
       }
 
