@@ -1,12 +1,18 @@
 import chalk from 'chalk'
+import { wrapHyperlink } from '../../render/hyperlink.js'
 
 export interface StyledSpan {
   text: string
   fg?: 'red' | 'green' | 'yellow' | 'cyan' | 'magenta' | 'gray' | 'white'
+  /** Custom foreground hex (e.g. '#8fbf8f'). Takes precedence over `fg`. */
+  hex?: string
   dim?: boolean
   bold?: boolean
   inverse?: boolean
   italic?: boolean
+  /** When set, the rendered span is wrapped in an OSC 8 hyperlink to this URL.
+   *  `text` stays the visible label, so width math is unaffected. */
+  link?: string
 }
 
 export interface StyledLine {
@@ -24,7 +30,9 @@ export function styledLineToAnsi(line: StyledLine): string {
     if (!s) return ''
 
     let result = s
-    if (span.fg) {
+    if (span.hex) {
+      result = chalk.hex(span.hex)(result)
+    } else if (span.fg) {
       switch (span.fg) {
         case 'red': result = chalk.red(result); break
         case 'green': result = chalk.green(result); break
@@ -39,6 +47,7 @@ export function styledLineToAnsi(line: StyledLine): string {
     if (span.dim) result = chalk.hex('#777777')(result)
     if (span.italic) result = chalk.italic(result)
     if (span.inverse) result = `\x1b[7m${s}\x1b[27m`
+    if (span.link) result = wrapHyperlink(span.link, result)
     return result
   }).join('')
 }

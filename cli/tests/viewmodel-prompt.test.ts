@@ -18,6 +18,7 @@ function defaultInput(overrides?: Partial<PromptVMInput>): PromptVMInput {
     planning: false,
     logMode: false,
     queuedMessages: [],
+    dashboardUrl: null,
     exitHint: false,
     completionCandidates: [],
     ghostHint: '',
@@ -93,6 +94,17 @@ describe('buildPromptBlocks', () => {
     const result = renderPlain(defaultInput({ queuedMessages: ['msg1', 'msg2'] }))
     expect(result).toContain('msg1')
     expect(result).toContain('msg2')
+  })
+
+  test('shows dashboard link when url is set', () => {
+    const result = renderPlain(defaultInput({ dashboardUrl: 'http://127.0.0.1:8788', columns: 200 }))
+    expect(result).toContain('dashboard')
+    expect(result).toContain('http://127.0.0.1:8788')
+  })
+
+  test('hides dashboard link when url is null', () => {
+    const result = renderPlain(defaultInput({ dashboardUrl: null, columns: 200 }))
+    expect(result).not.toContain('http://')
   })
 
   test('shows completion candidates', () => {

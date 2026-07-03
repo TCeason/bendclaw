@@ -1145,22 +1145,47 @@ describe('renderMarkdown', () => {
     }
   })
 
-  test('h1 heading is bold italic underlined', () => {
-    // Follow reference renderer: h1 gets bold+italic+underline, no hue.
+  test('h1 heading is gold, bold, italic, underlined', () => {
+    // evot accent gold + emphasis (matches banner headers + pi's mdHeading).
     const theme = getTheme()
-    expect(theme.h1.paint('Title')).toBe(chalk.bold.italic.underline('Title'))
+    expect(theme.h1.paint('Title')).toBe(chalk.hex('#f0c674').bold.italic.underline('Title'))
     const raw = renderMarkdown('# Title')
     expect(raw).toContain(theme.h1.paint('Title'))
   })
 
-  test('h2 heading is plain bold without colour', () => {
-    // h2+ is bold only; coloured headings feel chatty in long responses.
+  test('h2 heading is gold and bold', () => {
+    // h2+ carry the accent so every level reads as a distinct section marker.
     const theme = getTheme()
-    expect(theme.h2.paint('Subtitle')).toBe(chalk.bold('Subtitle'))
+    expect(theme.h2.paint('Subtitle')).toBe(chalk.hex('#f0c674').bold('Subtitle'))
     const raw = renderMarkdown('## Subtitle')
     expect(raw).toContain(theme.h2.paint('Subtitle'))
-    // No 24-bit RGB colour sequences should be emitted for the heading body.
-    expect(raw).not.toContain('\x1b[38;2;')
+  })
+
+  test('list markers carry the teal accent, checkbox stays uncoloured', () => {
+    // pi tints list markers with its accent; evot mirrors this with the teal
+    // secondary accent so list structure reads at a glance. The [ ]/[x] task
+    // glyph is left uncoloured so todo state isn't lost in the accent hue.
+    const prevLevel = chalk.level
+    chalk.level = 3
+    try {
+      const bulletMarker = getTheme().bullet.paint('-')
+      const orderedMarker = getTheme().listNumber.paint('1.')
+      const unordered = renderMarkdown('- item one')
+      expect(unordered).toContain(bulletMarker)
+      expect(stripAnsi(unordered)).toContain('- item one')
+
+      const ordered = renderMarkdown('1. first')
+      expect(ordered).toContain(orderedMarker)
+      expect(stripAnsi(ordered)).toContain('1. first')
+
+      // The checkbox glyph is emitted verbatim, not wrapped in the accent hue.
+      const task = renderMarkdown('- [x] done')
+      expect(task).toContain(bulletMarker)
+      expect(task).toContain('[x]')
+      expect(stripAnsi(task)).toContain('- [x] done')
+    } finally {
+      chalk.level = prevLevel
+    }
   })
 
   test('renders horizontal rules', () => {
@@ -1687,9 +1712,13 @@ describe('nested inline style continuity', () => {
 
   test('heading keeps bold/italic/underline open across a nested codespan', () => {
     const out = renderColored('# Run `npm test` before commit')
-    // h1 opens bold+italic+underline; codespan only toggles the foreground
-    // colour (39 close), so bold/italic/underline stay open for the tail.
-    expect(out.startsWith('\x1b[1m\x1b[3m\x1b[4m')).toBe(true)
+    // h1 now opens with the gold accent colour before the decorations, so the
+    // string no longer starts with the bold escape. What still matters: the
+    // decorations (bold+italic+underline) open together, and the codespan only
+    // toggles the foreground colour (39 close) rather than a full reset, so
+    // they stay open for the tail.
+    expect(out).toContain('\x1b[1m\x1b[3m\x1b[4m')
+    expect(out.startsWith('\x1b[')).toBe(true)
     expect(out).toContain('\x1b[39m')
     expect(out).not.toContain('\x1b[0m')
     expect(stripAnsi(out)).toBe('Run npm test before commit')

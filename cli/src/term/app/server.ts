@@ -1,5 +1,4 @@
-import { startServerBackground, type ServerInfo } from '../../native/index.js'
-import { spawn } from 'child_process'
+import { startServerBackground } from '../../native/index.js'
 
 export interface ServerState {
   port: number
@@ -10,45 +9,12 @@ export interface ServerState {
 
 let activePort: number | null = null
 
-/**
- * Decide how to open a URL in the default browser for the given platform, or
- * return null when auto-open should be skipped (EVOT_NO_OPEN set). Pure so it
- * can be unit-tested without spawning anything.
- */
-export function browserOpenCommand(
-  url: string,
-  platform: NodeJS.Platform = process.platform,
-  env: NodeJS.ProcessEnv = process.env,
-): { cmd: string; args: string[] } | null {
-  if (env.EVOT_NO_OPEN) return null
-  if (platform === 'darwin') return { cmd: 'open', args: [url] }
-  if (platform === 'win32') return { cmd: 'cmd', args: ['/C', 'start', '', url] }
-  return { cmd: 'xdg-open', args: [url] }
-}
-
-/**
- * Open the dashboard URL in the default browser. Best-effort and non-blocking:
- * the child is detached and any failure (headless/SSH/CI) is swallowed, mirroring
- * the native `evot serve` auto-open.
- */
-function openDashboard(url: string): void {
-  const plan = browserOpenCommand(url)
-  if (plan === null) return
-  try {
-    const child = spawn(plan.cmd, plan.args, { stdio: 'ignore', detached: true })
-    child.on('error', () => { /* no browser available — ignore */ })
-    child.unref()
-  } catch { /* spawn failed — ignore */ }
-}
-
 export async function tryStartServer(port?: number, envFile?: string): Promise<ServerState | null> {
   const info = await startServerBackground(port, undefined, envFile)
   if (info === null) return null
   activePort = info.port
-  // Only reached when this process actually bound the port and started a fresh
-  // server (null means another instance already owns it), so this is the right
-  // moment to surface the dashboard.
-  openDashboard(info.address)
+  // The dashboard is surfaced as a clickable link in the banner rather than
+  // auto-opened — popping a browser tab on every launch is disruptive.
   return {
     port: info.port,
     address: info.address,

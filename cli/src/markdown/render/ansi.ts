@@ -606,9 +606,17 @@ export function formatToken(
         // so todo state survives rendering (matches pi's TUI behaviour).
         const listItem = parent as Tokens.ListItem
         const checkbox = listItem.task ? `[${listItem.checked ? 'x' : ' '}] ` : ''
-        const prefix = `${marker} ${checkbox}`
+        // Tint the marker (bullet or ordinal) with the list accent so the list
+        // structure reads at a glance, matching pi's mdListBullet. Ordered and
+        // unordered markers use the same accent; the checkbox stays uncoloured
+        // so todo state (the [x]/[ ] glyph) isn't lost in the accent hue.
+        const markerStyle = orderedListNumber === null ? theme.bullet : theme.listNumber
+        const coloredMarker = markerStyle.paint(marker)
+        const prefix = `${coloredMarker} ${checkbox}`
         const depthPad = '  '.repeat(Math.max(0, listDepth - 1))
         const firstIndent = `${depthPad}${prefix}`
+        // terminalDisplayWidth strips ANSI before measuring, so the accent
+        // colour on the marker doesn't inflate the continuation indent width.
         const restIndent = `${depthPad}${' '.repeat(terminalDisplayWidth(prefix))}`
         const inner = token.tokens
           ? token.tokens.map(t => formatToken(t, listDepth, orderedListNumber, token, theme)).join('')

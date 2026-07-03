@@ -154,6 +154,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let streamMachine: StreamMachineState | null = null
   let lastPendingText = ''
   let lastPendingRendered = ''
+  // Messages sent mid-stream: held in the prompt zone (pi-style ❯ queue) and
+  // committed to history at the turn boundary, so they never render above the
+  // still-streaming reply.
+  let queuedUserMessages: string[] = []
   let expanded = false
   // Rendered-history cache — see HistoryRenderCache. Committed history is
   // append-only (or fully cleared), never mutated in place, so the flattened
@@ -269,7 +273,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       model: appState.model,
       planning,
       logMode: logMode !== null,
-      queuedMessages: [],
+      queuedMessages: queuedUserMessages,
+      dashboardUrl: serverState?.address ?? null,
       exitHint,
       completionCandidates: editor.completionCandidates,
       ghostHint: editor.ghostHint,
@@ -818,6 +823,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           }
         }
 
+        // A new turn means the engine injected the queued steer and flushed the
+        // preceding text, so the queued message now lands below it.
+        if (event.kind === 'turn_started') drainQueuedUserMessages()
+
         // writeLines are log-only: LLM/COMPACT/SPILL stats that don't render in
         // the TUI. Run them through the same formatting pipeline so screen.log
         // still captures the observability detail for post-hoc debug.
@@ -837,6 +846,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         appState = final.state.appState
         commitFlushResult(final)
       }
+      // Safety net: run settled without a further turn boundary.
+      drainQueuedUserMessages()
     } catch (err: any) {
       
       if (streamMachine) {
@@ -845,6 +856,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         commitFlushResult(final)
       }
       commitLines([{ id: 'sys-err', kind: 'error', text: err?.message ?? String(err) }])
+      drainQueuedUserMessages()
     } finally {
       unfreezeTerminalTitle()
       streamRef = null
@@ -980,6 +992,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     flushStreamContent()
     streamMachine = null
     stopSpinner()
+    drainQueuedUserMessages()
     commitLines([{ id, kind: 'system', text }])
   }
 
@@ -1019,9 +1032,26 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       } else {
         streamRef.steer(expandedText)
       }
-      commitLines(buildUserMessage(displayText))
+      // Save to input history like a normal submission.
+      if (displayText) {
+        historyMgr.append(displayText)
+        historyState = pushHistory(historyState, displayText)
+      }
+      // Queue instead of committing now: history renders above the streaming
+      // block, so an immediate commit lands above the incoming reply.
+      if (displayText) queuedUserMessages.push(displayText)
       clearAll()
       renderer.requestRender()
+    }
+  }
+
+  /** Commit queued mid-stream user messages into history. */
+  function drainQueuedUserMessages() {
+    if (queuedUserMessages.length === 0) return
+    const messages = queuedUserMessages
+    queuedUserMessages = []
+    for (const msg of messages) {
+      commitLines(buildUserMessage(msg))
     }
   }
 
@@ -1809,6 +1839,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         if (event.kind === 'tool_progress') commitLines(buildToolProgressLines(event, true))
         if (!update.suppressToolFinished && event.kind === 'tool_finished') commitToolFinished(event)
         if (update.commitLines.length > 0) commitLines(update.commitLines)
+        if (event.kind === 'turn_started') drainQueuedUserMessages()
         if (update.rerenderStatus) renderer.requestRender()
       }
 
@@ -1818,6 +1849,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         appState = final.state.appState
         commitFlushResult(final)
       }
+      drainQueuedUserMessages()
     } catch (err: any) {
       if (streamMachine) {
         const final = flushStreaming(streamMachine)
@@ -1825,6 +1857,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         commitFlushResult(final)
       }
       commitLines([{ id: 'sys-log-err', kind: 'system', text: chalk.red(`  Log query failed: ${err?.message ?? err}`) }])
+      drainQueuedUserMessages()
     } finally {
       streamRef = null
       isLoading = false

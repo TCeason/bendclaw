@@ -12,6 +12,8 @@ export interface PromptVMInput {
   planning: boolean
   logMode: boolean
   queuedMessages: string[]
+  /** Dashboard URL, shown as a clickable link above the footer. Null hides it. */
+  dashboardUrl: string | null
   exitHint: boolean
   completionCandidates: string[]
   ghostHint: string
@@ -178,8 +180,14 @@ function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
     }
   }
 
-  // Right side (reserved for future use)
+  // Right side: clickable dashboard link in a faint green. The URL text is the
+  // visible label (used for width math); the OSC 8 link is attached separately
+  // so escapes don't inflate the layout.
   const rightSpans: StyledSpan[] = []
+  if (input.dashboardUrl) {
+    rightSpans.push({ text: 'dashboard ', hex: '#7fae7f' })
+    rightSpans.push({ text: input.dashboardUrl, hex: '#7fae7f', link: input.dashboardUrl })
+  }
 
   let leftText = leftSpans.map(s => s.text).join('')
   const rightText = rightSpans.map(s => s.text).join('')
