@@ -220,6 +220,46 @@ describe('term stream machine', () => {
     expect(state.streamingText).toContain('x_11 = 11')
   })
 
+  test('overflow drain never tears a table mid-stream (rendered whole at end)', () => {
+    // Regression: a table taller than the viewport, preceded by non-pipe lines
+    // (a numbered list) that used to reset the old pipe-table guard's counter.
+    // With no last-resort split, the table has no internal blank line, so no
+    // safe commit boundary exists inside it — it stays fully pending and renders
+    // as one whole marked parse (box-drawn), never split into a committed head
+    // and an orphan tail that lost its header/separator (which showed as raw
+    // `| ... |` rows on screen).
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+
+    const msg =
+      '分析：\n\n1. 第一点\n2. 第二点\n3. 第三点\n\n' +
+      '| 类别 | 总量 | 训练 | 覆盖 |\n|------|------|------|------|\n' +
+      Array.from({ length: 10 }, (_, i) => `| item_${i} | ${i} | ${i} 步 | ok |`).join('\n')
+
+    // Feed char-by-char through the real reducer at a small viewport (termRows
+    // 10 → threshold max(8, 10-6)=8) so the overflow valve is exercised.
+    const committed: OutputLine[] = []
+    for (const ch of msg) {
+      const update = reduceRunEvent(state, { kind: 'assistant_delta', payload: { delta: ch } }, { termRows: 10 })
+      state = update.state
+      committed.push(...update.commitLines)
+    }
+    const flush = flushStreaming(state)
+    committed.push(...flush.lines)
+
+    const assistant = committed.filter(l => l.kind === 'assistant').map(l => l.text)
+    // No committed assistant line is a raw pipe row (the torn-table signature).
+    const rawPipeRows = assistant.filter(l => /^\s*\|.*\|\s*$/.test(l))
+    expect(rawPipeRows).toEqual([])
+    // The table rendered as a box-drawn grid instead.
+    const boxLines = assistant.filter(l => /[┌│├└]/.test(l))
+    expect(boxLines.length).toBeGreaterThan(0)
+    // Every data row survived inside the rendered table.
+    const joined = assistant.join('\n')
+    for (let i = 0; i < 10; i++) expect(joined).toContain(`item_${i}`)
+  })
+
   test('short message with an open code fence stays fully pending (no overflow)', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()

@@ -4,41 +4,27 @@ import { setSpinnerPhase, type SpinnerState } from '../spinner.js'
 import { applyEvent } from './reducer.js'
 import type { AppState } from './state.js'
 import type { RunEvent } from '../../native/index.js'
-import { findStreamingCommitPoint, findNaturalPlainTextCommitPoint, isInsideOpenMathBlock, isInsideOpenCodeFence } from '../../markdown/streaming/commit.js'
-
-// Detect pipe tables: two or more consecutive lines matching `| ... |`.
-// Splitting mid-table produces broken rendering, so the force-split path
-// leaves a building table in the pending tail until a safe boundary appears.
-const PIPE_TABLE_LINE_RE = /^\s*\|.*\|\s*$/
-function isInsidePipeTable(text: string): boolean {
-  const lines = text.split('\n')
-  let tableLines = 0
-  for (const l of lines) {
-    if (PIPE_TABLE_LINE_RE.test(l)) {
-      tableLines++
-      if (tableLines >= 2) return true
-    } else if (l.trim()) {
-      tableLines = 0
-    }
-  }
-  return false
-}
+import { findStreamingCommitPoint, findNaturalPlainTextCommitPoint, isInsideOpenMathBlock } from '../../markdown/streaming/commit.js'
 
 /**
  * Overflow safety valve for the streaming dynamic zone.
  *
- * The whole in-progress assistant message normally stays in the dynamic zone
- * and is re-rendered in place each delta (matching pi's single growing
- * component). Re-rendering the full pending text costs ~0.3ms, so there is no
- * performance reason to commit paragraphs early — and doing so made streaming
- * choppy: each paragraph boundary drained the dynamic zone into scrollback,
- * emptied it for a frame, then refilled it, so the spinner/prompt below jumped
- * up and back down on every `\n\n`.
+ * The whole in-progress assistant message stays in the dynamic zone and is
+ * re-rendered in place each delta (matching pi's single growing Markdown
+ * component, which reparses the full accumulated text every frame). This is
+ * what makes structural blocks impossible to tear: a table, a tight list, or a
+ * code block is always rendered as one whole marked parse, never split into a
+ * committed head and an orphan tail that has lost its header/separator.
  *
  * This function only acts when the pending message would grow taller than the
- * viewport: it commits leading blocks (at a markdown-safe boundary, else a
- * complete-line boundary) to scrollback so the tail keeps fitting on screen.
- * It never splits inside an open code fence, math block, or building table.
+ * viewport. Even then it commits ONLY at a true markdown-safe boundary
+ * (findStreamingCommitPoint — a blank-line block boundary) or, for long
+ * boundary-free prose, a safe complete-line boundary (findNaturalPlainText
+ * CommitPoint). There is deliberately NO last-resort "split at the last
+ * newline" fallback: forcing a split inside a block with no internal blank line
+ * (table, tight list, blockquote) is exactly what committed a partial block and
+ * tore the rendering. When no safe boundary exists, the whole block stays
+ * pending and grows in the dynamic zone until it completes — same as pi.
  *
  * Mutates nothing; returns the updated state and any lines to commit.
  */
@@ -48,15 +34,6 @@ function drainOverflowBlocks(
 ): { state: StreamMachineState; lines: OutputLine[] } {
   const lines: OutputLine[] = []
 
-  // Keep the whole in-progress message in the dynamic zone (re-rendered in
-  // place each delta, matching pi's single growing component) UNLESS it would
-  // grow taller than the visible viewport. Reserve a few rows below for tool
-  // progress, spinner, and prompt so those stay on screen.
-  //
-  // This is deliberately rare: normal multi-paragraph replies never trip it, so
-  // there is no per-paragraph "commit → dynamic zone empties → refills" jump
-  // that made streaming feel choppy. Re-rendering the full pending text every
-  // delta costs ~0.3ms, so there is nothing to optimize away by committing early.
   const overflowThreshold = Math.max(8, termRows - 6)
   const pendingLineCount = state.streamingText.split('\n').length
   if (pendingLineCount <= overflowThreshold) return { state, lines }
@@ -66,20 +43,7 @@ function drainOverflowBlocks(
     markdownSplitAt > 0 || isInsideOpenMathBlock(state.streamingText)
       ? 0
       : findNaturalPlainTextCommitPoint(state.streamingText, termRows)
-  let splitAt = markdownSplitAt || naturalSplitAt
-  // Last resort: commit at the last newline so structural markdown (lists,
-  // headings, blockquotes) doesn't accumulate in the dynamic zone. Skip when
-  // inside an open math block, an open code fence, or a building pipe table —
-  // splitting there commits a partial block and tears the rendering.
-  if (
-    splitAt <= 0 &&
-    !isInsideOpenMathBlock(state.streamingText) &&
-    !isInsideOpenCodeFence(state.streamingText) &&
-    !isInsidePipeTable(state.streamingText)
-  ) {
-    const lastNl = state.streamingText.lastIndexOf('\n')
-    if (lastNl > 0) splitAt = lastNl + 1
-  }
+  const splitAt = markdownSplitAt || naturalSplitAt
   if (splitAt > 0 && splitAt < state.streamingText.length) {
     const chunk = state.streamingText.slice(0, splitAt)
     const rest = state.streamingText.slice(splitAt)
