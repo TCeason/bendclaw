@@ -373,17 +373,8 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         turnCount: (p.turn_count as number) ?? state.currentRunStats.turnCount,
       }
 
-      const messages = [...state.messages]
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i]!.role === 'assistant') {
-          messages[i] = { ...messages[i]!, runStats: stats }
-          break
-        }
-      }
-
       return {
         ...state,
-        messages,
         isLoading: false,
         currentStreamText: '',
         currentThinkingText: '',

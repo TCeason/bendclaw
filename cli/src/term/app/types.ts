@@ -14,8 +14,6 @@ export interface UIMessage {
   text: string
   timestamp: number
   toolCalls?: UIToolCall[]
-  /** Run stats attached to the final assistant message of a run */
-  runStats?: RunStats
   /** Verbose events that occurred before this message */
   verboseEvents?: VerboseEvent[]
   /** Text was already streamed to stdout — skip rendering in Message component */

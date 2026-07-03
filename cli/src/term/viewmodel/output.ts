@@ -147,10 +147,6 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
         blocks.push(block(ol.text.split('\n').map(l => line(dim(l)))))
         break
 
-      case 'run_summary':
-        blocks.push(block([line(dim(ol.text))]))
-        break
-
       default:
         break
     }

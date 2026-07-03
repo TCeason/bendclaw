@@ -1,4 +1,4 @@
-import { buildError, buildRunSummary, buildToolCall, buildToolProgress, buildToolResult, buildVerboseEvent, buildLlmCard, isVisibleLlmEvent, buildAssistantLines, buildThinkingSummary, type OutputLine } from '../../render/output.js'
+import { buildError, buildToolCall, buildToolProgress, buildToolResult, buildVerboseEvent, buildLlmCard, isVisibleLlmEvent, buildAssistantLines, buildThinkingSummary, type OutputLine } from '../../render/output.js'
 import { formatDuration } from '../../render/format.js'
 import { setSpinnerPhase, type SpinnerState } from '../spinner.js'
 import { applyEvent } from './reducer.js'
@@ -395,7 +395,6 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     state = flushed.state
     commitLines.push(...flushed.lines)
     mergeFlushExpanded(flushed)
-    commitLines.push(...buildRunSummary(state.appState.currentRunStats))
   }
 
   return {

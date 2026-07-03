@@ -3,7 +3,7 @@
  * with verbose events, tool calls, thinking, and run stats.
  */
 
-import type { UIMessage, UIToolCall, VerboseEvent, RunStats } from '../term/app/types.js'
+import type { UIMessage, UIToolCall, VerboseEvent } from '../term/app/types.js'
 import { formatLlmCallStarted, formatLlmCallRetry, formatLlmCallCompleted, formatCompactionStarted, formatCompactionCompleted } from '../render/verbose.js'
 
 // ---------------------------------------------------------------------------
@@ -68,12 +68,6 @@ export function transcriptToMessages(items: RawItem[]): UIMessage[] {
       handleStats(item, acc)
     }
     // tool_result, system, extension, compact, marker — silently skipped
-  }
-
-  // Attach run stats to last assistant message
-  if (acc.runStats.llmCalls > 0) {
-    const last = lastAssistantMessage(messages)
-    if (last) last.runStats = buildRunStats(acc)
   }
 
   return messages
@@ -168,31 +162,11 @@ function inferPreviewCommand(name: string, args: Record<string, unknown>): strin
 
 interface RunAcc {
   verboseEvents: VerboseEvent[]
-  runStats: {
-    durationMs: number
-    inputTokens: number
-    outputTokens: number
-    cacheReadTokens: number
-    cacheWriteTokens: number
-    llmCalls: number
-    toolCallCount: number
-    toolErrorCount: number
-  }
 }
 
 function newRunAccumulator(): RunAcc {
   return {
     verboseEvents: [],
-    runStats: {
-      durationMs: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-      cacheWriteTokens: 0,
-      llmCalls: 0,
-      toolCallCount: 0,
-      toolErrorCount: 0,
-    },
   }
 }
 
@@ -211,7 +185,6 @@ function handleStats(item: RawItem, acc: RunAcc): void {
     case 'llm_call_completed': {
       const result = formatLlmCallCompleted(data)
       acc.verboseEvents.push({ kind: 'llm_completed', text: result.text, expandedText: result.expandedText })
-      accumulateLlmStats(data, acc)
       break
     }
     case 'context_compaction_started':
@@ -220,72 +193,5 @@ function handleStats(item: RawItem, acc: RunAcc): void {
     case 'context_compaction_completed':
       acc.verboseEvents.push({ kind: 'compact_done', text: formatCompactionCompleted(data) })
       break
-    case 'tool_finished':
-      if (data.is_error) acc.runStats.toolErrorCount++
-      acc.runStats.toolCallCount++
-      break
-    // run_finished, etc. — handled by buildRunStats
   }
-}
-
-// ---------------------------------------------------------------------------
-// Stats accumulation
-// ---------------------------------------------------------------------------
-
-function accumulateLlmStats(data: Record<string, unknown>, acc: RunAcc): void {
-  const usage = data.usage as Record<string, number> | undefined
-  const metrics = data.metrics as Record<string, number> | undefined
-  acc.runStats.llmCalls++
-  acc.runStats.inputTokens += usage?.input ?? 0
-  acc.runStats.outputTokens += usage?.output ?? 0
-  acc.runStats.cacheReadTokens += usage?.cache_read ?? 0
-  acc.runStats.cacheWriteTokens += usage?.cache_write ?? 0
-  acc.runStats.durationMs += metrics?.duration_ms ?? 0
-}
-
-// ---------------------------------------------------------------------------
-// Run stats builder
-// ---------------------------------------------------------------------------
-
-function buildRunStats(acc: RunAcc): RunStats {
-  return {
-    durationMs: acc.runStats.durationMs,
-    turnCount: 0,
-    toolCallCount: acc.runStats.toolCallCount,
-    toolErrorCount: acc.runStats.toolErrorCount,
-    inputTokens: acc.runStats.inputTokens,
-    outputTokens: acc.runStats.outputTokens,
-    cacheReadTokens: acc.runStats.cacheReadTokens,
-    cacheWriteTokens: acc.runStats.cacheWriteTokens,
-    llmCalls: acc.runStats.llmCalls,
-    contextTokens: 0,
-    contextWindow: 0,
-    toolBreakdown: [],
-    llmCallDetails: [],
-    compactHistory: [],
-    lastMessageStats: null,
-    cumulativeStats: {
-      userCount: 0,
-      assistantCount: 0,
-      toolResultCount: 0,
-      imageCount: 0,
-      userTokens: 0,
-      assistantTokens: 0,
-      toolResultTokens: 0,
-      imageTokens: 0,
-      toolDetails: [],
-    },
-    systemPromptTokens: 0,
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function lastAssistantMessage(messages: UIMessage[]): UIMessage | undefined {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'assistant') return messages[i]
-  }
-  return undefined
 }

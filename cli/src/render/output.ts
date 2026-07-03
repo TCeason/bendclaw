@@ -10,8 +10,8 @@
 
 import { renderMarkdown } from './markdown.js'
 import { colorizeUnifiedDiff } from './diff.js'
-import { truncate, humanTokens, formatDuration, renderBar, toolResultLines, padRight } from './format.js'
-import type { RunStats, SlimStats, UIMessage } from '../term/app/types.js'
+import { truncate, formatDuration, toolResultLines } from './format.js'
+import type { SlimStats, UIMessage } from '../term/app/types.js'
 
 // ---------------------------------------------------------------------------
 // Tool presentation — icon + primary-arg per tool, in the spirit of
@@ -65,7 +65,7 @@ function toolCallText(name: string, args: Record<string, unknown>, previewComman
 
 export interface OutputLine {
   id: string
-  kind: 'user' | 'assistant' | 'thinking' | 'thinking_summary' | 'tool' | 'tool_result' | 'verbose' | 'error' | 'system' | 'run_summary'
+  kind: 'user' | 'assistant' | 'thinking' | 'thinking_summary' | 'tool' | 'tool_result' | 'verbose' | 'error' | 'system'
   text: string
   rawMarkdown?: string
   codeBlockId?: string
@@ -358,173 +358,6 @@ export function buildLlmCard(text: string): OutputLine[] {
   return lines
 }
 
-
-export function buildRunSummary(stats: RunStats): OutputLine[] {
-  const lines: OutputLine[] = []
-  const dur = formatDuration(stats.durationMs)
-  const totalTokens = stats.inputTokens + stats.outputTokens
-  const pl = (n: number, s: string) => n === 1 ? s : `${s}s`
-  const line = (text: string) => lines.push({ id: genId('summary'), kind: 'run_summary' as const, text })
-  const barWidth = 20
-
-  // Header
-  line('')
-  line('── run summary ─────────────────────────────────────')
-  line(`overview    ${dur} · ${stats.turnCount} ${pl(stats.turnCount, 'turn')} · ${stats.llmCalls} llm · ${stats.toolCallCount} tools · ${humanTokens(totalTokens)} tokens`)
-
-  // Context budget bar
-  if (stats.contextWindow > 0 && stats.contextTokens > 0) {
-    const budget = Math.max(0, stats.contextWindow - stats.systemPromptTokens)
-    const pct = budget > 0 ? (stats.contextTokens / budget) * 100 : 0
-    if (pct > 0) {
-      const bar = renderBar(stats.contextTokens, budget, barWidth)
-      line(`context     ${bar}   ${humanTokens(stats.contextTokens)} / ${humanTokens(budget)} · ${pct.toFixed(0)}%`)
-    }
-  }
-
-  // --- tokens block ---
-  const totalInput = stats.inputTokens
-  const totalStreamMs = stats.llmCallDetails.reduce((s, c) => s + (c.durationMs - c.ttftMs), 0)
-  const overallTps = totalStreamMs > 0 ? (stats.outputTokens / (totalStreamMs / 1000)).toFixed(0) : '0'
-  let tokLine = `tokens      ${humanTokens(totalInput)} in → ${humanTokens(stats.outputTokens)} out · ${overallTps} tok/s`
-  if (stats.cacheReadTokens > 0 || stats.cacheWriteTokens > 0) {
-    const cacheTotalInput = stats.inputTokens + stats.cacheReadTokens + stats.cacheWriteTokens
-    const hitRate = cacheTotalInput > 0
-      ? (stats.cacheReadTokens / cacheTotalInput * 100).toFixed(0)
-      : '0'
-    tokLine += ` · cache ${hitRate}%`
-  }
-  line(tokLine)
-
-  // Token breakdown by role (last LLM call's context snapshot)
-  const ms = stats.lastMessageStats ?? stats.cumulativeStats
-  const hasBreakdown = ms.userTokens > 0 || ms.assistantTokens > 0 || ms.toolResultTokens > 0 || ms.imageTokens > 0
-  if (hasBreakdown) {
-    const sysTok = stats.systemPromptTokens
-    const breakdownTotal = sysTok + ms.userTokens + ms.assistantTokens + ms.toolResultTokens + ms.imageTokens
-    if (breakdownTotal > 0) {
-      const maxLabelWidth = 12
-      const maxValWidth = 6
-      const roles: [string, number][] = [
-        ['system', sysTok],
-        ['user', ms.userTokens],
-        ['assistant', ms.assistantTokens],
-        ['tool_result', ms.toolResultTokens],
-        ['image', ms.imageTokens],
-      ]
-      for (const [label, tokens] of roles) {
-        if (tokens === 0) continue
-        const pct = (tokens / breakdownTotal * 100).toFixed(0)
-        const bar = renderBar(tokens, breakdownTotal, barWidth)
-        line(`  ${padRight(label, maxLabelWidth)} ${humanTokens(tokens).padStart(maxValWidth)}   ${bar} ${pct.padStart(3)}%`)
-      }
-
-      // Per-tool breakdown under tool_result (only when >= 3 distinct tools)
-      if (ms.toolDetails.length >= 3) {
-        const agg = new Map<string, { calls: number; tokens: number }>()
-        for (const [name, tokens] of ms.toolDetails) {
-          const existing = agg.get(name)
-          if (existing) {
-            existing.calls++
-            existing.tokens += tokens
-          } else {
-            agg.set(name, { calls: 1, tokens })
-          }
-        }
-        const sorted = [...agg.entries()].sort((a, b) => b[1].tokens - a[1].tokens)
-        const shown = sorted.slice(0, 5)
-        const omitted = sorted.slice(5)
-        const toolNameWidth = Math.max(12, ...shown.map(([name]) => name.length))
-        for (const [name, a] of shown) {
-          const pct = breakdownTotal > 0 ? (a.tokens / breakdownTotal * 100).toFixed(0) : '0'
-          const bar = renderBar(a.tokens, breakdownTotal, barWidth)
-          const callWord = a.calls === 1 ? 'call' : 'calls'
-          line(`    ${padRight(name, toolNameWidth)} ${humanTokens(a.tokens).padStart(maxValWidth)}   ${bar} ${pct.padStart(3)}%   ${a.calls} ${callWord}`)
-        }
-        if (omitted.length > 0) {
-          const omittedTokens = omitted.reduce((s, [, a]) => s + a.tokens, 0)
-          const omittedCalls = omitted.reduce((s, [, a]) => s + a.calls, 0)
-          const pct = breakdownTotal > 0 ? (omittedTokens / breakdownTotal * 100).toFixed(0) : '0'
-          const bar = renderBar(omittedTokens, breakdownTotal, barWidth)
-          line(`    ${padRight(`… ${omitted.length} more`, toolNameWidth)} ${humanTokens(omittedTokens).padStart(maxValWidth)}   ${bar} ${pct.padStart(3)}%   ${omittedCalls} calls`)
-        }
-      }
-    }
-  }
-
-  // --- compact block ---
-  if (stats.compactHistory.length > 0) {
-    const compactTokens = (c: typeof stats.compactHistory[number]) => ({
-      before: c.beforeTokens ?? c.fromTokens ?? c.from_tokens ?? 0,
-      after: c.afterTokens ?? c.toTokens ?? c.to_tokens ?? 0,
-    })
-    const totalBefore = stats.compactHistory.reduce((s, c) => s + compactTokens(c).before, 0)
-    const totalSaved = stats.compactHistory.reduce((s, c) => {
-      const { before, after } = compactTokens(c)
-      return s + (before - after)
-    }, 0)
-    const savedPct = totalBefore > 0 ? (totalSaved / totalBefore * 100).toFixed(0) : '0'
-    line(`compact     ${stats.compactHistory.length} ${pl(stats.compactHistory.length, 'run')} · saved ${humanTokens(totalSaved)} (${savedPct}%)`)
-
-    const formatCompact = (c: typeof stats.compactHistory[number], idx: number) => {
-      const { before, after } = compactTokens(c)
-      const saved = before - after
-      const bar = renderBar(saved, before || 1, 12)
-      return `  #${String(idx + 1).padEnd(2)} L${String(c.level).padEnd(2)} ${humanTokens(before).padStart(5)} → ${humanTokens(after).padStart(5)}   −${humanTokens(saved).padEnd(5)} ${bar}`
-    }
-    const shownIndexes = compactDisplayIndexes(stats.compactHistory.length)
-    let insertedOmitted = false
-    for (const idx of shownIndexes) {
-      if (!insertedOmitted && idx > 2) {
-        const omitted = stats.compactHistory.slice(3, idx)
-        const omittedSaved = omitted.reduce((s, c) => {
-          const { before, after } = compactTokens(c)
-          return s + (before - after)
-        }, 0)
-        line(`       … ${omitted.length} more   −${humanTokens(omittedSaved)}`)
-        insertedOmitted = true
-      }
-      line(formatCompact(stats.compactHistory[idx]!, idx))
-    }
-  }
-
-  // --- llm block ---
-  if (stats.llmCallDetails.length > 0) {
-    const totalLlmMs = stats.llmCallDetails.reduce((s, c) => s + c.durationMs, 0)
-    const llmPct = stats.durationMs > 0 ? (totalLlmMs / stats.durationMs * 100).toFixed(0) : '0'
-    const totalOutputTok = stats.llmCallDetails.reduce((s, c) => s + c.outputTokens, 0)
-    const totalLlmStreamMs = stats.llmCallDetails.reduce((s, c) => s + (c.durationMs - c.ttftMs), 0)
-    const avgTps = totalLlmStreamMs > 0 ? (totalOutputTok / (totalLlmStreamMs / 1000)).toFixed(0) : '0'
-    const avgTtft = stats.llmCallDetails.reduce((s, c) => s + c.ttftMs, 0) / stats.llmCallDetails.length
-    const avgStream = stats.llmCallDetails.reduce((s, c) => s + (c.durationMs - c.ttftMs), 0) / stats.llmCallDetails.length
-    line(`llm         ${stats.llmCallDetails.length} ${pl(stats.llmCallDetails.length, 'call')} · ${formatDuration(totalLlmMs)} · ${llmPct}% of run · ${avgTps} tok/s avg · ttft ${formatDuration(Math.round(avgTtft))} · stream ${formatDuration(Math.round(avgStream))}`)
-
-    // Top 3 LLM calls by duration
-    const sorted = [...stats.llmCallDetails].sort((a, b) => b.durationMs - a.durationMs)
-    const show = Math.min(sorted.length, 3)
-    const maxDur = sorted[0]?.durationMs ?? 1
-    const maxDurWidth = Math.max(...sorted.slice(0, show).map(c => formatDuration(c.durationMs).length))
-    for (let i = 0; i < show; i++) {
-      const c = sorted[i]!
-      const bar = renderBar(c.durationMs, maxDur, barWidth)
-      const pct = totalLlmMs > 0 ? (c.durationMs / totalLlmMs * 100).toFixed(0) : '0'
-      const durStr = formatDuration(c.durationMs).padStart(maxDurWidth)
-      line(`  #${i + 1}        ${durStr}   ${bar} ${pct.padStart(3)}%`)
-    }
-    if (sorted.length > 3) {
-      const restMs = sorted.slice(3).reduce((s, c) => s + c.durationMs, 0)
-      line(`       … ${sorted.length - 3} more · ${formatDuration(restMs)} total`)
-    }
-  }
-
-  return lines
-}
-
-function compactDisplayIndexes(count: number): number[] {
-  if (count <= 4) return Array.from({ length: count }, (_, i) => i)
-  return [0, 1, 2, count - 1]
-}
-
 export function buildError(message: string): OutputLine[] {
   return [{ id: genId('err'), kind: 'error', text: `Error: ${message}` }]
 }
@@ -568,10 +401,6 @@ export function messagesToOutputLines(messages: UIMessage[]): OutputLine[] {
       // Assistant text
       if (msg.text.trim()) {
         lines.push(...buildAssistantLines(msg.text))
-      }
-      // Run summary
-      if (msg.runStats) {
-        lines.push(...buildRunSummary(msg.runStats))
       }
     }
   }

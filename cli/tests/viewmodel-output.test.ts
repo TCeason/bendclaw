@@ -230,11 +230,6 @@ describe('buildOutputBlocks', () => {
     expect(lines[1]!.startsWith('  ')).toBe(true)
   })
 
-  test('run_summary is dim', () => {
-    const result = render([{ id: 'r1', kind: 'run_summary', text: '  3 turns · 1.2k tokens' }])
-    expect(result).toContain('\x1b[38;2;119;119;119m')
-  })
-
   test('user message wraps when columns is provided', () => {
     // 20 columns minus 2 for prefix = 18 chars per line
     const longText = 'a'.repeat(40)

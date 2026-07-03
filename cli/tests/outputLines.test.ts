@@ -6,7 +6,6 @@ import {
   buildToolProgress,
   buildToolCall,
   buildVerboseEvent,
-  buildRunSummary,
   buildError,
   AssistantStreamBuffer,
   findSafeSplitPoint,
@@ -331,119 +330,6 @@ describe('buildVerboseEvent', () => {
     expect(completed).toContain('    map       [··OHHH··SS]   · kept   O Outline   H HeadTail   S Summarized')
     expect(completed).toContain('    summary   outlined 2 · head-tail 3')
     expect(completed).toContain('    actions   #12 read_file HeadTail 18k → 4k (−14k)')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// buildRunSummary
-// ---------------------------------------------------------------------------
-
-describe('buildRunSummary', () => {
-  test('formats stats with header and footer', () => {
-    const lines = buildRunSummary({
-      durationMs: 2500,
-      turnCount: 3,
-      toolCallCount: 5,
-      toolErrorCount: 0,
-      inputTokens: 1000,
-      outputTokens: 200,
-      cacheReadTokens: 0,
-      cacheWriteTokens: 0,
-      llmCalls: 2,
-      contextTokens: 0,
-      contextWindow: 0,
-      toolBreakdown: [],
-      llmCallDetails: [],
-      compactHistory: [],
-      lastMessageStats: null,
-      cumulativeStats: { userCount: 0, assistantCount: 0, toolResultCount: 0, imageCount: 0, userTokens: 0, assistantTokens: 0, toolResultTokens: 0, imageTokens: 0, toolDetails: [] },
-      systemPromptTokens: 0,
-    })
-    expect(lines.length).toBeGreaterThan(1)
-    expect(lines[0]!.text).toBe('')
-    expect(lines[1]!.text).toContain('run summary')
-    const statsLine = lines.find((l) => l.text.includes('overview'))!
-    expect(statsLine.text).toContain('2.5s')
-    expect(statsLine.text).toContain('3 turns')
-    expect(statsLine.text).toContain('5 tools')
-    expect(statsLine.text).toContain('1k tokens')
-    // Footer removed — no trailing separator line
-    const lastLine = lines[lines.length - 1]!
-    expect(lastLine.text).not.toContain('────')
-  })
-
-  test('includes llm call details', () => {
-    const lines = buildRunSummary({
-      durationMs: 5000,
-      turnCount: 2,
-      toolCallCount: 3,
-      toolErrorCount: 0,
-      inputTokens: 5000,
-      outputTokens: 500,
-      cacheReadTokens: 1000,
-      cacheWriteTokens: 200,
-      llmCalls: 2,
-      contextTokens: 0,
-      contextWindow: 0,
-      toolBreakdown: [],
-      llmCallDetails: [
-        { model: 'test', durationMs: 2000, inputTokens: 3000, outputTokens: 300, ttfbMs: 100, ttftMs: 200, tokPerSec: 150 },
-        { model: 'test', durationMs: 1500, inputTokens: 2000, outputTokens: 200, ttfbMs: 80, ttftMs: 150, tokPerSec: 133 },
-      ],
-      compactHistory: [],
-      lastMessageStats: null,
-      cumulativeStats: { userCount: 0, assistantCount: 0, toolResultCount: 0, imageCount: 0, userTokens: 0, assistantTokens: 0, toolResultTokens: 0, imageTokens: 0, toolDetails: [] },
-      systemPromptTokens: 0,
-    })
-    expect(lines.some((l) => l.text.includes('llm'))).toBe(true)
-    expect(lines.some((l) => l.text.includes('ttft'))).toBe(true)
-    expect(lines.some((l) => l.text.includes('#1'))).toBe(true)
-    expect(lines.some((l) => l.text.includes('cache'))).toBe(true)
-    expect(lines.some((l) => l.text.includes(' in → '))).toBe(true)
-  })
-
-  test('includes token breakdown by role', () => {
-    const lines = buildRunSummary({
-      durationMs: 10000,
-      turnCount: 2,
-      toolCallCount: 2,
-      toolErrorCount: 0,
-      inputTokens: 100000,
-      outputTokens: 500,
-      cacheReadTokens: 0,
-      cacheWriteTokens: 0,
-      llmCalls: 2,
-      contextTokens: 0,
-      contextWindow: 0,
-      toolBreakdown: [],
-      llmCallDetails: [
-        { model: 'test', durationMs: 5000, inputTokens: 50000, outputTokens: 250, ttfbMs: 500, ttftMs: 1000, tokPerSec: 62.5 },
-        { model: 'test', durationMs: 5000, inputTokens: 50000, outputTokens: 250, ttfbMs: 500, ttftMs: 1000, tokPerSec: 62.5 },
-      ],
-      compactHistory: [],
-      lastMessageStats: null,
-      cumulativeStats: {
-        userCount: 3,
-        assistantCount: 2,
-        toolResultCount: 2,
-        imageCount: 0,
-        userTokens: 5000,
-        assistantTokens: 15000,
-        toolResultTokens: 78000,
-        imageTokens: 0,
-        toolDetails: [['bash', 30000], ['read', 28000], ['search', 20000]],
-      },
-      systemPromptTokens: 2000,
-    })
-    const all = lines.map(l => l.text).join('\n')
-    expect(all).toContain('system')
-    expect(all).toContain('user')
-    expect(all).toContain('assistant')
-    expect(all).toContain('tool_result')
-    // Per-tool breakdown
-    expect(all).toContain('bash')
-    expect(all).toContain('read')
-    expect(all).toContain('%')
   })
 })
 

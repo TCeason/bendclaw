@@ -723,7 +723,7 @@ describe('term stream machine', () => {
     expect(u2.writeLines.some(l => l.text.includes('HTTP 520'))).toBe(true)
   })
 
-  test('run_summary is visible in commitLines', () => {
+  test('run_finished emits no run summary', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     const state = createStreamMachineState(appState, spinner)
@@ -731,8 +731,9 @@ describe('term stream machine', () => {
       kind: 'run_finished',
       payload: {},
     }, { termRows: 24 })
-    const hasSummary = update.commitLines.some(l => l.kind === 'run_summary')
-    expect(hasSummary).toBe(true)
+    // The end-of-run summary block was removed; run_finished only flushes any
+    // pending assistant text and never appends a summary.
+    expect(update.commitLines.some(l => (l.kind as string) === 'run_summary')).toBe(false)
   })
 
   test('flushStreaming emits pending assistant text', () => {
