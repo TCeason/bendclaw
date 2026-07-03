@@ -4,7 +4,7 @@ import { installBracketedPaste } from './bracketed-paste.js'
 import { createSpinnerState, advanceSpinner, formatSpinnerLine } from './spinner.js'
 import { createSelectorState, selectorExpandItems, selectorClearQuery } from './selector.js'
 import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
-import { buildUserMessage, buildAssistantLines, buildThinkingLines, type OutputLine } from '../render/output.js'
+import { buildUserMessage, buildThinkingLines, type OutputLine } from '../render/output.js'
 import { renderMarkdownCached } from '../render/markdown.js'
 import { Agent, QueryStream, fastExit, type SessionMeta, type ConfigInfo } from '../native/index.js'
 import { createInitialState, type AppState } from './app/state.js'
@@ -1780,6 +1780,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   async function runLogQuery(forked: import('../native/index.js').ForkedAgent, prompt: string) {
     isLoading = true
     spinnerState = createSpinnerState()
+    streamMachine = createStreamMachineState(appState, spinnerState)
     startSpinner()
     renderer.requestRender()
     commitLines(buildUserMessage(prompt))
@@ -1787,39 +1788,46 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     try {
       const stream = await forked.query(prompt)
       streamRef = stream
-      let streamingText = ''
 
+      // Reuse the main streaming path so log-mode inherits pi-aligned behavior:
+      // the whole message stays in the dynamic zone and only commits at
+      // markdown-safe boundaries, so tables/lists/code blocks are never torn
+      // (the old per-newline commit here split every table row into its own
+      // buildAssistantLines call).
       for await (const event of stream) {
         if (destroyed) break
-        if (event.kind === 'assistant_delta') {
-          const delta = (event.payload as any)?.delta as string | undefined
-          if (delta) {
-            streamingText += delta
-            const lastNl = streamingText.lastIndexOf('\n')
-            if (lastNl >= 0) {
-              const complete = streamingText.slice(0, lastNl + 1)
-              streamingText = streamingText.slice(lastNl + 1)
-              if (complete.trim()) {
-                commitLines(buildAssistantLines(complete))
-              }
-            }
-          }
-        } else if (event.kind === 'tool_started') {
-          if (streamingText.trim()) { commitLines(buildAssistantLines(streamingText)); streamingText = '' }
-          commitToolStarted(event)
-        } else if (event.kind === 'tool_progress') {
-          if (streamingText.trim()) { commitLines(buildAssistantLines(streamingText)); streamingText = '' }
-          commitLines(buildToolProgressLines(event, true))
-        } else if (event.kind === 'tool_finished') {
-          commitToolFinished(event)
-        }
+        if (!streamMachine) break
+
+        const update = reduceRunEvent(streamMachine, event, { termRows: renderer.termRows })
+        streamMachine = update.state
+        appState = update.state.appState
+        spinnerState = update.state.spinnerState
+
+        if (event.kind === 'assistant_delta') renderer.requestRender()
+        if (!update.suppressToolStarted && event.kind === 'tool_started') commitToolStarted(event)
+        if (event.kind === 'tool_progress') commitLines(buildToolProgressLines(event, true))
+        if (!update.suppressToolFinished && event.kind === 'tool_finished') commitToolFinished(event)
+        if (update.commitLines.length > 0) commitLines(update.commitLines)
+        if (update.rerenderStatus) renderer.requestRender()
       }
-      if (streamingText.trim()) commitLines(buildAssistantLines(streamingText))
+
+      if (streamMachine) {
+        const final = flushStreaming(streamMachine)
+        streamMachine = final.state
+        appState = final.state.appState
+        commitFlushResult(final)
+      }
     } catch (err: any) {
+      if (streamMachine) {
+        const final = flushStreaming(streamMachine)
+        streamMachine = final.state
+        commitFlushResult(final)
+      }
       commitLines([{ id: 'sys-log-err', kind: 'system', text: chalk.red(`  Log query failed: ${err?.message ?? err}`) }])
     } finally {
       streamRef = null
       isLoading = false
+      streamMachine = null
       stopSpinner()
       renderer.requestRender()
     }
