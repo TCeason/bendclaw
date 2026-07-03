@@ -39,11 +39,24 @@ describe('renderMarkdown', () => {
     expect(result).toContain('Subtitle')
   })
 
+  test('keeps the ### prefix for H3–H6, drops it for H1/H2 (pi-aligned)', () => {
+    // H1/H2 are visually distinct via styling, but H3–H6 all render as plain
+    // bold, so the hash prefix is what makes their levels distinguishable.
+    expect(render('# H1')).not.toContain('# H1')
+    expect(render('## H2')).not.toContain('## H2')
+    expect(render('### H3')).toContain('### H3')
+    expect(render('#### H4')).toContain('#### H4')
+    expect(render('##### H5')).toContain('##### H5')
+    expect(render('###### H6')).toContain('###### H6')
+  })
+
   test('renders indented h3 headings', () => {
     const result = render('2 行 verbose，工具调用是视觉主体。\n\n  ### 改造后（ctrl+o 展开，和改造前等价）\n\n完全等于改造前的 11 行 — 数据一字不差。')
 
-    expect(result).toContain('改造后（ctrl+o 展开，和改造前等价）')
-    expect(result).not.toContain('### 改造后')
+    // The indented `### ` is recognized as an H3 (not indented code). H3+ keeps
+    // its `###` prefix (aligned with pi), but the source-line indent is dropped.
+    expect(result).toContain('### 改造后（ctrl+o 展开，和改造前等价）')
+    expect(result).not.toContain('  ### 改造后')
   })
 
   test('renders bold text', () => {
@@ -1159,7 +1172,9 @@ describe('renderMarkdown', () => {
   test('splits hr glued before heading', () => {
     const result = render('---### 方案分层：从零代码到完整 Eval').replace(/\u200b/g, '')
 
-    expect(result).toContain('---\n\n方案分层：从零代码到完整 Eval')
+    // The glued `---###` is split into an hr and an H3. H3+ keeps its `###`
+    // prefix (aligned with pi), so the heading renders with the marker.
+    expect(result).toContain('---\n\n### 方案分层：从零代码到完整 Eval')
     expect(result).not.toContain('---###')
   })
 
