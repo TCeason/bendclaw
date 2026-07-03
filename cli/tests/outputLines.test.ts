@@ -218,10 +218,20 @@ describe('buildToolResult', () => {
     expect(all).toContain('ctrl+o to collapse')
   })
 
-  test('creates progress card header and preserves progress details', () => {
+  test('collapsed progress card shows header + expand hint, no content preview', () => {
     const lines = buildToolProgress('bash', 'line1\nline2\nline3')
     expect(lines[0]!.text).toBe('⌘ bash  · 3 lines')
-    expect(lines.map(l => l.text).join('\n')).toContain('  line3')
+    const body = lines.slice(1)
+    expect(body).toHaveLength(1)
+    expect(body[0]!.text).toContain('... (+3 lines, ctrl+o to expand)')
+    // No progress content previewed in the collapsed card.
+    expect(lines.map(l => l.text).join('\n')).not.toContain('line3')
+  })
+
+  test('single-line progress renders inline (nothing to collapse)', () => {
+    const lines = buildToolProgress('bash', 'only line')
+    expect(lines[0]!.text).toBe('⌘ bash  · 1 line')
+    expect(lines.map(l => l.text).join('\n')).toContain('  only line')
   })
 
   test('includes diff when present', () => {

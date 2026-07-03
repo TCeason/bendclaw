@@ -283,18 +283,24 @@ export function buildToolResult(
 export function buildToolProgress(name: string, text: string, expanded?: boolean): OutputLine[] {
   const progressLines = text.replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n')
   const total = progressLines.length
-  const visible = expanded ? progressLines : progressLines.slice(-5)
-  const hidden = expanded ? 0 : Math.max(0, total - visible.length)
   const header = `${toolGlyph(name).icon} ${name}  · ${total} ${total === 1 ? 'line' : 'lines'}`
   const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: header }]
-  for (const l of visible) {
-    lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${l}` })
+  if (expanded) {
+    // Expanded: full progress body + collapse hint.
+    for (const l of progressLines) {
+      lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${l}` })
+    }
+    if (progressLines.length > 1) {
+      lines.push({ id: genId('tool-hint'), kind: 'tool_result', text: '  \x1b[2m(ctrl+o to collapse)\x1b[0m' })
+    }
+    return lines
   }
-  if (expanded && visible.length > 1) {
-    lines.push({ id: genId('tool-hint'), kind: 'tool_result', text: '  \x1b[2m(ctrl+o to collapse)\x1b[0m' })
-  }
-  if (hidden > 0) {
-    lines.push({ id: genId('tool-hint'), kind: 'tool_result', text: `  \x1b[2m... (+${hidden} lines, ctrl+o to expand)\x1b[0m` })
+  // Collapsed: no content preview — the header already carries the line count,
+  // so a multiline body just adds a single expand hint (matching tool results).
+  if (total > 1) {
+    lines.push({ id: genId('tool-hint'), kind: 'tool_result', text: `  \x1b[2m... (+${total} lines, ctrl+o to expand)\x1b[0m` })
+  } else {
+    lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${progressLines[0] ?? ''}` })
   }
   return lines
 }
