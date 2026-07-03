@@ -537,14 +537,6 @@ impl AgentTool for BashTool {
             None
         };
 
-        // Slim: post-process output for token savings. Disabled commands and
-        // `exit != 0` pass through untouched; the sandbox hint below still
-        // fires based on the (possibly slimmed) stderr contents.
-        let slim_result = super::slim::on_bash(command, exit_code, stdout, stderr);
-        let stdout = slim_result.stdout;
-        let stderr = slim_result.stderr;
-        let slim_stats = slim_result.stats;
-
         let output = if stderr.is_empty() {
             if stdout_truncated {
                 if exit_code == 0 {
@@ -622,7 +614,6 @@ impl AgentTool for BashTool {
             details: serde_json::json!({
                 "exit_code": exit_code,
                 "success": exit_code == 0,
-                "slim": slim_stats,
                 "full_output_path": full_output_path
                     .as_ref()
                     .map(|p| p.to_string_lossy().to_string()),

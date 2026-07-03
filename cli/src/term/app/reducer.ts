@@ -129,14 +129,6 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       if (details?.diff && typeof details.diff === 'string') {
         finished.args = { ...finished.args, diff: details.diff }
       }
-      const slim = details?.slim as Record<string, any> | undefined
-      if (slim && typeof slim.filter === 'string') {
-        finished.slim = {
-          filter: slim.filter,
-          original: Number(slim.original ?? 0),
-          slimmed: Number(slim.slimmed ?? 0),
-        }
-      }
 
       const newMap = new Map(state.activeToolCalls)
       newMap.delete(id)

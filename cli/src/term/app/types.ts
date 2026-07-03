@@ -28,17 +28,6 @@ export interface UIToolCall {
   result?: string
   previewCommand?: string
   durationMs?: number
-  /** Optional token-slim stats carried in tool details (from engine). */
-  slim?: SlimStats
-}
-
-export interface SlimStats {
-  /** Filter id: "off" / "raw_error" / "none" / "tail" / "ack" / "git_diff" / ... */
-  filter: string
-  /** Bytes of the raw combined stdout+stderr before slimming. */
-  original: number
-  /** Bytes after slimming. */
-  slimmed: number
 }
 
 // ---------------------------------------------------------------------------

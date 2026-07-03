@@ -6,7 +6,6 @@ pub mod guard;
 pub mod naming;
 pub mod sandbox;
 pub mod skill;
-pub mod slim;
 pub mod validation;
 pub mod web_fetch;
 
