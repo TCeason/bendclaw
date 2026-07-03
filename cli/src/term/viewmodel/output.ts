@@ -3,6 +3,8 @@ import stringWidth from 'string-width'
 import { line, block, plain, dim, bold, colored, type ViewBlock, type StyledLine } from './types.js'
 import { wrapTextByWidth } from './prompt.js'
 import { wrapTextWithAnsi } from '../../render/wrap.js'
+import { BOX_DRAWING_RE } from '../../markdown/normalize/index.js'
+import stripAnsi from 'strip-ansi'
 
 export interface OutputContext {
   prevKind?: string
@@ -79,7 +81,13 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
         // text reflows on resize instead of being truncated by the renderer.
         const cols = initialContext.columns
         const avail = cols ? Math.max(1, cols - 2) : 0
-        if (avail > 0 && stringWidth(ol.text) > avail) {
+        // Never reflow box-drawing rows (rendered tables, tree/diagram art):
+        // wrapping a border line mid-cell shatters the grid. Those lines are
+        // left intact and the renderer clips them if the terminal is narrower
+        // — same rule as the markdown wrapper. Matches pi, which never re-wraps
+        // structural block art.
+        const isBoxArt = BOX_DRAWING_RE.test(stripAnsi(ol.text))
+        if (avail > 0 && !isBoxArt && stringWidth(ol.text) > avail) {
           const wrapped = wrapTextWithAnsi(ol.text, avail)
           const asstLines = wrapped.map((w, k) =>
             k === 0 ? line(dot, plain(w)) : line(plain('  '), plain(w)),

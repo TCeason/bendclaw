@@ -182,6 +182,33 @@ describe('buildOutputBlocks', () => {
     expect(lines[1]!.startsWith('  ')).toBe(true)
   })
 
+  test('box-drawing table rows are not reflowed on resize (no torn borders)', () => {
+    // A table rendered wide, then re-rendered at a narrow width. Border rows
+    // must stay intact (clipped by the renderer, never word-wrapped) — wrapping
+    // a border line mid-cell shatters the grid. Matches the markdown wrapper's
+    // box-drawing guard and pi, which never re-wraps structural block art.
+    const boxRows = [
+      '┌───────┬──────────┬──────────┐',
+      '│ 类别  │ 池子总量 │ 实际训练 │',
+      '├───────┼──────────┼──────────┤',
+      '│ count │ 8        │ 15 步    │',
+      '└───────┴──────────┴──────────┘',
+    ]
+    const lines: OutputLine[] = boxRows.map((text, i) => ({
+      id: `box${i}`, kind: 'assistant' as const, text, rawMarkdown: '',
+    }))
+    // Narrow terminal (30 cols) — each box row is wider than that.
+    const result = renderPlainWithColumns(lines, 30)
+    // No continuation fragment: a torn border shows up as a 2-space-indented
+    // line beginning with a horizontal-rule run (mid-border split).
+    const fragments = result.split('\n').filter(l => /^  ─{2,}/.test(l))
+    expect(fragments).toEqual([])
+    // Every rendered box row still begins with a corner/edge glyph.
+    const rendered = result.split('\n').filter(l => /[┌│├└]/.test(l))
+    expect(rendered.length).toBe(boxRows.length)
+    for (const l of rendered) expect(/^(⏺ |  )[┌│├└]/.test(l)).toBe(true)
+  })
+
   test('system lines are dim', () => {
     const result = render([{ id: 's1', kind: 'system', text: '  some info' }])
     expect(result).toContain('\x1b[38;2;119;119;119m')
