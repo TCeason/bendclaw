@@ -98,6 +98,13 @@ fn is_retryable_api_message(message: &str) -> bool {
         || lower.contains("gateway timeout")
         || lower.contains("stream interrupted")
         || lower.contains("please retry")
+        // Malformed tool-call output is a transient model defect, not a client
+        // error: sampling is non-deterministic, so re-running the same call
+        // usually yields valid JSON. Common with smaller local models. Retrying
+        // is far better than surfacing a fatal error to the user.
+        || lower.contains("malformed tool_use")
+        || lower.contains("invalid_tool_call")
+        || lower.contains("could not recover a valid tool call")
         || lower.contains("http 500")
         || lower.contains("http 502")
         || lower.contains("http 503")

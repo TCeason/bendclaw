@@ -181,6 +181,20 @@ fn stream_interrupted_api_error_is_retryable() {
 }
 
 #[test]
+fn malformed_tool_call_api_error_is_retryable() {
+    // A malformed tool_use JSON error is a transient model-output defect, not a
+    // client error: sampling is non-deterministic so re-running usually yields
+    // valid JSON. This is common with smaller local models (e.g. qwen3-4b),
+    // where the gateway rejects the tool call outright instead of emitting
+    // recoverable deltas. Retrying beats surfacing a fatal error.
+    let err = ProviderError::Api(
+        r#"{"type": "error", "error": {"type": "invalid_tool_call", "message": "malformed tool_use JSON; could not recover a valid tool call"}}"#
+            .into(),
+    );
+    assert!(evotengine::retry::should_retry(&err));
+}
+
+#[test]
 fn overflow_message_case_insensitive() {
     assert!(is_context_overflow_message("PROMPT IS TOO LONG"));
     assert!(is_context_overflow_message("Too Many Tokens in request"));

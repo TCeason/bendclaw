@@ -9,6 +9,7 @@ use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
+use tracing::warn;
 
 use super::types::*;
 use crate::provider::error::classify_sse_error_event;
@@ -304,6 +305,20 @@ fn process_sse_event(
         }
         "ping" | "message" => {}
         "error" => {
+            // Log any tool-call JSON buffered so far. When the gateway rejects a
+            // response with `invalid_tool_call` / `malformed tool_use JSON`, this
+            // is our only window into the exact (bad) format the model emitted,
+            // since the error path discards the partial content. Keyed by block
+            // index so a multi-tool turn stays legible.
+            if !state.tool_input_buffers.is_empty() {
+                for (idx, raw) in &state.tool_input_buffers {
+                    warn!(
+                        block_index = idx,
+                        raw_tool_json = raw.as_str(),
+                        "provider error with buffered tool-call JSON"
+                    );
+                }
+            }
             return Err(classify_sse_error_event(&sse.data));
         }
         other => {
