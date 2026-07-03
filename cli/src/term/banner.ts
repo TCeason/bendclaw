@@ -27,12 +27,19 @@ export interface BannerOptions {
   releaseNotes?: string[] | null
   /** Update available info */
   updateAvailable?: { version: string } | null
+  /**
+   * Skills directories resolved by the agent (global + EVOT_SKILLS_DIRS from
+   * evot.env/config + claude). When provided, the [Skills] section scans these
+   * so it matches what the agent loads (issue #38); otherwise it falls back to
+   * process.env-only resolution.
+   */
+  skillsDirs?: string[]
 }
 
 export function renderBanner(opts: BannerOptions): string {
   if (opts.quiet) return ''
 
-  const { model, cwd, configInfo, columns, serverState, releaseNotes, updateAvailable } = opts
+  const { model, cwd, configInfo, columns, serverState, releaseNotes, updateAvailable, skillsDirs } = opts
   const ver = version()
 
   const lines: string[] = []
@@ -52,7 +59,7 @@ export function renderBanner(opts: BannerOptions): string {
   }
 
   // [Skills] section
-  const skills = getSkillNames()
+  const skills = getSkillNames(skillsDirs)
   if (skills.length > 0) {
     lines.push('')
     lines.push(chalk.hex('#f0c674')('  [Skills]'))

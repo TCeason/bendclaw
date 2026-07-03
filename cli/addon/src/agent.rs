@@ -366,6 +366,19 @@ impl NapiAgent {
         self.agent.with_skills_dirs(paths);
     }
 
+    /// The fully-resolved, ordered skills directories the agent scans (global
+    /// ~/.evotai/skills + config/env-file EVOT_SKILLS_DIRS + ~/.claude/skills).
+    /// The CLI reads this so `/skill list` and the banner match what the agent
+    /// actually loads, instead of re-deriving from process.env alone.
+    #[napi]
+    pub fn skills_dirs(&self) -> Vec<String> {
+        self.agent
+            .skills_dirs()
+            .into_iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect()
+    }
+
     /// Send a steering message into a running session.
     #[napi]
     pub fn steer(&self, session_id: String, text: String, content_json: Option<String>) {

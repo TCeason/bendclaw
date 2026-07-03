@@ -285,6 +285,15 @@ impl Agent {
         &self.cwd
     }
 
+    /// The fully-resolved, ordered list of skills directories the agent scans:
+    /// global `~/.evotai/skills`, then config dirs (TOML / env-file /
+    /// process-env EVOT_SKILLS_DIRS), then `~/.claude/skills`. This is the
+    /// single source of truth the CLI display layer should read so `/skill
+    /// list` and the banner never drift from what the agent actually loads.
+    pub fn skills_dirs(&self) -> Vec<PathBuf> {
+        self.skills_dirs.read().clone()
+    }
+
     pub fn limits(&self) -> ExecutionLimits {
         self.limits.read().clone()
     }

@@ -34,8 +34,11 @@ function expandHome(dir: string): string {
  *   2. EVOT_SKILLS_DIRS entries (colon-separated, `~` expanded)
  *   3. ~/.claude/skills
  *
- * Keeping this in sync with the Rust side ensures `/skill list` and the banner
- * show exactly the skills the agent actually loads.
+ * This reads only `process.env`, so it MISSES EVOT_SKILLS_DIRS set in
+ * ~/.evotai/evot.env (or a custom --env-file / TOML config). Prefer passing the
+ * agent's resolved `skillsDirs()` to skillList()/getSkillNames() when a live
+ * agent is available (see issue #38); this remains the fallback for contexts
+ * without one.
  */
 export function resolveSkillsDirs(env: NodeJS.ProcessEnv = process.env): string[] {
   const dirs = [join(homedir(), '.evotai', 'skills')]
@@ -70,8 +73,8 @@ export function skillListFromDirs(dirs: string[]): string {
     .join('\n')}`
 }
 
-export function skillList(): string {
-  return skillListFromDirs(resolveSkillsDirs())
+export function skillList(dirs?: string[]): string {
+  return skillListFromDirs(dirs ?? resolveSkillsDirs())
 }
 
 // ---------------------------------------------------------------------------

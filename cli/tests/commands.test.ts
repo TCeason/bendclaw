@@ -3,7 +3,8 @@ import { mkdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { resolveCommand, isSlashCommand, buildHardenPrompt } from '../src/commands/index.js'
-import { skillListFromDirs, resolveSkillsDirs } from '../src/commands/skill.js'
+import { skillListFromDirs, resolveSkillsDirs, skillList } from '../src/commands/skill.js'
+import { getSkillNames } from '../src/term/banner-skills.js'
 import { homedir } from 'os'
 
 describe('isSlashCommand', () => {
@@ -184,5 +185,39 @@ describe('resolveSkillsDirs', () => {
   test('de-duplicates while preserving order', () => {
     // Repeating the global dir must not produce a duplicate entry.
     expect(resolveSkillsDirs({ EVOT_SKILLS_DIRS: evotaiDir })).toEqual([evotaiDir, claudeDir])
+  })
+})
+
+describe('skillList / getSkillNames honor an explicit dirs override (issue #38)', () => {
+  // The agent resolves EVOT_SKILLS_DIRS from ~/.evotai/evot.env, which
+  // resolveSkillsDirs() (process.env only) can't see. Both display helpers must
+  // scan the caller-provided dirs verbatim so `/skill list` and the banner match
+  // what the agent actually loaded.
+  test('skillList scans provided dirs, not process.env', () => {
+    const home = join(tmpdir(), `evot-skill-override-${Date.now()}`)
+    const envFileDir = join(home, 'from-env-file', 'skills')
+    try {
+      mkdirSync(join(envFileDir, 'env-skill'), { recursive: true })
+      writeFileSync(join(envFileDir, 'env-skill', 'SKILL.md'), '---\ndescription: x\n---\n')
+      const out = skillList([envFileDir])
+      expect(out).toContain('[env-skill]')
+      expect(out).toContain(join(envFileDir, 'env-skill'))
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  test('getSkillNames scans provided dirs, not process.env', () => {
+    const home = join(tmpdir(), `evot-skill-names-${Date.now()}`)
+    const envFileDir = join(home, 'from-env-file', 'skills')
+    try {
+      mkdirSync(join(envFileDir, 'alpha'), { recursive: true })
+      mkdirSync(join(envFileDir, 'beta'), { recursive: true })
+      writeFileSync(join(envFileDir, 'alpha', 'SKILL.md'), '---\n---\n')
+      writeFileSync(join(envFileDir, 'beta', 'SKILL.md'), '---\n---\n')
+      expect(getSkillNames([envFileDir])).toEqual(['alpha', 'beta'])
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 })

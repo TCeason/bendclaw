@@ -275,6 +275,16 @@ export class Agent {
     this.raw.addSkillsDirs(dirs)
   }
 
+  /**
+   * The fully-resolved, ordered skills directories the agent scans (global
+   * ~/.evotai/skills + config/env-file EVOT_SKILLS_DIRS + ~/.claude/skills).
+   * Read this instead of re-deriving from process.env so `/skill list` and the
+   * banner match what the agent actually loads (see issue #38).
+   */
+  skillsDirs(): string[] {
+    return this.raw.skillsDirs()
+  }
+
   steer(sessionId: string, text: string, contentJson?: string): void {
     this.raw.steer(sessionId, text, contentJson ?? null)
   }

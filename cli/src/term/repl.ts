@@ -318,6 +318,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       serverState,
       releaseNotes,
       updateAvailable,
+      skillsDirs: agent.skillsDirs(),
     })
   }
 
@@ -1600,7 +1601,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (!sub || sub === 'list') {
       try {
         const { skillList } = await import('../commands/skill.js')
-        commitLines([{ id: 'sys-skill', kind: 'system', text: skillList() }])
+        commitLines([{ id: 'sys-skill', kind: 'system', text: skillList(agent.skillsDirs()) }])
       } catch {
         commitLines([{ id: 'sys-skill-err', kind: 'system', text: '  skill list unavailable' }])
       }
