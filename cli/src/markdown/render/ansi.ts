@@ -425,7 +425,7 @@ export function formatToken(
       const inner = (token.tokens ?? [])
         .map(t => formatToken(t, 0, null, null, theme))
         .join('')
-      const bar = theme.blockquoteBorder.paint('▎')
+      const bar = theme.blockquoteBorder.paint('│')
       return inner
         .split(EOL)
         .map(line =>
@@ -440,6 +440,10 @@ export function formatToken(
       const isPlainDiagram = lang === PLAIN_DIAGRAM_LANGUAGE || (lang === 'plaintext' && (BOX_DRAWING_RE.test(highlighted) || DIAGRAM_ARROW_RE.test(highlighted)))
       if (isPlainDiagram) {
         highlighted = styleDiagramCode(normalizeDiagramIndent(highlighted), theme)
+        // Box-drawing / arrow diagrams are visual art, not code: no ```lang
+        // fence, just the 2-space indent (as before) so the art stays aligned
+        // with surrounding prose.
+        return padCodeBlock(highlighted) + EOL
       } else if (lang === 'json') {
         highlighted = highlightJsonCode(highlighted)
       } else if (highlighter) {
@@ -451,9 +455,18 @@ export function formatToken(
           // fallback to plain text
         }
       }
-      // Keep fenced code aligned with prose/table output while preserving the
-      // highlighted text itself.
-      return padCodeBlock(highlighted) + EOL
+      // Wrap fenced code in ```lang / ``` borders (matching pi) so a code block
+      // is visually distinct from ordinary indented prose. Echo the FIRST word
+      // of the original info string (preserving the author's casing, like pi),
+      // not the resolved/lowercased highlight language — and only the first
+      // word so a stray multi-word info string can't glue extra text onto the
+      // fence line. `plaintext` (our fallback for untagged blocks) prints a
+      // bare ``` to avoid a noisy tag.
+      const rawLang = ((token as Tokens.Code).lang ?? '').trim().split(/\s+/)[0] ?? ''
+      const fenceLang = lang === 'plaintext' ? '' : rawLang
+      const openFence = theme.codeBlockBorder.paint('```' + fenceLang)
+      const closeFence = theme.codeBlockBorder.paint('```')
+      return openFence + EOL + padCodeBlock(highlighted) + EOL + closeFence + EOL
     }
     case 'codespan': {
       const raw = token.text as string
@@ -514,10 +527,11 @@ export function formatToken(
       return wrapParagraph(style.paint(prefix + text)) + EOL
     }
     case 'hr': {
-      // Match claudecode: literal `---` (three dashes) instead of a full-width
-      // box-drawing rule. Keeps the separator inconspicuous and avoids the
-      // visual "second heading" effect on wide terminals.
-      return theme.hr.paint('---') + EOL
+      // Full-width horizontal rule (matching pi): a run of ─ capped at 80
+      // columns, sized to the current content width. Reads as a clear section
+      // break instead of a literal `---`.
+      const ruleWidth = Math.min(terminalContentWidth(), 80)
+      return theme.hr.paint('─'.repeat(Math.max(1, ruleWidth))) + EOL
     }
     case 'link': {
       if (token.href.startsWith('mailto:')) {

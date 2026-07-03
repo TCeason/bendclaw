@@ -13,6 +13,20 @@ function render(md: string): string {
   return stripAnsi(renderMarkdown(md))
 }
 
+// Helper: assert every ``` fence sits alone on its line and is never glued to
+// adjacent content. Code blocks now render WITH visible ```lang / ``` borders
+// (aligned with pi), so the old `not.toContain('```')` proxy — which meant
+// "the fence was consumed / didn't leak / didn't glue to a neighbor" — is
+// expressed directly here: a fence line is exactly ``` optionally followed by a
+// language tag, with nothing else on the line.
+function fencesWellFormed(rendered: string): boolean {
+  for (const line of rendered.split('\n')) {
+    if (!line.includes('```')) continue
+    if (!/^```[\w+-]*$/.test(line.trim())) return false
+  }
+  return true
+}
+
 // Helper: lex a single token from markdown
 function lexFirst(md: string): Token {
   const tokens = marked.lexer(md)
@@ -113,7 +127,7 @@ describe('renderMarkdown', () => {
   test('renders unclosed code fence as code', () => {
     const result = render('```sql\nSELECT 1')
     expect(result).toContain('SELECT 1')
-    expect(result).not.toContain('```')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('wraps implicit SQL snippets in code blocks', () => {
@@ -137,7 +151,8 @@ describe('renderMarkdown', () => {
     expect(result).toMatch(/^  CREATE TABLE decimal_driver_compat \($/m)
     expect(result).toMatch(/^ {6}id INT,$/m)
     expect(result).toContain('Continue explanation.')
-    expect(result).not.toContain('```sql')
+    expect(result).toContain('```sql')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('wraps implicit Java and Python driver snippets in code blocks', () => {
@@ -164,8 +179,10 @@ describe('renderMarkdown', () => {
     expect(result).toMatch(/^ {6}ResultSetMetaData md = rs\.getMetaData\(\);$/m)
     expect(result).toMatch(/^from decimal import Decimal$/m)
     expect(result).toMatch(/^ {4}print\(type\(row\[0\]\), row\[0\]\)$/m)
-    expect(result).not.toContain('```java')
-    expect(result).not.toContain('```python')
+    // Java is detected as implicit code and fenced; the Python snippet here
+    // stays plain prose (rendered at column 0), so only the Java fence appears.
+    expect(result).toContain('```java')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('stops implicit Java block at blank line before prose', () => {
@@ -248,6 +265,7 @@ describe('renderMarkdown', () => {
     expect(result).toContain('Final delivery table')
     expect(result).toContain('┌─────────────┬')
     expect(result).toContain('│ Java main   │ mariadb-java-client x.y.z   │ OK')
+    // Box-drawing diagram art gets no fence (rendered as-is, not code).
     expect(result).not.toContain('```text')
   })
 
@@ -337,10 +355,18 @@ describe('renderMarkdown', () => {
   test('unlabelled fenced code blocks use plaintext instead of language guessing', () => {
     // Reference renderer passes `plaintext` when no fence info string is present.
     // Auto-detection would colour random words and make unlabelled snippets
-    // inconsistent with the reference renderer.
+    // inconsistent with the reference renderer. The ```` fence borders may carry
+    // their own dim styling, so assert specifically that the code CONTENT line
+    // is uncoloured rather than the whole block.
     const result = renderMarkdown('```\nconst value = 1\n```')
     expect(result).toContain('const value = 1')
-    expect(result).not.toContain('\x1b[')
+    const contentLine = stripAnsi(result)
+      .split('\n')
+      .find(l => l.includes('const value = 1'))
+    expect(contentLine).toBeDefined()
+    // The content line, as emitted, contains no ANSI escape (no highlighting).
+    const rawContentLine = result.split('\n').find(l => l.includes('const value = 1'))
+    expect(rawContentLine).not.toContain('\x1b[')
   })
 
   test('highlights common alias tags (proto/jsonc/mdx/env/…)', async () => {
@@ -382,7 +408,7 @@ describe('renderMarkdown', () => {
     const result = render(md)
     expect(result).toContain('Intro')
     expect(result).toContain('const x: number = 1;')
-    expect(result).not.toContain('```')
+    expect(fencesWellFormed(result)).toBe(true)
     // Prose line must not carry the fence marker or code content.
     expect(result).toMatch(/^Intro$/m)
     expect(result).toMatch(/^  const x: number = 1;$/m)
@@ -548,7 +574,7 @@ describe('renderMarkdown', () => {
     const result = render(md)
     expect(result).toContain('{"id":"evt-001"}')
     expect(result).toContain('text after')
-    expect(result).not.toContain('```')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('keeps consecutive SQL statements inside one fence', () => {
@@ -562,7 +588,7 @@ describe('renderMarkdown', () => {
     expect(result).toContain('ALTER TASK t_etl RESUME;')
     expect(result).toContain('ALTER TASK t_ingest RESUME;')
     expect(result).toContain('后续说明。')
-    expect(result).not.toContain('```')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('splits fence close glued to following heading', () => {
@@ -571,7 +597,7 @@ describe('renderMarkdown', () => {
 
     expect(result).toContain('"id": "tr-abc"')
     expect(result).toContain('5.1 API')
-    expect(result).not.toContain('```')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('splits fence close glued to heading without a space', () => {
@@ -583,7 +609,7 @@ describe('renderMarkdown', () => {
     expect(result).toContain('"x":1')
     expect(result).toContain('题（8 项）')
     expect(result).not.toContain('##题')
-    expect(result).not.toContain('```')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('promotes ATX heading glued after a preceding paragraph', () => {
@@ -646,7 +672,8 @@ describe('renderMarkdown', () => {
     // emphasis markers.
     expect(render('-1.5 is negative').replace(/\u200b/g, '')).toContain('-1.5 is negative')
     expect(render('--flag is an option').replace(/\u200b/g, '')).toContain('--flag is an option')
-    expect(render('---').replace(/\u200b/g, '')).toContain('---')
+    // A bare `---` is an hr and now renders as a full-width ─ rule.
+    expect(render('---').replace(/\u200b/g, '')).toMatch(/─+/)
     expect(render('use *emphasis* here').replace(/\u200b/g, '')).toContain('emphasis')
   })
 
@@ -764,7 +791,7 @@ describe('renderMarkdown', () => {
 
     expect(result).toContain('const a = 1')
     expect(result).toContain('- item')
-    expect(result).not.toContain('```')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('splits fence close glued to following inline bold prose', () => {
@@ -773,7 +800,7 @@ describe('renderMarkdown', () => {
     expect(result).toContain('ToolError::Failed')
     expect(result).toContain('safe')
     expect(result).toContain('metadata only')
-    expect(result).not.toContain('```')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('splits fence close glued to following prose', () => {
@@ -781,7 +808,7 @@ describe('renderMarkdown', () => {
 
     expect(result).toContain('src/engine/Cargo.toml')
     expect(result).toContain('more info')
-    expect(result).not.toContain('```')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('splits trailing fence close glued to last code line', () => {
@@ -792,7 +819,7 @@ describe('renderMarkdown', () => {
     const result = render(md)
     expect(result).toContain('"diagnoses"')
     expect(result).toContain('"hypotheses"')
-    expect(result).not.toContain('```')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('splits trailing fence close glued to last code line and following prose', () => {
@@ -800,7 +827,7 @@ describe('renderMarkdown', () => {
 
     expect(result).toContain('print("hello")')
     expect(result).toContain('Continue explanation.')
-    expect(result).not.toContain('```')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('splits fence close glued to following plain prose', () => {
@@ -808,14 +835,14 @@ describe('renderMarkdown', () => {
 
     expect(result).toContain('print("hello")')
     expect(result).toContain('Continue explanation.')
-    expect(result).not.toContain('```')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('splits single-line fenced code', () => {
     const result = render('```const value = 1```')
 
     expect(result).toContain('const value = 1')
-    expect(result).not.toContain('```')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('repairs unclosed fence before following markdown heading without a blank line', () => {
@@ -823,7 +850,7 @@ describe('renderMarkdown', () => {
 
     expect(result).toContain('"id": "tr-abc"')
     expect(result.replace(/\u200b/g, '')).toContain('Step 8: input / output')
-    expect(result).not.toContain('```json')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('repairs completed json fence before plain chinese paragraph', () => {
@@ -831,7 +858,7 @@ describe('renderMarkdown', () => {
 
     expect(result).toContain('"is_deleted": 0')
     expect(result).toContain('text after')
-    expect(result).not.toContain('```json')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('repairs completed json fence before markdown hr without a blank line', () => {
@@ -839,9 +866,9 @@ describe('renderMarkdown', () => {
       .replace(/\u200b/g, '')
 
     expect(result).toContain('"is_deleted": 0')
-    expect(result).toContain('---')
+    expect(result).toMatch(/^─+$/m)
     expect(result).toContain('Step 8: input / output')
-    expect(result).not.toContain('```json')
+    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('repairs shell fence before following CJK prose and keeps later text fence visible', () => {
@@ -1137,9 +1164,10 @@ describe('renderMarkdown', () => {
   })
 
   test('renders horizontal rules', () => {
-    // Reference-style: literal `---`, not a box-drawing row.
+    // Full-width box-drawing rule (aligned with pi), not a literal `---`.
     const result = render('---')
-    expect(result).toContain('---')
+    expect(result).toMatch(/^─+$/m)
+    expect(result).not.toContain('---')
   })
 
   test('splits hr glued to end of sentence without whitespace', () => {
@@ -1156,10 +1184,11 @@ describe('renderMarkdown', () => {
     // the `###`, and the heading body. `---` + heading are ASCII; the CJK
     // body is kept because real-world failures came from CJK content.
     const result = render('---###第 4 / 5 步').replace(/\u200b/g, '')
-    expect(result).toContain('---')
-    expect(result).toContain('第 4 / 5 步')
+    // hr renders as a full-width ─ rule (aligned with pi); heading keeps `###`.
+    expect(result).toMatch(/^─+$/m)
+    expect(result).toContain('### 第 4 / 5 步')
     expect(result).not.toContain('###第')
-    expect(result).not.toContain('---###')
+    expect(result).not.toContain('---')
   })
 
   test('splits hr glued to heading after preceding prose', () => {
@@ -1172,10 +1201,10 @@ describe('renderMarkdown', () => {
   test('splits hr glued before heading', () => {
     const result = render('---### 方案分层：从零代码到完整 Eval').replace(/\u200b/g, '')
 
-    // The glued `---###` is split into an hr and an H3. H3+ keeps its `###`
-    // prefix (aligned with pi), so the heading renders with the marker.
-    expect(result).toContain('---\n\n### 方案分层：从零代码到完整 Eval')
-    expect(result).not.toContain('---###')
+    // The glued `---###` is split into an hr (full-width ─ rule, aligned with
+    // pi) and an H3. H3+ keeps its `###` prefix, so the heading shows the marker.
+    expect(result).toMatch(/^─+\n\n### 方案分层：从零代码到完整 Eval/m)
+    expect(result).not.toContain('---')
   })
 
   test('does not split em-dash mid-sentence', () => {
@@ -1698,7 +1727,7 @@ describe('formatToken', () => {
 
   test('renders hr as horizontal line', () => {
     const result = stripAnsi(formatToken({ type: 'hr', raw: '---' } as Token))
-    expect(result).toContain('---')
+    expect(result).toMatch(/^─+$/m)
   })
 
   test('renders image as href', () => {
@@ -1709,6 +1738,40 @@ describe('formatToken', () => {
   test('returns empty string for unknown token types', () => {
     const result = formatToken({ type: 'html', raw: '<div>' } as Token)
     expect(result).toBe('')
+  })
+})
+
+describe('block styling aligned with pi', () => {
+  test('code blocks render with ```lang / ``` borders', () => {
+    const out = render('```js\nconst a = 1\n```').split('\n').filter(l => l.trim())
+    expect(out[0]).toBe('```js')
+    expect(out[out.length - 1]).toBe('```')
+    expect(out.some(l => l === '  const a = 1')).toBe(true)
+  })
+
+  test('unlabelled code block uses a bare ``` (no plaintext tag)', () => {
+    const out = render('```\nplain\n```').split('\n').filter(l => l.trim())
+    expect(out[0]).toBe('```')
+    expect(out[out.length - 1]).toBe('```')
+  })
+
+  test('box-drawing diagram art gets no fence', () => {
+    const out = render('```\nA --> B\n│ tree\n```')
+    expect(out).not.toContain('```')
+    expect(out).toContain('A --> B')
+  })
+
+  test('blockquote uses the │ border (not ▎)', () => {
+    const out = render('> quoted')
+    expect(out).toContain('│ quoted')
+    expect(out).not.toContain('▎')
+  })
+
+  test('hr renders as a full-width ─ rule capped at 80 cols', () => {
+    const rule = render('---').split('\n').find(l => /─/.test(l)) ?? ''
+    expect(/^─+$/.test(rule)).toBe(true)
+    expect(rule.length).toBeLessThanOrEqual(80)
+    expect(render('---')).not.toContain('---')
   })
 })
 

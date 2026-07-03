@@ -197,7 +197,7 @@ function makeSeedCase(rng: () => number, seeds: string[]): Case {
     name: 'llm-seed',
     input,
     expected: [],
-    absent: [/```/, /\|---/, /<!-- -->/],
+    absent: [/\|---/, /<!-- -->/],
   }
 }
 
@@ -223,7 +223,7 @@ function makeFenceCase(rng: () => number): Case {
     name: `fence-${lang}`,
     input,
     expected: [code],
-    absent: [/```/],
+    absent: [],
   }
 }
 
@@ -306,7 +306,7 @@ function makeImplicitCodeCase(rng: () => number): Case {
     name: 'implicit-code',
     input,
     expected: [code[0]!, prose],
-    absent: [/```/],
+    absent: [],
   }
 }
 
@@ -360,9 +360,22 @@ function boxLineCount(text: string): number {
   return text.split('\n').filter(line => /[┌┐└┘├┤┬┴┼│─▼▲]/.test(line)).length
 }
 
+// Global invariant: code blocks now render WITH ```lang / ``` borders (aligned
+// with pi), so a bare `not.toContain('```')` no longer holds. What must still
+// hold is that every fence line is well-formed — exactly ``` plus an optional
+// language tag, alone on its line, never glued to prose or a neighbor.
+function fencesWellFormed(output: string): boolean {
+  for (const line of output.split('\n')) {
+    if (!line.includes('```')) continue
+    if (!/^```[\w+-]*$/.test(line.trim())) return false
+  }
+  return true
+}
+
 function assertCase(c: Case, output: string): void {
   expect(output.length).toBeLessThan(c.input.length * 20 + 1000)
   expect(output).not.toContain('<!-- -->')
+  expect(fencesWellFormed(output)).toBe(true)
   for (const expected of c.expected) {
     expect(output).toContain(expected)
   }

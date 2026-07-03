@@ -51,6 +51,7 @@ export interface Theme {
 
   // Misc
   hr: Style
+  codeBlockBorder: Style
   thinkBorder: Style
   thinkText: Style
 
@@ -100,6 +101,7 @@ function darkTheme(): Theme {
     tableHeader: style(s => chalk.bold(s)),
 
     hr: style(s => gray(s)),
+    codeBlockBorder: style(s => dimGray(s)),
     thinkBorder: style(s => gray(s)),
     thinkText: style(s => dimGray.italic(s)),
 
@@ -144,6 +146,7 @@ function lightTheme(): Theme {
     tableHeader: style(s => chalk.bold(s)),
 
     hr: style(s => gray(s)),
+    codeBlockBorder: style(s => dimGray(s)),
     thinkBorder: style(s => gray(s)),
     thinkText: style(s => dimGray.italic(s)),
 
