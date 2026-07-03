@@ -305,11 +305,27 @@ fn process_sse_event(
         }
         "ping" | "message" => {}
         "error" => {
-            // Log any tool-call JSON buffered so far. When the gateway rejects a
-            // response with `invalid_tool_call` / `malformed tool_use JSON`, this
-            // is our only window into the exact (bad) format the model emitted,
-            // since the error path discards the partial content. Keyed by block
-            // index so a multi-tool turn stays legible.
+            // Surface the exact malformed model output when the gateway rejects a
+            // tool call. Two sources, in priority order:
+            //   1. The `raw` field the gateway attaches to the error payload —
+            //      the model's original text when it couldn't assemble a valid
+            //      tool_use block at all (nothing was streamed to us).
+            //   2. Any tool-call JSON we buffered from streamed deltas before the
+            //      error arrived.
+            // Either way this is our only window into the bad format, since the
+            // error path discards the partial content.
+            if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&sse.data) {
+                if let Some(raw) = payload
+                    .get("error")
+                    .and_then(|e| e.get("raw"))
+                    .and_then(|r| r.as_str())
+                {
+                    warn!(
+                        raw_tool_json = raw,
+                        "provider error with raw tool-call JSON from gateway"
+                    );
+                }
+            }
             if !state.tool_input_buffers.is_empty() {
                 for (idx, raw) in &state.tool_input_buffers {
                     warn!(
