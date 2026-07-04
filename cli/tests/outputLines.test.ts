@@ -330,6 +330,19 @@ describe('buildVerboseEvent', () => {
     expect(result.expandedText).toBeUndefined()
   })
 
+  test('tok/s uses the streaming window, not total wall-clock', () => {
+    // 600 output tokens over a 3s streaming window = 200 tok/s. The 12s ttfb
+    // wait must not dilute the rate (total duration 15s would give 40 tok/s).
+    const result = formatLlmCallCompleted({
+      model: 'qwen3-4b',
+      turn: 1,
+      output_tokens: 600,
+      metrics: { duration_ms: 15000, ttfb_ms: 12000, ttft_ms: 12000, streaming_ms: 3000 },
+    })
+    expect(result.text).toContain('· 200 tok/s')
+    expect(result.text).not.toContain('· 40 tok/s')
+  })
+
   test('formats compact verbose with status symbols and preserves details', () => {
     const started = formatCompactionStarted({
       level: 'L1',

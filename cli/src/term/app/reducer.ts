@@ -250,7 +250,10 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const ttfbMs = (metrics?.ttfb_ms as number) ?? 0
       const ttftMs = (metrics?.ttft_ms as number) ?? 0
       const streamingMs = (metrics?.streaming_ms as number) ?? 0
-      const tokPerSec = durationMs > 0 ? outputTok / (durationMs / 1000) : 0
+      // Real generation speed: output tokens over the pure streaming window
+      // (first delta → done), not total wall-clock. duration_ms would dilute the
+      // rate with the ttfb wait (queueing + prompt processing).
+      const tokPerSec = streamingMs > 0 ? outputTok / (streamingMs / 1000) : 0
 
       if (usage) {
         stats.inputTokens += inputTok

@@ -214,9 +214,13 @@ export function formatLlmCallCompleted(data: Record<string, unknown>): { text: s
   const cacheWriteTok = usage?.cache_write ?? (data.cache_write as number) ?? 0
   const cacheTotalInput = inputTok + cacheReadTok + cacheWriteTok
   const cacheHitRate = cacheTotalInput > 0 ? (cacheReadTok / cacheTotalInput * 100).toFixed(0) : '0'
-  const tokPerSec = durationMs > 0 ? (outputTok / (durationMs / 1000)).toFixed(0) : '0'
   const ttfbMs = (data.time_to_first_byte_ms as number) ?? metrics?.ttfb_ms ?? 0
   const streamingMs = metrics?.streaming_ms ?? Math.max(0, durationMs - ttfbMs)
+  // Real generation speed: output tokens over the pure streaming window (first
+  // delta → done), not total wall-clock. Using duration_ms would dilute the rate
+  // with the ttfb wait (queueing + prompt processing), understating how fast the
+  // model actually emits tokens.
+  const tokPerSec = streamingMs > 0 ? (outputTok / (streamingMs / 1000)).toFixed(0) : '0'
   const dur = durationMs || 1
   const ttfbPct = ((ttfbMs / dur) * 100).toFixed(0)
   const streamPct = ((streamingMs / dur) * 100).toFixed(0)
