@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test'
 import { renderMarkdown } from '../src/render/markdown.js'
 import { formatToken } from '../src/markdown/render/ansi.js'
-import { getTheme } from '../src/render/theme.js'
+import { getTheme, resetThemeCache } from '../src/render/theme.js'
 import chalk from 'chalk'
 import { marked, type Token } from 'marked'
 import stripAnsi from 'strip-ansi'
@@ -1147,18 +1147,46 @@ describe('renderMarkdown', () => {
 
   test('h1 heading is gold, bold, italic, underlined', () => {
     // evot accent gold + emphasis (matches banner headers + pi's mdHeading).
-    const theme = getTheme()
-    expect(theme.h1.paint('Title')).toBe(chalk.hex('#f0c674').bold.italic.underline('Title'))
-    const raw = renderMarkdown('# Title')
-    expect(raw).toContain(theme.h1.paint('Title'))
+    // Pin the dark theme + colour level so the assertion is deterministic:
+    // getTheme() otherwise caches whichever theme the ambient env resolved
+    // (dark locally, light under CI), which flips the accent hue.
+    const prevLevel = chalk.level
+    const prevTheme = process.env.EVOT_THEME
+    chalk.level = 3
+    process.env.EVOT_THEME = 'dark'
+    resetThemeCache()
+    try {
+      const theme = getTheme()
+      expect(theme.h1.paint('Title')).toBe(chalk.hex('#f0c674').bold.italic.underline('Title'))
+      const raw = renderMarkdown('# Title')
+      expect(raw).toContain(theme.h1.paint('Title'))
+    } finally {
+      chalk.level = prevLevel
+      if (prevTheme === undefined) delete process.env.EVOT_THEME
+      else process.env.EVOT_THEME = prevTheme
+      resetThemeCache()
+    }
   })
 
   test('h2 heading is gold and bold', () => {
     // h2+ carry the accent so every level reads as a distinct section marker.
-    const theme = getTheme()
-    expect(theme.h2.paint('Subtitle')).toBe(chalk.hex('#f0c674').bold('Subtitle'))
-    const raw = renderMarkdown('## Subtitle')
-    expect(raw).toContain(theme.h2.paint('Subtitle'))
+    // See h1 test: pin dark theme + colour level for a deterministic hue.
+    const prevLevel = chalk.level
+    const prevTheme = process.env.EVOT_THEME
+    chalk.level = 3
+    process.env.EVOT_THEME = 'dark'
+    resetThemeCache()
+    try {
+      const theme = getTheme()
+      expect(theme.h2.paint('Subtitle')).toBe(chalk.hex('#f0c674').bold('Subtitle'))
+      const raw = renderMarkdown('## Subtitle')
+      expect(raw).toContain(theme.h2.paint('Subtitle'))
+    } finally {
+      chalk.level = prevLevel
+      if (prevTheme === undefined) delete process.env.EVOT_THEME
+      else process.env.EVOT_THEME = prevTheme
+      resetThemeCache()
+    }
   })
 
   test('list markers carry the teal accent, checkbox stays uncoloured', () => {
