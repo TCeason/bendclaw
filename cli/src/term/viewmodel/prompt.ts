@@ -50,7 +50,11 @@ export function buildPromptBlocks(input: PromptVMInput): ViewBlock[] {
   const columns = Number.isFinite(input.columns) ? Math.max(1, Math.floor(input.columns)) : 80
   const border = '─'.repeat(columns)
 
-  blocks.push(block([line(dim(border))]))
+  // Guarantee one blank line between the message area and the prompt's top
+  // border, independent of how the preceding block ended (history / streaming /
+  // spinner). Mirrors pi's always-present widgetContainerAbove spacer, and
+  // matches the marginTop:1 every other frame section already uses.
+  blocks.push(block([line(dim(border))], 1))
 
   const inputLines: StyledLine[] = []
   // Visual width available for input text after the 2-column prefix (`❯ ` / `  `).

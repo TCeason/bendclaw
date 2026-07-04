@@ -114,11 +114,14 @@ describe('buildPromptBlocks', () => {
     expect(result).toContain('/resume')
   })
 
-  test('does not add top margin', () => {
+  test('adds one top margin so the prompt is always separated from messages', () => {
+    // Mirrors pi's always-present widgetContainerAbove spacer: one guaranteed
+    // blank line between the message area and the prompt border, regardless of
+    // loading state or how the preceding block ended.
     const [promptBlock] = buildPromptBlocks(defaultInput({ isLoading: true }))
-    expect(promptBlock?.marginTop).toBeUndefined()
+    expect(promptBlock?.marginTop).toBe(1)
     const [idleBlock] = buildPromptBlocks(defaultInput({ isLoading: false }))
-    expect(idleBlock?.marginTop).toBeUndefined()
+    expect(idleBlock?.marginTop).toBe(1)
   })
 
   test('footer shows context with model but not session token totals', () => {
