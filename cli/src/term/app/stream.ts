@@ -1,6 +1,6 @@
 import { buildError, buildToolCall, buildToolProgress, buildToolResult, buildVerboseEvent, buildLlmCard, isVisibleLlmEvent, buildAssistantLines, buildThinkingSummary, type OutputLine } from '../../render/output.js'
 import { formatDuration } from '../../render/format.js'
-import { setSpinnerPhase, type SpinnerState } from '../spinner.js'
+import { recordStreamDelta, resetStreamStats, setSpinnerPhase, type SpinnerState } from '../spinner.js'
 import { applyEvent } from './reducer.js'
 import type { AppState } from './state.js'
 import type { RunEvent } from '../../native/index.js'
@@ -189,7 +189,14 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
 
   if (event.kind === 'llm_call_started' || event.kind === 'llm_call_retry' || event.kind === 'api_retry' || event.kind === 'context_compaction_started') {
     const flushed = flushStreaming(state)
-    state = { ...flushed.state, toolProgress: '', lastToolProgress: '', activeLlmCall: event.kind === 'llm_call_started' || event.kind === 'llm_call_retry' || event.kind === 'api_retry' }
+    const activeLlmCall = event.kind === 'llm_call_started' || event.kind === 'llm_call_retry' || event.kind === 'api_retry'
+    state = {
+      ...flushed.state,
+      toolProgress: '',
+      lastToolProgress: '',
+      activeLlmCall,
+      spinnerState: activeLlmCall ? resetStreamStats(flushed.state.spinnerState) : flushed.state.spinnerState,
+    }
     commitLines.push(...flushed.lines)
     mergeFlushExpanded(flushed)
     const newEvents = state.appState.verboseEvents.slice(prev.appState.verboseEvents.length)
@@ -210,12 +217,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
 
       state = {
         ...state,
-        spinnerState: {
-          ...state.spinnerState,
-          lastTokenAt: Date.now(),
-          streaming: true,
-          tokenCount: state.spinnerState.tokenCount + 1,
-        },
+        spinnerState: recordStreamDelta(state.spinnerState, textDelta),
       }
 
       // Keep the whole in-progress message in the dynamic zone so it grows in
@@ -260,17 +262,13 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
       if (visibleTextStarted) {
         appendVisibleTextDelta(thinkingDelta)
       } else {
+        const now = Date.now()
         state = {
           ...state,
           streamingThinkingText: state.streamingThinkingText + thinkingDelta,
           pendingThinkingText: state.streamingThinkingText + thinkingDelta,
           thinkingTokenCount: state.thinkingTokenCount + 1,
-          spinnerState: {
-            ...state.spinnerState,
-            lastTokenAt: Date.now(),
-            streaming: true,
-            tokenCount: state.spinnerState.tokenCount + 1,
-          },
+          spinnerState: recordStreamDelta(state.spinnerState, thinkingDelta, now),
         }
         rerenderStatus = true
       }

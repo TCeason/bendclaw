@@ -45,6 +45,7 @@ export interface SpinnerState {
   streaming: boolean
   toolName: string | null
   tokenCount: number
+  streamStartedAt: number | null
   glimmerPos: number
 }
 
@@ -57,6 +58,7 @@ export function createSpinnerState(): SpinnerState {
     streaming: false,
     toolName: null,
     tokenCount: 0,
+    streamStartedAt: null,
     glimmerPos: -2,
   }
 }
@@ -76,6 +78,27 @@ export function setSpinnerPhase(state: SpinnerState, phase: SpinnerPhase, toolNa
     phase,
     phaseStartedAt: Date.now(),
     toolName: toolName ?? null,
+  }
+}
+
+export function recordStreamDelta(state: SpinnerState, textDelta: string, now = Date.now()): SpinnerState {
+  const tokens = estimateTokens(textDelta)
+  return {
+    ...state,
+    lastTokenAt: now,
+    streaming: true,
+    tokenCount: state.tokenCount + tokens,
+    streamStartedAt: state.streamStartedAt ?? now,
+  }
+}
+
+export function resetStreamStats(state: SpinnerState): SpinnerState {
+  return {
+    ...state,
+    lastTokenAt: null,
+    streaming: false,
+    tokenCount: 0,
+    streamStartedAt: null,
   }
 }
 
@@ -110,7 +133,7 @@ export function formatSpinnerLine(state: SpinnerState, now: number, stats?: Spin
   }
 
   const status = formatFixedDuration(elapsed)
-  const tokenSuffix = formatSpinnerTokenSuffix(state, stats)
+  const tokenSuffix = formatSpinnerTokenSuffix(state, now, stats)
 
   if (slow) {
     return `\x1b[31m${char}\x1b[0m \x1b[31m${label}\x1b[0m\x1b[2m (${status}${tokenSuffix}) · esc to interrupt\x1b[0m`
@@ -148,24 +171,39 @@ function humanDuration(ms: number): string {
   return rem > 0 ? `${mins}m${rem}s` : `${mins}m`
 }
 
-function formatSpinnerTokenSuffix(state: SpinnerState, stats?: SpinnerStats): string {
+function formatSpinnerTokenSuffix(state: SpinnerState, now: number, stats?: SpinnerStats): string {
   const inputTokens = stats?.inputTokens ?? 0
   const outputTokens = stats?.outputTokens ?? 0
   const cacheReadTokens = stats?.cacheReadTokens ?? 0
+  const liveRate = formatLiveTokPerSec(state, now)
   if (inputTokens > 0 || outputTokens > 0 || cacheReadTokens > 0) {
     const parts: string[] = []
     if (inputTokens > 0) parts.push(`↑${formatTokens(inputTokens)}`)
     if (outputTokens > 0) parts.push(`↓${formatTokens(outputTokens)}`)
     if (cacheReadTokens > 0) parts.push(`cache ${formatCacheHitPercent(inputTokens, cacheReadTokens)}`)
-    return ` · ${parts.join(' ')}`
+    return ` · ${parts.join(' ')}${liveRate ? ` · ${liveRate}` : ''}`
   }
-  return state.tokenCount > 0 ? ` · ↓ ${formatTokens(state.tokenCount)} tokens` : ''
+  const tokenSuffix = state.tokenCount > 0 ? ` · ↓ ${formatTokens(state.tokenCount)} tokens` : ''
+  return `${tokenSuffix}${liveRate ? ` · ${liveRate}` : ''}`
 }
 
+function formatLiveTokPerSec(state: SpinnerState, now: number): string {
+  if (!state.streaming || state.phase !== 'thinking' || !state.streamStartedAt || state.tokenCount <= 0) return ''
+  const elapsedMs = Math.max(0, now - state.streamStartedAt)
+  if (elapsedMs < 500) return ''
+  const rate = state.tokenCount / (elapsedMs / 1000)
+  if (!Number.isFinite(rate) || rate <= 0) return ''
+  return `~${Math.round(rate)} tok/s`
+}
 function formatCacheHitPercent(inputTokens: number, cacheReadTokens: number): string {
   const total = inputTokens + cacheReadTokens
   if (total <= 0) return '0%'
   return `${Math.round(cacheReadTokens / total * 100)}%`
+}
+
+function estimateTokens(text: string): number {
+  if (!text) return 0
+  return Math.max(1, Math.round(text.length / 4))
 }
 
 function formatTokens(count: number): string {

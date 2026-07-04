@@ -3,6 +3,7 @@ import {
   createSpinnerState,
   advanceSpinner,
   setSpinnerPhase,
+  recordStreamDelta,
   isSlow,
   formatSpinnerLine,
 } from '../src/term/spinner.js'
@@ -216,5 +217,14 @@ describe('formatSpinnerLine', () => {
     const line = stripAnsi(formatSpinnerLine(state, now, { inputTokens: 408000, outputTokens: 1100, cacheReadTokens: 89000 }))
     expect(line).toContain('↑408k ↓1.1k cache 18%')
     expect(line).not.toContain('tokens')
+  })
+
+  test('shows live tok/s while streaming text', () => {
+    const start = 10_000
+    let state = createSpinnerState()
+    state = recordStreamDelta(state, 'x'.repeat(400), start)
+    const line = stripAnsi(formatSpinnerLine(state, start + 2000))
+    expect(line).toContain('↓ 100 tokens')
+    expect(line).toContain('~50 tok/s')
   })
 })
