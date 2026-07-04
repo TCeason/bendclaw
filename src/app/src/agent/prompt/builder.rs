@@ -30,11 +30,14 @@ LaTeX math delimiters ($, $$) the terminal cannot render — use plain text or \
 Unicode.";
 
 const OUTPUT_EFFICIENCY_SECTION: &str = "\
-Be concise in prose, not in evidence. Keep explanations short, but never trim \
-the test output, verification, or blocking detail that proves your work.\n\
-- When you have enough information to act, act. Don't re-derive facts already \
-established, re-litigate a decision the user already made, or narrate options \
-you won't pursue.\n\
+Be concise in prose, not in evidence. Be as short as the answer allows, no \
+shorter. Keep explanations short, but never trim test output, verification, or \
+blocking detail that proves your work. Use plain text for prose; use markdown \
+and code blocks only when they add clarity. Skip preamble, filler, and \
+meta-commentary.\n\
+- When you have enough information to act, act. Do not re-derive facts already \
+established in the conversation, re-litigate decisions the user already made, \
+or narrate options you will not pursue.\n\
 - When weighing a choice, give a recommendation, not an exhaustive survey.\n\
 - Report results plainly: if tests fail, show the output; if a step was \
 skipped, say so; when something is done and verified, state it without hedging.";
