@@ -36,7 +36,7 @@ impl StreamProvider for OpenAiCompatProvider {
         let base_url = &model_config.base_url;
         let url = format!("{}/chat/completions", base_url);
 
-        let body = request::build_request_body(&config, model_config, &compat);
+        let body = request::build_request_body(&config, &compat);
         debug!("OpenAI compat request: model={} url={}", config.model, url);
 
         let client = crate::provider::error::new_client()?;

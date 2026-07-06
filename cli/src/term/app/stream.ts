@@ -293,6 +293,18 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     }
     commitLines.push(...flushed.lines)
     mergeFlushExpanded(flushed)
+    // Surface an output-token truncation so a response cut off mid-sentence is
+    // not mistaken for a clean finish. Mirrors pi's assistant-message length
+    // notice. `resolved_max_tokens` clamps the budget to the window, so this
+    // only fires on a genuine max-output-tokens stop.
+    if (event.kind === 'assistant_completed' && p.stop_reason === 'length') {
+      const notice = buildError(
+        'Model stopped because it reached the maximum output token limit. The response may be incomplete.',
+      )
+      commitLines.push(...notice)
+      if (!expandedCommitLines) expandedCommitLines = []
+      expandedCommitLines.push(...notice)
+    }
     rerenderStatus = true
   }
 

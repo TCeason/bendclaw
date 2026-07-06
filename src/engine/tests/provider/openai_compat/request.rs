@@ -15,7 +15,7 @@ fn test_gpt_5_5_adaptive_thinking_maps_to_model_default_reasoning_effort() {
         .thinking(ThinkingLevel::Adaptive)
         .build();
 
-    let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
+    let body = build_request_body(&config, &OpenAiCompat::openai());
     assert_eq!(body["reasoning_effort"], "medium");
 }
 
@@ -28,7 +28,7 @@ fn test_gpt_5_4_adaptive_thinking_maps_to_model_default_reasoning_effort() {
         .thinking(ThinkingLevel::Adaptive)
         .build();
 
-    let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
+    let body = build_request_body(&config, &OpenAiCompat::openai());
     assert_eq!(body["reasoning_effort"], "xhigh");
 }
 
@@ -41,66 +41,61 @@ fn test_gpt_5_xhigh_thinking_maps_to_xhigh_reasoning_effort() {
         .thinking(ThinkingLevel::Xhigh)
         .build();
 
-    let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
+    let body = build_request_body(&config, &OpenAiCompat::openai());
     assert_eq!(body["reasoning_effort"], "xhigh");
 }
 
 #[test]
 fn test_medium_thinking_maps_to_medium_reasoning_effort() {
-    let model_config = ModelConfig::openai("gpt-5", "GPT-5");
     let config = StreamConfigBuilder::openai()
         .model("gpt-5")
         .thinking(ThinkingLevel::Medium)
         .build();
 
-    let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
+    let body = build_request_body(&config, &OpenAiCompat::openai());
     assert_eq!(body["reasoning_effort"], "medium");
 }
 
 #[test]
 fn test_low_thinking_maps_to_low_reasoning_effort() {
-    let model_config = ModelConfig::openai("gpt-5", "GPT-5");
     let config = StreamConfigBuilder::openai()
         .model("gpt-5")
         .thinking(ThinkingLevel::Low)
         .build();
 
-    let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
+    let body = build_request_body(&config, &OpenAiCompat::openai());
     assert_eq!(body["reasoning_effort"], "low");
 }
 
 #[test]
 fn test_off_thinking_omits_reasoning_effort() {
-    let model_config = ModelConfig::openai("gpt-5", "GPT-5");
     let config = StreamConfigBuilder::openai()
         .model("gpt-5")
         .thinking(ThinkingLevel::Off)
         .build();
 
-    let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
+    let body = build_request_body(&config, &OpenAiCompat::openai());
     assert!(body.get("reasoning_effort").is_none());
 }
 
 #[test]
 fn test_compat_without_reasoning_support_omits_reasoning_effort() {
-    let model_config = ModelConfig::openai("gpt-5", "GPT-5");
     let config = StreamConfigBuilder::openai()
         .model("gpt-5")
         .thinking(ThinkingLevel::Adaptive)
         .build();
 
-    let body = build_request_body(&config, &model_config, &OpenAiCompat::default());
+    let body = build_request_body(&config, &OpenAiCompat::default());
     assert!(body.get("reasoning_effort").is_none());
 }
 
 #[test]
 fn test_build_request_body_basic() {
-    let model_config = ModelConfig::openai("gpt-4o", "GPT-4o");
     let config = StreamConfigBuilder::openai()
         .system_prompt("You are helpful.")
         .build();
 
-    let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
+    let body = build_request_body(&config, &OpenAiCompat::openai());
     assert_eq!(body["model"], "gpt-4o");
     assert!(body["stream"].as_bool().unwrap());
     assert_eq!(body["messages"][0]["role"], "system");
@@ -110,29 +105,26 @@ fn test_build_request_body_basic() {
 
 #[test]
 fn test_prompt_cache_key_is_included_for_openai() {
-    let model_config = ModelConfig::openai("gpt-4o", "GPT-4o");
     let config = StreamConfigBuilder::openai()
         .prompt_cache_key("session-123")
         .build();
 
-    let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
+    let body = build_request_body(&config, &OpenAiCompat::openai());
     assert_eq!(body["prompt_cache_key"], "session-123");
 }
 
 #[test]
 fn test_prompt_cache_key_omitted_without_capability() {
-    let model_config = ModelConfig::openai("gpt-4o", "GPT-4o");
     let config = StreamConfigBuilder::openai()
         .prompt_cache_key("session-123")
         .build();
 
-    let body = build_request_body(&config, &model_config, &OpenAiCompat::default());
+    let body = build_request_body(&config, &OpenAiCompat::default());
     assert!(body.get("prompt_cache_key").is_none());
 }
 
 #[test]
 fn test_build_request_body_with_tools() {
-    let model_config = ModelConfig::openai("gpt-4o", "GPT-4o");
     let compat = OpenAiCompat::openai();
     let config = StreamConfigBuilder::openai()
         .messages(vec![Message::user("List files")])
@@ -141,7 +133,7 @@ fn test_build_request_body_with_tools() {
         .temperature(0.5)
         .build();
 
-    let body = build_request_body(&config, &model_config, &compat);
+    let body = build_request_body(&config, &compat);
     assert!(body["tools"].is_array());
     assert_eq!(body["tools"][0]["function"]["name"], "bash");
     assert_eq!(body["temperature"], 0.5);
@@ -201,7 +193,6 @@ fn test_content_to_openai_multipart() {
 
 #[test]
 fn test_tool_result_with_image() {
-    let model_config = ModelConfig::openai("gpt-4o", "GPT-4o");
     let compat = OpenAiCompat::openai();
     let config = StreamConfigBuilder::openai()
         .messages(vec![
@@ -236,7 +227,7 @@ fn test_tool_result_with_image() {
         ])
         .build();
 
-    let body = build_request_body(&config, &model_config, &compat);
+    let body = build_request_body(&config, &compat);
     let msgs = body["messages"].as_array().unwrap();
     let tool_msg = &msgs[1];
     assert_eq!(tool_msg["role"], "tool");
@@ -259,7 +250,6 @@ fn test_tool_result_with_image() {
 
 #[test]
 fn test_tool_result_text_only_uses_string() {
-    let model_config = ModelConfig::openai("gpt-4o", "GPT-4o");
     let compat = OpenAiCompat::openai();
     let config = StreamConfigBuilder::openai()
         .messages(vec![
@@ -290,7 +280,7 @@ fn test_tool_result_text_only_uses_string() {
         ])
         .build();
 
-    let body = build_request_body(&config, &model_config, &compat);
+    let body = build_request_body(&config, &compat);
     let msgs = body["messages"].as_array().unwrap();
     let tool_msg = &msgs[1];
     assert_eq!(tool_msg["content"], "hello");
@@ -298,7 +288,6 @@ fn test_tool_result_text_only_uses_string() {
 
 #[test]
 fn test_empty_assistant_message_is_skipped() {
-    let model_config = ModelConfig::openai("gpt-4o", "GPT-4o");
     let compat = OpenAiCompat::openai();
     let config = StreamConfigBuilder::openai()
         .messages(vec![
@@ -317,7 +306,7 @@ fn test_empty_assistant_message_is_skipped() {
         ])
         .build();
 
-    let body = build_request_body(&config, &model_config, &compat);
+    let body = build_request_body(&config, &compat);
     let msgs = body["messages"].as_array().unwrap();
     // user("hello") + user("world") = 2, empty assistant skipped (no system prompt)
     assert_eq!(msgs.len(), 2);
@@ -353,7 +342,6 @@ fn test_chunk_without_error_has_none() {
 
 #[test]
 fn test_reasoning_content_in_request() {
-    let model_config = ModelConfig::openai("deepseek-v4-pro", "DeepSeek V4 Pro");
     let config = StreamConfigBuilder::openai()
         .model("deepseek-v4-pro")
         .messages(vec![
@@ -380,7 +368,7 @@ fn test_reasoning_content_in_request() {
         ])
         .build();
 
-    let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
+    let body = build_request_body(&config, &OpenAiCompat::openai());
     let msgs = body["messages"].as_array().unwrap();
     assert_eq!(msgs.len(), 3);
     let asst = &msgs[1];
@@ -391,7 +379,6 @@ fn test_reasoning_content_in_request() {
 
 #[test]
 fn test_thinking_only_assistant_not_skipped() {
-    let model_config = ModelConfig::openai("deepseek-v4-pro", "DeepSeek V4 Pro");
     let config = StreamConfigBuilder::openai()
         .model("deepseek-v4-pro")
         .messages(vec![Message::user("test"), Message::Assistant {
@@ -409,7 +396,7 @@ fn test_thinking_only_assistant_not_skipped() {
         }])
         .build();
 
-    let body = build_request_body(&config, &model_config, &OpenAiCompat::openai());
+    let body = build_request_body(&config, &OpenAiCompat::openai());
     let msgs = body["messages"].as_array().unwrap();
     // user + assistant (thinking only, NOT skipped) = 2
     assert_eq!(
@@ -425,7 +412,6 @@ fn test_thinking_only_assistant_not_skipped() {
 
 #[test]
 fn test_tool_call_assistant_includes_empty_reasoning_content() {
-    let model_config = ModelConfig::openai("gpt-4o", "GPT-4o");
     let config = StreamConfigBuilder::openai()
         .messages(vec![Message::user("test"), Message::Assistant {
             content: vec![Content::ToolCall {
@@ -443,7 +429,7 @@ fn test_tool_call_assistant_includes_empty_reasoning_content() {
         }])
         .build();
 
-    let body = build_request_body(&config, &model_config, &OpenAiCompat::deepseek());
+    let body = build_request_body(&config, &OpenAiCompat::deepseek());
     let msgs = body["messages"].as_array().unwrap();
     let asst = &msgs[1];
     assert_eq!(asst["role"], "assistant");
@@ -453,7 +439,6 @@ fn test_tool_call_assistant_includes_empty_reasoning_content() {
 
 #[test]
 fn test_tool_call_assistant_omits_empty_reasoning_content_without_cap() {
-    let model_config = ModelConfig::openai("gpt-4o", "GPT-4o");
     let config = StreamConfigBuilder::openai()
         .messages(vec![Message::user("test"), Message::Assistant {
             content: vec![Content::ToolCall {
@@ -473,7 +458,7 @@ fn test_tool_call_assistant_omits_empty_reasoning_content_without_cap() {
 
     let compat = OpenAiCompat::openai();
     // OpenAI doesn't have this cap by default, so no need to remove it.
-    let body = build_request_body(&config, &model_config, &compat);
+    let body = build_request_body(&config, &compat);
     let msgs = body["messages"].as_array().unwrap();
     let asst = &msgs[1];
     assert_eq!(asst["role"], "assistant");

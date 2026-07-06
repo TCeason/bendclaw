@@ -310,14 +310,29 @@ pub struct ModelConfig {
     pub thinking_level_map: HashMap<String, Option<String>>,
 }
 
+/// Resolve `(context_window, default_max_output_tokens)` for an Anthropic model.
+///
+/// Version-gated rather than id-listed so future releases work without edits,
+/// mirroring pi's per-model registry values:
+/// - Opus 4.6+, Sonnet 5+, and the Fable family carry the 1M context window and
+///   a 128k output cap.
+/// - Other modern Claude 4.x (Sonnet/Haiku/Opus) support a 64k output budget.
+/// - Legacy `claude-3-*` and unparseable ids fall back to conservative caps.
+///
+/// The output cap is an upper bound only — [`StreamConfig::resolved_max_tokens`]
+/// clamps it to the remaining context window per request.
 fn anthropic_context_window(id: &str) -> (u32, u32) {
-    // Opus 4.6 introduced the 1M-token context window; every newer Opus keeps
-    // it. Version-gating (rather than listing ids) means future Opus releases
-    // work without edits.
-    if let Some((family, major, minor)) = anthropic_model_version(id) {
-        if family == "opus" && (major, minor) >= (4, 6) {
-            return (1_000_000, 128_000);
-        }
+    let Some((family, major, minor)) = anthropic_model_version(id) else {
+        return (200_000, 8192);
+    };
+    let million_ctx = family == "fable"
+        || (family == "opus" && (major, minor) >= (4, 6))
+        || (family == "sonnet" && major >= 5);
+    if million_ctx {
+        return (1_000_000, 128_000);
+    }
+    if major >= 4 {
+        return (200_000, 64_000);
     }
     (200_000, 8192)
 }
@@ -325,15 +340,20 @@ fn anthropic_context_window(id: &str) -> (u32, u32) {
 /// Default `thinking_level_map` for an Anthropic model id.
 ///
 /// The map records only *exceptions* to the request builder's default, which
-/// already maps the `xhigh` level to `"xhigh"` effort. The one known exception
-/// is Opus 4.6, whose strongest tier is `"max"` rather than `"xhigh"`. Opus 4.7+
-/// and all other models use the default, so they need no entry — new models keep
-/// working without touching this table. Mirrors pi's per-model `thinkingLevelMap`.
+/// already maps the `xhigh` level to `"xhigh"` effort. Known exceptions:
+/// - Opus 4.6's strongest tier is `"max"` rather than `"xhigh"`.
+/// - The Fable family cannot disable thinking, so `off` is unsupported.
+///
+/// Everything else uses the default, so new models keep working without
+/// touching this table. Mirrors pi's per-model `thinkingLevelMap`.
 fn anthropic_thinking_level_map(id: &str) -> HashMap<String, Option<String>> {
     let mut map = HashMap::new();
     if let Some((family, major, minor)) = anthropic_model_version(id) {
         if family == "opus" && (major, minor) == (4, 6) {
             map.insert("xhigh".into(), Some("max".into()));
+        }
+        if family == "fable" {
+            map.insert("off".into(), None);
         }
     }
     map
@@ -351,7 +371,7 @@ fn anthropic_thinking_level_map(id: &str) -> HashMap<String, Option<String>> {
 /// features gated here.
 fn anthropic_model_version(id: &str) -> Option<(&'static str, u32, u32)> {
     let normalized = id.trim().to_ascii_lowercase();
-    let family = ["opus", "sonnet", "haiku"]
+    let family = ["opus", "sonnet", "haiku", "fable"]
         .into_iter()
         .find(|f| normalized.contains(*f))?;
     let after = normalized.split(family).nth(1)?;
@@ -520,7 +540,7 @@ impl ModelConfig {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             context_window,
-            max_tokens: 4096,
+            max_tokens: 32_768,
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::openai()),
@@ -529,8 +549,14 @@ impl ModelConfig {
         }
     }
 
-    /// Create a config for a local OpenAI-compatible server (LM Studio, Ollama, etc.).
-    /// No API key required — sends an empty Bearer token.
+    /// Create a config for an OpenAI-compatible server (the runtime path for
+    /// every OpenAI-protocol provider — DeepSeek, xAI, Groq, Z.ai, MiniMax,
+    /// local servers, etc.). Provider-specific base URL, compat flags and
+    /// context window are layered on by the app's `build_model_config`.
+    ///
+    /// `max_tokens` is a generous default output cap; the request builder
+    /// clamps it to the remaining context window per call, so it never
+    /// overflows the window. Mirrors pi's generous per-model caps + clamp.
     pub fn local(base_url: impl Into<String>, model_id: impl Into<String>) -> Self {
         let id = model_id.into();
         let context_window = openai_context_window(&id);
@@ -542,132 +568,12 @@ impl ModelConfig {
             provider: "local".into(),
             base_url: base_url.into(),
             context_window,
-            max_tokens: 16384,
+            max_tokens: 32_768,
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::default()),
             thinking_passback: ThinkingPassbackPolicy::default(),
             thinking_level_map,
-        }
-    }
-
-    /// Create a new Z.ai (Zhipu AI) model config.
-    ///
-    /// Models: `glm-4.7`, `glm-4.5-air`, `glm-5`, etc.
-    pub fn zai(id: impl Into<String>, name: impl Into<String>) -> Self {
-        Self {
-            id: id.into(),
-            name: name.into(),
-            api: ApiProtocol::OpenAiCompletions,
-            provider: "zai".into(),
-            base_url: "https://api.z.ai/api/paas/v4".into(),
-            context_window: 128_000,
-            max_tokens: 4096,
-            cost: CostConfig::default(),
-            headers: HashMap::new(),
-            compat: Some(OpenAiCompat::zai()),
-            thinking_passback: ThinkingPassbackPolicy::default(),
-            thinking_level_map: HashMap::new(),
-        }
-    }
-
-    /// Create a new MiniMax model config.
-    ///
-    /// Models: `MiniMax-Text-01`, `MiniMax-M1`, etc.
-    pub fn minimax(id: impl Into<String>, name: impl Into<String>) -> Self {
-        Self {
-            id: id.into(),
-            name: name.into(),
-            api: ApiProtocol::OpenAiCompletions,
-            provider: "minimax".into(),
-            base_url: "https://api.minimaxi.chat/v1".into(),
-            context_window: 1_000_000,
-            max_tokens: 4096,
-            cost: CostConfig::default(),
-            headers: HashMap::new(),
-            compat: Some(OpenAiCompat::minimax()),
-            thinking_passback: ThinkingPassbackPolicy::default(),
-            thinking_level_map: HashMap::new(),
-        }
-    }
-
-    /// Create a new xAI (Grok) model config.
-    ///
-    /// Models: `grok-3-mini`, `grok-3`, etc.
-    pub fn xai(id: impl Into<String>, name: impl Into<String>) -> Self {
-        Self {
-            id: id.into(),
-            name: name.into(),
-            api: ApiProtocol::OpenAiCompletions,
-            provider: "xai".into(),
-            base_url: "https://api.x.ai/v1".into(),
-            context_window: 131_072,
-            max_tokens: 4096,
-            cost: CostConfig::default(),
-            headers: HashMap::new(),
-            compat: Some(OpenAiCompat::xai()),
-            thinking_passback: ThinkingPassbackPolicy::default(),
-            thinking_level_map: HashMap::new(),
-        }
-    }
-
-    /// Create a new Groq model config.
-    ///
-    /// Models: `llama-3.3-70b-versatile`, `mixtral-8x7b-32768`, etc.
-    pub fn groq(id: impl Into<String>, name: impl Into<String>) -> Self {
-        Self {
-            id: id.into(),
-            name: name.into(),
-            api: ApiProtocol::OpenAiCompletions,
-            provider: "groq".into(),
-            base_url: "https://api.groq.com/openai/v1".into(),
-            context_window: 128_000,
-            max_tokens: 4096,
-            cost: CostConfig::default(),
-            headers: HashMap::new(),
-            compat: Some(OpenAiCompat::groq()),
-            thinking_passback: ThinkingPassbackPolicy::default(),
-            thinking_level_map: HashMap::new(),
-        }
-    }
-
-    /// Create a new DeepSeek model config.
-    ///
-    /// Models: `deepseek-chat`, `deepseek-reasoner`, etc.
-    pub fn deepseek(id: impl Into<String>, name: impl Into<String>) -> Self {
-        Self {
-            id: id.into(),
-            name: name.into(),
-            api: ApiProtocol::OpenAiCompletions,
-            provider: "deepseek".into(),
-            base_url: "https://api.deepseek.com/v1".into(),
-            context_window: 128_000,
-            max_tokens: 4096,
-            cost: CostConfig::default(),
-            headers: HashMap::new(),
-            compat: Some(OpenAiCompat::deepseek()),
-            thinking_passback: ThinkingPassbackPolicy::default(),
-            thinking_level_map: HashMap::new(),
-        }
-    }
-
-    /// Create a new Mistral model config.
-    ///
-    /// Models: `mistral-large-latest`, `mistral-small-latest`, etc.
-    pub fn mistral(id: impl Into<String>, name: impl Into<String>) -> Self {
-        Self {
-            id: id.into(),
-            name: name.into(),
-            api: ApiProtocol::OpenAiCompletions,
-            provider: "mistral".into(),
-            base_url: "https://api.mistral.ai/v1".into(),
-            context_window: 128_000,
-            max_tokens: 4096,
-            cost: CostConfig::default(),
-            headers: HashMap::new(),
-            compat: Some(OpenAiCompat::mistral()),
-            thinking_passback: ThinkingPassbackPolicy::default(),
-            thinking_level_map: HashMap::new(),
         }
     }
 }

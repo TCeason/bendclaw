@@ -72,9 +72,11 @@ fn model_config_anthropic_opus_4_6_4_7_4_8_use_1m_context() {
         assert_eq!(config.max_tokens, 128_000, "{id}");
     }
 
+    // Opus 4.5 predates the 1M window but is still modern 4.x: 200k window,
+    // 64k output budget.
     let older = ModelConfig::anthropic("claude-opus-4.5", "Opus 4.5");
     assert_eq!(older.context_window, 200_000);
-    assert_eq!(older.max_tokens, 8192);
+    assert_eq!(older.max_tokens, 64_000);
 
     // Real ids carry a date suffix; version parsing must still apply the gate.
     let dated = ModelConfig::anthropic("claude-opus-4-6-20251101", "Opus 4.6");
@@ -112,22 +114,51 @@ fn openai_compat_variants() {
 }
 
 #[test]
-fn model_config_zai() {
-    let config = ModelConfig::zai("glm-4.7", "GLM 4.7");
-    assert_eq!(config.api, ApiProtocol::OpenAiCompletions);
-    assert_eq!(config.provider, "zai");
-    assert_eq!(config.base_url, "https://api.z.ai/api/paas/v4");
-    assert!(config.compat.is_some());
+fn model_config_local_defaults_to_generous_output_cap() {
+    // Every OpenAI-protocol provider is built through `local()` at runtime, so
+    // its default output cap must be generous (the request builder clamps it to
+    // the remaining context window per call). A small cap here would truncate
+    // long responses regardless of the window.
+    let config = ModelConfig::local("https://api.example.com/v1", "some-model");
+    assert_eq!(config.max_tokens, 32_768);
+    assert_eq!(config.provider, "local");
 }
 
 #[test]
-fn model_config_minimax() {
-    let config = ModelConfig::minimax("MiniMax-Text-01", "MiniMax Text 01");
-    assert_eq!(config.api, ApiProtocol::OpenAiCompletions);
-    assert_eq!(config.provider, "minimax");
-    assert_eq!(config.base_url, "https://api.minimaxi.chat/v1");
+fn model_config_anthropic_modern_models_use_64k_output_cap() {
+    // Modern Claude 4.x (non-1M) support a 64k output budget. The old 8192
+    // default silently truncated long responses.
+    for id in [
+        "claude-sonnet-4-20250514",
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+        "claude-opus-4-1",
+    ] {
+        let config = ModelConfig::anthropic(id, "Claude");
+        assert_eq!(config.context_window, 200_000, "{id}");
+        assert_eq!(config.max_tokens, 64_000, "{id}");
+    }
+
+    // Sonnet 5+ carries the 1M window and the 128k output cap.
+    let sonnet_5 = ModelConfig::anthropic("claude-sonnet-5", "Sonnet 5");
+    assert_eq!(sonnet_5.context_window, 1_000_000);
+    assert_eq!(sonnet_5.max_tokens, 128_000);
+
+    // Legacy claude-3 keeps the conservative fallback.
+    let legacy = ModelConfig::anthropic("claude-3-opus-20240229", "Opus 3");
+    assert_eq!(legacy.context_window, 200_000);
+    assert_eq!(legacy.max_tokens, 8192);
+}
+
+#[test]
+fn model_config_anthropic_fable_5_uses_1m_context_and_cannot_disable_thinking() {
+    // Fable is a distinct family (no opus/sonnet/haiku version gate): 1M window,
+    // 128k output cap, and `off` thinking is unsupported. Mirrors pi's
+    // claude-fable-5 registry entry (thinkingLevelMap {off:null}).
+    let config = ModelConfig::anthropic("claude-fable-5", "Claude Fable 5");
     assert_eq!(config.context_window, 1_000_000);
-    assert!(config.compat.is_some());
+    assert_eq!(config.max_tokens, 128_000);
+    assert!(!config.can_disable_thinking());
 }
 
 #[test]

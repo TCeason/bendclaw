@@ -52,6 +52,60 @@ pub struct StreamConfig {
     pub prompt_cache_key: Option<String>,
 }
 
+/// Headroom kept between the request's input tokens and the context window when
+/// clamping the output budget, so the model always has room to respond. Matches
+/// pi's `CONTEXT_SAFETY_TOKENS`.
+const CONTEXT_SAFETY_TOKENS: usize = 4096;
+
+impl StreamConfig {
+    /// The output-token budget to send this request, clamped to what the
+    /// context window can still hold.
+    ///
+    /// Starts from the caller's explicit `max_tokens`, else the model's default
+    /// cap, else a conservative floor. Then — mirroring pi's
+    /// `clampMaxTokensToContext` — caps it to `context_window - input - safety`
+    /// so a generous model cap never overflows the window (which providers
+    /// reject) or over-reserves credit on metered keys. Never returns 0.
+    pub fn resolved_max_tokens(&self) -> u32 {
+        let requested = self
+            .max_tokens
+            .or(self.model_config.as_ref().map(|m| m.max_tokens))
+            .unwrap_or(8192);
+
+        let context_window = self
+            .model_config
+            .as_ref()
+            .map(|m| m.context_window)
+            .unwrap_or(0);
+        if context_window == 0 {
+            return requested.max(1);
+        }
+
+        let input_tokens = crate::context::estimate_tokens(&self.system_prompt)
+            + crate::context::tool_definition_tokens(&self.tools)
+            + self
+                .messages
+                .iter()
+                .map(estimate_message_tokens)
+                .sum::<usize>();
+        let available = (context_window as usize)
+            .saturating_sub(input_tokens)
+            .saturating_sub(CONTEXT_SAFETY_TOKENS)
+            .max(1);
+        (requested as usize).min(available) as u32
+    }
+}
+
+/// Token estimate for an LLM `Message`, reusing the shared content heuristic.
+fn estimate_message_tokens(msg: &Message) -> usize {
+    let content = match msg {
+        Message::User { content, .. } => content,
+        Message::Assistant { content, .. } => content,
+        Message::ToolResult { content, .. } => content,
+    };
+    crate::context::content_tokens(content) + 4
+}
+
 /// Tool definition sent to the LLM (schema only, no execute fn)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {

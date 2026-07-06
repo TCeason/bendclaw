@@ -62,6 +62,50 @@ describe('term stream machine', () => {
     expect(state.pendingText).toBe('')
   })
 
+  test('assistant_completed with length stop appends a truncation notice', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+
+    let update = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { delta: 'a partial answer that got cut off' },
+    }, { termRows: 24 })
+    state = update.state
+
+    update = reduceRunEvent(state, {
+      kind: 'assistant_completed',
+      payload: { stop_reason: 'length' },
+    }, { termRows: 24 })
+    state = update.state
+
+    const committed = update.commitLines.map(l => l.text).join('\n')
+    expect(committed).toContain('a partial answer that got cut off')
+    expect(committed).toContain('maximum output token limit')
+    expect(update.commitLines.some(l => l.kind === 'error')).toBe(true)
+  })
+
+  test('assistant_completed with normal stop appends no truncation notice', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+
+    let update = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { delta: 'a complete answer' },
+    }, { termRows: 24 })
+    state = update.state
+
+    update = reduceRunEvent(state, {
+      kind: 'assistant_completed',
+      payload: { stop_reason: 'stop' },
+    }, { termRows: 24 })
+
+    const committed = update.commitLines.map(l => l.text).join('\n')
+    expect(committed).toContain('a complete answer')
+    expect(committed).not.toContain('maximum output token limit')
+  })
+
   test('no mid-stream commit: whole message flushed once at assistant_completed', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()

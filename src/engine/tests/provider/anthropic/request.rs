@@ -189,9 +189,9 @@ fn test_off_thinking_omitted_when_model_cannot_disable() {
 
 #[test]
 fn test_anthropic_max_tokens_falls_back_to_model_config() {
-    // No explicit max_tokens: use the model's configured budget (8192 for a
-    // standard Claude model) rather than an oversized constant. OpenRouter
-    // reserves credit from this value, so 128000 can 402 on limited keys.
+    // No explicit max_tokens: use the model's configured budget. Modern Claude
+    // 4.x supports a 64k output budget, so a small default would truncate long
+    // responses. The request builder still clamps this to the window per call.
     let config = StreamConfigBuilder::anthropic()
         .no_max_tokens()
         .model_config(ModelConfig::anthropic(
@@ -201,7 +201,33 @@ fn test_anthropic_max_tokens_falls_back_to_model_config() {
         .build();
 
     let body = build_request_body(&config, false);
-    assert_eq!(body["max_tokens"], 8192);
+    assert_eq!(body["max_tokens"], 64000);
+}
+
+#[test]
+fn test_anthropic_max_tokens_clamped_to_remaining_context() {
+    // A near-full context window must shrink the output budget so the request
+    // never overflows the window (which providers reject). Mirrors pi's
+    // clampMaxTokensToContext.
+    let mut model_config = ModelConfig::anthropic("claude-sonnet-4-20250514", "Claude Sonnet 4");
+    model_config.context_window = 10_000;
+    // ~8000 tokens of input (byte-length / 4) leaves < 64k of headroom.
+    let big_message = "x".repeat(32_000);
+    let config = StreamConfigBuilder::anthropic()
+        .no_max_tokens()
+        .messages(vec![Message::user(big_message)])
+        .model_config(model_config)
+        .build();
+
+    let body = build_request_body(&config, false);
+    let max_tokens = body["max_tokens"].as_u64().unwrap();
+    // context_window(10_000) - input(~8000) - safety(4096) is negative, so the
+    // clamp floors at 1 rather than sending a budget larger than the window.
+    assert!(max_tokens >= 1, "got {max_tokens}");
+    assert!(
+        max_tokens < 64_000,
+        "expected clamp below model cap, got {max_tokens}"
+    );
 }
 
 #[test]

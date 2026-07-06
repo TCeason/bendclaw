@@ -127,14 +127,10 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
         }
     }
 
-    // Fall back to the model's configured max_tokens rather than a constant.
-    // OpenRouter reserves credit up-front from this value, so an oversized
-    // default (128000) can 402 on keys that only support a normal Claude
-    // output budget (8192). Mirrors pi's `options?.maxTokens ?? model.maxTokens`.
-    let max_tokens = config
-        .max_tokens
-        .or_else(|| config.model_config.as_ref().map(|m| m.max_tokens))
-        .unwrap_or(8192);
+    // Clamp the model's output cap to the remaining context window so a
+    // generous default never overflows the window or over-reserves credit on
+    // metered keys (e.g. OpenRouter). Mirrors pi's clampMaxTokensToContext.
+    let max_tokens = config.resolved_max_tokens();
     let mut body = serde_json::json!({
         "model": config.model,
         "max_tokens": max_tokens,

@@ -2,7 +2,6 @@
 
 use crate::provider::model::CompatCaps;
 use crate::provider::model::MaxTokensField;
-use crate::provider::model::ModelConfig;
 use crate::provider::model::OpenAiCompat;
 use crate::provider::traits::StreamConfig;
 use crate::types::*;
@@ -14,11 +13,7 @@ pub struct ToolCallBuffer {
     pub arguments: String,
 }
 
-pub fn build_request_body(
-    config: &StreamConfig,
-    model_config: &ModelConfig,
-    compat: &OpenAiCompat,
-) -> serde_json::Value {
+pub fn build_request_body(config: &StreamConfig, compat: &OpenAiCompat) -> serde_json::Value {
     let mut messages: Vec<serde_json::Value> = Vec::new();
 
     // System prompt
@@ -124,7 +119,7 @@ pub fn build_request_body(
         }
     }
 
-    let max_tokens_val = config.max_tokens.unwrap_or(model_config.max_tokens);
+    let max_tokens_val = config.resolved_max_tokens();
     let mut body = serde_json::json!({
         "model": config.model,
         "stream": true,
