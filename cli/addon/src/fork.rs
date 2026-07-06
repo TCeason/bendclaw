@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -8,7 +9,6 @@ use tokio::sync::mpsc as tokio_mpsc;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 
-use crate::ask::AskResponder;
 use crate::run::NapiRun;
 
 // ---------------------------------------------------------------------------
@@ -38,16 +38,16 @@ impl NapiForkedAgent {
             .map_err(|e| Error::from_reason(format!("fork query: {e}")))?;
         let sid = run.session_id.clone();
         let handle = run.handle();
-        // Forked agents are readonly — no ask_user support, use dummy channels
-        let (_ask_tx, ask_rx) = tokio_mpsc::unbounded_channel::<String>();
+        // Forked agents are readonly — no host tools, use dummy channels.
+        let (_host_tx, host_rx) = tokio_mpsc::unbounded_channel::<String>();
         Ok(NapiRun {
             inner: Mutex::new(run),
             handle,
             cached_session_id: sid,
             aborted: Arc::new(AtomicBool::new(false)),
             abort_notify: Arc::new(Notify::new()),
-            ask_event_rx: Mutex::new(Some(ask_rx)),
-            ask_responder: AskResponder::default(),
+            host_event_rx: Mutex::new(Some(host_rx)),
+            host_responders: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 }

@@ -2,21 +2,30 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use evot_engine::tools::AskUserResponse;
+use evot_engine::host::HostToolResponse;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use tokio::sync::mpsc as tokio_mpsc;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 
-use crate::ask::AskResponder;
 use crate::convert::parse_content_blocks;
+use crate::host::HostResponders;
 
 /// Serialize a RunEvent to JSON string.
 fn serialize_event(event: evot::agent::RunEvent) -> Result<Option<String>> {
     serde_json::to_string(&event)
         .map(Some)
         .map_err(|e| Error::from_reason(format!("serialize event: {e}")))
+}
+
+/// Wire shape of a host tool response from JS: the correlation id plus the
+/// engine's [`HostToolResponse`] fields, flattened.
+#[derive(serde::Deserialize)]
+struct HostToolResponsePayload {
+    tool_call_id: String,
+    #[serde(flatten)]
+    response: HostToolResponse,
 }
 
 /// Abort-aware helper: read next event from run, or return None on abort.
@@ -81,8 +90,8 @@ pub struct NapiRun {
     pub(crate) cached_session_id: String,
     pub(crate) aborted: Arc<AtomicBool>,
     pub(crate) abort_notify: Arc<Notify>,
-    pub(crate) ask_event_rx: Mutex<Option<tokio_mpsc::UnboundedReceiver<String>>>,
-    pub(crate) ask_responder: AskResponder,
+    pub(crate) host_event_rx: Mutex<Option<tokio_mpsc::UnboundedReceiver<String>>>,
+    pub(crate) host_responders: HostResponders,
 }
 
 #[napi]
@@ -102,21 +111,21 @@ impl NapiRun {
 
         let mut run = self.inner.lock().await;
 
-        // Check if we have an ask_event receiver
-        let mut ask_rx_guard = self.ask_event_rx.lock().await;
-        let ask_rx_slot = &mut *ask_rx_guard;
+        // Check if we have a host-event receiver (host tool call forwarding).
+        let mut host_rx_guard = self.host_event_rx.lock().await;
+        let host_rx_slot = &mut *host_rx_guard;
 
-        match ask_rx_slot {
+        match host_rx_slot {
             None => next_run_or_abort!(run, self.abort_notify),
-            Some(ask_rx) => {
+            Some(host_rx) => {
                 tokio::select! {
-                    ask_json = ask_rx.recv() => {
-                        match ask_json {
+                    host_json = host_rx.recv() => {
+                        match host_json {
                             Some(json) => Ok(Some(json)),
                             None => {
                                 // Sender dropped and buffer empty — permanently
-                                // disable the ask branch, then read from run.
-                                *ask_rx_slot = None;
+                                // disable the host branch, then read from run.
+                                *host_rx_slot = None;
                                 next_run_or_abort!(run, self.abort_notify)
                             }
                         }
@@ -136,14 +145,18 @@ impl NapiRun {
         }
     }
 
-    /// Respond to an `ask_user` event.
+    /// Respond to a `host_tool_call` event with a JSON-encoded result.
+    ///
+    /// The payload is `{ tool_call_id, content, details?, is_error? }`. The
+    /// call is matched to its parked responder by `tool_call_id`, so parallel
+    /// host tool calls resolve independently.
     #[napi]
-    pub async fn respond_ask_user(&self, response_json: String) -> Result<()> {
-        let response: AskUserResponse = serde_json::from_str(&response_json)
-            .map_err(|e| Error::from_reason(format!("parse ask_user response: {e}")))?;
-        let mut guard = self.ask_responder.lock().await;
-        if let Some(tx) = guard.take() {
-            let _ = tx.send(Ok(response));
+    pub async fn respond_host_tool(&self, response_json: String) -> Result<()> {
+        let parsed: HostToolResponsePayload = serde_json::from_str(&response_json)
+            .map_err(|e| Error::from_reason(format!("parse host tool response: {e}")))?;
+        let mut guard = self.host_responders.lock().await;
+        if let Some(tx) = guard.remove(&parsed.tool_call_id) {
+            let _ = tx.send(Ok(parsed.response));
         }
         Ok(())
     }

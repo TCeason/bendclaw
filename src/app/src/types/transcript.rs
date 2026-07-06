@@ -148,6 +148,11 @@ pub enum TranscriptItem {
         tool_name: String,
         content: String,
         is_error: bool,
+        /// Structured metadata for UI rendering and state reconstruction on
+        /// resume (e.g. a plan artifact's task list). Never sent to the LLM.
+        /// Defaults to null for transcripts written before this field existed.
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        details: serde_json::Value,
     },
     System {
         text: String,

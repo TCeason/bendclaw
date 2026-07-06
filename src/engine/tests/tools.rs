@@ -1,5 +1,3 @@
-#[path = "tools/ask_user.rs"]
-mod ask_user;
 #[path = "tools/bash.rs"]
 mod bash;
 #[path = "tools/explore.rs"]
@@ -8,6 +6,8 @@ mod explore;
 mod file;
 #[path = "tools/guard.rs"]
 mod guard;
+#[path = "tools/host_tool.rs"]
+mod host_tool;
 #[path = "tools/naming.rs"]
 mod naming;
 #[path = "tools/skill.rs"]

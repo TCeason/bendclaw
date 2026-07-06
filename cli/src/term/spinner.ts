@@ -30,7 +30,7 @@ export function toolActionLabel(toolName: string): string {
     case 'edit': case 'file_edit': case 'write': case 'file_write': return 'Editing'
     case 'bash': return 'Running'
     case 'web_fetch': case 'webfetch': return 'Fetching'
-    case 'update_goal_tasks': case 'todowrite': return 'Planning'
+    case 'plan': return 'Planning'
     case 'skill': return 'Loading skill'
     case 'ask_user': case 'askuser': return 'Waiting for you'
     default: return 'Working'

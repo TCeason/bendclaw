@@ -144,7 +144,7 @@ describe('formatSpinnerLine', () => {
       ['grep', 'Searching…'],
       ['edit', 'Editing…'],
       ['web_fetch', 'Fetching…'],
-      ['update_goal_tasks', 'Planning…'],
+      ['plan', 'Planning…'],
       ['skill', 'Loading skill…'],
       ['ask_user', 'Waiting for you…'],
       ['some_unknown_tool', 'Working…'],

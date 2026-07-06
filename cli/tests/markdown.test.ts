@@ -444,6 +444,37 @@ describe('renderMarkdown', () => {
     expect(result).toMatch(/^ {4}│  │     └─ tools\/$/m)
   })
 
+  test('aligns tree trailing comments to a shared start column', () => {
+    // A directory tree with trailing `# …` comments whose `#` columns already
+    // line up in the source. The box-drawing preservation pass aligns the
+    // comment START columns (two spaces past the widest prefix), so every `#`
+    // lands in the same column. Regression for aligning the END column
+    // instead, which scattered the `#` markers across different columns and
+    // destroyed alignment the author already got right.
+    const md = [
+      '```',
+      'src/',
+      '├── host.ts        # host loader',
+      '├── api.ts         # public api surface',
+      '├── context.ts     # ui primitives',
+      '```',
+    ].join('\n')
+
+    const rendered = render(md).replace(/\u200b/g, '')
+    const hashColumns = rendered
+      .split('\n')
+      .filter(line => /[├└]/.test(line) && line.includes('#'))
+      .map(line => stringWidth(line.slice(0, line.indexOf('#'))))
+
+    expect(hashColumns.length).toBe(3)
+    // Every `#` must land in the same column.
+    expect(new Set(hashColumns).size).toBe(1)
+    // Comments and their prefixes are preserved verbatim (only spacing changes).
+    expect(rendered).toContain('# host loader')
+    expect(rendered).toContain('# public api surface')
+    expect(rendered).toContain('# ui primitives')
+  })
+
   test('styles plain ascii diagrams without changing their visible text', () => {
     const prevLevel = chalk.level
     chalk.level = 3
@@ -1371,13 +1402,14 @@ describe('renderMarkdown', () => {
         '   └── term-stream.test.ts          # [modify] 4 种事件都产出 expandedCommitLines',
       ].join('\n')
       const rendered = stripAnsi(renderMarkdown(tree)).replace(/\u200b/g, '')
-      const commentEnds = rendered
+      // Comment START columns are aligned (two spaces past the widest prefix),
+      // so every `#` lands in the same column regardless of comment length.
+      const commentStarts = rendered
         .split('\n')
         .filter(line => line.includes('modify]'))
-        .map(line => stringWidth(line))
+        .map(line => stringWidth(line.slice(0, line.indexOf('#'))))
 
-      expect(new Set(commentEnds).size).toBe(1)
-      expect(commentEnds[0]).toBeGreaterThanOrEqual(110)
+      expect(new Set(commentStarts).size).toBe(1)
       expect(rendered).toContain('  │       └── transcript.ts')
       expect(rendered).toContain('      ├── outputLines.test.ts')
       expect(rendered).toContain('      └── term-stream.test.ts')
@@ -1386,7 +1418,7 @@ describe('renderMarkdown', () => {
     }
   })
 
-  test('right-aligns trailing comment ends in tree-style directory listings', () => {
+  test('aligns trailing comment starts in tree-style directory listings', () => {
     const restore = withColumns(120)
     try {
       const tree = [
@@ -1419,13 +1451,13 @@ describe('renderMarkdown', () => {
         '  │   │       │   ├── tokens.rs   #   token 计数',
       ].join('\n')
       const rendered = stripAnsi(renderMarkdown(tree)).replace(/\u200b/g, '')
-      const commentEnds = rendered
+      const commentStarts = rendered
         .split('\n')
         .filter(line => line.includes('#'))
-        .map(line => stringWidth(line))
+        .map(line => stringWidth(line.slice(0, line.indexOf('#'))))
 
-      expect(new Set(commentEnds).size).toBe(1)
-      expect(commentEnds[0]).toBeGreaterThanOrEqual(116)
+      // Every `#` marker lands in the same column.
+      expect(new Set(commentStarts).size).toBe(1)
     } finally {
       restore()
     }

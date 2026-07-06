@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use evot::agent::Agent;
 use evot::agent::ForkRequest;
+use evot::agent::HostTools;
 use evot::agent::QueryRequest;
 use evot::agent::ToolMode;
 use napi::bindgen_prelude::*;
@@ -12,10 +13,11 @@ use tokio::sync::mpsc as tokio_mpsc;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 
-use crate::ask::build_ask_fn;
-use crate::ask::AskResponder;
 use crate::convert::parse_content_blocks;
 use crate::fork::NapiForkedAgent;
+use crate::host::parse_host_tool_specs;
+use crate::host::HostResponders;
+use crate::host::NapiHostBridge;
 use crate::run::NapiRun;
 use crate::run::NapiSubmitOutcome;
 use crate::tracing::init_tracing;
@@ -64,6 +66,11 @@ impl NapiAgent {
     }
 
     /// Send a prompt and get a stream of events.
+    ///
+    /// `host_specs_json` is a JSON array of host tool specs the TS side
+    /// registered (ask_user, plan, extension tools). When present and the mode
+    /// permits, these are attached to the run and their execution is delegated
+    /// back to JS via `host_tool_call` events.
     #[napi]
     pub async fn query(
         &self,
@@ -71,24 +78,38 @@ impl NapiAgent {
         session_id: Option<String>,
         tool_mode: Option<String>,
         content_json: Option<String>,
+        host_specs_json: Option<String>,
     ) -> Result<NapiSubmitOutcome> {
-        let (ask_event_tx, ask_event_rx) = tokio_mpsc::unbounded_channel::<String>();
-        let ask_responder: AskResponder = Arc::new(Mutex::new(None));
+        let (host_event_tx, host_event_rx) = tokio_mpsc::unbounded_channel::<String>();
+        let host_responders: HostResponders =
+            Arc::new(Mutex::new(std::collections::HashMap::new()));
 
         let mode = match tool_mode.as_deref() {
             Some("interactive") | Some("planning_interactive") => {
-                let ask_fn = build_ask_fn(ask_event_tx, ask_responder.clone());
                 if tool_mode.as_deref() == Some("planning_interactive") {
-                    ToolMode::Planning {
-                        ask_fn: Some(ask_fn),
-                    }
+                    ToolMode::Planning
                 } else {
-                    ToolMode::Interactive { ask_fn }
+                    ToolMode::Interactive
                 }
             }
-            Some("planning") => ToolMode::Planning { ask_fn: None },
+            Some("planning") => ToolMode::Planning,
             Some("readonly") => ToolMode::Readonly,
             _ => ToolMode::Headless,
+        };
+
+        // Assemble host tools from the registered specs. Readonly runs carry no
+        // host bridge (matches ToolMode::allows_host_tools).
+        let host_tools = if mode.allows_host_tools() {
+            let specs =
+                parse_host_tool_specs(host_specs_json.as_deref()).map_err(Error::from_reason)?;
+            if specs.is_empty() {
+                None
+            } else {
+                let bridge = Arc::new(NapiHostBridge::new(host_event_tx, host_responders.clone()));
+                Some(HostTools::new(bridge, specs))
+            }
+        } else {
+            None
         };
 
         let request = if let Some(json) = content_json {
@@ -101,11 +122,13 @@ impl NapiAgent {
             QueryRequest::with_input(input)
                 .session_id(session_id)
                 .mode(mode)
+                .host_tools(host_tools)
                 .source("repl")
         } else {
             QueryRequest::text(prompt)
                 .session_id(session_id)
                 .mode(mode)
+                .host_tools(host_tools)
                 .source("repl")
         };
 
@@ -133,8 +156,8 @@ impl NapiAgent {
                         cached_session_id: sid,
                         aborted: Arc::new(AtomicBool::new(false)),
                         abort_notify: Arc::new(Notify::new()),
-                        ask_event_rx: Mutex::new(Some(ask_event_rx)),
-                        ask_responder,
+                        host_event_rx: Mutex::new(Some(host_event_rx)),
+                        host_responders,
                     })),
                     message: None,
                 })

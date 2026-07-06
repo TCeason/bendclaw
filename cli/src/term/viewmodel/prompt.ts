@@ -31,6 +31,8 @@ export interface PromptVMInput {
   contextWindow: number
   // Reasoning effort shown next to the model name. Empty string hides it.
   thinkingLevel: string
+  // Persistent plan progress indicator (e.g. "📋 2/5"). Null hides it.
+  planLabel: string | null
 }
 
 const KNOWN_COMMANDS = new Set(
@@ -149,6 +151,9 @@ function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
   }
   if (input.planning) {
     leftSpans.push(dim('[plan] '))
+  }
+  if (input.planLabel) {
+    leftSpans.push(dim(`${input.planLabel}  `))
   }
 
   // cwd + branch

@@ -154,7 +154,7 @@ export function createStreamMachineState(appState: AppState, spinnerState: Spinn
 
 export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: StreamContext): StreamUpdate {
   const p = (event.payload ?? {}) as Record<string, any>
-  let state = event.kind === 'ask_user' ? prev : { ...prev, appState: applyEvent(prev.appState, event) }
+  let state = event.kind === 'host_tool_call' ? prev : { ...prev, appState: applyEvent(prev.appState, event) }
   const commitLines: OutputLine[] = []
   const writeLines: OutputLine[] = []
   let expandedCommitLines: OutputLine[] | undefined
@@ -426,9 +426,10 @@ export function buildToolFinishedLines(event: RunEvent, expanded?: boolean): Out
   const diff = details?.diff as string | undefined
   // Skip diff if it was already rendered as a preview
   const skipDiff = !!details?.preview_rendered && !!diff
+  const isPlanTool = toolName === 'plan' || toolName === 'Plan'
   const mergedArgs = diff && !skipDiff
     ? { ...args, diff }
-    : toolName === 'update_goal_tasks' && Array.isArray(details?.goal?.tasks)
+    : isPlanTool && Array.isArray(details?.goal?.tasks)
       ? { ...args, tasks: details.goal.tasks }
       : args
   const status = p.is_error ? 'error' as const : 'done' as const

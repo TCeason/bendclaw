@@ -7,6 +7,7 @@ edition.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
+async-trait.workspace = true
 axum.workspace = true
 evot = { path = "../../src/app" }
 evot-engine = { workspace = true }

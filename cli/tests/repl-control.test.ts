@@ -39,6 +39,14 @@ describe('repl control', () => {
     expect(kinds({ ...base, event: { type: 'escape' }, overlay: askUser, hasStream: true })).toEqual(['cancel-ask'])
   })
 
+  test('ctrl-c during an ask overlay routes to interrupt, not cancel-ask', () => {
+    // Regression guard: an ask/plan-review overlay is only shown while a run is
+    // loading, so Ctrl+C hits the loading-stream interrupt branch before the
+    // overlay checks. Both `interrupt` and `cancel-ask` must resolve the
+    // pending ask promise or the suspended host-tool dispatch hangs the loop.
+    expect(kinds({ ...base, event: { type: 'ctrl', key: 'c' }, overlay: askUser, isLoading: true, hasStream: true })).toEqual(['interrupt'])
+  })
+
   test('escape clears selector query before closing overlay', () => {
     expect(kinds({ ...base, event: { type: 'escape' }, overlay: selectorWithQuery })).toEqual(['clear-selector-query'])
   })

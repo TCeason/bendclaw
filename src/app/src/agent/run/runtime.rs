@@ -615,6 +615,7 @@ fn map_agent_event(
                     tool_name: tool_name.clone(),
                     content: content.clone(),
                     is_error: *is_error,
+                    details: result.details.clone(),
                 }),
                 RuntimeEvent::Transcript(
                     TranscriptStats::ToolFinished(ToolFinishedStats {

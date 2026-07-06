@@ -420,6 +420,62 @@ fn user_item_without_content_deserializes_for_backward_compatibility() {
 }
 
 // ---------------------------------------------------------------------------
+// ToolResult details persistence (plan artifact resume)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tool_result_details_round_trip() {
+    let item = TranscriptItem::ToolResult {
+        tool_call_id: "call-1".into(),
+        tool_name: "plan".into(),
+        content: "Plan approved (2 tasks).".into(),
+        is_error: false,
+        details: serde_json::json!({
+            "action": "propose",
+            "approved": true,
+            "goal": { "tasks": [{ "id": 1, "title": "Load data", "status": "completed" }] }
+        }),
+    };
+
+    let json = serde_json::to_string(&item).expect("serialize");
+    let back: TranscriptItem = serde_json::from_str(&json).expect("deserialize");
+    match back {
+        TranscriptItem::ToolResult { details, .. } => {
+            assert_eq!(details["approved"], true);
+            assert_eq!(details["goal"]["tasks"][0]["id"], 1);
+        }
+        _ => panic!("expected tool result"),
+    }
+}
+
+#[test]
+fn tool_result_without_details_deserializes_for_backward_compatibility() {
+    // Transcripts written before the details field existed omit it entirely.
+    let json = r#"{"type":"tool_result","tool_call_id":"c1","tool_name":"bash","content":"ok","is_error":false}"#;
+    let item: TranscriptItem = serde_json::from_str(json).expect("deserialize");
+    match item {
+        TranscriptItem::ToolResult { details, .. } => assert!(details.is_null()),
+        _ => panic!("expected tool result"),
+    }
+}
+
+#[test]
+fn tool_result_null_details_omitted_from_serialization() {
+    let item = TranscriptItem::ToolResult {
+        tool_call_id: "c1".into(),
+        tool_name: "bash".into(),
+        content: "ok".into(),
+        is_error: false,
+        details: serde_json::Value::Null,
+    };
+    let json = serde_json::to_string(&item).expect("serialize");
+    assert!(
+        !json.contains("details"),
+        "null details should be skipped: {json}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // entry_preview
 // ---------------------------------------------------------------------------
 

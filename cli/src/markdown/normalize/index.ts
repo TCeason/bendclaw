@@ -842,12 +842,13 @@ function alignTreeTrailingComments(lines: string[]): string[] {
   if (comments.length < 2) return lines
 
   const aligned = [...lines]
-  const targetEndColumn = Math.max(
-    ...comments.map(comment => comment.prefixWidth + 2 + terminalDisplayWidth(comment.comment)),
-    terminalContentWidth(),
-  )
+  // Align comment START columns (like alignTrailingCodeComments): every `#`
+  // lands in the same column, two spaces past the widest tree prefix. Aligning
+  // the END column instead (each comment has a different width) scatters the
+  // `#` markers and destroys alignment the author already got right.
+  const targetColumn = Math.max(...comments.map(comment => comment.prefixWidth)) + 2
   for (const comment of comments) {
-    const padding = ' '.repeat(Math.max(2, targetEndColumn - comment.prefixWidth - terminalDisplayWidth(comment.comment)))
+    const padding = ' '.repeat(Math.max(2, targetColumn - comment.prefixWidth))
     aligned[comment.lineIndex] = `${comment.prefix}${padding}${comment.comment}`
   }
   return aligned

@@ -34,6 +34,7 @@ function defaultInput(overrides?: Partial<PromptVMInput>): PromptVMInput {
     contextTokens: 0,
     contextWindow: 0,
     thinkingLevel: '',
+    planLabel: null,
     ...overrides,
   }
 }
@@ -78,6 +79,16 @@ describe('buildPromptBlocks', () => {
   test('no [plan] when not planning', () => {
     const result = renderPlain(defaultInput({ planning: false }))
     expect(result).not.toContain('[plan]')
+  })
+
+  test('shows the plan progress indicator when a plan is active', () => {
+    const result = renderPlain(defaultInput({ planLabel: '📋 2/5' }))
+    expect(result).toContain('📋 2/5')
+  })
+
+  test('no plan indicator when there is no plan', () => {
+    const result = renderPlain(defaultInput({ planLabel: null }))
+    expect(result).not.toContain('📋')
   })
 
   test('shows [log] when logMode', () => {

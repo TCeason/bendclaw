@@ -23,6 +23,7 @@ interface RawItem {
   tool_name?: string
   content?: string
   is_error?: boolean
+  details?: unknown
   // Stats
   kind?: string
   data?: Record<string, unknown>
@@ -98,13 +99,14 @@ function repairThinkingSplitText(text: string, thinking: string | undefined): st
 // Tool results
 // ---------------------------------------------------------------------------
 
-function collectToolResults(items: RawItem[]): Map<string, { content: string; isError: boolean }> {
-  const map = new Map<string, { content: string; isError: boolean }>()
+function collectToolResults(items: RawItem[]): Map<string, { content: string; isError: boolean; details?: unknown }> {
+  const map = new Map<string, { content: string; isError: boolean; details?: unknown }>()
   for (const item of items) {
     if (item.type === 'tool_result' && item.tool_call_id) {
       map.set(item.tool_call_id, {
         content: item.content ?? '',
         isError: item.is_error ?? false,
+        details: item.details,
       })
     }
   }
@@ -113,7 +115,7 @@ function collectToolResults(items: RawItem[]): Map<string, { content: string; is
 
 function buildToolCalls(
   calls: { id: string; name: string; input: Record<string, unknown> }[],
-  results: Map<string, { content: string; isError: boolean }>,
+  results: Map<string, { content: string; isError: boolean; details?: unknown }>,
 ): UIToolCall[] {
   return calls.map(tc => {
     const r = results.get(tc.id)
@@ -123,6 +125,7 @@ function buildToolCalls(
       args: tc.input,
       status: r ? (r.isError ? 'error' : 'done') : 'running' as const,
       result: r?.content,
+      details: r?.details,
       previewCommand: inferPreviewCommand(tc.name, tc.input),
     }
   })

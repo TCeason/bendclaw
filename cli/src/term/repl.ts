@@ -8,7 +8,6 @@ import { buildUserMessage, buildThinkingLines, type OutputLine } from '../render
 import { renderMarkdownCached } from '../render/markdown.js'
 import { Agent, QueryStream, fastExit, type SessionMeta, type ConfigInfo } from '../native/index.js'
 import { createInitialState, type AppState } from './app/state.js'
-import type { AskUserRequest } from './app/types.js'
 import { HistoryManager, parseHistoryItems } from '../session/history.js'
 import { ScreenLog } from '../session/screen-log.js'
 import { isSlashCommand, resolveCommand, buildHardenPrompt } from '../commands/index.js'
@@ -63,6 +62,8 @@ import {
 } from './app/stream.js'
 import { handleSlashCommand } from './app/commands.js'
 import { askStateToResponse } from './app/ask-user.js'
+import { createExtensionHost, footerLabel, tasksFromDetails, type ExtensionHost, type ExtensionUI, type PlanReviewResult, type PlanTask } from '../ext/index.js'
+import type { AskUserAnswer, AskUserParams } from '../ext/index.js'
 import { syncProvider } from './app/provider.js'
 import chalk from 'chalk'
 import {
@@ -151,6 +152,82 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let exitHint = false
   let exitHintTimer: ReturnType<typeof setTimeout> | null = null
   let overlay: OverlayState = { kind: 'none' }
+  // Promise-based bridge for the ask-user overlay. Both the `ask_user` host
+  // tool and the plan-review flow present questions through the same overlay
+  // and await the user's answers here. Resolves with the collected answers, or
+  // null when the user cancels/skips.
+  let pendingAsk: ((answers: AskUserAnswer[] | null) => void) | null = null
+
+  /** Resolve any awaiting ask/plan-review overlay as cancelled. Safe to call
+   *  on every teardown path (interrupt, cancel, overlay close, re-present) so a
+   *  suspended host-tool dispatch never strands the run loop. */
+  function resolvePendingAsk() {
+    if (pendingAsk) {
+      pendingAsk(null)
+      pendingAsk = null
+    }
+  }
+
+  function presentAskQuestions(questions: AskQuestion[]): Promise<AskUserAnswer[] | null> {
+    // Only one ask overlay can be active at a time; resolve any prior one as
+    // cancelled before opening the next.
+    resolvePendingAsk()
+    overlay = { kind: 'ask-user', state: createAskState(questions) }
+    freezeTerminalTitle('?')
+    renderer.requestRender()
+    return new Promise(resolve => {
+      pendingAsk = resolve
+    })
+  }
+
+  // Extension host: owns ask_user, plan, and any future host tools. The engine
+  // advertises their specs and delegates execution back here via
+  // `host_tool_call` events (dispatched in the run loop below).
+  const extensionUI: ExtensionUI = {
+    async reviewPlan({ tasks }): Promise<PlanReviewResult> {
+      const title = tasks.map(t => `#${t.id} ${t.title}`).join('\n')
+      const answers = await presentAskQuestions([
+        {
+          header: 'Plan',
+          question: `Review the ${tasks.length}-task plan and choose how to proceed:\n${title}`,
+          options: [
+            { label: 'Approve and execute', description: 'Run the plan as proposed.' },
+            { label: 'Reject', description: 'Do not execute; send feedback to revise.' },
+          ],
+        },
+      ])
+      if (!answers || answers.length === 0) {
+        return { kind: 'rejected' }
+      }
+      const choice = answers[0]!.answer
+      if (choice.startsWith('Approve')) return { kind: 'approved' }
+      // Any custom text the user typed becomes revision feedback.
+      const feedback = choice === 'Reject' ? undefined : choice
+      return { kind: 'rejected', feedback }
+    },
+  }
+
+  const extensionHost: ExtensionHost = createExtensionHost({
+    collectAnswers: (params: AskUserParams) =>
+      presentAskQuestions(
+        params.questions.map(q => ({
+          header: q.header,
+          question: q.question,
+          options: q.options.map(o => ({ label: o.label, description: o.description })),
+        })),
+      ),
+  })
+
+  // Latest plan task list, driving the persistent footer indicator (📋 2/5).
+  // Updated live from plan tool-result details and rebuilt from the transcript
+  // on resume. Null when the session has no plan.
+  let planTasks: PlanTask[] | null = null
+
+  /** Adopt plan tasks from a `plan` tool-result details payload, if present. */
+  function trackPlanFromDetails(details: unknown): void {
+    const tasks = tasksFromDetails(details)
+    if (tasks) planTasks = tasks
+  }
   let streamMachine: StreamMachineState | null = null
   let lastPendingText = ''
   let lastPendingRendered = ''
@@ -291,6 +368,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       contextTokens: appState.sessionTokens.contextTokens,
       contextWindow: appState.sessionTokens.contextWindow,
       thinkingLevel: configInfo?.thinkingLevel ?? '',
+      planLabel: footerLabel(planTasks),
     }
   }
 
@@ -603,6 +681,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const { messagesToOutputLines } = await import('../render/output.js')
       const { transcriptToMessages } = await import('../session/transcript.js')
       const messages = transcriptToMessages(transcript as any)
+      // Rebuild the footer plan indicator from the last plan tool result in the
+      // transcript, so a resumed session shows its plan progress immediately.
+      planTasks = null
+      for (const msg of messages) {
+        for (const tc of msg.toolCalls ?? []) {
+          if (tc.name === 'plan' || tc.name === 'Plan') {
+            const tasks = tasksFromDetails(tc.details)
+            if (tasks) planTasks = tasks
+          }
+        }
+      }
       renderer.clearScreen()
       compactLines.length = 0
       expandedLines.length = 0
@@ -715,7 +804,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
     try {
       const stream = prebuiltStream
-        ?? await agent.query(text, sessionId ?? undefined, planning ? 'planning_interactive' : 'interactive', contentJson)
+        ?? await agent.query(text, sessionId ?? undefined, planning ? 'planning_interactive' : 'interactive', contentJson, extensionHost.specsJson())
       streamRef = stream
       sessionId = stream.sessionId ?? sessionId
       appState = { ...appState, sessionId: sessionId }
@@ -725,22 +814,30 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         if (destroyed) break
         if (!streamMachine) break
 
-        if (event.kind === 'ask_user') {
-          
-          const payload = (event.payload ?? {}) as { questions?: AskUserRequest['questions'] }
-          if (payload.questions && payload.questions.length > 0) {
-            const questions: AskQuestion[] = payload.questions.map(q => ({
-              header: q.header,
-              question: q.question,
-              options: q.options.map(o => ({ label: o.label, description: o.description })),
-            }))
-            overlay = { kind: 'ask-user', state: createAskState(questions) }
-            freezeTerminalTitle('?')
-            // Append a single prompt line to scroll zone so the question
-            // appears inline with message history; the actual interactive UI
-            // renders in the status area and updates in-place.
-            
-            renderer.requestRender()
+        if (event.kind === 'host_tool_call') {
+          // The engine delegated a host-owned tool (ask_user, plan, …). Run it
+          // via the extension host and send the result back. The tool's execute
+          // may drive interactive UI (e.g. the ask overlay) and awaits the user.
+          const call = (event.payload ?? {}) as {
+            tool_name?: string
+            tool_call_id?: string
+            arguments?: Record<string, unknown>
+          }
+          if (call.tool_name && call.tool_call_id) {
+            const response = await extensionHost.dispatch(
+              {
+                tool_name: call.tool_name,
+                tool_call_id: call.tool_call_id,
+                arguments: call.arguments ?? {},
+              },
+              extensionUI,
+            )
+            // Keep the footer plan indicator in sync with the latest plan
+            // tool result (propose approval or live status update).
+            trackPlanFromDetails(response.details)
+            if (streamRef) {
+              await streamRef.respondHostTool(JSON.stringify(response))
+            }
           }
           continue
         }
@@ -919,6 +1016,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         return true
       case 'close-overlay': {
         const redraw = overlay.kind === 'selector'
+        // An ask overlay can be closed without a stream (e.g. leftover overlay);
+        // resolve its awaiting promise so nothing stays suspended.
+        if (overlay.kind === 'ask-user') resolvePendingAsk()
         overlay = { kind: 'none' }
         if (redraw) {
           renderer.fullRedraw()
@@ -984,6 +1084,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function interruptStream(id: string, text: string) {
     unfreezeTerminalTitle()
+    // If an ask/plan-review overlay is awaiting, resolve it as cancelled so the
+    // suspended host-tool dispatch in runQuery unblocks instead of hanging the
+    // run loop forever.
+    resolvePendingAsk()
     if (streamRef) {
       streamRef.abort()
       streamRef = null
@@ -1387,6 +1491,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         streamMachine = null; stopSpinner()
       }
       sessionId = null
+      planTasks = null
       appState = { ...createInitialState(appState.model, agent.cwd) }
       gitInfo.setCwd(agent.cwd)
       renderer.clearScreen()
@@ -1402,6 +1507,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         flushStreamContent()
         streamMachine = null; stopSpinner()
       }
+      planTasks = null
       // Start and bind a fresh empty session so /resume can see it immediately.
       const newSession = await agent.createSession()
       sessionId = newSession.session_id
@@ -1935,23 +2041,21 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
     switch (result.action) {
       case 'cancel':
-        if (streamRef) {
-          streamRef.abort()
-          streamRef = null
-        }
+        // Resolve the awaiting host tool as cancelled; the tool maps this to a
+        // tool error so the engine's run continues rather than hanging.
+        resolvePendingAsk()
         overlay = { kind: 'none' }
         unfreezeTerminalTitle()
-        isLoading = false
-        flushStreamContent()
-        streamMachine = null
-        stopSpinner()
         commitLines([{ id: 'sys-ask-cancel', kind: 'system', text: '  ⏺ Cancelled.' }])
         renderer.requestRender()
         return
       case 'submit':
-        if (streamRef) {
+        {
           const response = askStateToResponse(result.state)
-          streamRef.respondAskUser(JSON.stringify({ Answered: response }))
+          if (pendingAsk) {
+            pendingAsk(response)
+            pendingAsk = null
+          }
           overlay = { kind: 'none' }
           unfreezeTerminalTitle()
           const answerLines: OutputLine[] = response.flatMap((r, i) => ([

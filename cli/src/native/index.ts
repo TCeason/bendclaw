@@ -95,9 +95,10 @@ export class QueryStream {
     this.raw.followUp(text)
   }
 
-  /** Respond to an ask_user event with a JSON-encoded AskUserResponse. */
-  async respondAskUser(responseJson: string): Promise<void> {
-    await this.raw.respondAskUser(responseJson)
+  /** Respond to a host_tool_call event with a JSON-encoded response.
+   *  Payload shape: { tool_call_id, content, details?, is_error? }. */
+  async respondHostTool(responseJson: string): Promise<void> {
+    await this.raw.respondHostTool(responseJson)
   }
 
   /** Async iterator support — `for await (const event of stream)` */
@@ -158,8 +159,8 @@ export class Agent {
     return this.raw.cwd
   }
 
-  async query(prompt: string, sessionId?: string, toolMode?: string, contentJson?: string): Promise<QueryStream> {
-    const outcome = await this.raw.query(prompt, sessionId ?? null, toolMode ?? null, contentJson ?? null)
+  async query(prompt: string, sessionId?: string, toolMode?: string, contentJson?: string, hostSpecsJson?: string): Promise<QueryStream> {
+    const outcome = await this.raw.query(prompt, sessionId ?? null, toolMode ?? null, contentJson ?? null, hostSpecsJson ?? null)
     if (outcome.kind !== 'run') {
       throw new Error(`Expected run, got command: ${outcome.message}`)
     }
@@ -179,8 +180,9 @@ export class Agent {
     sessionId?: string,
     toolMode?: string,
     contentJson?: string,
+    hostSpecsJson?: string,
   ): Promise<SubmitOutcome> {
-    const outcome = await this.raw.query(prompt, sessionId ?? null, toolMode ?? null, contentJson ?? null)
+    const outcome = await this.raw.query(prompt, sessionId ?? null, toolMode ?? null, contentJson ?? null, hostSpecsJson ?? null)
     if (outcome.kind === 'command') {
       return { kind: 'command', message: outcome.message ?? '' }
     }

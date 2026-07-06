@@ -105,6 +105,11 @@ pub fn transcript_from_agent_message(message: &evot_engine::AgentMessage) -> Tra
                 tool_name: tool_name.clone(),
                 content: text,
                 is_error: *is_error,
+                // The engine's `Message::ToolResult` carries no details (they
+                // ride on the `ToolExecutionEnd` event, persisted directly in
+                // runtime.rs). This path converts history messages that have
+                // already been stripped to content, so details is null here.
+                details: serde_json::Value::Null,
             }
         }
         evot_engine::AgentMessage::Extension(ext) => TranscriptItem::Extension {
@@ -198,6 +203,7 @@ pub fn agent_message_from_transcript(item: &TranscriptItem) -> evot_engine::Agen
             tool_name,
             content,
             is_error,
+            ..
         } => evot_engine::AgentMessage::Llm(evot_engine::Message::ToolResult {
             tool_call_id: tool_call_id.clone(),
             tool_name: tool_name.clone(),

@@ -26,6 +26,9 @@ export interface UIToolCall {
   args: Record<string, unknown>
   status: 'running' | 'done' | 'error'
   result?: string
+  /** Structured tool-result metadata (e.g. a plan artifact's task list),
+   *  restored from the transcript so artifacts render on resume. */
+  details?: unknown
   previewCommand?: string
   durationMs?: number
 }

@@ -82,7 +82,7 @@ describe('buildToolCall', () => {
     expect(card.text).not.toContain('✗')
   })
 
-  test('renders goal task updates as a compact goal block', () => {
+  test('renders plan task updates as a compact plan block', () => {
     const args = {
       tasks: [
         { id: 1, title: 'Audit current code', status: 'completed', started_at: '2026-05-17T10:00:00Z', completed_at: '2026-05-17T10:02:30Z' },
@@ -91,20 +91,20 @@ describe('buildToolCall', () => {
       ],
     }
 
-    const started = buildToolCall('update_goal_tasks', args)
+    const started = buildToolCall('plan', args)
     const startedText = started.map(l => l.text).join('\n')
     expect(startedText).toContain('◇ plan  · 1/3 completed')
     expect(startedText).toContain('  ☑ #1 Audit current code')
     expect(startedText).toContain('  ▷ #2 Simplify coordinator')
     expect(startedText).toContain('  · #3 Add tests')
 
-    const finished = buildToolResult('update_goal_tasks', args, 'done', 'ignored')
+    const finished = buildToolResult('plan', args, 'done', 'ignored')
     const all = finished.map(l => l.text).join('\n')
     expect(all).toContain('◇ plan  · 1/3 completed')
     expect(all).toContain('  ☑ #1 Audit current code · done in 150.0s')
     expect(all).toContain('  ▷ #2 Simplify coordinator')
     expect(all).toContain('  · #3 Add tests')
-    expect(all).not.toContain('UPDATE_GOAL_TASKS')
+    expect(all).not.toContain('PLAN ')
   })
 
   test('regular tool call still surfaces reason lines up-front', () => {

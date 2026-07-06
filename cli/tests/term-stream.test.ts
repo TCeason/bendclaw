@@ -793,11 +793,11 @@ describe('term stream machine', () => {
     expect(flushed.state.streamingText).toBe('')
   })
 
-  test('build tool finish lines uses goal details for complete task progress', () => {
+  test('build tool finish lines uses plan details for complete task progress', () => {
     const finished = buildToolFinishedLines({
       kind: 'tool_finished',
       payload: {
-        tool_name: 'update_goal_tasks',
+        tool_name: 'plan',
         args: {},
         is_error: false,
         content: '\u2713 \u00b7 1/3 completed \u00b7 current #2 Simplify coordinator',

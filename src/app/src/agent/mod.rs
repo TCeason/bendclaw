@@ -24,6 +24,7 @@ pub use run::StatsAggregator;
 pub use run_manager::RunManager;
 pub use run_manager::SendOutcome;
 pub use session_locator::SessionLocator;
+pub use tools::HostTools;
 pub use tools::ToolMode;
 pub use variables::Variables;
 

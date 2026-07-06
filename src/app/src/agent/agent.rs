@@ -13,6 +13,7 @@ use super::run::runtime;
 use super::run::runtime::TurnFactory;
 use super::session::Session;
 use super::tools::build_tools;
+use super::tools::HostTools;
 use super::tools::ToolMode;
 use super::variables::Variables;
 use crate::agent::prompt::dynamic_sections;
@@ -67,6 +68,9 @@ pub struct QueryRequest {
     pub session_id: Option<String>,
     pub mode: ToolMode,
     pub source: String,
+    /// Host-owned tools (ask_user, plan, …) to attach to this run. `None` when
+    /// the caller has no host bridge (e.g. gateway/headless callers).
+    pub host_tools: Option<HostTools>,
 }
 
 impl QueryRequest {
@@ -78,6 +82,7 @@ impl QueryRequest {
             session_id: None,
             mode: ToolMode::Headless,
             source: String::new(),
+            host_tools: None,
         }
     }
 
@@ -87,6 +92,7 @@ impl QueryRequest {
             session_id: None,
             mode: ToolMode::Headless,
             source: String::new(),
+            host_tools: None,
         }
     }
 
@@ -102,6 +108,12 @@ impl QueryRequest {
 
     pub fn mode(mut self, mode: ToolMode) -> Self {
         self.mode = mode;
+        self
+    }
+
+    /// Attach host-owned tools (the host bridge plus its registered specs).
+    pub fn host_tools(mut self, host_tools: Option<HostTools>) -> Self {
+        self.host_tools = host_tools;
         self
     }
 
@@ -570,7 +582,7 @@ impl Agent {
             }
             Command::Dump { target } => {
                 let msg = self
-                    .handle_dump_command(&request.mode, session, target.as_deref())
+                    .handle_dump_command(request.mode, session, target.as_deref())
                     .await?;
                 Ok(Some(SubmitOutcome::Command(msg)))
             }
@@ -645,8 +657,9 @@ impl Agent {
         let factory: Arc<dyn TurnFactory> = Arc::new(AgentTurnFactory {
             agent: Arc::clone(self),
             session: Arc::clone(&session),
-            mode: request.mode.clone(),
+            mode: request.mode,
             session_id: session_id.clone(),
+            host_tools: request.host_tools.clone(),
         });
 
         let run = runtime::execute_run(runtime::ExecuteRunArgs {
@@ -802,7 +815,7 @@ impl Agent {
 
     // -- private -------------------------------------------------------------
 
-    fn build_system_prompt(&self, mode: &ToolMode) -> (String, Vec<Section>) {
+    fn build_system_prompt(&self, mode: ToolMode) -> (String, Vec<Section>) {
         let mut sections = self.system_prompt_sections.read().clone();
 
         let ctx = DynamicContext {
@@ -830,15 +843,16 @@ impl Agent {
     /// to JSON and returns a human-readable status string.
     async fn handle_dump_command(
         self: &Arc<Self>,
-        mode: &ToolMode,
+        mode: ToolMode,
         session: &Arc<Session>,
         target: Option<&str>,
     ) -> Result<String> {
         let session_id = session.session_id().await;
         // build_turn runs the full per-turn assembly (tools, skills_dirs,
-        // memory tool). Reuse it so the dump matches reality.
+        // memory tool). Reuse it so the dump matches reality. The dump path has
+        // no host bridge, so host tools are omitted — it reflects built-ins.
         let turn = self
-            .build_turn(mode, Arc::clone(session), &session_id, Vec::new())
+            .build_turn(mode, Arc::clone(session), &session_id, Vec::new(), None)
             .await?;
 
         let dump = build_prompt_dump(self, mode, &turn);
@@ -926,10 +940,11 @@ impl Agent {
 
     async fn build_turn(
         &self,
-        mode: &ToolMode,
+        mode: ToolMode,
         session: Arc<Session>,
         session_id: &str,
         input: Vec<evot_engine::Content>,
+        host_tools: Option<HostTools>,
     ) -> Result<runtime::TurnInput> {
         let llm = self.llm.read().clone();
         if llm.provider.is_empty() {
@@ -963,6 +978,7 @@ impl Agent {
             envs,
             sandbox_rt.allow_bash,
             sandbox_rt.bash_sandbox_dirs,
+            host_tools,
         );
 
         // Skill availability is surfaced via the Skill tool's own description,
@@ -1016,6 +1032,7 @@ struct AgentTurnFactory {
     session: Arc<Session>,
     mode: ToolMode,
     session_id: String,
+    host_tools: Option<HostTools>,
 }
 
 #[async_trait::async_trait]
@@ -1023,10 +1040,11 @@ impl TurnFactory for AgentTurnFactory {
     async fn build(&self, input: Vec<evot_engine::Content>) -> Result<runtime::TurnInput> {
         self.agent
             .build_turn(
-                &self.mode,
+                self.mode,
                 Arc::clone(&self.session),
                 &self.session_id,
                 input,
+                self.host_tools.clone(),
             )
             .await
     }
@@ -1068,21 +1086,20 @@ fn rough_tokens(s: &str) -> usize {
     chars.div_ceil(4)
 }
 
-fn mode_label(mode: &ToolMode) -> &'static str {
+fn mode_label(mode: ToolMode) -> &'static str {
     match mode {
-        ToolMode::Interactive { .. } => "Interactive",
+        ToolMode::Interactive => "Interactive",
         ToolMode::Headless => "Headless",
-        ToolMode::Planning { .. } => "Planning",
+        ToolMode::Planning => "Planning",
         ToolMode::Readonly => "Readonly",
     }
 }
 
-/// Distil the runtime [`ToolMode`] into the prompt-layer [`PromptMode`],
-/// dropping the ask-user callbacks the prompt layer has no use for.
-fn prompt_mode(mode: &ToolMode) -> PromptMode {
+/// Distil the runtime [`ToolMode`] into the prompt-layer [`PromptMode`].
+fn prompt_mode(mode: ToolMode) -> PromptMode {
     match mode {
-        ToolMode::Interactive { .. } => PromptMode::Interactive,
-        ToolMode::Planning { .. } => PromptMode::Planning,
+        ToolMode::Interactive => PromptMode::Interactive,
+        ToolMode::Planning => PromptMode::Planning,
         ToolMode::Headless => PromptMode::Headless,
         ToolMode::Readonly => PromptMode::Readonly,
     }
@@ -1100,7 +1117,7 @@ fn thinking_label(level: evot_engine::ThinkingLevel) -> &'static str {
     }
 }
 
-fn build_prompt_dump(_agent: &Agent, mode: &ToolMode, turn: &runtime::TurnInput) -> PromptDump {
+fn build_prompt_dump(_agent: &Agent, mode: ToolMode, turn: &runtime::TurnInput) -> PromptDump {
     let opts = &turn.options;
 
     // System prompt sections — sourced from the turn (includes planning,

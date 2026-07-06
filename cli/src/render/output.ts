@@ -179,7 +179,7 @@ export function buildToolCall(
   args: Record<string, unknown>,
   previewCommand?: string,
 ): OutputLine[] {
-  if (name === 'update_goal_tasks' || name === 'TodoWrite') return buildGoalTaskCall(name, args)
+  if (name === 'plan' || name === 'Plan') return buildPlanCall(args)
 
   // Reason fields surface the model's justification up-front.
   const lines: OutputLine[] = []
@@ -208,8 +208,8 @@ export function buildToolResult(
   const lines: OutputLine[] = []
   const isError = status === 'error'
 
-  if ((name === 'update_goal_tasks' || name === 'TodoWrite') && !isError) {
-    return buildGoalTaskResult(name, args, result)
+  if ((name === 'plan' || name === 'Plan') && !isError) {
+    return buildPlanResult(args, result)
   }
 
   const resultInfo = result ? formatToolResultInfo(result) : ''
@@ -372,10 +372,17 @@ export function messagesToOutputLines(messages: UIMessage[]): OutputLine[] {
       // Tool calls: show call + result
       if (msg.toolCalls) {
         for (const tc of msg.toolCalls) {
-          lines.push(...buildToolCall(tc.name, tc.args, tc.previewCommand))
+          // The plan tool renders its task list from the tool-result details,
+          // restored from the transcript on resume. Merge it into args so the
+          // artifact renders identically to the live path.
+          const details = tc.details as { goal?: { tasks?: unknown } } | undefined
+          const renderArgs = (tc.name === 'plan' || tc.name === 'Plan') && Array.isArray(details?.goal?.tasks)
+            ? { ...tc.args, tasks: details!.goal!.tasks }
+            : tc.args
+          lines.push(...buildToolCall(tc.name, renderArgs, tc.previewCommand))
           lines.push(...buildToolResult(
             tc.name,
-            tc.args,
+            renderArgs,
             tc.status === 'error' ? 'error' : 'done',
             tc.result,
             tc.durationMs,
@@ -502,29 +509,27 @@ export class AssistantStreamBuffer {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function buildGoalTaskCall(name: string, args: Record<string, unknown>): OutputLine[] {
-  const label = name === 'TodoWrite' ? 'todo' : 'plan'
-  const tasks = readGoalTasks(args)
-  const summary = summarizeGoalTasks(tasks)
-  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `◇ ${label}  · ${summary}` }]
+function buildPlanCall(args: Record<string, unknown>): OutputLine[] {
+  const tasks = readPlanTasks(args)
+  const summary = summarizePlanTasks(tasks)
+  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `◇ plan  · ${summary}` }]
   for (const task of tasks) {
-    lines.push({ id: genId('tool'), kind: 'tool', text: `  ${goalTaskSymbol(task.status)} #${task.id} ${task.title}` })
+    lines.push({ id: genId('tool'), kind: 'tool', text: `  ${planTaskSymbol(task.status)} #${task.id} ${task.title}` })
   }
   return lines
 }
 
-function buildGoalTaskResult(name: string, args: Record<string, unknown>, result?: string): OutputLine[] {
-  const label = name === 'TodoWrite' ? 'todo' : 'plan'
-  const tasks = readGoalTasks(args)
-  const summary = summarizeGoalTasks(tasks, result)
-  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `◇ ${label}  · ${summary}` }]
+function buildPlanResult(args: Record<string, unknown>, result?: string): OutputLine[] {
+  const tasks = readPlanTasks(args)
+  const summary = summarizePlanTasks(tasks, result)
+  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `◇ plan  · ${summary}` }]
   for (const task of tasks) {
-    lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${goalTaskSymbol(task.status)} #${task.id} ${task.title}${goalTaskDuration(task)}` })
+    lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${planTaskSymbol(task.status)} #${task.id} ${task.title}${planTaskDuration(task)}` })
   }
   return lines
 }
 
-interface GoalTaskView {
+interface PlanTaskView {
   id: number
   title: string
   status: string
@@ -532,15 +537,14 @@ interface GoalTaskView {
   completedAt?: string
 }
 
-function readGoalTasks(args: Record<string, unknown>): GoalTaskView[] {
+function readPlanTasks(args: Record<string, unknown>): PlanTaskView[] {
   const tasks = args?.tasks
   if (!Array.isArray(tasks)) return []
-  return tasks.flatMap((task): GoalTaskView[] => {
+  return tasks.flatMap((task): PlanTaskView[] => {
     if (!task || typeof task !== 'object') return []
     const input = task as Record<string, unknown>
     const id = typeof input.id === 'number' ? input.id : Number(input.id)
-    const title = typeof input.title === 'string' ? input.title.trim()
-      : typeof input.content === 'string' ? input.content.trim() : ''
+    const title = typeof input.title === 'string' ? input.title.trim() : ''
     const status = typeof input.status === 'string' ? input.status : ''
     const startedAt = typeof input.started_at === 'string' ? input.started_at : undefined
     const completedAt = typeof input.completed_at === 'string' ? input.completed_at : undefined
@@ -549,17 +553,17 @@ function readGoalTasks(args: Record<string, unknown>): GoalTaskView[] {
   })
 }
 
-function summarizeGoalTasks(tasks: GoalTaskView[], fallback?: string): string {
+function summarizePlanTasks(tasks: PlanTaskView[], fallback?: string): string {
   if (tasks.length === 0) return fallback?.trim() || 'tasks updated'
   const completed = tasks.filter(task => task.status === 'completed').length
   return `${completed}/${tasks.length} completed`
 }
 
-function goalTaskDuration(task: GoalTaskView): string {
-  const started = parseGoalTaskTime(task.startedAt)
+function planTaskDuration(task: PlanTaskView): string {
+  const started = parsePlanTaskTime(task.startedAt)
   if (started === undefined) return ''
   if (task.completedAt) {
-    const completed = parseGoalTaskTime(task.completedAt)
+    const completed = parsePlanTaskTime(task.completedAt)
     if (completed === undefined || completed < started) return ''
     return ` · done in ${formatDuration(completed - started)}`
   }
@@ -570,15 +574,16 @@ function goalTaskDuration(task: GoalTaskView): string {
   return ''
 }
 
-function parseGoalTaskTime(value?: string): number | undefined {
+function parsePlanTaskTime(value?: string): number | undefined {
   if (!value) return undefined
   const parsed = Date.parse(value)
   return Number.isFinite(parsed) ? parsed : undefined
 }
 
-function goalTaskSymbol(status: string): string {
+function planTaskSymbol(status: string): string {
   if (status === 'completed') return '☑'
   if (status === 'in_progress') return '▷'
+  if (status === 'failed') return '✗'
   return '·'
 }
 
