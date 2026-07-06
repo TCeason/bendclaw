@@ -37,6 +37,8 @@ pub struct MockTool {
     description: String,
     schema: serde_json::Value,
     result: Result<ToolResult, ToolError>,
+    /// Artificial execution delay, to simulate a long-running command.
+    delay: Option<std::time::Duration>,
 }
 
 impl MockTool {
@@ -54,6 +56,7 @@ impl MockTool {
                 details: serde_json::Value::Null,
                 retention: Retention::Normal,
             }),
+            delay: None,
         }
     }
 
@@ -65,7 +68,16 @@ impl MockTool {
             description: format!("Mock {}", name),
             schema: serde_json::json!({"type": "object", "properties": {}}),
             result: Err(ToolError::Failed(error.into())),
+            delay: None,
         }
+    }
+
+    /// Add an artificial execution delay, to simulate a long-running command
+    /// (a build, a training run) whose wall-time must be excluded from the
+    /// execution duration limit.
+    pub fn with_delay(mut self, delay: std::time::Duration) -> Self {
+        self.delay = Some(delay);
+        self
     }
 
     /// Override the JSON schema.
@@ -94,6 +106,9 @@ impl AgentTool for MockTool {
         _params: serde_json::Value,
         _ctx: ToolContext,
     ) -> Result<ToolResult, ToolError> {
+        if let Some(delay) = self.delay {
+            tokio::time::sleep(delay).await;
+        }
         match &self.result {
             Ok(r) => Ok(r.clone()),
             Err(ToolError::Failed(msg)) => Err(ToolError::Failed(msg.clone())),

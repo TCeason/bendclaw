@@ -24,4 +24,14 @@ impl ToolMode {
     pub fn allows_host_tools(self) -> bool {
         !matches!(self, ToolMode::Readonly)
     }
+
+    /// Whether the run is human-in-the-loop (a person is watching and can steer
+    /// or interrupt). Interactive sessions impose no execution limits — like
+    /// pi, the loop stops only on error, abort, or when there is no more work.
+    /// A long build, a slow training run, or a slow human reply must never
+    /// terminate the agent. Autonomous modes (Headless, Readonly) keep their
+    /// limits as a runaway-cost safety net.
+    pub fn is_interactive(self) -> bool {
+        matches!(self, ToolMode::Interactive | ToolMode::Planning)
+    }
 }

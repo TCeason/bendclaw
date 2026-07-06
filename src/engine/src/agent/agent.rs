@@ -224,6 +224,14 @@ impl Agent {
         self
     }
 
+    /// Set or clear execution limits. `None` runs the loop with no turn, token,
+    /// or duration ceiling — it stops only on error, abort, or when there is no
+    /// more work (interactive parity with pi).
+    pub fn with_execution_limits_opt(mut self, limits: Option<ExecutionLimits>) -> Self {
+        self.execution_limits = limits;
+        self
+    }
+
     pub fn with_messages(mut self, msgs: Vec<AgentMessage>) -> Self {
         self.messages = msgs;
         self

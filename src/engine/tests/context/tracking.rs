@@ -138,7 +138,10 @@ fn empty_response_does_not_reenable_stale_anchor() {
 }
 
 // ---------------------------------------------------------------------------
-// ExecutionTracker — idle clock excludes user-wait time from the duration limit
+// ExecutionTracker — idle clock excludes tool execution time from the duration
+// limit. The loop pauses the clock around every tool call, so `max_duration`
+// bounds only the agent's own work (LLM inference + loop overhead), never how
+// long a build, a training run, or a slow user reply takes.
 // ---------------------------------------------------------------------------
 
 fn short_duration_limits() -> ExecutionLimits {
@@ -149,8 +152,9 @@ fn short_duration_limits() -> ExecutionLimits {
     }
 }
 
-/// A guard's lifetime is subtracted from elapsed, so a wait longer than the
-/// duration limit does not trip `check_limits` as long as it was spent idle.
+/// A guard's lifetime is subtracted from elapsed, so a tool (or user wait)
+/// longer than the duration limit does not trip `check_limits` as long as it
+/// ran inside a pause interval.
 #[test]
 fn idle_time_is_excluded_from_duration_limit() {
     let clock = IdleClock::new();

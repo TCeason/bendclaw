@@ -63,17 +63,10 @@ impl AgentTool for HostTool {
             arguments: params,
         };
 
-        // Tools that block on the user (e.g. ask_user, plan review) should not
-        // count against the execution duration limit. Pause the idle clock for
-        // the duration of the delegation when the spec opts in.
-        let response = {
-            let _idle = if self.spec.pauses_idle_clock {
-                ctx.idle_clock.as_ref().map(|c| c.pause())
-            } else {
-                None
-            };
-            self.host.execute_tool(call).await
-        };
+        // Idle-clock accounting (excluding this wait from the execution
+        // duration limit) is handled uniformly by the loop for every tool, so
+        // there is nothing tool-specific to do here.
+        let response = self.host.execute_tool(call).await;
 
         match response {
             Ok(resp) => {

@@ -15,7 +15,6 @@ fn ctx(name: &str) -> ToolContext {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         spill: None,
-        idle_clock: None,
     }
 }
 

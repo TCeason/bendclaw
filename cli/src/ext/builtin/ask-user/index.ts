@@ -94,7 +94,6 @@ export function createAskUserTool(
       description: SPEC_DESCRIPTION,
       parameters_schema: PARAMETERS_SCHEMA,
       name_aliases: [['claude', 'AskUser']],
-      pauses_idle_clock: true,
     },
     async execute(params): Promise<HostToolResult> {
       const answers = await collect(params)

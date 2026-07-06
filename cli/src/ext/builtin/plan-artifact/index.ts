@@ -46,9 +46,6 @@ export function createPlanTool(): HostTool<PlanParams> {
       description: PLAN_DESCRIPTION,
       parameters_schema: PARAMETERS_SCHEMA,
       name_aliases: [['claude', 'Plan']],
-      // A propose blocks on user review, so exclude the wait from the
-      // execution duration limit.
-      pauses_idle_clock: true,
     },
 
     async execute(params, ctx): Promise<HostToolResult> {

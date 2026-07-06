@@ -85,10 +85,6 @@ pub struct ToolContext {
     pub path_guard: Arc<PathGuard>,
     /// Optional spill storage. Used by file tools to mark reads from spilled tool output.
     pub spill: Option<Arc<crate::spill::FsSpill>>,
-    /// Optional idle clock. Tools that block waiting on the user (e.g. `ask_user`)
-    /// pause this around the wait so the time is excluded from the execution
-    /// duration limit. `None` when no execution limits are tracked.
-    pub idle_clock: Option<crate::context::IdleClock>,
 }
 
 impl Clone for ToolContext {
@@ -102,7 +98,6 @@ impl Clone for ToolContext {
             cwd: self.cwd.clone(),
             path_guard: self.path_guard.clone(),
             spill: self.spill.clone(),
-            idle_clock: self.idle_clock.clone(),
         }
     }
 }
@@ -121,7 +116,6 @@ impl std::fmt::Debug for ToolContext {
             .field("cwd", &self.cwd)
             .field("path_guard", &self.path_guard)
             .field("spill", &self.spill.as_ref().map(|_| "<spill>"))
-            .field("idle_clock", &self.idle_clock.as_ref().map(|_| "<idle>"))
             .finish()
     }
 }

@@ -55,7 +55,9 @@ pub struct EngineOptions {
     /// Per-section breakdown matching `system_prompt`. Guaranteed:
     /// `system_prompt == sections.iter().map(|s| s.text).join("\n\n")`.
     pub system_prompt_sections: Vec<crate::agent::prompt::Section>,
-    pub limits: crate::agent::ExecutionLimits,
+    /// Execution limits, or `None` for interactive runs (no limits — the loop
+    /// stops only on error, abort, or when there is no more work, matching pi).
+    pub limits: Option<crate::agent::ExecutionLimits>,
     pub skills_dirs: Vec<std::path::PathBuf>,
     pub tools: Vec<Box<dyn evot_engine::AgentTool>>,
     pub thinking_level: evot_engine::ThinkingLevel,
@@ -1019,11 +1021,13 @@ pub(crate) fn build_agent(
         (None, Protocol::OpenAi) => evot_engine::Agent::new(OpenAiCompatProvider),
     };
 
-    let limits = evot_engine::context::ExecutionLimits {
-        max_turns: options.limits.max_turns as usize,
-        max_total_tokens: options.limits.max_total_tokens as usize,
-        max_duration: std::time::Duration::from_secs(options.limits.max_duration_secs),
-    };
+    let limits = options
+        .limits
+        .map(|l| evot_engine::context::ExecutionLimits {
+            max_turns: l.max_turns as usize,
+            max_total_tokens: l.max_total_tokens as usize,
+            max_duration: std::time::Duration::from_secs(l.max_duration_secs),
+        });
 
     let skills = match crate::agent::prompt::skill::load_skills(&options.skills_dirs) {
         Ok(specs) => evot_engine::SkillSet::new(specs),
@@ -1039,7 +1043,7 @@ pub(crate) fn build_agent(
         .with_model_config(model_config)
         .with_system_prompt(&options.system_prompt)
         .with_messages(prior_messages)
-        .with_execution_limits(limits)
+        .with_execution_limits_opt(limits)
         .with_tools(options.tools)
         .with_cwd(options.cwd)
         .with_path_guard(options.path_guard)

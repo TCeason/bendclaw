@@ -17,7 +17,6 @@ fn ctx() -> ToolContext {
         cwd: std::path::PathBuf::new(),
         path_guard: Arc::new(evotengine::PathGuard::open()),
         spill: None,
-        idle_clock: None,
     }
 }
 
@@ -29,7 +28,6 @@ fn spec() -> HostToolSpec {
         parameters_schema: serde_json::json!({ "type": "object" }),
         prompt_snippet: Some("track a multi-step plan".into()),
         name_aliases: vec![("claude".into(), "Plan".into())],
-        pauses_idle_clock: false,
     }
 }
 

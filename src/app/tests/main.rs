@@ -46,6 +46,8 @@ mod skill_loader_test;
 mod storage_memory_test;
 #[path = "storage_test.rs"]
 mod storage_test;
+#[path = "tool_mode_test.rs"]
+mod tool_mode_test;
 #[path = "types_transcript_stats_test.rs"]
 mod types_transcript_stats_test;
 

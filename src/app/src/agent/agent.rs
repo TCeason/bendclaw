@@ -1000,7 +1000,11 @@ impl Agent {
                 base_url: Some(llm.base_url),
                 system_prompt,
                 system_prompt_sections: sections,
-                limits: self.limits.read().clone(),
+                limits: if mode.is_interactive() {
+                    None
+                } else {
+                    Some(self.limits.read().clone())
+                },
                 skills_dirs: skill_dirs,
                 tools,
                 thinking_level: llm.thinking_level,

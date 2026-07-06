@@ -43,9 +43,6 @@ export interface HostToolSpec {
   prompt_snippet?: string
   /** Model-specific name aliases: [model_pattern, llm_name]. */
   name_aliases?: [string, string][]
-  /** When true, time spent awaiting this tool is excluded from the execution
-   *  duration limit (tools that block on the user). */
-  pauses_idle_clock?: boolean
 }
 
 /** Context passed to a host tool's execute and to UI-driven flows. */

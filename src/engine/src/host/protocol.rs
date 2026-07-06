@@ -31,10 +31,6 @@ pub struct HostToolSpec {
     /// Model-specific name aliases: `(model_pattern, llm_name)`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub name_aliases: Vec<(String, String)>,
-    /// When true, waiting on this tool is treated as idle time and excluded
-    /// from the execution duration limit (e.g. tools that block on the user).
-    #[serde(default)]
-    pub pauses_idle_clock: bool,
 }
 
 /// A single invocation of a host tool, forwarded from the engine.

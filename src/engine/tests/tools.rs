@@ -37,7 +37,6 @@ pub fn ctx(name: &str) -> ToolContext {
         cwd: std::path::PathBuf::new(),
         path_guard: Arc::new(evotengine::PathGuard::open()),
         spill: None,
-        idle_clock: None,
     }
 }
 
@@ -51,6 +50,5 @@ pub fn ctx_with_cancel(name: &str, cancel: CancellationToken) -> ToolContext {
         cwd: std::path::PathBuf::new(),
         path_guard: Arc::new(evotengine::PathGuard::open()),
         spill: None,
-        idle_clock: None,
     }
 }

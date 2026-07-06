@@ -2574,3 +2574,75 @@ async fn test_aliased_edit_call_dispatches_and_coerces() {
         content
     );
 }
+
+// ---------------------------------------------------------------------------
+// Execution duration limit excludes tool wall-time (issue: long tool killed run)
+// ---------------------------------------------------------------------------
+
+/// A single tool call that runs far longer than `max_duration` must not
+/// terminate the agent. The loop pauses the idle clock around every tool, so
+/// the tool's wall-time is excluded from the duration limit — only the agent's
+/// own work counts. Before this fix, a long bash command (e.g. a training run)
+/// would trip `max_duration` at the top of the next turn and stop the loop even
+/// though the tool returned normally.
+#[tokio::test]
+async fn slow_tool_does_not_trip_duration_limit() {
+    let output = TestHarness::new()
+        .execution_limits(evotengine::context::ExecutionLimits {
+            max_turns: 1_000_000,
+            max_total_tokens: usize::MAX,
+            max_duration: std::time::Duration::from_millis(30),
+        })
+        .responses(vec![
+            MockResponse::ToolCalls(vec![MockToolCall {
+                name: "slow_build".into(),
+                arguments: serde_json::json!({}),
+            }]),
+            MockResponse::Text("build finished".into()),
+        ])
+        // Tool runs ~4x longer than the duration limit.
+        .tool(MockTool::ok("slow_build", "done").with_delay(std::time::Duration::from_millis(120)))
+        .run("run the build")
+        .await;
+
+    output.assert_completed();
+    output.assert_no_errors();
+    // The loop reached the second turn and produced the final text rather than
+    // stopping with an "[Agent stopped: Max duration ...]" message.
+    output.assert_last_role("assistant");
+    assert!(
+        output.tool_errors().is_empty(),
+        "the slow tool returned normally; there should be no tool error"
+    );
+    let stopped = output.context_messages.iter().any(|m| {
+        matches!(m, AgentMessage::Llm(Message::User { content, .. })
+            if content.iter().any(|c| matches!(c, Content::Text { text } if text.contains("Agent stopped"))))
+    });
+    assert!(!stopped, "a long tool must not trip the duration limit");
+}
+
+/// Interactive parity with pi: with no execution limits, the loop never injects
+/// an "[Agent stopped]" message regardless of how much work it does.
+#[tokio::test]
+async fn no_limits_runs_without_stop_message() {
+    let output = TestHarness::new()
+        // execution_limits left as None (interactive default)
+        .responses(vec![
+            MockResponse::ToolCalls(vec![MockToolCall {
+                name: "slow_build".into(),
+                arguments: serde_json::json!({}),
+            }]),
+            MockResponse::Text("done".into()),
+        ])
+        .tool(MockTool::ok("slow_build", "ok").with_delay(std::time::Duration::from_millis(40)))
+        .run("go")
+        .await;
+
+    output.assert_completed();
+    output.assert_last_role("assistant");
+    let stopped = output.context_messages.iter().any(|m| {
+        matches!(m, AgentMessage::Llm(Message::User { content, .. })
+            if content.iter().any(|c| matches!(c, Content::Text { text } if text.contains("Agent stopped"))))
+    });
+    assert!(!stopped, "no limits means no stop message");
+}

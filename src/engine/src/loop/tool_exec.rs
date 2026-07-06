@@ -248,7 +248,6 @@ async fn execute_single_tool(
         cwd: cwd.to_path_buf(),
         path_guard: path_guard.clone(),
         spill: spill.clone(),
-        idle_clock: idle_clock.cloned(),
     };
 
     let (result, is_error) = match tool {
@@ -283,19 +282,29 @@ async fn execute_single_tool(
                     },
                     true,
                 ),
-                Ok(coerced_args) => match tool.execute(coerced_args, ctx).await {
-                    Ok(r) => (r, false),
-                    Err(e) => (
-                        ToolResult {
-                            content: vec![Content::Text {
-                                text: e.to_string(),
-                            }],
-                            details: serde_json::Value::Null,
-                            retention: Retention::Normal,
-                        },
-                        true,
-                    ),
-                },
+                Ok(coerced_args) => {
+                    // Exclude tool wall-time from the execution duration limit:
+                    // a legitimately long command (a build, a training run) or a
+                    // slow user response must not trip `max_duration`. The limit
+                    // bounds the agent's own work (LLM inference + loop
+                    // overhead), not how long a tool takes to run. The guard
+                    // records the elapsed span into the idle clock on drop, so
+                    // it counts on success, error, cancellation, and panic alike.
+                    let _idle = idle_clock.map(|c| c.pause());
+                    match tool.execute(coerced_args, ctx).await {
+                        Ok(r) => (r, false),
+                        Err(e) => (
+                            ToolResult {
+                                content: vec![Content::Text {
+                                    text: e.to_string(),
+                                }],
+                                details: serde_json::Value::Null,
+                                retention: Retention::Normal,
+                            },
+                            true,
+                        ),
+                    }
+                }
             }
         }
         None => (
