@@ -452,6 +452,7 @@ fn display_thinking_level(llm: &evot::conf::LlmConfig) -> String {
         llm.compat_caps,
         llm.context_window,
         llm.max_tokens,
+        llm.supports_image,
     );
     if model_config.supported_thinking_levels().is_empty() {
         return String::new();

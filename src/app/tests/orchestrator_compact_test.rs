@@ -102,6 +102,7 @@ fn test_llm() -> LlmConfig {
         compat_caps: Default::default(),
         context_window: None,
         max_tokens: None,
+        supports_image: None,
     }
 }
 
@@ -117,6 +118,7 @@ fn settings() -> CompactSettings {
     CompactSettings {
         keep_recent_tokens: KEEP_RECENT_TOKENS,
         keep_recent_min_messages: 2,
+        context_window: 0,
     }
 }
 

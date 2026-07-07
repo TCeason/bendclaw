@@ -24,6 +24,7 @@ fn ctx_at(dir: &std::path::Path) -> ToolContext {
         cwd: dir.to_path_buf(),
         path_guard: Arc::new(evotengine::PathGuard::open()),
         spill: None,
+        supports_image: true,
     }
 }
 

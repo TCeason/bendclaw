@@ -631,6 +631,7 @@ fn resolve_model_spec_by_model_name() -> TestResult {
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
     config
         .providers
@@ -643,6 +644,7 @@ fn resolve_model_spec_by_model_name() -> TestResult {
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
 
     config
@@ -656,6 +658,7 @@ fn resolve_model_spec_by_model_name() -> TestResult {
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
 
     let (name, override_model) = config.resolve_model_spec("deepseek-chat")?;
@@ -696,6 +699,7 @@ fn with_model_sets_override() -> TestResult {
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
 
     // provider:model sets override
@@ -726,6 +730,7 @@ fn with_model_none_is_noop() -> TestResult {
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
     let config = config.with_model(None)?;
     assert_eq!(config.llm.provider, "");
@@ -755,6 +760,7 @@ fn validate_missing_api_key() {
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
     config.llm.provider = "anthropic".into();
     let err = config.validate().unwrap_err();
@@ -775,6 +781,7 @@ fn validate_missing_base_url() {
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
     config.llm.provider = "anthropic".into();
     let err = config.validate().unwrap_err();
@@ -795,6 +802,7 @@ fn validate_missing_model() {
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
     config.llm.provider = "anthropic".into();
     let err = config.validate().unwrap_err();
@@ -815,6 +823,7 @@ fn validate_model_override_bypasses_empty_profile_model() {
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
     config.llm.provider = "anthropic".into();
     config.llm.model_override = Some("override-model".into());
@@ -926,6 +935,7 @@ fn make_multi_provider_config() -> Config {
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
     config
         .providers
@@ -938,6 +948,7 @@ fn make_multi_provider_config() -> Config {
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
     config
         .providers
@@ -950,6 +961,7 @@ fn make_multi_provider_config() -> Config {
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
     config.llm.provider = "anthropic".into();
     config
@@ -975,6 +987,7 @@ fn resolve_llm_config(
         compat_caps: Default::default(),
         context_window: None,
         max_tokens: None,
+        supports_image: None,
     })
 }
 
@@ -1059,6 +1072,7 @@ fn set_provider_validates_incomplete_provider() {
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
     config
         .providers
@@ -1071,6 +1085,7 @@ fn set_provider_validates_incomplete_provider() {
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
 
     // Resolving the broken provider succeeds at spec level

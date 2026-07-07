@@ -27,6 +27,7 @@ pub(super) async fn execute_tool_calls(
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
     idle_clock: Option<&crate::context::IdleClock>,
+    supports_image: bool,
 ) -> ToolExecutionResult {
     match strategy {
         ToolExecutionStrategy::Sequential => {
@@ -40,6 +41,7 @@ pub(super) async fn execute_tool_calls(
                 path_guard,
                 spill,
                 idle_clock,
+                supports_image,
             )
             .await
         }
@@ -54,6 +56,7 @@ pub(super) async fn execute_tool_calls(
                 path_guard,
                 spill,
                 idle_clock,
+                supports_image,
             )
             .await
         }
@@ -63,7 +66,16 @@ pub(super) async fn execute_tool_calls(
 
             for (batch_idx, batch) in tool_calls.chunks(*size).enumerate() {
                 let batch_result = execute_batch(
-                    tools, batch, tx, cancel, None, cwd, path_guard, spill, idle_clock,
+                    tools,
+                    batch,
+                    tx,
+                    cancel,
+                    None,
+                    cwd,
+                    path_guard,
+                    spill,
+                    idle_clock,
+                    supports_image,
                 )
                 .await;
                 results.extend(batch_result.tool_results);
@@ -105,13 +117,24 @@ async fn execute_sequential(
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
     idle_clock: Option<&crate::context::IdleClock>,
+    supports_image: bool,
 ) -> ToolExecutionResult {
     let mut results: Vec<Message> = Vec::new();
     let mut steering_messages: Option<Vec<AgentMessage>> = None;
 
     for (index, (id, name, args)) in tool_calls.iter().enumerate() {
         let (msg, _is_error) = execute_single_tool(
-            tools, id, name, args, tx, cancel, cwd, path_guard, spill, idle_clock,
+            tools,
+            id,
+            name,
+            args,
+            tx,
+            cancel,
+            cwd,
+            path_guard,
+            spill,
+            idle_clock,
+            supports_image,
         )
         .await;
         results.push(msg);
@@ -147,6 +170,7 @@ async fn execute_batch(
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
     idle_clock: Option<&crate::context::IdleClock>,
+    supports_image: bool,
 ) -> ToolExecutionResult {
     use futures::future::join_all;
 
@@ -154,7 +178,17 @@ async fn execute_batch(
         .iter()
         .map(|(id, name, args)| {
             execute_single_tool(
-                tools, id, name, args, tx, cancel, cwd, path_guard, spill, idle_clock,
+                tools,
+                id,
+                name,
+                args,
+                tx,
+                cancel,
+                cwd,
+                path_guard,
+                spill,
+                idle_clock,
+                supports_image,
             )
         })
         .collect();
@@ -194,6 +228,7 @@ async fn execute_single_tool(
     path_guard: &Arc<PathGuard>,
     spill: &Option<Arc<FsSpill>>,
     idle_clock: Option<&crate::context::IdleClock>,
+    supports_image: bool,
 ) -> (Message, bool) {
     let tool = tools.iter().find(|t| t.matches_call_name(name));
 
@@ -248,6 +283,7 @@ async fn execute_single_tool(
         cwd: cwd.to_path_buf(),
         path_guard: path_guard.clone(),
         spill: spill.clone(),
+        supports_image,
     };
 
     let (result, is_error) = match tool {

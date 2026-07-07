@@ -18,6 +18,7 @@ pub use mock::MockResponse;
 pub use model::ApiProtocol;
 pub use model::CompatCaps;
 pub use model::CostConfig;
+pub use model::InputModality;
 pub use model::ModelConfig;
 pub use model::OpenAiCompat;
 pub use model::ThinkingPassbackPolicy;

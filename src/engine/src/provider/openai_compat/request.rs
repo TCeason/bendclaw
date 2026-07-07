@@ -16,6 +16,16 @@ pub struct ToolCallBuffer {
 pub fn build_request_body(config: &StreamConfig, compat: &OpenAiCompat) -> serde_json::Value {
     let mut messages: Vec<serde_json::Value> = Vec::new();
 
+    // Whether the target model accepts image input. Text-only models get image
+    // content replaced with a text placeholder, mirroring pi's
+    // `model.input.includes("image")` gate. Absent model config, assume vision
+    // is allowed (the request path had no way to know otherwise).
+    let supports_image = config
+        .model_config
+        .as_ref()
+        .map(|m| m.supports_image())
+        .unwrap_or(true);
+
     // System prompt
     if !config.system_prompt.is_empty() {
         messages.push(serde_json::json!({
@@ -29,7 +39,7 @@ pub fn build_request_body(config: &StreamConfig, compat: &OpenAiCompat) -> serde
             Message::User { content, .. } => {
                 messages.push(serde_json::json!({
                     "role": "user",
-                    "content": content_to_openai(content),
+                    "content": content_to_openai(content, supports_image),
                 }));
             }
             Message::Assistant { content, .. } => {
@@ -86,6 +96,11 @@ pub fn build_request_body(config: &StreamConfig, compat: &OpenAiCompat) -> serde
                 ..
             } => {
                 let has_image = content.iter().any(|c| matches!(c, Content::Image { .. }));
+                // Only surface image content to vision-capable models. For
+                // text-only models the image is dropped and the tool result
+                // text carries a note, so the request never sends an
+                // `image_url` block a text-only endpoint would reject.
+                let attach_image = has_image && supports_image;
                 let text = content
                     .iter()
                     .find_map(|c| match c {
@@ -93,8 +108,10 @@ pub fn build_request_body(config: &StreamConfig, compat: &OpenAiCompat) -> serde
                         _ => None,
                     })
                     .unwrap_or_else(|| {
-                        if has_image {
+                        if attach_image {
                             "Image output is attached in the next user message.".into()
+                        } else if has_image {
+                            "[Image output omitted: the current model does not support image input.]".into()
                         } else {
                             String::new()
                         }
@@ -108,11 +125,11 @@ pub fn build_request_body(config: &StreamConfig, compat: &OpenAiCompat) -> serde
                 apply_tool_result_compat(&mut msg_obj, compat, tool_name);
                 messages.push(msg_obj);
 
-                if has_image {
+                if attach_image {
                     let image_content = tool_result_images_as_user_content(tool_name, content);
                     messages.push(serde_json::json!({
                         "role": "user",
-                        "content": content_to_openai(&image_content),
+                        "content": content_to_openai(&image_content, supports_image),
                     }));
                 }
             }
@@ -225,7 +242,7 @@ fn tool_result_images_as_user_content(tool_name: &str, content: &[Content]) -> V
     user_content
 }
 
-pub fn content_to_openai(content: &[Content]) -> serde_json::Value {
+pub fn content_to_openai(content: &[Content], supports_image: bool) -> serde_json::Value {
     if content.len() == 1 {
         if let Content::Text { text } = &content[0] {
             if !text.is_empty() {
@@ -238,6 +255,10 @@ pub fn content_to_openai(content: &[Content]) -> serde_json::Value {
         .filter(|c| !matches!(c, Content::Text { text } if text.is_empty()))
         .filter_map(|c| match c {
             Content::Text { text } => Some(serde_json::json!({"type": "text", "text": text})),
+            Content::Image { .. } if !supports_image => Some(serde_json::json!({
+                "type": "text",
+                "text": "[Image omitted: the current model does not support image input.]",
+            })),
             Content::Image { .. } => c.resolve_image_data().map(|(data, mime_type)| {
                 serde_json::json!({
                     "type": "image_url",

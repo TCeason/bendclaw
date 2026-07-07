@@ -28,6 +28,7 @@ async fn manual_compact_uses_llm_summary() -> TestResult {
         thinking_level: None,
         context_window: None,
         max_tokens: None,
+        supports_image: None,
     });
     config.llm.provider = "test".into();
 

@@ -175,6 +175,7 @@ async fn test_bash_progress_emitted() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         spill: None,
+        supports_image: true,
     };
 
     // Command runs ~4s, progress fires every 3s, so we should get at least 1
@@ -214,6 +215,7 @@ async fn test_bash_update_emitted() {
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
         spill: None,
+        supports_image: true,
     };
 
     // Command runs ~4s with output, update fires every 2s.
@@ -412,6 +414,7 @@ fn ctx_with_spill(name: &str, dir: std::path::PathBuf) -> ToolContext {
         cwd: std::path::PathBuf::new(),
         path_guard: Arc::new(evotengine::PathGuard::open()),
         spill: Some(Arc::new(evotengine::spill::FsSpill::new(dir))),
+        supports_image: true,
     }
 }
 

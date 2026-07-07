@@ -26,6 +26,16 @@ impl std::fmt::Display for ApiProtocol {
     }
 }
 
+/// A modality a model accepts as input. Mirrors pi's `Model.input` array
+/// (`("text" | "image")[]`), which the request builders consult before
+/// attaching non-text content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputModality {
+    Text,
+    Image,
+}
+
 /// Provider/model-level thinking passback policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -285,6 +295,12 @@ pub struct ModelConfig {
     pub context_window: u32,
     /// Default max output tokens.
     pub max_tokens: u32,
+    /// Input modalities the model accepts. Defaults to text-only, matching the
+    /// conservative assumption for unknown OpenAI-compatible servers. The
+    /// request builders consult this before attaching image content, mirroring
+    /// pi's `model.input.includes("image")` gate.
+    #[serde(default = "default_input_modalities")]
+    pub input: Vec<InputModality>,
     /// Cost configuration.
     #[serde(default)]
     pub cost: CostConfig,
@@ -308,6 +324,10 @@ pub struct ModelConfig {
     /// - key absent — the level uses the protocol's default behavior.
     #[serde(default)]
     pub thinking_level_map: HashMap<String, Option<String>>,
+}
+
+fn default_input_modalities() -> Vec<InputModality> {
+    vec![InputModality::Text]
 }
 
 /// Resolve `(context_window, default_max_output_tokens)` for an Anthropic model.
@@ -507,6 +527,13 @@ impl ModelConfig {
         id.starts_with("deepseek") || id.starts_with("kimi")
     }
 
+    /// Whether this model accepts image input. Mirrors pi's
+    /// `model.input.includes("image")` gate used by the request builders and
+    /// the read tool to decide whether to attach or drop image content.
+    pub fn supports_image(&self) -> bool {
+        self.input.contains(&InputModality::Image)
+    }
+
     /// Create a new Anthropic model config.
     pub fn anthropic(id: impl Into<String>, name: impl Into<String>) -> Self {
         let id = id.into();
@@ -520,6 +547,7 @@ impl ModelConfig {
             base_url: "https://api.anthropic.com".into(),
             context_window,
             max_tokens,
+            input: vec![InputModality::Text, InputModality::Image],
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: None,
@@ -541,6 +569,7 @@ impl ModelConfig {
             base_url: "https://api.openai.com/v1".into(),
             context_window,
             max_tokens: 32_768,
+            input: vec![InputModality::Text, InputModality::Image],
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::openai()),
@@ -569,6 +598,7 @@ impl ModelConfig {
             base_url: base_url.into(),
             context_window,
             max_tokens: 32_768,
+            input: default_input_modalities(),
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::default()),

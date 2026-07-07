@@ -29,6 +29,7 @@ fn anthropic_config(dir: &TempDir) -> Config {
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
     config.llm.provider = "anthropic".into();
     config
@@ -75,6 +76,7 @@ fn cycle_thinking_level_openai_without_effort_capability_is_inert() -> TestResul
         thinking_level: None,
         context_window: None,
         max_tokens: None,
+        supports_image: None,
     });
     config.llm.provider = "deepseek".into();
     let agent = Agent::new(&config, "/work")?;
@@ -97,6 +99,7 @@ fn cycle_thinking_level_openai_with_effort_capability() -> TestResult {
         thinking_level: None,
         context_window: None,
         max_tokens: None,
+        supports_image: None,
     });
     config.llm.provider = "openai".into();
     let agent = Agent::new(&config, "/work")?;
@@ -126,6 +129,7 @@ fn cycle_thinking_level_gpt_5_5_pro_cycles_medium_high_xhigh() -> TestResult {
         thinking_level: None,
         context_window: None,
         max_tokens: None,
+        supports_image: None,
     });
     config.llm.provider = "openai".into();
     let agent = Agent::new(&config, "/work")?;
@@ -167,6 +171,7 @@ fn restore_thinking_level_ignores_unknown_or_unsupported() -> TestResult {
         thinking_level: None,
         context_window: None,
         max_tokens: None,
+        supports_image: None,
     });
     config.llm.provider = "openai".into();
     let agent = Agent::new(&config, "/work")?;

@@ -69,6 +69,11 @@ pub struct ProviderProfile {
     pub thinking_level: Option<ThinkingLevel>,
     pub context_window: Option<u32>,
     pub max_tokens: Option<u32>,
+    /// Whether the model accepts image input. `None` leaves the protocol
+    /// default (Anthropic: vision; OpenAI-compatible: text-only). Set to
+    /// `Some(false)` for text-only models so images are never sent, and
+    /// `Some(true)` for vision-capable OpenAI-compatible models.
+    pub supports_image: Option<bool>,
 }
 
 impl ProviderProfile {
@@ -114,6 +119,7 @@ pub struct LlmConfig {
     pub compat_caps: CompatCaps,
     pub context_window: Option<u32>,
     pub max_tokens: Option<u32>,
+    pub supports_image: Option<bool>,
 }
 
 impl LlmConfig {
@@ -132,6 +138,7 @@ impl LlmConfig {
             compat_caps: CompatCaps::default(),
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         }
     }
 }
@@ -203,6 +210,7 @@ impl Config {
             compat_caps: profile.compat_caps,
             context_window: profile.context_window,
             max_tokens: profile.max_tokens,
+            supports_image: profile.supports_image,
         })
     }
 

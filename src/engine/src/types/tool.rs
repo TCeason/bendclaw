@@ -85,6 +85,10 @@ pub struct ToolContext {
     pub path_guard: Arc<PathGuard>,
     /// Optional spill storage. Used by file tools to mark reads from spilled tool output.
     pub spill: Option<Arc<crate::spill::FsSpill>>,
+    /// Whether the active model accepts image input. File tools consult this to
+    /// annotate image reads that the model cannot see, mirroring pi's
+    /// `getNonVisionImageNote`. Defaults to `true` (vision-capable).
+    pub supports_image: bool,
 }
 
 impl Clone for ToolContext {
@@ -98,6 +102,7 @@ impl Clone for ToolContext {
             cwd: self.cwd.clone(),
             path_guard: self.path_guard.clone(),
             spill: self.spill.clone(),
+            supports_image: self.supports_image,
         }
     }
 }

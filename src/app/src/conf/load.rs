@@ -58,6 +58,7 @@ struct ProviderSource {
     thinking_level: Option<String>,
     context_window: Option<u32>,
     max_tokens: Option<u32>,
+    supports_image: Option<bool>,
 }
 
 /// Deserialize a TOML value as either a single string or an array of strings.
@@ -241,6 +242,9 @@ fn merge_provider_source(
         if let Some(max_tokens) = src.max_tokens {
             profile.max_tokens = Some(max_tokens);
         }
+        if let Some(supports_image) = src.supports_image {
+            profile.supports_image = Some(supports_image);
+        }
     } else {
         let protocol = match src.protocol {
             Some(p) => parse_protocol(&p)?,
@@ -259,6 +263,7 @@ fn merge_provider_source(
             thinking_level,
             context_window: src.context_window,
             max_tokens: src.max_tokens,
+            supports_image: src.supports_image,
         });
     }
     Ok(())
@@ -503,6 +508,7 @@ fn apply_provider_field(
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
     match field {
         "_API_KEY" => profile.api_key = value.to_string(),
@@ -519,6 +525,7 @@ fn apply_provider_field(
         "_THINKING_LEVEL" => profile.thinking_level = Some(thinking_level_from_str(value)?),
         "_CONTEXT_WINDOW" => profile.context_window = Some(parse_token_count(name, field, value)?),
         "_MAX_TOKENS" => profile.max_tokens = Some(parse_token_count(name, field, value)?),
+        "_SUPPORTS_IMAGE" => profile.supports_image = Some(parse_bool(name, field, value)?),
         _ => {}
     }
     Ok(())
@@ -542,6 +549,21 @@ fn parse_token_count(name: &str, field: &str, value: &str) -> Result<u32> {
         )));
     }
     Ok(parsed)
+}
+
+/// Parse a boolean field (e.g. `_SUPPORTS_IMAGE`). Accepts common truthy/falsy
+/// spellings so `true/false`, `1/0`, `yes/no`, and `on/off` all work.
+fn parse_bool(name: &str, field: &str, value: &str) -> Result<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        _ => Err(EvotError::Conf(format!(
+            "EVOT_LLM_{}{} must be a boolean (true/false), got '{}'",
+            name.to_uppercase().replace('-', "_"),
+            field,
+            value
+        ))),
+    }
 }
 
 // ---------------------------------------------------------------------------

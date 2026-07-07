@@ -24,6 +24,8 @@ mod feishu_sink_test;
 mod id_validation_test;
 #[path = "manual_compact_llm_test.rs"]
 mod manual_compact_llm_test;
+#[path = "model_metadata_test.rs"]
+mod model_metadata_test;
 #[path = "orchestrator_compact_test.rs"]
 mod orchestrator_compact_test;
 #[path = "run_ask_channel_test.rs"]

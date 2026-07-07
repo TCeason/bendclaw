@@ -64,6 +64,7 @@ pub struct EngineOptions {
     pub compat_caps: evot_engine::provider::CompatCaps,
     pub context_window: Option<u32>,
     pub max_tokens: Option<u32>,
+    pub supports_image: Option<bool>,
     pub cwd: std::path::PathBuf,
     pub path_guard: std::sync::Arc<evot_engine::PathGuard>,
     pub spill_dir: Option<std::path::PathBuf>,
@@ -374,7 +375,10 @@ async fn drive_one_turn(
                             custom_instructions: None,
                             summary_override: summary.clone(),
                             summarizer: None,
-                            settings: crate::compact::orchestrator::CompactSettings::default(),
+                            settings: crate::compact::orchestrator::CompactSettings {
+                                context_window,
+                                ..Default::default()
+                            },
                         };
                         if let Err(e) = crate::compact::orchestrator::compact_session(
                             &session,
@@ -946,6 +950,7 @@ fn compact_record_from_result(result: &crate::types::CompactionResult) -> Option
 /// [`Agent`](crate::agent::Agent), and the NAPI addon's footer rendering so the
 /// set of selectable thinking levels matches exactly what the provider will
 /// honor at request time.
+#[allow(clippy::too_many_arguments)]
 pub fn build_model_config(
     protocol: Protocol,
     provider: &str,
@@ -954,6 +959,7 @@ pub fn build_model_config(
     compat_caps: evot_engine::provider::CompatCaps,
     context_window: Option<u32>,
     max_tokens: Option<u32>,
+    supports_image: Option<bool>,
 ) -> evot_engine::provider::ModelConfig {
     use evot_engine::provider::ModelConfig;
     use evot_engine::provider::OpenAiCompat;
@@ -980,11 +986,26 @@ pub fn build_model_config(
     if let Some(base_url) = base_url {
         model_config.base_url = base_url.to_string();
     }
+
+    // Explicit env/config overrides. `context_window`/`max_tokens` size the
+    // context budget; `supports_image` declares whether the model accepts image
+    // input so text-only endpoints never receive `image_url` blocks they would
+    // reject. All are provider-agnostic, set via `EVOT_LLM_<PROVIDER>_*`.
     if let Some(context_window) = context_window {
         model_config.context_window = context_window;
     }
     if let Some(max_tokens) = max_tokens {
         model_config.max_tokens = max_tokens;
+    }
+    if let Some(supports_image) = supports_image {
+        model_config.input = if supports_image {
+            vec![
+                evot_engine::provider::InputModality::Text,
+                evot_engine::provider::InputModality::Image,
+            ]
+        } else {
+            vec![evot_engine::provider::InputModality::Text]
+        };
     }
 
     model_config.apply_inferred_capabilities();
@@ -1013,6 +1034,7 @@ pub(crate) fn build_agent(
         options.compat_caps,
         options.context_window,
         options.max_tokens,
+        options.supports_image,
     );
 
     let provider_agent = match (options.provider_override, &options.protocol) {

@@ -101,6 +101,12 @@ pub fn config_to_env_groups(config: &Config) -> Vec<EnvGroup> {
         if let Some(max_tokens) = p.max_tokens {
             g.push(format!("EVOT_LLM_{seg}_MAX_TOKENS"), max_tokens.to_string());
         }
+        if let Some(supports_image) = p.supports_image {
+            g.push(
+                format!("EVOT_LLM_{seg}_SUPPORTS_IMAGE"),
+                if supports_image { "true" } else { "false" },
+            );
+        }
         groups.push(g);
     }
 
@@ -154,6 +160,7 @@ pub fn apply_settings(config: &mut Config, update: &SettingsUpdate) -> Result<()
         let compat_caps = existing.map(|e| e.compat_caps).unwrap_or(CompatCaps::NONE);
         let context_window = existing.and_then(|e| e.context_window);
         let max_tokens = existing.and_then(|e| e.max_tokens);
+        let supports_image = existing.and_then(|e| e.supports_image);
         let models: Vec<String> = p
             .models
             .iter()
@@ -169,6 +176,7 @@ pub fn apply_settings(config: &mut Config, update: &SettingsUpdate) -> Result<()
             thinking_level,
             context_window,
             max_tokens,
+            supports_image,
         });
     }
 

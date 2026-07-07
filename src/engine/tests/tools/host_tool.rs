@@ -17,6 +17,7 @@ fn ctx() -> ToolContext {
         cwd: std::path::PathBuf::new(),
         path_guard: Arc::new(evotengine::PathGuard::open()),
         spill: None,
+        supports_image: true,
     }
 }
 

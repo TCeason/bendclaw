@@ -68,6 +68,7 @@ async fn agent_create_session_persists_empty_repl_session() -> TestResult {
         thinking_level: None,
         context_window: None,
         max_tokens: None,
+        supports_image: None,
     });
     config.llm.provider = "test".into();
 
@@ -121,6 +122,7 @@ async fn missing_api_key_defers_to_query_time() -> TestResult {
             thinking_level: None,
             context_window: None,
             max_tokens: None,
+            supports_image: None,
         });
     config.llm.provider = "anthropic".into();
 

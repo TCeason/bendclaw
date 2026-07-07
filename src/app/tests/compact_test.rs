@@ -45,6 +45,7 @@ async fn compact_session_persists_structured_item_with_summary_override() -> Tes
             settings: CompactSettings {
                 keep_recent_tokens: KEEP_RECENT_TOKENS,
                 keep_recent_min_messages: 2,
+                context_window: 0,
             },
         },
         tokio_util::sync::CancellationToken::new(),
@@ -116,6 +117,7 @@ async fn compact_context_view_uses_latest_compact_boundary() -> TestResult {
             settings: CompactSettings {
                 keep_recent_tokens: KEEP_RECENT_TOKENS,
                 keep_recent_min_messages: 2,
+                context_window: 0,
             },
         },
         tokio_util::sync::CancellationToken::new(),

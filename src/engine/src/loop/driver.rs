@@ -445,6 +445,11 @@ async fn run_loop(
                     &context.path_guard,
                     &config.spill,
                     idle_clock.as_ref(),
+                    config
+                        .model_config
+                        .as_ref()
+                        .map(|m| m.supports_image())
+                        .unwrap_or(true),
                 )
                 .await;
 

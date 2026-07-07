@@ -138,13 +138,23 @@ impl AgentTool for ReadFileTool {
             let meta = tokio::fs::metadata(&path)
                 .await
                 .map_err(|e| ToolError::Failed(format!("Cannot read {}: {}", path.display(), e)))?;
+            let mut content = vec![Content::Image {
+                mime_type: mime_type.to_string(),
+                source: ImageSource::Path {
+                    path: path.to_string_lossy().to_string(),
+                },
+            }];
+            // Text-only models never receive the image bytes (the request
+            // builder drops them), so tell the model rather than letting it
+            // assume it saw the picture. Mirrors pi's `getNonVisionImageNote`.
+            if !ctx.supports_image {
+                content.push(Content::Text {
+                    text: "[Current model does not support image input. The image was omitted from this request.]"
+                        .into(),
+                });
+            }
             return Ok(ToolResult {
-                content: vec![Content::Image {
-                    mime_type: mime_type.to_string(),
-                    source: ImageSource::Path {
-                        path: path.to_string_lossy().to_string(),
-                    },
-                }],
+                content,
                 details: serde_json::json!({
                     "path": path_str,
                     "bytes": meta.len(),

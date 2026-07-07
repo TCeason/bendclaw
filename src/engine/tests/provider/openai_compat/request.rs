@@ -144,7 +144,7 @@ fn test_content_to_openai_simple_text() {
     let content = vec![Content::Text {
         text: "hello".into(),
     }];
-    let result = content_to_openai(&content);
+    let result = content_to_openai(&content, true);
     assert_eq!(result, "hello");
 }
 
@@ -157,7 +157,7 @@ fn test_content_to_openai_filters_empty_text() {
         },
         Content::Text { text: "".into() },
     ];
-    let result = content_to_openai(&content);
+    let result = content_to_openai(&content, true);
     let parts = result.as_array().unwrap();
     assert_eq!(parts.len(), 1);
     assert_eq!(parts[0]["text"], "hello");
@@ -166,7 +166,7 @@ fn test_content_to_openai_filters_empty_text() {
 #[test]
 fn test_content_to_openai_single_empty_text_filtered() {
     let content = vec![Content::Text { text: "".into() }];
-    let result = content_to_openai(&content);
+    let result = content_to_openai(&content, true);
     let parts = result.as_array().unwrap();
     assert!(parts.is_empty());
 }
@@ -185,10 +185,36 @@ fn test_content_to_openai_multipart() {
             },
         },
     ];
-    let result = content_to_openai(&content);
+    let result = content_to_openai(&content, true);
     assert!(result.is_array());
     assert_eq!(result[0]["type"], "text");
     assert_eq!(result[1]["type"], "image_url");
+}
+
+#[test]
+fn test_content_to_openai_text_only_model_drops_image() {
+    let content = vec![
+        Content::Text {
+            text: "look at this".into(),
+        },
+        Content::Image {
+            mime_type: "image/png".into(),
+            source: ImageSource::Base64 {
+                data: "abc".into(),
+                path: None,
+            },
+        },
+    ];
+    let result = content_to_openai(&content, false);
+    assert!(result.is_array());
+    assert_eq!(result[0]["type"], "text");
+    // Image becomes a text placeholder, never an image_url block.
+    assert_eq!(result[1]["type"], "text");
+    assert!(result
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|p| p["type"] != "image_url"));
 }
 
 #[test]

@@ -348,8 +348,27 @@ impl Agent {
             llm.compat_caps,
             llm.context_window,
             llm.max_tokens,
+            llm.supports_image,
         )
         .supported_thinking_levels()
+    }
+
+    /// The active model's resolved context window in tokens, after applying
+    /// explicit overrides. Used to size and validate compaction so the retained
+    /// context fits what the model actually accepts.
+    pub fn resolved_context_window(&self) -> u32 {
+        let llm = self.llm.read();
+        super::run::runtime::build_model_config(
+            llm.protocol.clone(),
+            &llm.provider,
+            &llm.model,
+            Some(&llm.base_url),
+            llm.compat_caps,
+            llm.context_window,
+            llm.max_tokens,
+            llm.supports_image,
+        )
+        .context_window
     }
 
     /// Advance the thinking level to the next supported tier, wrapping around.
@@ -530,12 +549,16 @@ impl Agent {
             } => {
                 let session_id = session.session_id().await;
                 self.abort_run(&session_id);
+                let context_window = self.resolved_context_window() as usize;
                 let request = crate::compact::orchestrator::ManualCompactRequest {
                     reason: crate::types::CompactReason::Manual,
                     custom_instructions,
                     summary_override: None,
                     summarizer: Some(self.compact_summarizer()),
-                    settings: crate::compact::orchestrator::CompactSettings::default(),
+                    settings: crate::compact::orchestrator::CompactSettings {
+                        context_window,
+                        ..Default::default()
+                    },
                 };
                 let result = crate::compact::orchestrator::compact_session(
                     session,
@@ -552,9 +575,20 @@ impl Agent {
                         messages_after,
                         ..
                     }) => {
-                        format!(
+                        let mut line = format!(
                             "Session compacted: {tokens_before} → {tokens_after} tokens, {messages_before} → {messages_after} messages."
-                        )
+                        );
+                        // Mirror pi's overflow guidance: if the compacted
+                        // context still exceeds the model window, tell the user
+                        // rather than letting the next request fail with a
+                        // near-zero output budget.
+                        if context_window > 0 && tokens_after >= context_window {
+                            line.push_str(&format!(
+                                "\nWarning: context is still {tokens_after} tokens, above this model's {context_window}-token window. \
+                                 Switch to a larger-context model or start a new session to continue."
+                            ));
+                        }
+                        line
                     }
                     _ => "Nothing to compact.".into(),
                 };
@@ -1011,6 +1045,7 @@ impl Agent {
                 compat_caps: llm.compat_caps,
                 context_window: llm.context_window,
                 max_tokens: llm.max_tokens,
+                supports_image: llm.supports_image,
                 cwd: cwd_path.to_path_buf(),
                 path_guard: sandbox_rt.path_guard,
                 spill_dir: self

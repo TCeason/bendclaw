@@ -16,6 +16,10 @@ use crate::types::TranscriptItem;
 pub struct CompactSettings {
     pub keep_recent_tokens: usize,
     pub keep_recent_min_messages: usize,
+    /// The active model's context window in tokens. Drives the shrink/reclaim
+    /// transforms applied to the retained tail and the post-compaction fit
+    /// check. `0` disables both (window unknown).
+    pub context_window: usize,
 }
 
 impl Default for CompactSettings {
@@ -23,6 +27,7 @@ impl Default for CompactSettings {
         Self {
             keep_recent_tokens: 20_000,
             keep_recent_min_messages: 6,
+            context_window: 0,
         }
     }
 }
