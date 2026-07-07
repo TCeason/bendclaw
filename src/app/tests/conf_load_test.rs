@@ -645,6 +645,19 @@ fn resolve_model_spec_by_model_name() -> TestResult {
             max_tokens: None,
         });
 
+    config
+        .providers
+        .insert("openrouter".into(), evot::conf::ProviderProfile {
+            protocol: Protocol::OpenAi,
+            api_key: "or-key".into(),
+            base_url: "https://openrouter.ai/api/v1".into(),
+            models: vec!["tencent/hy3:free".into()],
+            compat_caps: Default::default(),
+            thinking_level: None,
+            context_window: None,
+            max_tokens: None,
+        });
+
     let (name, override_model) = config.resolve_model_spec("deepseek-chat")?;
     assert_eq!(name, "deepseek");
     assert_eq!(override_model, None);
@@ -652,6 +665,14 @@ fn resolve_model_spec_by_model_name() -> TestResult {
     let (name, override_model) = config.resolve_model_spec("anthropic:custom-model")?;
     assert_eq!(name, "anthropic");
     assert_eq!(override_model, Some("custom-model".to_string()));
+
+    let (name, override_model) = config.resolve_model_spec("tencent/hy3:free")?;
+    assert_eq!(name, "openrouter");
+    assert_eq!(override_model, None);
+
+    let (name, override_model) = config.resolve_model_spec("openrouter:tencent/hy3:free")?;
+    assert_eq!(name, "openrouter");
+    assert_eq!(override_model, Some("tencent/hy3:free".to_string()));
 
     assert!(config.resolve_model_spec("nonexistent-model").is_err());
     assert!(config.resolve_model_spec("badprovider:model").is_err());

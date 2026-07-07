@@ -210,8 +210,25 @@ impl Config {
     ///
     /// Formats:
     /// - `"deepseek-chat"` — find first provider whose model matches
+    /// - `"tencent/hy3:free"` — exact model ids win even when they contain `:`
     /// - `"openrouter:google/gemini-2.5-pro"` — exact provider + model override
     pub fn resolve_model_spec(&self, spec: &str) -> Result<(String, Option<String>)> {
+        let found = self
+            .providers
+            .iter()
+            .find(|(_, p)| p.models.iter().any(|m| m == spec))
+            .map(|(name, p)| {
+                let override_model = if p.model() == spec {
+                    None
+                } else {
+                    Some(spec.to_string())
+                };
+                (name.clone(), override_model)
+            });
+        if let Some(found) = found {
+            return Ok(found);
+        }
+
         if let Some((provider, model)) = spec.split_once(':') {
             if model.is_empty() {
                 return Err(EvotError::Conf(format!(
@@ -231,30 +248,15 @@ impl Config {
             }
             Ok((provider.to_string(), Some(model.to_string())))
         } else {
-            let found = self
-                .providers
-                .iter()
-                .find(|(_, p)| p.models.iter().any(|m| m == spec))
-                .map(|(name, p)| {
-                    let override_model = if p.model() == spec {
-                        None
-                    } else {
-                        Some(spec.to_string())
-                    };
-                    (name.clone(), override_model)
-                });
-            match found {
-                Some((name, override_model)) => Ok((name, override_model)),
-                None => Err(EvotError::Conf(format!(
-                    "no provider with model '{}', available: {}",
-                    spec,
-                    self.providers
-                        .iter()
-                        .flat_map(|(n, p)| { p.models.iter().map(move |m| format!("{}:{}", n, m)) })
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ))),
-            }
+            Err(EvotError::Conf(format!(
+                "no provider with model '{}', available: {}",
+                spec,
+                self.providers
+                    .iter()
+                    .flat_map(|(n, p)| { p.models.iter().map(move |m| format!("{}:{}", n, m)) })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )))
         }
     }
 
