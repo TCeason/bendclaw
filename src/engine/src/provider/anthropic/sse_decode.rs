@@ -218,6 +218,9 @@ fn process_sse_event(
                         name,
                     });
                 }
+                // Unknown block type (e.g. a server-side `fallback` block).
+                // Ignore it so the stream continues, matching pi.
+                AnthropicContentBlock::Other => {}
             }
         }
         "content_block_delta" => {
@@ -266,6 +269,8 @@ fn process_sse_event(
                         *s = Some(signature);
                     }
                 }
+                // Unknown delta type: ignore for forward compatibility.
+                AnthropicDelta::Other => {}
             }
         }
         "content_block_stop" => {

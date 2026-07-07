@@ -47,6 +47,12 @@ pub(crate) enum AnthropicContentBlock {
     },
     #[serde(rename = "tool_use")]
     ToolUse { id: String, name: String },
+    /// Any other block type (e.g. `redacted_thinking`, or forward-compat
+    /// server-side blocks like `fallback`). Ignored rather than rejected so a
+    /// new Anthropic block type does not abort the whole stream, matching pi's
+    /// permissive `if/else if` dispatch.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Deserialize)]
@@ -67,6 +73,10 @@ pub(crate) enum AnthropicDelta {
     InputJsonDelta { partial_json: String },
     #[serde(rename = "signature_delta")]
     SignatureDelta { signature: String },
+    /// Any other delta type. Ignored rather than rejected for forward
+    /// compatibility with new Anthropic delta kinds.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Deserialize)]

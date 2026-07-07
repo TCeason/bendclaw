@@ -23,6 +23,25 @@ pub fn message_start(input_tokens: u64, cache_read: u64) -> String {
     )
 }
 
+/// content_block_start for an unknown/forward-compat block type (e.g. the
+/// server-side `fallback` block Anthropic emits on model fallback). The decoder
+/// must ignore it rather than abort the stream.
+pub fn fallback_block_start(index: u64) -> String {
+    format!(
+        "event: content_block_start\ndata: {}",
+        serde_json::json!({
+            "type": "content_block_start",
+            "index": index,
+            "content_block": {
+                "type": "fallback",
+                "from": {"model": "claude-fable-5"},
+                "to": {"model": "claude-opus-4-8"},
+                "trigger": {"category": "reasoning_extraction", "type": "refusal"}
+            }
+        })
+    )
+}
+
 /// content_block_start for text.
 pub fn text_block_start(index: u64) -> String {
     format!(

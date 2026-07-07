@@ -76,6 +76,44 @@ async fn anthropic_sse_stream_without_message_stop_errors() {
 }
 
 #[tokio::test]
+async fn anthropic_sse_ignores_unknown_fallback_block() {
+    let sse = anthropic_sse::body(vec![
+        anthropic_sse::message_start(100, 0),
+        // A server-side `fallback` block (unknown type) arrives before the
+        // real text block. It must be ignored, not abort the stream.
+        anthropic_sse::fallback_block_start(0),
+        anthropic_sse::block_stop(0),
+        anthropic_sse::text_block_start(1),
+        anthropic_sse::text_delta(1, "Hello"),
+        anthropic_sse::block_stop(1),
+        anthropic_sse::message_delta("end_turn", 5),
+        anthropic_sse::message_stop(),
+    ]);
+
+    let config = StreamConfigBuilder::anthropic().cache_disabled().build();
+    let (msg, _events) = run_provider_sse(&AnthropicProvider, config, &sse, 200)
+        .await
+        .unwrap();
+
+    match &msg {
+        Message::Assistant {
+            content,
+            stop_reason,
+            ..
+        } => {
+            assert!(
+                content
+                    .iter()
+                    .any(|c| matches!(c, Content::Text { text } if text == "Hello")),
+                "expected the real text block to survive the ignored fallback block"
+            );
+            assert_eq!(*stop_reason, StopReason::Stop);
+        }
+        _ => panic!("Expected Assistant message"),
+    }
+}
+
+#[tokio::test]
 async fn anthropic_sse_max_tokens_maps_to_length() {
     let sse = anthropic_sse::body(vec![
         anthropic_sse::message_start(100, 0),
