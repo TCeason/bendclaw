@@ -62,8 +62,9 @@ import {
 } from './app/stream.js'
 import { handleSlashCommand } from './app/commands.js'
 import { askStateToResponse } from './app/ask-user.js'
-import { createExtensionHost, footerLabel, tasksFromDetails, type ExtensionHost, type ExtensionUI, type PlanReviewResult, type PlanTask } from '../ext/index.js'
+import { createExtensionHost, type ExtensionHost } from '../ext/index.js'
 import type { AskUserAnswer, AskUserParams } from '../ext/index.js'
+import { extractPlanItems, markCompletedPlanItems, planItemsToTasks, footerLabel, type PlanModeItem, type PlanModeTask } from './plan-mode.js'
 import { syncProvider } from './app/provider.js'
 import chalk from 'chalk'
 import {
@@ -180,33 +181,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     })
   }
 
-  // Extension host: owns ask_user, plan, and any future host tools. The engine
+  // Extension host: owns ask_user and any future host tools. The engine
   // advertises their specs and delegates execution back here via
   // `host_tool_call` events (dispatched in the run loop below).
-  const extensionUI: ExtensionUI = {
-    async reviewPlan({ tasks }): Promise<PlanReviewResult> {
-      const title = tasks.map(t => `#${t.id} ${t.title}`).join('\n')
-      const answers = await presentAskQuestions([
-        {
-          header: 'Plan',
-          question: `Review the ${tasks.length}-task plan and choose how to proceed:\n${title}`,
-          options: [
-            { label: 'Approve and execute', description: 'Run the plan as proposed.' },
-            { label: 'Reject', description: 'Do not execute; send feedback to revise.' },
-          ],
-        },
-      ])
-      if (!answers || answers.length === 0) {
-        return { kind: 'rejected' }
-      }
-      const choice = answers[0]!.answer
-      if (choice.startsWith('Approve')) return { kind: 'approved' }
-      // Any custom text the user typed becomes revision feedback.
-      const feedback = choice === 'Reject' ? undefined : choice
-      return { kind: 'rejected', feedback }
-    },
-  }
-
   const extensionHost: ExtensionHost = createExtensionHost({
     collectAnswers: (params: AskUserParams) =>
       presentAskQuestions(
@@ -218,15 +195,96 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       ),
   })
 
-  // Latest plan task list, driving the persistent footer indicator (📋 2/5).
-  // Updated live from plan tool-result details and rebuilt from the transcript
-  // on resume. Null when the session has no plan.
-  let planTasks: PlanTask[] | null = null
+  // Plan-mode state (pi-style): `/plan` enters read-only planning, the model
+  // writes a `Plan:` section, and after the turn the extracted steps drive an
+  // Execute / Stay / Refine review. `planTasks` powers the footer indicator
+  // (📋 2/5); `planModeItems` powers the live progress widget.
+  let planTasks: PlanModeTask[] | null = null
+  let planModeItems: PlanModeItem[] = []
+  let lastReviewedPlanMarkdown = ''
 
-  /** Adopt plan tasks from a `plan` tool-result details payload, if present. */
-  function trackPlanFromDetails(details: unknown): void {
-    const tasks = tasksFromDetails(details)
-    if (tasks) planTasks = tasks
+  function syncPlanTasksFromModeItems(): void {
+    planTasks = planModeItems.length > 0 ? planItemsToTasks(planModeItems) : null
+  }
+
+  function latestAssistantMarkdown(): string | null {
+    for (let i = compactLines.length - 1; i >= 0; i--) {
+      const entry = compactLines[i]!
+      if (entry.kind === 'assistant' && entry.rawMarkdown) return entry.rawMarkdown
+    }
+    return null
+  }
+
+  function buildPlanModeWidgetBlocks(): ViewBlock[] {
+    if (planModeItems.length === 0) return []
+    const lines: StyledLine[] = planModeItems.slice(0, 12).map(item => ({
+      spans: [
+        { text: item.completed ? '  ☑ ' : '  ☐ ', fg: item.completed ? 'green' as const : undefined, dim: !item.completed },
+        { text: item.text, dim: item.completed },
+      ],
+    }))
+    if (planModeItems.length > 12) {
+      lines.push({ spans: [{ text: `  … ${planModeItems.length - 12} more`, dim: true }] })
+    }
+    return [{ lines, marginTop: 1 }]
+  }
+
+  async function maybeReviewPlanAfterTurn(): Promise<void> {
+    if (!planning) return
+    const markdown = latestAssistantMarkdown()
+    if (!markdown || markdown === lastReviewedPlanMarkdown) return
+    const extracted = extractPlanItems(markdown)
+    if (extracted.length === 0) return
+
+    lastReviewedPlanMarkdown = markdown
+    planModeItems = extracted
+    syncPlanTasksFromModeItems()
+    renderer.requestRender()
+
+    const planList = planModeItems.map(item => `${item.step}. ☐ ${item.text}`).join('\n')
+    const answers = await presentAskQuestions([
+      {
+        header: 'Plan',
+        question: `Plan mode - what next?\n${planList}\n\nChoose an action, or type refinement feedback as custom text.`,
+        options: [
+          { label: 'Execute the plan', description: 'Leave plan mode, restore write tools, and track progress.' },
+          { label: 'Stay in plan mode', description: 'Keep planning without executing yet.' },
+          { label: 'Refine the plan', description: 'Return to the prompt to enter refinement feedback.' },
+        ],
+      },
+    ])
+    if (!answers || answers.length === 0) return
+
+    const choice = answers[0]!.answer
+    if (choice === 'Execute the plan') {
+      planning = false
+      syncPlanTasksFromModeItems()
+      commitLines([{ id: 'sys-plan-exec', kind: 'system', text: '  planning: off · executing plan' }])
+      const remaining = planModeItems
+        .filter(item => !item.completed)
+        .map(item => `${item.step}. ${item.text}`)
+        .join('\n')
+      const execMessage = `Execute the plan.\n\nRemaining steps:\n${remaining}\n\nExecute each step in order. After completing a step, include a [DONE:n] tag in your response.`
+      commitLines(buildUserMessage(execMessage))
+      await runQuery(execMessage)
+      return
+    }
+
+    if (choice === 'Stay in plan mode' || choice === 'Skipped') {
+      commitLines([{ id: 'sys-plan-stay', kind: 'system', text: '  planning: on · staying in plan mode' }])
+      renderer.requestRender()
+      return
+    }
+
+    if (choice === 'Refine the plan') {
+      editor = insertText(clearEditor(editor), 'Refine the plan: ')
+      commitLines([{ id: 'sys-plan-refine', kind: 'system', text: '  planning: on · enter refinement feedback' }])
+      renderer.requestRender()
+      return
+    }
+
+    commitLines(buildUserMessage(choice))
+    await runQuery(choice)
   }
   let streamMachine: StreamMachineState | null = null
   let lastPendingText = ''
@@ -495,7 +553,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // 7. Overlay
     blocks.push(...buildOverlayBlocks(overlay, renderer.termCols))
 
-    // 8. Prompt
+    // 8. Plan progress widget (pi-style: live UI, not scrollback)
+    blocks.push(...buildPlanModeWidgetBlocks())
+
+    // 9. Prompt
     blocks.push(...buildPromptBlocks(getPromptVM()))
 
     return { lines: blocksToLines(blocks) }
@@ -681,17 +742,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const { messagesToOutputLines } = await import('../render/output.js')
       const { transcriptToMessages } = await import('../session/transcript.js')
       const messages = transcriptToMessages(transcript as any)
-      // Rebuild the footer plan indicator from the last plan tool result in the
-      // transcript, so a resumed session shows its plan progress immediately.
+      // A resumed session starts with no active plan; plan mode is re-entered
+      // via /plan on the live conversation.
       planTasks = null
-      for (const msg of messages) {
-        for (const tc of msg.toolCalls ?? []) {
-          if (tc.name === 'plan' || tc.name === 'Plan') {
-            const tasks = tasksFromDetails(tc.details)
-            if (tasks) planTasks = tasks
-          }
-        }
-      }
+      planModeItems = []
+      lastReviewedPlanMarkdown = ''
       renderer.clearScreen()
       compactLines.length = 0
       expandedLines.length = 0
@@ -802,6 +857,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     startSpinner()
     renderer.requestRender()
 
+    let completed = false
     try {
       const stream = prebuiltStream
         ?? await agent.query(text, sessionId ?? undefined, planning ? 'planning_interactive' : 'interactive', contentJson, extensionHost.specsJson())
@@ -815,26 +871,20 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         if (!streamMachine) break
 
         if (event.kind === 'host_tool_call') {
-          // The engine delegated a host-owned tool (ask_user, plan, …). Run it
-          // via the extension host and send the result back. The tool's execute
-          // may drive interactive UI (e.g. the ask overlay) and awaits the user.
+          // The engine delegated a host-owned tool (ask_user). Run it via the
+          // extension host and send the result back. The tool's execute may
+          // drive interactive UI (the ask overlay) and awaits the user.
           const call = (event.payload ?? {}) as {
             tool_name?: string
             tool_call_id?: string
             arguments?: Record<string, unknown>
           }
           if (call.tool_name && call.tool_call_id) {
-            const response = await extensionHost.dispatch(
-              {
-                tool_name: call.tool_name,
-                tool_call_id: call.tool_call_id,
-                arguments: call.arguments ?? {},
-              },
-              extensionUI,
-            )
-            // Keep the footer plan indicator in sync with the latest plan
-            // tool result (propose approval or live status update).
-            trackPlanFromDetails(response.details)
+            const response = await extensionHost.dispatch({
+              tool_name: call.tool_name,
+              tool_call_id: call.tool_call_id,
+              arguments: call.arguments ?? {},
+            })
             if (streamRef) {
               await streamRef.respondHostTool(JSON.stringify(response))
             }
@@ -945,6 +995,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       // Safety net: run settled without a further turn boundary.
       drainQueuedUserMessages()
+      completed = true
     } catch (err: any) {
       
       if (streamMachine) {
@@ -962,6 +1013,24 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       stopSpinner()
       renderer.requestRender()
     }
+
+    if (!completed) return
+
+    const latest = latestAssistantMarkdown()
+    if (latest && planModeItems.length > 0 && !planning) {
+      if (markCompletedPlanItems(latest, planModeItems) > 0) {
+        syncPlanTasksFromModeItems()
+        renderer.requestRender()
+      }
+      if (planModeItems.length > 0 && planModeItems.every(item => item.completed)) {
+        commitLines([{ id: 'sys-plan-complete', kind: 'system', text: '  Plan complete ✓' }])
+        planModeItems = []
+        planTasks = null
+        renderer.requestRender()
+      }
+    }
+
+    await maybeReviewPlanAfterTurn()
   }
 
   function handleKey(event: KeyEvent) {
@@ -1491,7 +1560,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         streamMachine = null; stopSpinner()
       }
       sessionId = null
+      planModeItems = []
       planTasks = null
+      lastReviewedPlanMarkdown = ''
       appState = { ...createInitialState(appState.model, agent.cwd) }
       gitInfo.setCwd(agent.cwd)
       renderer.clearScreen()
@@ -1507,7 +1578,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         flushStreamContent()
         streamMachine = null; stopSpinner()
       }
+      planModeItems = []
       planTasks = null
+      lastReviewedPlanMarkdown = ''
       // Start and bind a fresh empty session so /resume can see it immediately.
       const newSession = await agent.createSession()
       sessionId = newSession.session_id
@@ -1531,6 +1604,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       return
     }
     const { name, args } = resolved
+
+    if (name === '/plan') {
+      planModeItems = []
+      planTasks = null
+      lastReviewedPlanMarkdown = ''
+      renderer.requestRender()
+    }
 
     if (name === '/goto') {
       if (!args) {
@@ -1591,6 +1671,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         commitLines([{ id: 'sys-log-exit', kind: 'system', text: '  [log mode] exited' }])
       } else {
         planning = false
+        planModeItems = []
+        planTasks = null
         commitLines([{ id: 'sys-act', kind: 'system', text: '  planning: off' }])
       }
     } else if (name === '/_dump') {

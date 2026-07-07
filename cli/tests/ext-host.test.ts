@@ -1,12 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { ExtensionHost } from '../src/ext/host.js'
-import type { ExtensionUI, HostTool } from '../src/ext/types.js'
-
-const noopUI: ExtensionUI = {
-  async reviewPlan() {
-    return { kind: 'approved' }
-  },
-}
+import type { HostTool } from '../src/ext/types.js'
 
 function echoTool(name: string): HostTool {
   return {
@@ -32,18 +26,17 @@ describe('ExtensionHost', () => {
 
   test('specsJson serializes registered specs', () => {
     const host = new ExtensionHost()
-    host.register(echoTool('plan'))
+    host.register(echoTool('ask_user'))
     const specs = JSON.parse(host.specsJson()!)
     expect(specs).toHaveLength(1)
-    expect(specs[0].name).toBe('plan')
+    expect(specs[0].name).toBe('ask_user')
   })
 
   test('dispatch routes to the matching tool and returns its result', async () => {
     const host = new ExtensionHost()
-    host.register(echoTool('plan'))
+    host.register(echoTool('ask_user'))
     const resp = await host.dispatch(
-      { tool_name: 'plan', tool_call_id: 'c1', arguments: { a: 1 } },
-      noopUI,
+      { tool_name: 'ask_user', tool_call_id: 'c1', arguments: { a: 1 } },
     )
     expect(resp.tool_call_id).toBe('c1')
     expect(resp.is_error).toBe(false)
@@ -52,10 +45,9 @@ describe('ExtensionHost', () => {
 
   test('dispatch resolves aliased tool names', async () => {
     const host = new ExtensionHost()
-    host.register(echoTool('plan'))
+    host.register(echoTool('ask_user'))
     const resp = await host.dispatch(
-      { tool_name: 'Plan', tool_call_id: 'c2', arguments: {} },
-      noopUI,
+      { tool_name: 'Ask_user', tool_call_id: 'c2', arguments: {} },
     )
     expect(resp.is_error).toBe(false)
   })
@@ -64,7 +56,6 @@ describe('ExtensionHost', () => {
     const host = new ExtensionHost()
     const resp = await host.dispatch(
       { tool_name: 'nope', tool_call_id: 'c3', arguments: {} },
-      noopUI,
     )
     expect(resp.is_error).toBe(true)
     expect(resp.content[0].text).toContain('Unknown host tool')
@@ -80,7 +71,6 @@ describe('ExtensionHost', () => {
     })
     const resp = await host.dispatch(
       { tool_name: 'boom', tool_call_id: 'c4', arguments: {} },
-      noopUI,
     )
     expect(resp.is_error).toBe(true)
     expect(resp.content[0].text).toBe('kaboom')
@@ -88,8 +78,8 @@ describe('ExtensionHost', () => {
 
   test('later registration with same name wins', () => {
     const host = new ExtensionHost()
-    host.register(echoTool('plan'))
-    host.register({ ...echoTool('plan'), spec: { ...echoTool('plan').spec, label: 'v2' } })
+    host.register(echoTool('ask_user'))
+    host.register({ ...echoTool('ask_user'), spec: { ...echoTool('ask_user').spec, label: 'v2' } })
     expect(host.specs()).toHaveLength(1)
     expect(host.specs()[0].label).toBe('v2')
   })

@@ -41,7 +41,19 @@ Keep the final plan concise and implementation-oriented. Do not restate the
 user's request, and do not include long background or overview sections.
 Include only the recommended approach, not a comparison of alternatives.
 
-Structure the plan with clear sections:
+When the plan is ready for approval, include a final section headed exactly
+`Plan:` followed by numbered implementation steps. The CLI extracts this section
+after your turn and will ask the user whether to execute, stay in plan mode, or
+refine the plan.
+
+Example:
+
+Plan:
+1. Inspect the existing prompt-mode plumbing and identify the mode switch point.
+2. Update the CLI state transition and renderer so approval happens after the turn.
+3. Run the targeted CLI tests for the changed area.
+
+Before the final `Plan:` section, include any concise supporting detail needed:
 - **Context** — explain WHY this change is being made: the problem or need it
   addresses, what prompted it, and the intended outcome. Not just what is
   changing, but the motivation behind it.
@@ -91,7 +103,7 @@ existing code to reuse (with file paths), and how to verify the changes.
 
 Your turn should only end by either:
 - Using `AskUser` to gather more information from the user
-- Reporting that the plan is ready for approval (when all ambiguities are resolved)
+- Reporting that the plan is ready for approval with a final `Plan:` section and numbered steps
 
 Do NOT ask about plan readiness via plain text (e.g., "Does this plan look good?",
 "Should I proceed?"). Either use `AskUser` for genuine clarification questions,

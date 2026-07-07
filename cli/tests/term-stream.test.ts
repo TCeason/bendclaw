@@ -793,32 +793,6 @@ describe('term stream machine', () => {
     expect(flushed.state.streamingText).toBe('')
   })
 
-  test('build tool finish lines uses plan details for complete task progress', () => {
-    const finished = buildToolFinishedLines({
-      kind: 'tool_finished',
-      payload: {
-        tool_name: 'plan',
-        args: {},
-        is_error: false,
-        content: '\u2713 \u00b7 1/3 completed \u00b7 current #2 Simplify coordinator',
-        details: {
-          goal: {
-            tasks: [
-              { id: 1, title: 'Audit current code', status: 'completed', started_at: '2026-05-17T10:00:00Z', completed_at: '2026-05-17T10:02:30Z' },
-              { id: 2, title: 'Simplify coordinator', status: 'in_progress' },
-              { id: 3, title: 'Add tests', status: 'pending' },
-            ],
-          },
-        },
-      },
-    })
-    const text = finished.map(l => l.text).join('\n')
-    expect(text).toContain('\u25c7 plan  \u00b7 1/3 completed')
-    expect(text).toContain('  \u2611 #1 Audit current code \u00b7 done in 150.0s')
-    expect(text).toContain('  \u25b7 #2 Simplify coordinator')
-    expect(text).toContain('  \u00b7 #3 Add tests')
-  })
-
   test('build tool start/finish lines', () => {
     // Regular tools emit a call line at start (glyph + command, visible while
     // executing); the finish step appends a subordinate status line + output.

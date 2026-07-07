@@ -426,12 +426,7 @@ export function buildToolFinishedLines(event: RunEvent, expanded?: boolean): Out
   const diff = details?.diff as string | undefined
   // Skip diff if it was already rendered as a preview
   const skipDiff = !!details?.preview_rendered && !!diff
-  const isPlanTool = toolName === 'plan' || toolName === 'Plan'
-  const mergedArgs = diff && !skipDiff
-    ? { ...args, diff }
-    : isPlanTool && Array.isArray(details?.goal?.tasks)
-      ? { ...args, tasks: details.goal.tasks }
-      : args
+  const mergedArgs = diff && !skipDiff ? { ...args, diff } : args
   const status = p.is_error ? 'error' as const : 'done' as const
   return buildToolResult(toolName, mergedArgs, status, p.content as string | undefined, p.duration_ms as number | undefined, expanded)
 }

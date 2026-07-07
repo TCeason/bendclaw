@@ -7,8 +7,8 @@
  * LLM; when the LLM calls one, the engine delegates execution back here via a
  * `host_tool_call` event, and the tool's {@link HostTool.execute} runs in TS.
  *
- * This is the single, reusable seam behind ask_user, plan, and any future
- * domain workflow — the engine core knows none of them.
+ * This is the single, reusable seam behind ask_user and any future domain
+ * workflow — the engine core knows none of them.
  */
 
 /** Content block returned to the LLM as part of a tool result. */
@@ -45,17 +45,9 @@ export interface HostToolSpec {
   name_aliases?: [string, string][]
 }
 
-/** Context passed to a host tool's execute and to UI-driven flows. */
+/** Context passed to a host tool's execute. */
 export interface HostToolContext {
   toolCallId: string
-  /** UI primitives for interactive flows (select, editor, notify). */
-  ui: ExtensionUI
-}
-
-/** Interactive UI primitives an extension may use during tool execution. */
-export interface ExtensionUI {
-  /** Present a plan/artifact for review and return the user's decision. */
-  reviewPlan(spec: PlanReviewRequest): Promise<PlanReviewResult>
 }
 
 /** A registered host tool: its spec plus its TS execution logic. */
@@ -63,31 +55,6 @@ export interface HostTool<TParams = Record<string, unknown>> {
   spec: HostToolSpec
   execute(params: TParams, ctx: HostToolContext): Promise<HostToolResult>
 }
-
-// ---------------------------------------------------------------------------
-// Plan review (used by the plan-artifact builtin; kept here as it is part of
-// the shared UI contract extensions rely on).
-// ---------------------------------------------------------------------------
-
-export type PlanTaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
-
-export interface PlanTask {
-  id: number
-  title: string
-  status: PlanTaskStatus
-  /** IDs of tasks this task depends on. */
-  deps?: number[]
-  started_at?: string
-  completed_at?: string
-}
-
-export interface PlanReviewRequest {
-  tasks: PlanTask[]
-}
-
-export type PlanReviewResult =
-  | { kind: 'approved' }
-  | { kind: 'rejected'; feedback?: string }
 
 // ---------------------------------------------------------------------------
 // The event forwarded from the engine when the LLM calls a host tool.

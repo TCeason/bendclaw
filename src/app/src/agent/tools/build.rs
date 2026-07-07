@@ -13,8 +13,8 @@ use super::ToolMode;
 ///
 /// Bundles the outbound [`SharedHost`] bridge with the specs the host has
 /// registered. The engine builds one [`HostTool`] per spec, all routing back
-/// through the same bridge. This is the single seam for ask_user, plan, and
-/// any future domain tool — none of them are known to the engine or app core.
+/// through the same bridge. This is the single seam for ask_user and any future
+/// domain tool — none of them are known to the engine or app core.
 #[derive(Clone)]
 pub struct HostTools {
     pub host: SharedHost,
@@ -94,8 +94,8 @@ pub(crate) fn build_tools(
         t.push(Box::new(WebFetchTool::new()));
     }
 
-    // Host-owned tools (ask_user, plan, …). The engine treats these exactly
-    // like built-ins; only their execution is delegated back to the host.
+    // Host-owned tools (ask_user, …). The engine treats these exactly like
+    // built-ins; only their execution is delegated back to the host.
     if mode.allows_host_tools() {
         if let Some(host_tools) = host_tools {
             t.extend(host_tools.into_tools());

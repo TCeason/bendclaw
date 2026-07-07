@@ -29,37 +29,30 @@ describe('transcript conversion', () => {
     expect(messages[0]?.text).toBe('final answer')
   })
 
-  test('restores plan tool-result details onto the tool call for resume', () => {
+  test('restores tool-result details onto the tool call for resume', () => {
     const messages = transcriptToMessages([
       {
         type: 'assistant',
-        text: 'proposing a plan',
-        tool_calls: [{ id: 'call-1', name: 'plan', input: { action: 'propose' } }],
+        text: 'running a tool',
+        tool_calls: [{ id: 'call-1', name: 'bash', input: { command: 'ls' } }],
       },
       {
         type: 'tool_result',
         tool_call_id: 'call-1',
-        tool_name: 'plan',
-        content: 'Plan approved (2 tasks).',
+        tool_name: 'bash',
+        content: 'done',
         is_error: false,
         details: {
-          action: 'propose',
-          approved: true,
-          goal: {
-            tasks: [
-              { id: 1, title: 'Load data', status: 'completed' },
-              { id: 2, title: 'Transform', status: 'in_progress', deps: [1] },
-            ],
-          },
+          preview_rendered: true,
+          diff: 'a\nb',
         },
       },
     ])
 
     const toolCalls = messages[0]?.toolCalls
     expect(toolCalls).toHaveLength(1)
-    const details = toolCalls?.[0]?.details as { goal?: { tasks?: unknown[] } } | undefined
-    expect(Array.isArray(details?.goal?.tasks)).toBe(true)
-    expect(details?.goal?.tasks).toHaveLength(2)
+    const details = toolCalls?.[0]?.details as { diff?: string } | undefined
+    expect(details?.diff).toBe('a\nb')
   })
 
   test('tool call without details leaves details undefined', () => {

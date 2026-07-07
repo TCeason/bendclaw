@@ -65,7 +65,7 @@ export function handleSlashCommand(text: string, ctx: CommandContext): CommandRe
       return {
         ...baseResult(ctx),
         planning,
-        systemLines: [{ id: 'sys-p', kind: 'system', text: `  planning: ${planning ? 'on' : 'off'}` }],
+        systemLines: [{ id: 'sys-p', kind: 'system', text: `  plan mode: ${planning ? 'on · write tools disabled' : 'off'}` }],
       }
     }
 

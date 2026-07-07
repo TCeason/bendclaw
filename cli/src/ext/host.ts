@@ -9,13 +9,12 @@
  * 2. {@link dispatch} — handles a `host_tool_call` event by running the matched
  *    tool's `execute` and returning the wire response payload.
  *
- * The host holds no tool-specific logic; ask_user, plan, and any future tool
- * are just registered entries. This keeps the engine core and the CLI shell
- * free of domain concerns.
+ * The host holds no tool-specific logic; ask_user and any future tool are just
+ * registered entries. This keeps the engine core and the CLI shell free of
+ * domain concerns.
  */
 
 import type {
-  ExtensionUI,
   HostTool,
   HostToolCallEvent,
   HostToolResponsePayload,
@@ -70,7 +69,7 @@ export class ExtensionHost {
    * the engine's tool-execution path always gets a response and the run does
    * not hang.
    */
-  async dispatch(call: HostToolCallEvent, ui: ExtensionUI): Promise<HostToolResponsePayload> {
+  async dispatch(call: HostToolCallEvent): Promise<HostToolResponsePayload> {
     const tool = this.resolve(call.tool_name)
     if (!tool) {
       return {
@@ -83,7 +82,6 @@ export class ExtensionHost {
     try {
       const result = await tool.execute(call.arguments as never, {
         toolCallId: call.tool_call_id,
-        ui,
       })
       return {
         tool_call_id: call.tool_call_id,

@@ -179,8 +179,6 @@ export function buildToolCall(
   args: Record<string, unknown>,
   previewCommand?: string,
 ): OutputLine[] {
-  if (name === 'plan' || name === 'Plan') return buildPlanCall(args)
-
   // Reason fields surface the model's justification up-front.
   const lines: OutputLine[] = []
   for (const line of formatReasonLines(args)) {
@@ -207,10 +205,6 @@ export function buildToolResult(
 ): OutputLine[] {
   const lines: OutputLine[] = []
   const isError = status === 'error'
-
-  if ((name === 'plan' || name === 'Plan') && !isError) {
-    return buildPlanResult(args, result)
-  }
 
   const resultInfo = result ? formatToolResultInfo(result) : ''
   // The status line is appended at the END (after diff/output) so a tool reads
@@ -372,17 +366,10 @@ export function messagesToOutputLines(messages: UIMessage[]): OutputLine[] {
       // Tool calls: show call + result
       if (msg.toolCalls) {
         for (const tc of msg.toolCalls) {
-          // The plan tool renders its task list from the tool-result details,
-          // restored from the transcript on resume. Merge it into args so the
-          // artifact renders identically to the live path.
-          const details = tc.details as { goal?: { tasks?: unknown } } | undefined
-          const renderArgs = (tc.name === 'plan' || tc.name === 'Plan') && Array.isArray(details?.goal?.tasks)
-            ? { ...tc.args, tasks: details!.goal!.tasks }
-            : tc.args
-          lines.push(...buildToolCall(tc.name, renderArgs, tc.previewCommand))
+          lines.push(...buildToolCall(tc.name, tc.args, tc.previewCommand))
           lines.push(...buildToolResult(
             tc.name,
-            renderArgs,
+            tc.args,
             tc.status === 'error' ? 'error' : 'done',
             tc.result,
             tc.durationMs,
@@ -508,84 +495,6 @@ export class AssistantStreamBuffer {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function buildPlanCall(args: Record<string, unknown>): OutputLine[] {
-  const tasks = readPlanTasks(args)
-  const summary = summarizePlanTasks(tasks)
-  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `◇ plan  · ${summary}` }]
-  for (const task of tasks) {
-    lines.push({ id: genId('tool'), kind: 'tool', text: `  ${planTaskSymbol(task.status)} #${task.id} ${task.title}` })
-  }
-  return lines
-}
-
-function buildPlanResult(args: Record<string, unknown>, result?: string): OutputLine[] {
-  const tasks = readPlanTasks(args)
-  const summary = summarizePlanTasks(tasks, result)
-  const lines: OutputLine[] = [{ id: genId('tool'), kind: 'tool', text: `◇ plan  · ${summary}` }]
-  for (const task of tasks) {
-    lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${planTaskSymbol(task.status)} #${task.id} ${task.title}${planTaskDuration(task)}` })
-  }
-  return lines
-}
-
-interface PlanTaskView {
-  id: number
-  title: string
-  status: string
-  startedAt?: string
-  completedAt?: string
-}
-
-function readPlanTasks(args: Record<string, unknown>): PlanTaskView[] {
-  const tasks = args?.tasks
-  if (!Array.isArray(tasks)) return []
-  return tasks.flatMap((task): PlanTaskView[] => {
-    if (!task || typeof task !== 'object') return []
-    const input = task as Record<string, unknown>
-    const id = typeof input.id === 'number' ? input.id : Number(input.id)
-    const title = typeof input.title === 'string' ? input.title.trim() : ''
-    const status = typeof input.status === 'string' ? input.status : ''
-    const startedAt = typeof input.started_at === 'string' ? input.started_at : undefined
-    const completedAt = typeof input.completed_at === 'string' ? input.completed_at : undefined
-    if (!Number.isFinite(id) || title.length === 0) return []
-    return [{ id, title, status, startedAt, completedAt }]
-  })
-}
-
-function summarizePlanTasks(tasks: PlanTaskView[], fallback?: string): string {
-  if (tasks.length === 0) return fallback?.trim() || 'tasks updated'
-  const completed = tasks.filter(task => task.status === 'completed').length
-  return `${completed}/${tasks.length} completed`
-}
-
-function planTaskDuration(task: PlanTaskView): string {
-  const started = parsePlanTaskTime(task.startedAt)
-  if (started === undefined) return ''
-  if (task.completedAt) {
-    const completed = parsePlanTaskTime(task.completedAt)
-    if (completed === undefined || completed < started) return ''
-    return ` · done in ${formatDuration(completed - started)}`
-  }
-  if (task.status === 'in_progress') {
-    const elapsed = Date.now() - started
-    return elapsed >= 0 ? ` · running ${formatDuration(elapsed)}` : ''
-  }
-  return ''
-}
-
-function parsePlanTaskTime(value?: string): number | undefined {
-  if (!value) return undefined
-  const parsed = Date.parse(value)
-  return Number.isFinite(parsed) ? parsed : undefined
-}
-
-function planTaskSymbol(status: string): string {
-  if (status === 'completed') return '☑'
-  if (status === 'in_progress') return '▷'
-  if (status === 'failed') return '✗'
-  return '·'
-}
 
 function humanBytes(n: number): string {
   if (n < 1024) return `${n} B`

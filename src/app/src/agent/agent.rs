@@ -68,8 +68,8 @@ pub struct QueryRequest {
     pub session_id: Option<String>,
     pub mode: ToolMode,
     pub source: String,
-    /// Host-owned tools (ask_user, plan, …) to attach to this run. `None` when
-    /// the caller has no host bridge (e.g. gateway/headless callers).
+    /// Host-owned tools (ask_user, …) to attach to this run. `None` when the
+    /// caller has no host bridge (e.g. gateway/headless callers).
     pub host_tools: Option<HostTools>,
 }
 
