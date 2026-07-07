@@ -98,6 +98,11 @@ fn is_retryable_api_message(message: &str) -> bool {
         || lower.contains("gateway timeout")
         || lower.contains("stream interrupted")
         || lower.contains("please retry")
+        // An empty 200 response (no content, no usage) is a transient provider
+        // or proxy defect — the request was accepted but nothing came back.
+        // Both SSE decoders surface it as an Api error; retrying mirrors pi,
+        // which classifies interrupted/empty streams as retryable.
+        || lower.contains("empty response from provider")
         // Malformed tool-call output is a transient model defect, not a client
         // error: sampling is non-deterministic, so re-running the same call
         // usually yields valid JSON. Common with smaller local models. Retrying

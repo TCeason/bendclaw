@@ -157,6 +157,15 @@ fn classify_overloaded_message_without_status() {
 }
 
 #[test]
+fn empty_response_api_error_is_retryable() {
+    // Both SSE decoders surface an empty 200 (no content, no usage) as an Api
+    // error. It is a transient provider/proxy defect and must retry, matching
+    // the Network promotion in the agent loop and pi's retryable stream errors.
+    let err = ProviderError::Api("Empty response from provider (no content, no usage)".into());
+    assert!(evotengine::retry::should_retry(&err));
+}
+
+#[test]
 fn overloaded_api_message_is_retryable() {
     // Even when surfaced as a bare Api error, overloaded wording retries.
     let err = ProviderError::Api(
