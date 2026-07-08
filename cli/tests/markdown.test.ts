@@ -78,25 +78,6 @@ describe('renderMarkdown', () => {
     expect(result).toContain('bold')
   })
 
-  test('renders strong emphasis when closing marker is glued to following CJK text', () => {
-    const md = '换句话说：**KV cache 的持久化是推理引擎的特权，因为 KV cache 本来就是推理引擎自己家的东西。**调 API 的用户没这个能力，本地跑的引擎作者想怎么存就怎么存。'
-    const result = render(md).replace(/\u200b/g, '')
-    expect(result).toContain('KV cache 的持久化是推理引擎的特权')
-    expect(result).toContain('调 API')
-    expect(result).toContain('的用户没这个能力')
-    expect(result).not.toContain('**KV cache')
-    expect(result).not.toContain('东西。**调')
-  })
-
-  test('does not expose emphasis separator comments', () => {
-    const result = render('说明：**重要。**下一句').replace(/\u200b/g, '')
-    expect(result).toContain('说明：')
-    expect(result).toContain('重要。')
-    expect(result).toContain('下一句')
-    expect(result).not.toContain('<!-- -->')
-    expect(result).not.toContain('**重要')
-  })
-
   test('does not rewrite emphasis-like text inside code fences', () => {
     const result = render('```text\nliteral **重要。**下一句\n```').replace(/\u200b/g, '')
 
@@ -130,96 +111,6 @@ describe('renderMarkdown', () => {
     expect(fencesWellFormed(result)).toBe(true)
   })
 
-  test('wraps implicit SQL snippets in code blocks', () => {
-    const md = [
-      'Minimal test table',
-      '',
-      'DROP TABLE IF EXISTS decimal_driver_compat;',
-      '',
-      'CREATE TABLE decimal_driver_compat (',
-      '    id INT,',
-      '    d38 DECIMAL(38, 18),',
-      '    d76 DECIMAL(76, 18)',
-      ');',
-      '',
-      'Continue explanation.',
-    ].join('\n')
-
-    const result = render(md)
-
-    expect(result).toContain('DROP TABLE IF EXISTS decimal_driver_compat;')
-    expect(result).toMatch(/^  CREATE TABLE decimal_driver_compat \($/m)
-    expect(result).toMatch(/^ {6}id INT,$/m)
-    expect(result).toContain('Continue explanation.')
-    expect(result).toContain('```sql')
-    expect(fencesWellFormed(result)).toBe(true)
-  })
-
-  test('wraps implicit Java and Python driver snippets in code blocks', () => {
-    const md = [
-      'Java MariaDB JDBC example',
-      '',
-      'try (ResultSet rs = stmt.executeQuery("SELECT d38, d76 FROM decimal_driver_compat")) {',
-      '    ResultSetMetaData md = rs.getMetaData();',
-      '    System.out.println(md.getPrecision(1));',
-      '}',
-      '',
-      'Python driver example',
-      '',
-      'from decimal import Decimal',
-      '',
-      'cur.execute("SELECT d38, d76 FROM decimal_driver_compat ORDER BY id")',
-      'for row in cur.fetchall():',
-      '    print(type(row[0]), row[0])',
-    ].join('\n')
-
-    const result = render(md)
-
-    expect(result).toMatch(/^  try \(ResultSet rs = stmt\.executeQuery/m)
-    expect(result).toMatch(/^ {6}ResultSetMetaData md = rs\.getMetaData\(\);$/m)
-    expect(result).toMatch(/^from decimal import Decimal$/m)
-    expect(result).toMatch(/^ {4}print\(type\(row\[0\]\), row\[0\]\)$/m)
-    // Java is detected as implicit code and fenced; the Python snippet here
-    // stays plain prose (rendered at column 0), so only the Java fence appears.
-    expect(result).toContain('```java')
-    expect(fencesWellFormed(result)).toBe(true)
-  })
-
-  test('stops implicit Java block at blank line before prose', () => {
-    const md = [
-      'try (ResultSet rs = stmt.executeQuery("SELECT 1")) {',
-      '    System.out.println(rs.getInt(1));',
-      '}',
-      '',
-      'Driver compatibility summary',
-      '',
-      '- Java: OK',
-    ].join('\n')
-
-    const result = render(md)
-
-    expect(result).toMatch(/^  try \(ResultSet rs = stmt\.executeQuery/m)
-    expect(result).toContain('Driver compatibility summary')
-    expect(result).toContain('- Java: OK')
-  })
-
-  test('does not swallow following CJK prose into implicit SQL block', () => {
-    const md = [
-      'SELECT d38, d76',
-      'FROM decimal_driver_compat',
-      'ORDER BY id;',
-      '这里重点是：',
-      '',
-      '- d38：普通 DECIMAL(38,18)',
-    ].join('\n')
-
-    const result = render(md)
-
-    expect(result).toMatch(/^  SELECT d38, d76$/m)
-    expect(result).toContain('这里重点是：')
-    expect(result).toContain('- d38：普通 DECIMAL(38,18)')
-  })
-
   test('renders markdown tables from decimal compatibility log as actual tables', () => {
     const result = render([
       '## Verification matrix',
@@ -236,19 +127,6 @@ describe('renderMarkdown', () => {
     expect(result).toContain('mariadb-java-client')
     expect(result).toContain('Spark JDBC')
     expect(result).not.toContain('|---|---|---|---|')
-  })
-
-  test('renders markdown table when header and separator are glued', () => {
-    const result = render([
-      '| Client | Protocol | Focus ||---|---|---|',
-      '| Java | MySQL | `getBigDecimal()` precision |',
-      '| Spark JDBC | MySQL JDBC | **DecimalType limit** |',
-    ].join('\n')).replace(/\u200b/g, '')
-
-    expect(result).toContain('┌')
-    expect(result).toContain('Client')
-    expect(result).toContain('Spark JDBC')
-    expect(result).not.toContain('|---|---|---|')
   })
 
   test('preserves box-drawing conclusion tables from decimal compatibility log', () => {
@@ -399,21 +277,6 @@ describe('renderMarkdown', () => {
       expect(rendered).toContain('SAMPLE')
     }
   })
-  test('splits opening fence glued to preceding prose', () => {
-    // `Intro```tsx` — the model forgot the newline
-    // before the fence marker. Must be split into prose + fenced block so
-    // the snippet renders as a code block instead of leaking literal
-    // backticks into the paragraph.
-    const md = 'Intro```tsx\nconst x: number = 1;\n```\nAfter'
-    const result = render(md)
-    expect(result).toContain('Intro')
-    expect(result).toContain('const x: number = 1;')
-    expect(fencesWellFormed(result)).toBe(true)
-    // Prose line must not carry the fence marker or code content.
-    expect(result).toMatch(/^Intro$/m)
-    expect(result).toMatch(/^  const x: number = 1;$/m)
-  })
-
   test('splits hr marker glued to bold emphasis on next section', () => {
     // `---**SQL notes**` — the HR separator and the bold section title
     // share a line with no blank around them. Must be split so the HR renders
@@ -425,23 +288,6 @@ describe('renderMarkdown', () => {
     expect(result).toContain('SELECT 1')
     // Bold markers must be stripped by the renderer.
     expect(result).not.toContain('**SQL')
-  })
-
-  test('preserves leading indentation of tree/box-drawing paragraphs', () => {
-    // A paragraph whose first line starts with spaces (common for tree
-    // diagrams under an unindented root) must keep that indent verbatim —
-    // otherwise the first row shifts left and the branches below no longer
-    // line up with their parent. Regression for `formatTokens` using
-    // `trim()` and eating the leading spaces of the first block.
-    const md = [
-      '  │  │     ├─ lib.rs',
-      '  │  │     ├─ retry.rs',
-      '  │  │     └─ tools/',
-    ].join('\n')
-    const result = render(md)
-    expect(result).toMatch(/^ {4}│  │     ├─ lib\.rs$/m)
-    expect(result).toMatch(/^ {4}│  │     ├─ retry\.rs$/m)
-    expect(result).toMatch(/^ {4}│  │     └─ tools\/$/m)
   })
 
   test('aligns tree trailing comments to a shared start column', () => {
@@ -499,69 +345,6 @@ describe('renderMarkdown', () => {
     }
   })
 
-  test('aligns drifted diagram box borders and branch markers conservatively', () => {
-    const md = [
-      '```',
-      '物理显存:   ┌────┬────┬────┐',
-      '   │ B3 │ B0 │ B5 │',
-      '            └────┴────┴────┘',
-      '',
-      '2. Prefill',
-      '   ├─► 把 prompt 送入模型├─► 逐层计算',
-      '3.Decode 循环',
-      ' ├─► 取上一步生成的 token',
-      '    └─► 采样下一个 token',
-      '```',
-    ].join('\n')
-
-    const rendered = render(md).replace(/\u200b/g, '')
-
-    expect(rendered).toMatch(/^  物理显存:   ┌────┬────┬────┐$/m)
-    expect(rendered).toMatch(/^              │ B3 │ B0 │ B5 │$/m)
-    expect(rendered).toMatch(/^              └────┴────┴────┘$/m)
-    expect(rendered).toMatch(/^      ├─► 把 prompt 送入模型├─► 逐层计算$/m)
-    expect(rendered).toMatch(/^      ├─► 取上一步生成的 token$/m)
-    expect(rendered).toMatch(/^      └─► 采样下一个 token$/m)
-  })
-
-  test('preserves flow diagrams with box-drawing characters as plain code', () => {
-    // Flow diagrams are not necessarily directory trees, but they still rely
-    // on exact spaces around `│` / `├─` columns. The renderer should keep the
-    // block verbatim and must not add the old code-block gutter.
-    const md = [
-      '  Agent → Tool.call(args)                │',
-      '     ▼',
-      '   Session::goto(url)',
-      '            │',
-      '     ├─ preflight: daemon.health().await',
-      '    │    ├─ Stopped→ ToolError("daemon not running")  │ ├─ NoExtension',
-      '    │    └─ Ready     → ok',
-      '            │',
-      '          ▼',
-      '      daemon.send("navigate", ...)',
-    ].join('\n')
-    const result = render(md)
-    expect(result).toMatch(/^ {4}Agent → Tool\.call\(args\) {16}│$/m)
-    expect(result).toMatch(/^ {6}│ {4}├─ Stopped→ ToolError\("daemon not running"\) {2}│ ├─ NoExtension$/m)
-    expect(result).toMatch(/^ {8}daemon\.send\("navigate", \.\.\.\)$/m)
-    expect(result).not.toMatch(/^ │ /m)
-  })
-
-  test('does not normalize hr markers inside preserved box-drawing diagrams', () => {
-    // The box-drawing preservation pass wraps this paragraph in a synthetic
-    // code fence. Later markdown repair passes must respect that fence and
-    // keep `---` as diagram content, not reinterpret it as an HR separator.
-    const md = [
-      '  root │',
-      '  ---',
-      '  └─ child',
-    ].join('\n')
-    const result = render(md)
-    expect(result).toMatch(/^ {4}root │$/m)
-    expect(result).toMatch(/^ {4}---$/m)
-    expect(result).toMatch(/^ {4}└─ child$/m)
-  })
-
   test('does not normalize hr markers inside authored code fences', () => {
     const md = [
       '```text',
@@ -574,24 +357,6 @@ describe('renderMarkdown', () => {
     expect(result).toMatch(/^  alpha$/m)
     expect(result).toMatch(/^  ---$/m)
     expect(result).toMatch(/^  omega$/m)
-  })
-
-  test('splits ordered list item glued after CJK sentence terminator', () => {
-    // `一。2. 二` — the second list item is glued to the prose of the
-    // first. Must break onto its own line so both `1.` and `2.` render as
-    // ordered-list items.
-    const md = [
-      'List:',
-      '',
-      '1. 一。2. 二。',
-    ].join('\n')
-    const result = render(md)
-    expect(result).toContain('1.')
-    expect(result).toContain('2.')
-    // `。2.` must not remain glued on the same visual line — the split
-    // should put the second item on a fresh line (leading `2.` at col 0).
-    expect(result).not.toMatch(/一。[ \t]*2\./)
-    expect(result).toMatch(/^2\. 二/m)
   })
 
   test('renders unclosed tilde fence as code', () => {
@@ -608,96 +373,6 @@ describe('renderMarkdown', () => {
     expect(fencesWellFormed(result)).toBe(true)
   })
 
-  test('keeps consecutive SQL statements inside one fence', () => {
-    // Two `ALTER ... ;` statements: the trailing semicolon on the first must
-    // not trip the "code completed" heuristic into closing the fence early and
-    // wrapping the second statement in its own block. ALTER/MERGE/TRUNCATE are
-    // recognised as code keywords so they are never mistaken for prose.
-    const result = render('```sql\nALTER TASK t_etl RESUME;\nALTER TASK t_ingest RESUME;\n```后续说明。')
-      .replace(/\u200b/g, '')
-
-    expect(result).toContain('ALTER TASK t_etl RESUME;')
-    expect(result).toContain('ALTER TASK t_ingest RESUME;')
-    expect(result).toContain('后续说明。')
-    expect(fencesWellFormed(result)).toBe(true)
-  })
-
-  test('splits fence close glued to following heading', () => {
-    const result = render('```json\n{\n  "id": "tr-abc"\n}\n```### 5.1 API')
-      .replace(/\u200b/g, '')
-
-    expect(result).toContain('"id": "tr-abc"')
-    expect(result).toContain('5.1 API')
-    expect(fencesWellFormed(result)).toBe(true)
-  })
-
-  test('splits fence close glued to heading without a space', () => {
-    // Models often omit the space in CJK contexts: `\`\`\`##题`.
-    // We should normalise it so marked sees `## 题`.
-    const result = render('```json\n{"x":1}\n```##题（8 项）')
-      .replace(/\u200b/g, '')
-
-    expect(result).toContain('"x":1')
-    expect(result).toContain('题（8 项）')
-    expect(result).not.toContain('##题')
-    expect(fencesWellFormed(result)).toBe(true)
-  })
-
-  test('promotes ATX heading glued after a preceding paragraph', () => {
-    // `。 ##题` — split the heading onto its own line.
-    const result = render('句。 ##题').replace(/\u200b/g, '')
-
-    expect(result).toContain('句。')
-    expect(result).toContain('题')
-    // Should not keep `。 ##` on a single line.
-    expect(result).not.toMatch(/句。\s*##/)
-  })
-
-  test('promotes ATX heading glued with zero space after CJK punctuation', () => {
-    // Models often drop the space entirely: `。###题`.
-    const result = render('句。###题').replace(/\u200b/g, '')
-
-    expect(result).toContain('句。')
-    expect(result).toContain('题')
-    expect(result).not.toMatch(/。###/)
-  })
-
-  test('promotes ATX heading glued with zero space after CJK character', () => {
-    // No punctuation at all — `文###题` still needs a line break.
-    const result = render('文###题').replace(/\u200b/g, '')
-
-    expect(result).toContain('文')
-    expect(result).toContain('题')
-    expect(result).not.toMatch(/文###/)
-  })
-
-  test('promotes ATX heading glued before a body that has its own space', () => {
-    // `句。### Heading` — the heading body is well-formed (`###`
-    // followed by a space), only the preceding prose is glued to the marker.
-    const result = render('句。### Heading\n\nbody').replace(/\u200b/g, '')
-
-    expect(result).toContain('句。')
-    expect(result).toContain('Heading')
-    expect(result).toContain('body')
-    expect(result).not.toMatch(/。###/)
-  })
-
-  test('promotes ATX heading glued after ascii sentence punctuation', () => {
-    const result = render('done.## Next section\n\nbody').replace(/\u200b/g, '')
-
-    expect(result).toContain('done.')
-    expect(result).toContain('Next section')
-    expect(result).not.toMatch(/done\.##/)
-  })
-
-  test('normalises bullet marker glued to CJK body', () => {
-    // `-项` — CommonMark needs `- body`.
-    const result = render('-项\n- 二').replace(/\u200b/g, '')
-    // Should render as a list: bullet + body, not a dash-prefixed paragraph.
-    expect(result).toContain('- 项')
-    expect(result).toContain('- 二')
-  })
-
   test('does not normalise `-`/`*` that are not bullet intents', () => {
     // Guard rails — make sure we don't mangle negatives, CLI flags, HR, or
     // emphasis markers.
@@ -708,61 +383,11 @@ describe('renderMarkdown', () => {
     expect(render('use *emphasis* here').replace(/\u200b/g, '')).toContain('emphasis')
   })
 
-  test('splits bullet glued to end of prose after a colon', () => {
-    // CJK colon `：` is the trigger; prose itself can be ASCII.
-    const result = render('consensus：- sliced by something').replace(
-      /\u200b/g,
-      '',
-    )
-    expect(result).toContain('consensus：')
-    expect(result).toContain('- sliced by something')
-    expect(result).not.toMatch(/consensus：[ \t]*- /)
-  })
-
-  test('splits ordered list glued to end of prose after a colon', () => {
-    // CJK colon `：` is the trigger; prose itself can be ASCII.
-    const result = render('consensus：1. must have baseline').replace(/\u200b/g, '')
-    expect(result).toContain('consensus：')
-    expect(result).toContain('must have baseline')
-    expect(result).not.toMatch(/consensus：[ \t]*1\. /)
-  })
-
-  test('normalises ascii bullet marker glued before CJK prose', () => {
-    const result = render('-prompt 不是扩展：丢弃 checkpoint').replace(/\u200b/g, '')
-    expect(result).toContain('- prompt 不是扩展')
-    expect(result).not.toContain('-prompt')
-  })
-
-  test('normalises ascii bullet marker glued before CJK colon detail', () => {
-    const result = render('模型结构带来的 KV 分层（ds4_layer_compress_ratio）：-Layer0-1：dense，ratio=0，只有 raw cache').replace(/\u200b/g, '')
-    expect(result).toContain('模型结构带来的 KV 分层')
-    expect(result).toContain('- Layer0-1：dense')
-    expect(result).not.toContain('：-Layer0')
-  })
-
-  test('splits bullet glued after sentence punctuation', () => {
-    const result = render('- **跳过前 24050 的 prefill**，只 prefill 新增的 350 token（~1.5 秒）- Decode 继续').replace(/\u200b/g, '')
-    expect(result).toContain('- 跳过前 24050')
-    expect(result).toContain('- Decode 继续')
-    expect(result).not.toContain('秒）- Decode')
-  })
-
   test('does not normalise ascii bullet-like command options', () => {
     expect(render('-p value').replace(/\u200b/g, '')).toContain('-p value')
     expect(render('-1 remains negative').replace(/\u200b/g, '')).toContain('-1 remains negative')
     expect(render('config:-foo:bar').replace(/\u200b/g, '')).toContain('config:-foo:bar')
     expect(render('This is fine - not a bullet').replace(/\u200b/g, '')).toContain('This is fine - not a bullet')
-  })
-
-  test('normalises ordered item glued to non-ASCII body', () => {
-    // `3.多指标` — CommonMark needs `3. body`. CJK body is essential:
-    // ORDERED_MISSING_SPACE_RE only fires when the body is non-ASCII so
-    // decimals/versions stay intact.
-    const result = render('1. first\n2.二\n3.三').replace(/\u200b/g, '')
-    expect(result).toContain('二')
-    expect(result).toContain('三')
-    expect(result).not.toContain('2.二')
-    expect(result).not.toContain('3.三')
   })
 
   test('does not normalise decimals/versions as ordered list', () => {
@@ -785,88 +410,12 @@ describe('renderMarkdown', () => {
     expect(result).not.toMatch(/^\s*1\.\s+6/m)
   })
 
-  test('dedents over-indented ordered item so it stays in the list', () => {
-    // Models routinely over-indent mid-list items (`     3.多`). ≥4 spaces
-    // would otherwise trigger a code block or lazy continuation. CJK body
-    // is essential to trigger the dedent regex.
-    const md = '1. first item\n2. second item\n     3.三'
-    const result = render(md).replace(/\u200b/g, '')
-    expect(result).toContain('三')
-    expect(result).not.toContain('     3.')
-  })
-
-  test('normalises ATX heading missing the space after #', () => {
-    const result = render('##改进清单').replace(/\u200b/g, '')
-    expect(result).toContain('改进清单')
-    expect(result).not.toContain('##改进清单')
-  })
-
-  test('normalises single-# heading when body is non-ASCII', () => {
-    // `#改进清单` is a valid CJK heading intent. We only rewrite single-`#`
-    // when the body is non-ASCII so `#1` / `#include` stay untouched.
-    const result = render('#改进清单').replace(/\u200b/g, '')
-    expect(result).toContain('改进清单')
-    expect(result).not.toContain('#改进清单')
-  })
-
   test('preserves `#1` and `#include` (single-# ASCII body)', () => {
     // Issue refs and preprocessor directives must not become headings.
     const issue = render('see #1 for context')
     expect(issue).toContain('#1')
     const preproc = render('#include <stdio.h>')
     expect(preproc).toContain('#include')
-  })
-
-  test('splits fence close glued to following list item', () => {
-    const result = render('```ts\nconst a = 1\n```- item')
-
-    expect(result).toContain('const a = 1')
-    expect(result).toContain('- item')
-    expect(fencesWellFormed(result)).toBe(true)
-  })
-
-  test('splits fence close glued to following inline bold prose', () => {
-    const result = render('```rust\nErr(ToolError::Failed(format!("binary")))\n```**safe**: metadata only.')
-
-    expect(result).toContain('ToolError::Failed')
-    expect(result).toContain('safe')
-    expect(result).toContain('metadata only')
-    expect(fencesWellFormed(result)).toBe(true)
-  })
-
-  test('splits fence close glued to following prose', () => {
-    const result = render('```text\nsrc/engine/\nsrc/engine/Cargo.toml\n```**safe**: more info.')
-
-    expect(result).toContain('src/engine/Cargo.toml')
-    expect(result).toContain('more info')
-    expect(fencesWellFormed(result)).toBe(true)
-  })
-
-  test('splits trailing fence close glued to last code line', () => {
-    // Models sometimes omit the newline before the closing fence, e.g.
-    // `    }\`\`\``. The renderer used to leak literal backticks; we now
-    // split the marker onto its own line so marked sees a clean code block.
-    const md = 'Output:\n```json\n   {\n  "diagnoses": ["a"],\n  "hypotheses": ["b"]\n    }```'
-    const result = render(md)
-    expect(result).toContain('"diagnoses"')
-    expect(result).toContain('"hypotheses"')
-    expect(fencesWellFormed(result)).toBe(true)
-  })
-
-  test('splits trailing fence close glued to last code line and following prose', () => {
-    const result = render('Output:\n```python\nprint("hello")```Continue explanation.')
-
-    expect(result).toContain('print("hello")')
-    expect(result).toContain('Continue explanation.')
-    expect(fencesWellFormed(result)).toBe(true)
-  })
-
-  test('splits fence close glued to following plain prose', () => {
-    const result = render('```python\nprint("hello")\n```Continue explanation.')
-
-    expect(result).toContain('print("hello")')
-    expect(result).toContain('Continue explanation.')
-    expect(fencesWellFormed(result)).toBe(true)
   })
 
   test('splits single-line fenced code', () => {
@@ -890,94 +439,6 @@ describe('renderMarkdown', () => {
     expect(result).toContain('"is_deleted": 0')
     expect(result).toContain('text after')
     expect(fencesWellFormed(result)).toBe(true)
-  })
-
-  test('repairs completed json fence before markdown hr without a blank line', () => {
-    const result = render('Final:\n```json\n{\n  "id": "tr-abc",\n  "is_deleted": 0\n}\n---\nStep 8: input / output')
-      .replace(/\u200b/g, '')
-
-    expect(result).toContain('"is_deleted": 0')
-    expect(result).toMatch(/^─+$/m)
-    expect(result).toContain('Step 8: input / output')
-    expect(fencesWellFormed(result)).toBe(true)
-  })
-
-  test('repairs shell fence before following CJK prose and keeps later text fence visible', () => {
-    const md = [
-      '```bash',
-      'cd cli && bun test tests/term-commands.test.ts tests/repl-control.test.ts tests/outputLines.test.ts tests/viewmodel-output.test.ts tests/term-stream.test.ts',
-      '',
-      '重点：   ⏺ 当前目录有 12 个文件...',
-      '',
-      '所有 verbose 块塌成一行 dim gutter，工具调用主导视觉。',
-      '',
-      '**Verbose 模式（ctrl+o 切换）**',
-      '',
-      '```text',
-      '❯ 帮我列一下目录',
-      '',
-      '  ⋮ llm · claude-sonnet-4 · turn 1 · 3 msgs',
-      '  ⋮ ctx  ████░░░░░░░░░░░░░░░░  ~12k / 200k · 6%',
-      '  ⋮ tok  sys 8k · user 2k · tool 2k',
-    ].join('\n')
-
-    const result = render(md)
-
-    expect(result).toMatch(/^  cd cli && bun test tests\/term-commands\.test\.ts/m)
-    expect(result).toContain('重点：')
-    expect(result).toContain('Verbose 模式（ctrl+o 切换）')
-    expect(result).toMatch(/^  ❯ 帮我列一下目录$/m)
-    expect(result).toMatch(/^ {4}⋮ llm · claude-sonnet-4 · turn 1 · 3 msgs$/m)
-    expect(result).not.toContain('```text')
-  })
-
-  test('repairs stray fence close before following markdown blocks', () => {
-    const md = [
-      '```',
-      '循环到 EOS 或达到长度上限。',
-      '',
-      '## 关键工程点',
-      '',
-      '**内存分配策略**- 静态分配：一次开 `max_seq_len`，简单但浪费。',
-      '- PagedAttention（vLLM）：把 cache 切成固定 block。',
-      '',
-      '**batch 管理**',
-      '- Continuous batching：请求长度不一。',
-    ].join('\n')
-
-    const result = render(md).replace(/\u200b/g, '')
-
-    expect(result).toContain('循环到 EOS 或达到长度上限。')
-    expect(result).toContain('关键工程点')
-    expect(result).toContain('内存分配策略')
-    expect(result).toContain('- 静态分配：一次开 max_seq_len，简单但浪费。')
-    expect(result).toContain('batch 管理')
-    expect(result).not.toContain('```')
-    expect(result).not.toContain('## 关键工程点')
-    expect(result).not.toContain('**内存分配策略**-')
-  })
-
-  test('repairs unclosed text diagram fence before following bold paragraph', () => {
-    const md = [
-      '一张图总结',
-      '',
-      '```text',
-      '      冷启动 (昨天)       命中磁盘 (今天)',
-      '    ─────────────────                ──────────────────',
-      '  prompt: A B C            prompt: A B C D E F',
-      '     │                                 │',
-      '     ├─ prefill 3 次前向   ├─ 扫磁盘，SHA1 匹配',
-      '',
-      '**模型权重从头到尾是同一份只读数据。变的只是那些 K/V缓冲区里装的数值。**',
-    ].join('\n')
-
-    const result = render(md).replace(/\u200b/g, '')
-
-    expect(result).toContain('冷启动 (昨天)')
-    expect(result).toContain('prompt: A B C')
-    expect(result).toContain('模型权重从头到尾是同一份只读数据')
-    expect(result).not.toContain('```text')
-    expect(result).not.toContain('**模型权重')
   })
 
   test('does not close plain text fence without diagram content before bold literal', () => {
@@ -1254,43 +715,6 @@ describe('renderMarkdown', () => {
     expect(result).not.toContain('---')
   })
 
-  test('splits hr glued to end of sentence without whitespace', () => {
-    // Models sometimes emit `通用框架。---\n核心抽象` (no space/newline before
-    // the --- marker). Treat it as a thematic break, not literal dashes.
-    const result = render('通用框架。---\n核心抽象三个独立').replace(/\u200b/g, '')
-    expect(result).toContain('通用框架。')
-    expect(result).toContain('核心抽象三个独立')
-    expect(result).not.toMatch(/通用框架。---/)
-  })
-
-  test('splits hr glued to heading with zero space and CJK body', () => {
-    // `---###第 4 / 5 步` — models omit every whitespace between the HR,
-    // the `###`, and the heading body. `---` + heading are ASCII; the CJK
-    // body is kept because real-world failures came from CJK content.
-    const result = render('---###第 4 / 5 步').replace(/\u200b/g, '')
-    // hr renders as a full-width ─ rule (aligned with pi); heading keeps `###`.
-    expect(result).toMatch(/^─+$/m)
-    expect(result).toContain('### 第 4 / 5 步')
-    expect(result).not.toContain('###第')
-    expect(result).not.toContain('---')
-  })
-
-  test('splits hr glued to heading after preceding prose', () => {
-    const result = render('prose.\n---###step 4').replace(/\u200b/g, '')
-    expect(result).toContain('prose.')
-    expect(result).toContain('step 4')
-    expect(result).not.toContain('---###')
-  })
-
-  test('splits hr glued before heading', () => {
-    const result = render('---### 方案分层：从零代码到完整 Eval').replace(/\u200b/g, '')
-
-    // The glued `---###` is split into an hr (full-width ─ rule, aligned with
-    // pi) and an H3. H3+ keeps its `###` prefix, so the heading shows the marker.
-    expect(result).toMatch(/^─+\n\n### 方案分层：从零代码到完整 Eval/m)
-    expect(result).not.toContain('---')
-  })
-
   test('does not split em-dash mid-sentence', () => {
     // Plain em-dash usage with surrounding spaces must stay intact.
     const result = render('foo --- bar').replace(/\u200b/g, '')
@@ -1380,89 +804,6 @@ describe('renderMarkdown', () => {
     expect(rendered).not.toContain('```')
   })
 
-  test('aligns trailing comments in tree-style directory listings', () => {
-    const restore = withColumns(120)
-    try {
-      const tree = [
-        'Directory',
-        '',
-        '  cli/',
-        '  ├── src/',
-        '  │   ├── render/',
-        '  │   │   ├── verbose.ts      # [modify] 4 formatter 改为 { text, expandedText }',
-        '  │   │   └── output.ts                # [modify] buildRunSummary 紧凑化',
-        '  │   ├── term/',
-        '  │   │   └── app/',
-        '  │   │       ├── reducer.ts           # [modify] llm_started/compact_started 存 expandedText',
-        '  │   │       └── stream.ts            # [modify] 合并 started/completed 分支，统一 dual-commit',
-        '  │   └── session/',
-        '  │       └── transcript.ts       #[modify] 存储新字段，resume 兼容老会话',
-        '  └── tests/',
-        '  ├── outputLines.test.ts          # [modify] 断言 text 单行 + expandedText 详情',
-        '   └── term-stream.test.ts          # [modify] 4 种事件都产出 expandedCommitLines',
-      ].join('\n')
-      const rendered = stripAnsi(renderMarkdown(tree)).replace(/\u200b/g, '')
-      // Comment START columns are aligned (two spaces past the widest prefix),
-      // so every `#` lands in the same column regardless of comment length.
-      const commentStarts = rendered
-        .split('\n')
-        .filter(line => line.includes('modify]'))
-        .map(line => stringWidth(line.slice(0, line.indexOf('#'))))
-
-      expect(new Set(commentStarts).size).toBe(1)
-      expect(rendered).toContain('  │       └── transcript.ts')
-      expect(rendered).toContain('      ├── outputLines.test.ts')
-      expect(rendered).toContain('      └── term-stream.test.ts')
-    } finally {
-      restore()
-    }
-  })
-
-  test('aligns trailing comment starts in tree-style directory listings', () => {
-    const restore = withColumns(120)
-    try {
-      const tree = [
-        '⏺ /Users/bohu/github/evotai/evot',
-        '  ├── Cargo.toml     # Rust workspace root (engine/app/addon)',
-        '  ├── Cargo.lock',
-        '  ├── Makefile          # make check/build/test 入口',
-        '  ├── README.md',
-        '  ├── CLAUDE.md     # 项目级 AI 指令',
-        '  ├── FEATURE_COMPARISON.md',
-        '  ├── install.sh                    # 安装脚本',
-        '  ├── rust-toolchain.toml',
-        '  ├── rustfmt.toml',
-        '  │',
-        '  ├── .github/workflows/  # CI 与发布流水线',
-        '  │   ├── ci.yml',
-        '  │   └── release.yml',
-        '  │',
-        '  ├── src/      # Rust 核心代码',
-        '  │   ├── engine/              # evotengine — agent 运行时',
-        '  │   │   ├── Cargo.toml',
-        '  │   │   └── src/',
-        '  │   │       ├── lib.rs   # 仅模块声明与 re-export',
-        '  │   │       ├── retry.rs       # 通用重试逻辑',
-        '  │   │   ├── agent/  # Agent 主体',
-        '  │   │ │   ├── agent.rs      #  Agent 结构与生命周期',
-        '  │   │       │   ├── handle.rs   #   外部控制句柄',
-        '  │   │       │   └── run.rs #   单次 run 驱动',
-        '  │   │       ├── context/          # 上下文管理',
-        '  │   │       │   ├── tokens.rs   #   token 计数',
-      ].join('\n')
-      const rendered = stripAnsi(renderMarkdown(tree)).replace(/\u200b/g, '')
-      const commentStarts = rendered
-        .split('\n')
-        .filter(line => line.includes('#'))
-        .map(line => stringWidth(line.slice(0, line.indexOf('#'))))
-
-      // Every `#` marker lands in the same column.
-      expect(new Set(commentStarts).size).toBe(1)
-    } finally {
-      restore()
-    }
-  })
-
   test('does not treat markdown tables containing box-drawing text as streaming tree tails', () => {
     const table = [
       '| Name | Shape |',
@@ -1489,44 +830,6 @@ describe('renderMarkdown', () => {
     expect(result).toContain('┤')
     expect(result).toContain('└')
     expect(result).toContain('┘')
-  })
-
-  test('renders table when heading is glued to table header', () => {
-    const md = [
-      '## 架构层面的区别| 方面 | Pi | Evot |',
-      '|------|-----|------|',
-      '| 组件模型 | Component 树 | buildFrame() |',
-    ].join('\n')
-
-    const result = render(md).replace(/\u200b/g, '')
-    expect(result).toContain('┌')
-    expect(result).toContain('方面')
-    expect(result).toContain('组件模型')
-    expect(result).toContain('架构层面的区别')
-    expect(result).not.toContain('|------|')
-  })
-
-  test('repairs table rows glued to separators and following prose', () => {
-    const md = [
-      'Storage cost estimate',
-      '',
-      '| Storage | Unit price | Monthly cost |',
-      '|---|---|---|| OSS Standard | 0.148 CNY/GB/month | ~30 CNY |',
-      '| OSS Infrequent Access | 0.08 CNY/GB/month | ~16 CNY |',
-      '| OSS Archive | 0.033 CNY/GB/month | ~7 CNY |Archive is cheapest for write-once, rarely-read compliance retention.',
-    ].join('\n')
-
-    const result = render(md).replace(/\u200b/g, '')
-    expect(result).toContain('┌')
-    expect(result).toContain('└')
-    expect(result).toContain('OSS Standard')
-    expect(result).toContain('0.148')
-    expect(result).toContain('CNY/GB/month')
-    expect(result).toContain('~7')
-    expect(result).toContain('CNY')
-    expect(result).toContain('Archive is cheapest for write-once, rarely-read compliance retention.')
-    expect(result).not.toContain('|---|---|---|')
-    expect(result).not.toContain('|Archive is')
   })
 
   test('renders <br> inside table cells as a line break', () => {
@@ -1618,23 +921,6 @@ describe('renderMarkdown', () => {
     // renderMarkdown should never throw
     const result = renderMarkdown('just plain text')
     expect(result).toContain('just plain text')
-  })
-
-  test('strips system-reminder prompt tags before rendering', () => {
-    // Models occasionally echo the reminder envelope into visible output.
-    // Match the reference tag stripper: drop the tags and their body.
-    const result = render('hello\n<system-reminder>\ninternal only\n</system-reminder>\nworld')
-    expect(result).toContain('hello')
-    expect(result).toContain('world')
-    expect(result).not.toContain('system-reminder')
-    expect(result).not.toContain('internal only')
-  })
-
-  test('strips analysis tags', () => {
-    const result = render('<commit_analysis>\nhidden\n</commit_analysis>\nvisible body')
-    expect(result).toContain('visible body')
-    expect(result).not.toContain('hidden')
-    expect(result).not.toContain('commit_analysis')
   })
 
   test('keeps inline prose mentions of reminder tags and the content after them', () => {

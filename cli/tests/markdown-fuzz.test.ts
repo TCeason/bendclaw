@@ -4,15 +4,13 @@ import { existsSync, readFileSync } from 'fs'
 import { describe, expect, test } from 'bun:test'
 import stripAnsi from 'strip-ansi'
 import { renderMarkdown } from '../src/render/markdown.js'
-import { MARKDOWN_NORMALIZE_STAGES, applyMarkdownNormalizeStages } from '../src/markdown/normalize/index.js'
 
 interface Case {
-  kind: 'fence' | 'headingListGlue' | 'table' | 'implicitCode' | 'boxDrawing' | 'diagram' | 'seed'
+  kind: 'boxDrawing' | 'seed'
   stage: string
   name: string
   input: string
   expected: string[]
-  absent?: RegExp[]
 }
 
 const DEFAULT_SEED = 20260509
@@ -117,10 +115,6 @@ function pick<T>(rng: () => number, values: T[]): T {
   return values[Math.floor(rng() * values.length)]!
 }
 
-function maybe(rng: () => number, value: string): string {
-  return rng() < 0.5 ? value : ''
-}
-
 function readExternalSeeds(): string[] {
   const seedPath = process.env.MARKDOWN_FUZZ_SEED_FILE
   if (!seedPath || !existsSync(seedPath)) return []
@@ -197,116 +191,6 @@ function makeSeedCase(rng: () => number, seeds: string[]): Case {
     name: 'llm-seed',
     input,
     expected: [],
-    absent: [/\|---/, /<!-- -->/],
-  }
-}
-
-function makeFenceCase(rng: () => number): Case {
-  const lang = pick(rng, ['sql', 'python', 'bash', 'text'])
-  const code = pick(rng, [
-    'SELECT 1;',
-    'print("hello")',
-    'npm test',
-    'literal **bold** text',
-  ])
-  const tail = pick(rng, ['Continue explanation.', '## Next section', '- next item'])
-  const input = pick(rng, [
-    `Intro.\n\n\`\`\`${lang}\n${code}\n\`\`\`${tail}`,
-    `Intro.\`\`\`${lang}\n${code}\n\`\`\`\n${tail}`,
-    `Intro.\n\n\`\`\`${lang}\n${code}`,
-    `Intro.\n\n\`\`\`${lang}\n${code}\`\`\`${tail}`,
-  ])
-
-  return {
-    kind: 'fence',
-    stage: 'fence-repair',
-    name: `fence-${lang}`,
-    input,
-    expected: [code],
-    absent: [],
-  }
-}
-
-function makeHeadingListGlueCase(rng: () => number): Case {
-  const input = pick(rng, [
-    'Intro sentence.## Heading\nBody text.',
-    'Intro sentence.### Heading\nBody text.',
-    'Summary:- first item\n- second item',
-    'Steps:1. first item\n2. second item',
-    'Keep decimals: task_1: 0.8 and v1.2.3 remain text.',
-  ])
-
-  return {
-    kind: 'headingListGlue',
-    stage: 'heading-list-glue',
-    name: 'heading-list-glue',
-    input,
-    expected: input.includes('Heading') ? ['Heading'] : input.includes('first item') ? ['first item'] : ['task_1: 0.8', 'v1.2.3'],
-    absent: [/\.#{1,6}\S/, /:[-*+]\S/, /:\d+\.\s*first item/],
-  }
-}
-
-function makeTableCase(rng: () => number): Case {
-  const header = '| Client | Protocol | Focus |'
-  const separator = '|---|---|---|'
-  const rows = [
-    '| Java | MySQL | `getBigDecimal()` precision |',
-    '| Spark JDBC | MySQL JDBC | **DecimalType limit** |',
-  ]
-  const input = pick(rng, [
-    `${header}\n${separator}\n${rows.join('\n')}`,
-    `${header}${separator}\n${rows.join('\n')}`,
-    `${header}\n${separator}\n${rows.join('\n')}Continue explanation.`,
-    `Table:\n${header}\n${separator}\n${rows.join('\n')}`,
-  ])
-
-  return {
-    kind: 'table',
-    stage: 'table-glue',
-    name: 'table-glue',
-    input,
-    expected: ['Client', 'Java', 'Spark JDBC'],
-    absent: [/\|---/],
-  }
-}
-
-function makeImplicitCodeCase(rng: () => number): Case {
-  const prose = pick(rng, ['Continue explanation.', 'Driver compatibility summary', '这里重点是：'])
-  const code = pick(rng, [
-    [
-      'CREATE TABLE decimal_driver_compat (',
-      '    id INT,',
-      '    d38 DECIMAL(38, 18)',
-      ');',
-    ],
-    [
-      'try (ResultSet rs = stmt.executeQuery("SELECT 1")) {',
-      '    System.out.println(rs.getInt(1));',
-      '}',
-    ],
-    [
-      'from decimal import Decimal',
-      'cur.execute("SELECT d38 FROM decimal_driver_compat")',
-      'for row in cur.fetchall():',
-      '    print(type(row[0]), row[0])',
-    ],
-    [
-      'val df = spark.read.format("jdbc")',
-      '    .option("dbtable", "decimal_driver_compat")',
-      '    .load()',
-    ],
-  ])
-  // Indent all lines by 4 spaces to create a proper markdown implicit code block
-  const indentedCode = code.map(l => `    ${l}`).join('\n')
-  const input = `${maybe(rng, 'Example:\n\n')}${indentedCode}\n\n${prose}`
-
-  return {
-    kind: 'implicitCode',
-    stage: 'implicit-code-blocks',
-    name: 'implicit-code',
-    input,
-    expected: [code[0]!, prose],
-    absent: [],
   }
 }
 
@@ -337,58 +221,36 @@ function makeBoxDrawingCase(rng: () => number): Case {
     name: 'box-drawing',
     input,
     expected: input.includes('┌') ? ['┌', '│', '└'] : ['├── cli', '└── src'],
-    absent: [/```text/],
   }
 }
 
 function makeCase(rng: () => number, seedCorpus: string[]): Case {
-  if (seedCorpus.length > 0 && rng() < 0.45) return makeSeedCase(rng, seedCorpus)
-  if (rng() < 0.2) return makeSeedCase(rng, HIGH_RISK_LLM_SEEDS)
-  const kind = pick<Exclude<Case['kind'], 'seed'>>(rng, ['fence', 'headingListGlue', 'table', 'implicitCode', 'boxDrawing'])
-  switch (kind) {
-    case 'fence': return makeFenceCase(rng)
-    case 'headingListGlue': return makeHeadingListGlueCase(rng)
-    case 'table': return makeTableCase(rng)
-    case 'implicitCode': return makeImplicitCodeCase(rng)
-    case 'boxDrawing': return makeBoxDrawingCase(rng)
-    case 'diagram': return makeBoxDrawingCase(rng)
-    case 'seed': return makeSeedCase(rng, seedCorpus)
-  }
+  // evot renders model output as-is (no glue normalization), so the only
+  // meaningful fuzz inputs are real-world markdown seeds (mutated to simulate
+  // messy streaming) and box-drawing art that must survive verbatim.
+  if (seedCorpus.length > 0 && rng() < 0.7) return makeSeedCase(rng, seedCorpus)
+  if (rng() < 0.5) return makeSeedCase(rng, HIGH_RISK_LLM_SEEDS)
+  return makeBoxDrawingCase(rng)
 }
 
 function boxLineCount(text: string): number {
   return text.split('\n').filter(line => /[┌┐└┘├┤┬┴┼│─▼▲]/.test(line)).length
 }
 
-// Global invariant: code blocks now render WITH ```lang / ``` borders (aligned
-// with pi), so a bare `not.toContain('```')` no longer holds. What must still
-// hold is that every fence line is well-formed — exactly ``` plus an optional
-// language tag, alone on its line, never glued to prose or a neighbor.
-function fencesWellFormed(output: string): boolean {
-  for (const line of output.split('\n')) {
-    if (!line.includes('```')) continue
-    if (!/^```[\w+-]*$/.test(line.trim())) return false
-  }
-  return true
-}
-
+// Render-robustness invariants that hold WITHOUT any glue normalization
+// (evot renders model output as-is, like pi). We no longer assert that
+// malformed markdown is repaired into tables/headings; we only assert that
+// rendering never crashes, stays bounded, preserves literal content, and
+// never leaks internal separator artifacts.
 function assertCase(c: Case, output: string): void {
   expect(output.length).toBeLessThan(c.input.length * 20 + 1000)
+  // Internal separator sentinels must never reach the user.
   expect(output).not.toContain('<!-- -->')
-  expect(fencesWellFormed(output)).toBe(true)
+  // Literal content the case guarantees survives verbatim.
   for (const expected of c.expected) {
     expect(output).toContain(expected)
   }
-  for (const absent of c.absent ?? []) {
-    expect(output).not.toMatch(absent)
-  }
-
-  if (c.kind === 'table') {
-    expect(output).toContain('┌')
-  }
-  if (c.kind === 'implicitCode' && c.input.includes('    ')) {
-    expect(output).toMatch(/^ {4,}\S/m)
-  }
+  // Box-drawing / tree art is preserved verbatim by the paragraph renderer.
   if (c.kind === 'boxDrawing' || c.input.includes('┌') || c.input.includes('├──')) {
     expect(output).toMatch(/[┌└├│]/)
     expect(boxLineCount(output)).toBeGreaterThanOrEqual(Math.min(3, boxLineCount(c.input)))
@@ -400,24 +262,11 @@ function assertCase(c: Case, output: string): void {
 }
 
 describe('markdown targeted fuzz', () => {
-  test('normalizer exposes named stages for diagnostics', () => {
-    expect(MARKDOWN_NORMALIZE_STAGES.map(stage => stage.name)).toEqual([
-      'fence-open-glue',
-      'fence-close-repair',
-      'heading-list-glue',
-      'implicit-code-blocks',
-      'table-glue',
-      'box-drawing-preserve',
-      'hr-boundary',
-      'emphasis-boundary',
-    ])
-  })
-
   test('extracts existing markdown tests as fuzz seeds', () => {
     expect(readMarkdownTestSeeds().length).toBeGreaterThan(50)
   })
 
-  test('rendering invariants hold for mutated markdown cases', () => {
+  test('rendering is robust for mutated/malformed markdown cases', () => {
     const seed = Number(process.env.MARKDOWN_FUZZ_SEED ?? DEFAULT_SEED)
     const cases = Number(process.env.MARKDOWN_FUZZ_CASES ?? DEFAULT_CASES)
     const rng = createRng(seed)
@@ -430,13 +279,10 @@ describe('markdown targeted fuzz', () => {
         output = render(c.input)
         assertCase(c, output)
       } catch (error) {
-        const normalized = applyMarkdownNormalizeStages(c.input)
         throw new Error([
           `markdown fuzz failed seed=${seed} case=${i} kind=${c.kind} stage=${c.stage} name=${c.name}`,
           '--- input ---',
           c.input,
-          '--- normalized ---',
-          normalized,
           '--- output ---',
           output,
           '--- error ---',

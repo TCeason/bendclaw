@@ -10,7 +10,7 @@ import {
   terminalContentWidth,
   wrapDisplayTextWithIndent,
   wrapParagraph,
-} from '../normalize/index.js'
+} from '../primitives.js'
 import { createHyperlink, isWarpTerminal, supportsHyperlinks, wrapHyperlink } from '../../render/hyperlink.js'
 import { linkifyIssueRefs } from '../../render/linkify.js'
 import { getTheme, type Theme } from '../../render/theme.js'

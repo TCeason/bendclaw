@@ -1,14 +1,14 @@
 /**
  * Markdown rendering facade for terminal output.
  *
- * Pipeline:
+ * Pipeline (aligned with pi's TUI markdown component):
  *   raw markdown
- *   → prompt stripping + LLM glue normalizers
- *   → marked lexer
+ *   → marked lexer (partial closing fences trimmed for streaming stability)
  *   → ANSI token renderer
+ *
+ * Deliberately no "glue normalization": model output is rendered as-is.
  */
 
-import { prepareMarkdownForLex, stripPromptXMLTags } from '../markdown/normalize/index.js'
 import { lexMarkdownTokens } from '../markdown/parse/marked.js'
 import { formatTokens } from '../markdown/render/ansi.js'
 
@@ -19,11 +19,10 @@ export function renderMarkdown(text: string): string {
   if (!text || text.trim().length === 0) return text
 
   try {
-    // Strip prompt XML tags (system-reminder, commit_analysis, …) first so
-    // they never reach the lexer or the plain-text fast path.
-    const stripped = stripPromptXMLTags(text)
-    const lexText = prepareMarkdownForLex(stripped)
-    const tokens = lexMarkdownTokens(lexText, stripped)
+    // Replace tabs with spaces for consistent rendering (matches pi), then
+    // lex and render. No pre-lex normalization.
+    const lexText = text.replace(/\t/g, '   ')
+    const tokens = lexMarkdownTokens(lexText, text)
     return formatTokens(tokens)
   } catch {
     return text

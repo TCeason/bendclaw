@@ -1,12 +1,4 @@
-import {
-  BOX_DRAWING_RE,
-  CODE_FENCE_RE,
-  fenceLanguageFromLine,
-  isLikelyFenceClose,
-  isPlainTextFenceLanguage,
-  repairUnclosedFences,
-  shouldClosePlainTextFenceBeforeMarkdown,
-} from '../normalize/index.js'
+import { BOX_DRAWING_RE, CODE_FENCE_RE } from '../primitives.js'
 import { lexRawMarkdownTokens } from '../parse/marked.js'
 
 // ---------------------------------------------------------------------------
@@ -41,85 +33,6 @@ export function splitMarkdownBlocks(text: string): MarkdownSplit {
   }
 }
 
-function streamingTreeTailCommitPoint(text: string): number | null {
-  if (!BOX_DRAWING_RE.test(text) || text.endsWith('\n\n')) return null
-  const lines = text.split('\n')
-  let lastNonEmptyIndex = lines.length - 1
-  while (lastNonEmptyIndex >= 0 && lines[lastNonEmptyIndex]!.trim() === '') {
-    lastNonEmptyIndex--
-  }
-  if (lastNonEmptyIndex < 0) return null
-
-  let tailLineStart = lastNonEmptyIndex
-  while (tailLineStart > 0 && lines[tailLineStart - 1]!.trim() !== '') {
-    tailLineStart--
-  }
-  const tailLines = lines.slice(tailLineStart, lastNonEmptyIndex + 1)
-  if (!tailLooksLikeTreeBlock(tailLines)) return null
-  if (tailLineStart === 0) return 0
-
-  let offset = 0
-  for (let i = 0; i < tailLineStart; i++) {
-    offset += lines[i]!.length + 1
-  }
-  return offset
-}
-
-function tailLooksLikeTreeBlock(lines: string[]): boolean {
-  const meaningful = lines.filter(line => line.trim() !== '')
-  if (meaningful.length === 0) return false
-  const treeLineCount = meaningful.filter(looksLikeTreeLine).length
-  return treeLineCount > 0 && treeLineCount === meaningful.length
-}
-
-function looksLikeTreeLine(line: string): boolean {
-  const trimmed = line.trimStart()
-  return /^⏺\s+\S/.test(trimmed)
-    || /^[/~.][^\s]*/.test(trimmed)
-    || /^[│├└]\s*$/.test(trimmed)
-    || /^[│ ]*[├└]──\s+/.test(trimmed)
-    || /^[│ ]+│/.test(trimmed)
-}
-
-function openPlainTextDiagramFenceStart(text: string): number | null {
-  const lines = text.split('\n')
-  let offset = 0
-  let openStart: number | null = null
-  let openMarker = ''
-  let openLength = 0
-  let openLang: string | null = null
-  let codeLines: string[] = []
-
-  for (const line of lines) {
-    const match = CODE_FENCE_RE.exec(line)
-    if (openStart === null) {
-      if (match) {
-        openStart = offset
-        openMarker = match[2]![0]!
-        openLength = match[2]!.length
-        openLang = fenceLanguageFromLine(line)
-        codeLines = []
-      }
-    } else if (isLikelyFenceClose(line, openMarker, openLength)) {
-      openStart = null
-      openMarker = ''
-      openLength = 0
-      openLang = null
-      codeLines = []
-    } else if (shouldClosePlainTextFenceBeforeMarkdown(line, codeLines, openLang)) {
-      return null
-    } else {
-      codeLines.push(line)
-    }
-    offset += line.length + 1
-  }
-
-  if (openStart === null) return null
-  if (!isPlainTextFenceLanguage(openLang)) return null
-  if (!codeLines.some(codeLine => BOX_DRAWING_RE.test(codeLine))) return null
-  return openStart
-}
-
 /**
  * True when the streaming buffer ends inside an unterminated code fence
  * (opening ``` / ~~~ with no matching close yet). Force-splitting here would
@@ -127,23 +40,37 @@ function openPlainTextDiagramFenceStart(text: string): number | null {
  * lines as plain prose — tearing the block. Callers hold such text pending.
  */
 export function isInsideOpenCodeFence(text: string): boolean {
+  return openCodeFenceStart(text) !== null
+}
+
+/**
+ * Byte offset where the last still-open code fence begins, or `null` when no
+ * fence is open. Used to commit prose before an in-progress fence while
+ * holding the fence itself (and its body) pending until the close arrives.
+ */
+function openCodeFenceStart(text: string): number | null {
   let inFence = false
   let fenceMarker = ''
+  let fenceStart = 0
+  let offset = 0
 
   for (const line of text.split('\n')) {
     const fenceMatch = CODE_FENCE_RE.exec(line)
-    if (!fenceMatch) continue
-    const marker = fenceMatch[2]!
-    if (!inFence) {
-      inFence = true
-      fenceMarker = marker
-    } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
-      inFence = false
-      fenceMarker = ''
+    if (fenceMatch) {
+      const marker = fenceMatch[2]!
+      if (!inFence) {
+        inFence = true
+        fenceMarker = marker
+        fenceStart = offset
+      } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
+        inFence = false
+        fenceMarker = ''
+      }
     }
+    offset += line.length + 1
   }
 
-  return inFence
+  return inFence ? fenceStart : null
 }
 
 export function isInsideOpenMathBlock(text: string): boolean {
@@ -214,17 +141,10 @@ export function findStreamingCommitPoint(text: string): number {
   const completeMathBlockStart = firstCompleteMathBlockStart(text)
   if (completeMathBlockStart !== null) return completeMathBlockStart
 
-  const openTextDiagramStart = openPlainTextDiagramFenceStart(text)
-  if (openTextDiagramStart !== null) return openTextDiagramStart
-
-  const treeTailCommitPoint = streamingTreeTailCommitPoint(text)
-  if (treeTailCommitPoint !== null) return treeTailCommitPoint
-
-  const repaired = repairUnclosedFences(text, false)
-  if (repaired !== text) {
-    const insertedAt = firstDifferenceIndex(text, repaired)
-    return insertedAt > 0 ? insertedAt : 0
-  }
+  // An open code fence is never committable: commit only the prose before it
+  // and hold the fence (plus its still-forming body) pending.
+  const openFenceStart = openCodeFenceStart(text)
+  if (openFenceStart !== null) return openFenceStart > 0 ? openFenceStart : 0
 
   const tokens = lexRawMarkdownTokens(text)
   let lastContentIdx = tokens.length - 1
@@ -243,7 +163,7 @@ export function findStreamingCommitPoint(text: string): number {
 
 export function findNaturalPlainTextCommitPoint(text: string, termRows: number): number {
   if (!text) return 0
-  if (repairUnclosedFences(text, false) !== text) return 0
+  if (isInsideOpenCodeFence(text)) return 0
   if (hasMarkdownBlockSyntax(text)) return 0
   if (hasUnclosedInlineSyntax(text)) return 0
 
@@ -310,12 +230,4 @@ function isEscaped(text: string, index: number): boolean {
     slashCount++
   }
   return slashCount % 2 === 1
-}
-
-function firstDifferenceIndex(a: string, b: string): number {
-  const limit = Math.min(a.length, b.length)
-  for (let i = 0; i < limit; i++) {
-    if (a[i] !== b[i]) return i
-  }
-  return limit
 }

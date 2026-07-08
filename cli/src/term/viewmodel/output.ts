@@ -3,7 +3,7 @@ import stringWidth from 'string-width'
 import { line, block, plain, dim, bold, colored, type ViewBlock, type StyledLine } from './types.js'
 import { wrapTextByWidth } from './prompt.js'
 import { wrapTextWithAnsi } from '../../render/wrap.js'
-import { BOX_DRAWING_RE } from '../../markdown/normalize/index.js'
+import { BOX_DRAWING_RE } from '../../markdown/primitives.js'
 import stripAnsi from 'strip-ansi'
 
 export interface OutputContext {
