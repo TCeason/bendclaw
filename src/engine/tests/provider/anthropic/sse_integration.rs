@@ -218,6 +218,39 @@ async fn anthropic_sse_unknown_stop_reason_errors() {
     assert!(err.to_string().contains("Unhandled Anthropic stop reason"));
 }
 
+// A `refusal`/`sensitive` stop reason must surface as StopReason::Error with
+// a descriptive error_message — not a bare error the TUI renders as
+// "Unknown error".
+#[tokio::test]
+async fn anthropic_sse_refusal_stop_reason_carries_error_message() {
+    let sse = anthropic_sse::body(vec![
+        anthropic_sse::message_start(100, 0),
+        anthropic_sse::text_block_start(0),
+        anthropic_sse::text_delta(0, "I"),
+        anthropic_sse::block_stop(0),
+        anthropic_sse::message_delta("refusal", 9),
+        anthropic_sse::message_stop(),
+    ]);
+
+    let config = StreamConfigBuilder::anthropic().cache_disabled().build();
+    let (msg, _events) = run_provider_sse(&AnthropicProvider, config, &sse, 200)
+        .await
+        .unwrap();
+
+    match &msg {
+        Message::Assistant {
+            stop_reason,
+            error_message,
+            ..
+        } => {
+            assert_eq!(*stop_reason, StopReason::Error);
+            let err = error_message.as_deref().expect("error_message must be set");
+            assert!(err.contains("refusal"), "got: {err}");
+        }
+        _ => panic!("Expected Assistant message"),
+    }
+}
+
 #[tokio::test]
 async fn anthropic_sse_tool_call() {
     let sse = anthropic_sse::body(vec![

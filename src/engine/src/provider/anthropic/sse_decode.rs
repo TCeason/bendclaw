@@ -94,7 +94,9 @@ pub(crate) async fn decode_sse_stream(
         .content
         .iter()
         .any(|c| matches!(c, Content::ToolCall { .. }));
-    if has_tool_calls {
+    // Never mask a provider-terminal error (e.g. refusal) as a normal
+    // tool_use stop — the error must surface to the caller.
+    if has_tool_calls && state.stop_reason != StopReason::Error {
         state.stop_reason = StopReason::ToolUse;
     }
 
@@ -109,7 +111,7 @@ pub(crate) async fn decode_sse_stream(
         provider: "anthropic".into(),
         usage: state.usage,
         timestamp: now_ms(),
-        error_message: None,
+        error_message: state.error_message,
         response_id: state.response_id,
     };
 
@@ -128,6 +130,10 @@ struct AnthropicSseState {
     response_id: Option<String>,
     saw_message_start: bool,
     saw_message_stop: bool,
+    /// Human-readable reason when the stream terminated with
+    /// `StopReason::Error` (e.g. a safety refusal), so the caller sees the
+    /// actual cause instead of a generic "Unknown error".
+    error_message: Option<String>,
     /// Substitute model from a server-side `fallback` block, if any.
     fallback_model: Option<String>,
 }
@@ -142,6 +148,7 @@ impl Default for AnthropicSseState {
             response_id: None,
             saw_message_start: false,
             saw_message_stop: false,
+            error_message: None,
             fallback_model: None,
         }
     }
@@ -316,6 +323,11 @@ fn process_sse_event(
             let data = parse_event_data::<AnthropicMessageDelta>(sse)?;
             if let Some(reason) = data.delta.stop_reason.as_deref() {
                 state.stop_reason = map_stop_reason(reason)?;
+                if state.stop_reason == StopReason::Error {
+                    state.error_message = Some(format!(
+                        "Provider ended the response with stop reason '{reason}' (safety filter / refusal)"
+                    ));
+                }
             }
             state.usage.output = data.usage.output_tokens;
             // Only override cache fields when the delta actually carries
