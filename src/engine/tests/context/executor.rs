@@ -311,6 +311,36 @@ fn sanitize_drops_duplicate_tool_result() {
     assert_eq!(count_tool_calls(&result), 1);
 }
 
+#[test]
+fn sanitize_drops_duplicate_tool_use_ids_within_one_message() {
+    // Anthropic rejects a request whose assistant content repeats a tool_use id.
+    let messages = vec![
+        user_msg("hello"),
+        multi_tool_call_msg(&["dup", "dup", "other"]),
+        tool_result_msg("dup", "first"),
+        tool_result_msg("other", "second"),
+        assistant_msg("done"),
+    ];
+
+    let result = evotengine::sanitize_tool_pairs(messages);
+
+    // The repeated "dup" id collapses to a single call; "other" is untouched.
+    let ids: Vec<String> = result
+        .iter()
+        .filter_map(|m| match m {
+            AgentMessage::Llm(Message::Assistant { content, .. }) => Some(content),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|c| match c {
+            Content::ToolCall { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids.iter().filter(|id| *id == "dup").count(), 1);
+    assert_eq!(ids.iter().filter(|id| *id == "other").count(), 1);
+}
+
 fn multi_tool_call_msg(ids: &[&str]) -> AgentMessage {
     AgentMessage::Llm(Message::Assistant {
         content: ids

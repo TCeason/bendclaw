@@ -152,6 +152,7 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
             context_window,
             stop_reason,
             tool_calls,
+            response_model,
             ..
         } => {
             let mut data = json!({
@@ -175,6 +176,9 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
                 }
                 if let Some(tc) = tool_calls {
                     map.insert("tool_calls".into(), json!(tc));
+                }
+                if let Some(rm) = response_model {
+                    map.insert("response_model".into(), json!(rm));
                 }
             }
             events.push(json!({

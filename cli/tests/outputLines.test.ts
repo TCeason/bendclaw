@@ -318,6 +318,32 @@ describe('buildVerboseEvent', () => {
     expect(result.text).not.toContain('· 40 tok/s')
   })
 
+  test('shows server-side model fallback when response_model differs', () => {
+    const result = formatLlmCallCompleted({
+      model: 'claude-fable-5',
+      response_model: 'claude-opus-4-8',
+      turn: 3,
+      duration_ms: 5000,
+      output_tokens: 100,
+      metrics: { duration_ms: 5000, ttfb_ms: 1000, ttft_ms: 1000, streaming_ms: 4000 },
+    })
+    expect(result.text).toContain('[LLM] ✓ · claude-fable-5 → claude-opus-4-8 · turn 3')
+    expect(result.text).toContain('    fallback  served by claude-opus-4-8 (requested claude-fable-5)')
+  })
+
+  test('no fallback line when response_model matches requested model', () => {
+    const result = formatLlmCallCompleted({
+      model: 'claude-fable-5',
+      response_model: 'claude-fable-5',
+      turn: 3,
+      duration_ms: 5000,
+      output_tokens: 100,
+      metrics: { duration_ms: 5000, ttfb_ms: 1000, ttft_ms: 1000, streaming_ms: 4000 },
+    })
+    expect(result.text).toContain('[LLM] ✓ · claude-fable-5 · turn 3')
+    expect(result.text).not.toContain('fallback')
+  })
+
   test('formats compact verbose with status symbols and preserves details', () => {
     const started = formatCompactionStarted({
       level: 'L1',

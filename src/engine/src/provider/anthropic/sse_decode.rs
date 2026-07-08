@@ -101,7 +101,11 @@ pub(crate) async fn decode_sse_stream(
     let message = Message::Assistant {
         content: state.content,
         stop_reason: state.stop_reason,
-        model: config.model.clone(),
+        // Report the model that actually served the request. On server-side
+        // fallback (e.g. claude-fable-5 → claude-opus-4-8) this is the
+        // substitute model from the `fallback` block, so the TUI shows what
+        // really happened instead of the requested model.
+        model: state.fallback_model.unwrap_or_else(|| config.model.clone()),
         provider: "anthropic".into(),
         usage: state.usage,
         timestamp: now_ms(),
@@ -124,6 +128,8 @@ struct AnthropicSseState {
     response_id: Option<String>,
     saw_message_start: bool,
     saw_message_stop: bool,
+    /// Substitute model from a server-side `fallback` block, if any.
+    fallback_model: Option<String>,
 }
 
 impl Default for AnthropicSseState {
@@ -136,6 +142,7 @@ impl Default for AnthropicSseState {
             response_id: None,
             saw_message_start: false,
             saw_message_stop: false,
+            fallback_model: None,
         }
     }
 }
@@ -188,39 +195,58 @@ fn process_sse_event(
         "content_block_start" => {
             let data = parse_event_data::<AnthropicContentBlockStart>(sse)?;
             let idx = data.index as usize;
+            // Fill index gaps (from unknown blocks) with empty text
+            // placeholders — never clones of the current block, which would
+            // duplicate tool_use ids and get every later request rejected.
+            while state.content.len() < idx {
+                state.content.push(Content::Text {
+                    text: String::new(),
+                });
+            }
             match data.content_block {
                 AnthropicContentBlock::Text { .. } => {
-                    while state.content.len() <= idx {
-                        state.content.push(Content::Text {
-                            text: String::new(),
-                        });
-                    }
+                    state.content.push(Content::Text {
+                        text: String::new(),
+                    });
                 }
                 AnthropicContentBlock::Thinking { .. } => {
-                    while state.content.len() <= idx {
-                        state.content.push(Content::Thinking {
-                            thinking: String::new(),
-                            signature: None,
-                        });
-                    }
+                    state.content.push(Content::Thinking {
+                        thinking: String::new(),
+                        signature: None,
+                    });
                 }
                 AnthropicContentBlock::ToolUse { id, name, .. } => {
-                    while state.content.len() <= idx {
-                        state.content.push(Content::ToolCall {
-                            id: id.clone(),
-                            name: name.clone(),
-                            arguments: serde_json::Value::Object(Default::default()),
-                        });
-                    }
+                    state.content.push(Content::ToolCall {
+                        id: id.clone(),
+                        name: name.clone(),
+                        arguments: serde_json::Value::Object(Default::default()),
+                    });
                     let _ = tx.send(StreamEvent::ToolCallStart {
                         content_index: idx,
                         id,
                         name,
                     });
                 }
-                // Unknown block type (e.g. a server-side `fallback` block).
-                // Ignore it so the stream continues, matching pi.
-                AnthropicContentBlock::Other => {}
+                // Server-side model fallback (e.g. fable-5 → opus-4-8). Record
+                // the substitute model so the response reports what actually
+                // served the request, and keep a placeholder for alignment.
+                AnthropicContentBlock::Fallback { to } => {
+                    if let Some(model) = to.and_then(|t| t.model) {
+                        if !model.is_empty() {
+                            state.fallback_model = Some(model);
+                        }
+                    }
+                    state.content.push(Content::Text {
+                        text: String::new(),
+                    });
+                }
+                // Unknown block type: keep a placeholder so later indices stay
+                // aligned.
+                AnthropicContentBlock::Other => {
+                    state.content.push(Content::Text {
+                        text: String::new(),
+                    });
+                }
             }
         }
         "content_block_delta" => {

@@ -761,7 +761,7 @@ fn map_agent_event(
             context_window,
             stop_reason,
             content,
-            response_model: _,
+            response_model,
             response_id: _,
         } => {
             let usage_summary = UsageSummary {
@@ -821,6 +821,7 @@ fn map_agent_event(
                     } else {
                         Some(tool_calls)
                     },
+                    response_model: response_model.clone(),
                 }),
             ]
         }

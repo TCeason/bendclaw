@@ -11,6 +11,42 @@ use std::collections::HashSet;
 
 use crate::types::*;
 
+/// Remove repeated `ToolCall` blocks (same id) within one assistant message,
+/// keeping the first occurrence.
+fn dedup_tool_call_ids(msg: AgentMessage) -> AgentMessage {
+    let AgentMessage::Llm(Message::Assistant {
+        content,
+        stop_reason,
+        model,
+        provider,
+        usage,
+        timestamp,
+        error_message,
+        response_id,
+    }) = msg
+    else {
+        return msg;
+    };
+    let mut seen: HashSet<String> = HashSet::new();
+    let content = content
+        .into_iter()
+        .filter(|c| match c {
+            Content::ToolCall { id, .. } => seen.insert(id.clone()),
+            _ => true,
+        })
+        .collect();
+    AgentMessage::Llm(Message::Assistant {
+        content,
+        stop_reason,
+        model,
+        provider,
+        usage,
+        timestamp,
+        error_message,
+        response_id,
+    })
+}
+
 fn has_content(content: &[Content]) -> bool {
     content.iter().any(|c| match c {
         Content::Text { text } => !text.is_empty(),
@@ -28,6 +64,10 @@ fn has_content(content: &[Content]) -> bool {
 /// duplicated result becomes an orphan. Orphaned `tool_use` blocks and orphaned
 /// results are removed; matched pairs pass through untouched.
 pub fn sanitize_tool_pairs(messages: Vec<AgentMessage>) -> Vec<AgentMessage> {
+    // Anthropic rejects duplicate tool_use ids ("`tool_use` ids must be
+    // unique"); persisted history may contain them from a past decoder bug.
+    // Keep the first occurrence; extra results are dropped by pairing below.
+    let messages: Vec<AgentMessage> = messages.into_iter().map(dedup_tool_call_ids).collect();
     let len = messages.len();
 
     // Pass 1: classify by adjacency, tracking orphans per message instance.

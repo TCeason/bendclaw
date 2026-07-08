@@ -99,6 +99,7 @@ async fn anthropic_sse_ignores_unknown_fallback_block() {
         Message::Assistant {
             content,
             stop_reason,
+            model,
             ..
         } => {
             assert!(
@@ -108,6 +109,45 @@ async fn anthropic_sse_ignores_unknown_fallback_block() {
                 "expected the real text block to survive the ignored fallback block"
             );
             assert_eq!(*stop_reason, StopReason::Stop);
+            // The fallback block names the substitute model; the response must
+            // report it so the UI can show what actually served the request.
+            assert_eq!(model, "claude-opus-4-8");
+        }
+        _ => panic!("Expected Assistant message"),
+    }
+}
+
+#[tokio::test]
+async fn anthropic_sse_fallback_block_before_tool_use_keeps_single_tool_call() {
+    // A fallback block at index 0 followed by a tool_use at index 1 must not
+    // duplicate the tool call while gap-filling.
+    let sse = anthropic_sse::body(vec![
+        anthropic_sse::message_start(100, 0),
+        anthropic_sse::fallback_block_start(0),
+        anthropic_sse::block_stop(0),
+        anthropic_sse::tool_block_start(1, "toolu_1", "read"),
+        anthropic_sse::tool_input_delta(1, r#"{"path":"foo.rs"}"#),
+        anthropic_sse::block_stop(1),
+        anthropic_sse::message_delta("tool_use", 5),
+        anthropic_sse::message_stop(),
+    ]);
+
+    let config = StreamConfigBuilder::anthropic().cache_disabled().build();
+    let (msg, _events) = run_provider_sse(&AnthropicProvider, config, &sse, 200)
+        .await
+        .unwrap();
+
+    match &msg {
+        Message::Assistant { content, .. } => {
+            let tool_calls: Vec<_> = content
+                .iter()
+                .filter(|c| matches!(c, Content::ToolCall { .. }))
+                .collect();
+            assert_eq!(
+                tool_calls.len(),
+                1,
+                "gap-filling must not clone the tool_use block: {content:?}"
+            );
         }
         _ => panic!("Expected Assistant message"),
     }

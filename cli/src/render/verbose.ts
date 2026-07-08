@@ -198,6 +198,11 @@ export function formatLlmCallRetry(data: Record<string, unknown>): string {
 
 export function formatLlmCallCompleted(data: Record<string, unknown>): { text: string; expandedText?: string } {
   const model = data.model as string | undefined
+  // Model that actually served the response (e.g. Anthropic server-side
+  // fallback claude-fable-5 → claude-opus-4-8). Only surfaced when it
+  // differs from the requested model.
+  const responseModel = data.response_model as string | undefined
+  const servedByFallback = responseModel != null && responseModel !== '' && model != null && responseModel !== model
   const turn = data.turn as number | undefined
   const error = data.error as string | undefined
   const usage = data.usage as Record<string, number> | undefined
@@ -226,7 +231,10 @@ export function formatLlmCallCompleted(data: Record<string, unknown>): { text: s
   const streamPct = ((streamingMs / dur) * 100).toFixed(0)
 
   const lines: string[] = []
-  lines.push(`[LLM] ✓ · ${model ?? 'unknown'}${turn != null ? ` · turn ${turn}` : ''} · ${formatDuration(durationMs)} · ${tokPerSec} tok/s`)
+  lines.push(`[LLM] ✓ · ${model ?? 'unknown'}${servedByFallback ? ` → ${responseModel}` : ''}${turn != null ? ` · turn ${turn}` : ''} · ${formatDuration(durationMs)} · ${tokPerSec} tok/s`)
+  if (servedByFallback) {
+    lines.push(`    fallback  served by ${responseModel} (requested ${model})`)
+  }
   lines.push(`    tokens    ${humanTokens(inputTok)} in → ${humanTokens(outputTok)} out`)
   if (cacheReadTok > 0 || cacheWriteTok > 0) {
     lines.push(`    cache     ${humanTokens(cacheReadTok)} read · ${humanTokens(cacheWriteTok)} write · ${cacheHitRate}% hit`)

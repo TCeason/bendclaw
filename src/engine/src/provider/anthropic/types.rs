@@ -47,12 +47,26 @@ pub(crate) enum AnthropicContentBlock {
     },
     #[serde(rename = "tool_use")]
     ToolUse { id: String, name: String },
+    /// Server-side model fallback notice (e.g. claude-fable-5 → claude-opus-4-8
+    /// on refusal/reasoning-extraction). Carries the substitute model so the
+    /// UI can surface what actually served the request.
+    #[serde(rename = "fallback")]
+    Fallback {
+        #[serde(default)]
+        to: Option<AnthropicFallbackModel>,
+    },
     /// Any other block type (e.g. `redacted_thinking`, or forward-compat
-    /// server-side blocks like `fallback`). Ignored rather than rejected so a
+    /// server-side blocks). Ignored rather than rejected so a
     /// new Anthropic block type does not abort the whole stream, matching pi's
     /// permissive `if/else if` dispatch.
     #[serde(other)]
     Other,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AnthropicFallbackModel {
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Deserialize)]

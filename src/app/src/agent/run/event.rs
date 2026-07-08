@@ -113,6 +113,11 @@ pub enum RunEventPayload {
         /// Tool calls returned by the LLM, if any.
         #[serde(skip_serializing_if = "Option::is_none")]
         tool_calls: Option<Vec<LlmToolCallSummary>>,
+        /// Model that actually served the response when it differs from the
+        /// requested model (e.g. Anthropic server-side fallback
+        /// claude-fable-5 → claude-opus-4-8).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        response_model: Option<String>,
     },
     ContextCompactionStarted {
         reason: CompactReason,
