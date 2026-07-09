@@ -762,7 +762,9 @@ export function formatToken(
           line += mid.repeat(w + 2)
           line += i < numCols - 1 ? cross : right
         })
-        return line
+        // Same gray as diagram box-drawing (theme.tableBorder) so tables
+        // read as structure, not as body text.
+        return theme.tableBorder.paint(line)
       }
       function renderRow(cells: { tokens?: Token[] }[], forceCenter = false): string {
         const wrapped = cells.map((cell, ci) =>
@@ -770,8 +772,9 @@ export function formatToken(
         )
         const height = Math.max(...wrapped.map(w => w.length))
         const lines: string[] = []
+        const bar = theme.tableBorder.paint('│')
         for (let li = 0; li < height; li++) {
-          let line = '│'
+          let line = bar
           for (let ci = 0; ci < numCols; ci++) {
             // Vertical centering: offset content lines to the middle
             const cellLines = wrapped[ci]!
@@ -780,7 +783,7 @@ export function formatToken(
             const content = (vi >= 0 && vi < cellLines.length) ? cellLines[vi]! : ''
             const dw = terminalDisplayWidth(content)
             const align = forceCenter ? 'center' : tableToken.align?.[ci]
-            line += ' ' + padAligned(content, dw, colWidths[ci]!, align) + ' │'
+            line += ' ' + padAligned(content, dw, colWidths[ci]!, align) + ' ' + bar
           }
           lines.push(line)
         }

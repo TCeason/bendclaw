@@ -10,6 +10,7 @@ import { Agent, QueryStream, fastExit, type SessionMeta, type ConfigInfo } from 
 import { createInitialState, type AppState } from './app/state.js'
 import { HistoryManager, parseHistoryItems } from '../session/history.js'
 import { ScreenLog } from '../session/screen-log.js'
+import { findLastAssistantMarkdown } from '../session/assistant-markdown.js'
 import { isSlashCommand, resolveCommand, buildHardenPrompt } from '../commands/index.js'
 import { renderBanner } from './banner.js'
 import {
@@ -208,11 +209,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   function latestAssistantMarkdown(): string | null {
-    for (let i = compactLines.length - 1; i >= 0; i--) {
-      const entry = compactLines[i]!
-      if (entry.kind === 'assistant' && entry.rawMarkdown) return entry.rawMarkdown
-    }
-    return null
+    return findLastAssistantMarkdown(compactLines)?.rawMarkdown ?? null
   }
 
   function buildPlanModeWidgetBlocks(): ViewBlock[] {
@@ -1794,20 +1791,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   async function handleCopyCommand() {
-    // Scan committed history back-to-front for the most recent assistant
-    // message and copy its raw markdown source (not the ANSI-rendered form).
-    let raw: string | undefined
-    for (let i = compactLines.length - 1; i >= 0; i--) {
-      const l = compactLines[i]!
-      if (l.kind === 'assistant' && l.rawMarkdown) { raw = l.rawMarkdown; break }
-    }
-    if (!raw || !raw.trim()) {
+    // Last assistant raw markdown → clipboard (shared locator with plan / shot).
+    const last = findLastAssistantMarkdown(compactLines)
+    if (!last) {
       commitLines([{ id: 'sys-copy', kind: 'system', text: '  No agent messages to copy yet.' }])
       return
     }
     try {
       const { copyToClipboard } = await import('../render/clipboard.js')
-      await copyToClipboard(raw)
+      await copyToClipboard(last.rawMarkdown)
       commitLines([{ id: 'sys-copy', kind: 'system', text: '  Copied last agent message (Markdown source) to clipboard' }])
     } catch (err: any) {
       commitLines([{ id: 'sys-copy-err', kind: 'system', text: chalk.red(`  Copy failed: ${err?.message ?? err}`) }])
@@ -1899,7 +1891,32 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const logDir = join(homedir(), '.evotai', 'logs')
     const sid = sessionId
 
-    if (query.startsWith('up')) {
+    if (query === 'shot' || query.startsWith('shot ')) {
+      // /log shot [messageId] — export last (or specified) assistant markdown as HTML/PNG
+      const messageId = query.slice(4).trim() || undefined
+      const markdownPath =
+        screenLog.markdownTraceFilePath
+        ?? (sid ? join(logDir, `${sid}.markdown.log`) : null)
+      try {
+        const { writeMarkdownShot } = await import('../commands/log-shot.js')
+        const result = await writeMarkdownShot({
+          markdownLogPath: markdownPath,
+          historyLines: compactLines,
+          messageId,
+          columns: renderer.termCols,
+          open: false,
+        })
+        const lines = [
+          `  Shot: ${result.messageId}${result.chunkCount > 1 ? ` (${result.chunkCount} chunks)` : ''}`,
+          `  HTML: ${result.htmlPath}`,
+        ]
+        if (result.pngPath) lines.push(`  PNG:  ${result.pngPath}`)
+        else lines.push('  PNG:  (Chrome not available — HTML only)')
+        commitLines([{ id: 'sys-log-shot', kind: 'system', text: lines.join('\n') }])
+      } catch (err: any) {
+        commitLines([{ id: 'sys-log-err', kind: 'system', text: chalk.red(`  Shot failed: ${err?.message ?? err}`) }])
+      }
+    } else if (query.startsWith('up')) {
       // /log up [session_id] — upload/share session
       const upArg = query.slice(2).trim()
       let resolvedSid = upArg || sid

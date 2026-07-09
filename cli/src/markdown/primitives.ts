@@ -3,9 +3,10 @@
  *
  * Low-level helpers used by the ANSI renderer, the viewmodel, and the
  * streaming commit-point splitter: terminal width math, ANSI-aware wrapping,
- * and a few fence-detection predicates. Deliberately contains NO markdown
- * "glue normalization" — evot renders model output as-is (like pi) rather than
- * trying to repair malformed fences/headings/tables.
+ * and a few fence-detection predicates.
+ *
+ * Broader markdown glue-normalization lives in `normalize/fences.ts` and is
+ * limited to fence-boundary repairs (glued opens / stray closes / unclosed).
  */
 
 import stripAnsi from 'strip-ansi'

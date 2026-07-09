@@ -455,6 +455,116 @@ describe('renderMarkdown', () => {
     expect(result).toContain('**not markdown**')
   })
 
+  test('splits opening fence glued to a heading so later markdown still renders', () => {
+    // Production regression: model wrote `### title```\ncode...\n```\n### next`
+    // without a newline before the opening fence. marked then treats the later
+    // close as a new open and swallows the rest of the document as code.
+    const md = [
+      '### 3. Query-time merge```',
+      'On MV scan (inside the operator):',
+      '  1. read base snapshot',
+      '```',
+      '',
+      'Hard evidence: behind_by=1m2s',
+      '',
+      '### 4. Why those limits exist',
+      '',
+      '| Limit | Error | Reason |',
+      '|---|---|---|',
+      '| no join | `Join types` | breaks 1:1 mapping |',
+      '',
+      '- **Plan proof**: MV Scan is a composite operator',
+    ].join('\n')
+
+    const result = render(md).replace(/\u200b/g, '')
+
+    expect(result).toContain('### 3. Query-time merge')
+    expect(result).toContain('On MV scan')
+    expect(result).toContain('### 4. Why those limits exist')
+    expect(result).toContain('┌')
+    expect(result).toContain('no join')
+    expect(result).toContain('Plan proof')
+    // Table separator must be consumed by the table renderer, not left as code.
+    expect(result).not.toContain('|---|---|---|')
+    // Section 4 must not render as indented code (2-space prefix on the heading).
+    expect(result).not.toMatch(/^ {2}### 4\./m)
+  })
+
+  test('drops a stray bare fence before prose (overflow chunk boundary)', () => {
+    // When overflow drains mid-message, the next chunk can start with a bare
+    // ``` that was meant as a close for the previous chunk. Without dropping
+    // it, the whole chunk becomes one code block.
+    const md = [
+      '```',
+      '',
+      'Hard evidence: behind_by=1m2s',
+      '',
+      '### 4. Why those limits exist',
+      '',
+      '| Limit | Error |',
+      '|---|---|',
+      '| no join | not allowed |',
+    ].join('\n')
+
+    const result = render(md).replace(/\u200b/g, '')
+
+    expect(result).toContain('Hard evidence')
+    expect(result).toContain('### 4. Why those limits exist')
+    expect(result).toContain('┌')
+    expect(result).not.toMatch(/^ {2}### 4\./m)
+    expect(result).not.toContain('|---|---|')
+  })
+
+  test('repairs unclosed json fence so following heading is not code', () => {
+    const result = render('```json\n{\n  "id": "tr-abc"\n}\n## Step 8: input / output')
+      .replace(/\u200b/g, '')
+
+    expect(result).toContain('"id": "tr-abc"')
+    expect(result).toContain('Step 8: input / output')
+    // Heading must not sit inside an indented code block.
+    expect(result).not.toMatch(/^ {2}## Step 8/m)
+    expect(result).not.toMatch(/^ {2}###? Step 8/m)
+  })
+
+  test('keeps multi-statement sql fence intact when comments follow a semicolon', () => {
+    // Production regression (asst-1633): after `GROUP BY grp;` the next line is
+    // `-- CJK comment`. Treating `;` as "code done" + CJK as prose closed the
+    // fence early; the real close then re-opened and swallowed the document.
+    const md = [
+      '### 2. Target semantics',
+      '',
+      '```sql',
+      'CREATE MATERIALIZED VIEW mv AS',
+      '  SELECT grp, SUM(val) s',
+      '  FROM base_t',
+      '  GROUP BY grp;',
+      '',
+      '-- auto maintain in background',
+      '-- query is always correct; behind_by is lag only',
+      'SHOW MATERIALIZED VIEWS;  -- with behind_by',
+      '```',
+      '',
+      'Limits align with the Snowflake subset.',
+      '',
+      '### 3. Phased rollout',
+      '',
+      '- DDL first',
+      '- then incremental refresh',
+    ].join('\n')
+
+    const result = render(md).replace(/\u200b/g, '')
+
+    expect(result).toContain('CREATE MATERIALIZED VIEW')
+    expect(result).toContain('SHOW MATERIALIZED VIEWS')
+    expect(result).toContain('auto maintain in background')
+    expect(result).toContain('### 3. Phased rollout')
+    expect(result).toContain('- DDL first')
+    // Section 3 must not be swallowed into an indented code block.
+    expect(result).not.toMatch(/^ {2}### 3\./m)
+    // The sql fence must not be torn into an early close + stray open.
+    expect(result).not.toMatch(/GROUP BY grp;\s*\n\s*```\s*\n\s*-- auto maintain/)
+  })
+
   test('keeps adjacent prose compact', () => {
     const result = render('a\nb\nc')
 

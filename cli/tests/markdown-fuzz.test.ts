@@ -225,9 +225,9 @@ function makeBoxDrawingCase(rng: () => number): Case {
 }
 
 function makeCase(rng: () => number, seedCorpus: string[]): Case {
-  // evot renders model output as-is (no glue normalization), so the only
-  // meaningful fuzz inputs are real-world markdown seeds (mutated to simulate
-  // messy streaming) and box-drawing art that must survive verbatim.
+  // Prefer real-world markdown seeds (mutated to simulate messy streaming)
+  // and box-drawing art that must survive verbatim. Fence-boundary repair is
+  // narrow; fuzz still exercises render robustness more than repair coverage.
   if (seedCorpus.length > 0 && rng() < 0.7) return makeSeedCase(rng, seedCorpus)
   if (rng() < 0.5) return makeSeedCase(rng, HIGH_RISK_LLM_SEEDS)
   return makeBoxDrawingCase(rng)
@@ -237,11 +237,10 @@ function boxLineCount(text: string): number {
   return text.split('\n').filter(line => /[┌┐└┘├┤┬┴┼│─▼▲]/.test(line)).length
 }
 
-// Render-robustness invariants that hold WITHOUT any glue normalization
-// (evot renders model output as-is, like pi). We no longer assert that
-// malformed markdown is repaired into tables/headings; we only assert that
-// rendering never crashes, stays bounded, preserves literal content, and
-// never leaks internal separator artifacts.
+// Render-robustness invariants. Fence-boundary repair is intentionally
+// narrow (glued opens / stray closes / unclosed structured fences); fuzz
+// asserts crash-freedom, length bounds, content preservation, and no leak of
+// internal separator artifacts — not full markdown repair.
 function assertCase(c: Case, output: string): void {
   expect(output.length).toBeLessThan(c.input.length * 20 + 1000)
   // Internal separator sentinels must never reach the user.

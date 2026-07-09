@@ -110,7 +110,9 @@ export class ScreenLog {
         entry.rawMarkdown,
         '',
         '[rendered lines]',
-        ...entry.renderedLines.map(stripAnsi),
+        // Keep ANSI so /log shot can replay the exact TUI paint (wrap + colors).
+        // stripAnsi is only for the human-readable screen.log path above.
+        ...entry.renderedLines,
         `--- end markdown trace ${entry.messageId} ---`,
         '',
       ].join('\n')

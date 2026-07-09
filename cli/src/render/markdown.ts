@@ -1,14 +1,19 @@
 /**
  * Markdown rendering facade for terminal output.
  *
- * Pipeline (aligned with pi's TUI markdown component):
+ * Pipeline:
  *   raw markdown
+ *   → minimal fence-boundary repair (glued opens / stray closes / unclosed)
  *   → marked lexer (partial closing fences trimmed for streaming stability)
  *   → ANSI token renderer
  *
- * Deliberately no "glue normalization": model output is rendered as-is.
+ * Fence repair is intentionally narrow: only cases where an unpaired or glued
+ * fence would otherwise swallow subsequent headings/tables/prose as a single
+ * code block. Broader glue-normalization (tables/headings/hr) stays off so
+ * well-formed model output still renders as-is (pi-aligned).
  */
 
+import { prepareMarkdownFences } from '../markdown/normalize/fences.js'
 import { lexMarkdownTokens } from '../markdown/parse/marked.js'
 import { formatTokens } from '../markdown/render/ansi.js'
 
@@ -19,9 +24,8 @@ export function renderMarkdown(text: string): string {
   if (!text || text.trim().length === 0) return text
 
   try {
-    // Replace tabs with spaces for consistent rendering (matches pi), then
-    // lex and render. No pre-lex normalization.
-    const lexText = text.replace(/\t/g, '   ')
+    // Tabs → spaces (matches pi), then repair fence boundaries before lex.
+    const lexText = prepareMarkdownFences(text.replace(/\t/g, '   '))
     const tokens = lexMarkdownTokens(lexText, text)
     return formatTokens(tokens)
   } catch {

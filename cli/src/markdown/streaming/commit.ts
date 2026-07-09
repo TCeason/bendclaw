@@ -47,12 +47,20 @@ export function isInsideOpenCodeFence(text: string): boolean {
  * Byte offset where the last still-open code fence begins, or `null` when no
  * fence is open. Used to commit prose before an in-progress fence while
  * holding the fence itself (and its body) pending until the close arrives.
+ *
+ * Also recognizes opening fences glued to the end of a heading/prose line
+ * (`### title```) and closing fences glued to the end of a content line —
+ * the same cases `prepareMarkdownFences` repairs at render time — so the
+ * commit splitter does not treat the fence body as free prose.
  */
 function openCodeFenceStart(text: string): number | null {
   let inFence = false
   let fenceMarker = ''
   let fenceStart = 0
   let offset = 0
+
+  // Opening fence glued after non-whitespace content on the same line.
+  const gluedOpenRe = /^([^\n`]*?[^\s`])(`{3,}|~{3,})([^\n`]*)$/
 
   for (const line of text.split('\n')) {
     const fenceMatch = CODE_FENCE_RE.exec(line)
@@ -66,7 +74,35 @@ function openCodeFenceStart(text: string): number | null {
         inFence = false
         fenceMarker = ''
       }
+      offset += line.length + 1
+      continue
     }
+
+    if (inFence) {
+      // Closing fence glued to the end of a content line.
+      const escChar = fenceMarker[0]!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const closeGlued = new RegExp(
+        `^(.+[^\\s${escChar}])(${escChar}{${fenceMarker.length},})[ \\t]*$`,
+      )
+      if (closeGlued.test(line)) {
+        inFence = false
+        fenceMarker = ''
+      }
+      offset += line.length + 1
+      continue
+    }
+
+    const glued = gluedOpenRe.exec(line)
+    if (glued) {
+      const infoTrim = (glued[3] ?? '').trim()
+      if (infoTrim === '' || /^[A-Za-z0-9_+.#-]+$/.test(infoTrim)) {
+        inFence = true
+        fenceMarker = glued[2]!
+        // Fence starts at the marker, after the glued lead text.
+        fenceStart = offset + glued[1]!.length
+      }
+    }
+
     offset += line.length + 1
   }
 

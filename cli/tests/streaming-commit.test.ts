@@ -101,6 +101,26 @@ describe('isInsideOpenCodeFence', () => {
     expect(isInsideOpenCodeFence('~~~\ncode here')).toBe(true)
     expect(isInsideOpenCodeFence('~~~\ncode here\n~~~')).toBe(false)
   })
+
+  test('true when opening fence is glued to a heading', () => {
+    expect(isInsideOpenCodeFence('### title```\ncode body')).toBe(true)
+  })
+
+  test('false when glued open is later closed', () => {
+    expect(isInsideOpenCodeFence('### title```\ncode body\n```')).toBe(false)
+  })
+
+  test('false when close fence is glued to end of content line', () => {
+    expect(isInsideOpenCodeFence('```js\nconst a = 1```')).toBe(false)
+  })
+})
+
+describe('findStreamingCommitPoint with glued fences', () => {
+  test('holds body after a glued opening fence pending', () => {
+    const text = 'Intro\n\n### title```\ncode still streaming'
+    // Prose before the glued fence marker is committable; fence body is not.
+    expect(findStreamingCommitPoint(text)).toBe('Intro\n\n### title'.length)
+  })
 })
 
 describe('isInsideOpenMathBlock', () => {
