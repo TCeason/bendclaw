@@ -13,7 +13,7 @@
  * well-formed model output still renders as-is (pi-aligned).
  */
 
-import { prepareMarkdownFences } from '../markdown/normalize/fences.js'
+import { prepareMarkdownFences } from '../markdown/normalize/fences/index.js'
 import { lexMarkdownTokens } from '../markdown/parse/marked.js'
 import { formatTokens } from '../markdown/render/ansi.js'
 
