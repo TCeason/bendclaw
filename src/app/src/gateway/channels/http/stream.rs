@@ -30,6 +30,8 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
             content_index,
             tool_call_id,
             tool_name,
+            phase,
+            delta,
             args,
         } => {
             events.push(json!({
@@ -38,6 +40,8 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
                     "content_index": content_index,
                     "id": tool_call_id,
                     "name": tool_name,
+                    "phase": phase,
+                    "delta": delta,
                     "input": args,
                 }
             }));

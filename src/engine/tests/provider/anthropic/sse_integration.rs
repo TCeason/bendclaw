@@ -306,9 +306,21 @@ async fn anthropic_sse_tool_call_accumulates_split_input_json() {
     ]);
 
     let config = StreamConfigBuilder::anthropic().cache_disabled().build();
-    let (msg, _events) = run_provider_sse(&AnthropicProvider, config, &sse, 200)
+    let (msg, events) = run_provider_sse(&AnthropicProvider, config, &sse, 200)
         .await
         .unwrap();
+
+    let streamed_input = events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::ToolCallDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert_eq!(
+        streamed_input,
+        r#"{"path":"demo.html","content":"<html>long content</html>"}"#
+    );
 
     match &msg {
         Message::Assistant { content, .. } => {

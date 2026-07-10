@@ -23,6 +23,7 @@ use super::event::LlmToolCallSummary;
 use super::event::RunEvent;
 use super::event::RunEventContext;
 use super::event::RunEventPayload;
+use super::event::ToolCallStreamPhase;
 use super::run::Run;
 use crate::agent::session::Session;
 use crate::conf::Protocol;
@@ -545,7 +546,42 @@ fn map_agent_event(
 
         evot_engine::AgentEvent::MessageUpdate {
             delta:
-                evot_engine::StreamDelta::ToolCall {
+                evot_engine::StreamDelta::ToolCallStart {
+                    content_index,
+                    id,
+                    name,
+                },
+            ..
+        } => vec![RuntimeEvent::Public(RunEventPayload::AssistantToolCall {
+            content_index: *content_index,
+            tool_call_id: id.clone(),
+            tool_name: name.clone(),
+            phase: ToolCallStreamPhase::Start,
+            delta: None,
+            args: None,
+        })],
+
+        evot_engine::AgentEvent::MessageUpdate {
+            delta:
+                evot_engine::StreamDelta::ToolCallDelta {
+                    content_index,
+                    id,
+                    name,
+                    delta,
+                },
+            ..
+        } => vec![RuntimeEvent::Public(RunEventPayload::AssistantToolCall {
+            content_index: *content_index,
+            tool_call_id: id.clone(),
+            tool_name: name.clone(),
+            phase: ToolCallStreamPhase::Delta,
+            delta: Some(delta.clone()),
+            args: None,
+        })],
+
+        evot_engine::AgentEvent::MessageUpdate {
+            delta:
+                evot_engine::StreamDelta::ToolCallEnd {
                     content_index,
                     id,
                     name,
@@ -556,7 +592,9 @@ fn map_agent_event(
             content_index: *content_index,
             tool_call_id: id.clone(),
             tool_name: name.clone(),
-            args: arguments.clone(),
+            phase: ToolCallStreamPhase::End,
+            delta: None,
+            args: Some(arguments.clone()),
         })],
 
         evot_engine::AgentEvent::MessageEnd { message } => {

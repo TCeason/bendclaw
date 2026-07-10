@@ -550,7 +550,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         blocks.push({
           lines: [{ spans: [
             { text: '●', fg: 'cyan' as const, bold: true },
-            { text: ` ${calls.length} tools · ${done} done · ${running} running`, dim: true },
+            { text: ` ${calls.length} ${calls.length === 1 ? 'tool' : 'tools'} · ${done} done · ${running} running`, dim: true },
           ] }],
           marginTop: 1,
         })

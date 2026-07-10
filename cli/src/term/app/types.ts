@@ -27,6 +27,8 @@ export interface UIToolCall {
   status: 'running' | 'done' | 'error'
   /** Assistant content order; used to keep parallel cards stable. */
   contentIndex?: number
+  /** Raw JSON argument fragments are kept only on the live card, never persisted. */
+  partialArgs?: string
   /** Tool arguments are complete and execution may begin. */
   argsComplete?: boolean
   /** Wall-clock timestamp when execution started. */

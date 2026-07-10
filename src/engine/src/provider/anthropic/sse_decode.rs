@@ -241,7 +241,6 @@ fn process_sse_event(
                         content_index: idx,
                         id,
                         name,
-                        arguments: serde_json::Value::Object(Default::default()),
                     });
                 }
                 // Server-side model fallback (e.g. fable-5 → opus-4-8). Record
@@ -295,20 +294,12 @@ fn process_sse_event(
                 AnthropicDelta::InputJsonDelta { partial_json } => {
                     let input = state.tool_input_buffers.entry(idx).or_default();
                     input.push_str(&partial_json);
-                    let arguments = crate::provider::json_repair::try_repair_json(input)
-                        .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
-                    if let Some(Content::ToolCall {
-                        id,
-                        name,
-                        arguments: current,
-                    }) = state.content.get_mut(idx)
-                    {
-                        *current = arguments.clone();
+                    if let Some(Content::ToolCall { id, name, .. }) = state.content.get(idx) {
                         let _ = tx.send(StreamEvent::ToolCallDelta {
                             content_index: idx,
                             id: id.clone(),
                             name: name.clone(),
-                            arguments,
+                            delta: partial_json,
                         });
                     }
                 }
@@ -328,15 +319,30 @@ fn process_sse_event(
         "content_block_stop" => {
             let data = parse_event_data::<serde_json::Value>(sse)?;
             let idx = data["index"].as_u64().unwrap_or(0) as usize;
-            if let Some(input) = state.tool_input_buffers.remove(&idx) {
-                if let Some(Content::ToolCall { arguments, .. }) = state.content.get_mut(idx) {
-                    match serde_json::from_str(&input) {
+            let input = state.tool_input_buffers.remove(&idx).unwrap_or_default();
+            let mut finalized = None;
+            if let Some(Content::ToolCall {
+                id,
+                name,
+                arguments,
+            }) = state.content.get_mut(idx)
+            {
+                if !input.is_empty() {
+                    match crate::provider::json_repair::try_repair_json(&input) {
                         Ok(parsed) => *arguments = parsed,
                         Err(e) => debug!("Failed to parse tool call JSON: {} ({})", input, e),
                     }
                 }
+                finalized = Some((id.clone(), name.clone(), arguments.clone()));
             }
-            let _ = tx.send(StreamEvent::ToolCallEnd { content_index: idx });
+            if let Some((id, name, arguments)) = finalized {
+                let _ = tx.send(StreamEvent::ToolCallEnd {
+                    content_index: idx,
+                    id,
+                    name,
+                    arguments,
+                });
+            }
         }
         "message_delta" => {
             let data = parse_event_data::<AnthropicMessageDelta>(sse)?;

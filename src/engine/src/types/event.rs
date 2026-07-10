@@ -186,7 +186,18 @@ pub enum StreamDelta {
     Thinking {
         delta: String,
     },
-    ToolCall {
+    ToolCallStart {
+        content_index: usize,
+        id: String,
+        name: String,
+    },
+    ToolCallDelta {
+        content_index: usize,
+        id: String,
+        name: String,
+        delta: String,
+    },
+    ToolCallEnd {
         content_index: usize,
         id: String,
         name: String,

@@ -162,22 +162,64 @@ async fn openai_sse_interleaved_parallel_tool_calls_keep_separate_state() {
                 content_index,
                 id,
                 name,
-                arguments,
-            } => Some((*content_index, id.as_str(), name.as_str(), arguments)),
+                delta,
+            } => Some((*content_index, id.as_str(), name.as_str(), delta.as_str())),
             _ => None,
         })
         .collect();
-    assert!(updates.iter().any(|(index, id, name, args)| {
-        *index == 0 && *id == "call-read" && *name == "read" && args["path"] == "src/a"
+    assert!(updates.iter().any(|(index, id, name, delta)| {
+        *index == 0 && *id == "call-read" && *name == "read" && delta.contains("src/a")
     }));
-    assert!(updates.iter().any(|(index, id, name, args)| {
-        *index == 1 && *id == "call-edit" && *name == "edit" && args["path"] == "src/b"
+    assert!(updates.iter().any(|(index, id, name, delta)| {
+        *index == 1 && *id == "call-edit" && *name == "edit" && delta.contains("src/b")
     }));
 }
 
-// ---------------------------------------------------------------------------
-// SSE streaming — empty response is error
-// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn openai_sse_large_tool_arguments_emit_linear_sized_deltas(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let chunk = "x".repeat(16 * 1024);
+    let arguments = format!(
+        r#"{{"path":"a","oldText":"{}","newText":"{}"}}"#,
+        chunk, chunk
+    );
+    let pieces = arguments
+        .as_bytes()
+        .chunks(128)
+        .map(std::str::from_utf8)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut events = vec![openai_sse::tool_call_chunk(
+        0,
+        Some("call-edit"),
+        Some("edit"),
+        None,
+    )];
+    events.extend(
+        pieces
+            .iter()
+            .map(|piece| openai_sse::tool_call_chunk(0, None, None, Some(piece))),
+    );
+    events.push(openai_sse::finish_with_usage("tool_calls", 40, 8));
+    events.push(openai_sse::done());
+
+    let sse = openai_sse::body(events);
+    let (_, streamed) = run_provider_sse(&OpenAiCompatProvider, openai_config(), &sse, 200).await?;
+
+    let deltas: Vec<&str> = streamed
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::ToolCallDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(deltas.concat(), arguments);
+    assert_eq!(
+        deltas.iter().map(|delta| delta.len()).sum::<usize>(),
+        arguments.len()
+    );
+    assert!(deltas.iter().all(|delta| delta.len() <= 128));
+    Ok(())
+}
 
 #[tokio::test]
 async fn openai_sse_empty_response_is_error() {

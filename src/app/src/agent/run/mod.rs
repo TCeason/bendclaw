@@ -9,5 +9,6 @@ pub use control::RunControl;
 pub use event::RunEvent;
 pub use event::RunEventContext;
 pub use event::RunEventPayload;
+pub use event::ToolCallStreamPhase;
 pub use observability::StatsAggregator;
 pub use run::Run;

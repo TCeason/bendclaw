@@ -102,7 +102,9 @@ fn run_event_round_trip_assistant_tool_call() {
             content_index: 2,
             tool_call_id: "call-2".into(),
             tool_name: "edit".into(),
-            args: serde_json::json!({"path": "src/lib.rs"}),
+            phase: ToolCallStreamPhase::End,
+            delta: None,
+            args: Some(serde_json::json!({"path": "src/lib.rs"})),
         },
     );
     let json = serde_json::to_string(&event).unwrap();
@@ -112,6 +114,7 @@ fn run_event_round_trip_assistant_tool_call() {
     assert_eq!(parsed["payload"]["content_index"], 2);
     assert_eq!(parsed["payload"]["tool_call_id"], "call-2");
     assert_eq!(parsed["payload"]["tool_name"], "edit");
+    assert_eq!(parsed["payload"]["phase"], "end");
     assert_eq!(parsed["payload"]["args"]["path"], "src/lib.rs");
 }
 
@@ -336,7 +339,9 @@ fn sse_map_assistant_tool_call() {
             content_index: 1,
             tool_call_id: "tc-1".into(),
             tool_name: "edit".into(),
-            args: serde_json::json!({"path": "/tmp/a"}),
+            phase: ToolCallStreamPhase::Delta,
+            delta: Some("{\"path\":\"/tmp/a\"}".into()),
+            args: None,
         },
     );
     let payloads = map_run_event_json(&event);
@@ -345,7 +350,9 @@ fn sse_map_assistant_tool_call() {
     assert_eq!(payloads[0]["type"], "tool_call_delta");
     assert_eq!(payloads[0]["data"]["id"], "tc-1");
     assert_eq!(payloads[0]["data"]["name"], "edit");
-    assert_eq!(payloads[0]["data"]["input"]["path"], "/tmp/a");
+    assert_eq!(payloads[0]["data"]["phase"], "delta");
+    assert_eq!(payloads[0]["data"]["delta"], "{\"path\":\"/tmp/a\"}");
+    assert!(payloads[0]["data"]["input"].is_null());
 }
 
 #[test]

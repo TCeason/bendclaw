@@ -16,22 +16,26 @@ pub enum StreamEvent {
     TextDelta { content_index: usize, delta: String },
     /// Thinking content delta
     ThinkingDelta { content_index: usize, delta: String },
-    /// Tool call started
+    /// Tool call started. Arguments arrive separately as raw JSON deltas.
     ToolCallStart {
         content_index: usize,
         id: String,
         name: String,
-        arguments: serde_json::Value,
     },
-    /// Tool call argument delta
+    /// Raw tool call argument fragment, matching the provider stream.
     ToolCallDelta {
+        content_index: usize,
+        id: String,
+        name: String,
+        delta: String,
+    },
+    /// Tool call ended with its finalized arguments.
+    ToolCallEnd {
         content_index: usize,
         id: String,
         name: String,
         arguments: serde_json::Value,
     },
-    /// Tool call ended
-    ToolCallEnd { content_index: usize },
     /// Stream completed successfully
     Done { message: Message },
     /// Stream errored

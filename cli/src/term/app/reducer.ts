@@ -6,6 +6,7 @@ import type { RunEvent } from '../../native/index.js'
 import { formatLlmCallStarted, formatLlmCallRetry, formatLlmCallCompleted, formatCompactionStarted, formatCompactionCompleted } from '../../render/verbose.js'
 import { emptyRunStats, type AppState } from './state.js'
 import type { CompactRecord, MessageStats, UIMessage, UIToolCall } from './types.js'
+import { parseStreamingToolArgs } from './tool-args.js'
 
 
 export function applyEvent(state: AppState, event: RunEvent): AppState {
@@ -54,13 +55,21 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       if (!id) return state
       const next = new Map(state.liveToolCalls)
       const current = next.get(id)
+      const phase = p.phase as string | undefined
+      const delta = p.delta as string | undefined
+      const partialArgs = phase === 'start'
+        ? ''
+        : `${current?.partialArgs ?? ''}${delta ?? ''}`
+      const finalArgs = p.args as Record<string, unknown> | undefined
       next.set(id, {
         ...current,
         id,
         name: (p.tool_name as string) || current?.name || '',
-        args: (p.args as Record<string, unknown>) ?? current?.args ?? {},
+        args: finalArgs ?? (delta !== undefined ? parseStreamingToolArgs(partialArgs) : current?.args ?? {}),
         status: current?.status ?? 'running',
         contentIndex: (p.content_index as number | undefined) ?? current?.contentIndex,
+        partialArgs: phase === 'end' ? undefined : partialArgs,
+        argsComplete: phase === 'end' || current?.argsComplete,
       })
       return { ...state, liveToolCalls: next }
     }
@@ -83,6 +92,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
           args: (block.input ?? {}) as Record<string, unknown>,
           status: current?.status ?? 'running',
           argsComplete: true,
+          partialArgs: undefined,
           contentIndex: current?.contentIndex ?? contentIndex,
         })
       }
@@ -123,6 +133,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         status: 'running',
         contentIndex: current?.contentIndex,
         argsComplete: true,
+        partialArgs: undefined,
         startedAt: current?.startedAt ?? Date.now(),
         previewCommand: p.preview_command ?? current?.previewCommand,
       })

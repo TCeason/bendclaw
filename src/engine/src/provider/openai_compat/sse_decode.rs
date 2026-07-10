@@ -125,13 +125,6 @@ pub(crate) async fn decode_sse_stream(
     Ok(StreamOutcome::complete(message))
 }
 
-fn partial_tool_arguments(raw: &str) -> serde_json::Value {
-    match crate::provider::json_repair::try_repair_json(raw) {
-        Ok(arguments) => arguments,
-        Err(_) => serde_json::Value::Object(Default::default()),
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn process_sse_chunk(
     sse: &SseEvent,
@@ -285,22 +278,27 @@ fn process_sse_chunk(
                     }
                 }
 
-                let arguments = partial_tool_arguments(&buf.arguments);
                 if !buf.started && (!buf.id.is_empty() || !buf.name.is_empty()) {
                     buf.started = true;
                     let _ = tx.send(StreamEvent::ToolCallStart {
                         content_index,
                         id: buf.id.clone(),
                         name: buf.name.clone(),
-                        arguments,
                     });
-                } else if buf.started {
-                    let _ = tx.send(StreamEvent::ToolCallDelta {
-                        content_index,
-                        id: buf.id.clone(),
-                        name: buf.name.clone(),
-                        arguments,
-                    });
+                }
+                if let Some(delta) = tc
+                    .function
+                    .as_ref()
+                    .and_then(|function| function.arguments.as_ref())
+                {
+                    if buf.started && !delta.is_empty() {
+                        let _ = tx.send(StreamEvent::ToolCallDelta {
+                            content_index,
+                            id: buf.id.clone(),
+                            name: buf.name.clone(),
+                            delta: delta.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -327,13 +325,17 @@ fn finalize_tool_calls(
     for buf in tool_call_buffers.iter() {
         let args = crate::provider::json_repair::try_repair_json(&buf.arguments)
             .unwrap_or(serde_json::Value::Object(Default::default()));
+        let content_index = content.len();
         content.push(Content::ToolCall {
             id: buf.id.clone(),
             name: buf.name.clone(),
-            arguments: args,
+            arguments: args.clone(),
         });
         let _ = tx.send(StreamEvent::ToolCallEnd {
-            content_index: content.len() - 1,
+            content_index,
+            id: buf.id.clone(),
+            name: buf.name.clone(),
+            arguments: args,
         });
     }
 }

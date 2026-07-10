@@ -1388,7 +1388,7 @@ async fn test_streams_parallel_tool_calls_before_execution() {
         .filter_map(|event| match event {
             AgentEvent::MessageUpdate {
                 delta:
-                    StreamDelta::ToolCall {
+                    StreamDelta::ToolCallEnd {
                         content_index,
                         id,
                         name,
@@ -1845,18 +1845,23 @@ async fn test_compaction_after_tool_use_waits_for_tool_results() {
 
             let message = if call == 0 {
                 let id = "tc-high-usage".to_string();
+                let arguments = serde_json::json!({"path": "file.txt"});
                 let _ = tx.send(StreamEvent::ToolCallStart {
                     content_index: 0,
                     id: id.clone(),
                     name: "read".into(),
-                    arguments: serde_json::json!({"path": "file.txt"}),
                 });
-                let _ = tx.send(StreamEvent::ToolCallEnd { content_index: 0 });
+                let _ = tx.send(StreamEvent::ToolCallEnd {
+                    content_index: 0,
+                    id: id.clone(),
+                    name: "read".into(),
+                    arguments: arguments.clone(),
+                });
                 Message::Assistant {
                     content: vec![Content::ToolCall {
                         id,
                         name: "read".into(),
-                        arguments: serde_json::json!({"path": "file.txt"}),
+                        arguments,
                     }],
                     stop_reason: StopReason::ToolUse,
                     model: "mock".into(),

@@ -224,8 +224,7 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, now = Date.n
   }
 
   const elapsed = call.startedAt === undefined ? '' : ` · ${formatDuration(Math.max(0, now - call.startedAt))}`
-  const label = call.startedAt === undefined ? 'pending' : 'running'
-  lines.push({ id: genId('tool-status'), kind: 'tool', text: `  ● ${label}${elapsed}` })
+  lines.push({ id: genId('tool-status'), kind: 'tool', text: `  ● running${elapsed}` })
   return lines
 }
 

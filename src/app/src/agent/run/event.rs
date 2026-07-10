@@ -11,9 +11,13 @@ use crate::types::CompactionResult;
 use crate::types::LlmCallMetrics;
 use crate::types::UsageSummary;
 
-// ---------------------------------------------------------------------------
-// RunEventPayload — strongly typed event payload
-// ---------------------------------------------------------------------------
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCallStreamPhase {
+    Start,
+    Delta,
+    End,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -30,7 +34,11 @@ pub enum RunEventPayload {
         content_index: usize,
         tool_call_id: String,
         tool_name: String,
-        args: serde_json::Value,
+        phase: ToolCallStreamPhase,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        delta: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        args: Option<serde_json::Value>,
     },
     AssistantCompleted {
         content: Vec<AssistantBlock>,

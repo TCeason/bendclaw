@@ -21,6 +21,7 @@ pub use run::RunEvent;
 pub use run::RunEventContext;
 pub use run::RunEventPayload;
 pub use run::StatsAggregator;
+pub use run::ToolCallStreamPhase;
 pub use run_manager::RunManager;
 pub use run_manager::SendOutcome;
 pub use session_locator::SessionLocator;

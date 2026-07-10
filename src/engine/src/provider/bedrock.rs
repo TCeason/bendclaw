@@ -10,6 +10,8 @@
 //! The `base_url` in ModelConfig should be the Bedrock endpoint, e.g.:
 //! `https://bedrock-runtime.us-east-1.amazonaws.com`
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde::Deserialize;
@@ -85,6 +87,7 @@ impl StreamProvider for BedrockProvider {
         let mut content: Vec<Content> = Vec::new();
         let mut usage = Usage::default();
         let mut stop_reason = StopReason::Stop;
+        let mut tool_input_buffers: HashMap<usize, String> = HashMap::new();
 
         let _ = tx.send(StreamEvent::Start);
 
@@ -153,17 +156,15 @@ impl StreamProvider for BedrockProvider {
                                                     _ => None,
                                                 })
                                             {
-                                                let arguments = crate::provider::json_repair::try_repair_json(
-                                                    &tool_use.input,
-                                                )
-                                                .unwrap_or_else(|_| {
-                                                    serde_json::Value::Object(Default::default())
-                                                });
+                                                tool_input_buffers
+                                                    .entry(idx)
+                                                    .or_default()
+                                                    .push_str(&tool_use.input);
                                                 let _ = tx.send(StreamEvent::ToolCallDelta {
                                                     content_index: idx,
                                                     id,
                                                     name,
-                                                    arguments,
+                                                    delta: tool_use.input,
                                                 });
                                             }
                                         }
@@ -180,14 +181,35 @@ impl StreamProvider for BedrockProvider {
                                                 content_index: idx,
                                                 id: tool_use.tool_use_id,
                                                 name: tool_use.name,
-                                                arguments: serde_json::Value::Object(Default::default()),
                                             });
                                         }
                                     }
                                     BedrockEvent::ContentBlockStop { .. } => {
-                                        if content.iter().any(|c| matches!(c, Content::ToolCall { .. })) {
+                                        if let Some((idx, id, name)) = content
+                                            .iter()
+                                            .enumerate()
+                                            .rev()
+                                            .find_map(|(idx, c)| match c {
+                                                Content::ToolCall { id, name, .. } => {
+                                                    Some((idx, id.clone(), name.clone()))
+                                                }
+                                                _ => None,
+                                            })
+                                        {
+                                            let arguments = tool_input_buffers
+                                                .remove(&idx)
+                                                .and_then(|input| {
+                                                    crate::provider::json_repair::try_repair_json(&input).ok()
+                                                })
+                                                .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+                                            if let Some(Content::ToolCall { arguments: current, .. }) = content.get_mut(idx) {
+                                                *current = arguments.clone();
+                                            }
                                             let _ = tx.send(StreamEvent::ToolCallEnd {
-                                                content_index: content.len() - 1,
+                                                content_index: idx,
+                                                id,
+                                                name,
+                                                arguments,
                                             });
                                         }
                                     }

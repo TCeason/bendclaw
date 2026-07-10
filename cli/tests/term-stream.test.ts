@@ -552,9 +552,10 @@ describe('term stream machine', () => {
     expect(update.state.appState.liveToolCalls.get('call-bash')?.progress).toBe('line 1\nline 2')
   })
 
-  test('live tool card renders pending, running, and completed states', () => {
-    const pending = buildToolCard({ id: 'call-1', name: 'read', args: { path: 'src/a.rs' }, status: 'running' })
-    expect(pending.map(line => line.text).join('\n')).toContain('● pending')
+  test('live tool card renders queued, executing, and completed calls as active until completion', () => {
+    const queued = buildToolCard({ id: 'call-1', name: 'read', args: { path: 'src/a.rs' }, status: 'running' })
+    expect(queued.map(line => line.text).join('\n')).toContain('● running')
+    expect(queued.map(line => line.text).join('\n')).not.toContain('pending')
 
     const running = buildToolCard({
       id: 'call-1',
@@ -733,15 +734,28 @@ describe('term stream machine', () => {
         content_index: 0,
         tool_call_id: 'call-read',
         tool_name: 'read',
-        args: { path: 'src/a.rs' },
+        phase: 'start',
       },
     }, { termRows: 24 }).state
+    for (const delta of ['{"path":"src/', 'a.rs"}']) {
+      state = reduceRunEvent(state, {
+        kind: 'assistant_tool_call',
+        payload: {
+          content_index: 0,
+          tool_call_id: 'call-read',
+          tool_name: 'read',
+          phase: 'delta',
+          delta,
+        },
+      }, { termRows: 24 }).state
+    }
     state = reduceRunEvent(state, {
       kind: 'assistant_tool_call',
       payload: {
         content_index: 1,
         tool_call_id: 'call-edit',
         tool_name: 'edit',
+        phase: 'end',
         args: { path: 'src/b.rs', edits: [] },
       },
     }, { termRows: 24 }).state
@@ -777,6 +791,50 @@ describe('term stream machine', () => {
     expect(state.appState.liveToolCalls.get('call-read')?.startedAt).toBeUndefined()
   })
 
+  test('large streamed tool args stay as raw fragments and finalize once', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+    const chunk = 'x'.repeat(16 * 1024)
+    const raw = JSON.stringify({ path: 'a', oldText: chunk, newText: chunk })
+
+    state = reduceRunEvent(state, {
+      kind: 'assistant_tool_call',
+      payload: { content_index: 0, tool_call_id: 'call-edit', tool_name: 'edit', phase: 'start' },
+    }, { termRows: 24 }).state
+    for (let offset = 0; offset < raw.length; offset += 128) {
+      state = reduceRunEvent(state, {
+        kind: 'assistant_tool_call',
+        payload: {
+          content_index: 0,
+          tool_call_id: 'call-edit',
+          tool_name: 'edit',
+          phase: 'delta',
+          delta: raw.slice(offset, offset + 128),
+        },
+      }, { termRows: 24 }).state
+    }
+
+    const streaming = state.appState.liveToolCalls.get('call-edit')
+    expect(streaming?.partialArgs?.length).toBe(raw.length)
+    expect(streaming?.args.oldText).toBe(chunk)
+
+    state = reduceRunEvent(state, {
+      kind: 'assistant_tool_call',
+      payload: {
+        content_index: 0,
+        tool_call_id: 'call-edit',
+        tool_name: 'edit',
+        phase: 'end',
+        args: { path: 'a', oldText: chunk, newText: chunk },
+      },
+    }, { termRows: 24 }).state
+
+    const finalized = state.appState.liveToolCalls.get('call-edit')
+    expect(finalized?.partialArgs).toBeUndefined()
+    expect(finalized?.argsComplete).toBe(true)
+  })
+
   test('live cards preserve model order while tools finish out of order', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
@@ -785,7 +843,7 @@ describe('term stream machine', () => {
     for (const [contentIndex, id, name] of [[0, 'call-read', 'read'], [1, 'call-edit', 'edit']] as const) {
       state = reduceRunEvent(state, {
         kind: 'assistant_tool_call',
-        payload: { content_index: contentIndex, tool_call_id: id, tool_name: name, args: {} },
+        payload: { content_index: contentIndex, tool_call_id: id, tool_name: name, phase: 'start' },
       }, { termRows: 24 }).state
       state = reduceRunEvent(state, {
         kind: 'tool_started',

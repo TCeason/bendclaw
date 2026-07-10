@@ -202,9 +202,43 @@ pub(super) async fn stream_assistant_response(
                         content_index,
                         id,
                         name,
-                        arguments,
+                    } => {
+                        chunk_count += 1;
+                        if let Some(ref msg) = partial_message {
+                            event_tx
+                                .send(AgentEvent::MessageUpdate {
+                                    message: msg.clone(),
+                                    delta: StreamDelta::ToolCallStart {
+                                        content_index: *content_index,
+                                        id: id.clone(),
+                                        name: name.clone(),
+                                    },
+                                })
+                                .ok();
+                        }
                     }
-                    | StreamEvent::ToolCallDelta {
+                    StreamEvent::ToolCallDelta {
+                        content_index,
+                        id,
+                        name,
+                        delta,
+                    } => {
+                        chunk_count += 1;
+                        if let Some(ref msg) = partial_message {
+                            event_tx
+                                .send(AgentEvent::MessageUpdate {
+                                    message: msg.clone(),
+                                    delta: StreamDelta::ToolCallDelta {
+                                        content_index: *content_index,
+                                        id: id.clone(),
+                                        name: name.clone(),
+                                        delta: delta.clone(),
+                                    },
+                                })
+                                .ok();
+                        }
+                    }
+                    StreamEvent::ToolCallEnd {
                         content_index,
                         id,
                         name,
@@ -215,7 +249,7 @@ pub(super) async fn stream_assistant_response(
                             event_tx
                                 .send(AgentEvent::MessageUpdate {
                                     message: msg.clone(),
-                                    delta: StreamDelta::ToolCall {
+                                    delta: StreamDelta::ToolCallEnd {
                                         content_index: *content_index,
                                         id: id.clone(),
                                         name: name.clone(),
@@ -257,7 +291,6 @@ pub(super) async fn stream_assistant_response(
                         partial_message = Some(am.clone());
                         event_tx.send(AgentEvent::MessageEnd { message: am }).ok();
                     }
-                    _ => {}
                 }
             }
         });
