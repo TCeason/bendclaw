@@ -181,6 +181,22 @@ fn structured_server_error_with_empty_message_is_retryable() {
 }
 
 #[test]
+fn embedded_http_5xx_errors_are_retryable() {
+    for status in [500, 501, 502, 503, 504, 520, 529, 599] {
+        let err = ProviderError::Api(format!("API error: HTTP {status}: upstream failed"));
+        assert!(evotengine::retry::should_retry(&err), "HTTP {status}");
+    }
+}
+
+#[test]
+fn embedded_http_4xx_errors_are_not_retryable() {
+    for status in [400, 401, 403, 404, 422, 429] {
+        let err = ProviderError::Api(format!("API error: HTTP {status}: request failed"));
+        assert!(!evotengine::retry::should_retry(&err), "HTTP {status}");
+    }
+}
+
+#[test]
 fn try_again_later_is_retryable() {
     let err = ProviderError::Api("The model is busy, please try again later.".into());
     assert!(evotengine::retry::should_retry(&err));

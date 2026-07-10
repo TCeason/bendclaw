@@ -115,8 +115,29 @@ fn is_retryable_api_message(message: &str) -> bool {
         || lower.contains("malformed tool_use")
         || lower.contains("invalid_tool_call")
         || lower.contains("could not recover a valid tool call")
-        || lower.contains("http 500")
-        || lower.contains("http 502")
-        || lower.contains("http 503")
-        || lower.contains("http 504")
+        || has_retryable_http_status(&lower)
+}
+
+/// Match an HTTP status embedded in provider error text, e.g. `HTTP 520:`.
+/// All 5xx responses are server/proxy failures and safe to retry; 4xx remains
+/// non-retryable unless classified by an earlier, explicit rule.
+fn has_retryable_http_status(message: &str) -> bool {
+    let mut parts = message.split_ascii_whitespace();
+    while let Some(part) = parts.next() {
+        if !part.eq_ignore_ascii_case("http") {
+            continue;
+        }
+        let Some(status) = parts.next() else {
+            return false;
+        };
+        let digits = status.trim_matches(|c: char| !c.is_ascii_digit());
+        if digits.len() == 3
+            && digits
+                .parse::<u16>()
+                .is_ok_and(|status| (500..600).contains(&status))
+        {
+            return true;
+        }
+    }
+    false
 }
