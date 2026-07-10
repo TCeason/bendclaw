@@ -231,6 +231,7 @@ fn usage_snapshot_from_message(message: &Message) -> Option<UsageSnapshot> {
             cache_read: usage.cache_read as usize,
             cache_write: usage.cache_write as usize,
             output: usage.output as usize,
+            total_tokens: usage.total_tokens as usize,
             model: ModelId {
                 provider: provider.clone(),
                 model: model.clone(),

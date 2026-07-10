@@ -34,6 +34,7 @@ pub struct UsageSnapshot {
     pub cache_read: usize,
     pub cache_write: usize,
     pub output: usize,
+    pub total_tokens: usize,
     pub model: ModelId,
     pub timestamp: u64,
     pub stop_reason: crate::types::StopReason,

@@ -45,6 +45,28 @@ pub struct Usage {
 }
 
 impl Usage {
+    /// Total tokens represented by the disjoint usage buckets.
+    pub fn component_total_tokens(&self) -> u64 {
+        self.input
+            .saturating_add(self.output)
+            .saturating_add(self.cache_read)
+            .saturating_add(self.cache_write)
+    }
+
+    /// Provider total, falling back to normalized usage buckets.
+    pub fn context_tokens(&self) -> u64 {
+        if self.total_tokens > 0 {
+            self.total_tokens
+        } else {
+            self.component_total_tokens()
+        }
+    }
+
+    /// Recompute `total_tokens` from usage buckets.
+    pub fn refresh_total_tokens(&mut self) {
+        self.total_tokens = self.component_total_tokens();
+    }
+
     /// Fraction of input tokens served from cache (0.0–1.0).
     /// Returns 0.0 if no input tokens were processed.
     pub fn cache_hit_rate(&self) -> f64 {

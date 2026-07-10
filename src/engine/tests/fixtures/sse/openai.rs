@@ -59,6 +59,17 @@ pub fn finish_with_usage(
     prompt_tokens: u64,
     completion_tokens: u64,
 ) -> String {
+    finish_with_cache_usage(finish_reason, prompt_tokens, completion_tokens, 0, 0)
+}
+
+/// A finish chunk with detailed cache usage.
+pub fn finish_with_cache_usage(
+    finish_reason: &str,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    cached_tokens: u64,
+    cache_write_tokens: u64,
+) -> String {
     format!(
         "data: {}",
         serde_json::json!({
@@ -70,7 +81,11 @@ pub fn finish_with_usage(
             "usage": {
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens
+                "total_tokens": prompt_tokens + completion_tokens,
+                "prompt_tokens_details": {
+                    "cached_tokens": cached_tokens,
+                    "cache_write_tokens": cache_write_tokens
+                }
             }
         })
     )

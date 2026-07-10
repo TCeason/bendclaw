@@ -190,9 +190,18 @@ fn process_sse_event(
         "message_start" => {
             state.saw_message_start = true;
             let data = parse_event_data::<AnthropicMessageStart>(sse)?;
-            state.usage.input = data.message.usage.input_tokens;
-            state.usage.cache_read = data.message.usage.cache_read_input_tokens;
-            state.usage.cache_write = data.message.usage.cache_creation_input_tokens;
+            state.usage.input = data.message.usage.input_tokens.unwrap_or(0);
+            state.usage.output = data.message.usage.output_tokens.unwrap_or(0);
+            state.usage.cache_read = data.message.usage.cache_read_input_tokens.unwrap_or(0);
+            state.usage.cache_write = data.message.usage.cache_creation_input_tokens.unwrap_or(0);
+            state.usage.reasoning_output = data
+                .message
+                .usage
+                .output_tokens_details
+                .as_ref()
+                .map(|details| details.thinking_tokens)
+                .unwrap_or(0);
+            state.usage.refresh_total_tokens();
             if let Some(id) = data.message.id {
                 if !id.is_empty() {
                     state.response_id = Some(id);
@@ -329,17 +338,23 @@ fn process_sse_event(
                     ));
                 }
             }
-            state.usage.output = data.usage.output_tokens;
-            // Only override cache fields when the delta actually carries
-            // them — Anthropic's SSE spec only guarantees `output_tokens`
-            // in `message_delta.usage`, so a missing field (decoded as 0)
-            // must not clobber values captured from `message_start`.
-            if data.usage.cache_read_input_tokens > 0 {
-                state.usage.cache_read = data.usage.cache_read_input_tokens;
+            // Preserve message_start values for fields omitted by message_delta.
+            if let Some(input) = data.usage.input_tokens {
+                state.usage.input = input;
             }
-            if data.usage.cache_creation_input_tokens > 0 {
-                state.usage.cache_write = data.usage.cache_creation_input_tokens;
+            if let Some(output) = data.usage.output_tokens {
+                state.usage.output = output;
             }
+            if let Some(cache_read) = data.usage.cache_read_input_tokens {
+                state.usage.cache_read = cache_read;
+            }
+            if let Some(cache_write) = data.usage.cache_creation_input_tokens {
+                state.usage.cache_write = cache_write;
+            }
+            if let Some(details) = data.usage.output_tokens_details {
+                state.usage.reasoning_output = details.thinking_tokens;
+            }
+            state.usage.refresh_total_tokens();
         }
         "message_stop" => {
             let _ = parse_event_data::<serde_json::Value>(sse)?;

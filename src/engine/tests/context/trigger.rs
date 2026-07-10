@@ -25,11 +25,29 @@ fn make_usage(input: usize, output: usize, stop: StopReason) -> UsageSnapshot {
         cache_read: 0,
         cache_write: 0,
         output,
+        total_tokens: 0,
         model: model_id(),
         timestamp: 1000,
         stop_reason: stop,
         error_message: None,
     }
+}
+
+#[test]
+fn native_total_takes_precedence() {
+    let config = default_config();
+    let mut usage = make_usage(1_000, 100, StopReason::Stop);
+    usage.total_tokens = config.trigger_threshold() + 1;
+    let input = TriggerInput {
+        usage: Some(usage),
+        current_model: model_id(),
+        last_compaction_ts: None,
+        overflow_recovery_attempted: false,
+    };
+
+    assert_eq!(evaluate(&input, &config), TriggerDecision::Threshold {
+        context_tokens: config.trigger_threshold() + 1
+    });
 }
 
 #[test]

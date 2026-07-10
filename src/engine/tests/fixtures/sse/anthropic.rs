@@ -129,7 +129,7 @@ pub fn message_delta(stop_reason: &str, output_tokens: u64) -> String {
         serde_json::json!({
             "type": "message_delta",
             "delta": {"stop_reason": stop_reason},
-            "usage": {"output_tokens": output_tokens, "input_tokens": 0}
+            "usage": {"output_tokens": output_tokens}
         })
     )
 }
@@ -142,6 +142,25 @@ pub fn message_delta_with_usage(
     cache_read: u64,
     cache_write: u64,
 ) -> String {
+    message_delta_with_usage_and_reasoning(
+        stop_reason,
+        input_tokens,
+        output_tokens,
+        cache_read,
+        cache_write,
+        0,
+    )
+}
+
+/// message_delta with full cumulative usage and thinking-token details.
+pub fn message_delta_with_usage_and_reasoning(
+    stop_reason: &str,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read: u64,
+    cache_write: u64,
+    thinking_tokens: u64,
+) -> String {
     format!(
         "event: message_delta\ndata: {}",
         serde_json::json!({
@@ -151,7 +170,8 @@ pub fn message_delta_with_usage(
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "cache_read_input_tokens": cache_read,
-                "cache_creation_input_tokens": cache_write
+                "cache_creation_input_tokens": cache_write,
+                "output_tokens_details": {"thinking_tokens": thinking_tokens}
             }
         })
     )

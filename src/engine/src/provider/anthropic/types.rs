@@ -17,13 +17,21 @@ pub(crate) struct AnthropicMessageInfo {
 #[derive(Deserialize)]
 pub(crate) struct AnthropicUsage {
     #[serde(default)]
-    pub input_tokens: u64,
+    pub input_tokens: Option<u64>,
     #[serde(default)]
-    pub output_tokens: u64,
+    pub output_tokens: Option<u64>,
     #[serde(default)]
-    pub cache_read_input_tokens: u64,
+    pub cache_read_input_tokens: Option<u64>,
     #[serde(default)]
-    pub cache_creation_input_tokens: u64,
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens_details: Option<AnthropicOutputTokensDetails>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AnthropicOutputTokensDetails {
+    #[serde(default)]
+    pub thinking_tokens: u64,
 }
 
 #[derive(Deserialize)]

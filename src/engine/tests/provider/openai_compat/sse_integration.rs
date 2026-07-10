@@ -60,6 +60,30 @@ async fn openai_sse_text_response() {
     assert_eq!(text_deltas, vec!["Hello, ", "world!"]);
 }
 
+#[tokio::test]
+async fn openai_sse_cache_tokens_are_not_double_counted_as_input() {
+    let sse = openai_sse::body(vec![
+        openai_sse::text_chunk("cached", None),
+        openai_sse::finish_with_cache_usage("stop", 100_000, 2_000, 80_000, 1_000),
+        openai_sse::done(),
+    ]);
+
+    let (msg, _) = run_provider_sse(&OpenAiCompatProvider, openai_config(), &sse, 200)
+        .await
+        .unwrap();
+
+    match msg {
+        Message::Assistant { usage, .. } => {
+            assert_eq!(usage.input, 19_000);
+            assert_eq!(usage.cache_read, 80_000);
+            assert_eq!(usage.cache_write, 1_000);
+            assert_eq!(usage.output, 2_000);
+            assert_eq!(usage.total_tokens, 102_000);
+        }
+        _ => panic!("Expected Assistant message"),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // SSE streaming — tool call
 // ---------------------------------------------------------------------------
@@ -268,6 +292,48 @@ async fn openai_json_fallback_success() {
 
     assert!(events.iter().any(|e| matches!(e, StreamEvent::Start)));
     assert!(events.iter().any(|e| matches!(e, StreamEvent::Done { .. })));
+}
+
+#[tokio::test]
+async fn openai_json_fallback_cache_tokens_are_not_double_counted_as_input() {
+    let json = serde_json::json!({
+        "id": "chatcmpl-cache",
+        "object": "chat.completion",
+        "choices": [{
+            "index": 0,
+            "message": { "role": "assistant", "content": "cached" },
+            "finish_reason": "stop"
+        }],
+        "usage": {
+            "prompt_tokens": 100_000,
+            "completion_tokens": 2_000,
+            "total_tokens": 102_000,
+            "prompt_tokens_details": {
+                "cached_tokens": 80_000,
+                "cache_write_tokens": 1_000
+            }
+        }
+    });
+
+    let (msg, _) = run_provider_json(
+        &OpenAiCompatProvider,
+        openai_config(),
+        &json.to_string(),
+        200,
+    )
+    .await
+    .unwrap();
+
+    match msg {
+        Message::Assistant { usage, .. } => {
+            assert_eq!(usage.input, 19_000);
+            assert_eq!(usage.cache_read, 80_000);
+            assert_eq!(usage.cache_write, 1_000);
+            assert_eq!(usage.output, 2_000);
+            assert_eq!(usage.total_tokens, 102_000);
+        }
+        _ => panic!("Expected Assistant message"),
+    }
 }
 
 // ---------------------------------------------------------------------------

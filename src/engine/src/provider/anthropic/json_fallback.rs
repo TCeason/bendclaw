@@ -118,6 +118,14 @@ fn parse_success_response(
         {
             usage.cache_write = v;
         }
+        if let Some(v) = u
+            .get("output_tokens_details")
+            .and_then(|details| details.get("thinking_tokens"))
+            .and_then(|v| v.as_u64())
+        {
+            usage.reasoning_output = v;
+        }
+        usage.refresh_total_tokens();
         emitter.set_usage(usage);
     }
 

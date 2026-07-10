@@ -88,18 +88,31 @@ fn parse_success_response(
         emitter.set_stop_reason(stop_reason);
     }
 
-    // Usage
+    // OpenAI includes cached tokens in prompt_tokens.
     if let Some(u) = &response.usage {
         let cache_read = u
             .prompt_tokens_details
             .as_ref()
             .map(|d| d.cached_tokens)
+            .unwrap_or(u.prompt_cache_hit_tokens);
+        let cache_write = u
+            .prompt_tokens_details
+            .as_ref()
+            .map(|d| d.cache_write_tokens)
             .unwrap_or(0);
+        let input = u
+            .prompt_tokens
+            .saturating_sub(cache_read)
+            .saturating_sub(cache_write);
         let usage = Usage {
-            input: u.prompt_tokens,
+            input,
             output: u.completion_tokens,
-            total_tokens: u.total_tokens,
+            total_tokens: input
+                .saturating_add(u.completion_tokens)
+                .saturating_add(cache_read)
+                .saturating_add(cache_write),
             cache_read,
+            cache_write,
             ..Default::default()
         };
         emitter.set_usage(usage);

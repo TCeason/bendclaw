@@ -89,7 +89,11 @@ pub fn evaluate(input: &TriggerInput, config: &CompactionConfig) -> TriggerDecis
 }
 
 fn calculate_context_tokens(usage: &UsageSnapshot) -> usize {
-    usage.input + usage.cache_read + usage.cache_write + usage.output
+    if usage.total_tokens > 0 {
+        usage.total_tokens
+    } else {
+        usage.input + usage.cache_read + usage.cache_write + usage.output
+    }
 }
 
 /// Match provider error messages that indicate context overflow.

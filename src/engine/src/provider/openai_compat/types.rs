@@ -67,10 +67,11 @@ pub(crate) struct OpenAiFunctionDelta {
 pub(crate) struct OpenAiUsage {
     #[serde(default)]
     pub prompt_tokens: u64,
+    /// Legacy cache-hit field used by compatible providers.
+    #[serde(default)]
+    pub prompt_cache_hit_tokens: u64,
     #[serde(default)]
     pub completion_tokens: u64,
-    #[serde(default)]
-    pub total_tokens: u64,
     #[serde(default)]
     pub prompt_tokens_details: Option<OpenAiPromptTokensDetails>,
     #[serde(default)]
@@ -81,6 +82,9 @@ pub(crate) struct OpenAiUsage {
 pub(crate) struct OpenAiPromptTokensDetails {
     #[serde(default)]
     pub cached_tokens: u64,
+    /// Compatible providers may report cache writes separately.
+    #[serde(default)]
+    pub cache_write_tokens: u64,
 }
 
 #[derive(Deserialize)]

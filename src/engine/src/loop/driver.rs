@@ -408,9 +408,7 @@ async fn run_loop(
                     // Track turn + emit TurnEnd, then continue inner loop.
                     if let Some(ref mut tracker) = tracker {
                         let turn_tokens = match &message {
-                            Message::Assistant { usage, .. } => {
-                                (usage.input + usage.output) as usize
-                            }
+                            Message::Assistant { usage, .. } => usage.context_tokens() as usize,
                             _ => context::message_tokens(&agent_msg),
                         };
                         tracker.record_turn(turn_tokens);
@@ -495,7 +493,7 @@ async fn run_loop(
             // Track turn for execution limits
             if let Some(ref mut tracker) = tracker {
                 let turn_tokens = match &message {
-                    Message::Assistant { usage, .. } => (usage.input + usage.output) as usize,
+                    Message::Assistant { usage, .. } => usage.context_tokens() as usize,
                     _ => context::message_tokens(&agent_msg),
                 };
                 tracker.record_turn(turn_tokens);

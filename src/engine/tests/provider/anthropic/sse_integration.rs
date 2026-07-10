@@ -442,7 +442,9 @@ async fn anthropic_sse_cache_usage() {
     match &msg {
         Message::Assistant { usage, .. } => {
             assert_eq!(usage.input, 100);
+            assert_eq!(usage.output, 5);
             assert_eq!(usage.cache_read, 500);
+            assert_eq!(usage.total_tokens, 605);
         }
         _ => panic!("Expected Assistant message"),
     }
@@ -473,6 +475,36 @@ async fn anthropic_sse_cache_usage_in_message_delta() {
             assert_eq!(usage.output, 5);
             assert_eq!(usage.cache_read, 500);
             assert_eq!(usage.cache_write, 100);
+            assert_eq!(usage.total_tokens, 705);
+        }
+        _ => panic!("Expected Assistant message"),
+    }
+}
+
+#[tokio::test]
+async fn anthropic_sse_final_usage_updates_present_fields() {
+    let sse = anthropic_sse::body(vec![
+        anthropic_sse::message_start(100, 500),
+        anthropic_sse::text_block_start(0),
+        anthropic_sse::text_delta(0, "final usage"),
+        anthropic_sse::block_stop(0),
+        anthropic_sse::message_delta_with_usage_and_reasoning("end_turn", 120, 15, 0, 20, 7),
+        anthropic_sse::message_stop(),
+    ]);
+
+    let config = StreamConfigBuilder::anthropic().cache_disabled().build();
+    let (msg, _) = run_provider_sse(&AnthropicProvider, config, &sse, 200)
+        .await
+        .unwrap();
+
+    match msg {
+        Message::Assistant { usage, .. } => {
+            assert_eq!(usage.input, 120);
+            assert_eq!(usage.output, 15);
+            assert_eq!(usage.cache_read, 0);
+            assert_eq!(usage.cache_write, 20);
+            assert_eq!(usage.reasoning_output, 7);
+            assert_eq!(usage.total_tokens, 155);
         }
         _ => panic!("Expected Assistant message"),
     }
@@ -531,7 +563,13 @@ async fn anthropic_json_fallback_success() {
         "role": "assistant",
         "content": [{"type": "text", "text": "Hello from JSON!"}],
         "stop_reason": "end_turn",
-        "usage": {"input_tokens": 50, "output_tokens": 10}
+        "usage": {
+            "input_tokens": 50,
+            "output_tokens": 10,
+            "cache_read_input_tokens": 20,
+            "cache_creation_input_tokens": 5,
+            "output_tokens_details": {"thinking_tokens": 3}
+        }
     });
 
     let config = StreamConfigBuilder::anthropic().cache_disabled().build();
@@ -545,6 +583,10 @@ async fn anthropic_json_fallback_success() {
             assert!(matches!(&content[0], Content::Text { text } if text == "Hello from JSON!"));
             assert_eq!(usage.input, 50);
             assert_eq!(usage.output, 10);
+            assert_eq!(usage.cache_read, 20);
+            assert_eq!(usage.cache_write, 5);
+            assert_eq!(usage.reasoning_output, 3);
+            assert_eq!(usage.total_tokens, 85);
         }
         _ => panic!("Expected Assistant message"),
     }

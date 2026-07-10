@@ -38,8 +38,8 @@ fn assistant_with_input(text: &str, input: u64, cache_read: u64) -> AgentMessage
     })
 }
 
-/// The anchor is the provider's real input count (uncached + cached input),
-/// plus a byte estimate of only the messages appended after it.
+/// The anchor is the provider's real total usage, plus a byte estimate of only
+/// the messages appended after it.
 #[test]
 fn anchors_on_latest_assistant_usage_plus_trailing() {
     let tracker = ContextTracker::new();
@@ -51,9 +51,9 @@ fn anchors_on_latest_assistant_usage_plus_trailing() {
     ];
 
     let estimate = tracker.estimate_context_tokens(&messages);
-    // 100_000 anchor (input + cache_read) + trailing user message:
-    // 400 bytes / 4 = 100 content tokens + 4 user-envelope overhead.
-    assert_eq!(estimate, 100_000 + 104);
+    // 100_050 provider total (input + cache_read + output), plus the trailing
+    // user message: 400 bytes / 4 = 100 content tokens + 4 envelope tokens.
+    assert_eq!(estimate, 100_050 + 104);
 }
 
 /// The fix for the resume bug: a fresh tracker (as built on every resumed run)
@@ -70,8 +70,8 @@ fn fresh_tracker_recovers_anchor_on_resume() {
     let resumed = ContextTracker::new();
     let estimate = resumed.estimate_context_tokens(&messages);
 
-    // Anchored on the real 98k, not a whole-list byte guess.
-    assert_eq!(estimate, 98_000);
+    // Anchored on the real provider total, including 50 output tokens.
+    assert_eq!(estimate, 98_050);
 }
 
 /// Before any assistant response (first turn of a fresh session) there is no
@@ -118,7 +118,7 @@ fn suppresses_stale_anchor_after_compaction() {
         user_msg("q"),
         assistant_with_input("post-compaction answer", 40_000, 0),
     ];
-    assert_eq!(tracker.estimate_context_tokens(&fresh), 40_000);
+    assert_eq!(tracker.estimate_context_tokens(&fresh), 40_050);
 }
 
 /// An empty or error response carries no usable usage and must not clear the
@@ -135,6 +135,28 @@ fn empty_response_does_not_reenable_stale_anchor() {
         estimate < 1_000,
         "empty response must not revive the stale anchor, got {estimate}"
     );
+}
+
+#[test]
+fn native_total_tokens_take_precedence_over_component_fallback() {
+    let tracker = ContextTracker::new();
+    let mut assistant = assistant_with_input("answer", 90_000, 10_000);
+    if let AgentMessage::Llm(Message::Assistant { usage, .. }) = &mut assistant {
+        usage.total_tokens = 100_123;
+    }
+
+    assert_eq!(tracker.estimate_context_tokens(&[assistant]), 100_123);
+}
+
+#[test]
+fn zero_native_total_falls_back_to_usage_components() {
+    let tracker = ContextTracker::new();
+    let mut assistant = assistant_with_input("answer", 90_000, 10_000);
+    if let AgentMessage::Llm(Message::Assistant { usage, .. }) = &mut assistant {
+        usage.total_tokens = 0;
+    }
+
+    assert_eq!(tracker.estimate_context_tokens(&[assistant]), 100_050);
 }
 
 // ---------------------------------------------------------------------------

@@ -54,7 +54,7 @@ impl ContextTracker {
     /// error responses) are ignored so the stale pre-compaction anchor stays
     /// suppressed until a genuine measurement arrives.
     pub fn record_response(&mut self, usage: &Usage) {
-        if usage.input + usage.cache_read + usage.cache_write > 0 {
+        if usage.context_tokens() > 0 {
             self.baseline_stale = false;
         }
     }
@@ -71,11 +71,8 @@ impl ContextTracker {
     /// Measure current context size: provider anchor + byte estimate of the
     /// trailing delta since that response.
     ///
-    /// The anchor is the most recent assistant `usage` in the message list
-    /// (input + cached input), which is the model's own count for everything up
-    /// to that point. Only the few messages appended afterward are approximated.
-    /// Falls back to a whole-list byte estimate when no anchor is usable (the
-    /// first turn of a fresh session, or the brief window just after compaction).
+    /// The latest valid provider usage is the anchor; only later messages are
+    /// estimated locally.
     pub fn estimate_context_tokens(&self, messages: &[AgentMessage]) -> usize {
         if !self.baseline_stale {
             if let Some((baseline, idx)) = latest_provider_anchor(messages) {
@@ -116,17 +113,13 @@ impl ContextTracker {
 
 /// The most recent assistant `usage` in the list, as (anchor_tokens, index).
 ///
-/// The anchor is the provider's own count of the input it processed for that
-/// response — uncached input plus cached input (`cache_read` + `cache_write`),
-/// which together cover the full prompt regardless of cache state. Output is
-/// excluded: the assistant message itself is in the list and is approximated
-/// as part of the trailing delta. Responses with no usable usage are skipped.
+/// Uses provider total usage, falling back to normalized usage buckets.
 fn latest_provider_anchor(messages: &[AgentMessage]) -> Option<(usize, usize)> {
     messages.iter().enumerate().rev().find_map(|(idx, msg)| {
         let AgentMessage::Llm(Message::Assistant { usage, .. }) = msg else {
             return None;
         };
-        let anchor = (usage.input + usage.cache_read + usage.cache_write) as usize;
+        let anchor = usage.context_tokens() as usize;
         (anchor > 0).then_some((anchor, idx))
     })
 }

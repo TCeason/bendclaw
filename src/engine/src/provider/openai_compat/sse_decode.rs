@@ -172,14 +172,30 @@ fn process_sse_chunk(
         }
     }
 
-    // Process usage
+    // OpenAI includes cached tokens in prompt_tokens.
     if let Some(u) = &chunk.usage {
-        usage.input = u.prompt_tokens;
+        let cache_read = u
+            .prompt_tokens_details
+            .as_ref()
+            .map(|details| details.cached_tokens)
+            .unwrap_or(u.prompt_cache_hit_tokens);
+        let cache_write = u
+            .prompt_tokens_details
+            .as_ref()
+            .map(|details| details.cache_write_tokens)
+            .unwrap_or(0);
+        usage.input = u
+            .prompt_tokens
+            .saturating_sub(cache_read)
+            .saturating_sub(cache_write);
         usage.output = u.completion_tokens;
-        usage.total_tokens = u.total_tokens;
-        if let Some(details) = &u.prompt_tokens_details {
-            usage.cache_read = details.cached_tokens;
-        }
+        usage.total_tokens = usage
+            .input
+            .saturating_add(usage.output)
+            .saturating_add(cache_read)
+            .saturating_add(cache_write);
+        usage.cache_read = cache_read;
+        usage.cache_write = cache_write;
         if let Some(details) = &u.completion_tokens_details {
             usage.reasoning_output = details.reasoning_tokens;
         }
