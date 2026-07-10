@@ -46,14 +46,14 @@ impl FallbackEmitter {
     }
 
     /// Emit a thinking content block.
-    pub fn emit_thinking(&mut self, thinking: &str, signature: Option<String>) {
+    pub fn emit_thinking(&mut self, thinking: &str, metadata: Option<ThinkingMetadata>) {
         if thinking.is_empty() {
             return;
         }
         let idx = self.content.len();
         self.content.push(Content::Thinking {
             thinking: thinking.to_string(),
-            signature,
+            metadata,
         });
         let _ = self.tx.send(StreamEvent::ThinkingDelta {
             content_index: idx,

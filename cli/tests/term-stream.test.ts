@@ -3,6 +3,7 @@ import { createSpinnerState } from '../src/term/spinner.js'
 import { createInitialState } from '../src/term/app/state.js'
 import { createStreamMachineState, reduceRunEvent, flushStreaming } from '../src/term/app/stream.js'
 import { buildToolCard } from '../src/render/output.js'
+import { assistantToolCalls, findAssistantToolCall } from '../src/term/app/assistant-content.js'
 import type { OutputLine } from '../src/render/output.js'
 
 describe('term stream machine', () => {
@@ -13,7 +14,7 @@ describe('term stream machine', () => {
 
     const update = reduceRunEvent(state, {
       kind: 'assistant_delta',
-      payload: { delta: 'hello\n\nworld' },
+      payload: { content_index: 0, content_type: 'text', delta: 'hello\n\nworld' },
     }, { termRows: 24 })
 
     state = update.state
@@ -21,8 +22,8 @@ describe('term stream machine', () => {
     // to scrollback mid-stream (that caused the dynamic zone to empty/refill and
     // the spinner below to jump). Everything stays in the pending text.
     expect(update.commitLines.length).toBe(0)
-    expect(state.streamingText).toBe('hello\n\nworld')
-    expect(state.pendingText).toBe('hello\n\nworld')
+    expect(state.appState.currentAssistantContent.filter(block => block.type === 'text').map(block => block.text).join('')).toBe('hello\n\nworld')
+    expect(state.appState.currentAssistantContent.filter(block => block.type === 'text').map(block => block.text).join('')).toBe('hello\n\nworld')
   })
 
   test('assistant delta without complete block does not commit', () => {
@@ -32,12 +33,12 @@ describe('term stream machine', () => {
 
     const update = reduceRunEvent(state, {
       kind: 'assistant_delta',
-      payload: { delta: 'hello world' },
+      payload: { content_index: 0, content_type: 'text', delta: 'hello world' },
     }, { termRows: 24 })
 
     state = update.state
     expect(update.commitLines.length).toBe(0)
-    expect(state.streamingText).toBe('hello world')
+    expect(state.appState.currentAssistantContent.filter(block => block.type === 'text').map(block => block.text).join('')).toBe('hello world')
   })
 
   test('assistant_completed flushes remaining text', () => {
@@ -47,11 +48,11 @@ describe('term stream machine', () => {
 
     let update = reduceRunEvent(state, {
       kind: 'assistant_delta',
-      payload: { delta: 'hello world' },
+      payload: { content_index: 0, content_type: 'text', delta: 'hello world' },
     }, { termRows: 24 })
     state = update.state
     expect(update.commitLines.length).toBe(0)
-    expect(state.streamingText).toBe('hello world')
+    expect(state.appState.currentAssistantContent.filter(block => block.type === 'text').map(block => block.text).join('')).toBe('hello world')
 
     update = reduceRunEvent(state, {
       kind: 'assistant_completed',
@@ -59,8 +60,8 @@ describe('term stream machine', () => {
     }, { termRows: 24 })
     state = update.state
     expect(update.commitLines.length).toBeGreaterThan(0)
-    expect(state.streamingText).toBe('')
-    expect(state.pendingText).toBe('')
+    expect(state.appState.currentAssistantContent.filter(block => block.type === 'text').map(block => block.text).join('')).toBe('')
+    expect(state.appState.currentAssistantContent.filter(block => block.type === 'text').map(block => block.text).join('')).toBe('')
   })
 
   test('assistant_completed with length stop appends a truncation notice', () => {
@@ -70,7 +71,7 @@ describe('term stream machine', () => {
 
     let update = reduceRunEvent(state, {
       kind: 'assistant_delta',
-      payload: { delta: 'a partial answer that got cut off' },
+      payload: { content_index: 0, content_type: 'text', delta: 'a partial answer that got cut off' },
     }, { termRows: 24 })
     state = update.state
 
@@ -93,7 +94,7 @@ describe('term stream machine', () => {
 
     let update = reduceRunEvent(state, {
       kind: 'assistant_delta',
-      payload: { delta: 'a complete answer' },
+      payload: { content_index: 0, content_type: 'text', delta: 'a complete answer' },
     }, { termRows: 24 })
     state = update.state
 
@@ -116,7 +117,7 @@ describe('term stream machine', () => {
     for (const delta of ['Hello ', 'world.\n\n', 'Second paragraph.']) {
       const update = reduceRunEvent(state, {
         kind: 'assistant_delta',
-        payload: { delta },
+        payload: { content_index: 0, content_type: 'text', delta },
       }, { termRows: 24 })
       state = update.state
       for (const line of update.commitLines) allCommitted.push(line.text)
@@ -124,7 +125,7 @@ describe('term stream machine', () => {
 
     // Plan A: nothing commits mid-stream; the full message stays pending.
     expect(allCommitted.length).toBe(0)
-    expect(state.streamingText).toBe('Hello world.\n\nSecond paragraph.')
+    expect(state.appState.currentAssistantContent.filter(block => block.type === 'text').map(block => block.text).join('')).toBe('Hello world.\n\nSecond paragraph.')
 
     const update = reduceRunEvent(state, {
       kind: 'assistant_completed',
@@ -153,13 +154,13 @@ describe('term stream machine', () => {
 
     const update = reduceRunEvent(state, {
       kind: 'assistant_delta',
-      payload: { delta: text },
+      payload: { content_index: 0, content_type: 'text', delta: text },
     }, { termRows: 24 })
 
     state = update.state
     expect(update.commitLines.length).toBe(0)
-    expect(state.streamingText).toBe(text)
-    expect(state.pendingText).toBe(text)
+    expect(state.appState.currentAssistantContent.filter(block => block.type === 'text').map(block => block.text).join('')).toBe(text)
+    expect(state.appState.currentAssistantContent.filter(block => block.type === 'text').map(block => block.text).join('')).toBe(text)
   })
 
   test('streaming a multi-paragraph reply never commits or empties the dynamic zone mid-stream', () => {
@@ -181,22 +182,22 @@ describe('term stream machine', () => {
     for (let i = 0; i < full.length; i += 5) deltas.push(full.slice(i, i + 5))
 
     let midStreamCommits = 0
-    let emptyPendingFrames = 0
-    let prevPendingLen = 0
+    let emptyContentFrames = 0
+    let prevContentLen = 0
     for (const d of deltas) {
       const update = reduceRunEvent(state, {
         kind: 'assistant_delta',
-        payload: { delta: d },
+        payload: { content_index: 0, content_type: 'text', delta: d },
       }, { termRows: 40 })
       state = update.state
       midStreamCommits += update.commitLines.filter(l => l.kind === 'assistant' && l.text).length
-      if (state.pendingText.length === 0 && prevPendingLen > 0) emptyPendingFrames++
-      prevPendingLen = state.pendingText.length
+      if (state.appState.currentAssistantContent.filter(block => block.type === 'text').map(block => block.text).join('').length === 0 && prevContentLen > 0) emptyContentFrames++
+      prevContentLen = state.appState.currentAssistantContent.filter(block => block.type === 'text').map(block => block.text).join('').length
     }
 
     expect(midStreamCommits).toBe(0)
-    expect(emptyPendingFrames).toBe(0)
-    expect(state.pendingText).toBe(full)
+    expect(emptyContentFrames).toBe(0)
+    expect(state.appState.currentAssistantContent.filter(block => block.type === 'text').map(block => block.text).join('')).toBe(full)
 
     // Everything flushes once at the turn boundary.
     const done = reduceRunEvent(state, { kind: 'assistant_completed', payload: {} }, { termRows: 40 })
@@ -205,7 +206,7 @@ describe('term stream machine', () => {
     expect(flushed).toContain('Final wrap-up')
   })
 
-  test('flushStreaming after tool_started produces clean assistant block', () => {
+  test('tool_started keeps the partial assistant message stable', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
@@ -213,7 +214,7 @@ describe('term stream machine', () => {
     // Simulate a tool_started which flushes text
     let update = reduceRunEvent(state, {
       kind: 'assistant_delta',
-      payload: { delta: 'Before tool.' },
+      payload: { content_index: 0, content_type: 'text', delta: 'Before tool.' },
     }, { termRows: 18 })
     state = update.state
 
@@ -222,15 +223,18 @@ describe('term stream machine', () => {
       payload: { tool_name: 'bash', args: {} },
     }, { termRows: 18 })
     state = update.state
-    // tool_started flushes "Before tool." into commitLines
-    const beforeLines = update.commitLines.filter(l => l.kind === 'assistant')
-    expect(beforeLines.length).toBeGreaterThan(0)
-    expect(beforeLines.some(l => l.text.includes('Before tool'))).toBe(true)
+    // Execution updates the tool block in place; it must not move assistant
+    // content into scrollback while the partial message is still live.
+    expect(update.commitLines).toHaveLength(0)
+    expect(state.appState.currentAssistantContent[0]).toMatchObject({
+      type: 'text',
+      text: 'Before tool.',
+    })
 
     // Now add more text after tool
     update = reduceRunEvent(state, {
       kind: 'assistant_delta',
-      payload: { delta: 'After tool.' },
+      payload: { content_index: 1, content_type: 'text', delta: 'After tool.' },
     }, { termRows: 18 })
     state = update.state
 
@@ -238,11 +242,11 @@ describe('term stream machine', () => {
     // the tool call visually separates the two assistant blocks)
     const flushed = flushStreaming(state)
     expect(flushed.lines.length).toBeGreaterThan(0)
-    expect(flushed.lines[0]?.kind).toBe('assistant')
-    expect(flushed.lines[0]?.text).toContain('After tool')
+    expect(flushed.lines.map(line => line.text).join('\n')).toContain('Before tool')
+    expect(flushed.lines.map(line => line.text).join('\n')).toContain('After tool')
   })
 
-  test('overflow drain: preceding prose commits, open code fence stays pending', () => {
+  test('long open code fence stays in the partial message without scrollback migration', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
@@ -252,17 +256,18 @@ describe('term stream machine', () => {
 
     const update = reduceRunEvent(state, {
       kind: 'assistant_delta',
-      payload: { delta: text },
+      payload: { content_index: 0, content_type: 'text', delta: text },
     }, { termRows: 18 })
 
     state = update.state
-    // The completed "Intro" paragraph commits; the still-open fence is held
-    // pending in full so it never gets split into a torn code block.
-    const committed = update.commitLines.filter(l => l.kind === 'assistant').map(l => l.text).join('\n')
-    expect(committed).toContain('Intro')
-    expect(committed).not.toContain('x_0')
-    expect(state.streamingText.startsWith('```')).toBe(true)
-    expect(state.streamingText).toContain('x_11 = 11')
+    // The whole block remains in one dynamic AssistantMessage, matching pi.
+    expect(update.commitLines).toHaveLength(0)
+    const partial = state.appState.currentAssistantContent
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('')
+    expect(partial).toContain('Intro')
+    expect(partial).toContain('x_11 = 11')
   })
 
   test('overflow drain never tears a table mid-stream (rendered whole at end)', () => {
@@ -286,7 +291,7 @@ describe('term stream machine', () => {
     // 10 → threshold max(8, 10-6)=8) so the overflow valve is exercised.
     const committed: OutputLine[] = []
     for (const ch of msg) {
-      const update = reduceRunEvent(state, { kind: 'assistant_delta', payload: { delta: ch } }, { termRows: 10 })
+      const update = reduceRunEvent(state, { kind: 'assistant_delta', payload: { content_index: 0, content_type: 'text', delta: ch } }, { termRows: 10 })
       state = update.state
       committed.push(...update.commitLines)
     }
@@ -314,13 +319,82 @@ describe('term stream machine', () => {
 
     const update = reduceRunEvent(state, {
       kind: 'assistant_delta',
-      payload: { delta: text },
+      payload: { content_index: 0, content_type: 'text', delta: text },
     }, { termRows: 24 })
 
     state = update.state
     expect(update.commitLines.length).toBe(0)
-    expect(state.streamingText).toBe(text)
-    expect(state.pendingText).toBe(text)
+    expect(state.appState.currentAssistantContent.filter(block => block.type === 'text').map(block => block.text).join('')).toBe(text)
+    expect(state.appState.currentAssistantContent.filter(block => block.type === 'text').map(block => block.text).join('')).toBe(text)
+  })
+
+  test('assistant_completed authoritative snapshot is committed once', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+
+    state = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { content_index: 0, content_type: 'text', delta: 'partial' },
+    }, { termRows: 24 }).state
+
+    const completed = reduceRunEvent(state, {
+      kind: 'assistant_completed',
+      payload: { content: [{ type: 'text', text: 'authoritative' }] },
+    }, { termRows: 24 })
+
+    expect(completed.commitLines.filter(line => line.kind === 'assistant').map(line => line.text).join('\n'))
+      .toContain('authoritative')
+    expect(completed.commitLines.map(line => line.text).join('\n')).not.toContain('partial')
+    expect(completed.state.appState.currentAssistantContent).toEqual([])
+    expect(completed.state.appState.messages.at(-1)?.content).toEqual([
+      { type: 'text', contentIndex: 0, text: 'authoritative' },
+    ])
+    expect(flushStreaming(completed.state).lines).toHaveLength(0)
+  })
+
+  test('turn_started preserves partial content as a fallback when completion is missing', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+
+    state = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { content_index: 0, content_type: 'text', delta: 'unfinished' },
+    }, { termRows: 24 }).state
+
+    const nextTurn = reduceRunEvent(state, {
+      kind: 'turn_started',
+      payload: {},
+    }, { termRows: 24 })
+
+    expect(nextTurn.commitLines.filter(line => line.kind === 'assistant').map(line => line.text).join('\n'))
+      .toContain('unfinished')
+    expect(nextTurn.state.appState.currentAssistantContent).toEqual([])
+  })
+
+  test('llm_call_completed does not flush a tool-bearing ordered message', () => {
+    const appState = createInitialState('model', '/tmp')
+    appState.currentAssistantContent = [
+      { type: 'thinking', contentIndex: 0, text: 'plan' },
+      {
+        type: 'tool_call',
+        contentIndex: 1,
+        toolCall: { id: 'call-1', name: 'read', args: {}, status: 'running' },
+      },
+      { type: 'text', contentIndex: 2, text: 'after' },
+    ]
+    const state = createStreamMachineState(appState, createSpinnerState())
+
+    const completed = reduceRunEvent(state, {
+      kind: 'llm_call_completed',
+      payload: {},
+    }, { termRows: 24 })
+
+    expect(completed.commitLines.filter(line => ['thinking', 'assistant', 'tool'].includes(line.kind)))
+      .toHaveLength(0)
+    expect(completed.state.appState.currentAssistantContent.map(block => block.type))
+      .toEqual(['thinking', 'tool_call', 'text'])
   })
 
   test('no duplicate commits across llm_call_completed and assistant_completed', () => {
@@ -341,7 +415,7 @@ describe('term stream machine', () => {
     for (const delta of ['Hello ', 'world.']) {
       update = reduceRunEvent(state, {
         kind: 'assistant_delta',
-        payload: { delta },
+        payload: { content_index: 0, content_type: 'text', delta },
       }, { termRows: 24 })
       state = update.state
       allCommitted.push(...update.commitLines)
@@ -382,7 +456,7 @@ describe('term stream machine', () => {
     expect(helloCount).toBe(1)
   })
 
-  test('tool_started flushes text once, no duplicate with assistant_completed', () => {
+  test('tool execution does not commit or duplicate the partial assistant message', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
@@ -392,23 +466,19 @@ describe('term stream machine', () => {
     for (const delta of ['Before ', 'tool.']) {
       const update = reduceRunEvent(state, {
         kind: 'assistant_delta',
-        payload: { delta },
+        payload: { content_index: 0, content_type: 'text', delta },
       }, { termRows: 24 })
       state = update.state
       allCommitted.push(...update.commitLines)
     }
 
-    // 2. tool_started — should flush "Before tool."
+    // 2. tool_started keeps the partial message in the dynamic zone.
     let update = reduceRunEvent(state, {
       kind: 'tool_started',
       payload: { tool_name: 'bash', args: {} },
     }, { termRows: 24 })
     state = update.state
-    allCommitted.push(...update.commitLines)
-
-    // Verify text was flushed
-    const afterTool = allCommitted.filter(l => l.kind === 'assistant')
-    expect(afterTool.length).toBeGreaterThan(0)
+    expect(update.commitLines).toHaveLength(0)
 
     // 3. tool_finished
     update = reduceRunEvent(state, {
@@ -422,7 +492,7 @@ describe('term stream machine', () => {
     for (const delta of ['After ', 'tool.']) {
       update = reduceRunEvent(state, {
         kind: 'assistant_delta',
-        payload: { delta },
+        payload: { content_index: 1, content_type: 'text', delta },
       }, { termRows: 24 })
       state = update.state
       allCommitted.push(...update.commitLines)
@@ -447,75 +517,97 @@ describe('term stream machine', () => {
     expect((allAssistant.match(/After tool/g) || []).length).toBe(1)
   })
 
-  test('thinking deltas after visible text are preserved as assistant text', () => {
+  test('conflicting delta type cannot replace an existing content index', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
 
-    let update = reduceRunEvent(state, {
+    state = reduceRunEvent(state, {
       kind: 'assistant_delta',
-      payload: { delta: '每条都停在 `' },
-    }, { termRows: 24 })
-    state = update.state
-
-    update = reduceRunEvent(state, {
+      payload: { content_index: 0, content_type: 'text', delta: 'visible text' },
+    }, { termRows: 24 }).state
+    state = reduceRunEvent(state, {
       kind: 'assistant_delta',
-      payload: { thinking_delta: '` 里的推理中途:\n- 第 1 题' },
-    }, { termRows: 24 })
-    state = update.state
+      payload: { content_index: 0, content_type: 'thinking', delta: 'misclassified' },
+    }, { termRows: 24 }).state
 
-    expect(state.pendingThinkingText).toBe('')
-    expect(state.streamingThinkingText).toBe('')
-    // The glitchy thinking delta is preserved as assistant text. Block-commit
-    // may drain a completed paragraph mid-stream, so check committed + pending.
-    const committedSoFar = update.commitLines.filter(l => l.kind === 'assistant').map(l => l.text).join('\n')
-    expect(committedSoFar + '\n' + state.streamingText).toContain('里的推理中途')
-
-    const flushed = flushStreaming(state)
-    const assistantText = [committedSoFar, ...flushed.lines.filter(l => l.kind === 'assistant').map(l => l.text)].join('\n')
-    expect(flushed.lines.some(l => l.kind === 'thinking_summary')).toBe(false)
-    expect(assistantText).toContain('每条都停在')
-    expect(assistantText).toContain('里的推理中途')
+    expect(state.appState.currentAssistantContent).toEqual([
+      { type: 'text', contentIndex: 0, text: 'visible text' },
+    ])
   })
 
-  test('thinking before visible text still commits as thinking summary', () => {
+  test('thinking after text remains a distinct ordered content block', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
 
     let update = reduceRunEvent(state, {
       kind: 'assistant_delta',
-      payload: { thinking_delta: 'internal reasoning\nline 2' },
+      payload: { content_index: 0, content_type: 'text', delta: '每条都停在 `' },
     }, { termRows: 24 })
     state = update.state
 
     update = reduceRunEvent(state, {
       kind: 'assistant_delta',
-      payload: { delta: 'final answer' },
+      payload: { content_index: 1, content_type: 'thinking', delta: '` 里的推理中途:\n- 第 1 题' },
     }, { termRows: 24 })
     state = update.state
 
-    expect(update.commitLines.some(l => l.kind === 'thinking_summary')).toBe(true)
-    expect(state.pendingThinkingText).toBe('')
-    expect(state.streamingText).toBe('final answer')
+    expect(state.appState.currentAssistantContent.map(block => block.type)).toEqual(['text', 'thinking'])
+    const flushed = flushStreaming(state)
+    const visible = flushed.lines.map(line => line.text).join('\n')
+    expect(visible).toContain('每条都停在')
+    expect(visible).toContain('里的推理中途')
+  })
+
+  test('thinking before visible text commits as markdown thinking content', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+
+    let update = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { content_index: 0, content_type: 'thinking', delta: 'internal reasoning\nline 2' },
+    }, { termRows: 24 })
+    state = update.state
+
+    update = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { content_index: 1, content_type: 'text', delta: 'final answer' },
+    }, { termRows: 24 })
+    state = update.state
+
+    expect(update.commitLines).toHaveLength(0)
+    expect(state.appState.currentAssistantContent.map(block => block.type)).toEqual(['thinking', 'text'])
+    const flushed = flushStreaming(state)
+    expect(flushed.lines.filter(l => l.kind === 'thinking').map(l => l.text)).toEqual([
+      'internal reasoning',
+      'line 2',
+    ])
+    expect(flushed.lines.some(l => l.kind === 'assistant')).toBe(true)
   })
 
   test('tool progress updates its matching live card', () => {
     const appState = createInitialState('model', '/tmp')
-    appState.liveToolCalls.set('call-bash', {
-      id: 'call-bash',
-      name: 'bash',
-      args: { command: 'sleep 1' },
-      status: 'running',
-      startedAt: Date.now(),
-    })
+    appState.currentAssistantContent = [{
+      type: 'tool_call',
+      contentIndex: 0,
+      toolCall: {
+        id: 'call-bash',
+        name: 'bash',
+        args: { command: 'sleep 1' },
+        status: 'running',
+        startedAt: Date.now(),
+      },
+    }]
     const state = createStreamMachineState(appState, createSpinnerState())
     const update = reduceRunEvent(state, {
       kind: 'tool_progress',
       payload: { tool_call_id: 'call-bash', tool_name: 'bash', text: 'line 1\nline 2' },
     }, { termRows: 24 })
 
-    expect(update.state.appState.liveToolCalls.get('call-bash')?.progress).toBe('line 1\nline 2')
+    const progressBlock = update.state.appState.currentAssistantContent[0]
+    expect(progressBlock?.type === 'tool_call' ? progressBlock.toolCall.progress : undefined).toBe('line 1\nline 2')
     expect(update.rerenderStatus).toBe(true)
   })
 
@@ -536,26 +628,32 @@ describe('term stream machine', () => {
 
   test('heartbeat progress preserves the card output', () => {
     const appState = createInitialState('model', '/tmp')
-    appState.liveToolCalls.set('call-bash', {
-      id: 'call-bash',
-      name: 'bash',
-      args: {},
-      status: 'running',
-      progress: 'line 1\nline 2',
-    })
+    appState.currentAssistantContent = [{
+      type: 'tool_call',
+      contentIndex: 0,
+      toolCall: {
+        id: 'call-bash',
+        name: 'bash',
+        args: {},
+        status: 'running',
+        progress: 'line 1\nline 2',
+      },
+    }]
     const state = createStreamMachineState(appState, createSpinnerState())
     const update = reduceRunEvent(state, {
       kind: 'tool_progress',
       payload: { tool_call_id: 'call-bash', tool_name: 'bash', text: 'Running... 60s' },
     }, { termRows: 24 })
 
-    expect(update.state.appState.liveToolCalls.get('call-bash')?.progress).toBe('line 1\nline 2')
+    const heartbeatBlock = update.state.appState.currentAssistantContent[0]
+    expect(heartbeatBlock?.type === 'tool_call' ? heartbeatBlock.toolCall.progress : undefined).toBe('line 1\nline 2')
   })
 
-  test('live tool card renders queued, executing, and completed calls as active until completion', () => {
-    const queued = buildToolCard({ id: 'call-1', name: 'read', args: { path: 'src/a.rs' }, status: 'running' })
-    expect(queued.map(line => line.text).join('\n')).toContain('● running')
-    expect(queued.map(line => line.text).join('\n')).not.toContain('pending')
+  test('queued tool has no running state; execution uses the animated footer', () => {
+    const queued = buildToolCard({ id: 'call-1', name: 'read', args: { path: 'src/a.rs' }, status: 'queued' })
+    const queuedText = queued.map(line => line.text).join('\n')
+    expect(queuedText).toContain('read')
+    expect(queuedText).not.toContain('running')
 
     const running = buildToolCard({
       id: 'call-1',
@@ -567,7 +665,7 @@ describe('term stream machine', () => {
     }, false, 2_500)
     const runningText = running.map(line => line.text).join('\n')
     expect(runningText).toContain('partial output')
-    expect(runningText).toContain('● running · 1.5s')
+    expect(runningText).not.toContain('● running')
 
     const completed = buildToolCard({
       id: 'call-1',
@@ -697,6 +795,26 @@ describe('term stream machine', () => {
     expect(u2.writeLines.some(l => l.text.includes('HTTP 520'))).toBe(true)
   })
 
+  test('run_finished preserves partial assistant content on abnormal termination', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+
+    state = reduceRunEvent(state, {
+      kind: 'assistant_delta',
+      payload: { content_index: 0, content_type: 'text', delta: 'last partial line' },
+    }, { termRows: 24 }).state
+
+    const finished = reduceRunEvent(state, {
+      kind: 'run_finished',
+      payload: {},
+    }, { termRows: 24 })
+
+    expect(finished.commitLines.filter(line => line.kind === 'assistant').map(line => line.text).join('\n'))
+      .toContain('last partial line')
+    expect(finished.state.appState.currentAssistantContent).toEqual([])
+  })
+
   test('run_finished emits no run summary', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
@@ -710,17 +828,14 @@ describe('term stream machine', () => {
     expect(update.commitLines.some(l => (l.kind as string) === 'run_summary')).toBe(false)
   })
 
-  test('flushStreaming emits pending assistant text', () => {
+  test('flushStreaming emits ordered assistant content', () => {
     const appState = createInitialState('model', '/tmp')
+    appState.currentAssistantContent = [{ type: 'text', contentIndex: 0, text: 'pending text' }]
     const spinner = createSpinnerState()
-    const state = {
-      ...createStreamMachineState(appState, spinner),
-      streamingText: 'pending text',
-      pendingText: 'pending text',
-    }
+    const state = createStreamMachineState(appState, spinner)
     const flushed = flushStreaming(state)
     expect(flushed.lines.length).toBeGreaterThan(0)
-    expect(flushed.state.streamingText).toBe('')
+    expect(flushed.state.appState.currentAssistantContent).toEqual([])
   })
 
   test('streams parallel tool calls independently before execution', () => {
@@ -760,9 +875,10 @@ describe('term stream machine', () => {
       },
     }, { termRows: 24 }).state
 
-    expect(state.appState.liveToolCalls.size).toBe(2)
-    expect(state.appState.liveToolCalls.get('call-read')?.args).toEqual({ path: 'src/a.rs' })
-    expect(state.appState.liveToolCalls.get('call-edit')?.name).toBe('edit')
+    const calls = assistantToolCalls(state.appState.currentAssistantContent)
+    expect(calls).toHaveLength(2)
+    expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-read')?.args).toEqual({ path: 'src/a.rs' })
+    expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-edit')?.name).toBe('edit')
 
     state = reduceRunEvent(state, {
       kind: 'assistant_completed',
@@ -773,10 +889,13 @@ describe('term stream machine', () => {
         ],
       },
     }, { termRows: 24 }).state
-    expect(state.appState.liveToolCalls.size).toBe(2)
-    expect(state.appState.liveToolCalls.get('call-read')?.argsComplete).toBe(true)
+    expect(assistantToolCalls(state.appState.currentAssistantContent)).toHaveLength(2)
+    expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-read')?.argsComplete).toBe(true)
     const assistantMessage = state.appState.messages[state.appState.messages.length - 1]
-    expect(assistantMessage?.toolCalls?.map(call => call.id)).toEqual(['call-read', 'call-edit'])
+    const callIds = assistantMessage?.content
+      ?.filter(block => block.type === 'tool_call')
+      .map(block => block.type === 'tool_call' ? block.toolCall.id : '')
+    expect(callIds).toEqual(['call-read', 'call-edit'])
 
     state = reduceRunEvent(state, {
       kind: 'tool_started',
@@ -787,8 +906,11 @@ describe('term stream machine', () => {
       },
     }, { termRows: 24 }).state
 
-    expect(state.appState.liveToolCalls.get('call-edit')?.startedAt).toBeNumber()
-    expect(state.appState.liveToolCalls.get('call-read')?.startedAt).toBeUndefined()
+    expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-edit')?.status).toBe('running')
+    expect(state.spinnerState.phase).toBe('executing')
+    expect(state.spinnerState.toolName).toBe('edit')
+    expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-edit')?.startedAt).toBeNumber()
+    expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-read')?.startedAt).toBeUndefined()
   })
 
   test('large streamed tool args stay as raw fragments and finalize once', () => {
@@ -815,7 +937,7 @@ describe('term stream machine', () => {
       }, { termRows: 24 }).state
     }
 
-    const streaming = state.appState.liveToolCalls.get('call-edit')
+    const streaming = findAssistantToolCall(state.appState.currentAssistantContent, 'call-edit')
     expect(streaming?.partialArgs?.length).toBe(raw.length)
     expect(streaming?.args.oldText).toBe(chunk)
 
@@ -830,9 +952,34 @@ describe('term stream machine', () => {
       },
     }, { termRows: 24 }).state
 
-    const finalized = state.appState.liveToolCalls.get('call-edit')
+    const finalized = findAssistantToolCall(state.appState.currentAssistantContent, 'call-edit')
     expect(finalized?.partialArgs).toBeUndefined()
     expect(finalized?.argsComplete).toBe(true)
+  })
+
+  test('last tool completion flushes the ordered assistant message once', () => {
+    const appState = createInitialState('model', '/tmp')
+    appState.currentAssistantContent = [
+      { type: 'thinking', contentIndex: 0, text: 'plan' },
+      {
+        type: 'tool_call',
+        contentIndex: 1,
+        toolCall: { id: 'call-1', name: 'read', args: {}, status: 'running' },
+      },
+      { type: 'text', contentIndex: 2, text: 'answer' },
+    ]
+    const state = createStreamMachineState(appState, createSpinnerState())
+
+    const finished = reduceRunEvent(state, {
+      kind: 'tool_finished',
+      payload: { tool_call_id: 'call-1', tool_name: 'read', content: 'ok', is_error: false },
+    }, { termRows: 24 })
+
+    const visible = finished.commitLines.map(line => line.text).join('\n')
+    expect(visible.indexOf('plan')).toBeLessThan(visible.indexOf('read'))
+    expect(visible.indexOf('read')).toBeLessThan(visible.indexOf('answer'))
+    expect(finished.state.appState.currentAssistantContent).toEqual([])
+    expect(flushStreaming(finished.state).lines).toHaveLength(0)
   })
 
   test('live cards preserve model order while tools finish out of order', () => {
@@ -856,8 +1003,8 @@ describe('term stream machine', () => {
       payload: { tool_call_id: 'call-edit', tool_name: 'edit', content: 'edited', is_error: false },
     }, { termRows: 24 }).state
 
-    expect([...state.appState.liveToolCalls.keys()]).toEqual(['call-read', 'call-edit'])
-    expect(state.appState.liveToolCalls.get('call-read')?.status).toBe('running')
-    expect(state.appState.liveToolCalls.get('call-edit')?.status).toBe('done')
+    expect(assistantToolCalls(state.appState.currentAssistantContent).map(call => call.id)).toEqual(['call-read', 'call-edit'])
+    expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-read')?.status).toBe('running')
+    expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-edit')?.status).toBe('done')
   })
 })

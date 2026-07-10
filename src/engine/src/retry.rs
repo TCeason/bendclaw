@@ -93,6 +93,11 @@ fn is_retryable_api_message(message: &str) -> bool {
         || lower.contains("timed out")
         || lower.contains("internal server error")
         || lower.contains("server error")
+        // OpenAI-compatible APIs commonly return the structured error type
+        // `server_error` with an empty human-readable message. Preserve the raw
+        // body for diagnostics, but still recognize the machine-readable type
+        // as transient.
+        || lower.contains("server_error")
         || lower.contains("bad gateway")
         || lower.contains("service unavailable")
         || lower.contains("gateway timeout")

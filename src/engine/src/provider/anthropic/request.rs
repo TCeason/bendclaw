@@ -296,11 +296,19 @@ pub fn content_to_anthropic(content: &[Content]) -> Vec<serde_json::Value> {
             }
             Content::Thinking {
                 thinking,
-                signature,
-            } => serde_json::json!({
-                "type": "thinking",
-                "thinking": thinking,
-                "signature": signature.as_deref().unwrap_or(""),
+                metadata: Some(ThinkingMetadata::Anthropic { signature }),
+            } if !signature.is_empty() => {
+                serde_json::json!({
+                    "type": "thinking",
+                    "thinking": thinking,
+                    "signature": signature,
+                })
+            }
+            // Like pi's transformMessages, unsigned or foreign thinking is
+            // visible context but not replayable provider state.
+            Content::Thinking { thinking, .. } => serde_json::json!({
+                "type": "text",
+                "text": thinking,
             }),
             Content::ToolCall {
                 id,

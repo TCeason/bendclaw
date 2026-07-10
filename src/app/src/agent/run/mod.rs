@@ -6,6 +6,7 @@ pub mod run;
 pub mod runtime;
 
 pub use control::RunControl;
+pub use event::AssistantContentType;
 pub use event::RunEvent;
 pub use event::RunEventContext;
 pub use event::RunEventPayload;

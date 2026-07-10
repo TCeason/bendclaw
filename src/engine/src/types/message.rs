@@ -45,6 +45,36 @@ pub enum ImageSource {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ThinkingMetadata {
+    Anthropic { signature: String },
+    OpenAiCompletions { field: ReasoningField },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningField {
+    ReasoningContent,
+    Reasoning,
+    ReasoningText,
+}
+
+impl ThinkingMetadata {
+    pub fn supports_api(&self, api: crate::provider::ApiProtocol) -> bool {
+        matches!(
+            (self, api),
+            (
+                Self::Anthropic { .. },
+                crate::provider::ApiProtocol::AnthropicMessages
+            ) | (
+                Self::OpenAiCompletions { .. },
+                crate::provider::ApiProtocol::OpenAiCompletions
+            )
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Content {
     #[serde(rename = "text")]
@@ -59,7 +89,7 @@ pub enum Content {
     Thinking {
         thinking: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        signature: Option<String>,
+        metadata: Option<ThinkingMetadata>,
     },
     #[serde(rename = "toolCall")]
     ToolCall {

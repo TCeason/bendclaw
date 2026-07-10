@@ -132,7 +132,7 @@ fn serialize_messages_includes_thinking() {
         content: vec![
             Content::Thinking {
                 thinking: "Let me analyze this".to_string(),
-                signature: None,
+                metadata: None,
             },
             Content::Text {
                 text: "Here's my answer".to_string(),

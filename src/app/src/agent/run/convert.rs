@@ -1,7 +1,6 @@
 //! Message conversion — between engine AgentMessages and TranscriptItems.
 
 use crate::types::AssistantBlock;
-use crate::types::ToolCallRecord;
 use crate::types::TranscriptImageSource;
 use crate::types::TranscriptItem;
 use crate::types::TranscriptUserContent;
@@ -47,51 +46,15 @@ pub fn transcript_from_agent_message(message: &evot_engine::AgentMessage) -> Tra
             timestamp,
             error_message,
             ..
-        }) => {
-            let mut text = String::new();
-            let mut thinking = None;
-            let mut tool_calls = Vec::new();
-
-            for block in content {
-                match block {
-                    evot_engine::Content::Text { text: chunk } => {
-                        if !text.is_empty() {
-                            text.push('\n');
-                        }
-                        text.push_str(chunk);
-                    }
-                    evot_engine::Content::Thinking {
-                        thinking: chunk, ..
-                    } => {
-                        thinking = Some(chunk.clone());
-                    }
-                    evot_engine::Content::ToolCall {
-                        id,
-                        name,
-                        arguments,
-                    } => {
-                        tool_calls.push(ToolCallRecord {
-                            id: id.clone(),
-                            name: name.clone(),
-                            input: scrub_tool_args(name, arguments),
-                        });
-                    }
-                    _ => {}
-                }
-            }
-
-            TranscriptItem::Assistant {
-                text,
-                thinking,
-                tool_calls,
-                stop_reason: stop_reason.to_string(),
-                usage: usage_summary_from_engine(usage),
-                model: model.clone(),
-                provider: provider.clone(),
-                timestamp: *timestamp,
-                error_message: error_message.clone(),
-            }
-        }
+        }) => TranscriptItem::Assistant {
+            content: assistant_blocks_from_content(content),
+            stop_reason: stop_reason.to_string(),
+            usage: usage_summary_from_engine(usage),
+            model: model.clone(),
+            provider: provider.clone(),
+            timestamp: *timestamp,
+            error_message: error_message.clone(),
+        },
         evot_engine::AgentMessage::Llm(evot_engine::Message::ToolResult {
             tool_call_id,
             tool_name,
@@ -158,46 +121,23 @@ pub fn agent_message_from_transcript(item: &TranscriptItem) -> evot_engine::Agen
             })
         }
         TranscriptItem::Assistant {
-            text,
-            thinking,
-            tool_calls,
+            content,
             stop_reason,
             usage,
             model,
             provider,
             timestamp,
             error_message,
-        } => {
-            let mut content = Vec::new();
-
-            if let Some(thinking) = thinking {
-                content.push(evot_engine::Content::Thinking {
-                    thinking: thinking.clone(),
-                    signature: None,
-                });
-            }
-            if !text.is_empty() {
-                content.push(evot_engine::Content::Text { text: text.clone() });
-            }
-            for tool_call in tool_calls {
-                content.push(evot_engine::Content::ToolCall {
-                    id: tool_call.id.clone(),
-                    name: tool_call.name.clone(),
-                    arguments: tool_call.input.clone(),
-                });
-            }
-
-            evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant {
-                content,
-                stop_reason: parse_stop_reason(stop_reason),
-                model: model.clone(),
-                provider: provider.clone(),
-                usage: engine_usage_from_summary(usage),
-                timestamp: *timestamp,
-                error_message: error_message.clone(),
-                response_id: None,
-            })
-        }
+        } => evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant {
+            content: engine_content_from_assistant_blocks(content),
+            stop_reason: parse_stop_reason(stop_reason),
+            model: model.clone(),
+            provider: provider.clone(),
+            usage: engine_usage_from_summary(usage),
+            timestamp: *timestamp,
+            error_message: error_message.clone(),
+            response_id: None,
+        }),
         TranscriptItem::ToolResult {
             tool_call_id,
             tool_name,
@@ -251,9 +191,12 @@ pub fn assistant_blocks_from_content(content: &[evot_engine::Content]) -> Vec<As
             evot_engine::Content::Text { text } => {
                 Some(AssistantBlock::Text { text: text.clone() })
             }
-            evot_engine::Content::Thinking { thinking, .. } => Some(AssistantBlock::Thinking {
-                text: thinking.clone(),
-            }),
+            evot_engine::Content::Thinking { thinking, metadata } => {
+                Some(AssistantBlock::Thinking {
+                    text: thinking.clone(),
+                    metadata: metadata.clone(),
+                })
+            }
             evot_engine::Content::ToolCall {
                 id,
                 name,
@@ -264,6 +207,24 @@ pub fn assistant_blocks_from_content(content: &[evot_engine::Content]) -> Vec<As
                 input: scrub_tool_args(name, arguments),
             }),
             _ => None,
+        })
+        .collect()
+}
+
+fn engine_content_from_assistant_blocks(blocks: &[AssistantBlock]) -> Vec<evot_engine::Content> {
+    blocks
+        .iter()
+        .map(|block| match block {
+            AssistantBlock::Text { text } => evot_engine::Content::Text { text: text.clone() },
+            AssistantBlock::Thinking { text, metadata } => evot_engine::Content::Thinking {
+                thinking: text.clone(),
+                metadata: metadata.clone(),
+            },
+            AssistantBlock::ToolCall { id, name, input } => evot_engine::Content::ToolCall {
+                id: id.clone(),
+                name: name.clone(),
+                arguments: input.clone(),
+            },
         })
         .collect()
 }
@@ -370,35 +331,8 @@ pub fn transcript_from_assistant_completed_with_usage(
     timestamp: u64,
     error_message: Option<String>,
 ) -> TranscriptItem {
-    let mut text = String::new();
-    let mut thinking = None;
-    let mut tool_calls = Vec::new();
-
-    for block in content {
-        match block {
-            AssistantBlock::Text { text: t } => {
-                if !text.is_empty() {
-                    text.push('\n');
-                }
-                text.push_str(t);
-            }
-            AssistantBlock::Thinking { text: t } => {
-                thinking = Some(t.clone());
-            }
-            AssistantBlock::ToolCall { id, name, input } => {
-                tool_calls.push(ToolCallRecord {
-                    id: id.clone(),
-                    name: name.clone(),
-                    input: scrub_tool_args(name, input),
-                });
-            }
-        }
-    }
-
     TranscriptItem::Assistant {
-        text,
-        thinking,
-        tool_calls,
+        content: content.to_vec(),
         stop_reason: stop_reason.to_string(),
         usage,
         model,

@@ -1,5 +1,26 @@
 //! SSE event builders for OpenAI streaming format.
 
+pub fn combined_text_and_tool_chunk(text: &str, id: &str, name: &str) -> String {
+    format!(
+        "data: {}",
+        serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "content": text,
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": id,
+                        "type": "function",
+                        "function": {"name": name}
+                    }]
+                },
+                "finish_reason": null
+            }]
+        })
+    )
+}
+
 /// A text content delta chunk.
 pub fn text_chunk(text: &str, finish_reason: Option<&str>) -> String {
     format!(
@@ -9,6 +30,33 @@ pub fn text_chunk(text: &str, finish_reason: Option<&str>) -> String {
                 "index": 0,
                 "delta": {"content": text},
                 "finish_reason": finish_reason
+            }]
+        })
+    )
+}
+
+pub fn reasoning_chunk(
+    reasoning_content: Option<&str>,
+    reasoning: Option<&str>,
+    reasoning_text: Option<&str>,
+) -> String {
+    let mut delta = serde_json::Map::new();
+    if let Some(value) = reasoning_content {
+        delta.insert("reasoning_content".into(), serde_json::json!(value));
+    }
+    if let Some(value) = reasoning {
+        delta.insert("reasoning".into(), serde_json::json!(value));
+    }
+    if let Some(value) = reasoning_text {
+        delta.insert("reasoning_text".into(), serde_json::json!(value));
+    }
+    format!(
+        "data: {}",
+        serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": delta,
+                "finish_reason": null
             }]
         })
     )

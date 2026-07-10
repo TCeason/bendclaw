@@ -19,16 +19,22 @@ pub enum ToolCallStreamPhase {
     End,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssistantContentType {
+    Text,
+    Thinking,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RunEventPayload {
     RunStarted {},
     TurnStarted {},
     AssistantDelta {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        delta: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        thinking_delta: Option<String>,
+        content_index: usize,
+        content_type: AssistantContentType,
+        delta: String,
     },
     AssistantToolCall {
         content_index: usize,

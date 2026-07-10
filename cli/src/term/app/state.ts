@@ -2,7 +2,7 @@
  * AppState — top-level UI state and factory.
  */
 
-import type { UIMessage, UIToolCall, RunStats, VerboseEvent, AskUserRequest } from './types.js'
+import type { UIMessage, UIAssistantBlock, RunStats, VerboseEvent, AskUserRequest } from './types.js'
 
 
 // ---------------------------------------------------------------------------
@@ -16,10 +16,8 @@ export interface AppState {
   model: string
   cwd: string
   error: string | null
-  currentStreamText: string
-  currentThinkingText: string
-  /** Live tool cards for the current assistant tool batch, keyed by tool_call_id. */
-  liveToolCalls: Map<string, UIToolCall>
+  /** Ordered blocks for the current partial assistant message. */
+  currentAssistantContent: UIAssistantBlock[]
   /** Stats accumulated during the current run */
   currentRunStats: RunStats
   /** Start time of the current run */
@@ -72,9 +70,7 @@ export function createInitialState(model: string, cwd: string): AppState {
     model,
     cwd,
     error: null,
-    currentStreamText: '',
-    currentThinkingText: '',
-    liveToolCalls: new Map(),
+    currentAssistantContent: [],
     currentRunStats: emptyRunStats(),
     runStartTime: 0,
     verboseEvents: [],

@@ -1,6 +1,53 @@
 use evot::agent::*;
 
 #[test]
+fn transcript_round_trip_preserves_ordered_assistant_blocks_and_signature() {
+    let message = evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant {
+        content: vec![
+            evot_engine::Content::Thinking {
+                thinking: "plan".into(),
+                metadata: Some(evot_engine::ThinkingMetadata::OpenAiCompletions {
+                    field: evot_engine::ReasoningField::Reasoning,
+                }),
+            },
+            evot_engine::Content::ToolCall {
+                id: "call-1".into(),
+                name: "read".into(),
+                arguments: serde_json::json!({"path": "a"}),
+            },
+            evot_engine::Content::Text {
+                text: "done".into(),
+            },
+        ],
+        stop_reason: evot_engine::StopReason::ToolUse,
+        model: "model".into(),
+        provider: "provider".into(),
+        usage: evot_engine::Usage::default(),
+        timestamp: 1,
+        error_message: None,
+        response_id: None,
+    });
+
+    let transcript = evot::agent::run::convert::transcript_from_agent_message(&message);
+    let restored = evot::agent::run::convert::agent_message_from_transcript(&transcript);
+
+    assert!(matches!(
+        restored,
+        evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant { content, .. })
+            if matches!(&content[..], [
+                evot_engine::Content::Thinking { thinking, metadata },
+                evot_engine::Content::ToolCall { id, .. },
+                evot_engine::Content::Text { text },
+            ] if thinking == "plan"
+                && matches!(metadata, Some(evot_engine::ThinkingMetadata::OpenAiCompletions {
+                    field: evot_engine::ReasoningField::Reasoning,
+                }))
+                && id == "call-1"
+                && text == "done")
+    ));
+}
+
+#[test]
 fn run_event_round_trip_run_started() {
     let event = RunEvent::new(
         "run-1".into(),
@@ -36,26 +83,29 @@ fn run_event_round_trip_assistant_delta_text_only() {
         "sess-1".into(),
         1,
         RunEventPayload::AssistantDelta {
-            delta: Some("hello".into()),
-            thinking_delta: None,
+            content_index: 2,
+            content_type: AssistantContentType::Text,
+            delta: "hello".into(),
         },
     );
     let json = serde_json::to_string(&event).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     assert_eq!(parsed["kind"], "assistant_delta");
-    // skip_serializing_if: thinking_delta should be absent
-    assert!(parsed["payload"].get("thinking_delta").is_none());
+    assert_eq!(parsed["payload"]["content_index"], 2);
+    assert_eq!(parsed["payload"]["content_type"], "text");
     assert_eq!(parsed["payload"]["delta"], "hello");
 
     let deserialized: RunEvent = serde_json::from_str(&json).unwrap();
     if let RunEventPayload::AssistantDelta {
+        content_index,
+        content_type,
         delta,
-        thinking_delta,
     } = &deserialized.payload
     {
-        assert_eq!(delta.as_deref(), Some("hello"));
-        assert!(thinking_delta.is_none());
+        assert_eq!(*content_index, 2);
+        assert!(matches!(content_type, AssistantContentType::Text));
+        assert_eq!(delta, "hello");
     } else {
         panic!("wrong variant");
     }
@@ -68,25 +118,28 @@ fn run_event_round_trip_assistant_delta_thinking_only() {
         "sess-1".into(),
         1,
         RunEventPayload::AssistantDelta {
-            delta: None,
-            thinking_delta: Some("hmm".into()),
+            content_index: 0,
+            content_type: AssistantContentType::Thinking,
+            delta: "hmm".into(),
         },
     );
     let json = serde_json::to_string(&event).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-    // delta should be absent, thinking_delta present
-    assert!(parsed["payload"].get("delta").is_none());
-    assert_eq!(parsed["payload"]["thinking_delta"], "hmm");
+    assert_eq!(parsed["payload"]["content_index"], 0);
+    assert_eq!(parsed["payload"]["content_type"], "thinking");
+    assert_eq!(parsed["payload"]["delta"], "hmm");
 
     let deserialized: RunEvent = serde_json::from_str(&json).unwrap();
     if let RunEventPayload::AssistantDelta {
+        content_index,
+        content_type,
         delta,
-        thinking_delta,
     } = &deserialized.payload
     {
-        assert!(delta.is_none());
-        assert_eq!(thinking_delta.as_deref(), Some("hmm"));
+        assert_eq!(*content_index, 0);
+        assert!(matches!(content_type, AssistantContentType::Thinking));
+        assert_eq!(delta, "hmm");
     } else {
         panic!("wrong variant");
     }
@@ -319,8 +372,9 @@ fn sse_map_assistant_delta() {
         "sess-1".into(),
         1,
         RunEventPayload::AssistantDelta {
-            delta: Some("hi".into()),
-            thinking_delta: None,
+            content_index: 0,
+            content_type: AssistantContentType::Text,
+            delta: "hi".into(),
         },
     );
     let payloads = map_run_event_json(&event);
@@ -468,8 +522,9 @@ fn stream_json_output_preserves_shape() {
         "sess-1".into(),
         1,
         RunEventPayload::AssistantDelta {
-            delta: Some("hello".into()),
-            thinking_delta: None,
+            content_index: 0,
+            content_type: AssistantContentType::Text,
+            delta: "hello".into(),
         },
     );
     let json = serde_json::to_string(&event).unwrap();

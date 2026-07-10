@@ -414,9 +414,7 @@ fn aggregator_from_items_batch_ingest() {
         })
         .to_item(),
         TranscriptItem::Assistant {
-            text: "hi".into(),
-            thinking: None,
-            tool_calls: vec![],
+            content: vec![AssistantBlock::Text { text: "hi".into() }],
             stop_reason: "end_turn".into(),
             usage: UsageSummary::default(),
             model: String::new(),

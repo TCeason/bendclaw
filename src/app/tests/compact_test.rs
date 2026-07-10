@@ -5,6 +5,7 @@ use evot::compact::orchestrator::CompactSettings;
 use evot::compact::orchestrator::ManualCompactRequest;
 use evot::conf::StorageConfig;
 use evot::storage::open_storage;
+use evot::types::AssistantBlock;
 use evot::types::CompactReason;
 use evot::types::TranscriptItem;
 use evot::types::UsageSummary;
@@ -153,9 +154,7 @@ fn user(text: &str) -> TranscriptItem {
 
 fn assistant(text: &str) -> TranscriptItem {
     TranscriptItem::Assistant {
-        text: text.into(),
-        thinking: None,
-        tool_calls: vec![],
+        content: vec![AssistantBlock::Text { text: text.into() }],
         stop_reason: "stop".into(),
         usage: UsageSummary::default(),
         model: String::new(),

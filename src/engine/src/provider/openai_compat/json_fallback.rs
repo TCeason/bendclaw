@@ -55,12 +55,25 @@ fn parse_success_response(
         let msg = &choice.message;
 
         // Reasoning / thinking content
-        let reasoning = msg
-            .reasoning_content
-            .as_deref()
-            .or(msg.reasoning.as_deref());
-        if let Some(thinking) = reasoning {
-            emitter.emit_thinking(thinking, None);
+        let reasoning = [
+            (
+                ReasoningField::ReasoningContent,
+                msg.reasoning_content.as_deref(),
+            ),
+            (ReasoningField::Reasoning, msg.reasoning.as_deref()),
+            (ReasoningField::ReasoningText, msg.reasoning_text.as_deref()),
+        ]
+        .into_iter()
+        .find_map(|(field, value)| {
+            value
+                .filter(|value| !value.is_empty())
+                .map(|value| (field, value))
+        });
+        if let Some((field, thinking)) = reasoning {
+            emitter.emit_thinking(
+                thinking,
+                Some(ThinkingMetadata::OpenAiCompletions { field }),
+            );
         }
 
         // Text content

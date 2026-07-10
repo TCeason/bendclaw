@@ -274,7 +274,7 @@ async function printSetupGuide(forked: ForkedAgent, skillName: string): Promise<
     const stream = await forked.query(prompt)
     let text = ''
     for await (const event of stream) {
-      if (event.kind === 'assistant_delta' && event.payload?.delta) {
+      if (event.kind === 'assistant_delta' && event.payload?.content_type === 'text' && event.payload?.delta) {
         text += event.payload.delta as string
       }
     }

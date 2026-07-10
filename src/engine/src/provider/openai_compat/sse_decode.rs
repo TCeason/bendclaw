@@ -204,12 +204,39 @@ fn process_sse_chunk(
     for choice in &chunk.choices {
         let delta = &choice.delta;
 
-        // Handle reasoning/thinking content
-        let reasoning = match compat.thinking_format {
-            ThinkingFormat::Xai => delta.reasoning.as_deref(),
-            _ => delta.reasoning_content.as_deref(),
+        // Compatible endpoints may expose the same reasoning delta under
+        // multiple aliases. Prefer the provider's configured replay field, then
+        // fall back across aliases for proxies that don't honor that setting.
+        let reasoning_fields = match compat.thinking_format {
+            ThinkingFormat::Xai => [
+                (ReasoningField::Reasoning, delta.reasoning.as_deref()),
+                (
+                    ReasoningField::ReasoningContent,
+                    delta.reasoning_content.as_deref(),
+                ),
+                (
+                    ReasoningField::ReasoningText,
+                    delta.reasoning_text.as_deref(),
+                ),
+            ],
+            _ => [
+                (
+                    ReasoningField::ReasoningContent,
+                    delta.reasoning_content.as_deref(),
+                ),
+                (ReasoningField::Reasoning, delta.reasoning.as_deref()),
+                (
+                    ReasoningField::ReasoningText,
+                    delta.reasoning_text.as_deref(),
+                ),
+            ],
         };
-        if let Some(reasoning_text) = reasoning {
+        let reasoning = reasoning_fields.into_iter().find_map(|(field, value)| {
+            value
+                .filter(|value| !value.is_empty())
+                .map(|value| (field, value))
+        });
+        if let Some((reasoning_field, reasoning_text)) = reasoning {
             let thinking_idx = content
                 .iter()
                 .position(|c| matches!(c, Content::Thinking { .. }));
@@ -218,7 +245,9 @@ fn process_sse_chunk(
                 None => {
                     content.push(Content::Thinking {
                         thinking: String::new(),
-                        signature: None,
+                        metadata: Some(ThinkingMetadata::OpenAiCompletions {
+                            field: reasoning_field,
+                        }),
                     });
                     content.len() - 1
                 }
@@ -263,9 +292,24 @@ fn process_sse_chunk(
                     tool_call_buffers.push(ToolCallBuffer::default());
                 }
                 let buf = &mut tool_call_buffers[tc_index];
-                let content_index = *buf
-                    .content_index
-                    .get_or_insert_with(|| content.len() + tc_index);
+                let content_index = match buf.content_index {
+                    Some(index) => index,
+                    None => {
+                        // Reserve the provider block position immediately. Text
+                        // or reasoning may arrive after the tool-call start;
+                        // waiting until finalize would move the tool to the end
+                        // and make streamed content_index disagree with the
+                        // completed Message order.
+                        let index = content.len();
+                        content.push(Content::ToolCall {
+                            id: String::new(),
+                            name: String::new(),
+                            arguments: serde_json::Value::Object(Default::default()),
+                        });
+                        buf.content_index = Some(index);
+                        index
+                    }
+                };
                 if let Some(id) = &tc.id {
                     buf.id = id.clone();
                 }
@@ -325,12 +369,24 @@ fn finalize_tool_calls(
     for buf in tool_call_buffers.iter() {
         let args = crate::provider::json_repair::try_repair_json(&buf.arguments)
             .unwrap_or(serde_json::Value::Object(Default::default()));
-        let content_index = content.len();
-        content.push(Content::ToolCall {
+        let content_index = match buf.content_index {
+            Some(index) => index,
+            None => content.len(),
+        };
+        let tool_call = Content::ToolCall {
             id: buf.id.clone(),
             name: buf.name.clone(),
             arguments: args.clone(),
-        });
+        };
+        if content_index < content.len() {
+            content[content_index] = tool_call;
+        } else {
+            // Buffer indices are allocated from the next free content slot. If
+            // a malformed stream leaves a gap, append rather than inventing
+            // placeholder blocks; emitted and final indices still agree for all
+            // well-formed streams.
+            content.push(tool_call);
+        }
         let _ = tx.send(StreamEvent::ToolCallEnd {
             content_index,
             id: buf.id.clone(),

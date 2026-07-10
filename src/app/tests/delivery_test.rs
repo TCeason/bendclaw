@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use evot::agent::AssistantContentType;
 use evot::agent::Run;
 use evot::agent::RunEvent;
 use evot::agent::RunEventPayload;
@@ -146,8 +147,9 @@ fn event(payload: RunEventPayload) -> RunEvent {
 
 fn delta(text: &str) -> RunEvent {
     event(RunEventPayload::AssistantDelta {
-        delta: Some(text.to_string()),
-        thinking_delta: None,
+        content_index: 0,
+        content_type: AssistantContentType::Text,
+        delta: text.to_string(),
     })
 }
 

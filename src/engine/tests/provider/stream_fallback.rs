@@ -76,7 +76,12 @@ fn fallback_emitter_thinking() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
 
     let mut emitter = FallbackEmitter::new(tx);
-    emitter.emit_thinking("Let me think...", Some("sig123".into()));
+    emitter.emit_thinking(
+        "Let me think...",
+        Some(ThinkingMetadata::Anthropic {
+            signature: "sig123".into(),
+        }),
+    );
     emitter.emit_text("The answer is 42.");
     let msg = emitter.finalize("model", "provider");
 
@@ -84,7 +89,7 @@ fn fallback_emitter_thinking() {
         Message::Assistant { content, .. } => {
             assert_eq!(content.len(), 2);
             assert!(
-                matches!(&content[0], Content::Thinking { thinking, signature } if thinking == "Let me think..." && signature.as_deref() == Some("sig123"))
+                matches!(&content[0], Content::Thinking { thinking, metadata: Some(ThinkingMetadata::Anthropic { signature }) } if thinking == "Let me think..." && signature == "sig123")
             );
             assert!(matches!(&content[1], Content::Text { text } if text == "The answer is 42."));
         }

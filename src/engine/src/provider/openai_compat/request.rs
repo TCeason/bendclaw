@@ -47,7 +47,9 @@ pub fn build_request_body(config: &StreamConfig, compat: &OpenAiCompat) -> serde
             Message::Assistant { content, .. } => {
                 let mut parts: Vec<serde_json::Value> = Vec::new();
                 let mut tool_calls: Vec<serde_json::Value> = Vec::new();
+                let mut reasoning_content = String::new();
                 let mut reasoning = String::new();
+                let mut reasoning_text = String::new();
 
                 for c in content {
                     match c {
@@ -66,9 +68,15 @@ pub fn build_request_body(config: &StreamConfig, compat: &OpenAiCompat) -> serde
                                 "function": {"name": name, "arguments": arguments.to_string()},
                             }));
                         }
-                        Content::Thinking { thinking, .. } => {
-                            reasoning.push_str(thinking);
-                        }
+                        Content::Thinking { thinking, metadata } => match metadata {
+                            Some(ThinkingMetadata::OpenAiCompletions {
+                                field: ReasoningField::Reasoning,
+                            }) => reasoning.push_str(thinking),
+                            Some(ThinkingMetadata::OpenAiCompletions {
+                                field: ReasoningField::ReasoningText,
+                            }) => reasoning_text.push_str(thinking),
+                            _ => reasoning_content.push_str(thinking),
+                        },
                         _ => {}
                     }
                 }
@@ -77,7 +85,12 @@ pub fn build_request_body(config: &StreamConfig, compat: &OpenAiCompat) -> serde
                 // nor reasoning_content.
                 // Some providers (e.g. mimo-v2.5-pro) reject assistant messages without
                 // at least one of content, reasoning_content, or tool_calls.
-                if parts.is_empty() && tool_calls.is_empty() && reasoning.is_empty() {
+                if parts.is_empty()
+                    && tool_calls.is_empty()
+                    && reasoning_content.is_empty()
+                    && reasoning.is_empty()
+                    && reasoning_text.is_empty()
+                {
                     continue;
                 }
 
@@ -88,7 +101,13 @@ pub fn build_request_body(config: &StreamConfig, compat: &OpenAiCompat) -> serde
                 if !tool_calls.is_empty() {
                     msg_obj["tool_calls"] = serde_json::json!(tool_calls);
                 }
-                apply_assistant_compat(&mut msg_obj, compat, &reasoning);
+                apply_assistant_compat(
+                    &mut msg_obj,
+                    compat,
+                    &reasoning_content,
+                    &reasoning,
+                    &reasoning_text,
+                );
                 messages.push(msg_obj);
             }
             Message::ToolResult {
@@ -191,9 +210,21 @@ pub fn build_request_body(config: &StreamConfig, compat: &OpenAiCompat) -> serde
     body
 }
 
-fn apply_assistant_compat(msg_obj: &mut serde_json::Value, compat: &OpenAiCompat, reasoning: &str) {
-    if !reasoning.is_empty() || compat.has_cap(CompatCaps::REASONING_CONTENT_REQUIRED) {
-        msg_obj["reasoning_content"] = serde_json::json!(reasoning);
+fn apply_assistant_compat(
+    msg_obj: &mut serde_json::Value,
+    compat: &OpenAiCompat,
+    reasoning_content: &str,
+    reasoning: &str,
+    reasoning_text: &str,
+) {
+    if !reasoning_content.is_empty() || compat.has_cap(CompatCaps::REASONING_CONTENT_REQUIRED) {
+        msg_obj["reasoning_content"] = serde_json::json!(reasoning_content);
+    }
+    if !reasoning.is_empty() {
+        msg_obj["reasoning"] = serde_json::json!(reasoning);
+    }
+    if !reasoning_text.is_empty() {
+        msg_obj["reasoning_text"] = serde_json::json!(reasoning_text);
     }
 }
 

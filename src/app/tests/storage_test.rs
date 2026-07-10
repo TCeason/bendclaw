@@ -37,9 +37,7 @@ async fn open_storage_returns_working_backend() -> TestResult {
             2,
             0,
             TranscriptItem::Assistant {
-                text: "hi".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text { text: "hi".into() }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -63,21 +61,19 @@ async fn open_storage_returns_working_backend() -> TestResult {
 }
 
 #[tokio::test]
-async fn list_entries_skips_corrupt_line_and_loads_legacy_assistant() -> TestResult {
+async fn list_entries_skips_corrupt_line() -> TestResult {
     // A single unparseable transcript line must not make the whole session
-    // unloadable, and legacy assistant lines (missing model/provider/
-    // timestamp/usage) must still load with defaults. This is the path that
-    // surfaced `json error: missing field \`model\`` to channel callers.
+    // unloadable. Canonical assistant lines around it still load normally.
     let root = TempDir::new()?;
     let session_dir = root.path().join("sessions").join("sess-legacy");
     std::fs::create_dir_all(&session_dir)?;
 
-    let legacy_assistant = r#"{"session_id":"sess-legacy","run_id":null,"seq":1,"turn":0,"item":{"type":"assistant","text":"hi","tool_calls":[],"stop_reason":"stop"},"created_at":"2026-04-23T07:10:17Z"}"#;
+    let assistant = r#"{"session_id":"sess-legacy","run_id":null,"seq":1,"turn":0,"item":{"type":"assistant","content":[{"type":"text","text":"hi"}],"stop_reason":"stop","usage":{"input":0,"output":0,"cache_read":0,"cache_write":0},"model":"model","provider":"provider","timestamp":1},"created_at":"2026-04-23T07:10:17Z"}"#;
     let corrupt = r#"{ this is not valid json "#;
     let user_line = r#"{"session_id":"sess-legacy","run_id":null,"seq":2,"turn":0,"item":{"type":"user","text":"hello"},"created_at":"2026-04-23T07:10:18Z"}"#;
     std::fs::write(
         session_dir.join("transcript.jsonl"),
-        format!("{legacy_assistant}\n{corrupt}\n{user_line}\n"),
+        format!("{assistant}\n{corrupt}\n{user_line}\n"),
     )?;
 
     let storage = open_storage(&StorageConfig::fs(root.path().to_path_buf()))?;
@@ -90,8 +86,7 @@ async fn list_entries_skips_corrupt_line_and_loads_legacy_assistant() -> TestRes
         })
         .await?;
 
-    // Corrupt line skipped; both valid lines (including the legacy assistant)
-    // loaded.
+    // Corrupt line skipped; both canonical lines loaded.
     assert_eq!(loaded.len(), 2);
     assert!(matches!(loaded[0].item, TranscriptItem::Assistant { .. }));
     assert!(matches!(loaded[1].item, TranscriptItem::User { .. }));

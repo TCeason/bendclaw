@@ -228,7 +228,7 @@ fn process_sse_event(
                 AnthropicContentBlock::Thinking { .. } => {
                     state.content.push(Content::Thinking {
                         thinking: String::new(),
-                        signature: None,
+                        metadata: None,
                     });
                 }
                 AnthropicContentBlock::ToolUse { id, name, .. } => {
@@ -305,11 +305,11 @@ fn process_sse_event(
                 }
                 AnthropicDelta::SignatureDelta { signature } => {
                     if let Some(Content::Thinking {
-                        signature: ref mut s,
+                        metadata: ref mut value,
                         ..
                     }) = state.content.get_mut(idx)
                     {
-                        *s = Some(signature);
+                        *value = Some(ThinkingMetadata::Anthropic { signature });
                     }
                 }
                 // Unknown delta type: ignore for forward compatibility.

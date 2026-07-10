@@ -175,6 +175,12 @@ fn overloaded_api_message_is_retryable() {
 }
 
 #[test]
+fn structured_server_error_with_empty_message_is_retryable() {
+    let err = ProviderError::Api(r#"{"error": {"message": "", "type": "server_error"}}"#.into());
+    assert!(evotengine::retry::should_retry(&err));
+}
+
+#[test]
 fn try_again_later_is_retryable() {
     let err = ProviderError::Api("The model is busy, please try again later.".into());
     assert!(evotengine::retry::should_retry(&err));

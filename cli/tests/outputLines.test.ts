@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach } from 'bun:test'
 import {
   buildUserMessage,
   buildAssistantLines,
+  buildThinkingLines,
   buildToolResult,
   buildToolProgress,
   buildToolCall,
@@ -62,6 +63,18 @@ describe('buildAssistantLines', () => {
   test('returns empty for blank text', () => {
     expect(buildAssistantLines('')).toHaveLength(0)
     expect(buildAssistantLines('   ')).toHaveLength(0)
+  })
+})
+
+describe('buildThinkingLines', () => {
+  test('renders thinking as markdown like pi assistant content', () => {
+    const lines = buildThinkingLines('**Planning**\n\nnext')
+    expect(lines).toHaveLength(2)
+    expect(lines.every(line => line.kind === 'thinking')).toBe(true)
+    expect(lines.every(line => line.thinkingStyle)).toBe(true)
+    expect(lines.map(line => line.text).join('\n')).not.toContain('**')
+    expect(lines.map(line => line.text).join('\n')).toContain('Planning')
+    expect(lines.map(line => line.text).join('\n')).toContain('next')
   })
 })
 

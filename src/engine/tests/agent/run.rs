@@ -975,7 +975,7 @@ async fn test_message_update_events_emitted_during_streaming() {
         .iter()
         .filter_map(|e| match e {
             AgentEvent::MessageUpdate {
-                delta: StreamDelta::Text { delta },
+                delta: StreamDelta::Text { delta, .. },
                 ..
             } => Some(delta.clone()),
             _ => None,
@@ -2138,11 +2138,10 @@ async fn test_llm_call_start_carries_budget_and_window() {
 }
 
 #[tokio::test]
-async fn test_model_capability_preserves_tool_use_message_thinking() {
+async fn test_same_model_preserves_replayable_tool_use_thinking() {
     use evotengine::provider::ModelConfig;
 
-    let mut model_config = ModelConfig::anthropic("deepseek-reasoner", "deepseek-reasoner");
-    model_config.apply_inferred_capabilities();
+    let model_config = ModelConfig::anthropic("deepseek-reasoner", "deepseek-reasoner");
     let output = TestHarness::new()
         .responses(vec![MockResponse::Text("ok".into())])
         .model_config(model_config)
@@ -2152,7 +2151,9 @@ async fn test_model_capability_preserves_tool_use_message_thinking() {
                 content: vec![
                     Content::Thinking {
                         thinking: "old tool thinking".into(),
-                        signature: Some("old-sig".into()),
+                        metadata: Some(ThinkingMetadata::Anthropic {
+                            signature: "old-sig".into(),
+                        }),
                     },
                     Content::ToolCall {
                         id: "tc-old".into(),
@@ -2161,8 +2162,8 @@ async fn test_model_capability_preserves_tool_use_message_thinking() {
                     },
                 ],
                 stop_reason: StopReason::ToolUse,
-                model: "test".into(),
-                provider: "test".into(),
+                model: "deepseek-reasoner".into(),
+                provider: "anthropic".into(),
                 usage: Usage::default(),
                 timestamp: 0,
                 error_message: None,
@@ -2182,7 +2183,9 @@ async fn test_model_capability_preserves_tool_use_message_thinking() {
                 content: vec![
                     Content::Thinking {
                         thinking: "new tool thinking".into(),
-                        signature: Some("new-sig".into()),
+                        metadata: Some(ThinkingMetadata::Anthropic {
+                            signature: "new-sig".into(),
+                        }),
                     },
                     Content::ToolCall {
                         id: "tc-new".into(),
@@ -2191,8 +2194,8 @@ async fn test_model_capability_preserves_tool_use_message_thinking() {
                     },
                 ],
                 stop_reason: StopReason::ToolUse,
-                model: "test".into(),
-                provider: "test".into(),
+                model: "deepseek-reasoner".into(),
+                provider: "anthropic".into(),
                 usage: Usage::default(),
                 timestamp: 0,
                 error_message: None,

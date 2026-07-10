@@ -9,6 +9,7 @@ use std::sync::Arc;
 use evot::agent::session::Session;
 use evot::agent::session_locator::SessionLocator;
 use evot::storage::MemoryStorage;
+use evot::types::AssistantBlock;
 use evot::types::TranscriptItem;
 use evot::types::UsageSummary;
 
@@ -20,10 +21,10 @@ fn text_item(text: &str) -> TranscriptItem {
 
 fn assistant_item(text: &str) -> TranscriptItem {
     TranscriptItem::Assistant {
-        text: text.to_string(),
-        tool_calls: vec![],
+        content: vec![AssistantBlock::Text {
+            text: text.to_string(),
+        }],
         stop_reason: "stop".to_string(),
-        thinking: None,
         usage: UsageSummary::default(),
         model: String::new(),
         provider: String::new(),

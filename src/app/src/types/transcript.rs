@@ -35,7 +35,22 @@ pub enum AssistantBlock {
     },
     Thinking {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        metadata: Option<evot_engine::ThinkingMetadata>,
     },
+}
+
+impl AssistantBlock {
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            Self::Text { text } => Some(text),
+            _ => None,
+        }
+    }
+}
+
+pub fn assistant_text(content: &[AssistantBlock]) -> String {
+    content.iter().filter_map(AssistantBlock::text).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -120,18 +135,9 @@ pub enum TranscriptItem {
         content: Vec<TranscriptUserContent>,
     },
     Assistant {
-        text: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        thinking: Option<String>,
-        #[serde(default)]
-        tool_calls: Vec<ToolCallRecord>,
+        #[serde(alias = "content_blocks")]
+        content: Vec<AssistantBlock>,
         stop_reason: String,
-        // The fields below (usage/model/provider/timestamp) may be absent in
-        // transcripts written by older schema versions, which only persisted
-        // text/tool_calls/stop_reason. Default them rather than failing the
-        // whole session load — read_jsonl aborts the entire transcript on one
-        // unparseable line, and that error propagates all the way to channel
-        // callers (e.g. the feishu bot resuming a session).
         #[serde(default)]
         usage: UsageSummary,
         #[serde(default)]
@@ -311,9 +317,9 @@ pub struct ListTranscriptEntries {
 /// Short preview of a transcript item for `/history` output.
 pub fn entry_preview(item: &TranscriptItem) -> String {
     let text = match item {
-        TranscriptItem::User { text, .. } => text.as_str(),
-        TranscriptItem::Assistant { text, .. } => text.as_str(),
-        _ => "",
+        TranscriptItem::User { text, .. } => text.clone(),
+        TranscriptItem::Assistant { content, .. } => assistant_text(content),
+        _ => String::new(),
     };
     let normalized: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut chars = normalized.chars();

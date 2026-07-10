@@ -4,6 +4,8 @@ mod controller;
 mod dsl;
 #[path = "context/executor.rs"]
 mod executor;
+#[path = "context/history.rs"]
+mod history;
 #[path = "context/memory.rs"]
 mod memory;
 #[path = "context/planner.rs"]

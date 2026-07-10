@@ -2,6 +2,7 @@ import { describe, test, expect, beforeAll } from 'bun:test'
 import { buildOutputBlocks } from '../src/term/viewmodel/output.js'
 import { blocksToLines, styledLineToAnsi, line, colored, dim } from '../src/term/viewmodel/types.js'
 import { buildUserMessage, buildAssistantLines, type OutputLine } from '../src/render/output.js'
+import { assistantMessageToOutputLines } from '../src/render/assistant.js'
 import { colorizeUnifiedDiff } from '../src/render/diff.js'
 import stripAnsi from 'strip-ansi'
 import stringWidth from 'string-width'
@@ -61,6 +62,61 @@ describe('buildOutputBlocks', () => {
       lines.indexOf(contentLines[2]!) + 1
     ).filter(l => l === '')
     expect(emptyBetween.length).toBe(0)
+  })
+
+  test('thinking markdown receives the pi-style italic tint', () => {
+    const blocks = buildOutputBlocks([{
+      id: 'thinking-1',
+      kind: 'thinking',
+      text: '\x1b[1mPlanning\x1b[22m',
+      thinkingStyle: true,
+    }])
+    const rendered = blocksToLines(blocks).join('\n')
+    expect(rendered).toContain('\x1b[3m')
+    expect(stripAnsi(rendered)).toContain('Planning')
+  })
+
+  test('thinking block leads with a ✻ marker and indents continuations', () => {
+    const plain = renderPlain([{
+      id: 'thinking-1',
+      kind: 'thinking',
+      text: 'first line',
+      thinkingStyle: true,
+    }, {
+      id: 'thinking-2',
+      kind: 'thinking',
+      text: 'second line',
+      thinkingStyle: true,
+    }])
+    const lines = plain.split('\n').filter(l => l.length > 0)
+    expect(lines[0]).toBe('✻ first line')
+    expect(lines[1]).toBe('  second line')
+  })
+
+  test('thinking to text transition has the same blank-line boundary before commit', () => {
+    const output = assistantMessageToOutputLines([
+      { type: 'thinking', contentIndex: 0, text: 'Investigating config' },
+      { type: 'text', contentIndex: 1, text: 'Visible answer' },
+    ])
+    const plain = stripAnsi(blocksToLines(buildOutputBlocks(output)).join('\n'))
+
+    expect(plain).toContain('✻ Investigating config\n\n⏺ Visible answer')
+  })
+
+  test('ordered renderer preserves thinking tool text positions', () => {
+    const output = assistantMessageToOutputLines([
+      { type: 'thinking', contentIndex: 0, text: 'plan' },
+      {
+        type: 'tool_call',
+        contentIndex: 1,
+        toolCall: { id: 'call-1', name: 'read', args: { path: 'a' }, status: 'done' },
+      },
+      { type: 'text', contentIndex: 2, text: 'answer' },
+    ])
+    const plain = stripAnsi(blocksToLines(buildOutputBlocks(output)).join('\n'))
+
+    expect(plain.indexOf('✻ plan')).toBeLessThan(plain.indexOf('read'))
+    expect(plain.indexOf('read')).toBeLessThan(plain.indexOf('⏺ answer'))
   })
 
   test('tool card has marginTop=1', () => {

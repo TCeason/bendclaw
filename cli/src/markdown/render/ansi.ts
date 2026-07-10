@@ -910,17 +910,24 @@ const BLOCK_TYPES = new Set([
   'paragraph', 'code', 'heading', 'list', 'blockquote', 'hr', 'table',
 ])
 
-export function formatTokens(tokens: Token[]): string {
+export interface FormatTokensOptions {
+  blockSpacing?: 'normal' | 'compact'
+}
+
+export function formatTokens(tokens: Token[], options: FormatTokensOptions = {}): string {
   const theme = getTheme()
   let out = ''
   let prevWasBlock = false
 
   for (const token of tokens) {
+    if (options.blockSpacing === 'compact' && (token.type === 'space' || token.type === 'html')) {
+      continue
+    }
     const rendered = formatToken(token, 0, null, null, theme)
     if (!rendered) continue
     const isBlock = BLOCK_TYPES.has(token.type)
     // Insert blank line between consecutive block-level elements
-    if (isBlock && prevWasBlock) {
+    if (isBlock && prevWasBlock && options.blockSpacing !== 'compact') {
       out += EOL
     }
     out += rendered

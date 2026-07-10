@@ -1,6 +1,7 @@
 use evotengine::types::Content;
 use evotengine::types::Message;
 use evotengine::types::StopReason;
+use evotengine::types::ThinkingMetadata;
 use evotengine::types::Usage;
 use evotengine::ThinkingOnlyGuard;
 
@@ -20,7 +21,9 @@ fn assistant(content: Vec<Content>) -> Message {
 fn thinking_block() -> Content {
     Content::Thinking {
         thinking: "Let me analyze this deeply...".into(),
-        signature: Some("sig".into()),
+        metadata: Some(ThinkingMetadata::Anthropic {
+            signature: "sig".into(),
+        }),
     }
 }
 

@@ -20,17 +20,25 @@ import { formatTokens } from '../markdown/render/ansi.js'
 /**
  * Render markdown text to terminal-friendly ANSI output.
  */
-export function renderMarkdown(text: string): string {
+export interface MarkdownRenderOptions {
+  blockSpacing?: 'normal' | 'compact'
+}
+
+export function renderMarkdown(text: string, options: MarkdownRenderOptions = {}): string {
   if (!text || text.trim().length === 0) return text
 
   try {
     // Tabs → spaces (matches pi), then repair fence boundaries before lex.
     const lexText = prepareMarkdownFences(text.replace(/\t/g, '   '))
     const tokens = lexMarkdownTokens(lexText, text)
-    return formatTokens(tokens)
+    return formatTokens(tokens, options)
   } catch {
     return text
   }
+}
+
+export function renderThinkingMarkdown(text: string): string {
+  return renderMarkdown(text, { blockSpacing: 'compact' })
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +89,13 @@ export function renderMarkdownCached(text: string): string {
   }
 
   return result
+}
+
+export function renderThinkingMarkdownCached(text: string): string {
+  if (!text || text.trim().length === 0) return text
+  // Thinking uses compact block spacing and therefore cannot share the normal
+  // markdown cache entry for the same source string.
+  return renderMarkdown(text, { blockSpacing: 'compact' })
 }
 
 /** Clear the render cache (for tests). */

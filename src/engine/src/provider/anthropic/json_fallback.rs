@@ -77,7 +77,10 @@ fn parse_success_response(
                         .get("signature")
                         .and_then(|s| s.as_str())
                         .map(|s| s.to_string());
-                    emitter.emit_thinking(thinking, signature);
+                    emitter.emit_thinking(
+                        thinking,
+                        signature.map(|signature| ThinkingMetadata::Anthropic { signature }),
+                    );
                 }
                 "tool_use" => {
                     let id = block

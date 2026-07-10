@@ -317,7 +317,9 @@ impl Session {
 fn is_history_visible(item: &TranscriptItem) -> bool {
     match item {
         TranscriptItem::User { text, .. } => !text.trim().is_empty(),
-        TranscriptItem::Assistant { text, .. } => !text.trim().is_empty(),
+        TranscriptItem::Assistant { content, .. } => {
+            !crate::types::assistant_text(content).trim().is_empty()
+        }
         _ => false,
     }
 }

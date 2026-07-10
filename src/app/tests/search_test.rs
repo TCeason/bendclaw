@@ -1,5 +1,6 @@
 use evot::search::SessionSearcher;
 use evot::search::TextMatcher;
+use evot::types::AssistantBlock;
 use evot::types::SessionMeta;
 use evot::types::TranscriptEntry;
 use evot::types::TranscriptItem;
@@ -92,9 +93,9 @@ fn searcher_matches_transcript_user_text() {
 fn searcher_matches_transcript_assistant_text() {
     let session = make_session("s1", "untitled", "/tmp");
     let entries = vec![make_entry("s1", 1, TranscriptItem::Assistant {
-        text: "Here is the databend query syntax".to_string(),
-        thinking: None,
-        tool_calls: vec![],
+        content: vec![AssistantBlock::Text {
+            text: "Here is the databend query syntax".to_string(),
+        }],
         stop_reason: "end_turn".to_string(),
         usage: UsageSummary::default(),
         model: String::new(),

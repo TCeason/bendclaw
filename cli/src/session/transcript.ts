@@ -1,27 +1,31 @@
 /**
  * Parse raw transcript items (from NAPI loadTranscript) into UIMessages
- * with verbose events, tool calls, thinking, and run stats.
+ * with ordered assistant content and completed tool results.
  */
 
-import type { UIMessage, UIToolCall, VerboseEvent } from '../term/app/types.js'
-import { formatLlmCallStarted, formatLlmCallRetry, formatLlmCallCompleted, formatCompactionStarted, formatCompactionCompleted } from '../render/verbose.js'
+import type { UIAssistantBlock, UIMessage } from '../term/app/types.js'
 
 // ---------------------------------------------------------------------------
 // Raw transcript item shapes (from Rust TranscriptItem serialization)
 // ---------------------------------------------------------------------------
 
+type RawAssistantBlock =
+  | { type: 'text'; text: string }
+  | { type: 'thinking'; text: string }
+  | { type: 'tool_call'; id: string; name: string; input: Record<string, unknown> }
+
 interface RawItem {
   type: string
   // User
   text?: string
-  // Assistant
-  thinking?: string
-  tool_calls?: { id: string; name: string; input: Record<string, unknown> }[]
+  // Assistant content uses an array; tool results use a string.
+  content?: RawAssistantBlock[] | string
+  // Transcripts written before the canonical content migration.
+  content_blocks?: RawAssistantBlock[]
   stop_reason?: string
   // ToolResult
   tool_call_id?: string
   tool_name?: string
-  content?: string
   is_error?: boolean
   details?: unknown
   // Stats
@@ -36,7 +40,6 @@ interface RawItem {
 export function transcriptToMessages(items: RawItem[]): UIMessage[] {
   const messages: UIMessage[] = []
   const toolResults = collectToolResults(items)
-  let acc = newRunAccumulator()
   let idx = 0
 
   for (const item of items) {
@@ -49,50 +52,55 @@ export function transcriptToMessages(items: RawItem[]): UIMessage[] {
         timestamp: 0,
       })
     } else if (t === 'assistant') {
-      // Flush accumulated verbose events onto this message
-      const verboseEvents = acc.verboseEvents.length > 0 ? [...acc.verboseEvents] : undefined
-      acc.verboseEvents = []
-
-      const toolCalls = buildToolCalls(item.tool_calls ?? [], toolResults)
-
-      const text = repairThinkingSplitText(item.text ?? '', item.thinking)
+      const canonical = Array.isArray(item.content) ? item.content : undefined
+      const content = buildAssistantContent(canonical ?? item.content_blocks ?? [], toolResults)
+      const text = content
+        .filter((block): block is Extract<UIAssistantBlock, { type: 'text' }> => block.type === 'text')
+        .map(block => block.text)
+        .join('')
 
       messages.push({
         id: `transcript-assistant-${idx++}`,
         role: 'assistant',
         text,
         timestamp: 0,
-        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-        verboseEvents,
+        content,
       })
-    } else if (t === 'stats') {
-      handleStats(item, acc)
     }
-    // tool_result, system, extension, compact, marker — silently skipped
+    // stats, tool_result, system, extension, compact, marker — skipped
   }
 
   return messages
 }
 
-function repairThinkingSplitText(text: string, thinking: string | undefined): string {
-  if (!text || !thinking) return text
-
-  // Older transcripts flattened assistant content into separate `text` and
-  // `thinking` buckets, losing content-block order. Some Anthropic-compatible
-  // proxies misclassify visible prose that mentions `<think>` as a later
-  // thinking block, leaving `text` ending at an unmatched backtick and
-  // `thinking` starting with the matching backtick. Re-join only this narrow
-  // signature so genuine hidden reasoning stays hidden on resume.
-  const textTrimmed = text.trimEnd()
-  const thinkingTrimmed = thinking.trimStart()
-  if (!textTrimmed.endsWith('`') || !thinkingTrimmed.startsWith('`')) return text
-
-  const leftBackticks = (textTrimmed.match(/`/g) ?? []).length
-  const rightBackticks = (thinkingTrimmed.match(/`/g) ?? []).length
-  if ((leftBackticks + rightBackticks) % 2 !== 0) return text
-
-  const right = thinking.slice(thinking.length - thinkingTrimmed.length)
-  return `${text}${right}`
+function buildAssistantContent(
+  persisted: RawAssistantBlock[],
+  toolResults: Map<string, { content: string; isError: boolean; details?: unknown }>,
+): UIAssistantBlock[] {
+  return persisted.map((block, contentIndex): UIAssistantBlock => {
+    switch (block.type) {
+      case 'thinking':
+        return { type: 'thinking', contentIndex, text: block.text }
+      case 'tool_call': {
+        const result = toolResults.get(block.id)
+        return {
+          type: 'tool_call',
+          contentIndex,
+          toolCall: {
+            id: block.id,
+            name: block.name,
+            args: block.input,
+            status: result ? (result.isError ? 'error' : 'done') : 'queued',
+            result: result?.content,
+            details: result?.details,
+            previewCommand: inferPreviewCommand(block.name, block.input),
+          },
+        }
+      }
+      case 'text':
+        return { type: 'text', contentIndex, text: block.text }
+    }
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -104,31 +112,13 @@ function collectToolResults(items: RawItem[]): Map<string, { content: string; is
   for (const item of items) {
     if (item.type === 'tool_result' && item.tool_call_id) {
       map.set(item.tool_call_id, {
-        content: item.content ?? '',
+        content: typeof item.content === 'string' ? item.content : '',
         isError: item.is_error ?? false,
         details: item.details,
       })
     }
   }
   return map
-}
-
-function buildToolCalls(
-  calls: { id: string; name: string; input: Record<string, unknown> }[],
-  results: Map<string, { content: string; isError: boolean; details?: unknown }>,
-): UIToolCall[] {
-  return calls.map(tc => {
-    const r = results.get(tc.id)
-    return {
-      id: tc.id,
-      name: tc.name,
-      args: tc.input,
-      status: r ? (r.isError ? 'error' : 'done') : 'running' as const,
-      result: r?.content,
-      details: r?.details,
-      previewCommand: inferPreviewCommand(tc.name, tc.input),
-    }
-  })
 }
 
 /** Re-derive previewCommand from tool name + args (mirrors engine preview_command logic). */
@@ -157,44 +147,4 @@ function inferPreviewCommand(name: string, args: Record<string, unknown>): strin
     return path ? `edit ${path} (${count} replacement(s))` : undefined
   }
   return undefined
-}
-
-// ---------------------------------------------------------------------------
-// Stats → verbose events + run stats accumulation
-// ---------------------------------------------------------------------------
-
-interface RunAcc {
-  verboseEvents: VerboseEvent[]
-}
-
-function newRunAccumulator(): RunAcc {
-  return {
-    verboseEvents: [],
-  }
-}
-
-function handleStats(item: RawItem, acc: RunAcc): void {
-  const kind = item.kind ?? ''
-  const data = item.data ?? {}
-
-  switch (kind) {
-    case 'llm_call_started':
-      acc.verboseEvents.push({ kind: 'llm_call', text: formatLlmCallStarted(data) })
-      break
-    case 'llm_call_retry':
-    case 'api_retry':
-      acc.verboseEvents.push({ kind: 'llm_retry', text: formatLlmCallRetry(data) })
-      break
-    case 'llm_call_completed': {
-      const result = formatLlmCallCompleted(data)
-      acc.verboseEvents.push({ kind: 'llm_completed', text: result.text, expandedText: result.expandedText })
-      break
-    }
-    case 'context_compaction_started':
-      acc.verboseEvents.push({ kind: 'compact_call', text: formatCompactionStarted(data) })
-      break
-    case 'context_compaction_completed':
-      acc.verboseEvents.push({ kind: 'compact_done', text: formatCompactionCompleted(data) })
-      break
-  }
 }

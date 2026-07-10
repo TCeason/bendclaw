@@ -11,23 +11,26 @@ export type MessageRole = 'user' | 'assistant'
 export interface UIMessage {
   id: string
   role: MessageRole
+  /** User text, or a legacy assistant fallback for old transcripts. */
   text: string
   timestamp: number
-  toolCalls?: UIToolCall[]
+  /** Ordered assistant content, matching pi's AssistantMessage.content. */
+  content?: UIAssistantBlock[]
   /** Verbose events that occurred before this message */
   verboseEvents?: VerboseEvent[]
-  /** Text was already streamed to stdout — skip rendering in Message component */
-  streamed?: boolean
 }
+
+export type UIAssistantBlock =
+  | { type: 'text'; contentIndex: number; text: string }
+  | { type: 'thinking'; contentIndex: number; text: string }
+  | { type: 'tool_call'; contentIndex: number; toolCall: UIToolCall }
 
 export interface UIToolCall {
   id: string
   name: string
   args: Record<string, unknown>
-  status: 'running' | 'done' | 'error'
-  /** Assistant content order; used to keep parallel cards stable. */
-  contentIndex?: number
-  /** Raw JSON argument fragments are kept only on the live card, never persisted. */
+  status: 'queued' | 'running' | 'done' | 'error'
+  /** Raw JSON argument fragments for the in-progress call. */
   partialArgs?: string
   /** Tool arguments are complete and execution may begin. */
   argsComplete?: boolean

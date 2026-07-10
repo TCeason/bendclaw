@@ -8,7 +8,7 @@
  * This module is pure logic — no React, no stdout. Easy to test.
  */
 
-import { renderMarkdown } from './markdown.js'
+import { renderMarkdown, renderThinkingMarkdown } from './markdown.js'
 import { colorizeUnifiedDiff } from './diff.js'
 import { truncate, formatDuration, toolResultLines } from './format.js'
 import type { UIMessage, UIToolCall } from '../term/app/types.js'
@@ -65,9 +65,11 @@ function toolCallText(name: string, args: Record<string, unknown>, previewComman
 
 export interface OutputLine {
   id: string
-  kind: 'user' | 'assistant' | 'thinking' | 'thinking_summary' | 'tool' | 'tool_result' | 'verbose' | 'error' | 'system'
+  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'tool_result' | 'verbose' | 'error' | 'system'
   text: string
   rawMarkdown?: string
+  /** Thinking text already contains markdown ANSI; apply only the outer pi tint. */
+  thinkingStyle?: boolean
   codeBlockId?: string
   codeLanguage?: string
   /** Visual spacer inserted between streamed markdown chunks. It creates a
@@ -125,53 +127,15 @@ export function buildAssistantLines(markdownText: string): OutputLine[] {
 
 export function buildThinkingLines(text: string): OutputLine[] {
   if (!text.trim()) return []
-  const cleaned = text.replace(/^\n+/, '').replace(/\n+$/, '')
+  const rendered = renderThinkingMarkdown(text)
+  if (!rendered || !rendered.trim()) return []
+  const cleaned = rendered.replace(/^\n+/, '').replace(/\n+$/, '')
   return cleaned.split('\n').map((line) => ({
     id: genId('think'),
     kind: 'thinking' as const,
     text: line,
+    thinkingStyle: true,
   }))
-}
-
-export function buildThinkingSummary(text: string, durationMs: number, expanded?: boolean): OutputLine[] {
-  if (!text.trim()) return []
-  const cleaned = text.replace(/^\n+/, '').replace(/\n+$/, '')
-  const allLines = cleaned.split('\n')
-  const lineCount = allLines.length
-  const duration = formatDuration(durationMs)
-  const TAIL_LINES = 5
-  const MAX_LINE_WIDTH = 256
-
-  const lines: OutputLine[] = []
-  lines.push({
-    id: genId('think-summary'),
-    kind: 'thinking_summary' as const,
-    text: `${lineCount} lines · ${duration}`,
-  })
-
-  const capLine = (l: string) => l.length <= MAX_LINE_WIDTH ? l.slice(0, MAX_LINE_WIDTH) : l.slice(0, MAX_LINE_WIDTH - 1) + '…'
-
-  if (expanded) {
-    for (const l of allLines) {
-      lines.push({ id: genId('think'), kind: 'thinking' as const, text: `  ${capLine(l)}` })
-    }
-    lines.push({ id: genId('think-hint'), kind: 'thinking' as const, text: '  \x1b[2m(ctrl+o to collapse)\x1b[0m' })
-  } else {
-    if (allLines.length > TAIL_LINES) {
-      const tail = allLines.slice(0, TAIL_LINES)
-      for (const l of tail) {
-        lines.push({ id: genId('think'), kind: 'thinking' as const, text: `  ${capLine(l)}` })
-      }
-      const omitted = allLines.length - TAIL_LINES
-      lines.push({ id: genId('think-hint'), kind: 'thinking' as const, text: `  ... (+${omitted} lines, ctrl+o to expand)` })
-    } else {
-      for (const l of allLines) {
-        lines.push({ id: genId('think'), kind: 'thinking' as const, text: `  ${capLine(l)}` })
-      }
-    }
-  }
-
-  return lines
 }
 
 export function buildToolCall(
@@ -184,9 +148,9 @@ export function buildToolCall(
   for (const line of formatReasonLines(args)) {
     lines.push({ id: genId('tool'), kind: 'tool', text: `  ${line}` })
   }
-  // Call line: `<glyph> <name>  <primary-arg>` — shown the moment the tool
-  // starts so the running command is visible. The result block (status mark +
-  // duration + output) is appended below by buildToolResult on finish.
+  // Call line: `<glyph> <name>  <primary-arg>` — shown as soon as the model
+  // finishes decoding the call. Execution state is intentionally separate:
+  // only a later tool_started event activates the animated footer spinner.
   lines.push({
     id: genId('tool'),
     kind: 'tool',
@@ -195,11 +159,13 @@ export function buildToolCall(
   return lines
 }
 
-export function buildToolCard(call: UIToolCall, expanded?: boolean, now = Date.now()): OutputLine[] {
+export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.now()): OutputLine[] {
   const details = call.details as Record<string, unknown> | undefined
   const diff = typeof details?.diff === 'string' ? details.diff : undefined
   const args = diff ? { ...call.args, diff } : call.args
   const lines = buildToolCall(call.name, args, call.previewCommand)
+
+  if (call.status === 'queued') return lines
 
   if (call.status !== 'running') {
     lines.push(...buildToolResult(
@@ -223,8 +189,9 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, now = Date.n
     }
   }
 
-  const elapsed = call.startedAt === undefined ? '' : ` · ${formatDuration(Math.max(0, now - call.startedAt))}`
-  lines.push({ id: genId('tool-status'), kind: 'tool', text: `  ● running${elapsed}` })
+  // Execution activity is rendered by the animated footer spinner. Keeping a
+  // second static `● running` line here makes the tool look stalled between
+  // frames, especially immediately after thinking ends.
   return lines
 }
 
@@ -388,32 +355,25 @@ export function messagesToOutputLines(messages: UIMessage[]): OutputLine[] {
   for (const msg of messages) {
     if (msg.role === 'user') {
       lines.push(...buildUserMessage(msg.text))
-    } else if (msg.role === 'assistant') {
-      // Replay only the LLM errors/retries (as cards), matching live behavior.
-      // Per-call stats live in screen.log, not the TUI.
-      if (msg.verboseEvents) {
-        for (const evt of msg.verboseEvents) {
-          if (isVisibleLlmEvent(evt.text)) lines.push(...buildLlmCard(evt.text))
-        }
+      continue
+    }
+
+    // Replay only the LLM errors/retries (as cards), matching live behavior.
+    if (msg.verboseEvents) {
+      for (const evt of msg.verboseEvents) {
+        if (isVisibleLlmEvent(evt.text)) lines.push(...buildLlmCard(evt.text))
       }
-      // Tool calls: show call + result
-      if (msg.toolCalls) {
-        for (const tc of msg.toolCalls) {
-          lines.push(...buildToolCall(tc.name, tc.args, tc.previewCommand))
-          lines.push(...buildToolResult(
-            tc.name,
-            tc.args,
-            tc.status === 'error' ? 'error' : 'done',
-            tc.result,
-            tc.durationMs,
-            undefined,
-          ))
-        }
+    }
+
+    if (msg.content) {
+      for (const block of [...msg.content].sort((a, b) => a.contentIndex - b.contentIndex)) {
+        if (block.type === 'thinking') lines.push(...buildThinkingLines(block.text))
+        else if (block.type === 'text') lines.push(...buildAssistantLines(block.text))
+        else lines.push(...buildToolCard(block.toolCall))
       }
-      // Assistant text
-      if (msg.text.trim()) {
-        lines.push(...buildAssistantLines(msg.text))
-      }
+    } else if (msg.text.trim()) {
+      // Legacy UI messages created before ordered assistant content existed.
+      lines.push(...buildAssistantLines(msg.text))
     }
   }
   return lines

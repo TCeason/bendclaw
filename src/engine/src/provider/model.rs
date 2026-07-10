@@ -36,17 +36,6 @@ pub enum InputModality {
     Image,
 }
 
-/// Provider/model-level thinking passback policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ThinkingPassbackPolicy {
-    /// Never send prior thinking blocks back to the provider.
-    #[default]
-    Disabled,
-    /// Preserve thinking on assistant tool-use messages retained in history.
-    ToolUseMessages,
-}
-
 /// Cost per million tokens (input/output).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CostConfig {
@@ -310,9 +299,6 @@ pub struct ModelConfig {
     /// OpenAI-compat quirk flags (only for OpenAiCompletions protocol).
     #[serde(default)]
     pub compat: Option<OpenAiCompat>,
-    /// Whether prior thinking blocks must be passed back to the provider.
-    #[serde(default)]
-    pub thinking_passback: ThinkingPassbackPolicy,
     /// Per-model overrides for the abstract [`ThinkingLevel`] tiers. Keys are
     /// lowercase level names (e.g. `"xhigh"`), and the value encodes three
     /// states (mirroring pi's `thinkingLevelMap`):
@@ -559,18 +545,6 @@ impl ModelConfig {
         !matches!(self.thinking_level_map.get("off"), Some(None))
     }
 
-    pub fn apply_inferred_capabilities(&mut self) {
-        if self.api == ApiProtocol::AnthropicMessages && self.requires_tool_use_thinking_passback()
-        {
-            self.thinking_passback = ThinkingPassbackPolicy::ToolUseMessages;
-        }
-    }
-
-    fn requires_tool_use_thinking_passback(&self) -> bool {
-        let id = self.id.trim_start().to_ascii_lowercase();
-        id.starts_with("deepseek") || id.starts_with("kimi")
-    }
-
     /// Whether this model accepts image input. Mirrors pi's
     /// `model.input.includes("image")` gate used by the request builders and
     /// the read tool to decide whether to attach or drop image content.
@@ -595,7 +569,6 @@ impl ModelConfig {
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: None,
-            thinking_passback: ThinkingPassbackPolicy::default(),
             thinking_level_map,
         }
     }
@@ -618,7 +591,6 @@ impl ModelConfig {
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::openai()),
-            thinking_passback: ThinkingPassbackPolicy::default(),
             thinking_level_map,
         }
     }
@@ -648,7 +620,6 @@ impl ModelConfig {
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::default()),
-            thinking_passback: ThinkingPassbackPolicy::default(),
             thinking_level_map,
         }
     }

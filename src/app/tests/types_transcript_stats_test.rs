@@ -295,40 +295,36 @@ fn stats_item_serializes_to_flat_jsonl() {
 }
 
 #[test]
-fn assistant_item_missing_usage_defaults_to_zero() {
-    // Regression: assistant transcript lines written by older schema versions
-    // omit usage/model/provider/timestamp (they only persisted
-    // text/tool_calls/stop_reason). These must not abort the whole session
-    // load. read_jsonl previously propagated any line parse error with `?`, so
-    // one old line surfaced as `json error: missing field \`usage\`` (then
-    // `model`, etc. — whack-a-mole) to callers like the feishu bot.
-    //
-    // This mirrors a real on-disk line shape produced before the schema grew
-    // the usage/model/provider/timestamp fields.
-    let json = r#"{"type":"assistant","text":"\n\nLet me analyze.","tool_calls":[{"id":"tooluse_abc","name":"bash","input":{"command":"ls"}}],"stop_reason":"toolUse"}"#;
-    let item: TranscriptItem =
-        serde_json::from_str(json).expect("deserialize legacy assistant line");
+fn assistant_item_deserializes_pre_migration_content_blocks() {
+    let json = r#"{"type":"assistant","content_blocks":[{"type":"thinking","text":"plan"},{"type":"text","text":"answer"}],"stop_reason":"stop","usage":{"input":0,"output":0,"cache_read":0,"cache_write":0},"model":"model","provider":"provider","timestamp":1}"#;
+    let item: TranscriptItem = serde_json::from_str(json).expect("deserialize assistant line");
+
+    assert!(matches!(
+        item,
+        TranscriptItem::Assistant { content, .. }
+            if matches!(
+                &content[..],
+                [AssistantBlock::Thinking { text: plan, .. }, AssistantBlock::Text { text: answer }]
+                    if plan == "plan" && answer == "answer"
+            )
+    ));
+}
+
+#[test]
+fn assistant_item_uses_canonical_content_schema() {
+    let json = r#"{"type":"assistant","content":[{"type":"text","text":"Let me analyze."},{"type":"tool_call","id":"tooluse_abc","name":"bash","input":{"command":"ls"}}],"stop_reason":"toolUse","usage":{"input":0,"output":0,"cache_read":0,"cache_write":0},"model":"model","provider":"provider","timestamp":1}"#;
+    let item: TranscriptItem = serde_json::from_str(json).expect("deserialize assistant line");
     match item {
         TranscriptItem::Assistant {
-            usage,
-            model,
-            provider,
-            timestamp,
+            content,
             stop_reason,
-            tool_calls,
             ..
         } => {
-            assert_eq!(usage.input, 0);
-            assert_eq!(usage.output, 0);
-            assert_eq!(usage.cache_read, 0);
-            assert_eq!(usage.cache_write, 0);
-            assert_eq!(model, "");
-            assert_eq!(provider, "");
-            assert_eq!(timestamp, 0);
             assert_eq!(stop_reason, "toolUse");
-            // Real content (the part that matters) is preserved.
-            assert_eq!(tool_calls.len(), 1);
-            assert_eq!(tool_calls[0].name, "bash");
+            assert!(
+                matches!(&content[0], AssistantBlock::Text { text } if text == "Let me analyze.")
+            );
+            assert!(matches!(&content[1], AssistantBlock::ToolCall { name, .. } if name == "bash"));
         }
         other => panic!("expected Assistant, got {other:?}"),
     }
@@ -518,9 +514,7 @@ fn entry_preview_chinese_does_not_panic() {
 fn entry_preview_exact_60_chars_no_ellipsis() {
     let exact = "x".repeat(60);
     let item = TranscriptItem::Assistant {
-        text: exact,
-        thinking: None,
-        tool_calls: vec![],
+        content: vec![AssistantBlock::Text { text: exact }],
         stop_reason: "stop".into(),
         usage: UsageSummary::default(),
         model: String::new(),

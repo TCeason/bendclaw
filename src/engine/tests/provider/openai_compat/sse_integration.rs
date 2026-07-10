@@ -1,5 +1,7 @@
 //! Integration tests: OpenAI-compat provider → wiremock SSE server → Message.
 
+use evotengine::provider::model::OpenAiCompat;
+use evotengine::provider::model::ThinkingFormat;
 use evotengine::provider::traits::StreamConfig;
 use evotengine::provider::OpenAiCompatProvider;
 use evotengine::provider::StreamEvent;
@@ -84,9 +86,95 @@ async fn openai_sse_cache_tokens_are_not_double_counted_as_input() {
     }
 }
 
+#[tokio::test]
+async fn openai_sse_uses_first_non_empty_reasoning_alias_once() {
+    let sse = openai_sse::body(vec![
+        openai_sse::reasoning_chunk(Some("one"), Some("duplicate"), Some("duplicate-2")),
+        openai_sse::reasoning_chunk(None, Some(" two"), Some("duplicate-3")),
+        openai_sse::reasoning_chunk(None, None, Some(" three")),
+        openai_sse::finish_with_usage("stop", 50, 10),
+        openai_sse::done(),
+    ]);
+
+    let (message, events) = run_provider_sse(&OpenAiCompatProvider, openai_config(), &sse, 200)
+        .await
+        .unwrap();
+
+    let deltas = events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::ThinkingDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(deltas, vec!["one", " two", " three"]);
+    assert!(matches!(
+        message,
+        Message::Assistant { content, .. }
+            if matches!(&content[0], Content::Thinking { thinking, metadata: Some(ThinkingMetadata::OpenAiCompletions { field: ReasoningField::ReasoningContent }) }
+                if thinking == "one two three")
+    ));
+}
+
+#[tokio::test]
+async fn xai_sse_prefers_reasoning_alias_when_multiple_are_present() {
+    let sse = openai_sse::body(vec![
+        openai_sse::reasoning_chunk(Some("duplicate"), Some("xai"), None),
+        openai_sse::finish_with_usage("stop", 50, 10),
+        openai_sse::done(),
+    ]);
+    let mut model_config = evotengine::provider::model::ModelConfig::openai("grok", "Grok");
+    model_config.compat = Some(OpenAiCompat {
+        thinking_format: ThinkingFormat::Xai,
+        ..OpenAiCompat::default()
+    });
+    let config = StreamConfigBuilder::openai()
+        .model_config(model_config)
+        .build();
+
+    let (message, _) = run_provider_sse(&OpenAiCompatProvider, config, &sse, 200)
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        message,
+        Message::Assistant { content, .. }
+            if matches!(&content[0], Content::Thinking { thinking, metadata: Some(ThinkingMetadata::OpenAiCompletions { field: ReasoningField::Reasoning }) }
+                if thinking == "xai")
+    ));
+}
+
 // ---------------------------------------------------------------------------
 // SSE streaming — tool call
 // ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn openai_sse_tool_index_matches_final_order_when_text_arrives_in_same_chunk() {
+    let sse = openai_sse::body(vec![
+        openai_sse::combined_text_and_tool_chunk("before", "call-1", "read"),
+        openai_sse::tool_call_chunk(0, None, None, Some(r#"{"path":"a"}"#)),
+        openai_sse::finish_with_usage("tool_calls", 40, 8),
+        openai_sse::done(),
+    ]);
+
+    let (message, events) = run_provider_sse(&OpenAiCompatProvider, openai_config(), &sse, 200)
+        .await
+        .unwrap();
+
+    let streamed_index = events.iter().find_map(|event| match event {
+        StreamEvent::ToolCallStart { content_index, .. } => Some(*content_index),
+        _ => None,
+    });
+    let final_index = match message {
+        Message::Assistant { content, .. } => content
+            .iter()
+            .position(|block| matches!(block, Content::ToolCall { .. })),
+        _ => None,
+    };
+
+    assert_eq!(streamed_index, final_index);
+    assert_eq!(final_index, Some(1));
+}
 
 #[tokio::test]
 async fn openai_sse_tool_call() {
@@ -257,6 +345,26 @@ async fn openai_sse_inline_error() {
         err,
         evotengine::provider::ProviderError::Api(ref msg) if msg.contains("upstream failed")
     ));
+}
+
+#[tokio::test]
+async fn openai_sse_inline_server_error_with_empty_message_is_retryable() {
+    let sse = openai_sse::body(vec![
+        format!(
+            "data: {}",
+            serde_json::json!({
+                "choices": [],
+                "error": {"message": "", "type": "server_error"}
+            })
+        ),
+        openai_sse::done(),
+    ]);
+
+    let err = run_provider_sse(&OpenAiCompatProvider, openai_config(), &sse, 200)
+        .await
+        .unwrap_err();
+
+    assert!(evotengine::retry::should_retry(&err));
 }
 
 // ---------------------------------------------------------------------------

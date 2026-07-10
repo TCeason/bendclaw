@@ -18,6 +18,7 @@ use super::convert::extract_content_text;
 use super::convert::from_agent_messages;
 use super::convert::total_usage;
 use super::convert::transcript_from_agent_message;
+use super::event::AssistantContentType;
 use super::event::LlmMessageStats;
 use super::event::LlmToolCallSummary;
 use super::event::RunEvent;
@@ -499,9 +500,10 @@ fn map_agent_event(
                 .iter()
                 .rev()
                 .find_map(|t| {
-                    if let TranscriptItem::Assistant { text, .. } = t {
+                    if let TranscriptItem::Assistant { content, .. } = t {
+                        let text = crate::types::assistant_text(content);
                         if !text.is_empty() {
-                            return Some(text.clone());
+                            return Some(text);
                         }
                     }
                     None
@@ -529,19 +531,29 @@ fn map_agent_event(
         evot_engine::AgentEvent::MessageStart { .. } => vec![],
 
         evot_engine::AgentEvent::MessageUpdate {
-            delta: evot_engine::StreamDelta::Text { delta },
+            delta:
+                evot_engine::StreamDelta::Text {
+                    content_index,
+                    delta,
+                },
             ..
         } => vec![RuntimeEvent::Public(RunEventPayload::AssistantDelta {
-            delta: Some(delta.clone()),
-            thinking_delta: None,
+            content_index: *content_index,
+            content_type: AssistantContentType::Text,
+            delta: delta.clone(),
         })],
 
         evot_engine::AgentEvent::MessageUpdate {
-            delta: evot_engine::StreamDelta::Thinking { delta },
+            delta:
+                evot_engine::StreamDelta::Thinking {
+                    content_index,
+                    delta,
+                },
             ..
         } => vec![RuntimeEvent::Public(RunEventPayload::AssistantDelta {
-            delta: None,
-            thinking_delta: Some(delta.clone()),
+            content_index: *content_index,
+            content_type: AssistantContentType::Thinking,
+            delta: delta.clone(),
         })],
 
         evot_engine::AgentEvent::MessageUpdate {
@@ -1061,8 +1073,6 @@ pub fn build_model_config(
             vec![evot_engine::provider::InputModality::Text]
         };
     }
-
-    model_config.apply_inferred_capabilities();
 
     if protocol == Protocol::OpenAi {
         if let Some(compat) = &mut model_config.compat {

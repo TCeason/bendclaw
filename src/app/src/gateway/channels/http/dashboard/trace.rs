@@ -8,6 +8,7 @@
 
 use serde::Serialize;
 
+use crate::types::AssistantBlock;
 use crate::types::SessionMeta;
 use crate::types::TranscriptEntry;
 use crate::types::TranscriptItem;
@@ -259,8 +260,7 @@ pub fn project_spans(entries: &[TranscriptEntry]) -> Vec<SpanSummary> {
         .enumerate()
         .filter_map(|(idx, entry)| match &entry.item {
             TranscriptItem::Assistant {
-                text,
-                tool_calls,
+                content,
                 stop_reason,
                 usage,
                 model,
@@ -268,6 +268,14 @@ pub fn project_spans(entries: &[TranscriptEntry]) -> Vec<SpanSummary> {
                 ..
             } => {
                 let stats = span_stats_for(entries, idx as u64);
+                let text = crate::types::assistant_text(content);
+                let tool_names = content
+                    .iter()
+                    .filter_map(|block| match block {
+                        AssistantBlock::ToolCall { name, .. } => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
                 Some(SpanSummary {
                     seq: entry.seq,
                     model: model.clone(),
@@ -276,9 +284,9 @@ pub fn project_spans(entries: &[TranscriptEntry]) -> Vec<SpanSummary> {
                     output_tokens: usage.output,
                     duration_ms: stats.duration_ms,
                     n_messages: stats.n_messages,
-                    n_tool_use: tool_calls.len(),
-                    preview: first_line_preview(text, 120),
-                    tool_names: tool_calls.iter().map(|t| t.name.clone()).collect(),
+                    n_tool_use: tool_names.len(),
+                    preview: first_line_preview(&text, 120),
+                    tool_names,
                     error_message: error_message.clone(),
                 })
             }
@@ -312,38 +320,29 @@ fn build_input_blocks(entries: &[TranscriptEntry], seq: u64) -> Vec<InputBlock> 
                     });
                 }
             }
-            TranscriptItem::Assistant {
-                text,
-                thinking,
-                tool_calls,
-                ..
-            } => {
-                if let Some(th) = thinking {
-                    if !th.trim().is_empty() {
+            TranscriptItem::Assistant { content, .. } => {
+                for block in content {
+                    let block = match block {
+                        AssistantBlock::Text { text } if !text.trim().is_empty() => {
+                            Some(SpanBlock::Text { text: text.clone() })
+                        }
+                        AssistantBlock::Thinking { text, .. } if !text.trim().is_empty() => {
+                            Some(SpanBlock::Thinking { text: text.clone() })
+                        }
+                        AssistantBlock::ToolCall { id, name, input } => Some(SpanBlock::ToolUse {
+                            id: id.clone(),
+                            name: name.clone(),
+                            input: input.clone(),
+                        }),
+                        _ => None,
+                    };
+                    if let Some(block) = block {
                         out.push(InputBlock {
                             mi,
                             role: "assistant".into(),
-                            block: SpanBlock::Thinking { text: th.clone() },
+                            block,
                         });
                     }
-                }
-                if !text.trim().is_empty() {
-                    out.push(InputBlock {
-                        mi,
-                        role: "assistant".into(),
-                        block: SpanBlock::Text { text: text.clone() },
-                    });
-                }
-                for tc in tool_calls {
-                    out.push(InputBlock {
-                        mi,
-                        role: "assistant".into(),
-                        block: SpanBlock::ToolUse {
-                            id: tc.id.clone(),
-                            name: tc.name.clone(),
-                            input: tc.input.clone(),
-                        },
-                    });
                 }
             }
             TranscriptItem::ToolResult {
@@ -374,9 +373,7 @@ pub fn project_span_detail(entries: &[TranscriptEntry], seq: u64) -> Option<Span
     let idx = entries.iter().position(|e| e.seq == seq)?;
     let entry = &entries[idx];
     let TranscriptItem::Assistant {
-        text,
-        thinking,
-        tool_calls,
+        content,
         stop_reason,
         usage,
         model,
@@ -387,23 +384,24 @@ pub fn project_span_detail(entries: &[TranscriptEntry], seq: u64) -> Option<Span
         return None;
     };
 
-    // Assistant output blocks in display order: thinking, text, tool calls.
-    let mut blocks = Vec::new();
-    if let Some(th) = thinking {
-        if !th.trim().is_empty() {
-            blocks.push(SpanBlock::Thinking { text: th.clone() });
-        }
-    }
-    if !text.trim().is_empty() {
-        blocks.push(SpanBlock::Text { text: text.clone() });
-    }
-    for tc in tool_calls {
-        blocks.push(SpanBlock::ToolUse {
-            id: tc.id.clone(),
-            name: tc.name.clone(),
-            input: tc.input.clone(),
-        });
-    }
+    // Preserve provider content order in the trace detail.
+    let blocks = content
+        .iter()
+        .filter_map(|block| match block {
+            AssistantBlock::Text { text } if !text.trim().is_empty() => {
+                Some(SpanBlock::Text { text: text.clone() })
+            }
+            AssistantBlock::Thinking { text, .. } if !text.trim().is_empty() => {
+                Some(SpanBlock::Thinking { text: text.clone() })
+            }
+            AssistantBlock::ToolCall { id, name, input } => Some(SpanBlock::ToolUse {
+                id: id.clone(),
+                name: name.clone(),
+                input: input.clone(),
+            }),
+            _ => None,
+        })
+        .collect();
 
     // Tool results that follow this span, up to the next assistant call.
     let mut tool_results = Vec::new();
@@ -642,25 +640,28 @@ pub fn project_activity(
                 detail: json_value(&entry.item),
             }),
             TranscriptItem::Assistant {
-                text,
-                tool_calls,
+                content,
                 stop_reason,
                 usage,
                 error_message,
                 ..
             } => {
-                for call in tool_calls {
+                let text = crate::types::assistant_text(content);
+                for (id, name, input) in content.iter().filter_map(|block| match block {
+                    AssistantBlock::ToolCall { id, name, input } => Some((id, name, input)),
+                    _ => None,
+                }) {
                     rows.push(ActivityRow {
                         seq: entry.seq,
                         elapsed_ms: elapsed,
                         kind: "tool".into(),
                         badge: "TOOL".into(),
-                        title: call.name.clone(),
-                        subtitle: compact_json_text(&call.input, 110),
+                        title: name.clone(),
+                        subtitle: compact_json_text(input, 110),
                         detail: serde_json::json!({
-                            "id": call.id,
-                            "name": call.name,
-                            "input": call.input,
+                            "id": id,
+                            "name": name,
+                            "input": input,
                         }),
                     });
                 }
@@ -682,7 +683,7 @@ pub fn project_activity(
                     title: if text.trim().is_empty() {
                         format!("assistant \u{2192} {stop_reason}")
                     } else {
-                        first_line_preview(text, 120)
+                        first_line_preview(&text, 120)
                     },
                     subtitle: format!(
                         "{} in / {} out{}",

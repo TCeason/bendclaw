@@ -1,79 +1,15 @@
-import { buildError, buildVerboseEvent, buildLlmCard, isVisibleLlmEvent, buildAssistantLines, buildThinkingSummary, type OutputLine } from '../../render/output.js'
+import { buildError, buildVerboseEvent, buildLlmCard, isVisibleLlmEvent, type OutputLine } from '../../render/output.js'
 import { formatDuration } from '../../render/format.js'
 import { recordStreamDelta, resetStreamStats, setSpinnerPhase, type SpinnerState } from '../spinner.js'
+import { assistantToolCalls } from './assistant-content.js'
+import { assistantMessageToOutputLines } from '../../render/assistant.js'
 import { applyEvent } from './reducer.js'
 import type { AppState } from './state.js'
 import type { RunEvent } from '../../native/index.js'
-import { findStreamingCommitPoint, findNaturalPlainTextCommitPoint, isInsideOpenMathBlock } from '../../markdown/streaming/commit.js'
-
-/**
- * Overflow safety valve for the streaming dynamic zone.
- *
- * The whole in-progress assistant message stays in the dynamic zone and is
- * re-rendered in place each delta (matching pi's single growing Markdown
- * component, which reparses the full accumulated text every frame). This is
- * what makes structural blocks impossible to tear: a table, a tight list, or a
- * code block is always rendered as one whole marked parse, never split into a
- * committed head and an orphan tail that has lost its header/separator.
- *
- * This function only acts when the pending message would grow taller than the
- * viewport. Even then it commits ONLY at a true markdown-safe boundary
- * (findStreamingCommitPoint — a blank-line block boundary) or, for long
- * boundary-free prose, a safe complete-line boundary (findNaturalPlainText
- * CommitPoint). There is deliberately NO last-resort "split at the last
- * newline" fallback: forcing a split inside a block with no internal blank line
- * (table, tight list, blockquote) is exactly what committed a partial block and
- * tore the rendering. When no safe boundary exists, the whole block stays
- * pending and grows in the dynamic zone until it completes — same as pi.
- *
- * Mutates nothing; returns the updated state and any lines to commit.
- */
-function drainOverflowBlocks(
-  state: StreamMachineState,
-  termRows: number,
-): { state: StreamMachineState; lines: OutputLine[] } {
-  const lines: OutputLine[] = []
-
-  const overflowThreshold = Math.max(8, termRows - 6)
-  const pendingLineCount = state.streamingText.split('\n').length
-  if (pendingLineCount <= overflowThreshold) return { state, lines }
-
-  const markdownSplitAt = findStreamingCommitPoint(state.streamingText)
-  const naturalSplitAt =
-    markdownSplitAt > 0 || isInsideOpenMathBlock(state.streamingText)
-      ? 0
-      : findNaturalPlainTextCommitPoint(state.streamingText, termRows)
-  const splitAt = markdownSplitAt || naturalSplitAt
-  if (splitAt > 0 && splitAt < state.streamingText.length) {
-    const chunk = state.streamingText.slice(0, splitAt)
-    const rest = state.streamingText.slice(splitAt)
-    const built = buildAssistantLines(chunk)
-    if (built.length > 0) {
-      if (state.assistantCommitted) lines.push(assistantContinuationSpacer())
-      lines.push(...built)
-      state = { ...state, streamingText: rest, assistantCommitted: true }
-    }
-  }
-
-  return { state, lines }
-}
-
-let sepId = 0
-
-function assistantContinuationSpacer(): OutputLine {
-  return { id: `sep-${sepId++}`, kind: 'assistant', text: '', isContinuationSpacer: true }
-}
 
 export interface StreamMachineState {
   appState: AppState
   spinnerState: SpinnerState
-  pendingText: string
-  pendingThinkingText: string
-  streamingText: string
-  streamingThinkingText: string
-  thinkingTokenCount: number
-  prefixEmitted: boolean
-  assistantCommitted: boolean
   activeLlmCall: boolean
   /** Last error message surfaced via an LLM error card, so a following
    *  `error` event carrying the same text doesn't render it twice. */
@@ -130,19 +66,12 @@ export function createStreamMachineState(appState: AppState, spinnerState: Spinn
   return {
     appState,
     spinnerState,
-    pendingText: '',
-    pendingThinkingText: '',
-    streamingText: '',
-    streamingThinkingText: '',
-    thinkingTokenCount: 0,
-    prefixEmitted: false,
-    assistantCommitted: false,
     activeLlmCall: false,
     lastLlmErrorMessage: null,
   }
 }
 
-export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: StreamContext): StreamUpdate {
+export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: StreamContext): StreamUpdate {
   const p = (event.payload ?? {}) as Record<string, any>
   let state = event.kind === 'host_tool_call' ? prev : { ...prev, appState: applyEvent(prev.appState, event) }
   const commitLines: OutputLine[] = []
@@ -192,79 +121,24 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
   }
 
   if (event.kind === 'assistant_delta') {
-    const appendVisibleTextDelta = (textDelta: string) => {
-      state = { ...state, streamingText: state.streamingText + textDelta }
-      if (!state.prefixEmitted) {
-        const trimmed = state.streamingText.replace(/^[\n\r]+/, '')
-        if (trimmed.length > 0) {
-          state = { ...state, streamingText: trimmed, prefixEmitted: true }
-        }
-      }
-
-      state = {
-        ...state,
-        spinnerState: recordStreamDelta(state.spinnerState, textDelta),
-      }
-
-      // Keep the whole in-progress message in the dynamic zone so it grows in
-      // place (matching pi). Only drain to scrollback if it would overflow the
-      // viewport height — normal replies never trip this, so there is no
-      // per-paragraph zone-empties-and-refills jump.
-      const drained = drainOverflowBlocks(state, ctx.termRows)
-      state = drained.state
-      if (drained.lines.length > 0) {
-        commitLines.push(...drained.lines)
-        if (!expandedCommitLines) expandedCommitLines = []
-        expandedCommitLines.push(...drained.lines)
-      }
-
-      // pendingText mirrors the still-forming message for the viewport's
-      // streaming display (set after any overflow drain trims the head).
-      state = { ...state, pendingText: state.streamingText }
-      rerenderStatus = true
-    }
-
-    const flushThinkingBeforeText = () => {
-      if (!state.streamingThinkingText) return
-      const thinkingDurationMs = Date.now() - state.spinnerState.phaseStartedAt
-      const compactLines = buildThinkingSummary(state.streamingThinkingText, thinkingDurationMs)
-      const expLines = buildThinkingSummary(state.streamingThinkingText, thinkingDurationMs, true)
-      commitLines.push(...compactLines)
-      if (!expandedCommitLines) expandedCommitLines = []
-      expandedCommitLines.push(...expLines)
-      state = { ...state, streamingThinkingText: '', pendingThinkingText: '' }
-    }
-
-    const thinkingDelta = p.thinking_delta as string | undefined
-    if (thinkingDelta) {
-      // Anthropic/pi preserves content blocks by index. Our public
-      // AssistantDelta event currently drops that index, so the TUI only knows
-      // whether visible text has already started. A thinking delta after text
-      // has begun is almost certainly an upstream/proxy block-classification
-      // glitch (seen with prose that literally mentions `<think>`); treating it
-      // as hidden reasoning would tear the visible markdown in half. Preserve
-      // it as assistant text instead.
-      const visibleTextStarted = state.prefixEmitted || state.streamingText.replace(/^[\n\r]+/, '').length > 0
-      if (visibleTextStarted) {
-        appendVisibleTextDelta(thinkingDelta)
-      } else {
-        const now = Date.now()
+    if (p.content_type === 'text') {
+      const textDelta = p.delta as string | undefined
+      if (textDelta) {
         state = {
           ...state,
-          streamingThinkingText: state.streamingThinkingText + thinkingDelta,
-          pendingThinkingText: state.streamingThinkingText + thinkingDelta,
-          thinkingTokenCount: state.thinkingTokenCount + 1,
-          spinnerState: recordStreamDelta(state.spinnerState, thinkingDelta, now),
+          spinnerState: recordStreamDelta(state.spinnerState, textDelta),
         }
         rerenderStatus = true
       }
-    }
-
-    const delta = p.delta as string | undefined
-    if (delta) {
-      // When first text delta arrives after thinking, flush thinking content
-      flushThinkingBeforeText()
-      appendVisibleTextDelta(delta)
+    } else {
+      const thinkingDelta = p.delta as string | undefined
+      if (thinkingDelta) {
+        state = {
+          ...state,
+          spinnerState: recordStreamDelta(state.spinnerState, thinkingDelta, Date.now()),
+        }
+        rerenderStatus = true
+      }
     }
   }
 
@@ -279,11 +153,18 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     }
   }
 
-  if (event.kind === 'assistant_completed' || event.kind === 'turn_started') {
-    const flushed = flushStreaming(state)
+  if (event.kind === 'assistant_completed') {
+    // applyEvent has already replaced streamed blocks with the provider's
+    // authoritative completed content. A tool-bearing assistant message stays
+    // live while its tools execute, then repl commits the entire ordered block
+    // atomically. Text-only messages can commit immediately.
+    const hasToolCalls = state.appState.currentAssistantContent.some(block => block.type === 'tool_call')
+    const flushed = hasToolCalls
+      ? { state, lines: [] as OutputLine[], expandedLines: undefined }
+      : flushStreaming(state)
     state = {
       ...flushed.state,
-      activeLlmCall: event.kind === 'assistant_completed' ? false : flushed.state.activeLlmCall,
+      activeLlmCall: false,
       spinnerState: { ...flushed.state.spinnerState, streaming: false },
     }
     commitLines.push(...flushed.lines)
@@ -292,7 +173,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     // not mistaken for a clean finish. Mirrors pi's assistant-message length
     // notice. `resolved_max_tokens` clamps the budget to the window, so this
     // only fires on a genuine max-output-tokens stop.
-    if (event.kind === 'assistant_completed' && p.stop_reason === 'length') {
+    if (p.stop_reason === 'length') {
       const notice = buildError(
         'Model stopped because it reached the maximum output token limit. The response may be incomplete.',
       )
@@ -303,9 +184,32 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     rerenderStatus = true
   }
 
-  if (event.kind === 'llm_call_completed' || event.kind === 'context_compaction_completed') {
+  if (event.kind === 'turn_started') {
+    // A normal turn starts after the previous assistant_completed flush. This
+    // is only a fallback for interrupted or synthetic event sequences.
     const flushed = flushStreaming(state)
-    state = { ...flushed.state, activeLlmCall: event.kind === 'llm_call_completed' ? false : flushed.state.activeLlmCall }
+    state = {
+      ...flushed.state,
+      spinnerState: { ...flushed.state.spinnerState, streaming: false },
+    }
+    commitLines.push(...flushed.lines)
+    mergeFlushExpanded(flushed)
+    rerenderStatus = true
+  }
+
+  if (event.kind === 'llm_call_completed') {
+    // LLM accounting completes before tool execution and is not an assistant
+    // content boundary. Keep any tool-bearing ordered message live.
+    state = { ...state, activeLlmCall: false }
+    const newEvents = state.appState.verboseEvents.slice(prev.appState.verboseEvents.length)
+    for (const evt of newEvents) {
+      routeVerbose(evt.text, { commit: commitLines, write: writeLines })
+    }
+  }
+
+  if (event.kind === 'context_compaction_completed') {
+    const flushed = flushStreaming(state)
+    state = flushed.state
     commitLines.push(...flushed.lines)
     mergeFlushExpanded(flushed)
     const newEvents = state.appState.verboseEvents.slice(prev.appState.verboseEvents.length)
@@ -315,10 +219,6 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
   }
 
   if (event.kind === 'tool_started') {
-    const flushed = flushStreaming(state)
-    state = flushed.state
-    commitLines.push(...flushed.lines)
-    mergeFlushExpanded(flushed)
     const toolName = (p.tool_name as string) ?? 'unknown'
     const isAskUser = toolName === 'AskUser' || toolName === 'ask_user'
     const spinnerPhase = isAskUser ? 'thinking' : 'executing'
@@ -339,12 +239,21 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
   }
 
   if (event.kind === 'tool_finished') {
-    const running = [...state.appState.liveToolCalls.values()].find(call => call.status === 'running' && call.startedAt !== undefined)
+    const toolCalls = assistantToolCalls(state.appState.currentAssistantContent)
+    const running = toolCalls.find(call => call.status === 'running' && call.startedAt !== undefined)
     state = {
       ...state,
       spinnerState: running
         ? setSpinnerPhase(state.spinnerState, 'executing', running.name)
         : setSpinnerPhase(state.spinnerState, 'thinking'),
+    }
+    // Tool-bearing assistant messages stay live through execution. Commit the
+    // complete ordered message when the last tool settles, exactly once.
+    if (toolCalls.length > 0 && toolCalls.every(call => call.status === 'done' || call.status === 'error')) {
+      const flushed = flushStreaming(state)
+      state = flushed.state
+      commitLines.push(...flushed.lines)
+      mergeFlushExpanded(flushed)
     }
     rerenderStatus = true
   }
@@ -365,6 +274,8 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
   }
 
   if (event.kind === 'run_finished') {
+    // Do not let applyEvent discard partial content before an abnormal run end
+    // gets its final preservation flush.
     const flushed = flushStreaming(state)
     state = flushed.state
     commitLines.push(...flushed.lines)
@@ -381,38 +292,20 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
 }
 
 export function flushStreaming(state: StreamMachineState): { state: StreamMachineState; lines: OutputLine[]; expandedLines?: OutputLine[] } {
-  const lines: OutputLine[] = []
-  let expandedLines: OutputLine[] | undefined
+  const content = state.appState.currentAssistantContent
+  const lines = assistantMessageToOutputLines(content)
+  const expandedLines = lines.length > 0
+    ? assistantMessageToOutputLines(content, true)
+    : undefined
 
-  // Flush any remaining thinking content first
-  if (state.streamingThinkingText.trim()) {
-    const thinkingDurationMs = Date.now() - state.spinnerState.phaseStartedAt
-    const compactLines = buildThinkingSummary(state.streamingThinkingText, thinkingDurationMs)
-    const expLines = buildThinkingSummary(state.streamingThinkingText, thinkingDurationMs, true)
-    lines.push(...compactLines)
-    expandedLines = [...expLines]
+  const resetState = {
+    ...state,
+    appState: {
+      ...state.appState,
+      currentAssistantContent: [],
+    },
   }
+  if (lines.length === 0) return { state: resetState, lines: [] }
 
-  if (state.streamingText.trim()) {
-    const assistantLines = buildAssistantLines(state.streamingText)
-    if (state.assistantCommitted && assistantLines.length > 0) {
-      lines.unshift(assistantContinuationSpacer())
-      if (expandedLines) expandedLines.unshift(assistantContinuationSpacer())
-    }
-    lines.push(...assistantLines)
-    if (expandedLines) expandedLines.push(...assistantLines)
-  }
-
-  if (lines.length === 0) {
-    return {
-      state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false },
-      lines: [],
-    }
-  }
-
-  return {
-    state: { ...state, streamingText: '', streamingThinkingText: '', pendingText: '', pendingThinkingText: '', assistantCommitted: false },
-    lines,
-    expandedLines,
-  }
+  return { state: resetState, lines, expandedLines }
 }

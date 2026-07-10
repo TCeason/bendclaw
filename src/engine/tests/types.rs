@@ -108,7 +108,9 @@ fn test_content_variants_roundtrip() {
     });
     roundtrip(&Content::Thinking {
         thinking: "let me think...".into(),
-        signature: Some("sig123".into()),
+        metadata: Some(ThinkingMetadata::Anthropic {
+            signature: "sig123".into(),
+        }),
     });
     roundtrip(&Content::ToolCall {
         id: "tc-1".into(),

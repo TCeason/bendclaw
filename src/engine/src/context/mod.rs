@@ -1,6 +1,7 @@
 //! Context window management — token counting, compaction, and execution limits.
 
 pub mod compaction;
+pub mod history;
 pub mod image_resize;
 pub mod sanitize;
 pub mod tokens;
@@ -26,6 +27,7 @@ pub use compaction::SummarizerInput;
 pub use compaction::SummarizerMode;
 pub use compaction::TriggerDecision;
 pub use compaction::UsageSnapshot;
+pub use history::transform_messages_for_model;
 pub use image_resize::resize_image;
 pub use sanitize::sanitize_tool_pairs;
 pub use tokens::compute_call_stats;

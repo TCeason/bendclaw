@@ -17,9 +17,7 @@ type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
 fn assistant(text: &str) -> TranscriptItem {
     TranscriptItem::Assistant {
-        text: text.into(),
-        thinking: None,
-        tool_calls: vec![],
+        content: vec![AssistantBlock::Text { text: text.into() }],
         stop_reason: "stop".into(),
         usage: UsageSummary::default(),
         model: String::new(),

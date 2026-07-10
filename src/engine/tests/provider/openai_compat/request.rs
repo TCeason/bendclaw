@@ -404,7 +404,7 @@ fn test_reasoning_content_in_request() {
                 content: vec![
                     Content::Thinking {
                         thinking: "Let me think about this...".into(),
-                        signature: None,
+                        metadata: None,
                     },
                     Content::Text {
                         text: "Here is the answer.".into(),
@@ -432,13 +432,54 @@ fn test_reasoning_content_in_request() {
 }
 
 #[test]
+fn test_reasoning_signature_selects_replay_field() {
+    let config = StreamConfigBuilder::openai()
+        .messages(vec![Message::Assistant {
+            content: vec![
+                Content::Thinking {
+                    thinking: "content".into(),
+                    metadata: Some(ThinkingMetadata::OpenAiCompletions {
+                        field: ReasoningField::ReasoningContent,
+                    }),
+                },
+                Content::Thinking {
+                    thinking: "reasoning".into(),
+                    metadata: Some(ThinkingMetadata::OpenAiCompletions {
+                        field: ReasoningField::Reasoning,
+                    }),
+                },
+                Content::Thinking {
+                    thinking: "text".into(),
+                    metadata: Some(ThinkingMetadata::OpenAiCompletions {
+                        field: ReasoningField::ReasoningText,
+                    }),
+                },
+            ],
+            stop_reason: StopReason::Stop,
+            model: "model".into(),
+            provider: "provider".into(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+            response_id: None,
+        }])
+        .build();
+
+    let body = build_request_body(&config, &OpenAiCompat::openai());
+    let assistant = &body["messages"][0];
+    assert_eq!(assistant["reasoning_content"], "content");
+    assert_eq!(assistant["reasoning"], "reasoning");
+    assert_eq!(assistant["reasoning_text"], "text");
+}
+
+#[test]
 fn test_thinking_only_assistant_not_skipped() {
     let config = StreamConfigBuilder::openai()
         .model("deepseek-v4-pro")
         .messages(vec![Message::user("test"), Message::Assistant {
             content: vec![Content::Thinking {
                 thinking: "internal reasoning only".into(),
-                signature: None,
+                metadata: None,
             }],
             stop_reason: StopReason::Stop,
             model: "deepseek-v4-pro".into(),

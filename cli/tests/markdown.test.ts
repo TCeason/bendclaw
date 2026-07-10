@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { renderMarkdown } from '../src/render/markdown.js'
+import { renderMarkdown, renderThinkingMarkdown } from '../src/render/markdown.js'
 import { formatToken } from '../src/markdown/render/ansi.js'
 import { getTheme, resetThemeCache } from '../src/render/theme.js'
 import chalk from 'chalk'
@@ -34,6 +34,25 @@ function lexFirst(md: string): Token {
 }
 
 describe('renderMarkdown', () => {
+  test('keeps streamed thinking paragraph spacing stable as later blocks arrive', () => {
+    const first = stripAnsi(renderThinkingMarkdown('**Planning**'))
+    const second = stripAnsi(renderThinkingMarkdown('**Planning**\n\n<!-- -->\n\n**Designing**'))
+
+    expect(first).toBe('Planning')
+    expect(second).toBe('Planning\nDesigning')
+    expect(second.split('\n')[0]).toBe(first)
+  })
+
+  test('thinking compaction removes only blank rows, not structural content', () => {
+    const result = stripAnsi(renderThinkingMarkdown('Intro\n\n- one\n- two\n\n```text\nx\n```'))
+
+    expect(result).toContain('Intro')
+    expect(result).toContain('one')
+    expect(result).toContain('two')
+    expect(result).toContain('```')
+    expect(result).toContain('x')
+  })
+
   test('renders plain text', () => {
     expect(render('hello world')).toBe('hello world')
   })

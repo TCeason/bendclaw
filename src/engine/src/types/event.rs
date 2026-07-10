@@ -181,9 +181,11 @@ pub struct LlmCallStats {
 #[derive(Debug, Clone)]
 pub enum StreamDelta {
     Text {
+        content_index: usize,
         delta: String,
     },
     Thinking {
+        content_index: usize,
         delta: String,
     },
     ToolCallStart {

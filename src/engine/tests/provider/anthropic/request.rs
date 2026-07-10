@@ -520,6 +520,37 @@ fn test_tool_result_text_only_uses_string() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn test_content_to_anthropic_keeps_native_signature_but_downgrades_openai_field_marker() {
+    let content = vec![
+        Content::Thinking {
+            thinking: "native".into(),
+            metadata: Some(ThinkingMetadata::Anthropic {
+                signature: "cryptographic-signature".into(),
+            }),
+        },
+        Content::Thinking {
+            thinking: "cross-provider".into(),
+            metadata: Some(ThinkingMetadata::OpenAiCompletions {
+                field: ReasoningField::ReasoningContent,
+            }),
+        },
+        Content::Thinking {
+            thinking: "unsigned".into(),
+            metadata: None,
+        },
+    ];
+
+    let result = content_to_anthropic(&content);
+
+    assert_eq!(result[0]["type"], "thinking");
+    assert_eq!(result[0]["signature"], "cryptographic-signature");
+    assert_eq!(result[1]["type"], "text");
+    assert_eq!(result[1]["text"], "cross-provider");
+    assert_eq!(result[2]["type"], "text");
+    assert_eq!(result[2]["text"], "unsigned");
+}
+
+#[test]
 fn test_content_to_anthropic_filters_empty_text() {
     let content = vec![
         Content::Text { text: "".into() },

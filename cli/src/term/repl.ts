@@ -4,11 +4,11 @@ import { installBracketedPaste } from './bracketed-paste.js'
 import { createSpinnerState, advanceSpinner, formatSpinnerLine } from './spinner.js'
 import { createSelectorState, selectorExpandItems, selectorClearQuery } from './selector.js'
 import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
-import { buildUserMessage, buildThinkingLines, buildToolCard, type OutputLine } from '../render/output.js'
-import { renderMarkdownCached } from '../render/markdown.js'
+import { buildUserMessage, type OutputLine } from '../render/output.js'
 import { Agent, QueryStream, fastExit, type SessionMeta, type ConfigInfo } from '../native/index.js'
 import { createInitialState, type AppState } from './app/state.js'
-import type { UIToolCall } from './app/types.js'
+import { assistantToolCalls } from './app/assistant-content.js'
+import { assistantMessageToOutputLines } from '../render/assistant.js'
 import { HistoryManager, parseHistoryItems } from '../session/history.js'
 import { ScreenLog } from '../session/screen-log.js'
 import { findLastAssistantMarkdown } from '../session/assistant-markdown.js'
@@ -282,8 +282,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     await runQuery(choice)
   }
   let streamMachine: StreamMachineState | null = null
-  let lastPendingText = ''
-  let lastPendingRendered = ''
   // Messages sent mid-stream: held in the prompt zone (pi-style ❯ queue) and
   // committed to history at the turn boundary, so they never render above the
   // still-streaming reply.
@@ -304,9 +302,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
   const compactLines: OutputLine[] = []
   const expandedLines: OutputLine[] = []
-  let lastThinkingLineCount = 0
   let fdAbort: AbortController | null = null
-  // Streaming text: use stream machine's pendingText for the viewport.
   const screenLog = new ScreenLog()
   const gitVersion = getGitVersion(agent.cwd)
   const gitDirty = isGitDirty(agent.cwd)
@@ -424,19 +420,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
-  function buildLiveToolBlocks(calls: Map<string, UIToolCall>): ViewBlock[] {
-    const blocks: ViewBlock[] = []
-    const now = Date.now()
-    const ordered = [...calls.values()].sort(
-      (a, b) => (a.contentIndex ?? Number.MAX_SAFE_INTEGER) - (b.contentIndex ?? Number.MAX_SAFE_INTEGER),
-    )
-    for (const call of ordered) {
-      blocks.push(...buildOutputBlocks(buildToolCard(call, expanded, now), { columns: renderer.termCols }))
-    }
-    if (blocks.length > 0) blocks[0]!.marginTop = 1
-    return blocks
-  }
-
   // Release notes (shown once after update)
   let releaseNotes: string[] | null = null
   try {
@@ -467,6 +450,16 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   // --- buildFrame: the single render callback for the new differential renderer ---
+  function buildPartialAssistantBlocks(): ViewBlock[] {
+    const content = streamMachine?.appState.currentAssistantContent ?? []
+    // Use the exact ordered committed-output pipeline for the live partial. This
+    // keeps thinking/text/tool positions, margins, and prefixes stable through
+    // completion instead of rendering tool calls in a detached layer.
+    return buildOutputBlocks(assistantMessageToOutputLines(content, expanded), {
+      columns: renderer.termCols,
+    })
+  }
+
   function buildFrame(): RenderFrame {
     if (destroyed) return { lines: [] }
 
@@ -489,72 +482,23 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       blocks.push({ lines: cachedHistoryLines.map(l => ({ spans: [{ text: l }] })), marginTop: 0 })
     }
 
-    // 3. Thinking text preview (shown during reasoning phase before text arrives)
-    const pendingThinking = streamMachine?.pendingThinkingText ?? ''
-    if (pendingThinking && isLoading) {
-      if (expanded) {
-        const thinkLines = pendingThinking.split('\n').map(l => ({ spans: [{ text: `  ${l}`, dim: true }] }))
-        blocks.push({ lines: thinkLines, marginTop: 1 })
-      } else {
-        // Compact preview: header + last few lines
-        const allThinkLines = pendingThinking.split('\n')
-        const totalLines = allThinkLines.length
-        const MAX_THINKING_PREVIEW = 4
-        const MAX_LINE_WIDTH = 120
-        const visible = allThinkLines.slice(-MAX_THINKING_PREVIEW)
-        const thinkStyled: StyledLine[] = [
-          { spans: [{ text: '✻', fg: 'cyan' as const, bold: true }, { text: ' thinking', bold: true }, { text: `  · ${totalLines} lines…`, dim: true }] },
-        ]
-        for (const l of visible) {
-          const truncated = l.length > MAX_LINE_WIDTH ? l.slice(0, MAX_LINE_WIDTH - 1) + '\u2026' : l
-          thinkStyled.push({ spans: [{ text: `  ${truncated}`, dim: true }] })
-        }
-        blocks.push({ lines: thinkStyled, marginTop: 1 })
-      }
-    }
+    // 3. Ordered partial assistant message (thinking/text/tool calls).
+    blocks.push(...buildPartialAssistantBlocks())
 
-    // 4. Streaming content — only re-render markdown when text actually changes
-    const pendingText = streamMachine?.pendingText ?? ''
-    if (pendingText && isLoading) {
-      if (pendingText !== lastPendingText) {
-        lastPendingText = pendingText
-        lastPendingRendered = renderMarkdownCached(pendingText)
-      }
-      const mdLines = lastPendingRendered.split('\n')
-      // The whole message streams in place here. After a rare overflow drain
-      // (drainOverflowBlocks), leading blocks have already committed to history,
-      // so the tail is a continuation: use the 2-space prefix instead of a
-      // second ⏺ dot. Normal replies never commit mid-stream, so they keep the
-      // ⏺ marker for the life of the stream.
-      const isContinuation = streamMachine?.assistantCommitted ?? false
-      const styledLines = mdLines.map((l, i) => {
-        if (i === 0 && !isContinuation) return { spans: [{ text: '\u23fa ', fg: 'cyan' as const }, { text: l }] }
-        return { spans: [{ text: `  ${l}` }] }
-      })
-      blocks.push({ lines: styledLines, marginTop: 1 })
-    }
-
-    // 5. Live tool cards. Each tool_call_id owns one stable card that updates
-    // in place from argument streaming through execution and completion.
-    const liveToolCalls = streamMachine?.appState.liveToolCalls
-    if (liveToolCalls && liveToolCalls.size > 0 && isLoading) {
-      blocks.push(...buildLiveToolBlocks(liveToolCalls))
-    }
-
-    // 6. Spinner / parallel tool summary
+    const toolCalls = assistantToolCalls(streamMachine?.appState.currentAssistantContent ?? [])
+    const runningTool = toolCalls.find(call => call.status === 'running')
+    // 5. Spinner. Tool calls that are only decoded/queued show their command
+    // without claiming execution has started. Once tool_started arrives, reuse
+    // the same animated footer used by thinking so activity remains obvious.
     if (isLoading && overlay.kind !== 'ask-user') {
-      const calls = liveToolCalls ? [...liveToolCalls.values()] : []
-      if (calls.length > 0) {
-        const done = calls.filter(call => call.status !== 'running').length
-        const running = calls.length - done
-        blocks.push({
-          lines: [{ spans: [
-            { text: '●', fg: 'cyan' as const, bold: true },
-            { text: ` ${calls.length} ${calls.length === 1 ? 'tool' : 'tools'} · ${done} done · ${running} running`, dim: true },
-          ] }],
-          marginTop: 1,
+      if (runningTool) {
+        const spinnerText = formatSpinnerLine(spinnerState, Date.now(), {
+          inputTokens: appState.sessionTokens.inputTokens,
+          outputTokens: appState.sessionTokens.outputTokens,
+          cacheReadTokens: appState.sessionTokens.cacheReadTokens,
         })
-      } else {
+        blocks.push({ lines: [{ spans: [{ text: spinnerText }] }], marginTop: 1 })
+      } else if (toolCalls.length === 0) {
         const activeLlmCall = streamMachine?.activeLlmCall ?? false
         const liveOutputTokens = activeLlmCall ? spinnerState.tokenCount : 0
         const spinnerText = formatSpinnerLine(spinnerState, Date.now(), {
@@ -586,6 +530,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       prevKind: prev?.kind,
       columns: renderer.termCols,
     }
+  }
+
+  function restoreLines(outputLines: OutputLine[]) {
+    if (outputLines.length === 0) return
+    compactLines.push(...outputLines)
+    expandedLines.push(...outputLines)
+    // Resume is a projection of persisted transcript state, not a new terminal
+    // event. Paint it without appending it back into screen/markdown logs.
+    renderer.requestRender()
   }
 
   function commitLines(outputLines: OutputLine[]) {
@@ -620,29 +573,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     } else {
       commitLines(flushed.lines)
     }
-  }
-
-  function commitLiveToolBatch(): void {
-    const machine = streamMachine
-    if (!machine) return
-    const calls = machine.appState.liveToolCalls
-    if (calls.size === 0 || [...calls.values()].some(call => call.status === 'running')) return
-    const orderedCalls = [...calls.values()].sort(
-      (a, b) => (a.contentIndex ?? Number.MAX_SAFE_INTEGER) - (b.contentIndex ?? Number.MAX_SAFE_INTEGER),
-    )
-
-    const compact = orderedCalls.flatMap(call => buildToolCard(call))
-    const exp = orderedCalls.flatMap(call => buildToolCard(call, true))
-    compactLines.push(...compact)
-    expandedLines.push(...exp)
-    const visible = expanded ? exp : compact
-    const context = outputContextFor(compactLines.slice(0, -compact.length))
-    const rendered = blocksToLines(buildOutputBlocks(visible, context))
-    screenLog.logLines(rendered)
-
-    appState = { ...appState, liveToolCalls: new Map() }
-    streamMachine = { ...machine, appState }
-    renderer.requestRender()
   }
 
   /** Toggle expanded view and redraw. */
@@ -706,6 +636,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     titleFrame = 0
     spinnerTimer = setInterval(() => {
       spinnerState = advanceSpinner(spinnerState)
+      if (streamMachine) {
+        streamMachine = { ...streamMachine, spinnerState }
+      }
       renderer.requestRender()
       // Terminal title animation — update at ~960ms like Claude Code.
       if (spinnerState.frame % TITLE_INTERVAL_FRAMES === 0) {
@@ -771,9 +704,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       // it by session_id independently of this display transcript), so this
       // only trims what's painted, not what the model remembers.
       const { shown, hidden } = selectResumeMessages(messages)
-      if (hidden > 0) commitLines([resumeElidedLine(hidden)])
-      commitLines(messagesToOutputLines(shown))
-      commitLines([
+      if (hidden > 0) restoreLines([resumeElidedLine(hidden)])
+      restoreLines(messagesToOutputLines(shown))
+      restoreLines([
         { id: 'sys-resumed-gap', kind: 'system', text: '' },
         { id: 'sys-resumed', kind: 'system', text: chalk.dim(`  resumed session ${session.session_id.slice(0, 8)}`) },
       ])
@@ -916,29 +849,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           renderer.requestRender()
         }
 
-        if (event.kind === 'tool_finished') commitLiveToolBatch()
-        // In expanded mode, stream thinking lines to scroll area
-        if (expanded && event.kind === 'assistant_delta') {
-          const thinkingDelta = ((event.payload ?? {}) as Record<string, any>).thinking_delta as string | undefined
-          if (thinkingDelta && streamMachine?.pendingThinkingText) {
-            const allLines = streamMachine.pendingThinkingText.split('\n')
-            const newLines = allLines.slice(lastThinkingLineCount)
-            // Only commit complete lines (exclude the last partial line)
-            const completeNewLines = newLines.length > 1 ? newLines.slice(0, -1) : []
-            lastThinkingLineCount = allLines.length - 1
-            if (completeNewLines.length > 0) {
-              const thinkingOutputLines = buildThinkingLines(completeNewLines.join('\n'))
-              expandedLines.push(...thinkingOutputLines)
-              renderer.requestRender()
-            }
-          }
-          // Reset when thinking ends (first text delta after thinking)
-          const textDelta = ((event.payload ?? {}) as Record<string, any>).delta as string | undefined
-          if (textDelta && lastThinkingLineCount > 0) {
-            lastThinkingLineCount = 0
-          }
-        }
-
         if (update.commitLines.length > 0) {
           if (update.expandedCommitLines) {
             // Dual-commit: compact in compactLines, expanded in expandedLines
@@ -979,7 +889,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         streamMachine = final.state
         appState = final.state.appState
         commitFlushResult(final)
-        flushLiveToolCards()
       }
       // Safety net: run settled without a further turn boundary.
       drainQueuedUserMessages()
@@ -989,7 +898,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         const final = flushStreaming(streamMachine)
         streamMachine = final.state
         commitFlushResult(final)
-        flushLiveToolCards()
       }
       commitLines([{ id: 'sys-err', kind: 'error', text: err?.message ?? String(err) }])
       drainQueuedUserMessages()
@@ -1119,26 +1027,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
-  function flushLiveToolCards(): void {
-    if (!streamMachine) return
-    const calls = [...streamMachine.appState.liveToolCalls.values()].sort(
-      (a, b) => (a.contentIndex ?? Number.MAX_SAFE_INTEGER) - (b.contentIndex ?? Number.MAX_SAFE_INTEGER),
-    )
-    if (calls.length === 0) return
-
-    const compact = calls.flatMap(call => buildToolCard(call))
-    const exp = calls.flatMap(call => buildToolCard(call, true))
-    compactLines.push(...compact)
-    expandedLines.push(...exp)
-    const visible = expanded ? exp : compact
-    const context = outputContextFor(compactLines.slice(0, -compact.length))
-    screenLog.logLines(blocksToLines(buildOutputBlocks(visible, context)))
-
-    appState = { ...appState, liveToolCalls: new Map() }
-    streamMachine = { ...streamMachine, appState }
-    renderer.requestRender()
-  }
-
   /** Flush any in-progress streaming content to committed output.
    *  Call before clearing streaming state on any abort/cancel path. */
   function flushStreamContent() {
@@ -1147,7 +1035,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const flushed = flushStreaming(streamMachine)
     streamMachine = flushed.state
     commitFlushResult(flushed)
-    flushLiveToolCards()
   }
 
   function interruptStream(id: string, text: string) {
@@ -2042,7 +1929,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         spinnerState = update.state.spinnerState
 
         if (event.kind === 'assistant_delta') renderer.requestRender()
-        if (event.kind === 'tool_finished') commitLiveToolBatch()
         if (update.commitLines.length > 0) commitLines(update.commitLines)
         if (event.kind === 'turn_started') drainQueuedUserMessages()
         if (update.rerenderStatus) renderer.requestRender()
@@ -2053,7 +1939,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         streamMachine = final.state
         appState = final.state.appState
         commitFlushResult(final)
-        flushLiveToolCards()
       }
       drainQueuedUserMessages()
     } catch (err: any) {
@@ -2061,7 +1946,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         const final = flushStreaming(streamMachine)
         streamMachine = final.state
         commitFlushResult(final)
-        flushLiveToolCards()
       }
       commitLines([{ id: 'sys-log-err', kind: 'system', text: chalk.red(`  Log query failed: ${err?.message ?? err}`) }])
       drainQueuedUserMessages()

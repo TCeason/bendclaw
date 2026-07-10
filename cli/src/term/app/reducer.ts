@@ -5,7 +5,8 @@
 import type { RunEvent } from '../../native/index.js'
 import { formatLlmCallStarted, formatLlmCallRetry, formatLlmCallCompleted, formatCompactionStarted, formatCompactionCompleted } from '../../render/verbose.js'
 import { emptyRunStats, type AppState } from './state.js'
-import type { CompactRecord, MessageStats, UIMessage, UIToolCall } from './types.js'
+import type { CompactRecord, MessageStats, UIAssistantBlock, UIMessage, UIToolCall } from './types.js'
+import { appendAssistantDelta, assistantToolCalls, completedAssistantContent, findAssistantToolCall, updateAssistantToolCall, updateToolCallInMessages, upsertAssistantToolCall } from './assistant-content.js'
 import { parseStreamingToolArgs } from './tool-args.js'
 
 
@@ -20,9 +21,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         isLoading: true,
         sessionId: event.session_id,
         error: null,
-        currentStreamText: '',
-        currentThinkingText: '',
-        liveToolCalls: new Map(),
+        currentAssistantContent: [],
         currentRunStats: emptyRunStats(),
         runStartTime: Date.now(),
         verboseEvents: [],
@@ -31,8 +30,6 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
     case 'turn_started':
       return {
         ...state,
-        currentStreamText: '',
-        currentThinkingText: '',
         currentRunStats: {
           ...state.currentRunStats,
           turnCount: state.currentRunStats.turnCount + 1,
@@ -41,81 +38,74 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
 
     case 'assistant_delta': {
       const delta = p.delta as string | undefined
-      const thinkingDelta = p.thinking_delta as string | undefined
+      if (!Number.isInteger(p.content_index) || !delta || (p.content_type !== 'text' && p.content_type !== 'thinking')) {
+        return state
+      }
       return {
         ...state,
-        currentStreamText: state.currentStreamText + (delta ?? ''),
-        currentThinkingText: state.currentThinkingText + (thinkingDelta ?? ''),
+        currentAssistantContent: appendAssistantDelta(state.currentAssistantContent, p),
         lastTokenAt: Date.now(),
       }
     }
 
     case 'assistant_tool_call': {
       const id = p.tool_call_id as string
-      if (!id) return state
-      const next = new Map(state.liveToolCalls)
-      const current = next.get(id)
+      const contentIndex = p.content_index as number
+      if (!id || !Number.isInteger(contentIndex)) return state
+      const current = findAssistantToolCall(state.currentAssistantContent, id)
       const phase = p.phase as string | undefined
       const delta = p.delta as string | undefined
       const partialArgs = phase === 'start'
         ? ''
         : `${current?.partialArgs ?? ''}${delta ?? ''}`
       const finalArgs = p.args as Record<string, unknown> | undefined
-      next.set(id, {
+      const toolCall: UIToolCall = {
         ...current,
         id,
         name: (p.tool_name as string) || current?.name || '',
         args: finalArgs ?? (delta !== undefined ? parseStreamingToolArgs(partialArgs) : current?.args ?? {}),
-        status: current?.status ?? 'running',
-        contentIndex: (p.content_index as number | undefined) ?? current?.contentIndex,
+        status: current?.status ?? 'queued',
         partialArgs: phase === 'end' ? undefined : partialArgs,
         argsComplete: phase === 'end' || current?.argsComplete,
-      })
-      return { ...state, liveToolCalls: next }
+      }
+      return {
+        ...state,
+        currentAssistantContent: upsertAssistantToolCall(
+          state.currentAssistantContent,
+          contentIndex,
+          toolCall,
+        ),
+      }
     }
 
     case 'assistant_completed': {
-      const content = p.content as any[] | undefined
-      const textParts = (content ?? [])
-        .filter((b: any) => b.type === 'text')
-        .map((b: any) => b.text)
-      const text = textParts.join('') || state.currentStreamText
-
-      const liveToolCalls = new Map(state.liveToolCalls)
-      for (const [contentIndex, block] of (content ?? []).entries()) {
-        if (block.type !== 'tool_call') continue
-        const current = liveToolCalls.get(block.id)
-        liveToolCalls.set(block.id, {
+      const completed = p.content as unknown[] | undefined
+      const streamedContent = state.currentAssistantContent
+      let content = completedAssistantContent(completed, streamedContent)
+      for (const toolCall of assistantToolCalls(content)) {
+        content = updateAssistantToolCall(content, toolCall.id, current => ({
           ...current,
-          id: block.id as string,
-          name: block.name as string,
-          args: (block.input ?? {}) as Record<string, unknown>,
-          status: current?.status ?? 'running',
           argsComplete: true,
           partialArgs: undefined,
-          contentIndex: current?.contentIndex ?? contentIndex,
-        })
+        }))
       }
-
-      const toolCalls = [...liveToolCalls.values()].sort(
-        (a, b) => (a.contentIndex ?? Number.MAX_SAFE_INTEGER) - (b.contentIndex ?? Number.MAX_SAFE_INTEGER),
-      )
+      const text = content
+        .filter((block): block is Extract<UIAssistantBlock, { type: 'text' }> => block.type === 'text')
+        .map(block => block.text)
+        .join('')
       const msg: UIMessage = {
         id: event.event_id,
         role: 'assistant',
         text,
         timestamp: Date.now(),
-        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        content,
         verboseEvents: state.verboseEvents.length > 0 ? [...state.verboseEvents] : undefined,
-        streamed: state.currentStreamText.length > 0,
       }
 
       return {
         ...state,
         messages: [...state.messages, msg],
-        currentStreamText: '',
-        currentThinkingText: '',
-        liveToolCalls,
+        currentAssistantContent: content,
         verboseEvents: [],
       }
     }
@@ -123,43 +113,39 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
     case 'tool_started': {
       const id = p.tool_call_id as string
       if (!id) return state
-      const next = new Map(state.liveToolCalls)
-      const current = next.get(id)
-      next.set(id, {
-        ...current,
-        id,
-        name: (p.tool_name as string) ?? current?.name ?? 'unknown',
-        args: (p.args as Record<string, unknown>) ?? current?.args ?? {},
-        status: 'running',
-        contentIndex: current?.contentIndex,
-        argsComplete: true,
-        partialArgs: undefined,
-        startedAt: current?.startedAt ?? Date.now(),
-        previewCommand: p.preview_command ?? current?.previewCommand,
-      })
-      return { ...state, liveToolCalls: next }
+      return {
+        ...state,
+        currentAssistantContent: updateAssistantToolCall(state.currentAssistantContent, id, current => ({
+          ...current,
+          name: (p.tool_name as string) ?? current.name,
+          args: (p.args as Record<string, unknown>) ?? current.args,
+          status: 'running',
+          argsComplete: true,
+          partialArgs: undefined,
+          startedAt: current.startedAt ?? Date.now(),
+          previewCommand: p.preview_command ?? current.previewCommand,
+        })),
+      }
     }
 
     case 'tool_progress': {
       const id = p.tool_call_id as string
-      if (!id) return state
-      const next = new Map(state.liveToolCalls)
-      const current = next.get(id)
-      if (!current) return state
+      if (!id || !findAssistantToolCall(state.currentAssistantContent, id)) return state
       const text = p.text as string | undefined
-      const progress = text && !/^Running\.\.\. \d+s$/.test(text.trim()) ? text : current.progress
-      next.set(id, {
-        ...current,
-        progress: progress || undefined,
-        details: p.details ?? current.details,
-      })
-      return { ...state, liveToolCalls: next }
+      return {
+        ...state,
+        currentAssistantContent: updateAssistantToolCall(state.currentAssistantContent, id, current => ({
+          ...current,
+          progress: text && !/^Running\.\.\. \d+s$/.test(text.trim()) ? text : current.progress,
+          details: p.details ?? current.details,
+        })),
+      }
     }
 
     case 'tool_finished': {
       const id = p.tool_call_id as string
       const isError = !!p.is_error
-      const current = state.liveToolCalls.get(id)
+      const current = findAssistantToolCall(state.currentAssistantContent, id)
       const toolName = p.tool_name ?? current?.name ?? 'unknown'
       const durationMs = (p.duration_ms as number) ?? 0
 
@@ -168,7 +154,6 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         name: toolName,
         args: current?.args ?? (p.args as Record<string, unknown>) ?? {},
         status: isError ? 'error' : 'done',
-        contentIndex: current?.contentIndex,
         result: p.content,
         details: p.details,
         previewCommand: current?.previewCommand,
@@ -179,9 +164,6 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       if (details?.diff && typeof details.diff === 'string') {
         finished.details = { ...(finished.details as Record<string, unknown> ?? {}), diff: details.diff }
       }
-
-      const liveToolCalls = new Map(state.liveToolCalls)
-      liveToolCalls.set(id, finished)
 
       const stats = { ...state.currentRunStats }
       stats.toolCallCount++
@@ -204,7 +186,11 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
 
       return {
         ...state,
-        liveToolCalls,
+        currentAssistantContent: updateAssistantToolCall(
+          state.currentAssistantContent,
+          id,
+          () => finished,
+        ),
         messages: updateToolCallInMessages(state.messages, id, finished),
         currentRunStats: stats,
       }
@@ -413,9 +399,6 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       return {
         ...state,
         isLoading: false,
-        currentStreamText: '',
-        currentThinkingText: '',
-        liveToolCalls: new Map(),
         currentRunStats: stats,
       }
     }
@@ -468,20 +451,4 @@ export function countMessagesByRole(messages: { role: string; content?: string; 
   toolDetails.sort((a, b) => b[1] - a[1])
 
   return { userCount, assistantCount, toolResultCount, imageCount: 0, userTokens, assistantTokens, toolResultTokens, imageTokens: 0, toolDetails }
-}
-
-function updateToolCallInMessages(messages: UIMessage[], toolCallId: string, finished: UIToolCall): UIMessage[] {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i]!
-    if (!msg.toolCalls) continue
-    const idx = msg.toolCalls.findIndex((tc) => tc.id === toolCallId)
-    if (idx >= 0) {
-      const newMessages = [...messages]
-      const newToolCalls = [...msg.toolCalls]
-      newToolCalls[idx] = finished
-      newMessages[i] = { ...msg, toolCalls: newToolCalls }
-      return newMessages
-    }
-  }
-  return messages
 }

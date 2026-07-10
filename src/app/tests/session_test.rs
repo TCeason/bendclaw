@@ -225,9 +225,7 @@ async fn round_trip_session_with_transcript() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "hi".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text { text: "hi".into() }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -277,9 +275,9 @@ async fn resume_session_appends_transcript() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "reply".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "reply".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -318,9 +316,9 @@ async fn session_title_comes_from_first_user_message() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "working".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "working".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -400,9 +398,9 @@ async fn save_and_load_transcript() -> TestResult {
             2,
             0,
             TranscriptItem::Assistant {
-                text: "hi there".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "hi there".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -423,7 +421,9 @@ async fn save_and_load_transcript() -> TestResult {
         .await?;
     assert_eq!(loaded.len(), 2);
     assert!(matches!(&loaded[0].item, TranscriptItem::User { text, .. } if text == "hello"));
-    assert!(matches!(&loaded[1].item, TranscriptItem::Assistant { text, ..} if text == "hi there"));
+    assert!(
+        matches!(&loaded[1].item, TranscriptItem::Assistant { content, ..} if matches!(&content[..], [AssistantBlock::Text { text }] if text == "hi there"))
+    );
     Ok(())
 }
 
@@ -447,9 +447,9 @@ async fn open_resumes_from_last_compact_entry() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "old reply 1".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "old reply 1".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -462,9 +462,9 @@ async fn open_resumes_from_last_compact_entry() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "old reply 2".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "old reply 2".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -488,9 +488,9 @@ async fn open_resumes_from_last_compact_entry() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "new reply".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "new reply".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -514,7 +514,7 @@ async fn open_resumes_from_last_compact_entry() -> TestResult {
     );
     assert!(matches!(&transcript[1], TranscriptItem::User { text, .. } if text == "old message 2"));
     assert!(
-        matches!(&transcript[2], TranscriptItem::Assistant { text, ..} if text == "old reply 2")
+        matches!(&transcript[2], TranscriptItem::Assistant { content, ..} if matches!(&content[..], [AssistantBlock::Text { text }] if text == "old reply 2"))
     );
     assert!(
         matches!(&transcript[3], TranscriptItem::User { text, .. } if text == "new message after compact")
@@ -542,9 +542,7 @@ async fn open_without_compact_returns_all_entries() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "hi".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text { text: "hi".into() }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -561,7 +559,9 @@ async fn open_without_compact_returns_all_entries() -> TestResult {
     let transcript = loaded.transcript().await;
     assert_eq!(transcript.len(), 2);
     assert!(matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "hello"));
-    assert!(matches!(&transcript[1], TranscriptItem::Assistant { text, ..} if text == "hi"));
+    assert!(
+        matches!(&transcript[1], TranscriptItem::Assistant { content, ..} if matches!(&content[..], [AssistantBlock::Text { text }] if text == "hi"))
+    );
     Ok(())
 }
 
@@ -624,9 +624,9 @@ async fn multiple_compactions_uses_last() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "reply1".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "reply1".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -721,9 +721,7 @@ async fn stats_items_persisted_but_filtered_on_resume() -> TestResult {
             },
             stats_item,
             TranscriptItem::Assistant {
-                text: "hi".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text { text: "hi".into() }],
                 stop_reason: "end_turn".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -756,7 +754,9 @@ async fn stats_items_persisted_but_filtered_on_resume() -> TestResult {
     let transcript = loaded.transcript().await;
     assert_eq!(transcript.len(), 2);
     assert!(matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "hello"));
-    assert!(matches!(&transcript[1], TranscriptItem::Assistant { text, ..} if text == "hi"));
+    assert!(
+        matches!(&transcript[1], TranscriptItem::Assistant { content, ..} if matches!(&content[..], [AssistantBlock::Text { text }] if text == "hi"))
+    );
     Ok(())
 }
 
@@ -780,9 +780,9 @@ async fn stats_after_compact_filtered_on_resume() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "old reply".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "old reply".into(),
+                }],
                 stop_reason: "end_turn".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -911,9 +911,9 @@ async fn title_is_correct_when_user_message_is_clean() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "planning".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "planning".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -962,9 +962,9 @@ async fn clear_marker_resets_context() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "reply1".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "reply1".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -1019,9 +1019,9 @@ async fn goto_marker_restores_snapshot() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "reply1".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "reply1".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -1034,9 +1034,9 @@ async fn goto_marker_restores_snapshot() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "reply2".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "reply2".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -1053,7 +1053,9 @@ async fn goto_marker_restores_snapshot() -> TestResult {
     let transcript = session.transcript().await;
     assert_eq!(transcript.len(), 2);
     assert!(matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "msg1"));
-    assert!(matches!(&transcript[1], TranscriptItem::Assistant { text, ..} if text == "reply1"));
+    assert!(
+        matches!(&transcript[1], TranscriptItem::Assistant { content, ..} if matches!(&content[..], [AssistantBlock::Text { text }] if text == "reply1"))
+    );
 
     // Continue from goto point
     session
@@ -1070,7 +1072,9 @@ async fn goto_marker_restores_snapshot() -> TestResult {
     let transcript = loaded.transcript().await;
     assert_eq!(transcript.len(), 3);
     assert!(matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "msg1"));
-    assert!(matches!(&transcript[1], TranscriptItem::Assistant { text, ..} if text == "reply1"));
+    assert!(
+        matches!(&transcript[1], TranscriptItem::Assistant { content, ..} if matches!(&content[..], [AssistantBlock::Text { text }] if text == "reply1"))
+    );
     assert!(matches!(&transcript[2], TranscriptItem::User { text, .. } if text == "new direction"));
     Ok(())
 }
@@ -1095,9 +1099,9 @@ async fn goto_after_clear_restores_old_context() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "response".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "response".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -1116,7 +1120,9 @@ async fn goto_after_clear_restores_old_context() -> TestResult {
     let transcript = session.transcript().await;
     assert_eq!(transcript.len(), 2);
     assert!(matches!(&transcript[0], TranscriptItem::User { text, .. } if text == "original"));
-    assert!(matches!(&transcript[1], TranscriptItem::Assistant { text, ..} if text == "response"));
+    assert!(
+        matches!(&transcript[1], TranscriptItem::Assistant { content, ..} if matches!(&content[..], [AssistantBlock::Text { text }] if text == "response"))
+    );
     Ok(())
 }
 
@@ -1140,9 +1146,9 @@ async fn structured_compact_entry_rebuilds_context() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "old reply".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "old reply".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -1258,9 +1264,9 @@ async fn history_on_resumed_session() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "hi there".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "hi there".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -1273,9 +1279,9 @@ async fn history_on_resumed_session() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "doing well".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "doing well".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -1297,7 +1303,9 @@ async fn history_on_resumed_session() -> TestResult {
     assert_eq!(entries[0].0, 1); // seq
     assert!(matches!(&entries[0].1, TranscriptItem::User { text, .. } if text == "hello"));
     assert_eq!(entries[1].0, 2);
-    assert!(matches!(&entries[1].1, TranscriptItem::Assistant { text, ..} if text == "hi there"));
+    assert!(
+        matches!(&entries[1].1, TranscriptItem::Assistant { content, ..} if matches!(&content[..], [AssistantBlock::Text { text }] if text == "hi there"))
+    );
     assert_eq!(entries[2].0, 3);
     assert_eq!(entries[3].0, 4);
 
@@ -1329,9 +1337,9 @@ async fn history_after_clear_shows_only_post_clear() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "old reply".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "old reply".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -1384,9 +1392,9 @@ async fn history_after_goto_shows_snapshot_and_new_entries() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "first answer".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "first answer".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -1399,9 +1407,9 @@ async fn history_after_goto_shows_snapshot_and_new_entries() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "second answer".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "second answer".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -1423,9 +1431,9 @@ async fn history_after_goto_shows_snapshot_and_new_entries() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "new answer".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "new answer".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -1453,14 +1461,16 @@ async fn history_after_goto_shows_snapshot_and_new_entries() -> TestResult {
     assert!(matches!(&entries[0].1, TranscriptItem::User { text, .. } if text == "first question"));
     assert_eq!(entries[1].0, 0);
     assert!(
-        matches!(&entries[1].1, TranscriptItem::Assistant { text, ..} if text == "first answer")
+        matches!(&entries[1].1, TranscriptItem::Assistant { content, ..} if matches!(&content[..], [AssistantBlock::Text { text }] if text == "first answer"))
     );
 
     // New items have real seq
     assert!(entries[2].0 > 0);
     assert!(matches!(&entries[2].1, TranscriptItem::User { text, .. } if text == "new question"));
     assert!(entries[3].0 > 0);
-    assert!(matches!(&entries[3].1, TranscriptItem::Assistant { text, ..} if text == "new answer"));
+    assert!(
+        matches!(&entries[3].1, TranscriptItem::Assistant { content, ..} if matches!(&content[..], [AssistantBlock::Text { text }] if text == "new answer"))
+    );
 
     Ok(())
 }
@@ -1485,9 +1495,7 @@ async fn history_excludes_empty_messages() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "".into(), // empty assistant (tool call start)
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![], // empty assistant (tool call start)
                 stop_reason: "tool_use".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -1496,9 +1504,9 @@ async fn history_excludes_empty_messages() -> TestResult {
                 error_message: None,
             },
             TranscriptItem::Assistant {
-                text: "real answer".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "real answer".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -1515,7 +1523,7 @@ async fn history_excludes_empty_messages() -> TestResult {
     assert_eq!(entries.len(), 2);
     assert!(matches!(&entries[0].1, TranscriptItem::User { text, .. } if text == "hello"));
     assert!(
-        matches!(&entries[1].1, TranscriptItem::Assistant { text, ..} if text == "real answer")
+        matches!(&entries[1].1, TranscriptItem::Assistant { content, ..} if matches!(&content[..], [AssistantBlock::Text { text }] if text == "real answer"))
     );
 
     Ok(())
@@ -1541,9 +1549,7 @@ async fn is_valid_context_seq_rejects_empty_assistant() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text { text: "".into() }],
                 stop_reason: "tool_use".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -1552,9 +1558,9 @@ async fn is_valid_context_seq_rejects_empty_assistant() -> TestResult {
                 error_message: None,
             },
             TranscriptItem::Assistant {
-                text: "real answer".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "real answer".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -1595,9 +1601,9 @@ async fn get_item_at_returns_correct_item() -> TestResult {
                 content: vec![],
             },
             TranscriptItem::Assistant {
-                text: "world".into(),
-                thinking: None,
-                tool_calls: vec![],
+                content: vec![AssistantBlock::Text {
+                    text: "world".into(),
+                }],
                 stop_reason: "stop".into(),
                 usage: UsageSummary::default(),
                 model: String::new(),
@@ -1612,7 +1618,9 @@ async fn get_item_at_returns_correct_item() -> TestResult {
     assert!(matches!(&item, Some(TranscriptItem::User { text, .. }) if text == "hello"));
 
     let item = session.get_item_at(2).await?;
-    assert!(matches!(&item, Some(TranscriptItem::Assistant { text, ..}) if text == "world"));
+    assert!(
+        matches!(&item, Some(TranscriptItem::Assistant { content, ..}) if matches!(&content[..], [AssistantBlock::Text { text }] if text == "world"))
+    );
 
     let item = session.get_item_at(999).await?;
     assert!(item.is_none());

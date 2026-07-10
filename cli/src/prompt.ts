@@ -47,7 +47,7 @@ export async function runPrompt(opts: CliOptions) {
 function printEventText(event: any) {
   switch (event.kind) {
     case 'assistant_delta':
-      if (event.payload?.delta) process.stdout.write(event.payload.delta)
+      if (event.payload?.content_type === 'text' && event.payload?.delta) process.stdout.write(String(event.payload.delta))
       break
     case 'tool_finished':
       if (event.payload?.is_error) {

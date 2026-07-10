@@ -4,10 +4,10 @@ use tokio::sync::mpsc;
 
 use super::config::default_convert_to_llm;
 use super::config::AgentLoopConfig;
+use crate::provider::ApiProtocol;
 use crate::provider::ProviderError;
 use crate::provider::StreamConfig;
 use crate::provider::StreamEvent;
-use crate::provider::ThinkingPassbackPolicy;
 use crate::provider::ToolDefinition;
 use crate::types::*;
 
@@ -52,11 +52,16 @@ pub(super) async fn stream_assistant_response(
         Some(f) => f(&messages),
         None => default_convert_to_llm(&messages),
     };
-    // Strip thinking blocks before sending history back to the provider.
-    // Most providers do not require thinking passback, and keeping it bloats
-    // context/cache keys. DeepSeek-compatible Anthropic endpoints require
-    // thinking on retained assistant tool-use messages.
-    let llm_messages = strip_thinking(llm_messages, thinking_passback_policy(config));
+    // Normalize provider-opaque history at the LLM boundary. Replayable
+    // thinking survives only for the exact provider/model/protocol that emitted
+    // it; foreign thinking is retained as ordinary text context.
+    let (target_provider, target_model, target_api) = target_model(config);
+    let llm_messages = crate::context::transform_messages_for_model(
+        llm_messages,
+        &target_provider,
+        &target_model,
+        target_api,
+    );
 
     // Build tool definitions
     let tool_defs: Vec<ToolDefinition> = context
@@ -160,7 +165,10 @@ pub(super) async fn stream_assistant_response(
                             })
                             .ok();
                     }
-                    StreamEvent::TextDelta { delta, .. } => {
+                    StreamEvent::TextDelta {
+                        content_index,
+                        delta,
+                    } => {
                         if !first_delta_seen {
                             first_delta_seen = true;
                             if let Ok(mut m) = metrics_handle.lock() {
@@ -173,13 +181,17 @@ pub(super) async fn stream_assistant_response(
                                 .send(AgentEvent::MessageUpdate {
                                     message: msg.clone(),
                                     delta: StreamDelta::Text {
+                                        content_index: *content_index,
                                         delta: delta.clone(),
                                     },
                                 })
                                 .ok();
                         }
                     }
-                    StreamEvent::ThinkingDelta { delta, .. } => {
+                    StreamEvent::ThinkingDelta {
+                        content_index,
+                        delta,
+                    } => {
                         if !first_delta_seen {
                             first_delta_seen = true;
                             if let Ok(mut m) = metrics_handle.lock() {
@@ -192,6 +204,7 @@ pub(super) async fn stream_assistant_response(
                                 .send(AgentEvent::MessageUpdate {
                                     message: msg.clone(),
                                     delta: StreamDelta::Thinking {
+                                        content_index: *content_index,
                                         delta: delta.clone(),
                                     },
                                 })
@@ -456,83 +469,13 @@ pub(super) async fn stream_assistant_response(
     }
 }
 
-/// Strip thinking blocks from request history.
-///
-/// Thinking is the model's internal reasoning. It is expensive to replay and
-/// usually not part of the provider protocol. DeepSeek-compatible Anthropic
-/// endpoints are the exception: assistant tool-use messages retained in history
-/// must keep their original thinking blocks.
-fn strip_thinking(messages: Vec<Message>, policy: ThinkingPassbackPolicy) -> Vec<Message> {
-    messages
-        .into_iter()
-        .map(|msg| match policy {
-            ThinkingPassbackPolicy::Disabled => strip_message_thinking(msg),
-            ThinkingPassbackPolicy::ToolUseMessages if is_assistant_tool_use_message(&msg) => msg,
-            ThinkingPassbackPolicy::ToolUseMessages => strip_message_thinking(msg),
-        })
-        .collect()
-}
-
-fn thinking_passback_policy(config: &AgentLoopConfig) -> ThinkingPassbackPolicy {
-    config
-        .model_config
-        .as_ref()
-        .map(|model_config| model_config.thinking_passback)
-        .unwrap_or_default()
-}
-
-fn is_assistant_tool_use_message(message: &Message) -> bool {
-    matches!(
-        message,
-        Message::Assistant { content, .. }
-            if content.iter().any(|c| matches!(c, Content::ToolCall { .. }))
-    )
-}
-
-fn strip_message_thinking(msg: Message) -> Message {
-    match msg {
-        Message::Assistant {
-            content,
-            stop_reason,
-            model,
-            provider,
-            usage,
-            timestamp,
-            error_message,
-            response_id,
-        } => {
-            let filtered: Vec<Content> = content
-                .into_iter()
-                .filter(|c| !matches!(c, Content::Thinking { .. }))
-                .collect();
-            // Keep original content if filtering would leave it empty — some
-            // providers reject empty content arrays.
-            if filtered.is_empty() {
-                Message::Assistant {
-                    content: vec![Content::Text {
-                        text: "(thinking only)".to_string(),
-                    }],
-                    stop_reason,
-                    model,
-                    provider,
-                    usage,
-                    timestamp,
-                    error_message,
-                    response_id,
-                }
-            } else {
-                Message::Assistant {
-                    content: filtered,
-                    stop_reason,
-                    model,
-                    provider,
-                    usage,
-                    timestamp,
-                    error_message,
-                    response_id,
-                }
-            }
-        }
-        other => other,
+fn target_model(config: &AgentLoopConfig) -> (String, String, ApiProtocol) {
+    match &config.model_config {
+        Some(model) => (model.provider.clone(), model.id.clone(), model.api),
+        None => (
+            "openai".into(),
+            config.model.clone(),
+            ApiProtocol::OpenAiCompletions,
+        ),
     }
 }

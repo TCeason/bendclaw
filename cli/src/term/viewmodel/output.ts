@@ -100,16 +100,15 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
       }
 
       case 'thinking': {
-        blocks.push(block([
-          line(dim(`${ol.text}`)),
-        ], 0))
-        break
-      }
-
-      case 'thinking_summary': {
-        blocks.push(block([
-          line(colored('✻', 'cyan', { bold: true }), bold(' thinking'), dim(`  · ${ol.text}`)),
-        ], 1))
+        // First line of a thinking block gets a lightweight ✻ marker (dim, so it
+        // reads as secondary next to the assistant's cyan ⏺). Continuation lines
+        // align under it with a 2-col indent — same shape as assistant text.
+        const isBlockStart = prevKind !== 'thinking'
+        const prefix = isBlockStart ? colored('✻ ', 'magenta', { dim: true }) : plain('  ')
+        const body = ol.thinkingStyle
+          ? { text: `${ol.text}`, italic: true, dim: true }
+          : dim(`${ol.text}`)
+        blocks.push(block([line(prefix, body)], isBlockStart ? 1 : 0))
         break
       }
 

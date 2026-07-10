@@ -60,8 +60,8 @@ impl SessionSearcher {
 
         for entry in entries {
             if let Some(text) = extract_text(&entry.item) {
-                if self.matcher.matches(text) {
-                    let snippet = truncate(text, 120);
+                if self.matcher.matches(&text) {
+                    let snippet = truncate(&text, 120);
                     return Some(hit(session, "content", &snippet));
                 }
             }
@@ -95,7 +95,7 @@ pub fn collect_search_text(session: &SessionMeta, entries: &[TranscriptEntry]) -
             break;
         }
         if let Some(text) = extract_text(&entry.item) {
-            let normalized = normalize_ws(text);
+            let normalized = normalize_ws(&text);
             if normalized.is_empty() {
                 continue;
             }
@@ -131,12 +131,12 @@ fn hit(session: &SessionMeta, field: &str, snippet: &str) -> SearchHit {
     }
 }
 
-fn extract_text(item: &TranscriptItem) -> Option<&str> {
+fn extract_text(item: &TranscriptItem) -> Option<String> {
     match item {
-        TranscriptItem::User { text, .. } => Some(text),
-        TranscriptItem::Assistant { text, .. } => Some(text),
-        TranscriptItem::ToolResult { content, .. } => Some(content),
-        TranscriptItem::System { text } => Some(text),
+        TranscriptItem::User { text, .. } => Some(text.clone()),
+        TranscriptItem::Assistant { content, .. } => Some(crate::types::assistant_text(content)),
+        TranscriptItem::ToolResult { content, .. } => Some(content.clone()),
+        TranscriptItem::System { text } => Some(text.clone()),
         _ => None,
     }
 }

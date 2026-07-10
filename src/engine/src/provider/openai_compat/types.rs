@@ -42,6 +42,8 @@ pub(crate) struct OpenAiDelta {
     #[serde(default)]
     pub reasoning: Option<String>,
     #[serde(default)]
+    pub reasoning_text: Option<String>,
+    #[serde(default)]
     pub tool_calls: Option<Vec<OpenAiToolCallDelta>>,
 }
 
@@ -120,6 +122,8 @@ pub(crate) struct OpenAiResponseMessage {
     pub reasoning_content: Option<String>,
     #[serde(default)]
     pub reasoning: Option<String>,
+    #[serde(default)]
+    pub reasoning_text: Option<String>,
     #[serde(default)]
     pub tool_calls: Option<Vec<OpenAiResponseToolCall>>,
 }

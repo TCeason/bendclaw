@@ -56,7 +56,7 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
                             "data": { "id": id, "name": name, "input": input }
                         }));
                     }
-                    AssistantBlock::Thinking { text } if !text.is_empty() => {
+                    AssistantBlock::Thinking { text, .. } if !text.is_empty() => {
                         events.push(json!({ "type": "thinking", "data": { "thinking": text } }));
                     }
                     _ => {}
@@ -105,9 +105,12 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
             events.push(json!({ "type": "error", "data": { "message": message } }));
         }
         RunEventPayload::AssistantDelta {
-            delta: Some(delta), ..
+            content_type,
+            delta,
+            ..
         } => {
-            if !delta.is_empty() {
+            if matches!(content_type, crate::agent::AssistantContentType::Text) && !delta.is_empty()
+            {
                 events.push(json!({ "type": "text", "data": { "text": delta } }));
             }
         }

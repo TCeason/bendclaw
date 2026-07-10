@@ -93,9 +93,7 @@ fn is_control_point(item: &TranscriptItem) -> bool {
 fn clear_assistant_usage(item: TranscriptItem) -> TranscriptItem {
     match item {
         TranscriptItem::Assistant {
-            text,
-            thinking,
-            tool_calls,
+            content,
             stop_reason,
             model,
             provider,
@@ -103,9 +101,7 @@ fn clear_assistant_usage(item: TranscriptItem) -> TranscriptItem {
             error_message,
             ..
         } => TranscriptItem::Assistant {
-            text,
-            thinking,
-            tool_calls,
+            content,
             stop_reason,
             usage: UsageSummary::default(),
             model,

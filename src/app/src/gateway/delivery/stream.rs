@@ -83,8 +83,12 @@ async fn deliver_progressive(
     while let Some(event) = run.next().await {
         match &event.payload {
             RunEventPayload::AssistantDelta {
-                delta: Some(delta), ..
-            } if !delta.is_empty() => {
+                content_type,
+                delta,
+                ..
+            } if matches!(content_type, crate::agent::AssistantContentType::Text)
+                && !delta.is_empty() =>
+            {
                 text_buf.push_str(delta);
                 let visible = &text_buf[text_offset..];
                 let threshold = if continuation {
@@ -249,10 +253,13 @@ async fn deliver_final(
     let mut text_buf = String::new();
     while let Some(event) = run.next().await {
         if let RunEventPayload::AssistantDelta {
-            delta: Some(delta), ..
+            content_type,
+            delta,
+            ..
         } = &event.payload
         {
-            if !delta.is_empty() {
+            if matches!(content_type, crate::agent::AssistantContentType::Text) && !delta.is_empty()
+            {
                 text_buf.push_str(delta);
             }
         }

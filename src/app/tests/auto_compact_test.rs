@@ -7,6 +7,7 @@ use evot::conf::Config;
 use evot::conf::Protocol;
 use evot::conf::ProviderProfile;
 use evot::storage::MemoryStorage;
+use evot::types::AssistantBlock;
 use evot::types::TranscriptItem;
 use evot::types::UsageSummary;
 use evot_engine::provider::MockProvider;
@@ -137,9 +138,7 @@ fn assistant(text: &str) -> TranscriptItem {
 
 fn assistant_with_usage(text: &str, input_tokens: u64) -> TranscriptItem {
     TranscriptItem::Assistant {
-        text: text.into(),
-        thinking: None,
-        tool_calls: vec![],
+        content: vec![AssistantBlock::Text { text: text.into() }],
         stop_reason: "stop".into(),
         usage: UsageSummary {
             input: input_tokens,
