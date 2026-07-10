@@ -228,8 +228,8 @@ fn thinking_effort(level: ThinkingLevel, config: &StreamConfig) -> Option<&str> 
         ThinkingLevel::Minimal | ThinkingLevel::Low => Some("low"),
         ThinkingLevel::Medium | ThinkingLevel::Adaptive => Some("medium"),
         ThinkingLevel::High => Some("high"),
-        // Default for the strongest level when the model declares no override.
         ThinkingLevel::Xhigh => Some("xhigh"),
+        ThinkingLevel::Max => Some("max"),
     }
 }
 

@@ -20,14 +20,28 @@ fn model_config_openai() {
 }
 
 #[test]
-fn model_config_openai_gpt_5_5_uses_272k_context() {
-    // gpt-5.5's Codex backend serves ~272k usable context (matches pi-mono's
-    // industry value), not the advertised 400k.
-    let config = ModelConfig::openai("gpt-5.5", "GPT-5.5");
-    assert_eq!(config.context_window, 272_000);
+fn model_config_openai_current_gpt_models_use_catalog_limits() {
+    for id in [
+        "gpt-5.4",
+        "gpt-5.5",
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+    ] {
+        let config = ModelConfig::openai(id, id);
+        assert_eq!(config.context_window, 272_000, "{id}");
+        assert_eq!(config.max_tokens, 128_000, "{id}");
 
-    let local_config = ModelConfig::local("", "gpt-5.5");
-    assert_eq!(local_config.context_window, 272_000);
+        let local_config = ModelConfig::local("", id);
+        assert_eq!(local_config.context_window, 272_000, "{id}");
+        assert_eq!(local_config.max_tokens, 128_000, "{id}");
+    }
+
+    for id in ["gpt-5.4-pro", "gpt-5.5-pro"] {
+        let config = ModelConfig::openai(id, id);
+        assert_eq!(config.context_window, 1_050_000, "{id}");
+        assert_eq!(config.max_tokens, 128_000, "{id}");
+    }
 }
 
 #[test]
@@ -139,10 +153,12 @@ fn model_config_anthropic_modern_models_use_64k_output_cap() {
         assert_eq!(config.max_tokens, 64_000, "{id}");
     }
 
-    // Sonnet 5+ carries the 1M window and the 128k output cap.
-    let sonnet_5 = ModelConfig::anthropic("claude-sonnet-5", "Sonnet 5");
-    assert_eq!(sonnet_5.context_window, 1_000_000);
-    assert_eq!(sonnet_5.max_tokens, 128_000);
+    // Sonnet 4.6 and Sonnet 5+ carry the 1M window and the 128k output cap.
+    for id in ["claude-sonnet-4-6", "claude-sonnet-5"] {
+        let sonnet = ModelConfig::anthropic(id, "Sonnet");
+        assert_eq!(sonnet.context_window, 1_000_000, "{id}");
+        assert_eq!(sonnet.max_tokens, 128_000, "{id}");
+    }
 
     // Legacy claude-3 keeps the conservative fallback.
     let legacy = ModelConfig::anthropic("claude-3-opus-20240229", "Opus 3");
@@ -212,11 +228,17 @@ fn cost_config_default() {
 }
 
 #[test]
-fn supported_thinking_levels_anthropic_offers_full_ramp() {
+fn supported_thinking_levels_anthropic_use_model_specific_extended_tiers() {
     use evotengine::ThinkingLevel::*;
-    let config = ModelConfig::anthropic("claude-opus-4-6", "Opus 4.6");
-    assert_eq!(config.supported_thinking_levels(), vec![
-        Off, Low, Medium, High, Xhigh
+
+    let opus_4_6 = ModelConfig::anthropic("claude-opus-4-6", "Opus 4.6");
+    assert_eq!(opus_4_6.supported_thinking_levels(), vec![
+        Off, Low, Medium, High, Max
+    ]);
+
+    let opus_4_8 = ModelConfig::anthropic("claude-opus-4-8", "Opus 4.8");
+    assert_eq!(opus_4_8.supported_thinking_levels(), vec![
+        Off, Low, Medium, High, Xhigh, Max
     ]);
 }
 
@@ -285,6 +307,34 @@ fn supported_thinking_levels_gpt_5_5_drops_minimal_only() {
     let config = ModelConfig::openai("gpt-5.5", "GPT-5.5");
     assert_eq!(config.supported_thinking_levels(), vec![
         Off, Low, Medium, High, Xhigh
+    ]);
+}
+
+#[test]
+fn supported_thinking_levels_gpt_5_6_includes_xhigh_and_max() {
+    use evotengine::ThinkingLevel::*;
+
+    for id in ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"] {
+        let config = ModelConfig::openai(id, id);
+        assert_eq!(
+            config.supported_thinking_levels(),
+            vec![Off, Low, Medium, High, Xhigh, Max],
+            "{id}"
+        );
+        assert_eq!(config.thinking_effort_override(Max), Some("max"), "{id}");
+    }
+}
+
+#[test]
+fn openrouter_prefixed_gpt_5_6_gets_catalog_limits_and_reasoning_metadata() {
+    use evotengine::ThinkingLevel::*;
+
+    let mut config = ModelConfig::local("", "openai/gpt-5.6-sol");
+    config.compat = Some(OpenAiCompat::openai());
+    assert_eq!(config.context_window, 272_000);
+    assert_eq!(config.max_tokens, 128_000);
+    assert_eq!(config.supported_thinking_levels(), vec![
+        Off, Low, Medium, High, Xhigh, Max
     ]);
 }
 

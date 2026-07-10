@@ -210,8 +210,7 @@ fn apply_reasoning_effort(
     config: &StreamConfig,
     compat: &OpenAiCompat,
 ) {
-    if config.thinking_level == ThinkingLevel::Off || !compat.has_cap(CompatCaps::REASONING_EFFORT)
-    {
+    if !compat.has_cap(CompatCaps::REASONING_EFFORT) {
         return;
     }
 
@@ -225,6 +224,7 @@ fn apply_reasoning_effort(
             ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
             ThinkingLevel::Medium => "medium",
             ThinkingLevel::High | ThinkingLevel::Xhigh | ThinkingLevel::Adaptive => "high",
+            ThinkingLevel::Max => "max",
             ThinkingLevel::Off => return,
         },
     };

@@ -79,6 +79,43 @@ fn explicit_context_window_and_max_tokens_apply() {
 }
 
 #[test]
+fn native_openai_gpt_5_6_metadata_applies_without_explicit_overrides() {
+    let mc = build_model_config(
+        Protocol::OpenAi,
+        "openai",
+        "gpt-5.6-sol",
+        Some("https://api.openai.com/v1"),
+        CompatCaps::NONE,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(mc.context_window, 272_000);
+    assert_eq!(mc.max_tokens, 128_000);
+    assert!(mc.supports_image());
+}
+
+#[test]
+fn openrouter_gpt_5_6_gets_catalog_limits_without_explicit_overrides() {
+    let mc = build_model_config(
+        Protocol::OpenAi,
+        "openrouter",
+        "openai/gpt-5.6-sol",
+        Some("https://openrouter.ai/api/v1"),
+        CompatCaps::REASONING_EFFORT,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(mc.context_window, 272_000);
+    assert_eq!(mc.max_tokens, 128_000);
+    assert_eq!(
+        mc.thinking_effort_override(evot_engine::ThinkingLevel::Max),
+        Some("max")
+    );
+}
+
+#[test]
 fn anthropic_defaults_to_vision() {
     let mc = build_model_config(
         Protocol::Anthropic,

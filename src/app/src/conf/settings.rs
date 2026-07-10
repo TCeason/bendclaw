@@ -281,7 +281,7 @@ pub fn settings_snapshot(config: &Config) -> serde_json::Value {
         "active_provider": config.llm.provider,
         "thinking_level": config.llm.thinking_level.as_str(),
         "protocols": [Protocol::Anthropic.to_string(), Protocol::OpenAi.to_string()],
-        "thinking_levels": ["off", "minimal", "low", "medium", "high", "xhigh", "adaptive"],
+        "thinking_levels": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "adaptive"],
         "providers": providers,
         "feishu": feishu,
         "env_file_path": config.env_file_path.display().to_string(),

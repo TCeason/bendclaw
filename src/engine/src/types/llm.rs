@@ -154,10 +154,11 @@ pub enum ThinkingLevel {
     Low,
     Medium,
     High,
-    /// Highest reasoning level. Maps to provider-specific effort via the
-    /// model's `thinking_level_map` (e.g. "max" on Opus 4.6, "xhigh" on
-    /// Opus 4.7+/4.8/Fable).
+    /// Extra-high reasoning level. Only selectable when model metadata opts in.
     Xhigh,
+    /// Maximum reasoning level. Distinct from `xhigh`; GPT-5.6 and newer
+    /// adaptive-thinking models can expose both tiers.
+    Max,
     #[default]
     Adaptive,
 }
@@ -173,6 +174,7 @@ impl ThinkingLevel {
             Self::Medium => "medium",
             Self::High => "high",
             Self::Xhigh => "xhigh",
+            Self::Max => "max",
             Self::Adaptive => "adaptive",
         }
     }

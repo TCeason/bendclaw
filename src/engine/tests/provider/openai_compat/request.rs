@@ -46,6 +46,21 @@ fn test_gpt_5_xhigh_thinking_maps_to_xhigh_reasoning_effort() {
 }
 
 #[test]
+fn test_gpt_5_6_max_thinking_maps_to_max_reasoning_effort() {
+    for id in ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"] {
+        let model_config = ModelConfig::openai(id, id);
+        let config = StreamConfigBuilder::openai()
+            .model(id)
+            .model_config(model_config)
+            .thinking(ThinkingLevel::Max)
+            .build();
+
+        let body = build_request_body(&config, &OpenAiCompat::openai());
+        assert_eq!(body["reasoning_effort"], "max", "{id}");
+    }
+}
+
+#[test]
 fn test_medium_thinking_maps_to_medium_reasoning_effort() {
     let config = StreamConfigBuilder::openai()
         .model("gpt-5")
@@ -76,6 +91,19 @@ fn test_off_thinking_omits_reasoning_effort() {
 
     let body = build_request_body(&config, &OpenAiCompat::openai());
     assert!(body.get("reasoning_effort").is_none());
+}
+
+#[test]
+fn test_gpt_5_6_off_thinking_sends_none_reasoning_effort() {
+    let model_config = ModelConfig::openai("gpt-5.6-sol", "GPT-5.6 Sol");
+    let config = StreamConfigBuilder::openai()
+        .model("gpt-5.6-sol")
+        .model_config(model_config)
+        .thinking(ThinkingLevel::Off)
+        .build();
+
+    let body = build_request_body(&config, &OpenAiCompat::openai());
+    assert_eq!(body["reasoning_effort"], "none");
 }
 
 #[test]

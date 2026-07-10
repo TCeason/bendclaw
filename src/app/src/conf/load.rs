@@ -348,9 +348,9 @@ fn default_env_content() -> &'static str {
 # overridden per provider via EVOT_LLM_{PROVIDER}_THINKING_LEVEL below.
 # Anthropic: thinking is always adaptive; this sets output_config.effort.
 #   off disables thinking; minimal/low=low, medium/adaptive=medium, high=high effort.
-#   xhigh=strongest effort, resolved per model (Opus 4.6="max", Opus 4.7+/4.8/Fable="xhigh").
+#   xhigh/max=strongest efforts when the active model supports those tiers.
 # OpenAI-compatible: adaptive=model default when known (gpt-5.5=medium, gpt-5.4=xhigh),
-#   high=high, xhigh=xhigh for supported GPT models, medium=medium, minimal/low=low.
+#   high=high, xhigh=xhigh and max=max for supported GPT models, medium=medium, minimal/low=low.
 
 # EVOT_LLM_ANTHROPIC_API_KEY=
 # EVOT_LLM_ANTHROPIC_BASE_URL=https://api.anthropic.com

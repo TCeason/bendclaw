@@ -334,7 +334,7 @@ fn default_input_modalities() -> Vec<InputModality> {
 ///
 /// Version-gated rather than id-listed so future releases work without edits,
 /// mirroring pi's per-model registry values:
-/// - Opus 4.6+, Sonnet 5+, and the Fable family carry the 1M context window and
+/// - Opus 4.6+, Sonnet 4.6+, and the Fable family carry the 1M context window and
 ///   a 128k output cap.
 /// - Other modern Claude 4.x (Sonnet/Haiku/Opus) support a 64k output budget.
 /// - Legacy `claude-3-*` and unparseable ids fall back to conservative caps.
@@ -347,7 +347,7 @@ fn anthropic_context_window(id: &str) -> (u32, u32) {
     };
     let million_ctx = family == "fable"
         || (family == "opus" && (major, minor) >= (4, 6))
-        || (family == "sonnet" && major >= 5);
+        || (family == "sonnet" && ((major, minor) >= (4, 6) || major >= 5));
     if million_ctx {
         return (1_000_000, 128_000);
     }
@@ -359,17 +359,28 @@ fn anthropic_context_window(id: &str) -> (u32, u32) {
 
 /// Default `thinking_level_map` for an Anthropic model id.
 ///
-/// The map records only *exceptions* to the request builder's default, which
-/// already maps the `xhigh` level to `"xhigh"` effort. Known exceptions:
-/// - Opus 4.6's strongest tier is `"max"` rather than `"xhigh"`.
-/// - The Fable family cannot disable thinking, so `off` is unsupported.
-///
-/// Everything else uses the default, so new models keep working without
-/// touching this table. Mirrors pi's per-model `thinkingLevelMap`.
+/// Only model-specific selectable tiers are recorded. Current adaptive-thinking
+/// models opt into `max`; Opus 4.7+, Sonnet 5+, and Fable also opt into
+/// `xhigh`. Opus 4.6 exposes `max` but not `xhigh`, while Fable cannot disable
+/// thinking. Mirrors pi's per-model `thinkingLevelMap`.
 fn anthropic_thinking_level_map(id: &str) -> HashMap<String, Option<String>> {
     let mut map = HashMap::new();
     if let Some((family, major, minor)) = anthropic_model_version(id) {
-        if family == "opus" && (major, minor) == (4, 6) {
+        let adaptive = family == "fable"
+            || (family == "opus" && (major, minor) >= (4, 6))
+            || (family == "sonnet" && ((major, minor) >= (4, 6) || major >= 5));
+        if adaptive {
+            map.insert("max".into(), Some("max".into()));
+        }
+        let supports_xhigh = family == "fable"
+            || (family == "opus" && (major, minor) >= (4, 7))
+            || (family == "sonnet" && major >= 5);
+        if supports_xhigh {
+            map.insert("xhigh".into(), Some("xhigh".into()));
+        } else if adaptive {
+            // Backward compatibility for persisted/configured `xhigh`: max-only
+            // models should receive a valid effort even though xhigh is no
+            // longer offered as a separate selectable tier.
             map.insert("xhigh".into(), Some("max".into()));
         }
         if family == "fable" {
@@ -405,14 +416,35 @@ fn anthropic_model_version(id: &str) -> Option<(&'static str, u32, u32)> {
 }
 
 fn openai_context_window(id: &str) -> u32 {
-    match id.trim().to_ascii_lowercase().as_str() {
-        // gpt-5.5's Codex backend only serves ~272k usable input (matches pi-mono),
-        // not the advertised 400k.
-        "gpt-5.5" => 272_000,
+    match native_openai_model_id(id).as_str() {
+        // Direct OpenAI Responses metadata currently reports this 272k catalog
+        // window. Evot uses the Chat Completions transport, so treat the value
+        // as the configured budgeting limit; Codex separately reports 372k.
+        "gpt-5.4" | "gpt-5.5" | "gpt-5.6-luna" | "gpt-5.6-sol" | "gpt-5.6-terra" => 272_000,
+        "gpt-5.4-pro" | "gpt-5.5-pro" => 1_050_000,
         #[cfg(test)]
         "tiny-context" => 128,
         _ => 128_000,
     }
+}
+
+fn openai_max_tokens(id: &str) -> u32 {
+    match native_openai_model_id(id).as_str() {
+        "gpt-5.4" | "gpt-5.4-pro" | "gpt-5.5" | "gpt-5.5-pro" | "gpt-5.6-luna" | "gpt-5.6-sol"
+        | "gpt-5.6-terra" => 128_000,
+        _ => 32_768,
+    }
+}
+
+/// Strip an OpenRouter-style `openai/` prefix before applying model-family
+/// reasoning metadata and user-configured generic-provider catalog limits. The
+/// provider still receives the original id unchanged.
+fn native_openai_model_id(id: &str) -> String {
+    let normalized = id.trim().to_ascii_lowercase();
+    normalized
+        .strip_prefix("openai/")
+        .unwrap_or(&normalized)
+        .to_string()
 }
 
 /// Default `thinking_level_map` for native OpenAI/Codex-backed GPT models.
@@ -424,7 +456,7 @@ fn openai_context_window(id: &str) -> u32 {
 /// are mapped to `None` so they drop out of the selectable cycle.
 fn openai_thinking_level_map(id: &str) -> HashMap<String, Option<String>> {
     let mut map = HashMap::new();
-    let normalized = id.trim().to_ascii_lowercase();
+    let normalized = native_openai_model_id(id);
     if normalized.starts_with("gpt-5") || normalized.starts_with("codex-") {
         let default = if normalized == "gpt-5.4" {
             "xhigh"
@@ -432,7 +464,13 @@ fn openai_thinking_level_map(id: &str) -> HashMap<String, Option<String>> {
             "medium"
         };
         map.insert("adaptive".into(), Some(default.into()));
-        map.insert("xhigh".into(), Some("xhigh".into()));
+        if normalized.starts_with("gpt-5.6-") {
+            map.insert("off".into(), Some("none".into()));
+            map.insert("xhigh".into(), Some("xhigh".into()));
+            map.insert("max".into(), Some("max".into()));
+        } else {
+            map.insert("xhigh".into(), Some("xhigh".into()));
+        }
         // gpt-5.5-pro rejects the lowest tiers; medium is its floor. gpt-5.5
         // (non-pro) drops only `minimal`. Values mirror pi's per-model
         // `thinkingLevelMap` so the unsupported tiers match upstream exactly.
@@ -451,7 +489,7 @@ impl ModelConfig {
     /// Thinking levels a user can cycle through for this model, in ascending
     /// order of effort.
     ///
-    /// The ramp is `off → low → medium → high → xhigh`, filtered by
+    /// The ramp is `off → low → medium → high → xhigh → max`, filtered by
     /// [`Self::level_selectable`] so that per-model overrides in
     /// [`Self::thinking_level_map`] (a `None` value) remove unsupported tiers.
     ///
@@ -464,7 +502,7 @@ impl ModelConfig {
         if self.api == ApiProtocol::OpenAiCompletions && !self.honors_reasoning_effort() {
             return Vec::new();
         }
-        [Off, Low, Medium, High, Xhigh]
+        [Off, Low, Medium, High, Xhigh, Max]
             .into_iter()
             .filter(|level| self.level_selectable(*level))
             .collect()
@@ -488,18 +526,24 @@ impl ModelConfig {
     ///
     /// - value `Some(effort)` — supported (explicit effort mapping).
     /// - value `None` — explicitly unsupported.
-    /// - key absent — protocol default: every tier is selectable except
-    ///   `xhigh` on OpenAI, which collapses onto `high` unless mapped.
+    /// - key absent — protocol default: every ordinary tier is selectable;
+    ///   `xhigh` and `max` require an explicit per-model mapping.
     fn level_selectable(&self, level: ThinkingLevel) -> bool {
         match self.thinking_level_map.get(level.as_str()) {
-            Some(Some(_)) => true,
+            Some(Some(effort)) => {
+                // A legacy xhigh→max alias keeps old persisted settings valid,
+                // but max is the only selectable tier when both keys map there.
+                !(level == ThinkingLevel::Xhigh
+                    && effort == "max"
+                    && self.thinking_level_map.contains_key("max"))
+            }
             Some(None) => false,
-            None => level != ThinkingLevel::Xhigh || self.api != ApiProtocol::OpenAiCompletions,
+            None => !matches!(level, ThinkingLevel::Xhigh | ThinkingLevel::Max),
         }
     }
 
     /// The explicit per-model effort string for `level`, if the model maps one
-    /// (e.g. `xhigh` → `"max"` on Opus 4.6). `None` means "no override" — the
+    /// (e.g. `max` → `"max"` on GPT-5.6). `None` means "no override" — the
     /// caller applies its protocol default. Shared by the request builders so
     /// the mapping lives in exactly one place.
     pub fn thinking_effort_override(&self, level: ThinkingLevel) -> Option<&str> {
@@ -560,6 +604,7 @@ impl ModelConfig {
     pub fn openai(id: impl Into<String>, name: impl Into<String>) -> Self {
         let id = id.into();
         let context_window = openai_context_window(&id);
+        let max_tokens = openai_max_tokens(&id);
         let thinking_level_map = openai_thinking_level_map(&id);
         Self {
             id,
@@ -568,7 +613,7 @@ impl ModelConfig {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             context_window,
-            max_tokens: 32_768,
+            max_tokens,
             input: vec![InputModality::Text, InputModality::Image],
             cost: CostConfig::default(),
             headers: HashMap::new(),
@@ -589,6 +634,7 @@ impl ModelConfig {
     pub fn local(base_url: impl Into<String>, model_id: impl Into<String>) -> Self {
         let id = model_id.into();
         let context_window = openai_context_window(&id);
+        let max_tokens = openai_max_tokens(&id);
         let thinking_level_map = openai_thinking_level_map(&id);
         Self {
             id,
@@ -597,7 +643,7 @@ impl ModelConfig {
             provider: "local".into(),
             base_url: base_url.into(),
             context_window,
-            max_tokens: 32_768,
+            max_tokens,
             input: default_input_modalities(),
             cost: CostConfig::default(),
             headers: HashMap::new(),

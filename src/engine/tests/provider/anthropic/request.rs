@@ -111,6 +111,17 @@ fn test_xhigh_maps_to_max_on_opus_4_6() {
 }
 
 #[test]
+fn test_max_maps_to_max_on_supported_anthropic_model() {
+    let config = StreamConfigBuilder::anthropic()
+        .model("claude-opus-4-8")
+        .model_config(ModelConfig::anthropic("claude-opus-4-8", "Claude Opus 4.8"))
+        .thinking(ThinkingLevel::Max)
+        .build();
+    let body = build_request_body(&config, false);
+    assert_eq!(body["output_config"]["effort"], "max");
+}
+
+#[test]
 fn test_xhigh_maps_to_xhigh_on_opus_4_8() {
     // Opus 4.7+/4.8 use "xhigh" (max is invalid there).
     let config = StreamConfigBuilder::anthropic()

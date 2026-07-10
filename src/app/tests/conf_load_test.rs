@@ -305,6 +305,7 @@ fn thinking_level_from_str_valid() -> TestResult {
     assert_eq!(thinking_level_from_str("medium")?, ThinkingLevel::Medium);
     assert_eq!(thinking_level_from_str("high")?, ThinkingLevel::High);
     assert_eq!(thinking_level_from_str("xhigh")?, ThinkingLevel::Xhigh);
+    assert_eq!(thinking_level_from_str("max")?, ThinkingLevel::Max);
     assert_eq!(
         thinking_level_from_str("adaptive")?,
         ThinkingLevel::Adaptive

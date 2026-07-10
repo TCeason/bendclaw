@@ -435,9 +435,9 @@ impl NapiAgent {
 }
 
 /// Footer label for the active reasoning effort, mirroring pi's footer:
-/// the abstract level name (`off`/`low`/`medium`/`high`/`xhigh`) is shown
+/// the abstract level name (`off`/`low`/`medium`/`high`/`xhigh`/`max`) is shown
 /// verbatim — it is never translated through the model's
-/// `thinking_level_map` (so Opus 4.6 reads `xhigh`, not `max`).
+/// `thinking_level_map`.
 ///
 /// Returns an empty string when the model honors no selectable reasoning
 /// effort (e.g. an OpenAI-compatible provider without the reasoning-effort

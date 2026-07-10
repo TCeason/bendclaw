@@ -406,9 +406,10 @@ pub fn thinking_level_from_str(value: &str) -> Result<ThinkingLevel> {
         "medium" => Ok(ThinkingLevel::Medium),
         "high" => Ok(ThinkingLevel::High),
         "xhigh" => Ok(ThinkingLevel::Xhigh),
+        "max" => Ok(ThinkingLevel::Max),
         "adaptive" => Ok(ThinkingLevel::Adaptive),
         other => Err(EvotError::Conf(format!(
-            "unknown thinking level: {other} (valid: off, minimal, low, medium, high, xhigh, adaptive)"
+            "unknown thinking level: {other} (valid: off, minimal, low, medium, high, xhigh, max, adaptive)"
         ))),
     }
 }

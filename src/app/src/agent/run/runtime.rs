@@ -968,7 +968,11 @@ pub fn build_model_config(
     let mut model_config = match protocol {
         Protocol::Anthropic => ModelConfig::anthropic(model, model),
         Protocol::OpenAi => {
-            let mut mc = ModelConfig::local("", model);
+            let mut mc = if provider == "openai" {
+                ModelConfig::openai(model, model)
+            } else {
+                ModelConfig::local("", model)
+            };
             mc.compat = Some(match provider {
                 "openai" => OpenAiCompat::openai(),
                 "deepseek" => OpenAiCompat::deepseek(),

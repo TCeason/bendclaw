@@ -46,7 +46,9 @@ fn cycle_thinking_level_anthropic_walks_full_ramp_and_wraps() -> TestResult {
     assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Low));
     assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Medium));
     assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::High));
-    assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Xhigh));
+    // Opus 4.6 is max-only above high; xhigh remains a compatibility alias but
+    // is not a separate selectable stop.
+    assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Max));
     // Wraps back to the start.
     assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Off));
     Ok(())
@@ -145,6 +147,39 @@ fn cycle_thinking_level_gpt_5_5_pro_cycles_medium_high_xhigh() -> TestResult {
     assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::High));
     assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Xhigh));
     assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Medium));
+    Ok(())
+}
+
+#[test]
+fn cycle_thinking_level_gpt_5_6_cycles_xhigh_then_max() -> TestResult {
+    let dir = TempDir::new()?;
+    let mut config = Config::new(dir.path().to_path_buf());
+    config.providers.insert("openai".into(), ProviderProfile {
+        protocol: Protocol::OpenAi,
+        api_key: "test-key".into(),
+        base_url: "https://api.openai.com/v1".into(),
+        models: vec!["gpt-5.6-sol".into()],
+        compat_caps: CompatCaps::REASONING_EFFORT,
+        thinking_level: None,
+        context_window: None,
+        max_tokens: None,
+        supports_image: None,
+    });
+    config.llm.provider = "openai".into();
+    let agent = Agent::new(&config, "/work")?;
+
+    assert_eq!(agent.supported_thinking_levels(), vec![
+        ThinkingLevel::Off,
+        ThinkingLevel::Low,
+        ThinkingLevel::Medium,
+        ThinkingLevel::High,
+        ThinkingLevel::Xhigh,
+        ThinkingLevel::Max,
+    ]);
+    agent.set_thinking_level(ThinkingLevel::High);
+    assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Xhigh));
+    assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Max));
+    assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Off));
     Ok(())
 }
 
