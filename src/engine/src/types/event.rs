@@ -180,7 +180,16 @@ pub struct LlmCallStats {
 
 #[derive(Debug, Clone)]
 pub enum StreamDelta {
-    Text { delta: String },
-    Thinking { delta: String },
-    ToolCallDelta { delta: String },
+    Text {
+        delta: String,
+    },
+    Thinking {
+        delta: String,
+    },
+    ToolCall {
+        content_index: usize,
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
 }

@@ -241,6 +241,7 @@ fn process_sse_event(
                         content_index: idx,
                         id,
                         name,
+                        arguments: serde_json::Value::Object(Default::default()),
                     });
                 }
                 // Server-side model fallback (e.g. fable-5 → opus-4-8). Record
@@ -292,15 +293,24 @@ fn process_sse_event(
                     });
                 }
                 AnthropicDelta::InputJsonDelta { partial_json } => {
-                    state
-                        .tool_input_buffers
-                        .entry(idx)
-                        .or_default()
-                        .push_str(&partial_json);
-                    let _ = tx.send(StreamEvent::ToolCallDelta {
-                        content_index: idx,
-                        delta: partial_json,
-                    });
+                    let input = state.tool_input_buffers.entry(idx).or_default();
+                    input.push_str(&partial_json);
+                    let arguments = crate::provider::json_repair::try_repair_json(input)
+                        .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
+                    if let Some(Content::ToolCall {
+                        id,
+                        name,
+                        arguments: current,
+                    }) = state.content.get_mut(idx)
+                    {
+                        *current = arguments.clone();
+                        let _ = tx.send(StreamEvent::ToolCallDelta {
+                            content_index: idx,
+                            id: id.clone(),
+                            name: name.clone(),
+                            arguments,
+                        });
+                    }
                 }
                 AnthropicDelta::SignatureDelta { signature } => {
                     if let Some(Content::Thinking {

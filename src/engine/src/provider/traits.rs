@@ -21,9 +21,15 @@ pub enum StreamEvent {
         content_index: usize,
         id: String,
         name: String,
+        arguments: serde_json::Value,
     },
     /// Tool call argument delta
-    ToolCallDelta { content_index: usize, delta: String },
+    ToolCallDelta {
+        content_index: usize,
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
     /// Tool call ended
     ToolCallEnd { content_index: usize },
     /// Stream completed successfully

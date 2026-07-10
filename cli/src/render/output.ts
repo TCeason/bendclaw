@@ -11,7 +11,7 @@
 import { renderMarkdown } from './markdown.js'
 import { colorizeUnifiedDiff } from './diff.js'
 import { truncate, formatDuration, toolResultLines } from './format.js'
-import type { UIMessage } from '../term/app/types.js'
+import type { UIMessage, UIToolCall } from '../term/app/types.js'
 
 // ---------------------------------------------------------------------------
 // Tool presentation — icon + primary-arg per tool, in the spirit of
@@ -192,6 +192,40 @@ export function buildToolCall(
     kind: 'tool',
     text: toolCallText(name, args, previewCommand),
   })
+  return lines
+}
+
+export function buildToolCard(call: UIToolCall, expanded?: boolean, now = Date.now()): OutputLine[] {
+  const details = call.details as Record<string, unknown> | undefined
+  const diff = typeof details?.diff === 'string' ? details.diff : undefined
+  const args = diff ? { ...call.args, diff } : call.args
+  const lines = buildToolCall(call.name, args, call.previewCommand)
+
+  if (call.status !== 'running') {
+    lines.push(...buildToolResult(
+      call.name,
+      args,
+      call.status,
+      call.result,
+      call.durationMs,
+      expanded,
+    ))
+    return lines
+  }
+
+  if (diff) {
+    lines.push({ id: genId('tool-diff'), kind: 'tool', text: colorizeUnifiedDiff(diff) })
+  }
+  if (call.progress && !call.progress.startsWith('__evot_spill_event__ ')) {
+    const progressLines = toolResultLines(formatToolResultContent(call.progress), false, call.name, expanded)
+    for (const text of progressLines) {
+      lines.push({ id: genId('tool-progress'), kind: 'tool_result', text: `  ${text}` })
+    }
+  }
+
+  const elapsed = call.startedAt === undefined ? '' : ` · ${formatDuration(Math.max(0, now - call.startedAt))}`
+  const label = call.startedAt === undefined ? 'pending' : 'running'
+  lines.push({ id: genId('tool-status'), kind: 'tool', text: `  ● ${label}${elapsed}` })
   return lines
 }
 

@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { createSpinnerState } from '../src/term/spinner.js'
 import { createInitialState } from '../src/term/app/state.js'
-import { createStreamMachineState, reduceRunEvent, flushStreaming, buildToolStartedLines, buildToolFinishedLines, buildToolProgressLines } from '../src/term/app/stream.js'
+import { createStreamMachineState, reduceRunEvent, flushStreaming } from '../src/term/app/stream.js'
+import { buildToolCard } from '../src/render/output.js'
 import type { OutputLine } from '../src/render/output.js'
 
 describe('term stream machine', () => {
@@ -499,25 +500,31 @@ describe('term stream machine', () => {
     expect(state.streamingText).toBe('final answer')
   })
 
-  test('tool progress updates state', () => {
+  test('tool progress updates its matching live card', () => {
     const appState = createInitialState('model', '/tmp')
-    const spinner = createSpinnerState()
-    const state = createStreamMachineState(appState, spinner)
+    appState.liveToolCalls.set('call-bash', {
+      id: 'call-bash',
+      name: 'bash',
+      args: { command: 'sleep 1' },
+      status: 'running',
+      startedAt: Date.now(),
+    })
+    const state = createStreamMachineState(appState, createSpinnerState())
     const update = reduceRunEvent(state, {
       kind: 'tool_progress',
-      payload: { text: 'running' },
+      payload: { tool_call_id: 'call-bash', tool_name: 'bash', text: 'line 1\nline 2' },
     }, { termRows: 24 })
-    expect(update.state.toolProgress).toBe('running')
+
+    expect(update.state.appState.liveToolCalls.get('call-bash')?.progress).toBe('line 1\nline 2')
     expect(update.rerenderStatus).toBe(true)
   })
 
   test('spill progress commits visible event line', () => {
-    const appState = createInitialState('model', '/tmp')
-    const spinner = createSpinnerState()
-    const state = createStreamMachineState(appState, spinner)
+    const state = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
     const update = reduceRunEvent(state, {
       kind: 'tool_progress',
       payload: {
+        tool_call_id: 'call-bash',
         tool_name: 'bash',
         text: '__evot_spill_event__ {"kind":"write","path":"/tmp/spill.txt","size_bytes":120000,"preview_bytes":4000}',
       },
@@ -525,129 +532,51 @@ describe('term stream machine', () => {
     const text = update.commitLines.map(l => l.text).join('\n')
     expect(text).toContain('\u21aa 117.2 KB written \u00b7 3.9 KB preview \u00b7 bash')
     expect(text).toContain('/tmp/spill.txt')
-    expect(update.state.toolProgress).toBe('')
   })
 
-  test('tool progress builder renders spill marker as event', () => {
-    const lines = buildToolProgressLines({
-      kind: 'tool_progress',
-      payload: {
-        tool_name: 'read_file',
-        text: '__evot_spill_event__ {"kind":"read","path":"/tmp/tool-results/spill.txt","size_bytes":2048,"duration_ms":12}',
-      },
-    } as any, true)
-    const text = lines.map(l => l.text).join('\n')
-    expect(text).toContain('\u21a9 2.0 KB read \u00b7 12ms \u00b7 read_file')
-    expect(text).toContain('/tmp/tool-results/spill.txt')
-    expect(text).not.toContain('__evot_spill_event__')
-  })
-
-  test('tool started suppresses ask_user', () => {
+  test('heartbeat progress preserves the card output', () => {
     const appState = createInitialState('model', '/tmp')
-    const spinner = createSpinnerState()
-    const state = createStreamMachineState(appState, spinner)
-    const update = reduceRunEvent(state, {
-      kind: 'tool_started',
-      payload: { tool_name: 'ask_user', args: {} },
-    }, { termRows: 24 })
-    expect(update.suppressToolStarted).toBe(true)
-  })
-
-  test('heartbeat progress does not replace cached output', () => {
-    const appState = createInitialState('model', '/tmp')
-    const spinner = createSpinnerState()
-    const state = {
-      ...createStreamMachineState(appState, spinner),
-      toolProgress: 'line 1\nline 2',
-      lastToolProgress: 'line 1\nline 2',
-    }
+    appState.liveToolCalls.set('call-bash', {
+      id: 'call-bash',
+      name: 'bash',
+      args: {},
+      status: 'running',
+      progress: 'line 1\nline 2',
+    })
+    const state = createStreamMachineState(appState, createSpinnerState())
     const update = reduceRunEvent(state, {
       kind: 'tool_progress',
-      payload: { text: 'Running... 60s' },
+      payload: { tool_call_id: 'call-bash', tool_name: 'bash', text: 'Running... 60s' },
     }, { termRows: 24 })
-    expect(update.state.toolProgress).toBe('')
-    expect(update.state.lastToolProgress).toBe('line 1\nline 2')
-    expect(update.rerenderStatus).toBe(true)
+
+    expect(update.state.appState.liveToolCalls.get('call-bash')?.progress).toBe('line 1\nline 2')
   })
 
-  test('tool started clears stale progress cache', () => {
-    const appState = createInitialState('model', '/tmp')
-    const spinner = createSpinnerState()
-    const state = {
-      ...createStreamMachineState(appState, spinner),
-      toolProgress: 'line 1\nline 2',
-      lastToolProgress: 'line 1\nline 2',
-    }
-    const update = reduceRunEvent(state, {
-      kind: 'tool_started',
-      payload: { tool_name: 'bash', args: {} },
-    }, { termRows: 24 })
-    expect(update.state.toolProgress).toBe('')
-    expect(update.state.lastToolProgress).toBe('')
-  })
+  test('live tool card renders pending, running, and completed states', () => {
+    const pending = buildToolCard({ id: 'call-1', name: 'read', args: { path: 'src/a.rs' }, status: 'running' })
+    expect(pending.map(line => line.text).join('\n')).toContain('● pending')
 
-  test('tool finished clears stale progress cache', () => {
-    const appState = createInitialState('model', '/tmp')
-    const spinner = createSpinnerState()
-    const state = {
-      ...createStreamMachineState(appState, spinner),
-      toolProgress: 'line 1\nline 2',
-      lastToolProgress: 'line 1\nline 2',
-    }
-    const update = reduceRunEvent(state, {
-      kind: 'tool_finished',
-      payload: { tool_name: 'bash', args: {}, content: 'ok' },
-    }, { termRows: 24 })
-    expect(update.state.toolProgress).toBe('')
-    expect(update.state.lastToolProgress).toBe('')
-  })
+    const running = buildToolCard({
+      id: 'call-1',
+      name: 'read',
+      args: { path: 'src/a.rs' },
+      status: 'running',
+      startedAt: 1_000,
+      progress: 'partial output',
+    }, false, 2_500)
+    const runningText = running.map(line => line.text).join('\n')
+    expect(runningText).toContain('partial output')
+    expect(runningText).toContain('● running · 1.5s')
 
-  test('turn started clears stale progress cache', () => {
-    const appState = createInitialState('model', '/tmp')
-    const spinner = createSpinnerState()
-    const state = {
-      ...createStreamMachineState(appState, spinner),
-      toolProgress: 'line 1\nline 2',
-      lastToolProgress: 'line 1\nline 2',
-    }
-    const update = reduceRunEvent(state, {
-      kind: 'turn_started',
-      payload: {},
-    }, { termRows: 24 })
-    expect(update.state.toolProgress).toBe('')
-    expect(update.state.lastToolProgress).toBe('')
-  })
-
-  test('llm call started clears stale progress cache', () => {
-    const appState = createInitialState('model', '/tmp')
-    const spinner = createSpinnerState()
-    const state = {
-      ...createStreamMachineState(appState, spinner),
-      toolProgress: 'line 1\nline 2',
-      lastToolProgress: 'line 1\nline 2',
-    }
-    const update = reduceRunEvent(state, {
-      kind: 'llm_call_started',
-      payload: { model: 'model' },
-    }, { termRows: 24 })
-    expect(update.state.toolProgress).toBe('')
-    expect(update.state.lastToolProgress).toBe('')
-  })
-
-  test('context compaction started clears stale progress cache', () => {
-    const appState = createInitialState('model', '/tmp')
-    const spinner = createSpinnerState()
-    const state = {
-      ...createStreamMachineState(appState, spinner),
-      toolProgress: 'line 1\nline 2',
-      lastToolProgress: 'line 1\nline 2',
-    }
-    const update = reduceRunEvent(state, {
-      kind: 'context_compaction_started',
-      payload: { estimated_tokens: 10, context_window: 100 },
-    }, { termRows: 24 })
-    expect(update.state.toolProgress).toBe('')
-    expect(update.state.lastToolProgress).toBe('')
+    const completed = buildToolCard({
+      id: 'call-1',
+      name: 'read',
+      args: { path: 'src/a.rs' },
+      status: 'done',
+      result: 'done',
+      durationMs: 12,
+    })
+    expect(completed.map(line => line.text).join('\n')).toContain('✓ · 12ms')
   })
 
   test('llm retry renders as a visible card with backoff and error', () => {
@@ -793,31 +722,84 @@ describe('term stream machine', () => {
     expect(flushed.state.streamingText).toBe('')
   })
 
-  test('build tool start/finish lines', () => {
-    // Regular tools emit a call line at start (glyph + command, visible while
-    // executing); the finish step appends a subordinate status line + output.
-    const started = buildToolStartedLines({
-      kind: 'tool_started',
-      payload: { tool_name: 'bash', args: { command: 'ls' } },
-    })
-    const startCard = started[started.length - 1]!
-    expect(startCard.text).toContain('⌘ bash')
-    expect(startCard.text).toContain('ls')
-    expect(startCard.text).not.toContain('✓')
+  test('streams parallel tool calls independently before execution', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
 
-    const startedWithReason = buildToolStartedLines({
-      kind: 'tool_started',
-      payload: { tool_name: 'bash', args: { command: 'ls', reason: 'list files' } },
-    })
-    expect(startedWithReason.some(l => l.text.includes('reason: list files'))).toBe(true)
+    state = reduceRunEvent(state, {
+      kind: 'assistant_tool_call',
+      payload: {
+        content_index: 0,
+        tool_call_id: 'call-read',
+        tool_name: 'read',
+        args: { path: 'src/a.rs' },
+      },
+    }, { termRows: 24 }).state
+    state = reduceRunEvent(state, {
+      kind: 'assistant_tool_call',
+      payload: {
+        content_index: 1,
+        tool_call_id: 'call-edit',
+        tool_name: 'edit',
+        args: { path: 'src/b.rs', edits: [] },
+      },
+    }, { termRows: 24 }).state
 
-    const finished = buildToolFinishedLines({
+    expect(state.appState.liveToolCalls.size).toBe(2)
+    expect(state.appState.liveToolCalls.get('call-read')?.args).toEqual({ path: 'src/a.rs' })
+    expect(state.appState.liveToolCalls.get('call-edit')?.name).toBe('edit')
+
+    state = reduceRunEvent(state, {
+      kind: 'assistant_completed',
+      payload: {
+        content: [
+          { type: 'tool_call', id: 'call-read', name: 'read', input: { path: 'src/a.rs' } },
+          { type: 'tool_call', id: 'call-edit', name: 'edit', input: { path: 'src/b.rs', edits: [] } },
+        ],
+      },
+    }, { termRows: 24 }).state
+    expect(state.appState.liveToolCalls.size).toBe(2)
+    expect(state.appState.liveToolCalls.get('call-read')?.argsComplete).toBe(true)
+    const assistantMessage = state.appState.messages[state.appState.messages.length - 1]
+    expect(assistantMessage?.toolCalls?.map(call => call.id)).toEqual(['call-read', 'call-edit'])
+
+    state = reduceRunEvent(state, {
+      kind: 'tool_started',
+      payload: {
+        tool_call_id: 'call-edit',
+        tool_name: 'edit',
+        args: { path: 'src/b.rs', edits: [] },
+      },
+    }, { termRows: 24 }).state
+
+    expect(state.appState.liveToolCalls.get('call-edit')?.startedAt).toBeNumber()
+    expect(state.appState.liveToolCalls.get('call-read')?.startedAt).toBeUndefined()
+  })
+
+  test('live cards preserve model order while tools finish out of order', () => {
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+
+    for (const [contentIndex, id, name] of [[0, 'call-read', 'read'], [1, 'call-edit', 'edit']] as const) {
+      state = reduceRunEvent(state, {
+        kind: 'assistant_tool_call',
+        payload: { content_index: contentIndex, tool_call_id: id, tool_name: name, args: {} },
+      }, { termRows: 24 }).state
+      state = reduceRunEvent(state, {
+        kind: 'tool_started',
+        payload: { tool_call_id: id, tool_name: name, args: {} },
+      }, { termRows: 24 }).state
+    }
+
+    state = reduceRunEvent(state, {
       kind: 'tool_finished',
-      payload: { tool_name: 'bash', args: { command: 'ls' }, is_error: false, content: 'ok', duration_ms: 10 },
-    })
-    // Status line is the first tool line: indented ✓, no glyph/command.
-    const statusLine = finished.find(l => l.kind === 'tool')!
-    expect(statusLine.text).toMatch(/^ {2}✓/)
-    expect(statusLine.text).not.toContain('⌘ bash')
+      payload: { tool_call_id: 'call-edit', tool_name: 'edit', content: 'edited', is_error: false },
+    }, { termRows: 24 }).state
+
+    expect([...state.appState.liveToolCalls.keys()]).toEqual(['call-read', 'call-edit'])
+    expect(state.appState.liveToolCalls.get('call-read')?.status).toBe('running')
+    expect(state.appState.liveToolCalls.get('call-edit')?.status).toBe('done')
   })
 })

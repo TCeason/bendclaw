@@ -544,9 +544,20 @@ fn map_agent_event(
         })],
 
         evot_engine::AgentEvent::MessageUpdate {
-            delta: evot_engine::StreamDelta::ToolCallDelta { .. },
+            delta:
+                evot_engine::StreamDelta::ToolCall {
+                    content_index,
+                    id,
+                    name,
+                    arguments,
+                },
             ..
-        } => vec![],
+        } => vec![RuntimeEvent::Public(RunEventPayload::AssistantToolCall {
+            content_index: *content_index,
+            tool_call_id: id.clone(),
+            tool_name: name.clone(),
+            args: arguments.clone(),
+        })],
 
         evot_engine::AgentEvent::MessageEnd { message } => {
             if let evot_engine::AgentMessage::Llm(evot_engine::Message::Assistant {

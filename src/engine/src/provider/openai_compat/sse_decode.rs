@@ -125,6 +125,13 @@ pub(crate) async fn decode_sse_stream(
     Ok(StreamOutcome::complete(message))
 }
 
+fn partial_tool_arguments(raw: &str) -> serde_json::Value {
+    match crate::provider::json_repair::try_repair_json(raw) {
+        Ok(arguments) => arguments,
+        Err(_) => serde_json::Value::Object(Default::default()),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn process_sse_chunk(
     sse: &SseEvent,
@@ -263,25 +270,37 @@ fn process_sse_chunk(
                     tool_call_buffers.push(ToolCallBuffer::default());
                 }
                 let buf = &mut tool_call_buffers[tc_index];
+                let content_index = *buf
+                    .content_index
+                    .get_or_insert_with(|| content.len() + tc_index);
                 if let Some(id) = &tc.id {
                     buf.id = id.clone();
                 }
                 if let Some(f) = &tc.function {
                     if let Some(name) = &f.name {
                         buf.name.clone_from(name);
-                        let _ = tx.send(StreamEvent::ToolCallStart {
-                            content_index: content.len() + tc_index,
-                            id: buf.id.clone(),
-                            name: name.clone(),
-                        });
                     }
                     if let Some(args) = &f.arguments {
                         buf.arguments.push_str(args);
-                        let _ = tx.send(StreamEvent::ToolCallDelta {
-                            content_index: content.len() + tc_index,
-                            delta: args.clone(),
-                        });
                     }
+                }
+
+                let arguments = partial_tool_arguments(&buf.arguments);
+                if !buf.started && (!buf.id.is_empty() || !buf.name.is_empty()) {
+                    buf.started = true;
+                    let _ = tx.send(StreamEvent::ToolCallStart {
+                        content_index,
+                        id: buf.id.clone(),
+                        name: buf.name.clone(),
+                        arguments,
+                    });
+                } else if buf.started {
+                    let _ = tx.send(StreamEvent::ToolCallDelta {
+                        content_index,
+                        id: buf.id.clone(),
+                        name: buf.name.clone(),
+                        arguments,
+                    });
                 }
             }
         }

@@ -198,14 +198,28 @@ pub(super) async fn stream_assistant_response(
                                 .ok();
                         }
                     }
-                    StreamEvent::ToolCallDelta { delta, .. } => {
+                    StreamEvent::ToolCallStart {
+                        content_index,
+                        id,
+                        name,
+                        arguments,
+                    }
+                    | StreamEvent::ToolCallDelta {
+                        content_index,
+                        id,
+                        name,
+                        arguments,
+                    } => {
                         chunk_count += 1;
                         if let Some(ref msg) = partial_message {
                             event_tx
                                 .send(AgentEvent::MessageUpdate {
                                     message: msg.clone(),
-                                    delta: StreamDelta::ToolCallDelta {
-                                        delta: delta.clone(),
+                                    delta: StreamDelta::ToolCall {
+                                        content_index: *content_index,
+                                        id: id.clone(),
+                                        name: name.clone(),
+                                        arguments: arguments.clone(),
                                     },
                                 })
                                 .ok();

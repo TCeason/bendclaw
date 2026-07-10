@@ -197,11 +197,11 @@ function buildToolBlock(text: string, columns?: number): ViewBlock {
   // Subordinate status line under a call: `  ✓ · 0.6s · 2 lines` /
   // `  ✗ · exit 1` / `  ↻ · retrying…`. Paint the mark (✓ green / ✗ red /
   // ↻ yellow), the rest dim.
-  const statusMatch = text.match(/^ {2}([✓✗↻])(.*)$/u)
+  const statusMatch = text.match(/^ {2}([✓✗↻●])(.*)$/u)
   if (statusMatch) {
     const mark = statusMatch[1]!
     const tail = statusMatch[2] ?? ''
-    const color = mark === '✗' ? 'red' : mark === '↻' ? 'yellow' : 'green'
+    const color = mark === '✗' ? 'red' : mark === '↻' ? 'yellow' : mark === '●' ? 'cyan' : 'green'
     const spans = [colored(`  ${mark}`, color, { bold: true })]
     if (tail) spans.push(dim(tail))
     return block([line(...spans)])

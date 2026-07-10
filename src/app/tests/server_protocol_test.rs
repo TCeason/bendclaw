@@ -93,6 +93,29 @@ fn run_event_round_trip_assistant_delta_thinking_only() {
 }
 
 #[test]
+fn run_event_round_trip_assistant_tool_call() {
+    let event = RunEvent::new(
+        "run-1".into(),
+        "sess-1".into(),
+        1,
+        RunEventPayload::AssistantToolCall {
+            content_index: 2,
+            tool_call_id: "call-2".into(),
+            tool_name: "edit".into(),
+            args: serde_json::json!({"path": "src/lib.rs"}),
+        },
+    );
+    let json = serde_json::to_string(&event).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(parsed["kind"], "assistant_tool_call");
+    assert_eq!(parsed["payload"]["content_index"], 2);
+    assert_eq!(parsed["payload"]["tool_call_id"], "call-2");
+    assert_eq!(parsed["payload"]["tool_name"], "edit");
+    assert_eq!(parsed["payload"]["args"]["path"], "src/lib.rs");
+}
+
+#[test]
 fn run_event_round_trip_assistant_completed() {
     let event = RunEvent::new(
         "run-1".into(),
@@ -301,6 +324,28 @@ fn sse_map_assistant_delta() {
     assert_eq!(payloads.len(), 1);
     assert_eq!(payloads[0]["type"], "text");
     assert_eq!(payloads[0]["data"]["text"], "hi");
+}
+
+#[test]
+fn sse_map_assistant_tool_call() {
+    let event = RunEvent::new(
+        "run-1".into(),
+        "sess-1".into(),
+        1,
+        RunEventPayload::AssistantToolCall {
+            content_index: 1,
+            tool_call_id: "tc-1".into(),
+            tool_name: "edit".into(),
+            args: serde_json::json!({"path": "/tmp/a"}),
+        },
+    );
+    let payloads = map_run_event_json(&event);
+
+    assert_eq!(payloads.len(), 1);
+    assert_eq!(payloads[0]["type"], "tool_call_delta");
+    assert_eq!(payloads[0]["data"]["id"], "tc-1");
+    assert_eq!(payloads[0]["data"]["name"], "edit");
+    assert_eq!(payloads[0]["data"]["input"]["path"], "/tmp/a");
 }
 
 #[test]

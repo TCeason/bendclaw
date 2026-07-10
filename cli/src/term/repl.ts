@@ -4,10 +4,11 @@ import { installBracketedPaste } from './bracketed-paste.js'
 import { createSpinnerState, advanceSpinner, formatSpinnerLine } from './spinner.js'
 import { createSelectorState, selectorExpandItems, selectorClearQuery } from './selector.js'
 import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
-import { buildUserMessage, buildThinkingLines, type OutputLine } from '../render/output.js'
+import { buildUserMessage, buildThinkingLines, buildToolCard, type OutputLine } from '../render/output.js'
 import { renderMarkdownCached } from '../render/markdown.js'
 import { Agent, QueryStream, fastExit, type SessionMeta, type ConfigInfo } from '../native/index.js'
 import { createInitialState, type AppState } from './app/state.js'
+import type { UIToolCall } from './app/types.js'
 import { HistoryManager, parseHistoryItems } from '../session/history.js'
 import { ScreenLog } from '../session/screen-log.js'
 import { findLastAssistantMarkdown } from '../session/assistant-markdown.js'
@@ -56,9 +57,6 @@ import {
   createStreamMachineState,
   reduceRunEvent,
   flushStreaming,
-  buildToolStartedLines,
-  buildToolFinishedLines,
-  buildToolProgressLines,
   type StreamMachineState,
 } from './app/stream.js'
 import { handleSlashCommand } from './app/commands.js'
@@ -306,7 +304,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
   const compactLines: OutputLine[] = []
   const expandedLines: OutputLine[] = []
-  let lastProgressLineCount = 0
   let lastThinkingLineCount = 0
   let fdAbort: AbortController | null = null
   // Streaming text: use stream machine's pendingText for the viewport.
@@ -427,8 +424,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
-  function currentToolProgress(): string {
-    return streamMachine?.toolProgress || streamMachine?.lastToolProgress || ''
+  function buildLiveToolBlocks(calls: Map<string, UIToolCall>): ViewBlock[] {
+    const blocks: ViewBlock[] = []
+    const now = Date.now()
+    const ordered = [...calls.values()].sort(
+      (a, b) => (a.contentIndex ?? Number.MAX_SAFE_INTEGER) - (b.contentIndex ?? Number.MAX_SAFE_INTEGER),
+    )
+    for (const call of ordered) {
+      blocks.push(...buildOutputBlocks(buildToolCard(call, expanded, now), { columns: renderer.termCols }))
+    }
+    if (blocks.length > 0) blocks[0]!.marginTop = 1
+    return blocks
   }
 
   // Release notes (shown once after update)
@@ -528,23 +534,36 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       blocks.push({ lines: styledLines, marginTop: 1 })
     }
 
-    // 5. Tool progress
-    const toolProgress = currentToolProgress()
-    if (toolProgress && isLoading) {
-      const progLines = toolProgress.split('\n').slice(0, 5).map(l => ({ spans: [{ text: `  ${l}`, dim: true }] }))
-      blocks.push({ lines: progLines, marginTop: 1 })
+    // 5. Live tool cards. Each tool_call_id owns one stable card that updates
+    // in place from argument streaming through execution and completion.
+    const liveToolCalls = streamMachine?.appState.liveToolCalls
+    if (liveToolCalls && liveToolCalls.size > 0 && isLoading) {
+      blocks.push(...buildLiveToolBlocks(liveToolCalls))
     }
 
-    // 6. Spinner
+    // 6. Spinner / parallel tool summary
     if (isLoading && overlay.kind !== 'ask-user') {
-      const activeLlmCall = streamMachine?.activeLlmCall ?? false
-      const liveOutputTokens = activeLlmCall ? spinnerState.tokenCount : 0
-      const spinnerText = formatSpinnerLine(spinnerState, Date.now(), {
-        inputTokens: appState.sessionTokens.inputTokens,
-        outputTokens: appState.sessionTokens.outputTokens + liveOutputTokens,
-        cacheReadTokens: appState.sessionTokens.cacheReadTokens,
-      })
-      blocks.push({ lines: [{ spans: [{ text: spinnerText }] }], marginTop: 1 })
+      const calls = liveToolCalls ? [...liveToolCalls.values()] : []
+      if (calls.length > 0) {
+        const done = calls.filter(call => call.status !== 'running').length
+        const running = calls.length - done
+        blocks.push({
+          lines: [{ spans: [
+            { text: '●', fg: 'cyan' as const, bold: true },
+            { text: ` ${calls.length} tools · ${done} done · ${running} running`, dim: true },
+          ] }],
+          marginTop: 1,
+        })
+      } else {
+        const activeLlmCall = streamMachine?.activeLlmCall ?? false
+        const liveOutputTokens = activeLlmCall ? spinnerState.tokenCount : 0
+        const spinnerText = formatSpinnerLine(spinnerState, Date.now(), {
+          inputTokens: appState.sessionTokens.inputTokens,
+          outputTokens: appState.sessionTokens.outputTokens + liveOutputTokens,
+          cacheReadTokens: appState.sessionTokens.cacheReadTokens,
+        })
+        blocks.push({ lines: [{ spans: [{ text: spinnerText }] }], marginTop: 1 })
+      }
     }
 
     // 7. Overlay
@@ -603,29 +622,26 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
-  function commitToolStarted(event: import('../native/index.js').RunEvent): void {
-    // The call line has no compact/expanded variants, so build it once and
-    // append to both histories to keep them aligned.
-    const callLines = buildToolStartedLines(event)
-    compactLines.push(...callLines)
-    expandedLines.push(...callLines)
-    const context = outputContextFor(compactLines.slice(0, -callLines.length))
-    const blocks = buildOutputBlocks(callLines, context)
-    const rendered = blocksToLines(blocks)
-    screenLog.logLines(rendered)
-    renderer.requestRender()
-  }
+  function commitLiveToolBatch(): void {
+    const machine = streamMachine
+    if (!machine) return
+    const calls = machine.appState.liveToolCalls
+    if (calls.size === 0 || [...calls.values()].some(call => call.status === 'running')) return
+    const orderedCalls = [...calls.values()].sort(
+      (a, b) => (a.contentIndex ?? Number.MAX_SAFE_INTEGER) - (b.contentIndex ?? Number.MAX_SAFE_INTEGER),
+    )
 
-  function commitToolFinished(event: import('../native/index.js').RunEvent): void {
-    const compact = buildToolFinishedLines(event)
-    const exp = buildToolFinishedLines(event, true)
+    const compact = orderedCalls.flatMap(call => buildToolCard(call))
+    const exp = orderedCalls.flatMap(call => buildToolCard(call, true))
     compactLines.push(...compact)
     expandedLines.push(...exp)
     const visible = expanded ? exp : compact
     const context = outputContextFor(compactLines.slice(0, -compact.length))
-    const blocks = buildOutputBlocks(visible, context)
-    const rendered = blocksToLines(blocks)
+    const rendered = blocksToLines(buildOutputBlocks(visible, context))
     screenLog.logLines(rendered)
+
+    appState = { ...appState, liveToolCalls: new Map() }
+    streamMachine = { ...machine, appState }
     renderer.requestRender()
   }
 
@@ -900,32 +916,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           renderer.requestRender()
         }
 
-        // When a tool starts, stream machine already committed pending text via update.commitLines
-        if (!update.suppressToolStarted && event.kind === 'tool_started') {
-          commitToolStarted(event)
-          lastProgressLineCount = 0
-        }
-        if (!update.suppressToolFinished && event.kind === 'tool_finished') {
-          commitToolFinished(event)
-          lastProgressLineCount = 0
-        }
-
-        // In expanded mode, commit tool progress lines to scroll area
-        if (expanded && event.kind === 'tool_progress') {
-          const text = ((event.payload ?? {}) as Record<string, any>).text as string | undefined
-          if (text) {
-            const allLines = text.split('\n')
-            const baseline = Math.max(lastProgressLineCount, currentToolProgress().split('\n').length)
-            const newLines = allLines.slice(baseline)
-            lastProgressLineCount = allLines.length
-            if (newLines.length > 0) {
-              const expandedProgress = buildToolProgressLines({ ...event, payload: { ...(event.payload ?? {}), text: newLines.join('\n') } }, true)
-              expandedLines.push(...expandedProgress)
-              renderer.requestRender()
-            }
-          }
-        }
-
+        if (event.kind === 'tool_finished') commitLiveToolBatch()
         // In expanded mode, stream thinking lines to scroll area
         if (expanded && event.kind === 'assistant_delta') {
           const thinkingDelta = ((event.payload ?? {}) as Record<string, any>).thinking_delta as string | undefined
@@ -984,21 +975,21 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
 
       if (streamMachine) {
-        
         const final = flushStreaming(streamMachine)
         streamMachine = final.state
         appState = final.state.appState
         commitFlushResult(final)
+        flushLiveToolCards()
       }
       // Safety net: run settled without a further turn boundary.
       drainQueuedUserMessages()
       completed = true
     } catch (err: any) {
-      
       if (streamMachine) {
         const final = flushStreaming(streamMachine)
         streamMachine = final.state
         commitFlushResult(final)
+        flushLiveToolCards()
       }
       commitLines([{ id: 'sys-err', kind: 'error', text: err?.message ?? String(err) }])
       drainQueuedUserMessages()
@@ -1128,24 +1119,35 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
+  function flushLiveToolCards(): void {
+    if (!streamMachine) return
+    const calls = [...streamMachine.appState.liveToolCalls.values()].sort(
+      (a, b) => (a.contentIndex ?? Number.MAX_SAFE_INTEGER) - (b.contentIndex ?? Number.MAX_SAFE_INTEGER),
+    )
+    if (calls.length === 0) return
+
+    const compact = calls.flatMap(call => buildToolCard(call))
+    const exp = calls.flatMap(call => buildToolCard(call, true))
+    compactLines.push(...compact)
+    expandedLines.push(...exp)
+    const visible = expanded ? exp : compact
+    const context = outputContextFor(compactLines.slice(0, -compact.length))
+    screenLog.logLines(blocksToLines(buildOutputBlocks(visible, context)))
+
+    appState = { ...appState, liveToolCalls: new Map() }
+    streamMachine = { ...streamMachine, appState }
+    renderer.requestRender()
+  }
+
   /** Flush any in-progress streaming content to committed output.
    *  Call before clearing streaming state on any abort/cancel path. */
   function flushStreamContent() {
-    
     // Flush anything the stream machine accumulated
     if (!streamMachine) return
     const flushed = flushStreaming(streamMachine)
     streamMachine = flushed.state
     commitFlushResult(flushed)
-    // Preserve tool progress that was only shown in the status area
-    const progress = streamMachine.lastToolProgress
-    if (progress) {
-      const toolName = streamMachine.spinnerState.toolName ?? 'Bash'
-      commitLines(buildToolProgressLines(
-        { kind: 'tool_progress', payload: { tool_name: toolName, text: progress } } as any,
-        expanded,
-      ))
-    }
+    flushLiveToolCards()
   }
 
   function interruptStream(id: string, text: string) {
@@ -2040,9 +2042,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         spinnerState = update.state.spinnerState
 
         if (event.kind === 'assistant_delta') renderer.requestRender()
-        if (!update.suppressToolStarted && event.kind === 'tool_started') commitToolStarted(event)
-        if (event.kind === 'tool_progress') commitLines(buildToolProgressLines(event, true))
-        if (!update.suppressToolFinished && event.kind === 'tool_finished') commitToolFinished(event)
+        if (event.kind === 'tool_finished') commitLiveToolBatch()
         if (update.commitLines.length > 0) commitLines(update.commitLines)
         if (event.kind === 'turn_started') drainQueuedUserMessages()
         if (update.rerenderStatus) renderer.requestRender()
@@ -2053,6 +2053,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         streamMachine = final.state
         appState = final.state.appState
         commitFlushResult(final)
+        flushLiveToolCards()
       }
       drainQueuedUserMessages()
     } catch (err: any) {
@@ -2060,6 +2061,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         const final = flushStreaming(streamMachine)
         streamMachine = final.state
         commitFlushResult(final)
+        flushLiveToolCards()
       }
       commitLines([{ id: 'sys-log-err', kind: 'system', text: chalk.red(`  Log query failed: ${err?.message ?? err}`) }])
       drainQueuedUserMessages()

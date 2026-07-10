@@ -26,6 +26,22 @@ pub fn map_run_event_json(run_event: &RunEvent) -> Vec<serde_json::Value> {
     let mut events = Vec::new();
 
     match &run_event.payload {
+        RunEventPayload::AssistantToolCall {
+            content_index,
+            tool_call_id,
+            tool_name,
+            args,
+        } => {
+            events.push(json!({
+                "type": "tool_call_delta",
+                "data": {
+                    "content_index": content_index,
+                    "id": tool_call_id,
+                    "name": tool_name,
+                    "input": args,
+                }
+            }));
+        }
         RunEventPayload::AssistantCompleted { content, .. } => {
             for block in content {
                 match block {

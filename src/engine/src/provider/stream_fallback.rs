@@ -73,6 +73,7 @@ impl FallbackEmitter {
             content_index: idx,
             id: id.to_string(),
             name: name.to_string(),
+            arguments: arguments.clone(),
         });
         let _ = self
             .tx

@@ -26,6 +26,12 @@ pub enum RunEventPayload {
         #[serde(skip_serializing_if = "Option::is_none")]
         thinking_delta: Option<String>,
     },
+    AssistantToolCall {
+        content_index: usize,
+        tool_call_id: String,
+        tool_name: String,
+        args: serde_json::Value,
+    },
     AssistantCompleted {
         content: Vec<AssistantBlock>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -218,6 +224,7 @@ impl RunEventPayload {
             Self::RunStarted { .. } => "run_started",
             Self::TurnStarted { .. } => "turn_started",
             Self::AssistantDelta { .. } => "assistant_delta",
+            Self::AssistantToolCall { .. } => "assistant_tool_call",
             Self::AssistantCompleted { .. } => "assistant_completed",
             Self::ToolStarted { .. } => "tool_started",
             Self::ToolProgress { .. } => "tool_progress",

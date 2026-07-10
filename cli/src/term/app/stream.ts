@@ -1,4 +1,4 @@
-import { buildError, buildToolCall, buildToolProgress, buildToolResult, buildVerboseEvent, buildLlmCard, isVisibleLlmEvent, buildAssistantLines, buildThinkingSummary, type OutputLine } from '../../render/output.js'
+import { buildError, buildVerboseEvent, buildLlmCard, isVisibleLlmEvent, buildAssistantLines, buildThinkingSummary, type OutputLine } from '../../render/output.js'
 import { formatDuration } from '../../render/format.js'
 import { recordStreamDelta, resetStreamStats, setSpinnerPhase, type SpinnerState } from '../spinner.js'
 import { applyEvent } from './reducer.js'
@@ -69,8 +69,6 @@ export interface StreamMachineState {
   spinnerState: SpinnerState
   pendingText: string
   pendingThinkingText: string
-  toolProgress: string
-  lastToolProgress: string
   streamingText: string
   streamingThinkingText: string
   thinkingTokenCount: number
@@ -92,12 +90,6 @@ export interface StreamUpdate {
   expandedCommitLines?: OutputLine[]
   writeLines: OutputLine[]
   rerenderStatus: boolean
-  suppressToolStarted: boolean
-  suppressToolFinished: boolean
-}
-
-function isHeartbeatProgress(text: string): boolean {
-  return /^Running\.\.\. \d+s$/.test(text.trim())
 }
 
 function parseSpillProgress(text: string): Record<string, unknown> | undefined {
@@ -140,8 +132,6 @@ export function createStreamMachineState(appState: AppState, spinnerState: Spinn
     spinnerState,
     pendingText: '',
     pendingThinkingText: '',
-    toolProgress: '',
-    lastToolProgress: '',
     streamingText: '',
     streamingThinkingText: '',
     thinkingTokenCount: 0,
@@ -159,8 +149,6 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
   const writeLines: OutputLine[] = []
   let expandedCommitLines: OutputLine[] | undefined
   let rerenderStatus = false
-  let suppressToolStarted = false
-  let suppressToolFinished = false
   // Tracks an LLM error message surfaced as a card this tick (or carried from a
   // prior tick via state), so a following `error` event won't duplicate it.
   let capturedLlmError: string | null = prev.lastLlmErrorMessage
@@ -192,8 +180,6 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     const activeLlmCall = event.kind === 'llm_call_started' || event.kind === 'llm_call_retry' || event.kind === 'api_retry'
     state = {
       ...flushed.state,
-      toolProgress: '',
-      lastToolProgress: '',
       activeLlmCall,
       spinnerState: activeLlmCall ? resetStreamStats(flushed.state.spinnerState) : flushed.state.spinnerState,
     }
@@ -282,12 +268,21 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     }
   }
 
+  if (event.kind === 'assistant_tool_call') {
+    const toolName = (p.tool_name as string) ?? ''
+    if (toolName) {
+      state = {
+        ...state,
+        spinnerState: setSpinnerPhase(state.spinnerState, 'executing', toolName),
+      }
+      rerenderStatus = true
+    }
+  }
+
   if (event.kind === 'assistant_completed' || event.kind === 'turn_started') {
     const flushed = flushStreaming(state)
     state = {
       ...flushed.state,
-      toolProgress: '',
-      lastToolProgress: '',
       activeLlmCall: event.kind === 'assistant_completed' ? false : flushed.state.activeLlmCall,
       spinnerState: { ...flushed.state.spinnerState, streaming: false },
     }
@@ -329,59 +324,28 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     const spinnerPhase = isAskUser ? 'thinking' : 'executing'
     state = {
       ...state,
-      toolProgress: '',
-      lastToolProgress: '',
       spinnerState: setSpinnerPhase(state.spinnerState, spinnerPhase, toolName),
     }
-    suppressToolStarted = isAskUser
     rerenderStatus = true
   }
 
   if (event.kind === 'tool_progress') {
     const text = p.text as string | undefined
-    const details = p.details as Record<string, any> | undefined
-
-    // Preview diff — render immediately before tool finishes
-    if (details?.preview && details?.diff) {
-      const flushed = flushStreaming(state)
-      state = { ...flushed.state, toolProgress: '', lastToolProgress: '' }
-      commitLines.push(...flushed.lines)
-      mergeFlushExpanded(flushed)
-      const toolName = (p.tool_name as string) ?? 'unknown'
-      const previewArgs = { diff: details.diff as string }
-      const previewLines = buildToolResult(toolName, previewArgs, 'done', undefined, undefined)
-      commitLines.push(...previewLines)
-      if (!expandedCommitLines) expandedCommitLines = []
-      expandedCommitLines.push(...previewLines)
-      rerenderStatus = true
-    } else if (text) {
-      const spill = parseSpillProgress(text)
-      if (spill) {
-        const flushed = flushStreaming(state)
-        state = { ...flushed.state, toolProgress: '', lastToolProgress: '' }
-        commitLines.push(...flushed.lines)
-        mergeFlushExpanded(flushed)
-        const spillLines = buildSpillEventLines(spill, p.tool_name as string | undefined)
-        commitLines.push(...spillLines)
-      } else {
-        state = isHeartbeatProgress(text)
-          ? { ...state, toolProgress: '' }
-          : { ...state, toolProgress: text, lastToolProgress: text }
-      }
-      rerenderStatus = true
+    const spill = text ? parseSpillProgress(text) : undefined
+    if (spill) {
+      commitLines.push(...buildSpillEventLines(spill, p.tool_name as string | undefined))
     }
+    rerenderStatus = true
   }
 
   if (event.kind === 'tool_finished') {
-    const toolName = (p.tool_name as string) ?? 'unknown'
-    const isAskUser = toolName === 'AskUser' || toolName === 'ask_user'
+    const running = [...state.appState.liveToolCalls.values()].find(call => call.status === 'running' && call.startedAt !== undefined)
     state = {
       ...state,
-      toolProgress: '',
-      lastToolProgress: '',
-      spinnerState: setSpinnerPhase(state.spinnerState, 'thinking'),
+      spinnerState: running
+        ? setSpinnerPhase(state.spinnerState, 'executing', running.name)
+        : setSpinnerPhase(state.spinnerState, 'thinking'),
     }
-    suppressToolFinished = isAskUser
     rerenderStatus = true
   }
 
@@ -413,38 +377,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, ctx: S
     expandedCommitLines,
     writeLines,
     rerenderStatus,
-    suppressToolStarted,
-    suppressToolFinished,
   }
-}
-
-export function buildToolFinishedLines(event: RunEvent, expanded?: boolean): OutputLine[] {
-  const p = (event.payload ?? {}) as Record<string, any>
-  const toolName = (p.tool_name as string) ?? 'unknown'
-  const args = (p.args as Record<string, unknown>) ?? {}
-  const details = p.details as Record<string, any> | undefined
-  const diff = details?.diff as string | undefined
-  // Skip diff if it was already rendered as a preview
-  const skipDiff = !!details?.preview_rendered && !!diff
-  const mergedArgs = diff && !skipDiff ? { ...args, diff } : args
-  const status = p.is_error ? 'error' as const : 'done' as const
-  return buildToolResult(toolName, mergedArgs, status, p.content as string | undefined, p.duration_ms as number | undefined, expanded)
-}
-
-export function buildToolStartedLines(event: RunEvent): OutputLine[] {
-  const p = (event.payload ?? {}) as Record<string, any>
-  const toolName = (p.tool_name as string) ?? 'unknown'
-  const previewCommand = p.preview_command as string | undefined
-  return buildToolCall(toolName, (p.args as Record<string, unknown>) ?? {}, previewCommand)
-}
-
-export function buildToolProgressLines(event: RunEvent, expanded?: boolean): OutputLine[] {
-  const p = (event.payload ?? {}) as Record<string, any>
-  const toolName = (p.tool_name as string) ?? 'unknown'
-  const text = (p.text as string) ?? ''
-  const spill = parseSpillProgress(text)
-  if (spill) return buildSpillEventLines(spill, toolName)
-  return text ? buildToolProgress(toolName, text, expanded) : []
 }
 
 export function flushStreaming(state: StreamMachineState): { state: StreamMachineState; lines: OutputLine[]; expandedLines?: OutputLine[] } {

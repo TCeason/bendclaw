@@ -142,10 +142,30 @@ impl StreamProvider for BedrockProvider {
                                             });
                                         }
                                         if let Some(tool_use) = delta.tool_use {
-                                            let _ = tx.send(StreamEvent::ToolCallDelta {
-                                                content_index: content.len(),
-                                                delta: tool_use.input,
-                                            });
+                                            if let Some((idx, id, name)) = content
+                                                .iter()
+                                                .enumerate()
+                                                .rev()
+                                                .find_map(|(idx, c)| match c {
+                                                    Content::ToolCall { id, name, .. } => {
+                                                        Some((idx, id.clone(), name.clone()))
+                                                    }
+                                                    _ => None,
+                                                })
+                                            {
+                                                let arguments = crate::provider::json_repair::try_repair_json(
+                                                    &tool_use.input,
+                                                )
+                                                .unwrap_or_else(|_| {
+                                                    serde_json::Value::Object(Default::default())
+                                                });
+                                                let _ = tx.send(StreamEvent::ToolCallDelta {
+                                                    content_index: idx,
+                                                    id,
+                                                    name,
+                                                    arguments,
+                                                });
+                                            }
                                         }
                                     }
                                     BedrockEvent::ContentBlockStart { start, .. } => {
@@ -160,6 +180,7 @@ impl StreamProvider for BedrockProvider {
                                                 content_index: idx,
                                                 id: tool_use.tool_use_id,
                                                 name: tool_use.name,
+                                                arguments: serde_json::Value::Object(Default::default()),
                                             });
                                         }
                                     }

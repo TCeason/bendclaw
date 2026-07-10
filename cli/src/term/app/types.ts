@@ -25,10 +25,17 @@ export interface UIToolCall {
   name: string
   args: Record<string, unknown>
   status: 'running' | 'done' | 'error'
-  result?: string
-  /** Structured tool-result metadata (e.g. a plan artifact's task list),
-   *  restored from the transcript so artifacts render on resume. */
+  /** Assistant content order; used to keep parallel cards stable. */
+  contentIndex?: number
+  /** Tool arguments are complete and execution may begin. */
+  argsComplete?: boolean
+  /** Wall-clock timestamp when execution started. */
+  startedAt?: number
+  /** Latest partial output for this tool. */
+  progress?: string
+  /** Structured partial/final metadata, including edit diffs. */
   details?: unknown
+  result?: string
   previewCommand?: string
   durationMs?: number
 }

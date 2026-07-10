@@ -11,6 +11,8 @@ pub struct ToolCallBuffer {
     pub id: String,
     pub name: String,
     pub arguments: String,
+    pub content_index: Option<usize>,
+    pub started: bool,
 }
 
 pub fn build_request_body(config: &StreamConfig, compat: &OpenAiCompat) -> serde_json::Value {

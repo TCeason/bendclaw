@@ -125,6 +125,56 @@ async fn openai_sse_tool_call() {
         .any(|e| matches!(e, StreamEvent::ToolCallEnd { .. })));
 }
 
+#[tokio::test]
+async fn openai_sse_interleaved_parallel_tool_calls_keep_separate_state() {
+    let sse = openai_sse::body(vec![
+        openai_sse::tool_call_chunk(0, Some("call-read"), Some("read"), None),
+        openai_sse::tool_call_chunk(1, Some("call-edit"), Some("edit"), None),
+        openai_sse::tool_call_chunk(0, None, None, Some(r#"{"path":"src/a"}"#)),
+        openai_sse::tool_call_chunk(1, None, None, Some(r#"{"path":"src/b","edits":[]}"#)),
+        openai_sse::finish_with_usage("tool_calls", 40, 8),
+        openai_sse::done(),
+    ]);
+
+    let (msg, events) = run_provider_sse(&OpenAiCompatProvider, openai_config(), &sse, 200)
+        .await
+        .unwrap();
+
+    let calls = match msg {
+        Message::Assistant { content, .. } => content,
+        _ => panic!("Expected Assistant message"),
+    };
+    assert!(matches!(
+        &calls[0],
+        Content::ToolCall { id, name, arguments }
+            if id == "call-read" && name == "read" && arguments["path"] == "src/a"
+    ));
+    assert!(matches!(
+        &calls[1],
+        Content::ToolCall { id, name, arguments }
+            if id == "call-edit" && name == "edit" && arguments["path"] == "src/b"
+    ));
+
+    let updates: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::ToolCallDelta {
+                content_index,
+                id,
+                name,
+                arguments,
+            } => Some((*content_index, id.as_str(), name.as_str(), arguments)),
+            _ => None,
+        })
+        .collect();
+    assert!(updates.iter().any(|(index, id, name, args)| {
+        *index == 0 && *id == "call-read" && *name == "read" && args["path"] == "src/a"
+    }));
+    assert!(updates.iter().any(|(index, id, name, args)| {
+        *index == 1 && *id == "call-edit" && *name == "edit" && args["path"] == "src/b"
+    }));
+}
+
 // ---------------------------------------------------------------------------
 // SSE streaming — empty response is error
 // ---------------------------------------------------------------------------

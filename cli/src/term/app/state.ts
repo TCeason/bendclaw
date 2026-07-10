@@ -18,9 +18,8 @@ export interface AppState {
   error: string | null
   currentStreamText: string
   currentThinkingText: string
-  activeToolCalls: Map<string, UIToolCall>
-  /** Accumulated tool calls for the current turn, merged into assistant_completed */
-  turnToolCalls: UIToolCall[]
+  /** Live tool cards for the current assistant tool batch, keyed by tool_call_id. */
+  liveToolCalls: Map<string, UIToolCall>
   /** Stats accumulated during the current run */
   currentRunStats: RunStats
   /** Start time of the current run */
@@ -75,8 +74,7 @@ export function createInitialState(model: string, cwd: string): AppState {
     error: null,
     currentStreamText: '',
     currentThinkingText: '',
-    activeToolCalls: new Map(),
-    turnToolCalls: [],
+    liveToolCalls: new Map(),
     currentRunStats: emptyRunStats(),
     runStartTime: 0,
     verboseEvents: [],

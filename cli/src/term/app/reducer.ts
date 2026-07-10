@@ -21,8 +21,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         error: null,
         currentStreamText: '',
         currentThinkingText: '',
-        activeToolCalls: new Map(),
-        turnToolCalls: [],
+        liveToolCalls: new Map(),
         currentRunStats: emptyRunStats(),
         runStartTime: Date.now(),
         verboseEvents: [],
@@ -33,7 +32,6 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         ...state,
         currentStreamText: '',
         currentThinkingText: '',
-        turnToolCalls: [],
         currentRunStats: {
           ...state.currentRunStats,
           turnCount: state.currentRunStats.turnCount + 1,
@@ -51,6 +49,22 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       }
     }
 
+    case 'assistant_tool_call': {
+      const id = p.tool_call_id as string
+      if (!id) return state
+      const next = new Map(state.liveToolCalls)
+      const current = next.get(id)
+      next.set(id, {
+        ...current,
+        id,
+        name: (p.tool_name as string) || current?.name || '',
+        args: (p.args as Record<string, unknown>) ?? current?.args ?? {},
+        status: current?.status ?? 'running',
+        contentIndex: (p.content_index as number | undefined) ?? current?.contentIndex,
+      })
+      return { ...state, liveToolCalls: next }
+    }
+
     case 'assistant_completed': {
       const content = p.content as any[] | undefined
       const textParts = (content ?? [])
@@ -58,29 +72,30 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         .map((b: any) => b.text)
       const text = textParts.join('') || state.currentStreamText
 
-      const contentToolCalls = (content ?? [])
-        .filter((b: any) => b.type === 'tool_call')
-        .map((b: any) => {
-          const finished = state.turnToolCalls.find((tc) => tc.id === b.id)
-          if (finished) return finished
-          return {
-            id: b.id as string,
-            name: b.name as string,
-            args: (b.input ?? {}) as Record<string, unknown>,
-            status: 'running' as const,
-          }
+      const liveToolCalls = new Map(state.liveToolCalls)
+      for (const [contentIndex, block] of (content ?? []).entries()) {
+        if (block.type !== 'tool_call') continue
+        const current = liveToolCalls.get(block.id)
+        liveToolCalls.set(block.id, {
+          ...current,
+          id: block.id as string,
+          name: block.name as string,
+          args: (block.input ?? {}) as Record<string, unknown>,
+          status: current?.status ?? 'running',
+          argsComplete: true,
+          contentIndex: current?.contentIndex ?? contentIndex,
         })
+      }
 
-      const contentIds = new Set(contentToolCalls.map((tc) => tc.id))
-      const extraToolCalls = state.turnToolCalls.filter((tc) => !contentIds.has(tc.id))
-      const allToolCalls = [...contentToolCalls, ...extraToolCalls]
-
+      const toolCalls = [...liveToolCalls.values()].sort(
+        (a, b) => (a.contentIndex ?? Number.MAX_SAFE_INTEGER) - (b.contentIndex ?? Number.MAX_SAFE_INTEGER),
+      )
       const msg: UIMessage = {
         id: event.event_id,
         role: 'assistant',
         text,
         timestamp: Date.now(),
-        toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         verboseEvents: state.verboseEvents.length > 0 ? [...state.verboseEvents] : undefined,
         streamed: state.currentStreamText.length > 0,
       }
@@ -90,48 +105,72 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         messages: [...state.messages, msg],
         currentStreamText: '',
         currentThinkingText: '',
-        activeToolCalls: new Map(),
-        turnToolCalls: [],
+        liveToolCalls,
         verboseEvents: [],
       }
     }
 
     case 'tool_started': {
-      const tc: UIToolCall = {
-        id: p.tool_call_id,
-        name: p.tool_name,
-        args: p.args ?? {},
+      const id = p.tool_call_id as string
+      if (!id) return state
+      const next = new Map(state.liveToolCalls)
+      const current = next.get(id)
+      next.set(id, {
+        ...current,
+        id,
+        name: (p.tool_name as string) ?? current?.name ?? 'unknown',
+        args: (p.args as Record<string, unknown>) ?? current?.args ?? {},
         status: 'running',
-        previewCommand: p.preview_command,
-      }
-      const newMap = new Map(state.activeToolCalls)
-      newMap.set(tc.id, tc)
-      return { ...state, activeToolCalls: newMap }
+        contentIndex: current?.contentIndex,
+        argsComplete: true,
+        startedAt: current?.startedAt ?? Date.now(),
+        previewCommand: p.preview_command ?? current?.previewCommand,
+      })
+      return { ...state, liveToolCalls: next }
+    }
+
+    case 'tool_progress': {
+      const id = p.tool_call_id as string
+      if (!id) return state
+      const next = new Map(state.liveToolCalls)
+      const current = next.get(id)
+      if (!current) return state
+      const text = p.text as string | undefined
+      const progress = text && !/^Running\.\.\. \d+s$/.test(text.trim()) ? text : current.progress
+      next.set(id, {
+        ...current,
+        progress: progress || undefined,
+        details: p.details ?? current.details,
+      })
+      return { ...state, liveToolCalls: next }
     }
 
     case 'tool_finished': {
       const id = p.tool_call_id as string
       const isError = !!p.is_error
-      const toolName = p.tool_name ?? state.activeToolCalls.get(id)?.name ?? 'unknown'
+      const current = state.liveToolCalls.get(id)
+      const toolName = p.tool_name ?? current?.name ?? 'unknown'
       const durationMs = (p.duration_ms as number) ?? 0
 
       const finished: UIToolCall = {
         id,
         name: toolName,
-        args: state.activeToolCalls.get(id)?.args ?? {},
+        args: current?.args ?? (p.args as Record<string, unknown>) ?? {},
         status: isError ? 'error' : 'done',
+        contentIndex: current?.contentIndex,
         result: p.content,
-        previewCommand: state.activeToolCalls.get(id)?.previewCommand,
+        details: p.details,
+        previewCommand: current?.previewCommand,
         durationMs,
       }
 
       const details = p.details as Record<string, any> | undefined
       if (details?.diff && typeof details.diff === 'string') {
-        finished.args = { ...finished.args, diff: details.diff }
+        finished.details = { ...(finished.details as Record<string, unknown> ?? {}), diff: details.diff }
       }
 
-      const newMap = new Map(state.activeToolCalls)
-      newMap.delete(id)
+      const liveToolCalls = new Map(state.liveToolCalls)
+      liveToolCalls.set(id, finished)
 
       const stats = { ...state.currentRunStats }
       stats.toolCallCount++
@@ -154,15 +193,11 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
 
       return {
         ...state,
-        activeToolCalls: newMap,
-        turnToolCalls: [...state.turnToolCalls, finished],
+        liveToolCalls,
         messages: updateToolCallInMessages(state.messages, id, finished),
         currentRunStats: stats,
       }
     }
-
-    case 'tool_progress':
-      return state
 
     case 'llm_call_started': {
       const model = (p.model as string) ?? state.model
@@ -369,7 +404,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         isLoading: false,
         currentStreamText: '',
         currentThinkingText: '',
-        activeToolCalls: new Map(),
+        liveToolCalls: new Map(),
         currentRunStats: stats,
       }
     }

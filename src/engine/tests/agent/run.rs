@@ -1362,6 +1362,54 @@ impl AgentTool for NamedProgressTool {
 }
 
 #[tokio::test]
+async fn test_streams_parallel_tool_calls_before_execution() {
+    let output = TestHarness::new()
+        .responses(vec![
+            MockResponse::ToolCalls(vec![
+                MockToolCall {
+                    name: "read_a".into(),
+                    arguments: serde_json::json!({"path": "a.rs"}),
+                },
+                MockToolCall {
+                    name: "read_b".into(),
+                    arguments: serde_json::json!({"path": "b.rs"}),
+                },
+            ]),
+            MockResponse::Text("done".into()),
+        ])
+        .tool(MockTool::ok("read_a", "a"))
+        .tool(MockTool::ok("read_b", "b"))
+        .run("go")
+        .await;
+
+    let streamed: Vec<_> = output
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::MessageUpdate {
+                delta:
+                    StreamDelta::ToolCall {
+                        content_index,
+                        id,
+                        name,
+                        arguments,
+                    },
+                ..
+            } => Some((*content_index, id.as_str(), name.as_str(), arguments)),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(streamed.len(), 2);
+    assert_eq!(streamed[0].0, 0);
+    assert_eq!(streamed[0].2, "read_a");
+    assert_eq!(streamed[0].3["path"], "a.rs");
+    assert_eq!(streamed[1].0, 1);
+    assert_eq!(streamed[1].2, "read_b");
+    assert_eq!(streamed[1].3["path"], "b.rs");
+}
+
+#[tokio::test]
 async fn test_parallel_tools_progress_distinguishable() {
     let provider = MockProvider::new(vec![
         MockResponse::ToolCalls(vec![
@@ -1801,6 +1849,7 @@ async fn test_compaction_after_tool_use_waits_for_tool_results() {
                     content_index: 0,
                     id: id.clone(),
                     name: "read".into(),
+                    arguments: serde_json::json!({"path": "file.txt"}),
                 });
                 let _ = tx.send(StreamEvent::ToolCallEnd { content_index: 0 });
                 Message::Assistant {
