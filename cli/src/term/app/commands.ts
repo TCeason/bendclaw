@@ -78,7 +78,7 @@ export function handleSlashCommand(text: string, ctx: CommandContext): CommandRe
         const activeSpec = currentModelSpec(ctx.configInfo, ctx.agent.model)
         const idx = models.findIndex(option => option.spec === activeSpec)
         const next = models[(idx + 1) % models.length]!
-        ctx.agent.model = next.spec
+        ctx.agent.setProvider(next.spec)
         const appState = { ...ctx.appState, model: next.model }
         return {
           ...baseResult(ctx),
@@ -87,7 +87,12 @@ export function handleSlashCommand(text: string, ctx: CommandContext): CommandRe
         }
       }
       if (args) {
-        ctx.agent.model = args
+        const configured = ctx.configInfo?.availableModels.find(option => option.spec === args)
+        if (configured) {
+          ctx.agent.setProvider(configured.spec)
+        } else {
+          ctx.agent.model = args
+        }
         const model = ctx.agent.model
         const provider = ctx.agent.configInfo().provider
         const appState = { ...ctx.appState, model }

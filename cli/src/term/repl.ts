@@ -1458,13 +1458,33 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   async function handleSlashInput(text: string) {
-    const result = handleSlashCommand(text, {
+    // Model configuration can change while the CLI is running. Refresh before
+    // resolving `/model` so the selector and model cycling use the latest env file.
+    const pendingCommand = resolveCommand(text)
+    if (pendingCommand.kind === 'resolved' && pendingCommand.name === '/model') {
+      try {
+        configInfo = agent.configInfo()
+      } catch (err: any) {
+        commitLines([{ id: 'sys-model-config', kind: 'system', text: chalk.red(`  Failed to reload model config: ${err?.message ?? err}`) }])
+        renderer.requestRender()
+        return
+      }
+    }
+
+    let result
+    try {
+      result = handleSlashCommand(text, {
       agent,
       appState,
       configInfo,
       preloadedSessions,
       planning,
     })
+    } catch (err: any) {
+      commitLines([{ id: 'sys-command-err', kind: 'system', text: chalk.red(`  Command failed: ${err?.message ?? err}`) }])
+      renderer.requestRender()
+      return
+    }
     appState = result.appState
     planning = result.planning
     if (result.overlay) overlay = result.overlay
@@ -1664,7 +1684,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         overlay = {
           kind: 'selector',
           state: selectorFocusOn(
-            { ...createSelectorState('Models', items), subtitle: 'Choose a provider and model for this session', circularNavigation: true },
+            { ...createSelectorState('Models', items), subtitle: 'Choose a provider and model for this session' },
             item => item.id === activeSpec,
           ),
         }
@@ -2046,13 +2066,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         return
       case 'select-model': {
         overlay = { kind: 'none' }
-        agent.model = action.spec
-        refreshConfigInfo()
-        const selected = selectModelOption(configInfo, action.spec)
-        const model = selected?.model ?? agent.model
-        const provider = selected?.provider ?? configInfo?.provider ?? ''
-        appState = { ...appState, model }
-        commitLines([{ id: 'sys-model', kind: 'system', text: `  Model → ${formatModelLabel(model, provider)}` }])
+        try {
+          agent.setProvider(action.spec)
+          refreshConfigInfo()
+          const selected = selectModelOption(configInfo, action.spec)
+          const model = selected?.model ?? agent.model
+          const provider = selected?.provider ?? configInfo?.provider ?? ''
+          appState = { ...appState, model }
+          commitLines([{ id: 'sys-model', kind: 'system', text: `  Model → ${formatModelLabel(model, provider)}` }])
+        } catch (err: any) {
+          commitLines([{ id: 'sys-model-err', kind: 'system', text: chalk.red(`  Failed to switch model: ${err?.message ?? err}`) }])
+        }
         renderer.requestRender()
         return
       }

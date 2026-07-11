@@ -4,7 +4,7 @@ import { createInitialState } from '../src/term/app/state.js'
 
 describe('term commands', () => {
   const mkCtx = () => ({
-    agent: { model: 'claude-3-5-sonnet' } as any,
+    agent: { model: 'claude-3-5-sonnet', setProvider(spec: string) { this.model = spec } } as any,
     appState: createInitialState('claude-3-5-sonnet', '/tmp'),
     configInfo: {
       provider: 'p1',
@@ -34,9 +34,20 @@ describe('term commands', () => {
     const ctx = mkCtx()
     ctx.agent.configInfo = () => ({ provider: 'p2' })
     const result = handleSlashCommand('/model p2:shared', ctx)
-    expect(result.appState.model).toBe('p2:shared')
     expect(ctx.agent.model).toBe('p2:shared')
+    expect(result.appState.model).toBe('p2:shared')
     expect(result.systemLines[0]?.text).toContain('p2:shared@p2')
+  })
+
+  test('/model uses strict provider switching for a configured model', () => {
+    const ctx = mkCtx()
+    let selected = ''
+    ctx.agent.setProvider = (spec: string) => { selected = spec; ctx.agent.model = 'shared' }
+    ctx.agent.configInfo = () => ({ provider: 'p2' })
+
+    handleSlashCommand('/model p2:shared', ctx)
+
+    expect(selected).toBe('p2:shared')
   })
 
   test('/model n distinguishes the same model from different providers', () => {

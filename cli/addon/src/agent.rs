@@ -25,7 +25,7 @@ use crate::tracing::init_tracing;
 #[napi]
 pub struct NapiAgent {
     agent: Arc<Agent>,
-    config: evot::conf::Config,
+    env_file_path: String,
 }
 
 #[napi]
@@ -40,11 +40,15 @@ impl NapiAgent {
             .with_model(model)
             .map_err(|e| Error::from_reason(format!("config model: {e}")))?;
 
+        let env_file_path = config.env_file_path.to_string_lossy().to_string();
         let agent = evot::gateway::service::build_agent(&config)
             .await
             .map_err(|e| Error::from_reason(format!("agent init: {e}")))?;
 
-        Ok(Self { agent, config })
+        Ok(Self {
+            agent,
+            env_file_path,
+        })
     }
 
     /// Current model name.
@@ -55,8 +59,10 @@ impl NapiAgent {
 
     /// Set the active model by model spec (e.g. "deepseek-chat" or "openrouter:google/gemini-2.5-pro").
     #[napi(setter)]
-    pub fn set_model(&mut self, model: String) {
-        self.agent.set_model_by_spec(&self.config, &model);
+    pub fn set_model(&mut self, model: String) -> Result<()> {
+        let config = self.load_config()?;
+        self.agent.set_model_by_spec(&config, &model);
+        Ok(())
     }
 
     /// Current working directory.
@@ -286,15 +292,15 @@ impl NapiAgent {
     }
 
     /// Get config info: active provider, env path, base URL, and configured models.
+    /// Reloads the config file so edits are visible without restarting the CLI.
     #[napi]
     pub fn config_info(&self) -> Result<String> {
+        let config = self.load_config()?;
         let llm = self.agent.llm();
         let provider = llm.provider.clone();
-        let env_path = evot::conf::paths::default_env_file_path()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
+        let env_path = config.env_file_path.to_string_lossy().to_string();
         let has_api_key = !llm.api_key.is_empty();
-        let available = self.collect_models();
+        let available = self.collect_models(&config);
         let thinking_level = display_thinking_level(&llm);
         let info = serde_json::json!({
             "provider": provider,
@@ -310,17 +316,24 @@ impl NapiAgent {
     /// Get configured models as provider-qualified specs. Provider qualification
     /// keeps entries distinct when multiple providers expose the same model id.
     #[napi]
-    pub fn available_models(&self) -> Vec<String> {
-        self.collect_models()
+    pub fn available_models(&self) -> Result<Vec<String>> {
+        let config = self.load_config()?;
+        Ok(self
+            .collect_models(&config)
             .into_iter()
             .filter_map(|entry| entry.get("spec")?.as_str().map(str::to_string))
-            .collect()
+            .collect())
     }
 
-    fn collect_models(&self) -> Vec<serde_json::Value> {
+    fn load_config(&self) -> Result<evot::conf::Config> {
+        evot::conf::Config::load_with_env_file(Some(&self.env_file_path))
+            .map_err(|e| Error::from_reason(format!("config reload failed: {e}")))
+    }
+
+    fn collect_models(&self, config: &evot::conf::Config) -> Vec<serde_json::Value> {
         let llm = self.agent.llm();
         let mut models = Vec::new();
-        for (provider, profile) in &self.config.providers {
+        for (provider, profile) in &config.providers {
             for model in &profile.models {
                 let model = model.trim();
                 if !model.is_empty() {
@@ -332,16 +345,12 @@ impl NapiAgent {
                 }
             }
         }
-        let current_is_listed = self
-            .config
-            .providers
-            .get(&llm.provider)
-            .is_some_and(|profile| {
-                profile
-                    .models
-                    .iter()
-                    .any(|model| model.trim() == llm.model.trim())
-            });
+        let current_is_listed = config.providers.get(&llm.provider).is_some_and(|profile| {
+            profile
+                .models
+                .iter()
+                .any(|model| model.trim() == llm.model.trim())
+        });
         if !llm.model.trim().is_empty() && !current_is_listed {
             models.push(serde_json::json!({
                 "provider": llm.provider,
@@ -355,8 +364,9 @@ impl NapiAgent {
     /// Switch the active provider by model spec.
     #[napi]
     pub fn set_provider(&self, provider: String) -> Result<()> {
+        let config = self.load_config()?;
         self.agent
-            .set_provider_by_spec(&self.config, &provider)
+            .set_provider_by_spec(&config, &provider)
             .map_err(|e| Error::from_reason(format!("invalid provider: {e}")))
     }
 
