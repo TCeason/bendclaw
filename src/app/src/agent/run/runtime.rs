@@ -1023,36 +1023,35 @@ pub fn build_model_config(
     max_tokens: Option<u32>,
     supports_image: Option<bool>,
 ) -> evot_engine::provider::ModelConfig {
+    use evot_engine::provider::ApiProtocol;
     use evot_engine::provider::ModelConfig;
     use evot_engine::provider::OpenAiCompat;
 
-    let mut model_config = match protocol {
-        Protocol::Anthropic => ModelConfig::anthropic(model, model),
-        Protocol::OpenAi => {
-            let mut mc = if provider == "openai" {
-                ModelConfig::openai(model, model)
-            } else {
-                ModelConfig::local("", model)
-            };
-            mc.compat = Some(match provider {
-                "openai" => OpenAiCompat::openai(),
-                "deepseek" => OpenAiCompat::deepseek(),
-                "xai" => OpenAiCompat::xai(),
-                "grok" => OpenAiCompat::grok_cli(),
-                "groq" => OpenAiCompat::groq(),
-                "cerebras" => OpenAiCompat::cerebras(),
-                "openrouter" => OpenAiCompat::openrouter(),
-                "mistral" => OpenAiCompat::mistral(),
-                "zai" => OpenAiCompat::zai(),
-                "minimax" => OpenAiCompat::minimax(),
-                _ => OpenAiCompat::default(),
-            });
-            mc
-        }
+    // Layers:
+    // 1. model catalog (by model id)
+    // 2. provider transport profile
+    // 3. explicit env overrides
+    let (api, default_base, compat) = match protocol {
+        Protocol::Anthropic => (
+            ApiProtocol::AnthropicMessages,
+            "https://api.anthropic.com",
+            None,
+        ),
+        Protocol::OpenAi => (
+            ApiProtocol::OpenAiCompletions,
+            "",
+            Some(OpenAiCompat::for_provider(provider)),
+        ),
     };
-    if let Some(base_url) = base_url {
-        model_config.base_url = base_url.to_string();
-    }
+
+    let mut model_config = ModelConfig::resolve(
+        api,
+        provider,
+        model,
+        model,
+        base_url.unwrap_or(default_base),
+        compat,
+    );
 
     // Explicit env/config overrides. `context_window`/`max_tokens` size the
     // context budget; `supports_image` declares whether the model accepts image

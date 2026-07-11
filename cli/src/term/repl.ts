@@ -576,6 +576,44 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     renderer.requestRender()
   }
 
+  /** Commit a transient status line (model / thinking level). Rapid re-toggles
+   *  replace the previous status in place instead of stacking a new line each
+   *  time. Model and thinking share one status slot so alternating switches
+   *  stay single-line. Only the trailing line is eligible for replacement, so a
+   *  later user message or other output freezes the prior status into history. */
+  function commitStatusLine(line: OutputLine) {
+    const isStatusId = (id: string) => id === 'sys-model' || id === 'sys-think'
+    const replaceOrPush = (lines: OutputLine[]): boolean => {
+      const last = lines.length > 0 ? lines[lines.length - 1] : undefined
+      if (last && isStatusId(last.id) && isStatusId(line.id)) {
+        lines[lines.length - 1] = line
+        return true
+      }
+      lines.push(line)
+      return false
+    }
+    const replaced = replaceOrPush(compactLines)
+    replaceOrPush(expandedLines)
+    // In-place mutation invalidates the append-only history cache prefix.
+    if (replaced) resetHistoryCache()
+    const context = outputContextFor(compactLines.slice(0, -1))
+    const blocks = buildOutputBlocks([line], context)
+    const rendered = blocksToLines(blocks)
+    screenLog.logLines(rendered)
+    renderer.requestRender()
+  }
+
+  /** Commit slash-command system lines, collapsing model/thinking status in place. */
+  function commitSystemLines(outputLines: OutputLine[]) {
+    for (const line of outputLines) {
+      if (line.kind === 'system' && (line.id === 'sys-model' || line.id === 'sys-think')) {
+        commitStatusLine(line)
+      } else {
+        commitLines([line])
+      }
+    }
+  }
+
   /** Commit flush result with optional dual-commit (compact summary vs expanded full). */
   function commitFlushResult(flushed: { lines: OutputLine[]; expandedLines?: OutputLine[] }) {
     if (flushed.lines.length === 0) return
@@ -618,12 +656,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       return
     }
     if (level === null) {
-      commitLines([{ id: 'sys-think', kind: 'system', text: '  This model has no selectable thinking level' }])
+      commitStatusLine({ id: 'sys-think', kind: 'system', text: '  This model has no selectable thinking level' })
       return
     }
     refreshConfigInfo()
     const label = level === 'off' ? 'off' : level
-    commitLines([{ id: 'sys-think', kind: 'system', text: `  Thinking level → ${label}` }])
+    commitStatusLine({ id: 'sys-think', kind: 'system', text: `  Thinking level → ${label}` })
     renderer.requestRender()
   }
 
@@ -1537,7 +1575,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
     if (result.exit) { cleanup(); fastExit(0) }
     if (result.resumeSession) await resumeSession(result.resumeSession)
-    if (result.systemLines.length > 0) commitLines(result.systemLines)
+    if (result.systemLines.length > 0) commitSystemLines(result.systemLines)
 
     // Handle async commands that the simple handleSlashCommand can't do
     const resolved = resolveCommand(text)
@@ -2073,7 +2111,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           const model = selected?.model ?? agent.model
           const provider = selected?.provider ?? configInfo?.provider ?? ''
           appState = { ...appState, model }
-          commitLines([{ id: 'sys-model', kind: 'system', text: `  Model → ${formatModelLabel(model, provider)}` }])
+          commitStatusLine({ id: 'sys-model', kind: 'system', text: `  Model → ${formatModelLabel(model, provider)}` })
         } catch (err: any) {
           commitLines([{ id: 'sys-model-err', kind: 'system', text: chalk.red(`  Failed to switch model: ${err?.message ?? err}`) }])
         }

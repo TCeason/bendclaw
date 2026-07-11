@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod bedrock;
+pub mod catalog;
 pub mod error;
 pub mod json_repair;
 pub mod mock;
@@ -12,6 +13,8 @@ pub mod traits;
 
 pub use anthropic::AnthropicProvider;
 pub use bedrock::BedrockProvider;
+pub use catalog::resolve as resolve_model_metadata;
+pub use catalog::ModelMetadata;
 pub use error::*;
 pub use mock::MockProvider;
 pub use mock::MockResponse;

@@ -336,6 +336,19 @@ fn grok_cli_models_use_catalog_context_and_reasoning_metadata() {
 }
 
 #[test]
+fn openai_channel_uses_model_catalog_for_grok() {
+    use evotengine::ThinkingLevel::*;
+
+    // Catalog is model-id keyed; the OpenAI constructor is just a transport preset.
+    let config = ModelConfig::openai("grok-4.5", "Grok 4.5");
+    assert_eq!(config.context_window, 500_000);
+    assert_eq!(config.max_tokens, 500_000);
+    assert!(config.reasoning);
+    assert_eq!(config.supported_thinking_levels(), vec![Low, Medium, High]);
+    assert_eq!(config.thinking_effort_override(Adaptive), Some("high"));
+}
+
+#[test]
 fn thinking_effort_override_distinguishes_unsupported_from_default() {
     use evotengine::ThinkingLevel;
     // gpt-5.5-pro: `low` is explicitly unsupported (None), `xhigh` maps to a

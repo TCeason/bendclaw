@@ -140,6 +140,28 @@ fn grok_provider_uses_cli_model_metadata_without_env_overrides() {
 }
 
 #[test]
+fn openai_provider_grok_4_5_uses_catalog_metadata() {
+    use evot_engine::ThinkingLevel::*;
+
+    // Model metadata is keyed by model id. Routing grok-4.5 through the openai
+    // channel must still resolve the Grok catalog entry.
+    let mc = build_model_config(
+        Protocol::OpenAi,
+        "openai",
+        "grok-4.5",
+        Some("https://openrouter.databend.cloud/openai/v1"),
+        CompatCaps::NONE,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(mc.context_window, 500_000);
+    assert_eq!(mc.max_tokens, 500_000);
+    assert!(mc.reasoning);
+    assert_eq!(mc.supported_thinking_levels(), vec![Low, Medium, High]);
+}
+
+#[test]
 fn anthropic_defaults_to_vision() {
     let mc = build_model_config(
         Protocol::Anthropic,

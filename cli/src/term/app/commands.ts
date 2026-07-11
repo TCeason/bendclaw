@@ -83,7 +83,7 @@ export function handleSlashCommand(text: string, ctx: CommandContext): CommandRe
         return {
           ...baseResult(ctx),
           appState,
-          systemLines: [{ id: 'sys-m', kind: 'system', text: `  Model → ${formatModelLabel(next.model, next.provider)}` }],
+          systemLines: [{ id: 'sys-model', kind: 'system', text: `  Model → ${formatModelLabel(next.model, next.provider)}` }],
         }
       }
       if (args) {
@@ -99,7 +99,7 @@ export function handleSlashCommand(text: string, ctx: CommandContext): CommandRe
         return {
           ...baseResult(ctx),
           appState,
-          systemLines: [{ id: 'sys-m', kind: 'system', text: `  Model → ${formatModelLabel(model, provider)}` }],
+          systemLines: [{ id: 'sys-model', kind: 'system', text: `  Model → ${formatModelLabel(model, provider)}` }],
         }
       }
       // No arg — return empty result; handleSlashInput will show selector overlay
