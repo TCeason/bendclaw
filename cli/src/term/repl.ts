@@ -22,7 +22,6 @@ import {
   blocksToLines,
   type OverlayState,
   type PromptVMInput,
-  type StyledLine,
   type ViewBlock,
 } from './viewmodel/index.js'
 import { HistoryRenderCache } from './viewmodel/history-cache.js'
@@ -64,7 +63,7 @@ import { handleSlashCommand } from './app/commands.js'
 import { askStateToResponse } from './app/ask-user.js'
 import { createExtensionHost, type ExtensionHost } from '../ext/index.js'
 import type { AskUserAnswer, AskUserParams } from '../ext/index.js'
-import { extractPlanItems, markCompletedPlanItems, planItemsToTasks, footerLabel, type PlanModeItem, type PlanModeTask } from './plan-mode.js'
+import { extractPlanItems, type PlanModeItem } from './plan-mode.js'
 import { currentModelSpec, formatModelLabel, modelOptions, selectModelOption } from './app/provider.js'
 import chalk from 'chalk'
 import {
@@ -198,32 +197,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   // Plan-mode state (pi-style): `/plan` enters read-only planning, the model
   // writes a `Plan:` section, and after the turn the extracted steps drive an
-  // Execute / Stay / Refine review. `planTasks` powers the footer indicator
-  // (📋 2/5); `planModeItems` powers the live progress widget.
-  let planTasks: PlanModeTask[] | null = null
+  // Execute / Stay / Refine review. Progress is not rendered as a sticky
+  // checklist (it only advances on turn-end [DONE:n] tags and is easy to stick
+  // when a step is never tagged). The review overlay owns the plan display.
   let planModeItems: PlanModeItem[] = []
   let lastReviewedPlanMarkdown = ''
 
-  function syncPlanTasksFromModeItems(): void {
-    planTasks = planModeItems.length > 0 ? planItemsToTasks(planModeItems) : null
-  }
-
   function latestAssistantMarkdown(): string | null {
     return findLastAssistantMarkdown(compactLines)?.rawMarkdown ?? null
-  }
-
-  function buildPlanModeWidgetBlocks(): ViewBlock[] {
-    if (planModeItems.length === 0) return []
-    const lines: StyledLine[] = planModeItems.slice(0, 12).map(item => ({
-      spans: [
-        { text: item.completed ? '  ☑ ' : '  ☐ ', fg: item.completed ? 'green' as const : undefined, dim: !item.completed },
-        { text: item.text, dim: item.completed },
-      ],
-    }))
-    if (planModeItems.length > 12) {
-      lines.push({ spans: [{ text: `  … ${planModeItems.length - 12} more`, dim: true }] })
-    }
-    return [{ lines, marginTop: 1 }]
   }
 
   async function maybeReviewPlanAfterTurn(): Promise<void> {
@@ -235,7 +216,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
     lastReviewedPlanMarkdown = markdown
     planModeItems = extracted
-    syncPlanTasksFromModeItems()
     renderer.requestRender()
 
     const planList = planModeItems.map(item => `${item.step}. ☐ ${item.text}`).join('\n')
@@ -244,7 +224,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         header: 'Plan',
         question: `Plan mode - what next?\n${planList}\n\nChoose an action, or type refinement feedback as custom text.`,
         options: [
-          { label: 'Execute the plan', description: 'Leave plan mode, restore write tools, and track progress.' },
+          { label: 'Execute the plan', description: 'Leave plan mode and restore write tools.' },
           { label: 'Stay in plan mode', description: 'Keep planning without executing yet.' },
           { label: 'Refine the plan', description: 'Return to the prompt to enter refinement feedback.' },
         ],
@@ -255,13 +235,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const choice = answers[0]!.answer
     if (choice === 'Execute the plan') {
       planning = false
-      syncPlanTasksFromModeItems()
       commitLines([{ id: 'sys-plan-exec', kind: 'system', text: '  planning: off · executing plan' }])
       const remaining = planModeItems
-        .filter(item => !item.completed)
         .map(item => `${item.step}. ${item.text}`)
         .join('\n')
-      const execMessage = `Execute the plan.\n\nRemaining steps:\n${remaining}\n\nExecute each step in order. After completing a step, include a [DONE:n] tag in your response.`
+      // Drop the sticky checklist for execution: it only advanced on turn-end
+      // [DONE:n] tags and stuck when a step was never tagged.
+      planModeItems = []
+      const execMessage = `Execute the plan.\n\nRemaining steps:\n${remaining}\n\nExecute each step in order.`
       commitLines(buildUserMessage(execMessage))
       await runQuery(execMessage)
       return
@@ -421,7 +402,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       contextTokens: appState.sessionTokens.contextTokens,
       contextWindow: appState.sessionTokens.contextWindow,
       thinkingLevel: configInfo?.thinkingLevel ?? '',
-      planLabel: footerLabel(planTasks),
     }
   }
 
@@ -528,10 +508,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // 4. Overlay
     blocks.push(...buildOverlayBlocks(overlay, renderer.termCols))
 
-    // 5. Plan progress widget (pi-style: live UI, not scrollback)
-    blocks.push(...buildPlanModeWidgetBlocks())
-
-    // 6. Spinner + prompt form one anchored footer unit. The spinner owns the
+    // 5. Spinner + prompt form one anchored footer unit. The spinner owns the
     // spacing above the unit; suppress the prompt's usual top margin so there is
     // no blank row between spinner and border.
     if (spinnerBlock) blocks.push(spinnerBlock)
@@ -762,7 +739,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const messages = transcriptToMessages(transcript as any)
       // A resumed session starts with no active plan; plan mode is re-entered
       // via /plan on the live conversation.
-      planTasks = null
       planModeItems = []
       lastReviewedPlanMarkdown = ''
       renderer.clearScreen()
@@ -987,20 +963,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
 
     if (!completed) return
-
-    const latest = latestAssistantMarkdown()
-    if (latest && planModeItems.length > 0 && !planning) {
-      if (markCompletedPlanItems(latest, planModeItems) > 0) {
-        syncPlanTasksFromModeItems()
-        renderer.requestRender()
-      }
-      if (planModeItems.length > 0 && planModeItems.every(item => item.completed)) {
-        commitLines([{ id: 'sys-plan-complete', kind: 'system', text: '  Plan complete ✓' }])
-        planModeItems = []
-        planTasks = null
-        renderer.requestRender()
-      }
-    }
 
     await maybeReviewPlanAfterTurn()
   }
@@ -1543,7 +1505,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       sessionId = null
       planModeItems = []
-      planTasks = null
       lastReviewedPlanMarkdown = ''
       appState = { ...createInitialState(appState.model, agent.cwd) }
       gitInfo.setCwd(agent.cwd)
@@ -1561,7 +1522,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         streamMachine = null; stopSpinner()
       }
       planModeItems = []
-      planTasks = null
       lastReviewedPlanMarkdown = ''
       // Start and bind a fresh empty session so /resume can see it immediately.
       const newSession = await agent.createSession()
@@ -1594,7 +1554,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
     if (name === '/plan') {
       planModeItems = []
-      planTasks = null
       lastReviewedPlanMarkdown = ''
       renderer.requestRender()
     }
@@ -1659,7 +1618,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       } else {
         planning = false
         planModeItems = []
-        planTasks = null
         commitLines([{ id: 'sys-act', kind: 'system', text: '  planning: off' }])
       }
     } else if (name === '/_dump') {

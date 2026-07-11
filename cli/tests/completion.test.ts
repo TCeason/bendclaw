@@ -119,15 +119,10 @@ describe('file path completion', () => {
 })
 
 describe('ghost hints', () => {
-  test('shows goal subcommands and options', () => {
-    const hint = getGhostHint('/goal ', 6)
-    expect(hint).toContain('show')
-    expect(hint).toContain('pause')
-    expect(hint).toContain('resume')
-    expect(hint).toContain('clear')
-    expect(hint).toContain('<objective>')
-    expect(hint).toContain('--budget=<tokens>')
-    expect(hint).toContain('--max-iter=<n>')
-    expect(hint).toContain('--timeout=<secs>')
+  test('shows skill subcommands', () => {
+    const hint = getGhostHint('/skill ', 7)
+    expect(hint).toContain('install')
+    expect(hint).toContain('list')
+    expect(hint).toContain('remove')
   })
 })

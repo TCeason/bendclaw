@@ -24,7 +24,6 @@
 
 - **2026-07-09** [REPL] `/log shot` — export the last assistant markdown turn as an HTML/PNG snapshot matching the TUI.
 - **2026-07-03** [REPL] `/copy` — copy the last agent message's Markdown source to the clipboard.
-- **2026-06-30** [Distill] `evot distill` — generate verified SFT/RL datasets by driving evot as a teacher.
 - **2026-06-16** [REPL] Shift+Tab cycles reasoning effort; persisted per session.
 - **2026-06-05** [Dashboard] Built-in web dashboard — server metrics, sessions, usage, and tool traces.
 
@@ -141,7 +140,6 @@ evot -p "summarize today's PRs"               # one-shot task
 evot -p "review this" -f ./src/main.rs        # attach file context
 evot -p "continue work" -c                    # continue latest session in cwd
 evot -p "continue work" -r my-session         # resume or create session
-evot distill --auto --domain "python backend" # generate an SFT/RL dataset
 ```
 
 > In the REPL: `/help` lists commands, Shift+Tab cycles the reasoning effort.

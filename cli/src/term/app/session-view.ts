@@ -15,17 +15,6 @@ export function findPreviousSession(preloaded: SessionMeta[], cwd: string): Sess
     .find(s => s.cwd === cwd)
 }
 
-export function previousSessionLine(session: SessionMeta): OutputLine {
-  const tag = session.source ? `[${session.source}] ` : ''
-  const title = session.title || '(untitled)'
-  const short = title.length > 40 ? title.slice(0, 39) + '…' : title
-  return {
-    id: `prev-session-${session.session_id}`,
-    kind: 'system',
-    text: `  previous session: ${tag}${short} · /resume ${session.session_id.slice(0, 8)}`,
-  }
-}
-
 /**
  * Select which messages to paint on resume. Rendering the whole transcript
  * re-runs markdown per message (O(total), ~500ms on very long sessions), so we

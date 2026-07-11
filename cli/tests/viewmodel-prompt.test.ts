@@ -35,7 +35,6 @@ function defaultInput(overrides?: Partial<PromptVMInput>): PromptVMInput {
     contextTokens: 0,
     contextWindow: 0,
     thinkingLevel: '',
-    planLabel: null,
     ...overrides,
   }
 }
@@ -80,16 +79,6 @@ describe('buildPromptBlocks', () => {
   test('no [plan] when not planning', () => {
     const result = renderPlain(defaultInput({ planning: false }))
     expect(result).not.toContain('[plan]')
-  })
-
-  test('shows the plan progress indicator when a plan is active', () => {
-    const result = renderPlain(defaultInput({ planLabel: '📋 2/5' }))
-    expect(result).toContain('📋 2/5')
-  })
-
-  test('no plan indicator when there is no plan', () => {
-    const result = renderPlain(defaultInput({ planLabel: null }))
-    expect(result).not.toContain('📋')
   })
 
   test('shows [log] when logMode', () => {
@@ -202,10 +191,10 @@ describe('buildPromptBlocks', () => {
   })
 
   test('highlights known slash command in theme color', () => {
-    const plainResult = renderPlain(defaultInput({ lines: ['/goal remove unwraps'], cursorCol: 5, placeholder: false }))
-    const ansiResult = render(defaultInput({ lines: ['/goal remove unwraps'], cursorCol: 5, placeholder: false }))
+    const plainResult = renderPlain(defaultInput({ lines: ['/plan remove unwraps'], cursorCol: 5, placeholder: false }))
+    const ansiResult = render(defaultInput({ lines: ['/plan remove unwraps'], cursorCol: 5, placeholder: false }))
 
-    expect(plainResult).toContain('/goal remove unwraps')
+    expect(plainResult).toContain('/plan remove unwraps')
     expect(plainResult).not.toContain('command matched:')
     expect(ansiResult).toContain('\x1b[36m')
   })

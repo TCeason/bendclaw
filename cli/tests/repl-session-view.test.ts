@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { findPreviousSession, previousSessionLine, shouldPreloadStartupSessions, selectResumeMessages, resumeElidedLine, resumeModelUnavailableNote, RESUME_DISPLAY_LIMIT } from '../src/term/app/session-view.js'
+import { findPreviousSession, shouldPreloadStartupSessions, selectResumeMessages, resumeElidedLine, resumeModelUnavailableNote, RESUME_DISPLAY_LIMIT } from '../src/term/app/session-view.js'
 import type { SessionMeta } from '../src/native/index.js'
 import type { UIMessage } from '../src/term/app/types.js'
 
@@ -21,18 +21,6 @@ describe('repl session view helpers', () => {
   test('findPreviousSession returns latest cwd session', () => {
     const older = { session_id: 'cccccccc-3333-4333-8333-cccccccccccc', title: 'older cwd session', cwd: '/work', updated_at: '2026-01-01T00:00:00Z' } as any
     expect(findPreviousSession([older, ...sessions], '/work')).toBe(sessions[0])
-  })
-
-  test('previousSessionLine formats source, title, and resume prefix', () => {
-    const line = previousSessionLine(sessions[0]!)
-    expect(line.id).toBe(`prev-session-${sessions[0]!.session_id}`)
-    expect(line.kind).toBe('system')
-    expect(line.text).toBe('  previous session: [local] cwd session · /resume aaaaaaaa')
-  })
-
-  test('previousSessionLine truncates long title', () => {
-    const line = previousSessionLine({ session_id: sessions[0]!.session_id, title: 'x'.repeat(41) } as any)
-    expect(line.text).toContain(`${'x'.repeat(39)}…`)
   })
 
   const makeMessages = (n: number): UIMessage[] =>
