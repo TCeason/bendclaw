@@ -221,6 +221,18 @@ impl OpenAiCompat {
         }
     }
 
+    /// Compat flags for the llmproxy Grok CLI Chat Completions adapter.
+    ///
+    /// This is intentionally separate from direct xAI: api.x.ai's Chat
+    /// Completions endpoint rejects `reasoning_effort`, while the Grok CLI
+    /// adapter accepts it and translates to the Responses API.
+    pub fn grok_cli() -> Self {
+        Self {
+            caps: CompatCaps::USAGE_IN_STREAMING | CompatCaps::REASONING_EFFORT,
+            ..Default::default()
+        }
+    }
+
     /// Compat flags for Groq.
     pub fn groq() -> Self {
         Self::default()
@@ -284,6 +296,12 @@ pub struct ModelConfig {
     pub context_window: u32,
     /// Default max output tokens.
     pub max_tokens: u32,
+    /// Whether this concrete model supports reasoning/thinking.
+    ///
+    /// This is model metadata, separate from [`OpenAiCompat`] which describes
+    /// whether a provider endpoint can carry the model's reasoning controls.
+    #[serde(default = "default_reasoning_capability")]
+    pub reasoning: bool,
     /// Input modalities the model accepts. Defaults to text-only, matching the
     /// conservative assumption for unknown OpenAI-compatible servers. The
     /// request builders consult this before attaching image content, mirroring
@@ -310,6 +328,12 @@ pub struct ModelConfig {
     /// - key absent — the level uses the protocol's default behavior.
     #[serde(default)]
     pub thinking_level_map: HashMap<String, Option<String>>,
+}
+
+fn default_reasoning_capability() -> bool {
+    // Preserve compatibility for externally deserialized model definitions that
+    // predate this field. First-party non-reasoning models set it explicitly.
+    true
 }
 
 fn default_input_modalities() -> Vec<InputModality> {
@@ -401,6 +425,50 @@ fn anthropic_model_version(id: &str) -> Option<(&'static str, u32, u32)> {
     Some((family, major, minor))
 }
 
+struct GrokModelMetadata {
+    context_window: u32,
+    max_tokens: u32,
+    reasoning: bool,
+    thinking_level_map: HashMap<String, Option<String>>,
+}
+
+fn grok_model_metadata(id: &str) -> Option<GrokModelMetadata> {
+    let normalized = id.trim().to_ascii_lowercase();
+    let model_id = normalized
+        .strip_prefix("xai/")
+        .or_else(|| normalized.strip_prefix("x-ai/"))
+        .unwrap_or(&normalized);
+    let mut levels = HashMap::new();
+    match model_id {
+        // Grok CLI advertises a 500k context window and low/medium/high
+        // reasoning efforts. It does not publish a separate output cap, so the
+        // context clamp is the authoritative output limit.
+        "grok-4.5" => {
+            levels.insert("off".into(), None);
+            levels.insert("minimal".into(), None);
+            levels.insert("low".into(), Some("low".into()));
+            levels.insert("medium".into(), Some("medium".into()));
+            levels.insert("high".into(), Some("high".into()));
+            levels.insert("adaptive".into(), Some("high".into()));
+            levels.insert("xhigh".into(), None);
+            levels.insert("max".into(), None);
+            Some(GrokModelMetadata {
+                context_window: 500_000,
+                max_tokens: 500_000,
+                reasoning: true,
+                thinking_level_map: levels,
+            })
+        }
+        "grok-composer-2.5-fast" => Some(GrokModelMetadata {
+            context_window: 200_000,
+            max_tokens: 200_000,
+            reasoning: false,
+            thinking_level_map: levels,
+        }),
+        _ => None,
+    }
+}
+
 fn openai_context_window(id: &str) -> u32 {
     match native_openai_model_id(id).as_str() {
         // Direct OpenAI Responses metadata currently reports this 272k catalog
@@ -485,6 +553,9 @@ impl ModelConfig {
     /// they alias other tiers and would be redundant stops in the cycle.
     pub fn supported_thinking_levels(&self) -> Vec<ThinkingLevel> {
         use crate::ThinkingLevel::*;
+        if !self.reasoning {
+            return Vec::new();
+        }
         if self.api == ApiProtocol::OpenAiCompletions && !self.honors_reasoning_effort() {
             return Vec::new();
         }
@@ -565,6 +636,7 @@ impl ModelConfig {
             base_url: "https://api.anthropic.com".into(),
             context_window,
             max_tokens,
+            reasoning: true,
             input: vec![InputModality::Text, InputModality::Image],
             cost: CostConfig::default(),
             headers: HashMap::new(),
@@ -587,6 +659,7 @@ impl ModelConfig {
             base_url: "https://api.openai.com/v1".into(),
             context_window,
             max_tokens,
+            reasoning: true,
             input: vec![InputModality::Text, InputModality::Image],
             cost: CostConfig::default(),
             headers: HashMap::new(),
@@ -605,22 +678,26 @@ impl ModelConfig {
     /// overflows the window. Mirrors pi's generous per-model caps + clamp.
     pub fn local(base_url: impl Into<String>, model_id: impl Into<String>) -> Self {
         let id = model_id.into();
-        let context_window = openai_context_window(&id);
-        let max_tokens = openai_max_tokens(&id);
-        let thinking_level_map = openai_thinking_level_map(&id);
+        let metadata = grok_model_metadata(&id).unwrap_or_else(|| GrokModelMetadata {
+            context_window: openai_context_window(&id),
+            max_tokens: openai_max_tokens(&id),
+            reasoning: true,
+            thinking_level_map: openai_thinking_level_map(&id),
+        });
         Self {
             id,
             name: "Local Model".into(),
             api: ApiProtocol::OpenAiCompletions,
             provider: "local".into(),
             base_url: base_url.into(),
-            context_window,
-            max_tokens,
+            context_window: metadata.context_window,
+            max_tokens: metadata.max_tokens,
+            reasoning: metadata.reasoning,
             input: default_input_modalities(),
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat: Some(OpenAiCompat::default()),
-            thinking_level_map,
+            thinking_level_map: metadata.thinking_level_map,
         }
     }
 }

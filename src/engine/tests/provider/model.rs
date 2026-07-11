@@ -107,6 +107,10 @@ fn openai_compat_variants() {
     let xai = OpenAiCompat::xai();
     assert_eq!(xai.thinking_format, ThinkingFormat::Xai);
     assert!(!xai.caps.contains(CompatCaps::STORE));
+    assert!(!xai.caps.contains(CompatCaps::REASONING_EFFORT));
+
+    let grok_cli = OpenAiCompat::grok_cli();
+    assert!(grok_cli.caps.contains(CompatCaps::REASONING_EFFORT));
 
     let groq = OpenAiCompat::groq();
     assert!(groq.caps.contains(CompatCaps::USAGE_IN_STREAMING));
@@ -309,6 +313,26 @@ fn openrouter_prefixed_gpt_5_6_gets_catalog_limits_and_reasoning_metadata() {
     assert_eq!(config.supported_thinking_levels(), vec![
         Off, Low, Medium, High, Xhigh, Max
     ]);
+}
+
+#[test]
+fn grok_cli_models_use_catalog_context_and_reasoning_metadata() {
+    use evotengine::ThinkingLevel::*;
+
+    let mut grok = ModelConfig::local("", "grok-4.5");
+    grok.compat = Some(OpenAiCompat::grok_cli());
+    assert_eq!(grok.context_window, 500_000);
+    assert_eq!(grok.max_tokens, 500_000);
+    assert!(grok.reasoning);
+    assert_eq!(grok.supported_thinking_levels(), vec![Low, Medium, High]);
+    assert_eq!(grok.thinking_effort_override(Adaptive), Some("high"));
+
+    let mut composer = ModelConfig::local("", "grok-composer-2.5-fast");
+    composer.compat = Some(OpenAiCompat::grok_cli());
+    assert_eq!(composer.context_window, 200_000);
+    assert_eq!(composer.max_tokens, 200_000);
+    assert!(!composer.reasoning);
+    assert!(composer.supported_thinking_levels().is_empty());
 }
 
 #[test]

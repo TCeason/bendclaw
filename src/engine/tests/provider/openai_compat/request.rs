@@ -118,6 +118,34 @@ fn test_compat_without_reasoning_support_omits_reasoning_effort() {
 }
 
 #[test]
+fn test_non_reasoning_model_omits_reasoning_effort_even_when_endpoint_supports_it() {
+    let mut model_config = ModelConfig::local("", "grok-composer-2.5-fast");
+    model_config.compat = Some(OpenAiCompat::grok_cli());
+    let config = StreamConfigBuilder::openai()
+        .model("grok-composer-2.5-fast")
+        .model_config(model_config)
+        .thinking(ThinkingLevel::High)
+        .build();
+
+    let body = build_request_body(&config, &OpenAiCompat::grok_cli());
+    assert!(body.get("reasoning_effort").is_none());
+}
+
+#[test]
+fn test_grok_4_5_high_thinking_sends_high_reasoning_effort() {
+    let mut model_config = ModelConfig::local("", "grok-4.5");
+    model_config.compat = Some(OpenAiCompat::grok_cli());
+    let config = StreamConfigBuilder::openai()
+        .model("grok-4.5")
+        .model_config(model_config)
+        .thinking(ThinkingLevel::High)
+        .build();
+
+    let body = build_request_body(&config, &OpenAiCompat::grok_cli());
+    assert_eq!(body["reasoning_effort"], "high");
+}
+
+#[test]
 fn test_build_request_body_basic() {
     let config = StreamConfigBuilder::openai()
         .system_prompt("You are helpful.")

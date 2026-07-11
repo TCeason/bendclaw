@@ -116,6 +116,30 @@ fn openrouter_gpt_5_6_gets_catalog_limits_without_explicit_overrides() {
 }
 
 #[test]
+fn grok_provider_uses_cli_model_metadata_without_env_overrides() {
+    use evot_engine::ThinkingLevel::*;
+
+    let mc = build_model_config(
+        Protocol::OpenAi,
+        "grok",
+        "grok-4.5",
+        Some("https://openrouter.databend.cloud/grok/v1"),
+        CompatCaps::NONE,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(mc.context_window, 500_000);
+    assert_eq!(mc.max_tokens, 500_000);
+    assert!(mc.reasoning);
+    assert!(mc
+        .compat
+        .as_ref()
+        .is_some_and(|compat| compat.caps.contains(CompatCaps::REASONING_EFFORT)));
+    assert_eq!(mc.supported_thinking_levels(), vec![Low, Medium, High]);
+}
+
+#[test]
 fn anthropic_defaults_to_vision() {
     let mc = build_model_config(
         Protocol::Anthropic,

@@ -243,7 +243,13 @@ fn apply_reasoning_effort(
     config: &StreamConfig,
     compat: &OpenAiCompat,
 ) {
-    if !compat.has_cap(CompatCaps::REASONING_EFFORT) {
+    if !config
+        .model_config
+        .as_ref()
+        .map(|model| model.reasoning)
+        .unwrap_or(true)
+        || !compat.has_cap(CompatCaps::REASONING_EFFORT)
+    {
         return;
     }
 

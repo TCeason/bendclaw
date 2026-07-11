@@ -1038,6 +1038,7 @@ pub fn build_model_config(
                 "openai" => OpenAiCompat::openai(),
                 "deepseek" => OpenAiCompat::deepseek(),
                 "xai" => OpenAiCompat::xai(),
+                "grok" => OpenAiCompat::grok_cli(),
                 "groq" => OpenAiCompat::groq(),
                 "cerebras" => OpenAiCompat::cerebras(),
                 "openrouter" => OpenAiCompat::openrouter(),
