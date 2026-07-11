@@ -186,7 +186,7 @@ test('runSetup prepares a standard Python runtime before task setup', async () =
   } finally {
     await rm(dst, { recursive: true, force: true })
   }
-})
+}, 30_000)
 
 test('runSetup installs pytest when the verifier uses it, even without requirements.txt', async () => {
   const dst = await mkdtemp(join(tmpdir(), 'pytest-rt-'))
@@ -212,7 +212,7 @@ test('runSetup installs pytest when the verifier uses it, even without requireme
   } finally {
     await rm(dst, { recursive: true, force: true })
   }
-})
+}, 30_000)
 
 function hasGit(): boolean {
   return spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0

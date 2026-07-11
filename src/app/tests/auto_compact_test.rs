@@ -147,7 +147,7 @@ fn assistant_with_usage(text: &str, input_tokens: u64) -> TranscriptItem {
             cache_write: 0,
         },
         model: "gpt-4o".into(),
-        provider: "local".into(),
+        provider: "test".into(),
         timestamp: evot_engine::now_ms(),
         error_message: None,
     }
