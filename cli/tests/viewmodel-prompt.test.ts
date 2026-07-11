@@ -15,6 +15,7 @@ function defaultInput(overrides?: Partial<PromptVMInput>): PromptVMInput {
     cursorCol: 0,
     active: true,
     model: 'claude-sonnet',
+    provider: '',
     planning: false,
     logMode: false,
     queuedMessages: [],
@@ -149,6 +150,14 @@ describe('buildPromptBlocks', () => {
     expect(result).not.toContain('↑408k')
     expect(result).not.toContain('↓1.1k')
     expect(result).not.toContain('R89k')
+  })
+
+  test('footer labels the model with its provider', () => {
+    const result = renderPlain(defaultInput({
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+    }))
+    expect(result).toContain('claude-sonnet@anthropic')
   })
 
   test('footer shows thinking level next to model when set', () => {

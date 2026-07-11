@@ -6,7 +6,13 @@ describe('term commands', () => {
   const mkCtx = () => ({
     agent: { model: 'claude-3-5-sonnet' } as any,
     appState: createInitialState('claude-3-5-sonnet', '/tmp'),
-    configInfo: { availableModels: ['m1', 'm2'] } as any,
+    configInfo: {
+      provider: 'p1',
+      availableModels: [
+        { provider: 'p1', model: 'shared', spec: 'p1:shared' },
+        { provider: 'p2', model: 'shared', spec: 'p2:shared' },
+      ],
+    } as any,
     preloadedSessions: [
       { session_id: 'abc12345', title: 'session one', source: 'local' },
       { session_id: 'def67890', title: 'session two' },
@@ -24,11 +30,23 @@ describe('term commands', () => {
     expect(result.planning).toBe(true)
   })
 
-  test('/model updates model', () => {
+  test('/model updates model and reports its resolved provider', () => {
     const ctx = mkCtx()
-    const result = handleSlashCommand('/model m2', ctx)
-    expect(result.appState.model).toBe('m2')
-    expect(ctx.agent.model).toBe('m2')
+    ctx.agent.configInfo = () => ({ provider: 'p2' })
+    const result = handleSlashCommand('/model p2:shared', ctx)
+    expect(result.appState.model).toBe('p2:shared')
+    expect(ctx.agent.model).toBe('p2:shared')
+    expect(result.systemLines[0]?.text).toContain('p2:shared@p2')
+  })
+
+  test('/model n distinguishes the same model from different providers', () => {
+    const ctx = mkCtx()
+    ctx.agent.model = 'shared'
+    ctx.appState = createInitialState('shared', '/tmp')
+    const result = handleSlashCommand('/model n', ctx)
+    expect(ctx.agent.model).toBe('p2:shared')
+    expect(result.appState.model).toBe('shared')
+    expect(result.systemLines[0]?.text).toContain('shared@p2')
   })
 
   test('/model without arg returns empty result for selector', () => {

@@ -2,7 +2,7 @@ import { TermRenderer, type RenderFrame } from './renderer.js'
 import { parseInput, enableRawMode, enableEnhancedKeyboard, type KeyEvent } from './input.js'
 import { installBracketedPaste } from './bracketed-paste.js'
 import { createSpinnerState, advanceSpinner, formatSpinnerLine } from './spinner.js'
-import { createSelectorState, selectorExpandItems, selectorClearQuery } from './selector.js'
+import { createSelectorState, selectorExpandItems, selectorClearQuery, selectorFocusOn, type SelectorItem } from './selector.js'
 import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
 import { buildUserMessage, type OutputLine } from '../render/output.js'
 import { Agent, QueryStream, fastExit, type SessionMeta, type ConfigInfo } from '../native/index.js'
@@ -64,7 +64,7 @@ import { askStateToResponse } from './app/ask-user.js'
 import { createExtensionHost, type ExtensionHost } from '../ext/index.js'
 import type { AskUserAnswer, AskUserParams } from '../ext/index.js'
 import { extractPlanItems, markCompletedPlanItems, planItemsToTasks, footerLabel, type PlanModeItem, type PlanModeTask } from './plan-mode.js'
-import { syncProvider } from './app/provider.js'
+import { currentModelSpec, formatModelLabel, modelOptions, selectModelOption } from './app/provider.js'
 import chalk from 'chalk'
 import {
   shouldCollapse,
@@ -396,6 +396,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       cursorCol: editor.cursorCol,
       active: overlay.kind === 'none',
       model: appState.model,
+      provider: configInfo?.provider ?? '',
       planning,
       logMode: logMode !== null,
       queuedMessages: queuedUserMessages,
@@ -486,28 +487,19 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     blocks.push(...buildPartialAssistantBlocks())
 
     const toolCalls = assistantToolCalls(streamMachine?.appState.currentAssistantContent ?? [])
-    const runningTool = toolCalls.find(call => call.status === 'running')
-    // 5. Spinner. Tool calls that are only decoded/queued show their command
-    // without claiming execution has started. Once tool_started arrives, reuse
-    // the same animated footer used by thinking so activity remains obvious.
+    // 5. Spinner. Keep the animated footer visible for the whole turn so a
+    // queued (decoded but not-yet-running) tool call doesn't make it vanish and
+    // look finished. Live output tokens count only while thinking/streaming.
     if (isLoading && overlay.kind !== 'ask-user') {
-      if (runningTool) {
-        const spinnerText = formatSpinnerLine(spinnerState, Date.now(), {
-          inputTokens: appState.sessionTokens.inputTokens,
-          outputTokens: appState.sessionTokens.outputTokens,
-          cacheReadTokens: appState.sessionTokens.cacheReadTokens,
-        })
-        blocks.push({ lines: [{ spans: [{ text: spinnerText }] }], marginTop: 1 })
-      } else if (toolCalls.length === 0) {
-        const activeLlmCall = streamMachine?.activeLlmCall ?? false
-        const liveOutputTokens = activeLlmCall ? spinnerState.tokenCount : 0
-        const spinnerText = formatSpinnerLine(spinnerState, Date.now(), {
-          inputTokens: appState.sessionTokens.inputTokens,
-          outputTokens: appState.sessionTokens.outputTokens + liveOutputTokens,
-          cacheReadTokens: appState.sessionTokens.cacheReadTokens,
-        })
-        blocks.push({ lines: [{ spans: [{ text: spinnerText }] }], marginTop: 1 })
-      }
+      const isThinkingPhase = toolCalls.length === 0
+      const activeLlmCall = isThinkingPhase && (streamMachine?.activeLlmCall ?? false)
+      const liveOutputTokens = activeLlmCall ? spinnerState.tokenCount : 0
+      const spinnerText = formatSpinnerLine(spinnerState, Date.now(), {
+        inputTokens: appState.sessionTokens.inputTokens,
+        outputTokens: appState.sessionTokens.outputTokens + liveOutputTokens,
+        cacheReadTokens: appState.sessionTokens.cacheReadTokens,
+      })
+      blocks.push({ lines: [{ spans: [{ text: spinnerText }] }], marginTop: 1 })
     }
 
     // 7. Overlay
@@ -1491,6 +1483,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
     const { name, args } = resolved
 
+    if (name === '/model' && args) {
+      refreshConfigInfo()
+      appState = { ...appState, model: agent.model }
+    }
+
     if (name === '/plan') {
       planModeItems = []
       planTasks = null
@@ -1598,18 +1595,31 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         commitLines([{ id: 'sys-r-err', kind: 'system', text: chalk.red(`  Failed to list sessions: ${err?.message ?? err}`) }])
       }
     } else if (name === '/model' && !args) {
-      // Show model selector overlay
-      const models = configInfo?.availableModels ?? [agent.model]
+      // Show model selector overlay, grouped by provider (droid-style):
+      // ── provider ── dividers with model-only labels underneath.
+      const models = modelOptions(configInfo, agent.model)
       if (models.length > 1) {
+        const activeSpec = currentModelSpec(configInfo, agent.model)
+        const items: SelectorItem[] = []
+        let lastProvider: string | null = null
+        for (const option of models) {
+          if (option.provider !== lastProvider) {
+            items.push({ label: option.provider, header: true, focusable: false })
+            lastProvider = option.provider
+          }
+          items.push({
+            label: option.model,
+            id: option.spec,
+            selected: option.spec === activeSpec,
+            searchText: `${option.model} ${option.provider}`,
+          })
+        }
         overlay = {
           kind: 'selector',
-          state: {
-            ...createSelectorState('Select model', models.map(m => ({
-              label: m,
-              detail: m === agent.model ? '(current)' : undefined,
-            }))),
-            focusIndex: Math.max(0, models.indexOf(agent.model)),
-          },
+          state: selectorFocusOn(
+            { ...createSelectorState('Models', items), subtitle: 'Choose a provider and model for this session' },
+            item => item.id === activeSpec,
+          ),
         }
       } else {
         commitLines([{ id: 'sys-m', kind: 'system', text: '  Only one model available.' }])
@@ -1986,15 +1996,18 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         commitLines([{ id: 'sys-hist-preview', kind: 'system', text: `  ${action.label} assistant: ${action.text}` }])
         renderer.requestRender()
         return
-      case 'select-model':
+      case 'select-model': {
         overlay = { kind: 'none' }
-        agent.model = action.model
-        syncProvider(agent, action.model, configInfo)
+        agent.model = action.spec
         refreshConfigInfo()
-        appState = { ...appState, model: action.model }
-        commitLines([{ id: 'sys-model', kind: 'system', text: `  Model → ${action.model}` }])
+        const selected = selectModelOption(configInfo, action.spec)
+        const model = selected?.model ?? agent.model
+        const provider = selected?.provider ?? configInfo?.provider ?? ''
+        appState = { ...appState, model }
+        commitLines([{ id: 'sys-model', kind: 'system', text: `  Model → ${formatModelLabel(model, provider)}` }])
         renderer.requestRender()
         return
+      }
       case 'delete-session':
         overlay = { kind: 'selector', state: action.state }
         agent.deleteSession(action.sessionId).then(ok => {

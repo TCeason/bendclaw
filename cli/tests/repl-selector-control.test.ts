@@ -67,9 +67,9 @@ describe('repl selector control', () => {
     expect(handleSelectorControl(state, key('enter')).kind).toBe('close')
   })
 
-  test('model enter returns select-model action', () => {
-    const state = createSelectorState('Select model', [{ label: 'claude' }])
-    expect(handleSelectorControl(state, key('enter'))).toEqual({ kind: 'select-model', model: 'claude' })
+  test('model enter returns provider-qualified select-model action', () => {
+    const state = createSelectorState('Select model', [{ label: 'claude', id: 'anthropic:claude', detail: 'anthropic' }])
+    expect(handleSelectorControl(state, key('enter'))).toEqual({ kind: 'select-model', spec: 'anthropic:claude' })
   })
 
   test('delete removes resume session item', () => {

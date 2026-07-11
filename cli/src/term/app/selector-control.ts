@@ -16,7 +16,7 @@ export type SelectorControlAction =
   | { kind: 'resume'; sessionId: string }
   | { kind: 'history-goto'; seq: string }
   | { kind: 'history-preview'; label: string; text: string }
-  | { kind: 'select-model'; model: string }
+  | { kind: 'select-model'; spec: string }
   | { kind: 'delete-session'; sessionId: string; label: string; state: SelectorState }
   | { kind: 'none' }
 
@@ -59,7 +59,7 @@ function selectAction(state: SelectorState): SelectorControlAction {
     return { kind: 'history-goto', seq: selected.label.replace('#', '') }
   }
 
-  return { kind: 'select-model', model: selected.label }
+  return { kind: 'select-model', spec: selected.id ?? selected.label }
 }
 
 function deleteAction(state: SelectorState): SelectorControlAction {

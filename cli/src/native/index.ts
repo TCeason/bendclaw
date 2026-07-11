@@ -51,14 +51,19 @@ export type SubmitOutcome =
   | { kind: 'run'; stream: QueryStream }
   | { kind: 'command'; message: string }
 
+export interface ModelOption {
+  provider: string
+  model: string
+  /** Provider-qualified value accepted by --model and the model setter. */
+  spec: string
+}
+
 export interface ConfigInfo {
   provider: string
   envPath: string
   hasApiKey: boolean
   baseUrl: string | null
-  anthropicModel: string
-  openaiModel: string
-  availableModels: string[]
+  availableModels: ModelOption[]
   thinkingLevel: string
 }
 

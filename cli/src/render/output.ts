@@ -148,9 +148,9 @@ export function buildToolCall(
   for (const line of formatReasonLines(args)) {
     lines.push({ id: genId('tool'), kind: 'tool', text: `  ${line}` })
   }
-  // Call line: `<glyph> <name>  <primary-arg>` — shown as soon as the model
-  // finishes decoding the call. Execution state is intentionally separate:
-  // only a later tool_started event activates the animated footer spinner.
+  // Call line: `<glyph> <name>  <primary-arg>` — shown once the call is decoded.
+  // The footer spinner keeps animating through the queued gap; status (✓/✗)
+  // lands on the result line later.
   lines.push({
     id: genId('tool'),
     kind: 'tool',

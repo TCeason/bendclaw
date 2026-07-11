@@ -7,6 +7,7 @@ import {
   selectorType,
   selectorBackspace,
   selectorExpandItems,
+  selectorFocusOn,
 } from '../src/term/selector.js'
 import { buildOverlayBlocks } from '../src/term/viewmodel/overlays.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
@@ -119,9 +120,9 @@ describe('renderSelector via viewmodel', () => {
     const state = createSelectorState('T', items)
     const lines = blocksToLines(buildOverlayBlocks({ kind: 'selector', state }, 80))
     const text = lines.map(l => stripAnsi(l)).join('\n')
-    expect(text).toContain('navigate')
+    expect(text).toContain('move')
     expect(text).toContain('enter select')
-    expect(text).toContain('esc cancel')
+    expect(text).toContain('esc close')
   })
 
   test('shows search query when filtering', () => {
@@ -129,18 +130,45 @@ describe('renderSelector via viewmodel', () => {
     state = selectorType(state, 'g')
     const lines = blocksToLines(buildOverlayBlocks({ kind: 'selector', state }, 80))
     const text = lines.map(l => stripAnsi(l)).join('\n')
-    expect(text).toContain('search:')
+    expect(text).toContain('Filter')
     expect(text).toContain('g')
   })
 
-  test('shows "No matches" when filter yields nothing', () => {
+  test('shows empty-filter state when filter yields nothing', () => {
     let state = createSelectorState('T', items)
     state = selectorType(state, 'z')
     state = selectorType(state, 'z')
     state = selectorType(state, 'z')
     const lines = blocksToLines(buildOverlayBlocks({ kind: 'selector', state }, 80))
     const text = lines.map(l => stripAnsi(l)).join('\n')
-    expect(text).toContain('No matches')
+    expect(text).toContain('No matching items')
+  })
+
+  test('renders provider as part of the model identity', () => {
+    const state = createSelectorState('Models', [
+      { label: 'gpt-5.6-sol@droid', selected: true },
+      { label: 'gpt-5.6-sol@cursor' },
+    ])
+    const lines = blocksToLines(buildOverlayBlocks({ kind: 'selector', state }, 80))
+    const text = lines.map(l => stripAnsi(l)).join('\n')
+    expect(text).toContain('gpt-5.6-sol@droid ✓')
+    expect(text).toContain('gpt-5.6-sol@cursor')
+  })
+
+  test('renders provider group headers as dividers', () => {
+    const state = createSelectorState('Models', [
+      { label: 'anthropic', header: true, focusable: false },
+      { label: 'claude-opus' },
+      { label: 'openai', header: true, focusable: false },
+      { label: 'gpt-5.5' },
+    ])
+    const lines = blocksToLines(buildOverlayBlocks({ kind: 'selector', state }, 80))
+    const text = lines.map(l => stripAnsi(l)).join('\n')
+    expect(text).toContain('── anthropic ──')
+    expect(text).toContain('── openai ──')
+    expect(text).toContain('❯ claude-opus')
+    // Headers do not count as selectable items in the title tally.
+    expect(text).toContain('Models  2')
   })
 
   test('highlights matching query in items', () => {
@@ -414,5 +442,69 @@ describe('focusable items', () => {
     expect(state.focusIndex).toBe(0)
     state = selectorDown(state)
     expect(state.focusIndex).toBe(1)
+  })
+})
+
+describe('smooth scrolling window', () => {
+  const many = Array.from({ length: 25 }, (_, i) => ({ label: `model-${i}` }))
+
+  test('scrollOffset stays put while focus moves inside the window', () => {
+    let state = createSelectorState('T', many)
+    expect(state.scrollOffset).toBe(0)
+    for (let i = 0; i < 9; i++) state = selectorDown(state)
+    expect(state.focusIndex).toBe(9)
+    expect(state.scrollOffset).toBe(0)
+  })
+
+  test('window slides one row at a time when focus passes the bottom edge', () => {
+    let state = createSelectorState('T', many)
+    for (let i = 0; i < 10; i++) state = selectorDown(state)
+    expect(state.focusIndex).toBe(10)
+    expect(state.scrollOffset).toBe(1)
+    state = selectorDown(state)
+    expect(state.scrollOffset).toBe(2)
+  })
+
+  test('moving back up keeps the window until focus hits the top edge', () => {
+    let state = createSelectorState('T', many)
+    for (let i = 0; i < 14; i++) state = selectorDown(state)
+    expect(state.scrollOffset).toBe(5)
+    // Focus walks up inside the window without any scroll.
+    for (let i = 0; i < 9; i++) state = selectorUp(state)
+    expect(state.focusIndex).toBe(5)
+    expect(state.scrollOffset).toBe(5)
+    // The next step crosses the top edge: slide exactly one row.
+    state = selectorUp(state)
+    expect(state.scrollOffset).toBe(4)
+  })
+
+  test('reaching the first model scrolls its group header into view', () => {
+    const grouped = [
+      { label: 'anthropic', header: true, focusable: false },
+      ...Array.from({ length: 24 }, (_, i) => ({ label: `m-${i}` })),
+    ]
+    let state = createSelectorState('T', grouped)
+    for (let i = 0; i < 15; i++) state = selectorDown(state)
+    while (state.focusIndex > 1) state = selectorUp(state)
+    expect(state.scrollOffset).toBe(0)
+  })
+
+  test('selectorFocusOn jumps focus and keeps it visible', () => {
+    let state = createSelectorState('T', many)
+    state = selectorFocusOn(state, item => item.label === 'model-20')
+    expect(state.focusIndex).toBe(20)
+    expect(state.scrollOffset).toBe(11)
+  })
+
+  test('filtering drops group headers from results', () => {
+    let state = createSelectorState('T', [
+      { label: 'anthropic', header: true, focusable: false },
+      { label: 'claude-opus' },
+      { label: 'openai', header: true, focusable: false },
+      { label: 'gpt-5.5' },
+    ])
+    state = selectorType(state, 'a')
+    expect(state.items.every(i => !i.header)).toBe(true)
+    expect(state.items.map(i => i.label)).toContain('claude-opus')
   })
 })

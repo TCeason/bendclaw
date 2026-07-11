@@ -240,11 +240,16 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
 
   if (event.kind === 'tool_finished') {
     const toolCalls = assistantToolCalls(state.appState.currentAssistantContent)
+    // Prefer a still-running tool; otherwise keep the next queued tool in the
+    // executing phase so the footer never flickers back to Thinking… between
+    // serial tool calls. Only fall back to thinking when nothing remains.
     const running = toolCalls.find(call => call.status === 'running' && call.startedAt !== undefined)
+    const queued = running ? undefined : toolCalls.find(call => call.status === 'queued')
+    const next = running ?? queued
     state = {
       ...state,
-      spinnerState: running
-        ? setSpinnerPhase(state.spinnerState, 'executing', running.name)
+      spinnerState: next
+        ? setSpinnerPhase(state.spinnerState, 'executing', next.name)
         : setSpinnerPhase(state.spinnerState, 'thinking'),
     }
     // Tool-bearing assistant messages stay live through execution. Commit the

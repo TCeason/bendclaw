@@ -1,6 +1,10 @@
 export interface SelectorItem {
   label: string
   detail?: string
+  /** Renders as a non-focusable group divider (e.g. a provider name). */
+  header?: boolean
+  /** Marks the active choice without mixing status into detail text. */
+  selected?: boolean
   /** Opaque identifier (e.g. full session id) — not displayed. */
   id?: string
   /** Extra text searched but not displayed (e.g. full session id, cwd). */
@@ -13,8 +17,26 @@ export interface SelectorState {
   items: SelectorItem[]
   allItems: SelectorItem[]
   focusIndex: number
+  /** First visible row. Moves only when focus walks past a window edge, so
+   *  the list slides one row at a time instead of recentering (droid-style). */
+  scrollOffset: number
   title: string
+  /** Optional secondary context displayed below the title. */
+  subtitle?: string
   query: string
+}
+
+/** Rows visible at once in the selector window. Shared by movement logic and
+ *  the renderer so scroll behavior and display stay in sync. */
+export const SELECTOR_VIEWPORT = 10
+
+/** Slide the window minimally so `focus` is visible: no jumps, no recentering. */
+function ensureVisible(offset: number, focus: number, total: number): number {
+  const maxOffset = Math.max(0, total - SELECTOR_VIEWPORT)
+  let next = Math.min(Math.max(offset, 0), maxOffset)
+  if (focus < next) next = focus
+  else if (focus >= next + SELECTOR_VIEWPORT) next = focus - SELECTOR_VIEWPORT + 1
+  return Math.min(next, maxOffset)
 }
 
 /** Find the first focusable index in items, defaulting to 0. */
@@ -26,23 +48,35 @@ function firstFocusable(items: SelectorItem[]): number {
 export function createSelectorState(title: string, items: SelectorItem[], allItems?: SelectorItem[], initialQuery?: string): SelectorState {
   const all = allItems ?? items
   if (initialQuery) {
-    return applyFilter({ items: all, allItems: all, focusIndex: 0, title, query: '' }, initialQuery)
+    return applyFilter({ items: all, allItems: all, focusIndex: 0, scrollOffset: 0, title, query: '' }, initialQuery)
   }
-  return { items, allItems: all, focusIndex: firstFocusable(items), title, query: '' }
+  const focusIndex = firstFocusable(items)
+  return { items, allItems: all, focusIndex, scrollOffset: ensureVisible(0, focusIndex, items.length), title, query: '' }
+}
+
+/** Move focus to the first item matching `predicate`, keeping it visible. */
+export function selectorFocusOn(state: SelectorState, predicate: (item: SelectorItem) => boolean): SelectorState {
+  const idx = state.items.findIndex(i => i.focusable !== false && predicate(i))
+  if (idx < 0) return state
+  return { ...state, focusIndex: idx, scrollOffset: ensureVisible(state.scrollOffset, idx, state.items.length) }
 }
 
 export function selectorUp(state: SelectorState): SelectorState {
   let next = state.focusIndex - 1
   while (next >= 0 && state.items[next]?.focusable === false) next--
   if (next < 0) return state
-  return { ...state, focusIndex: next }
+  // When only headers remain above, slide the window to the very top so the
+  // leading group divider scrolls into view with its first model.
+  const anyFocusableAbove = state.items.slice(0, next).some(i => i.focusable !== false)
+  const target = anyFocusableAbove ? next : 0
+  return { ...state, focusIndex: next, scrollOffset: ensureVisible(state.scrollOffset, target, state.items.length) }
 }
 
 export function selectorDown(state: SelectorState): SelectorState {
   let next = state.focusIndex + 1
   while (next < state.items.length && state.items[next]?.focusable === false) next++
   if (next >= state.items.length) return state
-  return { ...state, focusIndex: next }
+  return { ...state, focusIndex: next, scrollOffset: ensureVisible(state.scrollOffset, next, state.items.length) }
 }
 
 export function selectorSelect(state: SelectorState): SelectorItem | null {
@@ -76,7 +110,7 @@ export function selectorRemoveItem(state: SelectorState, index: number): Selecto
   const items = state.items.filter((_, i) => i !== index)
   const allItems = state.allItems.filter(i => i.label !== label)
   const focusIndex = Math.min(state.focusIndex, Math.max(0, items.length - 1))
-  return { ...state, items, allItems, focusIndex }
+  return { ...state, items, allItems, focusIndex, scrollOffset: ensureVisible(state.scrollOffset, focusIndex, items.length) }
 }
 
 function searchableText(item: SelectorItem): string {
@@ -107,12 +141,15 @@ function extractContext(source: string, query: string, width: number): string | 
 
 function applyFilter(state: SelectorState, query: string): SelectorState {
   if (!query) {
-    return { ...state, query, items: state.allItems, focusIndex: firstFocusable(state.allItems) }
+    const focusIndex = firstFocusable(state.allItems)
+    return { ...state, query, items: state.allItems, focusIndex, scrollOffset: ensureVisible(0, focusIndex, state.allItems.length) }
   }
   const lower = query.toLowerCase()
   const exact: SelectorItem[] = []
   const fuzzy: SelectorItem[] = []
   for (const item of state.allItems) {
+    // Group dividers are dropped while filtering: results are ranked flat.
+    if (item.header) continue
     const text = searchableText(item)
     if (text.includes(lower)) {
       exact.push(withContext(item, query))
@@ -121,7 +158,8 @@ function applyFilter(state: SelectorState, query: string): SelectorState {
     }
   }
   const filtered = exact.concat(fuzzy)
-  return { ...state, query, items: filtered, focusIndex: firstFocusable(filtered) }
+  const focusIndex = firstFocusable(filtered)
+  return { ...state, query, items: filtered, focusIndex, scrollOffset: ensureVisible(0, focusIndex, filtered.length) }
 }
 
 function withContext(item: SelectorItem, query: string): SelectorItem {

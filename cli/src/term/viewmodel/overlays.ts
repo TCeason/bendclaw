@@ -1,5 +1,5 @@
 import { line, block, plain, dim, bold, colored, inverse, type ViewBlock, type StyledSpan, type StyledLine } from './types.js'
-import type { SelectorState } from '../selector.js'
+import { SELECTOR_VIEWPORT, type SelectorItem, type SelectorState } from '../selector.js'
 import type { AskState } from '../ask.js'
 
 export type OverlayState =
@@ -15,7 +15,7 @@ export function buildOverlayBlocks(overlay: OverlayState, columns: number): View
     case 'help':
       return buildHelpBlocks(columns)
     case 'selector':
-      return buildSelectorBlocks(overlay.state)
+      return buildSelectorBlocks(overlay.state, columns)
     case 'ask-user':
       return buildAskBlocks(overlay.state, columns)
   }
@@ -80,53 +80,68 @@ function highlightSpans(text: string, query: string, base: Partial<StyledSpan>):
   return spans
 }
 
-function buildSelectorBlocks(state: SelectorState): ViewBlock[] {
-  const lines = [
-    line(bold(state.title)),
+function buildSelectorBlocks(state: SelectorState, _columns: number): ViewBlock[] {
+  const selectable = (items: SelectorItem[]) => items.filter(i => !i.header).length
+  const countLabel = `${selectable(state.items)}${state.query ? ` of ${selectable(state.allItems)}` : ''}`
+  const lines: StyledLine[] = [
+    line(bold(state.title), dim(`  ${countLabel}`)),
   ]
 
-  if (state.query) {
-    lines.push(line(dim('  search: '), plain(state.query)))
+  if (state.subtitle) {
+    lines.push(line(dim(state.subtitle)))
   }
 
   lines.push(line(plain('')))
+  if (state.query) {
+    lines.push(line(colored('Filter  ', 'cyan'), plain(state.query), colored('▌', 'cyan')))
+    lines.push(line(plain('')))
+  }
 
   if (state.items.length === 0) {
-    lines.push(line(dim('  No matches')))
+    lines.push(line(dim('  No matching items')))
   } else {
-    const maxVisible = 10
-    // Keep focused item visible within the window
-    let start = 0
-    if (state.items.length > maxVisible) {
-      start = Math.min(
-        Math.max(0, state.focusIndex - Math.floor(maxVisible / 2)),
-        state.items.length - maxVisible
-      )
-    }
+    const maxVisible = SELECTOR_VIEWPORT
+    // The window follows scrollOffset (updated one row at a time by up/down),
+    // clamped defensively so the focused row is always on screen.
+    let start = Math.min(Math.max(state.scrollOffset, 0), Math.max(0, state.items.length - maxVisible))
+    if (state.focusIndex < start) start = state.focusIndex
+    else if (state.focusIndex >= start + maxVisible) start = state.focusIndex - maxVisible + 1
     const end = Math.min(start + maxVisible, state.items.length)
 
     if (start > 0) {
-      lines.push(line(dim(`  ↑ ${start} more`)))
+      lines.push(line(dim(`  ↑ ${start} above`)))
     }
     for (let i = start; i < end; i++) {
       const item = state.items[i]!
+      if (item.header) {
+        lines.push(line(dim(`── ${item.label} ──`)))
+        continue
+      }
       const focused = i === state.focusIndex
-      const prefix: StyledSpan = focused ? colored('❯ ', 'cyan') : plain('  ')
+      const prefix: StyledSpan = focused ? colored('❯ ', 'cyan', { bold: true }) : plain('  ')
       const labelSpans = state.query
         ? highlightSpans(item.label, state.query, focused ? { bold: true } : {})
         : [focused ? bold(item.label) : plain(item.label)]
       const detailSpans = item.detail && state.query
-        ? highlightSpans(` ${item.detail}`, state.query, { dim: true })
-        : [item.detail ? dim(` ${item.detail}`) : plain('')]
-      lines.push(line(prefix, ...labelSpans, ...detailSpans))
+        ? highlightSpans(`  ${item.detail}`, state.query, { dim: true })
+        : [item.detail ? dim(`  ${item.detail}`) : plain('')]
+      const selectedSpans = item.selected
+        ? [plain(' '), colored('✓', 'green')]
+        : []
+      lines.push(line(prefix, ...labelSpans, ...detailSpans, ...selectedSpans))
     }
     if (end < state.items.length) {
-      lines.push(line(dim(`  ↓ ${state.items.length - end} more`)))
+      lines.push(line(dim(`  ↓ ${state.items.length - end} below`)))
     }
   }
 
   lines.push(line(plain('')))
-  lines.push(line(dim('↑↓ navigate · type to filter · enter select · esc cancel')))
+  lines.push(line(
+    colored('↑↓', 'cyan'), dim(' move   '),
+    colored('enter', 'cyan'), dim(' select   '),
+    colored('type', 'cyan'), dim(' filter   '),
+    colored('esc', 'cyan'), dim(' close'),
+  ))
   return [block(lines, 1)]
 }
 

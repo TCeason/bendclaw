@@ -9,6 +9,7 @@ export interface PromptVMInput {
   cursorCol: number
   active: boolean
   model: string
+  provider: string
   planning: boolean
   logMode: boolean
   queuedMessages: string[]
@@ -167,7 +168,7 @@ function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
     leftSpans.push(dim(` (${input.gitBranch})`))
   }
 
-  // Context usage + current model
+  // Context usage + current provider/model
   if (input.contextWindow > 0 && input.contextTokens > 0) {
     const pctNum = input.contextTokens / input.contextWindow * 100
     const ctxText = `context: ${pctNum.toFixed(1)}% (${formatContextTokens(input.contextTokens)}/${formatContextTokens(input.contextWindow)})`
@@ -181,7 +182,8 @@ function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
     }
   }
   if (input.model) {
-    leftSpans.push(dim(` ${input.model}`))
+    const model = input.provider ? `${input.model}@${input.provider}` : input.model
+    leftSpans.push(dim(` ${model}`))
     // Reasoning effort indicator, aligned with pi's footer (model • level).
     if (input.thinkingLevel) {
       const label = input.thinkingLevel === 'off' ? 'thinking off' : input.thinkingLevel

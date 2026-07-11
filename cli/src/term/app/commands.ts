@@ -1,9 +1,9 @@
-import chalk from 'chalk'
 import type { Agent, SessionMeta, ConfigInfo } from '../../native/index.js'
 import type { AppState } from './state.js'
 import type { OutputLine } from '../../render/output.js'
 import type { OverlayState } from '../viewmodel/index.js'
 import { resolveCommand } from '../../commands/index.js'
+import { currentModelSpec, formatModelLabel, modelOptions } from './provider.js'
 
 export interface CommandContext {
   agent: Agent
@@ -71,27 +71,30 @@ export function handleSlashCommand(text: string, ctx: CommandContext): CommandRe
 
     case '/model': {
       if (args === 'n') {
-        const models = ctx.configInfo?.availableModels ?? [ctx.agent.model]
+        const models = modelOptions(ctx.configInfo, ctx.agent.model)
         if (models.length <= 1) {
           return { ...baseResult(ctx), systemLines: [{ id: 'sys-m', kind: 'system', text: '  Only one model available.' }] }
         }
-        const idx = models.indexOf(ctx.agent.model)
+        const activeSpec = currentModelSpec(ctx.configInfo, ctx.agent.model)
+        const idx = models.findIndex(option => option.spec === activeSpec)
         const next = models[(idx + 1) % models.length]!
-        ctx.agent.model = next
-        const appState = { ...ctx.appState, model: next }
+        ctx.agent.model = next.spec
+        const appState = { ...ctx.appState, model: next.model }
         return {
           ...baseResult(ctx),
           appState,
-          systemLines: [{ id: 'sys-m', kind: 'system', text: `  Model → ${next}` }],
+          systemLines: [{ id: 'sys-m', kind: 'system', text: `  Model → ${formatModelLabel(next.model, next.provider)}` }],
         }
       }
       if (args) {
         ctx.agent.model = args
-        const appState = { ...ctx.appState, model: args }
+        const model = ctx.agent.model
+        const provider = ctx.agent.configInfo().provider
+        const appState = { ...ctx.appState, model }
         return {
           ...baseResult(ctx),
           appState,
-          systemLines: [{ id: 'sys-m', kind: 'system', text: `  Model → ${args}` }],
+          systemLines: [{ id: 'sys-m', kind: 'system', text: `  Model → ${formatModelLabel(model, provider)}` }],
         }
       }
       // No arg — return empty result; handleSlashInput will show selector overlay

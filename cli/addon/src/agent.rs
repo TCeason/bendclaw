@@ -285,7 +285,7 @@ impl NapiAgent {
         }
     }
 
-    /// Get config info: provider, env path, base URL, configured models.
+    /// Get config info: active provider, env path, base URL, and configured models.
     #[napi]
     pub fn config_info(&self) -> Result<String> {
         let llm = self.agent.llm();
@@ -307,26 +307,47 @@ impl NapiAgent {
         serde_json::to_string(&info).map_err(|e| Error::from_reason(format!("serialize: {e}")))
     }
 
-    /// Get the list of available models from config (unique, non-empty).
+    /// Get configured models as provider-qualified specs. Provider qualification
+    /// keeps entries distinct when multiple providers expose the same model id.
     #[napi]
     pub fn available_models(&self) -> Vec<String> {
         self.collect_models()
+            .into_iter()
+            .filter_map(|entry| entry.get("spec")?.as_str().map(str::to_string))
+            .collect()
     }
 
-    fn collect_models(&self) -> Vec<String> {
+    fn collect_models(&self) -> Vec<serde_json::Value> {
         let llm = self.agent.llm();
         let mut models = Vec::new();
-        for (_, profile) in &self.config.providers {
-            for m in &profile.models {
-                let trimmed = m.trim();
-                if !trimmed.is_empty() && !models.contains(&trimmed.to_string()) {
-                    models.push(trimmed.to_string());
+        for (provider, profile) in &self.config.providers {
+            for model in &profile.models {
+                let model = model.trim();
+                if !model.is_empty() {
+                    models.push(serde_json::json!({
+                        "provider": provider,
+                        "model": model,
+                        "spec": format!("{provider}:{model}"),
+                    }));
                 }
             }
         }
-        let trimmed = llm.model.trim();
-        if !trimmed.is_empty() && !models.contains(&trimmed.to_string()) {
-            models.push(trimmed.to_string());
+        let current_is_listed = self
+            .config
+            .providers
+            .get(&llm.provider)
+            .is_some_and(|profile| {
+                profile
+                    .models
+                    .iter()
+                    .any(|model| model.trim() == llm.model.trim())
+            });
+        if !llm.model.trim().is_empty() && !current_is_listed {
+            models.push(serde_json::json!({
+                "provider": llm.provider,
+                "model": llm.model,
+                "spec": format!("{}:{}", llm.provider, llm.model),
+            }));
         }
         models
     }

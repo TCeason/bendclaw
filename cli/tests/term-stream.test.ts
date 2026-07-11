@@ -913,6 +913,58 @@ describe('term stream machine', () => {
     expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-read')?.startedAt).toBeUndefined()
   })
 
+  test('spinner enters executing phase on tool call, before tool_started', () => {
+    // Regression: a queued (decoded but not-yet-running) tool call must not
+    // drop the spinner back to thinking or leave it idle — the footer keeps
+    // animating in the executing phase so the turn never looks finished.
+    const appState = createInitialState('model', '/tmp')
+    const spinner = createSpinnerState()
+    let state = createStreamMachineState(appState, spinner)
+    expect(state.spinnerState.phase).toBe('thinking')
+
+    state = reduceRunEvent(state, {
+      kind: 'assistant_tool_call',
+      payload: { content_index: 0, tool_call_id: 'call-read', tool_name: 'read', phase: 'end', args: { path: 'src/a.rs' } },
+    }, { termRows: 24 }).state
+
+    // Queued, not yet running — but the spinner already reflects execution.
+    expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-read')?.status).toBe('queued')
+    expect(state.spinnerState.phase).toBe('executing')
+    expect(state.spinnerState.toolName).toBe('read')
+
+    state = reduceRunEvent(state, {
+      kind: 'tool_started',
+      payload: { tool_call_id: 'call-read', tool_name: 'read', args: { path: 'src/a.rs' } },
+    }, { termRows: 24 }).state
+    expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-read')?.status).toBe('running')
+    expect(state.spinnerState.phase).toBe('executing')
+  })
+
+  test('spinner stays executing when a tool finishes and another is still queued', () => {
+    // Serial tools: finishing A while B is still queued must not flicker the
+    // footer back to Thinking… — keep executing with B's name until it starts.
+    let state = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
+    for (const [contentIndex, id, name] of [[0, 'call-read', 'read'], [1, 'call-edit', 'edit']] as const) {
+      state = reduceRunEvent(state, {
+        kind: 'assistant_tool_call',
+        payload: { content_index: contentIndex, tool_call_id: id, tool_name: name, phase: 'end', args: {} },
+      }, { termRows: 24 }).state
+    }
+    state = reduceRunEvent(state, {
+      kind: 'tool_started',
+      payload: { tool_call_id: 'call-read', tool_name: 'read', args: {} },
+    }, { termRows: 24 }).state
+    state = reduceRunEvent(state, {
+      kind: 'tool_finished',
+      payload: { tool_call_id: 'call-read', tool_name: 'read', content: 'ok', is_error: false },
+    }, { termRows: 24 }).state
+
+    expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-read')?.status).toBe('done')
+    expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-edit')?.status).toBe('queued')
+    expect(state.spinnerState.phase).toBe('executing')
+    expect(state.spinnerState.toolName).toBe('edit')
+  })
+
   test('large streamed tool args stay as raw fragments and finalize once', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
