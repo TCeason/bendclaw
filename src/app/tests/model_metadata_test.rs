@@ -158,7 +158,62 @@ fn openai_provider_grok_4_5_uses_catalog_metadata() {
     assert_eq!(mc.context_window, 500_000);
     assert_eq!(mc.max_tokens, 500_000);
     assert!(mc.reasoning);
+    // Transport stays provider-driven: openai preset still carries reasoning_effort.
+    assert!(mc
+        .compat
+        .as_ref()
+        .is_some_and(|compat| compat.caps.contains(CompatCaps::REASONING_EFFORT)));
     assert_eq!(mc.supported_thinking_levels(), vec![Low, Medium, High]);
+}
+
+#[test]
+fn openrouter_gpt_without_compat_caps_has_no_selectable_thinking() {
+    // Catalog may mark GPT models as reasoning-capable, but the openrouter
+    // transport does not advertise reasoning_effort unless COMPAT_CAPS is set.
+    let mc = build_model_config(
+        Protocol::OpenAi,
+        "openrouter",
+        "openai/gpt-5.6-sol",
+        Some("https://openrouter.ai/api/v1"),
+        CompatCaps::NONE,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(mc.context_window, 272_000);
+    assert!(mc.reasoning);
+    assert!(mc.supported_thinking_levels().is_empty());
+}
+
+#[test]
+fn openai_provider_defaults_base_url_when_missing() {
+    let mc = build_model_config(
+        Protocol::OpenAi,
+        "openai",
+        "gpt-5.6-sol",
+        None,
+        CompatCaps::NONE,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(mc.base_url, "https://api.openai.com/v1");
+    assert_eq!(mc.context_window, 272_000);
+}
+
+#[test]
+fn non_openai_opencompat_has_empty_default_base_url() {
+    let mc = build_model_config(
+        Protocol::OpenAi,
+        "openrouter",
+        "some/model",
+        None,
+        CompatCaps::NONE,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(mc.base_url, "");
 }
 
 #[test]

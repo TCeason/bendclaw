@@ -94,6 +94,7 @@ import {
 import { findPreviousSession, shouldPreloadStartupSessions, selectResumeMessages, resumeElidedLine } from './app/session-view.js'
 import { handleSelectorControl } from './app/selector-control.js'
 import { decideReplControl, type ReplControlAction } from './app/repl-control.js'
+import { replaceOrPushStatusLine } from './app/status-line.js'
 import { extractAtPrefix, completeAtFile } from '../commands/file-completion.js'
 import { GitInfoProvider } from './git-info.js'
 
@@ -582,18 +583,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
    *  stay single-line. Only the trailing line is eligible for replacement, so a
    *  later user message or other output freezes the prior status into history. */
   function commitStatusLine(line: OutputLine) {
-    const isStatusId = (id: string) => id === 'sys-model' || id === 'sys-think'
-    const replaceOrPush = (lines: OutputLine[]): boolean => {
-      const last = lines.length > 0 ? lines[lines.length - 1] : undefined
-      if (last && isStatusId(last.id) && isStatusId(line.id)) {
-        lines[lines.length - 1] = line
-        return true
-      }
-      lines.push(line)
-      return false
-    }
-    const replaced = replaceOrPush(compactLines)
-    replaceOrPush(expandedLines)
+    const replaced = replaceOrPushStatusLine(compactLines, line)
+    replaceOrPushStatusLine(expandedLines, line)
     // In-place mutation invalidates the append-only history cache prefix.
     if (replaced) resetHistoryCache()
     const context = outputContextFor(compactLines.slice(0, -1))

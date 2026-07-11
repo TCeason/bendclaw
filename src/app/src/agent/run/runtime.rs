@@ -1037,11 +1037,21 @@ pub fn build_model_config(
             "https://api.anthropic.com",
             None,
         ),
-        Protocol::OpenAi => (
-            ApiProtocol::OpenAiCompletions,
-            "",
-            Some(OpenAiCompat::for_provider(provider)),
-        ),
+        Protocol::OpenAi => {
+            // Preserve the pre-catalog default: native openai falls back to the
+            // public API host when no base_url is supplied. Other OpenAI-compat
+            // channels have no safe default host and must configure one.
+            let default_base = if provider == "openai" {
+                "https://api.openai.com/v1"
+            } else {
+                ""
+            };
+            (
+                ApiProtocol::OpenAiCompletions,
+                default_base,
+                Some(OpenAiCompat::for_provider(provider)),
+            )
+        }
     };
 
     let mut model_config = ModelConfig::resolve(
