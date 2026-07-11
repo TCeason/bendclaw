@@ -18,6 +18,7 @@ import {
   buildOutputBlocks,
   buildPromptBlocks,
   buildOverlayBlocks,
+  updateLiveHeight,
   blocksToLines,
   type OverlayState,
   type PromptVMInput,
@@ -308,6 +309,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const gitDirty = isGitDirty(agent.cwd)
   const markdownRendererVersion = `evot-${appVersion}:markdown-trace-v2${gitVersion ? `:git-${gitVersion}` : ''}${gitDirty ? ':dirty' : ''}`
   let markdownTraceId = 0
+  let liveContentMaxHeight = 0
+  let liveContentWidth = renderer.termCols
 
   function logMarkdownTrace(outputLines: OutputLine[], renderedLines: string[]) {
     const raw = outputLines.find(line => line.kind === 'assistant' && line.rawMarkdown)?.rawMarkdown
@@ -477,14 +480,32 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // whole transcript. The cache extends in place on append and rebuilds only
     // on reset (clear/replace), width change, or shrink. See HistoryRenderCache.
     const cols = renderer.termCols
+    if (cols !== liveContentWidth) {
+      liveContentWidth = cols
+      liveContentMaxHeight = 0
+    }
     const cache = expanded ? expandedHistoryCache : compactHistoryCache
     const cachedHistoryLines = cache.sync(expanded ? expandedLines : compactLines, cols)
     if (cachedHistoryLines.length > 0) {
       blocks.push({ lines: cachedHistoryLines.map(l => ({ spans: [{ text: l }] })), marginTop: 0 })
     }
 
-    // 3. Ordered partial assistant message (thinking/text/tool calls).
-    blocks.push(...buildPartialAssistantBlocks())
+    // 3. Ordered partial assistant message (thinking/text/tool calls). Markdown
+    // prefixes can legitimately reparse into fewer rows as a fence/list/table
+    // becomes complete. Track history + partial as one region: when completion
+    // moves the same content from partial into history its total height remains
+    // continuous, and any transient parser shrink is absorbed above the footer.
+    const partialBlocks = buildPartialAssistantBlocks()
+    blocks.push(...partialBlocks)
+    const liveContentHeight = cachedHistoryLines.length + blocksToLines(partialBlocks).length
+    const liveHeight = updateLiveHeight(liveContentMaxHeight, liveContentHeight, isLoading)
+    liveContentMaxHeight = liveHeight.maxHeight
+    if (liveHeight.padding > 0) {
+      blocks.push({
+        lines: Array.from({ length: liveHeight.padding }, () => ({ spans: [{ text: '' }] })),
+        marginTop: 0,
+      })
+    }
 
     const toolCalls = assistantToolCalls(streamMachine?.appState.currentAssistantContent ?? [])
     let spinnerBlock: ViewBlock | null = null
@@ -575,6 +596,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   /** Toggle expanded view and redraw. */
   function toggleExpanded(): void {
     expanded = !expanded
+    // An explicit Ctrl+O layout change should take effect immediately rather
+    // than being mistaken for parser-induced shrink by the live-height guard.
+    liveContentMaxHeight = 0
     // Differential render, not a forced clear. When the content being toggled
     // (e.g. the tool output you just ran) sits in the viewport, the renderer
     // repaints in place from the first changed line down, so the view stays
@@ -805,6 +829,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   async function runQuery(text: string, contentJson?: string, prebuiltStream?: QueryStream) {
+    liveContentMaxHeight = 0
     isLoading = true
     spinnerState = createSpinnerState()
     streamMachine = createStreamMachineState(appState, spinnerState)
@@ -1620,6 +1645,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         let lastProvider: string | null = null
         for (const option of models) {
           if (option.provider !== lastProvider) {
+            if (lastProvider !== null) {
+              items.push({ label: '', header: true, focusable: false })
+            }
             items.push({ label: option.provider, header: true, focusable: false })
             lastProvider = option.provider
           }
@@ -1633,7 +1661,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         overlay = {
           kind: 'selector',
           state: selectorFocusOn(
-            { ...createSelectorState('Models', items), subtitle: 'Choose a provider and model for this session' },
+            { ...createSelectorState('Models', items), subtitle: 'Choose a provider and model for this session', circularNavigation: true },
             item => item.id === activeSpec,
           ),
         }
@@ -1929,6 +1957,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   async function runLogQuery(forked: import('../native/index.js').ForkedAgent, prompt: string) {
+    liveContentMaxHeight = 0
     isLoading = true
     spinnerState = createSpinnerState()
     streamMachine = createStreamMachineState(appState, spinnerState)

@@ -23,6 +23,8 @@ export interface SelectorState {
   title: string
   /** Optional secondary context displayed below the title. */
   subtitle?: string
+  /** Wraps up/down navigation between the first and last focusable items. */
+  circularNavigation?: boolean
   query: string
 }
 
@@ -45,6 +47,13 @@ function firstFocusable(items: SelectorItem[]): number {
   return idx >= 0 ? idx : 0
 }
 
+function lastFocusable(items: SelectorItem[]): number {
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i]?.focusable !== false) return i
+  }
+  return 0
+}
+
 export function createSelectorState(title: string, items: SelectorItem[], allItems?: SelectorItem[], initialQuery?: string): SelectorState {
   const all = allItems ?? items
   if (initialQuery) {
@@ -64,7 +73,16 @@ export function selectorFocusOn(state: SelectorState, predicate: (item: Selector
 export function selectorUp(state: SelectorState): SelectorState {
   let next = state.focusIndex - 1
   while (next >= 0 && state.items[next]?.focusable === false) next--
-  if (next < 0) return state
+  if (next < 0) {
+    if (!state.circularNavigation || state.items.length === 0) return state
+    next = lastFocusable(state.items)
+    if (state.items[next]?.focusable === false) return state
+    return {
+      ...state,
+      focusIndex: next,
+      scrollOffset: ensureVisible(Math.max(0, state.items.length - SELECTOR_VIEWPORT), next, state.items.length),
+    }
+  }
   // When only headers remain above, slide the window to the very top so the
   // leading group divider scrolls into view with its first model.
   const anyFocusableAbove = state.items.slice(0, next).some(i => i.focusable !== false)
@@ -75,7 +93,14 @@ export function selectorUp(state: SelectorState): SelectorState {
 export function selectorDown(state: SelectorState): SelectorState {
   let next = state.focusIndex + 1
   while (next < state.items.length && state.items[next]?.focusable === false) next++
-  if (next >= state.items.length) return state
+  if (next >= state.items.length) {
+    if (!state.circularNavigation || state.items.length === 0) return state
+    next = firstFocusable(state.items)
+    if (state.items[next]?.focusable === false) return state
+    // Include a leading group header when wrapping back to its first model.
+    const target = state.items.slice(0, next).some(i => i.focusable !== false) ? next : 0
+    return { ...state, focusIndex: next, scrollOffset: ensureVisible(0, target, state.items.length) }
+  }
   return { ...state, focusIndex: next, scrollOffset: ensureVisible(state.scrollOffset, next, state.items.length) }
 }
 

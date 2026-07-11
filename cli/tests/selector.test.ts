@@ -45,6 +45,20 @@ describe('selectorUp', () => {
     expect(next.focusIndex).toBe(0)
     expect(next).toBe(state)
   })
+
+  test('wraps from the first choice to the last when circular navigation is enabled', () => {
+    const grouped = [
+      { label: 'anthropic', header: true, focusable: false },
+      { label: 'claude-opus' },
+      { label: '', header: true, focusable: false },
+      { label: 'openai', header: true, focusable: false },
+      { label: 'gpt-5.5' },
+    ]
+    const state = { ...createSelectorState('Models', grouped), circularNavigation: true }
+    const next = selectorUp(state)
+    expect(next.focusIndex).toBe(4)
+    expect(next.items[next.focusIndex]?.label).toBe('gpt-5.5')
+  })
 })
 
 describe('selectorDown', () => {
@@ -60,6 +74,20 @@ describe('selectorDown', () => {
     const next = selectorDown(state)
     expect(next.focusIndex).toBe(2)
     expect(next).toBe(state)
+  })
+
+  test('wraps from the last choice to the first and restores its header', () => {
+    const grouped = [
+      { label: 'anthropic', header: true, focusable: false },
+      { label: 'claude-opus' },
+      { label: '', header: true, focusable: false },
+      { label: 'openai', header: true, focusable: false },
+      { label: 'gpt-5.5' },
+    ]
+    let state = { ...createSelectorState('Models', grouped), circularNavigation: true, focusIndex: 4 }
+    state = selectorDown(state)
+    expect(state.focusIndex).toBe(1)
+    expect(state.scrollOffset).toBe(0)
   })
 })
 
@@ -159,15 +187,16 @@ describe('renderSelector via viewmodel', () => {
     const state = createSelectorState('Models', [
       { label: 'anthropic', header: true, focusable: false },
       { label: 'claude-opus' },
+      { label: '', header: true, focusable: false },
       { label: 'openai', header: true, focusable: false },
       { label: 'gpt-5.5' },
     ])
     const lines = blocksToLines(buildOverlayBlocks({ kind: 'selector', state }, 80))
     const text = lines.map(l => stripAnsi(l)).join('\n')
-    expect(text).toContain('── anthropic ──')
+    expect(text).toContain('── anthropic ──\n❯ claude-opus\n\n── openai ──')
     expect(text).toContain('── openai ──')
     expect(text).toContain('❯ claude-opus')
-    // Headers do not count as selectable items in the title tally.
+    // Headers and spacing rows do not count as selectable items in the title tally.
     expect(text).toContain('Models  2')
   })
 

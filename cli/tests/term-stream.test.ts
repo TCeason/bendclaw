@@ -679,7 +679,7 @@ describe('term stream machine', () => {
     expect(completed.map(line => line.text).join('\n')).toContain('✓ · 12ms')
   })
 
-  test('queued tool streams write/edit drafts inside the live card', () => {
+  test('queued tools stream only stable argument summaries', () => {
     const write = buildToolCard({
       id: 'call-write',
       name: 'write',
@@ -689,7 +689,8 @@ describe('term stream machine', () => {
     })
     const writeText = write.map(line => line.text).join('\n')
     expect(writeText).toContain('write  src/a.ts  generating content... 3 lines')
-    expect(writeText).toContain('+three')
+    expect(writeText).not.toContain('+one')
+    expect(writeText).not.toContain('+three')
 
     const edit = buildToolCard({
       id: 'call-edit',

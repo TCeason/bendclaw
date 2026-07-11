@@ -75,22 +75,6 @@ function lineCount(text: string): number {
   return count
 }
 
-function tailTextLines(text: string, limit: number): { lines: string[]; hidden: number } {
-  const total = lineCount(text)
-  let start = text.length
-  let remaining = limit
-  while (start > 0 && remaining > 0) {
-    start = text.lastIndexOf('\n', start - 1)
-    remaining--
-  }
-  if (start >= 0) start++
-  else start = 0
-  return {
-    lines: text.slice(start).replace(/\r\n/g, '\n').split('\n'),
-    hidden: Math.max(0, total - limit),
-  }
-}
-
 function toolDraftSummary(call: UIToolCall): string {
   const name = call.name.toLowerCase()
   if (name === 'write' || name === 'file_write') {
@@ -103,28 +87,6 @@ function toolDraftSummary(call: UIToolCall): string {
     return edits > 0 ? `preparing replacement ${edits}...` : 'preparing replacement...'
   }
   return 'preparing arguments...'
-}
-
-/** Live content preview while the model is still streaming write arguments.
- * Edit drafts are intentionally omitted: only the engine can produce the final
- * diff after matching and normalization, so showing a provisional diff causes
- * a distracting second rewrite when the authoritative diff arrives. */
-function buildStreamingToolDraft(call: UIToolCall): OutputLine[] {
-  const name = call.name.toLowerCase()
-  if (name !== 'write' && name !== 'file_write') return []
-  const content = toolDraftText(call.args, ['content'])
-  if (!content) return []
-  const preview = tailTextLines(content, 6)
-  return [
-    ...(preview.hidden > 0
-      ? [{ id: genId('tool-draft'), kind: 'tool' as const, text: `  … ${preview.hidden} earlier lines` }]
-      : []),
-    ...preview.lines.map(text => ({
-      id: genId('tool-draft'),
-      kind: 'tool' as const,
-      text: colorizeUnifiedDiff(`+${text}`),
-    })),
-  ]
 }
 
 function appendToolCallStatus(lines: OutputLine[], status: string): void {
@@ -241,7 +203,6 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
   if (call.status === 'queued') {
     const status = call.argsComplete ? 'ready...' : toolDraftSummary(call)
     appendToolCallStatus(lines, status)
-    if (!call.argsComplete) lines.push(...buildStreamingToolDraft(call))
     return lines
   }
 

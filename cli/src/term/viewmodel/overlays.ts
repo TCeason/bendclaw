@@ -114,7 +114,7 @@ function buildSelectorBlocks(state: SelectorState, _columns: number): ViewBlock[
     for (let i = start; i < end; i++) {
       const item = state.items[i]!
       if (item.header) {
-        lines.push(line(dim(`── ${item.label} ──`)))
+        lines.push(item.label ? line(dim(`── ${item.label} ──`)) : line(plain('')))
         continue
       }
       const focused = i === state.focusIndex
@@ -137,7 +137,7 @@ function buildSelectorBlocks(state: SelectorState, _columns: number): ViewBlock[
 
   lines.push(line(plain('')))
   lines.push(line(
-    colored('↑↓', 'cyan'), dim(' move   '),
+    colored('↑↓', 'cyan'), dim(state.circularNavigation ? ' move · wraps   ' : ' move   '),
     colored('enter', 'cyan'), dim(' select   '),
     colored('type', 'cyan'), dim(' filter   '),
     colored('esc', 'cyan'), dim(' close'),
