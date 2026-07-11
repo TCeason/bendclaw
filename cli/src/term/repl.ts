@@ -627,8 +627,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     renderer.requestRender()
   }
 
-  function setTerminalTitle(suffix?: string) {
-    if (titleFrozen) return
+  function setTerminalTitle(suffix?: string, force = false) {
+    if (titleFrozen && !force) return
     const dirName = agent.cwd.split('/').pop() || agent.cwd
     const base = `evot - ${dirName}`
     const portPart = serverState ? ` · :${serverState.port}` : ''
@@ -676,7 +676,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       clearInterval(spinnerTimer)
       spinnerTimer = null
     }
-    setTerminalTitle('✳')
+    // Always replace the final animated glyph. An ask overlay can keep the
+    // title frozen while the run settles; normal title writes are correctly
+    // blocked then, but the completed state must not remain stuck on ·/⠂/⠐.
+    setTerminalTitle('✳', true)
   }
 
   async function resumeSession(session: SessionMeta) {
