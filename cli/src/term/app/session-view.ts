@@ -53,3 +53,19 @@ export function resumeElidedLine(hidden: number, limit: number = RESUME_DISPLAY_
     text: `  … ${hidden} earlier message${plural} hidden (still in context) · showing the latest ${limit}`,
   }
 }
+
+/**
+ * Notice when a session's saved provider/model cannot be restored (e.g. the
+ * channel was removed from config). Resume still loads the transcript and keeps
+ * the live model so the user can switch with /model.
+ */
+export function resumeModelUnavailableNote(opts: {
+  provider?: string
+  model?: string
+  keptModel: string
+}): string {
+  if (opts.provider) {
+    return `  provider '${opts.provider}' unavailable · kept ${opts.keptModel} · /model to switch`
+  }
+  return `  model '${opts.model ?? ''}' unavailable · kept ${opts.keptModel} · /model to switch`
+}

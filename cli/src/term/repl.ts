@@ -91,7 +91,7 @@ import {
   resolveSessionByPrefix,
   selectSessionPool,
 } from './app/resume.js'
-import { findPreviousSession, shouldPreloadStartupSessions, selectResumeMessages, resumeElidedLine } from './app/session-view.js'
+import { findPreviousSession, shouldPreloadStartupSessions, selectResumeMessages, resumeElidedLine, resumeModelUnavailableNote } from './app/session-view.js'
 import { handleSelectorControl } from './app/selector-control.js'
 import { decideReplControl, type ReplControlAction } from './app/repl-control.js'
 import { replaceOrPushStatusLine } from './app/status-line.js'
@@ -727,28 +727,36 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           if (thinkingLevel === undefined) thinkingLevel = full.thinking_level
         }
       }
+
+      // Restore model selection when possible. A removed/renamed provider must
+      // never block resume — keep the current live model and let the user pick
+      // a replacement with /model after the transcript is painted.
+      let modelRestoreNote: string | null = null
       if (model) {
-        // Provider-qualified restore is mandatory for new sessions so two
-        // providers exposing the same model id resume to the exact selection.
-        // Legacy sessions have no provider and retain model-only behavior.
-        // Use the strict provider switch API here. The model setter deliberately
-        // falls back to a raw model id for interactive convenience, which would
-        // silently lose the persisted provider if that provider was removed or
-        // renamed after the session was saved.
-        agent.setProvider(provider ? `${provider}:${model}` : model)
+        const preferred = provider ? `${provider}:${model}` : model
+        try {
+          agent.setProvider(preferred)
+        } catch {
+          // Do not force the raw model id onto the current provider: a missing
+          // channel like `grok` would leave anthropic/openai holding a foreign
+          // model name. Keep the live selection and surface a switch hint.
+          const kept = agent.model
+          modelRestoreNote = resumeModelUnavailableNote({
+            provider: provider || undefined,
+            model,
+            keptModel: kept,
+          })
+        }
       }
       // Restore the session's reasoning effort so a resumed conversation keeps
       // the level it was last run with (no-op for non-reasoning models).
       if (thinkingLevel) {
         agent.restoreThinkingLevel(thinkingLevel)
       }
-      // Commit local session state only after model restoration succeeds. A
-      // missing/renamed provider must leave the current conversation intact.
+
       sessionId = session.session_id
-      if (model || thinkingLevel) {
-        refreshConfigInfo()
-      }
-      appState = { ...appState, sessionId: session.session_id, model: model || appState.model }
+      refreshConfigInfo()
+      appState = { ...appState, sessionId: session.session_id, model: agent.model }
       const { messagesToOutputLines } = await import('../render/output.js')
       const { transcriptToMessages } = await import('../session/transcript.js')
       const messages = transcriptToMessages(transcript as any)
@@ -774,6 +782,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         { id: 'sys-resumed-gap', kind: 'system', text: '' },
         { id: 'sys-resumed', kind: 'system', text: chalk.dim(`  resumed session ${session.session_id.slice(0, 8)}`) },
       ])
+      if (modelRestoreNote) {
+        restoreLines([{ id: 'sys-resume-model', kind: 'system', text: chalk.dim(modelRestoreNote) }])
+      }
     } catch (err: any) {
       commitLines([{ id: 'sys-err', kind: 'error', text: `Failed to resume: ${err?.message ?? err}` }])
     }

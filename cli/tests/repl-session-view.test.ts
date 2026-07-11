@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { findPreviousSession, previousSessionLine, shouldPreloadStartupSessions, selectResumeMessages, resumeElidedLine, RESUME_DISPLAY_LIMIT } from '../src/term/app/session-view.js'
+import { findPreviousSession, previousSessionLine, shouldPreloadStartupSessions, selectResumeMessages, resumeElidedLine, resumeModelUnavailableNote, RESUME_DISPLAY_LIMIT } from '../src/term/app/session-view.js'
 import type { SessionMeta } from '../src/native/index.js'
 import type { UIMessage } from '../src/term/app/types.js'
 
@@ -75,5 +75,18 @@ describe('repl session view helpers', () => {
     expect(many.text).toContain('120 earlier messages hidden')
     expect(many.text).toContain(`latest ${RESUME_DISPLAY_LIMIT}`)
     expect(resumeElidedLine(1).text).toContain('1 earlier message hidden')
+  })
+
+  test('resumeModelUnavailableNote keeps live model and points to /model', () => {
+    expect(resumeModelUnavailableNote({
+      provider: 'grok',
+      model: 'grok-4.5',
+      keptModel: 'claude-opus-4-8',
+    })).toBe("  provider 'grok' unavailable · kept claude-opus-4-8 · /model to switch")
+
+    expect(resumeModelUnavailableNote({
+      model: 'missing-model',
+      keptModel: 'claude-opus-4-8',
+    })).toBe("  model 'missing-model' unavailable · kept claude-opus-4-8 · /model to switch")
   })
 })
