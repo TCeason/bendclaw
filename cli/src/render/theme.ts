@@ -62,17 +62,11 @@ export interface Theme {
 }
 
 function darkTheme(): Theme {
-  const gray = chalk.hex('#808080')
-  const dimGray = chalk.hex('#6a6a6a')
-  // evot's brand accent — the same warm gold used for the banner section
-  // headers ([Context]/[Skills], banner.ts). pi tints mdHeading with the
-  // identical hue (#f0c674) on dark backgrounds, so headings now read as a
-  // clear section break instead of blending into surrounding bold prose.
-  const accent = chalk.hex('#f0c674')
-  // Secondary accent — the teal evot uses for banner links / 'evot update'.
-  // pi tints list markers with its accent; we mirror that so bullets and
-  // ordinals read as structure without competing with the gold headings.
-  const listAccent = chalk.hex('#8abeb7')
+  // Always call chalk.hex() at paint time. Binding `const accent = chalk.hex(...)`
+  // at construction freezes chalk's color-level approximation: if the theme is
+  // first built while chalk.level is 0/1 (no TTY, CI), headings/fences stay stuck
+  // on 16-color SGR even after log-shot forces level 3. Lazy hex matches codeInline
+  // / tableBorder and keeps truecolor stable across environments.
   return {
     text: plain,
     bold: style(s => chalk.bold(s)),
@@ -92,28 +86,31 @@ function darkTheme(): Theme {
     // Headings carry evot's gold accent (matches the banner + pi's mdHeading).
     // h1 keeps the extra italic·underline emphasis; h2+ are accent-bold so
     // every level reads as a distinct section marker.
-    h1: style(s => accent.bold.italic.underline(s)),
-    h2: style(s => accent.bold(s)),
-    h3: style(s => accent.bold(s)),
-    h4: style(s => accent.bold(s)),
-    h5: style(s => accent.bold(s)),
-    h6: style(s => accent.bold(s)),
+    h1: style(s => chalk.hex('#f0c674').bold.italic.underline(s)),
+    h2: style(s => chalk.hex('#f0c674').bold(s)),
+    h3: style(s => chalk.hex('#f0c674').bold(s)),
+    h4: style(s => chalk.hex('#f0c674').bold(s)),
+    h5: style(s => chalk.hex('#f0c674').bold(s)),
+    h6: style(s => chalk.hex('#f0c674').bold(s)),
 
-    bullet: style(s => listAccent(s)),
-    listNumber: style(s => listAccent(s)),
+    // Secondary accent — the teal evot uses for banner links / 'evot update'.
+    // pi tints list markers with its accent; we mirror that so bullets and
+    // ordinals read as structure without competing with the gold headings.
+    bullet: style(s => chalk.hex('#8abeb7')(s)),
+    listNumber: style(s => chalk.hex('#8abeb7')(s)),
 
-    blockquoteBorder: style(s => gray(s)),
+    blockquoteBorder: style(s => chalk.hex('#808080')(s)),
     // Italic but not dim — dimGray on dark backgrounds is nearly invisible
     // for long CJK quotes.
     blockquoteText: style(s => chalk.italic(s)),
 
-  tableBorder: style(s => chalk.hex('#8a8a8a')(s)),
+    tableBorder: style(s => chalk.hex('#8a8a8a')(s)),
     tableHeader: style(s => chalk.bold(s)),
 
-    hr: style(s => gray(s)),
-    codeBlockBorder: style(s => dimGray(s)),
-    thinkBorder: style(s => gray(s)),
-    thinkText: style(s => dimGray.italic(s)),
+    hr: style(s => chalk.hex('#808080')(s)),
+    codeBlockBorder: style(s => chalk.hex('#6a6a6a')(s)),
+    thinkBorder: style(s => chalk.hex('#808080')(s)),
+    thinkText: style(s => chalk.hex('#6a6a6a').italic(s)),
 
     heading: '#c0c0c0',
     inlineCode: '#5fb3b3',
@@ -122,15 +119,7 @@ function darkTheme(): Theme {
 }
 
 function lightTheme(): Theme {
-  const gray = chalk.hex('#6a6a6a')
-  const dimGray = chalk.hex('#8a8a8a')
-  // Darker gold than the dark-theme accent so headings stay legible on a
-  // light background (the #f0c674 gold washes out on white). Same warm
-  // family as evot's brand accent.
-  const accent = chalk.hex('#b8860b')
-  // See darkTheme: teal list markers. A slightly deeper teal reads better on
-  // a light background than the dark-theme #8abeb7.
-  const listAccent = chalk.hex('#5a8080')
+  // Same lazy-hex rule as darkTheme — see comment there.
   return {
     text: plain,
     bold: style(s => chalk.bold(s)),
@@ -144,27 +133,31 @@ function lightTheme(): Theme {
     // rgb(87,105,247) = #5769f7 (medium blue).
     codeInline: style(s => chalk.hex('#5769f7')(s)),
 
-    // See darkTheme: gold-accented headings (h1 adds italic·underline).
-    h1: style(s => accent.bold.italic.underline(s)),
-    h2: style(s => accent.bold(s)),
-    h3: style(s => accent.bold(s)),
-    h4: style(s => accent.bold(s)),
-    h5: style(s => accent.bold(s)),
-    h6: style(s => accent.bold(s)),
+    // Darker gold than the dark-theme accent so headings stay legible on a
+    // light background (the #f0c674 gold washes out on white). Same warm
+    // family as evot's brand accent.
+    h1: style(s => chalk.hex('#b8860b').bold.italic.underline(s)),
+    h2: style(s => chalk.hex('#b8860b').bold(s)),
+    h3: style(s => chalk.hex('#b8860b').bold(s)),
+    h4: style(s => chalk.hex('#b8860b').bold(s)),
+    h5: style(s => chalk.hex('#b8860b').bold(s)),
+    h6: style(s => chalk.hex('#b8860b').bold(s)),
 
-    bullet: style(s => listAccent(s)),
-    listNumber: style(s => listAccent(s)),
+    // See darkTheme: teal list markers. A slightly deeper teal reads better on
+    // a light background than the dark-theme #8abeb7.
+    bullet: style(s => chalk.hex('#5a8080')(s)),
+    listNumber: style(s => chalk.hex('#5a8080')(s)),
 
-    blockquoteBorder: style(s => gray(s)),
+    blockquoteBorder: style(s => chalk.hex('#6a6a6a')(s)),
     blockquoteText: style(s => chalk.italic(s)),
 
-  tableBorder: style(s => chalk.hex('#8a8a8a')(s)),
+    tableBorder: style(s => chalk.hex('#8a8a8a')(s)),
     tableHeader: style(s => chalk.bold(s)),
 
-    hr: style(s => gray(s)),
-    codeBlockBorder: style(s => dimGray(s)),
-    thinkBorder: style(s => gray(s)),
-    thinkText: style(s => dimGray.italic(s)),
+    hr: style(s => chalk.hex('#6a6a6a')(s)),
+    codeBlockBorder: style(s => chalk.hex('#8a8a8a')(s)),
+    thinkBorder: style(s => chalk.hex('#6a6a6a')(s)),
+    thinkText: style(s => chalk.hex('#8a8a8a').italic(s)),
 
     heading: '#333333',
     inlineCode: '#0d7d7d',
