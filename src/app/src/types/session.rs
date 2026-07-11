@@ -13,6 +13,10 @@ pub struct SessionMeta {
     pub session_id: String,
     pub cwd: String,
     pub model: String,
+    /// Provider paired with `model`. Empty for sessions persisted before this
+    /// field existed; resume callers then fall back to legacy model-only lookup.
+    #[serde(default)]
+    pub provider: String,
     /// Reasoning effort active for this session, as a lowercase level name
     /// (e.g. `"high"`). `None` for sessions created before this field existed
     /// or whose model has no selectable thinking level; callers fall back to
@@ -54,6 +58,7 @@ impl SessionMeta {
             session_id,
             cwd,
             model,
+            provider: String::new(),
             thinking_level: None,
             title: None,
             source: String::new(),
@@ -67,6 +72,11 @@ impl SessionMeta {
             created_at: now.clone(),
             updated_at: now,
         }
+    }
+
+    pub fn with_provider(mut self, provider: impl Into<String>) -> Self {
+        self.provider = provider.into();
+        self
     }
 
     pub fn with_source(mut self, source: impl Into<String>) -> Self {

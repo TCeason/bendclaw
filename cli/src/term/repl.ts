@@ -487,29 +487,34 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     blocks.push(...buildPartialAssistantBlocks())
 
     const toolCalls = assistantToolCalls(streamMachine?.appState.currentAssistantContent ?? [])
-    // 5. Spinner. Keep the animated footer visible for the whole turn so a
-    // queued (decoded but not-yet-running) tool call doesn't make it vanish and
-    // look finished. Live output tokens count only while thinking/streaming.
+    let spinnerBlock: ViewBlock | null = null
+    // Persistent run spinner. Keep one blank line above it to separate it from
+    // transcript content, but place it immediately against the prompt border.
+    // Building it here and appending it after transient widgets prevents those
+    // widgets from splitting the spinner/prompt pair.
     if (isLoading && overlay.kind !== 'ask-user') {
-      const isThinkingPhase = toolCalls.length === 0
-      const activeLlmCall = isThinkingPhase && (streamMachine?.activeLlmCall ?? false)
+      const activeLlmCall = toolCalls.length === 0 && (streamMachine?.activeLlmCall ?? false)
       const liveOutputTokens = activeLlmCall ? spinnerState.tokenCount : 0
       const spinnerText = formatSpinnerLine(spinnerState, Date.now(), {
         inputTokens: appState.sessionTokens.inputTokens,
         outputTokens: appState.sessionTokens.outputTokens + liveOutputTokens,
         cacheReadTokens: appState.sessionTokens.cacheReadTokens,
       })
-      blocks.push({ lines: [{ spans: [{ text: spinnerText }] }], marginTop: 1 })
+      spinnerBlock = { lines: [{ spans: [{ text: spinnerText }] }], marginTop: 1 }
     }
 
-    // 7. Overlay
+    // 4. Overlay
     blocks.push(...buildOverlayBlocks(overlay, renderer.termCols))
 
-    // 8. Plan progress widget (pi-style: live UI, not scrollback)
+    // 5. Plan progress widget (pi-style: live UI, not scrollback)
     blocks.push(...buildPlanModeWidgetBlocks())
 
-    // 9. Prompt
-    blocks.push(...buildPromptBlocks(getPromptVM()))
+    // 6. Spinner + prompt form one anchored footer unit. The spinner owns the
+    // spacing above the unit; suppress the prompt's usual top margin so there is
+    // no blank row between spinner and border.
+    if (spinnerBlock) blocks.push(spinnerBlock)
+    const promptBlocks = buildPromptBlocks(getPromptVM(), { attachedAbove: spinnerBlock !== null })
+    blocks.push(...promptBlocks)
 
     return { lines: blocksToLines(blocks) }
   }
@@ -653,26 +658,37 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   async function resumeSession(session: SessionMeta) {
     try {
       const transcript = await agent.loadTranscript(session.session_id)
-      sessionId = session.session_id
       // Fields may be missing when the caller passes a partial SessionMeta
       // (e.g. the resume selector only knows the id); fetch the full record.
       let model = session.model
+      let provider = session.provider
       let thinkingLevel = session.thinking_level
-      if (!model || thinkingLevel === undefined) {
+      if (!model || !provider || thinkingLevel === undefined) {
         const full = await agent.findSession(session.session_id)
         if (full) {
           if (!model) model = full.model
+          if (!provider) provider = full.provider
           if (thinkingLevel === undefined) thinkingLevel = full.thinking_level
         }
       }
       if (model) {
-        agent.model = model
+        // Provider-qualified restore is mandatory for new sessions so two
+        // providers exposing the same model id resume to the exact selection.
+        // Legacy sessions have no provider and retain model-only behavior.
+        // Use the strict provider switch API here. The model setter deliberately
+        // falls back to a raw model id for interactive convenience, which would
+        // silently lose the persisted provider if that provider was removed or
+        // renamed after the session was saved.
+        agent.setProvider(provider ? `${provider}:${model}` : model)
       }
       // Restore the session's reasoning effort so a resumed conversation keeps
       // the level it was last run with (no-op for non-reasoning models).
       if (thinkingLevel) {
         agent.restoreThinkingLevel(thinkingLevel)
       }
+      // Commit local session state only after model restoration succeeds. A
+      // missing/renamed provider must leave the current conversation intact.
+      sessionId = session.session_id
       if (model || thinkingLevel) {
         refreshConfigInfo()
       }

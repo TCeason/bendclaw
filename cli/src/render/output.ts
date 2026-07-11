@@ -59,6 +59,79 @@ function toolCallText(name: string, args: Record<string, unknown>, previewComman
   return primary ? `${glyph} ${name}  ${primary}` : `${glyph} ${name}`
 }
 
+function toolDraftText(args: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = args[key]
+    if (typeof value === 'string' && value.length > 0) return value
+  }
+  return ''
+}
+
+function lineCount(text: string): number {
+  let count = 1
+  for (let index = 0; index < text.length; index++) {
+    if (text.charCodeAt(index) === 10) count++
+  }
+  return count
+}
+
+function tailTextLines(text: string, limit: number): { lines: string[]; hidden: number } {
+  const total = lineCount(text)
+  let start = text.length
+  let remaining = limit
+  while (start > 0 && remaining > 0) {
+    start = text.lastIndexOf('\n', start - 1)
+    remaining--
+  }
+  if (start >= 0) start++
+  else start = 0
+  return {
+    lines: text.slice(start).replace(/\r\n/g, '\n').split('\n'),
+    hidden: Math.max(0, total - limit),
+  }
+}
+
+function toolDraftSummary(call: UIToolCall): string {
+  const name = call.name.toLowerCase()
+  if (name === 'write' || name === 'file_write') {
+    const content = toolDraftText(call.args, ['content'])
+    const count = content ? lineCount(content) : 0
+    return count > 0 ? `generating content... ${count} ${count === 1 ? 'line' : 'lines'}` : 'generating content...'
+  }
+  if (name === 'edit' || name === 'file_edit') {
+    const edits = Array.isArray(call.args.edits) ? call.args.edits.length : 0
+    return edits > 0 ? `preparing replacement ${edits}...` : 'preparing replacement...'
+  }
+  return 'preparing arguments...'
+}
+
+/** Live content preview while the model is still streaming write arguments.
+ * Edit drafts are intentionally omitted: only the engine can produce the final
+ * diff after matching and normalization, so showing a provisional diff causes
+ * a distracting second rewrite when the authoritative diff arrives. */
+function buildStreamingToolDraft(call: UIToolCall): OutputLine[] {
+  const name = call.name.toLowerCase()
+  if (name !== 'write' && name !== 'file_write') return []
+  const content = toolDraftText(call.args, ['content'])
+  if (!content) return []
+  const preview = tailTextLines(content, 6)
+  return [
+    ...(preview.hidden > 0
+      ? [{ id: genId('tool-draft'), kind: 'tool' as const, text: `  … ${preview.hidden} earlier lines` }]
+      : []),
+    ...preview.lines.map(text => ({
+      id: genId('tool-draft'),
+      kind: 'tool' as const,
+      text: colorizeUnifiedDiff(`+${text}`),
+    })),
+  ]
+}
+
+function appendToolCallStatus(lines: OutputLine[], status: string): void {
+  const callLine = [...lines].reverse().find(line => line.kind === 'tool' && !line.text.startsWith('  '))
+  if (callLine) callLine.text = `${callLine.text}  ${status}`
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -165,7 +238,12 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
   const args = diff ? { ...call.args, diff } : call.args
   const lines = buildToolCall(call.name, args, call.previewCommand)
 
-  if (call.status === 'queued') return lines
+  if (call.status === 'queued') {
+    const status = call.argsComplete ? 'ready...' : toolDraftSummary(call)
+    appendToolCallStatus(lines, status)
+    if (!call.argsComplete) lines.push(...buildStreamingToolDraft(call))
+    return lines
+  }
 
   if (call.status !== 'running') {
     lines.push(...buildToolResult(
@@ -189,9 +267,7 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
     }
   }
 
-  // Execution activity is rendered by the animated footer spinner. Keeping a
-  // second static `● running` line here makes the tool look stalled between
-  // frames, especially immediately after thinking ends.
+  // Execution activity stays in the persistent run spinner below the card.
   return lines
 }
 

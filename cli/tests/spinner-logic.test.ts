@@ -135,14 +135,15 @@ describe('formatSpinnerLine', () => {
   test('contains action label when executing', () => {
     const state = setSpinnerPhase(createSpinnerState(), 'executing', 'bash')
     const line = stripAnsi(formatSpinnerLine(state, Date.now()))
-    expect(line).toContain('Running…')
+    expect(line).toContain('Running command…')
   })
 
   test('maps tool names to action verbs', () => {
     const cases: [string, string][] = [
       ['read', 'Reading…'],
       ['grep', 'Searching…'],
-      ['edit', 'Editing…'],
+      ['edit', 'Applying changes…'],
+      ['write', 'Writing file…'],
       ['web_fetch', 'Fetching…'],
       ['plan', 'Planning…'],
       ['skill', 'Loading skill…'],
@@ -172,7 +173,7 @@ describe('formatSpinnerLine', () => {
       toolName: 'bash',
     }
     const line = stripAnsi(formatSpinnerLine(state, now))
-    expect(line).toContain('Running slow…')
+    expect(line).toContain('Running command slow…')
   })
 
   test('contains duration', () => {

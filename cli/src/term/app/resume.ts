@@ -34,7 +34,7 @@ export function formatSessionItems(sessions: SessionMeta[]): SelectorItem[] {
     const title = padRight(s.title || '(untitled)', 65)
     const turns = padRight(s.turns ? `[${s.turns} turns]` : '', 12)
     const time = relativeTime(s.updated_at)
-    const searchText = `${s.session_id} ${s.title} ${s.cwd} ${s.source} ${s.model}`
+    const searchText = `${s.session_id} ${s.title} ${s.cwd} ${s.source} ${s.provider ?? ''} ${s.model}`
     return { label: s.session_id.slice(0, 8), id: s.session_id, detail: `${source} ${title} ${turns} ${time}`, searchText }
   })
 }

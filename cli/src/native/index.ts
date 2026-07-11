@@ -26,6 +26,8 @@ export interface SessionMeta {
   session_id: string
   title: string
   model: string
+  /** Provider paired with model; absent on sessions saved before provider-aware selection. */
+  provider?: string
   thinking_level: string | null
   cwd: string
   source: string

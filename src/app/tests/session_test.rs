@@ -56,6 +56,33 @@ async fn new_session_creates_meta_and_empty_transcript() -> TestResult {
 }
 
 #[tokio::test]
+async fn model_selection_update_is_persisted_immediately() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+    let session = Session::new_with_provider_source(
+        "selection-persist".into(),
+        "/tmp".into(),
+        "provider-a".into(),
+        "shared-model".into(),
+        "repl",
+        storage.clone(),
+    )
+    .await?;
+
+    session
+        .set_model_selection("provider-b".into(), "shared-model".into())
+        .await?;
+
+    let reopened = Session::open("selection-persist", storage)
+        .await?
+        .ok_or_else(|| missing_error("missing reopened session"))?;
+    let meta = reopened.meta().await;
+    assert_eq!(meta.provider, "provider-b");
+    assert_eq!(meta.model, "shared-model");
+    Ok(())
+}
+
+#[tokio::test]
 async fn agent_create_session_persists_empty_repl_session() -> TestResult {
     let dir = TempDir::new()?;
     let mut config = evot::conf::Config::new(dir.path().to_path_buf());
@@ -77,6 +104,7 @@ async fn agent_create_session_persists_empty_repl_session() -> TestResult {
 
     assert_eq!(meta.cwd, "/work");
     assert_eq!(meta.model, "test-model");
+    assert_eq!(meta.provider, "test");
     assert_eq!(meta.source, "repl");
     assert_eq!(meta.turns, 0);
 

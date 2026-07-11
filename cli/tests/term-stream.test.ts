@@ -649,10 +649,10 @@ describe('term stream machine', () => {
     expect(heartbeatBlock?.type === 'tool_call' ? heartbeatBlock.toolCall.progress : undefined).toBe('line 1\nline 2')
   })
 
-  test('queued tool has no running state; execution uses the animated footer', () => {
+  test('queued and running tools leave execution activity to the persistent spinner', () => {
     const queued = buildToolCard({ id: 'call-1', name: 'read', args: { path: 'src/a.rs' }, status: 'queued' })
     const queuedText = queued.map(line => line.text).join('\n')
-    expect(queuedText).toContain('read')
+    expect(queuedText).toContain('read  src/a.rs  preparing arguments...')
     expect(queuedText).not.toContain('running')
 
     const running = buildToolCard({
@@ -665,6 +665,7 @@ describe('term stream machine', () => {
     }, false, 2_500)
     const runningText = running.map(line => line.text).join('\n')
     expect(runningText).toContain('partial output')
+    expect(runningText).not.toContain('running...')
     expect(runningText).not.toContain('● running')
 
     const completed = buildToolCard({
@@ -676,6 +677,51 @@ describe('term stream machine', () => {
       durationMs: 12,
     })
     expect(completed.map(line => line.text).join('\n')).toContain('✓ · 12ms')
+  })
+
+  test('queued tool streams write/edit drafts inside the live card', () => {
+    const write = buildToolCard({
+      id: 'call-write',
+      name: 'write',
+      args: { path: 'src/a.ts', content: 'one\ntwo\nthree' },
+      status: 'queued',
+      argsComplete: false,
+    })
+    const writeText = write.map(line => line.text).join('\n')
+    expect(writeText).toContain('write  src/a.ts  generating content... 3 lines')
+    expect(writeText).toContain('+three')
+
+    const edit = buildToolCard({
+      id: 'call-edit',
+      name: 'edit',
+      args: {
+        path: 'src/a.ts',
+        edits: [{ oldText: 'old line', newText: 'new line' }],
+      },
+      status: 'queued',
+      argsComplete: false,
+    })
+    const editText = edit.map(line => line.text).join('\n')
+    expect(editText).toContain('edit  src/a.ts  preparing replacement 1...')
+    expect(editText).not.toContain('-old line')
+    expect(editText).not.toContain('+new line')
+  })
+
+  test('completed edit keeps the final authoritative diff unchanged', () => {
+    const diff = '@@ -1 +1 @@\n-old\n+new'
+    const completed = buildToolCard({
+      id: 'call-edit',
+      name: 'edit',
+      args: { path: 'src/a.ts', edits: [] },
+      status: 'done',
+      details: { diff },
+      durationMs: 12,
+    })
+    const completedText = completed.map(line => line.text).join('\n')
+    expect(completedText).toContain('-old')
+    expect(completedText).toContain('+new')
+    expect(completedText).toContain('✓ · 12ms')
+    expect(completedText).not.toContain('applying changes')
   })
 
   test('llm retry renders as a visible card with backoff and error', () => {
@@ -913,10 +959,47 @@ describe('term stream machine', () => {
     expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-read')?.startedAt).toBeUndefined()
   })
 
-  test('spinner enters executing phase on tool call, before tool_started', () => {
-    // Regression: a queued (decoded but not-yet-running) tool call must not
-    // drop the spinner back to thinking or leave it idle — the footer keeps
-    // animating in the executing phase so the turn never looks finished.
+  test('tool argument deltas stay in thinking phase until the call is complete', () => {
+    let state = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
+    state = reduceRunEvent(state, {
+      kind: 'assistant_tool_call',
+      payload: { content_index: 0, tool_call_id: 'call-edit', tool_name: 'edit', phase: 'start' },
+    }, { termRows: 24 }).state
+    expect(state.spinnerState.phase).toBe('thinking')
+
+    state = reduceRunEvent(state, {
+      kind: 'assistant_tool_call',
+      payload: {
+        content_index: 0,
+        tool_call_id: 'call-edit',
+        tool_name: 'edit',
+        phase: 'delta',
+        delta: '{"path":"src/a.ts"',
+      },
+    }, { termRows: 24 }).state
+    expect(state.spinnerState.phase).toBe('thinking')
+
+    state = reduceRunEvent(state, {
+      kind: 'assistant_tool_call',
+      payload: {
+        content_index: 0,
+        tool_call_id: 'call-edit',
+        tool_name: 'edit',
+        phase: 'end',
+        args: { path: 'src/a.ts', edits: [] },
+      },
+    }, { termRows: 24 }).state
+    expect(state.spinnerState.phase).toBe('thinking')
+
+    state = reduceRunEvent(state, {
+      kind: 'tool_started',
+      payload: { tool_call_id: 'call-edit', tool_name: 'edit', args: { path: 'src/a.ts', edits: [] } },
+    }, { termRows: 24 }).state
+    expect(state.spinnerState.phase).toBe('executing')
+  })
+
+  test('spinner enters executing phase only when tool_started arrives', () => {
+    // A decoded call is still queued; execution starts at tool_started.
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
@@ -927,10 +1010,9 @@ describe('term stream machine', () => {
       payload: { content_index: 0, tool_call_id: 'call-read', tool_name: 'read', phase: 'end', args: { path: 'src/a.rs' } },
     }, { termRows: 24 }).state
 
-    // Queued, not yet running — but the spinner already reflects execution.
+    // Queued, not yet running — keep the run spinner in its thinking phase.
     expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-read')?.status).toBe('queued')
-    expect(state.spinnerState.phase).toBe('executing')
-    expect(state.spinnerState.toolName).toBe('read')
+    expect(state.spinnerState.phase).toBe('thinking')
 
     state = reduceRunEvent(state, {
       kind: 'tool_started',
@@ -940,9 +1022,8 @@ describe('term stream machine', () => {
     expect(state.spinnerState.phase).toBe('executing')
   })
 
-  test('spinner stays executing when a tool finishes and another is still queued', () => {
-    // Serial tools: finishing A while B is still queued must not flicker the
-    // footer back to Thinking… — keep executing with B's name until it starts.
+  test('spinner returns to thinking when a tool finishes and another is still queued', () => {
+    // Serial tools: queued B has not started, so do not claim it is executing.
     let state = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
     for (const [contentIndex, id, name] of [[0, 'call-read', 'read'], [1, 'call-edit', 'edit']] as const) {
       state = reduceRunEvent(state, {
@@ -961,8 +1042,7 @@ describe('term stream machine', () => {
 
     expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-read')?.status).toBe('done')
     expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-edit')?.status).toBe('queued')
-    expect(state.spinnerState.phase).toBe('executing')
-    expect(state.spinnerState.toolName).toBe('edit')
+    expect(state.spinnerState.phase).toBe('thinking')
   })
 
   test('large streamed tool args stay as raw fragments and finalize once', () => {

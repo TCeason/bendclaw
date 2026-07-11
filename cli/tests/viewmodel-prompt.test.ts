@@ -136,6 +136,11 @@ describe('buildPromptBlocks', () => {
     expect(idleBlock?.marginTop).toBe(1)
   })
 
+  test('can attach the prompt border directly below a footer widget', () => {
+    const blocks = buildPromptBlocks(defaultInput(), { attachedAbove: true })
+    expect(blocks[0]!.marginTop).toBe(0)
+  })
+
   test('footer shows context with model but not session token totals', () => {
     const result = renderPlain(defaultInput({
       model: 'claude-sonnet',

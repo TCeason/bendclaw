@@ -48,7 +48,12 @@ function styleInputText(text: string): StyledSpan[] {
     ...(match[2] ? [plain(match[2])] : []),
   ]
 }
-export function buildPromptBlocks(input: PromptVMInput): ViewBlock[] {
+export interface PromptLayoutOptions {
+  /** The preceding block is part of the prompt footer (for example, spinner). */
+  attachedAbove?: boolean
+}
+
+export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOptions = {}): ViewBlock[] {
   const blocks: ViewBlock[] = []
   const columns = Number.isFinite(input.columns) ? Math.max(1, Math.floor(input.columns)) : 80
   const border = '─'.repeat(columns)
@@ -57,7 +62,7 @@ export function buildPromptBlocks(input: PromptVMInput): ViewBlock[] {
   // border, independent of how the preceding block ended (history / streaming /
   // spinner). Mirrors pi's always-present widgetContainerAbove spacer, and
   // matches the marginTop:1 every other frame section already uses.
-  blocks.push(block([line(dim(border))], 1))
+  blocks.push(block([line(dim(border))], options.attachedAbove ? 0 : 1))
 
   const inputLines: StyledLine[] = []
   // Visual width available for input text after the 2-column prefix (`❯ ` / `  `).

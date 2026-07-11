@@ -27,8 +27,9 @@ export function toolActionLabel(toolName: string): string {
   switch (toolName.toLowerCase()) {
     case 'read': case 'read_code': return 'Reading'
     case 'grep': case 'glob': case 'find': case 'search': case 'semantic_code_search': return 'Searching'
-    case 'edit': case 'file_edit': case 'write': case 'file_write': return 'Editing'
-    case 'bash': return 'Running'
+    case 'edit': case 'file_edit': return 'Applying changes'
+    case 'write': case 'file_write': return 'Writing file'
+    case 'bash': return 'Running command'
     case 'web_fetch': case 'webfetch': return 'Fetching'
     case 'plan': return 'Planning'
     case 'skill': return 'Loading skill'

@@ -49,7 +49,20 @@ impl Session {
         source: &str,
         storage: Arc<dyn Storage>,
     ) -> Result<Arc<Self>> {
-        let meta = SessionMeta::new(session_id, cwd, model).with_source(source);
+        Self::new_with_provider_source(session_id, cwd, "".into(), model, source, storage).await
+    }
+
+    pub async fn new_with_provider_source(
+        session_id: String,
+        cwd: String,
+        provider: String,
+        model: String,
+        source: &str,
+        storage: Arc<dyn Storage>,
+    ) -> Result<Arc<Self>> {
+        let meta = SessionMeta::new(session_id, cwd, model)
+            .with_provider(provider)
+            .with_source(source);
         storage.save_session(meta.clone()).await?;
         Ok(Self::init(storage, meta, Vec::new(), 0))
     }
@@ -83,16 +96,29 @@ impl Session {
         model: &str,
         storage: Arc<dyn Storage>,
     ) -> Result<Arc<Self>> {
+        Self::open_or_create_with_provider(locator, cwd, "", model, storage).await
+    }
+
+    pub async fn open_or_create_with_provider(
+        locator: &SessionLocator,
+        cwd: &str,
+        provider: &str,
+        model: &str,
+        storage: Arc<dyn Storage>,
+    ) -> Result<Arc<Self>> {
         let id = locator.session_id();
         match Self::open(&id, storage.clone()).await? {
             Some(session) => {
-                session.set_model(model.to_string()).await;
+                session
+                    .set_model_selection(provider.to_string(), model.to_string())
+                    .await?;
                 Ok(session)
             }
             None => {
-                Self::new_with_source(
+                Self::new_with_provider_source(
                     id,
                     cwd.to_string(),
+                    provider.to_string(),
                     model.to_string(),
                     &locator.stable_key(),
                     storage,
@@ -104,6 +130,15 @@ impl Session {
 
     pub async fn set_model(&self, model: String) {
         self.meta.write().await.model = model;
+    }
+
+    pub async fn set_model_selection(&self, provider: String, model: String) -> Result<()> {
+        self.update_meta(|meta| {
+            meta.provider = provider;
+            meta.model = model;
+            Ok(())
+        })
+        .await
     }
 
     /// Set the session's persisted thinking level (lowercase level name, or

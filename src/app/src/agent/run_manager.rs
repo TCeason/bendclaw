@@ -60,10 +60,12 @@ impl RunManager {
         let _guard = gate.lock().await;
 
         // Resolve session via locator (open existing or create new)
-        let session = Session::open_or_create(
+        let llm = self.agent.llm();
+        let session = Session::open_or_create_with_provider(
             locator,
             self.agent.cwd(),
-            &self.agent.llm().model,
+            &llm.provider,
+            &llm.model,
             self.agent.storage(),
         )
         .await?;

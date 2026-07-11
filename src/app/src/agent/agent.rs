@@ -823,11 +823,21 @@ impl Agent {
     }
 
     pub async fn create_session(&self, source: &str) -> Result<SessionMeta> {
-        let model = self.llm.read().model.clone();
+        let (provider, model) = {
+            let llm = self.llm.read();
+            (llm.provider.clone(), llm.model.clone())
+        };
         let storage = self.storage.read().clone();
         let id = crate::types::new_id();
-        let session =
-            Session::new_with_source(id, self.cwd.clone(), model, source, storage).await?;
+        let session = Session::new_with_provider_source(
+            id,
+            self.cwd.clone(),
+            provider,
+            model,
+            source,
+            storage,
+        )
+        .await?;
         Ok(session.meta().await)
     }
 
@@ -924,19 +934,23 @@ impl Agent {
         session_id: Option<&str>,
         source: &str,
     ) -> Result<Arc<Session>> {
-        let model = self.llm.read().model.clone();
+        let (provider, model) = {
+            let llm = self.llm.read();
+            (llm.provider.clone(), llm.model.clone())
+        };
         let thinking_level = self.persisted_thinking_level();
         let storage = self.storage.read().clone();
         let session = match session_id {
             Some(id) => match Session::open(id, storage.clone()).await? {
                 Some(session) => {
-                    session.set_model(model).await;
+                    session.set_model_selection(provider, model).await?;
                     session
                 }
                 None => {
-                    Session::new_with_source(
+                    Session::new_with_provider_source(
                         id.to_string(),
                         self.cwd.clone(),
+                        provider,
                         model,
                         source,
                         storage,
@@ -946,7 +960,15 @@ impl Agent {
             },
             None => {
                 let id = crate::types::new_id();
-                Session::new_with_source(id, self.cwd.clone(), model, source, storage).await?
+                Session::new_with_provider_source(
+                    id,
+                    self.cwd.clone(),
+                    provider,
+                    model,
+                    source,
+                    storage,
+                )
+                .await?
             }
         };
         // Mirror the live model selection: every run stamps the session with the
