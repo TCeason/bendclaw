@@ -1871,6 +1871,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           messageId,
           columns: renderer.termCols,
           open: false,
+          header: {
+            model: appState.model || agent.model,
+            thinkingLevel: configInfo?.thinkingLevel,
+            sessionId: sessionId ?? undefined,
+            cwd: agent.cwd,
+          },
         })
         const lines = [
           `  Shot: ${result.messageId}${result.chunkCount > 1 ? ` (${result.chunkCount} chunks)` : ''}`,

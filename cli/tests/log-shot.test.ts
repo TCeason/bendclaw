@@ -18,6 +18,8 @@ import {
   renderAssistantAnsi,
   renderShotAnsi,
   writeMarkdownShot,
+  formatShotModelLabel,
+  buildShotHeaderSpans,
 } from '../src/commands/log-shot.js'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
@@ -312,7 +314,7 @@ describe('log-shot ansi + render', () => {
     })
     expect(source).not.toBeNull()
     const html = buildShotHtml(source!)
-    expect(html).toContain('chunks: 2')
+    expect(html).toContain('2 chunks')
     expect(html).toContain('⏺')
     expect(html).toContain('Hello')
     expect(html).toContain('code')
@@ -324,6 +326,37 @@ describe('log-shot ansi + render', () => {
     expect(html).toContain('.w2') // CJK cell metric present in CSS
     expect(html).not.toContain('background:#39c5cf')
     expect(html).not.toContain('background:#56b6c2')
+  })
+
+  test('buildShotHtml header shows model badge without provider and meta chips', () => {
+    const source = resolveShotSource({
+      historyLines: [
+        { kind: 'assistant', id: 'a1', rawMarkdown: 'hi' },
+      ],
+    })
+    expect(source).not.toBeNull()
+    const html = buildShotHtml(source!, {
+      header: {
+        model: 'claude-opus-4-8',
+        thinkingLevel: 'high',
+        sessionId: '019f5621-a16e-7453-83e0-d649dd632c14',
+        cwd: `${process.env.HOME}/github/evotai/evot`,
+      },
+    })
+    expect(html).toContain('class="shot-header"')
+    expect(html).toContain('class="shot-model">claude-opus-4-8 · high</span>')
+    expect(html).not.toContain('@anthropic')
+    expect(html).not.toContain('provider')
+    expect(html).toContain('session 019f5621')
+    expect(html).toContain('~/github/evotai/evot')
+    expect(html).toContain('<title>evot shot · claude-opus-4-8 · high ·')
+  })
+
+  test('formatShotModelLabel omits provider and empty parts', () => {
+    expect(formatShotModelLabel({ model: 'gpt-5.5' })).toBe('gpt-5.5')
+    expect(formatShotModelLabel({ model: 'gpt-5.5', thinkingLevel: 'off' })).toBe('gpt-5.5 · thinking off')
+    expect(formatShotModelLabel({})).toBe('')
+    expect(buildShotHeaderSpans({ model: 'm' }).join('')).toContain('class="model">m</span>')
   })
 
   test('painted history lines keep TUI wrap 1:1 (no raw reflow)', () => {

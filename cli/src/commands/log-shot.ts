@@ -70,6 +70,14 @@ export interface ResolveShotSourceOptions {
   messageId?: string
 }
 
+/** Optional session/context fields shown in the shot HTML header. */
+export interface ShotHeaderMeta {
+  model?: string
+  thinkingLevel?: string
+  sessionId?: string
+  cwd?: string
+}
+
 export interface WriteMarkdownShotOptions extends ResolveShotSourceOptions {
   outDir?: string
   /** Terminal columns for wrap/table layout. Default SHOT_COLUMNS. */
@@ -78,6 +86,8 @@ export interface WriteMarkdownShotOptions extends ResolveShotSourceOptions {
   png?: boolean
   /** Open the HTML in the default browser after write. Default false. */
   open?: boolean
+  /** Extra header fields (model, thinking, session, cwd). */
+  header?: ShotHeaderMeta
 }
 
 export interface MarkdownShotResult {
@@ -401,7 +411,64 @@ export function ansiMaxColumns(ansi: string): number {
   return max
 }
 
-export function buildShotHtml(source: ShotSource, opts?: { columns?: number }): string {
+/** Format model · thinking for shot headers (provider intentionally omitted). */
+export function formatShotModelLabel(header?: ShotHeaderMeta): string {
+  if (!header) return ''
+  const model = header.model?.trim() ?? ''
+  const thinking = header.thinkingLevel?.trim() ?? ''
+  if (!model && !thinking) return ''
+  if (!thinking) return model
+  const level = thinking === 'off' ? 'thinking off' : thinking
+  return model ? `${model} · ${level}` : level
+}
+
+function shortenHomePath(path: string): string {
+  const home = process.env.HOME || process.env.USERPROFILE || ''
+  if (home && path.startsWith(home)) return '~' + path.slice(home.length)
+  return path
+}
+
+function shortSessionId(id: string): string {
+  if (id.length <= 12) return id
+  return id.slice(0, 8)
+}
+
+/** Secondary meta chips under the hero row (session / cwd / id / …). */
+export function buildShotMetaChips(args: {
+  header?: ShotHeaderMeta
+  idLabel: string
+  chunkCount: number
+  columns: number
+  rendererVersion?: string
+  ts?: string
+}): string[] {
+  const chips: string[] = []
+  const header = args.header
+  if (header?.sessionId?.trim()) {
+    chips.push(`session ${escapeHtml(shortSessionId(header.sessionId.trim()))}`)
+  }
+  if (header?.cwd?.trim()) {
+    chips.push(escapeHtml(shortenHomePath(header.cwd.trim())))
+  }
+  chips.push(`id ${escapeHtml(args.idLabel)}`)
+  if (args.chunkCount > 1) chips.push(`${args.chunkCount} chunks`)
+  chips.push(`${args.columns} cols`)
+  if (args.rendererVersion) chips.push(`renderer ${escapeHtml(args.rendererVersion)}`)
+  if (args.ts) chips.push(escapeHtml(args.ts))
+  return chips
+}
+
+/** @deprecated use buildShotMetaChips — kept for tests that only need model chip text. */
+export function buildShotHeaderSpans(header?: ShotHeaderMeta): string[] {
+  const modelLabel = formatShotModelLabel(header)
+  if (!modelLabel) return []
+  return [`<span class="model">${escapeHtml(modelLabel)}</span>`]
+}
+
+export function buildShotHtml(
+  source: ShotSource,
+  opts?: { columns?: number; header?: ShotHeaderMeta },
+): string {
   const meta = sourceMeta(source)
   const columns = opts?.columns ?? SHOT_COLUMNS
   const ansi = renderShotAnsi(source, columns)
@@ -412,13 +479,23 @@ export function buildShotHtml(source: ShotSource, opts?: { columns?: number }): 
   const idLabel = meta.lastMessageId && meta.lastMessageId !== meta.messageId
     ? `${meta.messageId}…${meta.lastMessageId}`
     : meta.messageId
+  const modelLabel = formatShotModelLabel(opts?.header)
+  const titleBits = ['evot shot', modelLabel, idLabel].filter(Boolean)
+  const metaChips = buildShotMetaChips({
+    header: opts?.header,
+    idLabel,
+    chunkCount: meta.chunkCount,
+    columns,
+    rendererVersion: meta.rendererVersion,
+    ts: meta.ts,
+  })
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>evot shot · ${escapeHtml(idLabel)}</title>
+<title>${escapeHtml(titleBits.join(' · '))}</title>
 <style>
   :root {
     color-scheme: dark;
@@ -427,6 +504,8 @@ export function buildShotHtml(source: ShotSource, opts?: { columns?: number }): 
     --muted: ${SHOT_MUTED};
     --border: ${SHOT_BORDER};
     --accent: #f0c674;
+    --accent-soft: rgba(240, 198, 116, 0.12);
+    --header-bg: #353644;
     --cell: 1ch;
   }
   * { box-sizing: border-box; }
@@ -451,16 +530,49 @@ export function buildShotHtml(source: ShotSource, opts?: { columns?: number }): 
     font-kerning: none;
     text-rendering: optimizeLegibility;
   }
-  header {
-    padding: 6px 12px;
+  header.shot-header {
+    padding: 12px 16px 10px;
     border-bottom: 1px solid var(--border);
+    background:
+      linear-gradient(180deg, var(--header-bg) 0%, var(--bg) 100%);
+    border-left: 3px solid var(--accent);
+  }
+  .shot-hero {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    margin-bottom: 8px;
+  }
+  .shot-brand {
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .shot-model {
+    color: var(--fg);
+    font-weight: 600;
+    font-size: 14px;
+    background: var(--accent-soft);
+    border: 1px solid rgba(240, 198, 116, 0.28);
+    border-radius: 999px;
+    padding: 2px 10px;
+  }
+  .shot-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 8px;
     color: var(--muted);
     font-size: 11px;
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
   }
-  header strong { color: var(--accent); font-weight: 600; }
+  .shot-meta .chip {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    padding: 2px 8px;
+  }
   main {
     padding: 12px 14px 24px;
     /* Column budget the TUI used for tables/wrap (+ small pad). */
@@ -495,13 +607,14 @@ export function buildShotHtml(source: ShotSource, opts?: { columns?: number }): 
 </style>
 </head>
 <body>
-<header>
-  <span><strong>evot shot</strong></span>
-  <span>id: ${escapeHtml(idLabel)}</span>
-  <span>chunks: ${meta.chunkCount}</span>
-  <span>cols: ${columns}</span>
-  ${meta.rendererVersion ? `<span>renderer: ${escapeHtml(meta.rendererVersion)}</span>` : ''}
-  ${meta.ts ? `<span>ts: ${escapeHtml(meta.ts)}</span>` : ''}
+<header class="shot-header">
+  <div class="shot-hero">
+    <span class="shot-brand">evot shot</span>
+    ${modelLabel ? `<span class="shot-model">${escapeHtml(modelLabel)}</span>` : ''}
+  </div>
+  <div class="shot-meta">
+    ${metaChips.map((c) => `<span class="chip">${c}</span>`).join('\n    ')}
+  </div>
 </header>
 <main>
 ${bodyHtml}
@@ -526,7 +639,7 @@ export async function writeMarkdownShot(opts: WriteMarkdownShotOptions): Promise
   const base = `shot-${stamp}-${safeId}`
   const htmlPath = join(outDir, `${base}.html`)
   const columns = opts.columns ?? SHOT_COLUMNS
-  const html = buildShotHtml(source, { columns })
+  const html = buildShotHtml(source, { columns, header: opts.header })
   writeFileSync(htmlPath, html, { mode: 0o600 })
 
   let pngPath: string | undefined
