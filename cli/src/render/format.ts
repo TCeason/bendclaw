@@ -290,6 +290,56 @@ export function summarizeInline(value: string, maxChars: number): string {
   return truncate(collapsed, maxChars)
 }
 
+/** Max visible columns for the first line of a collapsed bash command. */
+const BASH_CMD_FIRST_LINE_MAX = 120
+
+export interface BashCommandDisplay {
+  /** Text after `⌘ bash  ` on the card header. Empty means header is just the tool name. */
+  headline: string
+  /** Extra indented lines under the header (expanded multi-line commands only). */
+  detailLines: string[]
+}
+
+/**
+ * Format a bash tool command for the tool card.
+ *
+ * Collapsed: keep short one-liners; multi-line / huge heredocs become
+ * `first line … (+N lines)` so the transcript is not a wrapped wall of text.
+ * Expanded: multi-line commands are shown in full under the header (newlines
+ * preserved), matching readable shell transcript style rather than flattening.
+ */
+export function formatBashCommandDisplay(command: string, expanded = false): BashCommandDisplay {
+  const normalized = command.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const trimmed = normalized.replace(/\n+$/, '')
+  if (!trimmed) return { headline: '', detailLines: [] }
+
+  const lines = trimmed.split('\n')
+  const multi = lines.length > 1
+  const first = (lines[0] ?? '').trimEnd()
+
+  if (expanded && multi) {
+    // Header carries the first line; remaining lines sit indented underneath.
+    return {
+      headline: first.trimEnd(),
+      detailLines: lines.slice(1).map((line) => `  ${line}`),
+    }
+  }
+
+  if (!multi) {
+    const one = first.trim()
+    if (one.length <= BASH_CMD_FIRST_LINE_MAX) return { headline: one, detailLines: [] }
+    return { headline: `${one.slice(0, BASH_CMD_FIRST_LINE_MAX - 1)}…`, detailLines: [] }
+  }
+
+  // Collapsed multi-line: first non-empty-ish line + total line count.
+  const headRaw = first.trim() || lines.find((l) => l.trim())?.trim() || ''
+  const head =
+    headRaw.length <= BASH_CMD_FIRST_LINE_MAX
+      ? headRaw
+      : `${headRaw.slice(0, BASH_CMD_FIRST_LINE_MAX - 1)}…`
+  return { headline: `${head} … (+${lines.length} lines)`, detailLines: [] }
+}
+
 export function toolResultLines(content: string, isError: boolean, _toolName?: string, expanded?: boolean): string[] {
   const MAX_LINE_WIDTH = 256
 

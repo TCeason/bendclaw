@@ -95,6 +95,46 @@ describe('buildToolCall', () => {
     expect(card.text).not.toContain('✗')
   })
 
+  test('multi-line bash command collapses to first line + line count', () => {
+    const command = [
+      "cd /Users/bohu/github/evotai/llmproxy && python3 - <<'PY'",
+      'from pathlib import Path',
+      "path = Path('src/core/base_proxy.py')",
+      'print(path.read_text()[:20])',
+      'PY',
+    ].join('\n')
+    const lines = buildToolCall('bash', { command }, command)
+    const all = lines.map(l => l.text).join('\n')
+    expect(all).toContain('⌘ bash  cd /Users/bohu/github/evotai/llmproxy && python3 - <<\'PY\' … (+5 lines)')
+    // Full heredoc body must not be flattened into the header.
+    expect(all).not.toContain('from pathlib import Path')
+  })
+
+  test('expanded multi-line bash command preserves newlines under the header', () => {
+    const command = [
+      "cd /tmp && python3 - <<'PY'",
+      'from pathlib import Path',
+      'print(1)',
+      'PY',
+    ].join('\n')
+    const lines = buildToolCall('bash', { command }, command, true)
+    const all = lines.map(l => l.text).join('\n')
+    expect(all).toContain("⌘ bash  cd /tmp && python3 - <<'PY'")
+    expect(all).toContain('  from pathlib import Path')
+    expect(all).toContain('  print(1)')
+    expect(all).toContain('  PY')
+    expect(all).not.toContain('… (+')
+  })
+
+  test('long single-line bash command is truncated on the card header', () => {
+    const command = 'x'.repeat(200)
+    const lines = buildToolCall('bash', { command }, command)
+    const card = lines[lines.length - 1]!
+    expect(card.text).toContain('⌘ bash')
+    expect(card.text.endsWith('…')).toBe(true)
+    expect(card.text.length).toBeLessThan(command.length)
+  })
+
   test('regular tool call still surfaces reason lines up-front', () => {
     const lines = buildToolCall('bash', { reason: 'list project files' }, 'ls -la')
     const all = lines.map(l => l.text).join('\n')

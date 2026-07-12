@@ -10,7 +10,7 @@
 
 import { renderMarkdown, renderThinkingMarkdown } from './markdown.js'
 import { colorizeUnifiedDiff } from './diff.js'
-import { truncate, formatDuration, toolResultLines } from './format.js'
+import { truncate, formatDuration, toolResultLines, formatBashCommandDisplay } from './format.js'
 import type { UIMessage, UIToolCall } from '../term/app/types.js'
 
 // ---------------------------------------------------------------------------
@@ -35,12 +35,16 @@ function toolGlyph(name: string): ToolGlyph {
 }
 
 /** The single most useful argument to show beside the tool name. */
-function toolPrimaryArg(name: string, args: Record<string, unknown>, previewCommand?: string): string {
+function toolPrimaryArg(
+  name: string,
+  args: Record<string, unknown>,
+  previewCommand?: string,
+  expanded?: boolean,
+): string {
   const n = name.toLowerCase()
   if (n === 'bash') {
-    // Show the full command — the viewmodel wraps it to terminal width so the
-    // tail is never lost. Newlines collapse to spaces for a single logical line.
-    return (previewCommand ?? (args?.command as string) ?? '').replace(/\r?\n/g, ' ').trim()
+    const command = previewCommand ?? (args?.command as string) ?? ''
+    return formatBashCommandDisplay(command, expanded).headline
   }
   const path = (args?.path ?? args?.file ?? args?.file_path) as string | undefined
   if (path) return path
@@ -53,9 +57,14 @@ function toolPrimaryArg(name: string, args: Record<string, unknown>, previewComm
 
 /** Tool call line text: `<glyph> <name>  <primary-arg>`. The viewmodel paints
  *  the glyph and parts; status (✓/✗) lives on the subordinate result line. */
-function toolCallText(name: string, args: Record<string, unknown>, previewCommand?: string): string {
+function toolCallText(
+  name: string,
+  args: Record<string, unknown>,
+  previewCommand?: string,
+  expanded?: boolean,
+): string {
   const glyph = toolGlyph(name).icon
-  const primary = toolPrimaryArg(name, args, previewCommand)
+  const primary = toolPrimaryArg(name, args, previewCommand, expanded)
   return primary ? `${glyph} ${name}  ${primary}` : `${glyph} ${name}`
 }
 
@@ -177,6 +186,7 @@ export function buildToolCall(
   name: string,
   args: Record<string, unknown>,
   previewCommand?: string,
+  expanded?: boolean,
 ): OutputLine[] {
   // Reason fields surface the model's justification up-front.
   const lines: OutputLine[] = []
@@ -189,8 +199,15 @@ export function buildToolCall(
   lines.push({
     id: genId('tool'),
     kind: 'tool',
-    text: toolCallText(name, args, previewCommand),
+    text: toolCallText(name, args, previewCommand, expanded),
   })
+  // Expanded multi-line bash: keep newlines instead of flattening into a wall.
+  if (name.toLowerCase() === 'bash' && expanded) {
+    const command = previewCommand ?? (args?.command as string) ?? ''
+    for (const detail of formatBashCommandDisplay(command, true).detailLines) {
+      lines.push({ id: genId('tool'), kind: 'tool', text: detail })
+    }
+  }
   return lines
 }
 
@@ -198,7 +215,7 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
   const details = call.details as Record<string, unknown> | undefined
   const diff = typeof details?.diff === 'string' ? details.diff : undefined
   const args = diff ? { ...call.args, diff } : call.args
-  const lines = buildToolCall(call.name, args, call.previewCommand)
+  const lines = buildToolCall(call.name, args, call.previewCommand, expanded)
 
   if (call.status === 'queued') {
     const status = call.argsComplete ? 'ready...' : toolDraftSummary(call)
