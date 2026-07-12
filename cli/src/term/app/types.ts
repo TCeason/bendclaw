@@ -66,9 +66,22 @@ export interface RunStats {
   compactHistory: CompactRecord[]
   /** Last LLM call snapshot (used for per-call verbose display) */
   lastMessageStats: MessageStats | null
+  /**
+   * Usage from the most recently completed LLM call in this run.
+   * Spinner token/cache stats prefer this over run-cumulative totals so a long
+   * agent loop does not collapse into a meaningless 90%+ session average.
+   */
+  lastLlmUsage: LlmCallUsage | null
   /** Cumulative token breakdown across all LLM calls (kept for compatibility) */
   cumulativeStats: MessageStats
   systemPromptTokens: number
+}
+
+export interface LlmCallUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
 }
 
 export interface LlmCallDetail {
@@ -76,6 +89,8 @@ export interface LlmCallDetail {
   durationMs: number
   inputTokens: number
   outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
   ttfbMs: number
   ttftMs: number
   tokPerSec: number

@@ -114,9 +114,11 @@ export function isSlow(state: SpinnerState, now: number): boolean {
 }
 
 export interface SpinnerStats {
+  /** Uncached prompt tokens for the current run (or latest completed call). */
   inputTokens?: number
   outputTokens?: number
   cacheReadTokens?: number
+  cacheWriteTokens?: number
 }
 
 export function formatSpinnerLine(state: SpinnerState, now: number, stats?: SpinnerStats): string {
@@ -176,12 +178,14 @@ function formatSpinnerTokenSuffix(state: SpinnerState, now: number, stats?: Spin
   const inputTokens = stats?.inputTokens ?? 0
   const outputTokens = stats?.outputTokens ?? 0
   const cacheReadTokens = stats?.cacheReadTokens ?? 0
+  const cacheWriteTokens = stats?.cacheWriteTokens ?? 0
   const liveRate = formatLiveTokPerSec(state, now)
-  if (inputTokens > 0 || outputTokens > 0 || cacheReadTokens > 0) {
+  if (inputTokens > 0 || outputTokens > 0 || cacheReadTokens > 0 || cacheWriteTokens > 0) {
     const parts: string[] = []
     if (inputTokens > 0) parts.push(`↑${formatTokens(inputTokens)}`)
     if (outputTokens > 0) parts.push(`↓${formatTokens(outputTokens)}`)
-    if (cacheReadTokens > 0) parts.push(`cache ${formatCacheHitPercent(inputTokens, cacheReadTokens)}`)
+    const cacheLabel = formatCacheLabel(inputTokens, cacheReadTokens, cacheWriteTokens)
+    if (cacheLabel) parts.push(cacheLabel)
     return ` · ${parts.join(' ')}${liveRate ? ` · ${liveRate}` : ''}`
   }
   const tokenSuffix = state.tokenCount > 0 ? ` · ↓ ${formatTokens(state.tokenCount)} tokens` : ''
@@ -196,10 +200,52 @@ function formatLiveTokPerSec(state: SpinnerState, now: number): string {
   if (!Number.isFinite(rate) || rate <= 0) return ''
   return `~${Math.round(rate)} tok/s`
 }
-function formatCacheHitPercent(inputTokens: number, cacheReadTokens: number): string {
-  const total = inputTokens + cacheReadTokens
-  if (total <= 0) return '0%'
-  return `${Math.round(cacheReadTokens / total * 100)}%`
+
+/**
+ * Cache hit share of billed prompt tokens.
+ * Provider buckets are disjoint: uncached input + cache read + cache write.
+ */
+export function cacheHitPercent(
+  inputTokens: number,
+  cacheReadTokens: number,
+  cacheWriteTokens = 0,
+): number {
+  const total = inputTokens + cacheReadTokens + cacheWriteTokens
+  if (total <= 0) return 0
+  return Math.round((cacheReadTokens / total) * 100)
+}
+
+/** Compact spinner cache segment: absolute read amount + hit percent. */
+export function formatCacheLabel(
+  inputTokens: number,
+  cacheReadTokens: number,
+  cacheWriteTokens = 0,
+): string | null {
+  if (cacheReadTokens <= 0 && cacheWriteTokens <= 0) return null
+  const pct = cacheHitPercent(inputTokens, cacheReadTokens, cacheWriteTokens)
+  if (cacheReadTokens > 0) return `cache ${formatTokens(cacheReadTokens)} ${pct}%`
+  return `cache write ${formatTokens(cacheWriteTokens)}`
+}
+
+/**
+ * Pick spinner token stats from the last completed LLM call.
+ * Live output estimates replace ↓ while the next call is streaming.
+ */
+export function spinnerStatsFromLastUsage(
+  last: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
+  } | null | undefined,
+  liveOutputTokens = 0,
+): SpinnerStats {
+  return {
+    inputTokens: last?.inputTokens ?? 0,
+    outputTokens: liveOutputTokens > 0 ? liveOutputTokens : (last?.outputTokens ?? 0),
+    cacheReadTokens: last?.cacheReadTokens ?? 0,
+    cacheWriteTokens: last?.cacheWriteTokens ?? 0,
+  }
 }
 
 function estimateTokens(text: string): number {

@@ -1,7 +1,7 @@
 import { TermRenderer, type RenderFrame } from './renderer.js'
 import { parseInput, enableRawMode, enableEnhancedKeyboard, type KeyEvent } from './input.js'
 import { installBracketedPaste } from './bracketed-paste.js'
-import { createSpinnerState, advanceSpinner, formatSpinnerLine } from './spinner.js'
+import { createSpinnerState, advanceSpinner, formatSpinnerLine, spinnerStatsFromLastUsage } from './spinner.js'
 import { createSelectorState, selectorExpandItems, selectorClearQuery, selectorFocusOn, type SelectorItem } from './selector.js'
 import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
 import { buildUserMessage, type OutputLine } from '../render/output.js'
@@ -497,11 +497,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (isLoading && overlay.kind !== 'ask-user') {
       const activeLlmCall = toolCalls.length === 0 && (streamMachine?.activeLlmCall ?? false)
       const liveOutputTokens = activeLlmCall ? spinnerState.tokenCount : 0
-      const spinnerText = formatSpinnerLine(spinnerState, Date.now(), {
-        inputTokens: appState.sessionTokens.inputTokens,
-        outputTokens: appState.sessionTokens.outputTokens + liveOutputTokens,
-        cacheReadTokens: appState.sessionTokens.cacheReadTokens,
-      })
+      // Align with pi: absolute ↑/↓/cache from usage buckets, but cache hit % only
+      // from the latest completed LLM call — never session-cumulative averages.
+      const spinnerText = formatSpinnerLine(
+        spinnerState,
+        Date.now(),
+        spinnerStatsFromLastUsage(appState.currentRunStats.lastLlmUsage, liveOutputTokens),
+      )
       spinnerBlock = { lines: [{ spans: [{ text: spinnerText }] }], marginTop: 1 }
     }
 

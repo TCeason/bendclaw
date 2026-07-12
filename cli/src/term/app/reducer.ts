@@ -287,18 +287,24 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       // rate with the ttfb wait (queueing + prompt processing).
       const tokPerSec = streamingMs > 0 ? outputTok / (streamingMs / 1000) : 0
 
+      const cacheReadTok = (usage?.cache_read as number) ?? 0
+      const cacheWriteTok = (usage?.cache_write as number) ?? 0
+
       if (usage) {
         stats.inputTokens += inputTok
         stats.outputTokens += outputTok
-        stats.cacheReadTokens += (usage.cache_read as number) ?? 0
-        stats.cacheWriteTokens += (usage.cache_write as number) ?? 0
+        stats.cacheReadTokens += cacheReadTok
+        stats.cacheWriteTokens += cacheWriteTok
+        stats.lastLlmUsage = {
+          inputTokens: inputTok,
+          outputTokens: outputTok,
+          cacheReadTokens: cacheReadTok,
+          cacheWriteTokens: cacheWriteTok,
+        }
 
         // Provider usage buckets are disjoint.
         const realContextTokens =
-          inputTok +
-          ((usage.cache_read as number) ?? 0) +
-          ((usage.cache_write as number) ?? 0) +
-          outputTok
+          inputTok + cacheReadTok + cacheWriteTok + outputTok
         if (realContextTokens > 0) {
           stats.contextTokens = realContextTokens
         }
@@ -309,6 +315,8 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         durationMs,
         inputTokens: inputTok,
         outputTokens: outputTok,
+        cacheReadTokens: cacheReadTok,
+        cacheWriteTokens: cacheWriteTok,
         ttfbMs,
         ttftMs,
         tokPerSec,
@@ -329,7 +337,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         sessionTokens: {
           inputTokens: state.sessionTokens.inputTokens + inputTok,
           outputTokens: state.sessionTokens.outputTokens + outputTok,
-          cacheReadTokens: state.sessionTokens.cacheReadTokens + ((usage?.cache_read as number) ?? 0),
+          cacheReadTokens: state.sessionTokens.cacheReadTokens + cacheReadTok,
           contextTokens: stats.contextTokens,
           contextWindow: stats.contextWindow,
         },

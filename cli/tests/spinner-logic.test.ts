@@ -6,6 +6,7 @@ import {
   recordStreamDelta,
   isSlow,
   formatSpinnerLine,
+  spinnerStatsFromLastUsage,
 } from '../src/term/spinner.js'
 import stripAnsi from 'strip-ansi'
 
@@ -212,12 +213,59 @@ describe('formatSpinnerLine', () => {
     expect(line).toContain('↓ 100 tokens')
   })
 
-  test('shows session token stats when provided', () => {
+  test('shows last-call token stats with absolute cache amount when provided', () => {
     const now = Date.now()
     const state = { ...createSpinnerState(), phaseStartedAt: now - 5000 }
-    const line = stripAnsi(formatSpinnerLine(state, now, { inputTokens: 408000, outputTokens: 1100, cacheReadTokens: 89000 }))
-    expect(line).toContain('↑408k ↓1.1k cache 18%')
+    const line = stripAnsi(formatSpinnerLine(state, now, {
+      inputTokens: 408000,
+      outputTokens: 1100,
+      cacheReadTokens: 89000,
+    }))
+    // cache% = 89k / (408k + 89k) ≈ 18%; absolute read is shown so a high
+    // percentage can be sanity-checked against the real volume (pi: CH% from
+    // latest call + R absolute separately).
+    expect(line).toContain('↑408k ↓1.1k cache 89k 18%')
     expect(line).not.toContain('tokens')
+  })
+
+  test('cache hit percent includes cache-write tokens in the denominator', () => {
+    const now = Date.now()
+    const state = { ...createSpinnerState(), phaseStartedAt: now - 5000 }
+    // 80 read / (10 + 80 + 10) = 80% — same formula as pi CH%
+    const line = stripAnsi(formatSpinnerLine(state, now, {
+      inputTokens: 10_000,
+      outputTokens: 100,
+      cacheReadTokens: 80_000,
+      cacheWriteTokens: 10_000,
+    }))
+    expect(line).toContain('cache 80k 80%')
+  })
+
+  test('spinnerStatsFromLastUsage prefers last call and live ↓', () => {
+    const last = {
+      inputTokens: 12_000,
+      outputTokens: 800,
+      cacheReadTokens: 450_000,
+      cacheWriteTokens: 0,
+    }
+    expect(spinnerStatsFromLastUsage(last)).toEqual({
+      inputTokens: 12_000,
+      outputTokens: 800,
+      cacheReadTokens: 450_000,
+      cacheWriteTokens: 0,
+    })
+    expect(spinnerStatsFromLastUsage(last, 320)).toEqual({
+      inputTokens: 12_000,
+      outputTokens: 320,
+      cacheReadTokens: 450_000,
+      cacheWriteTokens: 0,
+    })
+    expect(spinnerStatsFromLastUsage(null, 50)).toEqual({
+      inputTokens: 0,
+      outputTokens: 50,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    })
   })
 
   test('shows live tok/s while streaming text', () => {
