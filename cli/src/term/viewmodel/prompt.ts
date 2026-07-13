@@ -132,12 +132,8 @@ export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOpt
     blocks.push(block([line(dim('  Press Ctrl+C again to exit'))]))
   }
 
-  if (input.queuedMessages.length > 0) {
-    const qLines: StyledLine[] = input.queuedMessages.map(msg =>
-      line(dim('  ❯ '), dim(msg))
-    )
-    blocks.push(block(qLines))
-  }
+  // Queued mid-stream messages render above the spinner/prompt unit in
+  // buildFrame (formatQueuedMessageLines), not under the status footer.
 
   const footerBlocks = buildFooter(input, columns)
   blocks.push(footerBlocks)

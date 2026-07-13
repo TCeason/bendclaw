@@ -2,5 +2,6 @@ export { type ViewBlock, type StyledLine, type StyledSpan, blocksToLines, styled
 export { buildOutputBlocks } from './output.js'
 export { updateLiveHeight, type LiveHeightUpdate } from './live-height.js'
 export { bottomAnchorFiller } from './bottom-anchor.js'
+export { formatQueuedMessageLines } from './queued-messages.js'
 export { buildPromptBlocks, type PromptVMInput } from './prompt.js'
 export { buildOverlayBlocks, buildAskBlocks, type OverlayState } from './overlays.js'

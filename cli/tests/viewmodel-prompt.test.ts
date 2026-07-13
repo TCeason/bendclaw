@@ -91,10 +91,14 @@ describe('buildPromptBlocks', () => {
     expect(result).toContain('Press Ctrl+C again to exit')
   })
 
-  test('shows queued messages', () => {
+  test('shows queued messages above the prompt via buildFrame helper contract', () => {
+    // Queue rendering moved out of the prompt footer (easy to miss under the
+    // status line) into formatQueuedMessageLines above the spinner. Prompt
+    // itself no longer embeds queued text.
     const result = renderPlain(defaultInput({ queuedMessages: ['msg1', 'msg2'] }))
-    expect(result).toContain('msg1')
-    expect(result).toContain('msg2')
+    expect(result).not.toContain('msg1')
+    expect(result).not.toContain('msg2')
+    expect(result).not.toContain('Queued:')
   })
 
   test('shows dashboard link when url is set', () => {

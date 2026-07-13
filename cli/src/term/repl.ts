@@ -20,6 +20,7 @@ import {
   buildOverlayBlocks,
   updateLiveHeight,
   bottomAnchorFiller,
+  formatQueuedMessageLines,
   blocksToLines,
   type OverlayState,
   type PromptVMInput,
@@ -95,6 +96,7 @@ import { findPreviousSession, shouldPreloadStartupSessions, selectResumeMessages
 import { handleSelectorControl } from './app/selector-control.js'
 import { decideReplControl, type ReplControlAction } from './app/repl-control.js'
 import { replaceOrPushStatusLine } from './app/status-line.js'
+import { mergeQueuedIntoEditorText } from './app/queue-restore.js'
 import { extractAtPrefix, completeAtFile } from '../commands/file-completion.js'
 import { GitInfoProvider } from './git-info.js'
 
@@ -508,13 +510,24 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       spinnerBlock = { lines: [{ spans: [{ text: spinnerText }] }], marginTop: 1 }
     }
 
-    // 4–5. Overlay + spinner + prompt form the sticky footer unit. When the
-    // transcript is shorter than the terminal, pad between body and footer so
-    // the input stays on the last rows instead of floating mid-screen.
+    // 4–5. Queue + overlay + spinner + prompt form the sticky footer unit.
+    // Queue sits above the spinner (pi-style) so a message that left the input
+    // box still has a labeled home, with an esc hint to pull it back.
     const footerBlocks: ViewBlock[] = []
+    const queueLines = formatQueuedMessageLines(queuedUserMessages)
+    if (queueLines.length > 0) {
+      footerBlocks.push({
+        lines: queueLines.map(text => ({ spans: [{ text, dim: true }] })),
+        marginTop: 1,
+      })
+      // Queue already owns the blank line above the footer unit.
+      if (spinnerBlock) spinnerBlock = { ...spinnerBlock, marginTop: 0 }
+    }
     footerBlocks.push(...buildOverlayBlocks(overlay, renderer.termCols))
     if (spinnerBlock) footerBlocks.push(spinnerBlock)
-    footerBlocks.push(...buildPromptBlocks(getPromptVM(), { attachedAbove: spinnerBlock !== null }))
+    footerBlocks.push(...buildPromptBlocks(getPromptVM(), {
+      attachedAbove: spinnerBlock !== null || queueLines.length > 0,
+    }))
 
     const bodyLineCount = blocksToLines(blocks).length
     const footerLineCount = blocksToLines(footerBlocks).length
@@ -1101,8 +1114,21 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     flushStreamContent()
     streamMachine = null
     stopSpinner()
-    drainQueuedUserMessages()
+    // Mid-stream queue was steered but the run is aborted — put it back in the
+    // editor so the user can edit and press Enter, instead of committing it as
+    // history under the Interrupted notice.
+    restoreQueuedUserMessagesToEditor()
     commitLines([{ id, kind: 'system', text }])
+  }
+
+  /** Move mid-stream queued messages into the input box after an interrupt. */
+  function restoreQueuedUserMessagesToEditor() {
+    if (queuedUserMessages.length === 0) return
+    const messages = queuedUserMessages
+    queuedUserMessages = []
+    const next = mergeQueuedIntoEditorText(messages, getEditorText(editor))
+    editor = insertText(clearEditor(editor), next)
+    renderer.requestRender()
   }
 
   function formatLogPaths(logPath: string | null, markdownPath: string | null): string | null {
