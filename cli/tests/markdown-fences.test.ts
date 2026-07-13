@@ -40,8 +40,8 @@ describe('shell-close-before-md-boundary render', () => {
     const md = [
       '```bash',
       'cursor-agent --model grok',
-      '## 排除的项目',
-      '| 项目 | 原因 |',
+      '## Excluded projects',
+      '| Project | Reason |',
       '|---|---|',
       '| foo | `bar` |',
     ].join('\n')
@@ -49,14 +49,45 @@ describe('shell-close-before-md-boundary render', () => {
     const result = stripAnsi(renderMarkdown(md)).replace(/\u200b/g, '')
 
     expect(result).toContain('cursor-agent --model grok')
-    expect(result).toContain('排除的项目')
-    // Heading must not sit inside an indented code block.
-    expect(result).not.toMatch(/^ {2}## 排除的项目/m)
-    // Table separator must be consumed by the table renderer.
+    expect(result).toContain('Excluded projects')
+    expect(result).not.toMatch(/^ {2}## Excluded projects/m)
     expect(result).not.toContain('|---|---|')
     expect(result).toContain('┌')
-    // Inline code inside the table cell should render, not leak backticks as
-    // part of a swallowed code fence body.
     expect(result).toContain('bar')
+  })
+
+  test('bash # comments stay inside the fence (not ATX H1 early-close)', () => {
+    const md = [
+      '## Usage',
+      '',
+      '```bash',
+      '# Edit config (auto-created on first run)',
+      "$EDITOR ~/.db0/db0.env",
+      '',
+      '# Uncomment and fill in, for example:',
+      '# DB0_MODEL=anthropic/claude-sonnet-4-6',
+      '',
+      '# Show resolved config (keys redacted)',
+      'cargo run -- config',
+      '```',
+      '',
+      '## Layout',
+      '',
+      '```text',
+      'src/config/',
+      '  mod.rs',
+      '```',
+    ].join('\n')
+
+    const result = stripAnsi(renderMarkdown(md)).replace(/\u200b/g, '')
+
+    expect(result).toContain('# Uncomment and fill in, for example:')
+    expect(result).toContain('cargo run -- config')
+    expect(result).toMatch(/^ {0,2}Layout/m)
+    expect(result).not.toMatch(/^ {2,}## Layout/m)
+    expect(result).toContain('src/config/')
+    expect(result).toContain('mod.rs')
+    const bareFenceLines = result.split('\n').filter(l => /^ {0,2}```\s*$/.test(l))
+    expect(bareFenceLines.length).toBeLessThanOrEqual(4)
   })
 })

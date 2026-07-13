@@ -129,8 +129,9 @@ export function isShellFenceLanguage(lang: string | null): boolean {
 export function looksLikeCodeCommentOrContinuation(line: string, lang: string | null): boolean {
   const trimmed = line.trim()
   if (!trimmed) return false
-  // Common line comments across languages (SQL `--`, C-like `//`, shell/python `#`
-  // that is not an ATX heading).
+  // Shell `# foo` is a comment, not ATX H1; `##` still closes the fence.
+  if (isShellFenceLanguage(lang) && /^#(?!#)/.test(trimmed)) return true
+  // SQL `--`, C-like `//`, python `#` that is not an ATX heading.
   if (/^(?:--|\/\/|\/\*|\*(?:\s|$)|#(?!#{0,5}\s|#))/.test(trimmed)) return true
   // SQL / pseudo-code continuation keywords after a prior statement.
   if (/^(AND|OR|JOIN|LEFT|RIGHT|INNER|OUTER|WHERE|GROUP|ORDER|LIMIT|HAVING|UNION|ELSE|ELIF|THEN|DO|DONE|FI|THEN)\b/i.test(trimmed)) {
