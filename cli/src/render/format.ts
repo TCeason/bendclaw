@@ -293,6 +293,13 @@ export function summarizeInline(value: string, maxChars: number): string {
 /** Max visible columns for the first line of a collapsed bash command. */
 const BASH_CMD_FIRST_LINE_MAX = 120
 
+/** Shared expand/collapse copy for bash commands, tool results, and progress. */
+export function expandLinesHint(n: number): string {
+  return `(+${n} lines, ctrl+o to expand)`
+}
+
+export const COLLAPSE_HINT = '(ctrl+o to collapse)'
+
 export interface BashCommandDisplay {
   /** Text after `⌘ bash  ` on the card header. Empty means header is just the tool name. */
   headline: string
@@ -304,7 +311,8 @@ export interface BashCommandDisplay {
  * Format a bash tool command for the tool card.
  *
  * Collapsed: keep short one-liners; multi-line / huge heredocs become
- * `first line … (+N lines)` so the transcript is not a wrapped wall of text.
+ * `first line … (+N lines, ctrl+o to expand)` so the transcript is not a
+ * wrapped wall of text and the expand shortcut matches tool-result cards.
  * Expanded: multi-line commands are shown in full under the header (newlines
  * preserved), matching readable shell transcript style rather than flattening.
  */
@@ -331,13 +339,13 @@ export function formatBashCommandDisplay(command: string, expanded = false): Bas
     return { headline: `${one.slice(0, BASH_CMD_FIRST_LINE_MAX - 1)}…`, detailLines: [] }
   }
 
-  // Collapsed multi-line: first non-empty-ish line + total line count.
+  // Collapsed multi-line: first non-empty-ish line + shared expand hint.
   const headRaw = first.trim() || lines.find((l) => l.trim())?.trim() || ''
   const head =
     headRaw.length <= BASH_CMD_FIRST_LINE_MAX
       ? headRaw
       : `${headRaw.slice(0, BASH_CMD_FIRST_LINE_MAX - 1)}…`
-  return { headline: `${head} … (+${lines.length} lines)`, detailLines: [] }
+  return { headline: `${head} … ${expandLinesHint(lines.length)}`, detailLines: [] }
 }
 
 export function toolResultLines(content: string, isError: boolean, _toolName?: string, expanded?: boolean): string[] {
@@ -363,7 +371,7 @@ export function toolResultLines(content: string, isError: boolean, _toolName?: s
     // only a single hint with the full line count; ctrl+o expands it. A
     // single-line result has nothing to collapse, so it's shown inline.
     if (allLines.length > 1) {
-      return [`... (+${allLines.length} lines, ctrl+o to expand)`]
+      return [`... ${expandLinesHint(allLines.length)}`]
     }
     return allLines.map(capLine)
   }

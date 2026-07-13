@@ -95,7 +95,7 @@ describe('buildToolCall', () => {
     expect(card.text).not.toContain('✗')
   })
 
-  test('multi-line bash command collapses to first line + line count', () => {
+  test('multi-line bash command collapses to first line + expand hint', () => {
     const command = [
       "cd /Users/bohu/github/evotai/llmproxy && python3 - <<'PY'",
       'from pathlib import Path',
@@ -105,7 +105,7 @@ describe('buildToolCall', () => {
     ].join('\n')
     const lines = buildToolCall('bash', { command }, command)
     const all = lines.map(l => l.text).join('\n')
-    expect(all).toContain('⌘ bash  cd /Users/bohu/github/evotai/llmproxy && python3 - <<\'PY\' … (+5 lines)')
+    expect(all).toContain("⌘ bash  cd /Users/bohu/github/evotai/llmproxy && python3 - <<'PY' … (+5 lines, ctrl+o to expand)")
     // Full heredoc body must not be flattened into the header.
     expect(all).not.toContain('from pathlib import Path')
   })
@@ -123,6 +123,7 @@ describe('buildToolCall', () => {
     expect(all).toContain('  from pathlib import Path')
     expect(all).toContain('  print(1)')
     expect(all).toContain('  PY')
+    expect(all).toContain('ctrl+o to collapse')
     expect(all).not.toContain('… (+')
   })
 

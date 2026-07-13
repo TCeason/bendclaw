@@ -10,7 +10,7 @@
 
 import { renderMarkdown, renderThinkingMarkdown } from './markdown.js'
 import { colorizeUnifiedDiff } from './diff.js'
-import { truncate, formatDuration, toolResultLines, formatBashCommandDisplay } from './format.js'
+import { truncate, formatDuration, toolResultLines, formatBashCommandDisplay, expandLinesHint, COLLAPSE_HINT } from './format.js'
 import type { UIMessage, UIToolCall } from '../term/app/types.js'
 
 // ---------------------------------------------------------------------------
@@ -202,10 +202,19 @@ export function buildToolCall(
     text: toolCallText(name, args, previewCommand, expanded),
   })
   // Expanded multi-line bash: keep newlines instead of flattening into a wall.
+  // Collapse hint matches expanded tool results / progress cards.
   if (name.toLowerCase() === 'bash' && expanded) {
     const command = previewCommand ?? (args?.command as string) ?? ''
-    for (const detail of formatBashCommandDisplay(command, true).detailLines) {
+    const details = formatBashCommandDisplay(command, true).detailLines
+    for (const detail of details) {
       lines.push({ id: genId('tool'), kind: 'tool', text: detail })
+    }
+    if (details.length > 0) {
+      lines.push({
+        id: genId('tool-hint'),
+        kind: 'tool_result',
+        text: `  \x1b[2m${COLLAPSE_HINT}\x1b[0m`,
+      })
     }
   }
   return lines
@@ -305,7 +314,7 @@ export function buildToolResult(
       lines.push({
         id: genId('tool-hint'),
         kind: 'tool_result',
-        text: '  \x1b[2m(ctrl+o to collapse)\x1b[0m',
+        text: `  \x1b[2m${COLLAPSE_HINT}\x1b[0m`,
       })
     }
   }
@@ -326,14 +335,14 @@ export function buildToolProgress(name: string, text: string, expanded?: boolean
       lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${l}` })
     }
     if (progressLines.length > 1) {
-      lines.push({ id: genId('tool-hint'), kind: 'tool_result', text: '  \x1b[2m(ctrl+o to collapse)\x1b[0m' })
+      lines.push({ id: genId('tool-hint'), kind: 'tool_result', text: `  \x1b[2m${COLLAPSE_HINT}\x1b[0m` })
     }
     return lines
   }
   // Collapsed: no content preview — the header already carries the line count,
   // so a multiline body just adds a single expand hint (matching tool results).
   if (total > 1) {
-    lines.push({ id: genId('tool-hint'), kind: 'tool_result', text: `  \x1b[2m... (+${total} lines, ctrl+o to expand)\x1b[0m` })
+    lines.push({ id: genId('tool-hint'), kind: 'tool_result', text: `  \x1b[2m... ${expandLinesHint(total)}\x1b[0m` })
   } else {
     lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${progressLines[0] ?? ''}` })
   }
