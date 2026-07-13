@@ -19,6 +19,7 @@ import {
   buildPromptBlocks,
   buildOverlayBlocks,
   updateLiveHeight,
+  bottomAnchorFiller,
   blocksToLines,
   type OverlayState,
   type PromptVMInput,
@@ -507,15 +508,24 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       spinnerBlock = { lines: [{ spans: [{ text: spinnerText }] }], marginTop: 1 }
     }
 
-    // 4. Overlay
-    blocks.push(...buildOverlayBlocks(overlay, renderer.termCols))
+    // 4–5. Overlay + spinner + prompt form the sticky footer unit. When the
+    // transcript is shorter than the terminal, pad between body and footer so
+    // the input stays on the last rows instead of floating mid-screen.
+    const footerBlocks: ViewBlock[] = []
+    footerBlocks.push(...buildOverlayBlocks(overlay, renderer.termCols))
+    if (spinnerBlock) footerBlocks.push(spinnerBlock)
+    footerBlocks.push(...buildPromptBlocks(getPromptVM(), { attachedAbove: spinnerBlock !== null }))
 
-    // 5. Spinner + prompt form one anchored footer unit. The spinner owns the
-    // spacing above the unit; suppress the prompt's usual top margin so there is
-    // no blank row between spinner and border.
-    if (spinnerBlock) blocks.push(spinnerBlock)
-    const promptBlocks = buildPromptBlocks(getPromptVM(), { attachedAbove: spinnerBlock !== null })
-    blocks.push(...promptBlocks)
+    const bodyLineCount = blocksToLines(blocks).length
+    const footerLineCount = blocksToLines(footerBlocks).length
+    const filler = bottomAnchorFiller(bodyLineCount, footerLineCount, renderer.termRows)
+    if (filler > 0) {
+      blocks.push({
+        lines: Array.from({ length: filler }, () => ({ spans: [{ text: '' }] })),
+        marginTop: 0,
+      })
+    }
+    blocks.push(...footerBlocks)
 
     return { lines: blocksToLines(blocks) }
   }
