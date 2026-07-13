@@ -268,7 +268,7 @@ static SHARED_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock
 /// which `stream_http` maps to [`ProviderError::Network`] and the retry policy
 /// then reconnects. Without it a half-open socket can hang for the OS TCP
 /// timeout (~2 h on macOS), leaving the UI stuck on "thinking".
-const STREAM_READ_TIMEOUT: Duration = Duration::from_secs(60);
+const STREAM_READ_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Timeout for the connect phase only (TCP + TLS handshake).
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
