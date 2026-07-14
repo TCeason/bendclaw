@@ -24,6 +24,7 @@ const SYNC_START = '\x1b[?2026h'
 const SYNC_END = '\x1b[?2026l'
 const CLEAR_LINE = '\x1b[2K'
 const CLEAR_SCREEN = '\x1b[2J\x1b[H\x1b[3J'
+const CLEAR_VIEWPORT = '\x1b[2J\x1b[H'
 const HIDE_CURSOR = '\x1b[?25l'
 const SHOW_CURSOR = '\x1b[?25h'
 const NOWRAP = '\x1b[?7l'   // Disable auto-wrap (DECAWM off)
@@ -223,6 +224,27 @@ export class TermRenderer {
       this.positionHardwareCursor(cursorPos, newLines.length)
     }
 
+    // Repaint only the visible tail. This is used when a shorter frame would
+    // otherwise remain mapped to the old, lower scrollback viewport and leave
+    // blank terminal rows below the prompt.
+    const renderTail = (): void => {
+      const viewportTop = Math.max(0, newLines.length - height)
+      let buffer = SYNC_START + CLEAR_VIEWPORT
+      for (let i = viewportTop; i < newLines.length; i++) {
+        if (i > viewportTop) buffer += '\r\n'
+        buffer += newLines[i]
+      }
+      buffer += SYNC_END
+      this.write(buffer)
+      this.hardwareCursorRow = Math.max(0, newLines.length - 1)
+      this.maxLinesRendered = newLines.length
+      this.previousViewportTop = viewportTop
+      this.previousLines = newLines
+      this.previousWidth = width
+      this.previousHeight = height
+      this.positionHardwareCursor(cursorPos, newLines.length)
+    }
+
     // First render
     if (this.previousLines.length === 0 && !widthChanged && !heightChanged) {
       fullRender(false)
@@ -285,6 +307,11 @@ export class TermRenderer {
     // All changes are in deleted lines (content shrunk)
     if (firstChanged >= newLines.length) {
       if (this.previousLines.length > newLines.length) {
+        const targetViewportTop = Math.max(0, newLines.length - height)
+        if (targetViewportTop < prevViewportTop) {
+          renderTail()
+          return
+        }
         let buffer = SYNC_START
         // Move to end of new content (clamp to 0 for empty content)
         const targetRow = Math.max(0, newLines.length - 1)
@@ -321,6 +348,7 @@ export class TermRenderer {
       return
     }
 
+    const targetViewportTop = Math.max(0, newLines.length - height)
     if (firstChanged < prevViewportTop) {
       const delta = newLines.length - this.previousLines.length
 
@@ -347,10 +375,23 @@ export class TermRenderer {
 
       if (delta === 0) {
         firstChanged = prevViewportTop
+      } else if (targetViewportTop < prevViewportTop) {
+        renderTail()
+        return
       } else {
         fullRender(true)
         return
       }
+    }
+
+    // A frame can shrink from taller than the terminal to exactly one screen
+    // after streaming content is committed or interrupted. Its logical tail then
+    // belongs above the current scrollback viewport. Cursor-up cannot recover
+    // those rows, so an in-place diff would leave the prompt floating with blank
+    // rows below it. Repaint the new visible tail instead.
+    if (targetViewportTop < prevViewportTop) {
+      renderTail()
+      return
     }
 
     // --- Build differential update buffer ---

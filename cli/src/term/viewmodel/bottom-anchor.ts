@@ -1,6 +1,7 @@
 /**
- * How many blank rows to insert between the transcript body and the
- * spinner/prompt footer so a short frame still ends on the last terminal row.
+ * How many blank rows to insert above the transcript body so a short frame
+ * still ends on the last terminal row, with body + footer packed together at
+ * the bottom (no mid-frame gap that pins content to the top).
  *
  * When body + footer already fill (or exceed) the terminal, returns 0 and the
  * normal scroll path keeps the newest content at the bottom.

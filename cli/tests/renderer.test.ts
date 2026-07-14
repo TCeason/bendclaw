@@ -152,6 +152,46 @@ describe('TermRenderer', () => {
       renderer.destroy()
     })
 
+    test('reanchors a frame that shrinks above the current viewport', async () => {
+      const { renderer, stdout } = createRenderer()
+      stdout.rows = 8
+      renderer.init()
+
+      let lines = Array.from({ length: 16 }, (_, i) => `old ${i}`)
+      renderer.setRenderCallback(() => lines)
+      await renderFrame(renderer)
+
+      stdout.clear()
+      // Short frame already bottom-packed by the viewmodel (top pad + body +
+      // footer). After a shrink that leaves the logical tail above the old
+      // viewport, repaint that full screen from home without wiping scrollback.
+      lines = [
+        '',
+        '',
+        'history',
+        'Thinking...',
+        '────────',
+        '❯ ',
+        '────────',
+        'footer',
+      ]
+      await renderFrame(renderer)
+
+      const out = stdout.output
+      expect(out).toContain('\x1b[2J\x1b[H')
+      expect(out).not.toContain('\x1b[3J')
+      expect(out).toContain('Thinking...')
+      expect(out).toContain('footer')
+      // Only the visible tail is emitted after clearing; stale scrollback rows
+      // must not be replayed through the terminal.
+      expect(out).not.toContain('old 0')
+      // Content must sit under the top pad, not flush against the home row with
+      // a large blank band under the conversation.
+      const cleared = out.slice(out.indexOf('\x1b[2J\x1b[H') + '\x1b[2J\x1b[H'.length)
+      expect(cleared.startsWith('\r\n\r\nhistory')).toBe(true)
+      renderer.destroy()
+    })
+
     test('uses synchronized output wrapping', async () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()

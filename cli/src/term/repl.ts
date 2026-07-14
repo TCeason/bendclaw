@@ -531,16 +531,21 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
     const bodyLineCount = blocksToLines(blocks).length
     const footerLineCount = blocksToLines(footerBlocks).length
+    // Pad above the body (not between body and footer). Short frames must end
+    // on the last terminal row with the transcript sitting directly above the
+    // prompt — a mid-frame gap pins content to the top and leaves a large blank
+    // band under the conversation.
     const filler = bottomAnchorFiller(bodyLineCount, footerLineCount, renderer.termRows)
+    const frameBlocks: ViewBlock[] = []
     if (filler > 0) {
-      blocks.push({
+      frameBlocks.push({
         lines: Array.from({ length: filler }, () => ({ spans: [{ text: '' }] })),
         marginTop: 0,
       })
     }
-    blocks.push(...footerBlocks)
+    frameBlocks.push(...blocks, ...footerBlocks)
 
-    return { lines: blocksToLines(blocks) }
+    return { lines: blocksToLines(frameBlocks) }
   }
 
   renderer.setRenderCallback(buildFrame)

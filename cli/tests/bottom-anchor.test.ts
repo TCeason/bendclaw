@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { bottomAnchorFiller } from '../src/term/viewmodel/bottom-anchor.js'
 
 describe('bottomAnchorFiller', () => {
-  test('pads short frames so body + footer fill the terminal', () => {
+  test('pads short frames so body + footer fill the terminal from the bottom', () => {
+    // Filler is placed above the body; body and footer stay packed together.
     expect(bottomAnchorFiller(10, 6, 40)).toBe(24)
   })
 
