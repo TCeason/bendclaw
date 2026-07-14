@@ -1912,6 +1912,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             thinkingLevel: configInfo?.thinkingLevel,
             sessionId: sessionId ?? undefined,
             cwd: agent.cwd,
+            branch: gitInfo.getBranch() ?? undefined,
           },
         })
         const lines = [

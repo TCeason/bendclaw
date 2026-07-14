@@ -20,6 +20,7 @@ import {
   writeMarkdownShot,
   formatShotModelLabel,
   buildShotHeaderSpans,
+  shotWindowSize,
 } from '../src/commands/log-shot.js'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
@@ -328,7 +329,7 @@ describe('log-shot ansi + render', () => {
     expect(html).not.toContain('background:#56b6c2')
   })
 
-  test('buildShotHtml header shows model badge without provider and meta chips', () => {
+  test('buildShotHtml header shows model badge and slim meta with rules and footer', () => {
     const source = resolveShotSource({
       historyLines: [
         { kind: 'assistant', id: 'a1', rawMarkdown: 'hi' },
@@ -341,14 +342,25 @@ describe('log-shot ansi + render', () => {
         thinkingLevel: 'high',
         sessionId: '019f5621-a16e-7453-83e0-d649dd632c14',
         cwd: `${process.env.HOME}/github/evotai/evot`,
+        branch: 'main',
       },
     })
     expect(html).toContain('class="shot-header"')
     expect(html).toContain('class="shot-model">claude-opus-4-8 · high</span>')
     expect(html).not.toContain('@anthropic')
     expect(html).not.toContain('provider')
-    expect(html).toContain('session 019f5621')
-    expect(html).toContain('~/github/evotai/evot')
+    // No workspace path on the share image; time sits on the hero row.
+    expect(html).not.toContain('~/github/evotai/evot')
+    expect(html).not.toContain('session 019f5621')
+    expect(html).not.toContain('100 cols')
+    expect(html).not.toContain('class="chip"')
+    expect(html).toContain('class="shot-time"')
+    // Clear rules separate chrome from content
+    expect(html).toContain('class="shot-rule"')
+    // Footer explains how to generate
+    expect(html).toContain('class="shot-footer"')
+    expect(html).toContain('/log shot')
+    expect(html).toContain('Generated with')
     expect(html).toContain('<title>evot shot · claude-opus-4-8 · high ·')
   })
 
@@ -481,9 +493,24 @@ plain body with enough width xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
       expect(body).toContain('Snowflake MV')
       expect(body).toContain('Conclusion')
       expect(body).toContain('⏺')
+      expect(body).toContain('padding: 14px 16px 18px')
+      expect(body).toContain('class="shot-footer"')
+      expect(body).toContain('/log shot')
+      expect(body).toContain('class="shot-rule"')
       expect(result.pngPath).toBeUndefined()
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  test('shotWindowSize tracks content height without a 900px floor', () => {
+    const short = shotWindowSize(80, 20)
+    expect(short.height).toBeLessThan(900)
+    expect(short.height).toBeGreaterThan(200)
+    const long = shotWindowSize(80, 200)
+    expect(long.height).toBeGreaterThan(short.height)
+    expect(long.height).toBeLessThanOrEqual(16000)
+    // Wide content still gets a usable width, but not a tall empty frame.
+    expect(shotWindowSize(40, 5).width).toBeGreaterThanOrEqual(480)
   })
 })

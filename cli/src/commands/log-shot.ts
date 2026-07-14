@@ -50,6 +50,12 @@ export const SHOT_FONT =
   'Menlo, Monaco, "SF Mono", ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace'
 export const SHOT_FONT_SIZE_PX = 12
 export const SHOT_LINE_HEIGHT = 1.25
+/** Header block + main top padding used when sizing the PNG viewport. */
+export const SHOT_CHROME_PX = 120
+/** Approximate CSS px per terminal row (font-size × line-height + fudge). */
+export const SHOT_ROW_PX = Math.ceil(SHOT_FONT_SIZE_PX * SHOT_LINE_HEIGHT) + 2
+/** Extra CSS px under the last content line in the PNG (tight crop + breathing room). */
+export const SHOT_BOTTOM_PAD_PX = 20
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 
@@ -76,6 +82,8 @@ export interface ShotHeaderMeta {
   thinkingLevel?: string
   sessionId?: string
   cwd?: string
+  /** Optional git branch, shown next to cwd when present. */
+  branch?: string
 }
 
 export interface WriteMarkdownShotOptions extends ResolveShotSourceOptions {
@@ -428,12 +436,43 @@ function shortenHomePath(path: string): string {
   return path
 }
 
-function shortSessionId(id: string): string {
-  if (id.length <= 12) return id
-  return id.slice(0, 8)
+/** Compact local time for the header (e.g. 2026-07-14 11:15). */
+export function formatShotTimestamp(isoOrLogTs?: string, now = new Date()): string {
+  const d = isoOrLogTs ? new Date(isoOrLogTs.replace(' ', 'T')) : now
+  if (Number.isNaN(d.getTime())) {
+    // Log timestamps may already be "YYYY-MM-DD HH:mm:ss.sss"
+    const m = isoOrLogTs?.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/)
+    if (m) return `${m[1]} ${m[2]}`
+    return ''
+  }
+  const p = (n: number) => n.toString().padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-/** Secondary meta chips under the hero row (session / cwd / id / …). */
+/**
+ * Optional second header line (only when needed).
+ * Time lives on the hero row; cwd/workspace is intentionally omitted from shares.
+ */
+export function buildShotMetaLine(args: {
+  header?: ShotHeaderMeta
+  chunkCount: number
+  ts?: string
+}): string {
+  if (args.chunkCount > 1) return `${args.chunkCount} chunks`
+  return ''
+}
+
+/** Timestamp shown on the hero row next to the model. */
+export function buildShotHeroTime(ts?: string): string {
+  return formatShotTimestamp(ts)
+}
+
+/** One-line footer: how this image was produced. */
+export function buildShotFooterLine(): string {
+  return 'Generated with evot  ·  type /log shot in a session'
+}
+
+/** @deprecated use buildShotMetaLine — kept for older tests. */
 export function buildShotMetaChips(args: {
   header?: ShotHeaderMeta
   idLabel: string
@@ -442,23 +481,15 @@ export function buildShotMetaChips(args: {
   rendererVersion?: string
   ts?: string
 }): string[] {
-  const chips: string[] = []
-  const header = args.header
-  if (header?.sessionId?.trim()) {
-    chips.push(`session ${escapeHtml(shortSessionId(header.sessionId.trim()))}`)
-  }
-  if (header?.cwd?.trim()) {
-    chips.push(escapeHtml(shortenHomePath(header.cwd.trim())))
-  }
-  chips.push(`id ${escapeHtml(args.idLabel)}`)
-  if (args.chunkCount > 1) chips.push(`${args.chunkCount} chunks`)
-  chips.push(`${args.columns} cols`)
-  if (args.rendererVersion) chips.push(`renderer ${escapeHtml(args.rendererVersion)}`)
-  if (args.ts) chips.push(escapeHtml(args.ts))
-  return chips
+  const line = buildShotMetaLine({
+    header: args.header,
+    chunkCount: args.chunkCount,
+    ts: args.ts,
+  })
+  return line ? [escapeHtml(line)] : []
 }
 
-/** @deprecated use buildShotMetaChips — kept for tests that only need model chip text. */
+/** @deprecated use formatShotModelLabel — kept for tests that only need model chip text. */
 export function buildShotHeaderSpans(header?: ShotHeaderMeta): string[] {
   const modelLabel = formatShotModelLabel(header)
   if (!modelLabel) return []
@@ -481,14 +512,13 @@ export function buildShotHtml(
     : meta.messageId
   const modelLabel = formatShotModelLabel(opts?.header)
   const titleBits = ['evot shot', modelLabel, idLabel].filter(Boolean)
-  const metaChips = buildShotMetaChips({
+  const metaLine = buildShotMetaLine({
     header: opts?.header,
-    idLabel,
     chunkCount: meta.chunkCount,
-    columns,
-    rendererVersion: meta.rendererVersion,
     ts: meta.ts,
   })
+  const heroTime = buildShotHeroTime(meta.ts)
+  const canvasCh = Math.max(48, contentCols + 4)
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -505,6 +535,7 @@ export function buildShotHtml(
     --border: ${SHOT_BORDER};
     --accent: #f0c674;
     --accent-soft: rgba(240, 198, 116, 0.12);
+    --rule: rgba(240, 198, 116, 0.35);
     --header-bg: #353644;
     --cell: 1ch;
   }
@@ -513,6 +544,9 @@ export function buildShotHtml(
     margin: 0;
     background: var(--bg);
     color: var(--fg);
+    /* Shrink-wrap to the frame so PNG width tracks content, not the Chrome window. */
+    width: fit-content;
+    min-width: min(100%, ${canvasCh}ch);
   }
   body {
     /*
@@ -530,9 +564,12 @@ export function buildShotHtml(
     font-kerning: none;
     text-rendering: optimizeLegibility;
   }
+  .shot-frame {
+    width: ${canvasCh}ch;
+    max-width: none;
+  }
   header.shot-header {
-    padding: 12px 16px 10px;
-    border-bottom: 1px solid var(--border);
+    padding: 14px 16px 12px;
     background:
       linear-gradient(180deg, var(--header-bg) 0%, var(--bg) 100%);
     border-left: 3px solid var(--accent);
@@ -540,44 +577,52 @@ export function buildShotHtml(
   .shot-hero {
     display: flex;
     align-items: baseline;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 10px 14px;
-    margin-bottom: 8px;
   }
   .shot-brand {
     color: var(--accent);
     font-weight: 700;
-    font-size: 13px;
-    letter-spacing: 0.04em;
+    font-size: 12px;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
   .shot-model {
     color: var(--fg);
     font-weight: 600;
-    font-size: 14px;
+    font-size: 13px;
     background: var(--accent-soft);
     border: 1px solid rgba(240, 198, 116, 0.28);
     border-radius: 999px;
     padding: 2px 10px;
+    white-space: nowrap;
+  }
+  .shot-time {
+    color: var(--muted);
+    font-size: 11px;
+    white-space: nowrap;
   }
   .shot-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 8px;
+    margin-top: 8px;
     color: var(--muted);
     font-size: 11px;
   }
-  .shot-meta .chip {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 6px;
-    padding: 2px 8px;
+  /* Hairline rule — single soft edge, inset to the content padding. */
+  .shot-rule {
+    height: 1px;
+    border: 0;
+    margin: 0 16px;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.04) 6%,
+      rgba(232, 232, 236, 0.14) 50%,
+      rgba(255, 255, 255, 0.04) 94%,
+      transparent 100%
+    );
   }
   main {
-    padding: 12px 14px 24px;
-    /* Column budget the TUI used for tables/wrap (+ small pad). */
-    width: ${Math.max(48, contentCols + 4)}ch;
-    max-width: none;
+    padding: 14px 16px 18px;
   }
   pre.term {
     margin: 0;
@@ -587,10 +632,6 @@ export function buildShotHtml(
     font: inherit;
     line-height: inherit;
     overflow-x: auto;
-    /*
-     * ASCII / box-drawing advance comes from the mono font itself (same as
-     * the terminal). Only wide (CJK/emoji) glyphs are width-forced below.
-     */
   }
   /*
    * Wide graphemes: TUI measures them as 2 columns via string-width.
@@ -604,21 +645,38 @@ export function buildShotHtml(
     vertical-align: baseline;
     white-space: pre;
   }
+  footer.shot-footer {
+    padding: 10px 16px 14px;
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.01em;
+  }
+  footer.shot-footer .cmd {
+    color: var(--accent);
+    font-weight: 600;
+  }
 </style>
 </head>
 <body>
+<div class="shot-frame">
 <header class="shot-header">
   <div class="shot-hero">
     <span class="shot-brand">evot shot</span>
     ${modelLabel ? `<span class="shot-model">${escapeHtml(modelLabel)}</span>` : ''}
+    ${heroTime ? `<span class="shot-time">${escapeHtml(heroTime)}</span>` : ''}
   </div>
-  <div class="shot-meta">
-    ${metaChips.map((c) => `<span class="chip">${c}</span>`).join('\n    ')}
-  </div>
+  ${metaLine ? `<div class="shot-meta">${escapeHtml(metaLine)}</div>` : ''}
 </header>
+<hr class="shot-rule" />
 <main>
 ${bodyHtml}
 </main>
+<hr class="shot-rule" />
+<footer class="shot-footer">
+  Generated with <span class="cmd">evot</span>
+  · type <span class="cmd">/log shot</span> in a session
+</footer>
+</div>
 </body>
 </html>
 `
@@ -644,15 +702,13 @@ export async function writeMarkdownShot(opts: WriteMarkdownShotOptions): Promise
 
   let pngPath: string | undefined
   if (opts.png !== false) {
-    // Estimate size from the painted ANSI so wide TUI turns are not clipped.
+    // Width is estimated from content; height is measured from the live DOM via
+    // CDP so the PNG ends at the last painted pixel (no empty bottom band).
     const ansi = renderShotAnsi(source, columns)
     const contentCols = Math.max(columns, ansiMaxColumns(ansi))
-    const lineCount = Math.max(1, ansi.split('\n').length)
-    const height = Math.min(16000, Math.max(900, 120 + lineCount * 18))
-    const shot = await tryChromeScreenshot(htmlPath, join(outDir, `${base}.png`), {
-      width: Math.max(720, contentCols * 9 + 48),
-      height,
-    })
+    const lineCount = Math.max(1, ansi.replace(/\n+$/, '').split('\n').length)
+    const size = shotWindowSize(contentCols, lineCount)
+    const shot = await tryChromeScreenshot(htmlPath, join(outDir, `${base}.png`), size)
     if (shot) pngPath = shot
   }
 
@@ -940,12 +996,35 @@ export function ansiToHtml(input: string): string {
   return out
 }
 
+/**
+ * Initial Chrome window size before CDP measures the real document height.
+ * Width is final; height is only a bootstrap (must be tall enough to avoid
+ * early layout collapse, but the PNG clip uses measured scrollHeight).
+ */
+export function shotWindowSize(
+  contentCols: number,
+  lineCount: number,
+): { width: number; height: number } {
+  const cols = Number.isFinite(contentCols) ? Math.max(1, Math.floor(contentCols)) : SHOT_COLUMNS
+  const lines = Number.isFinite(lineCount) ? Math.max(1, Math.floor(lineCount)) : 1
+  const width = Math.max(480, cols * 9 + 48)
+  // Bootstrap viewport: slightly above content estimate so fonts/layout settle,
+  // but never a fixed 900px floor that leaves empty PNG bands.
+  const height = Math.min(16000, Math.max(200, SHOT_CHROME_PX + lines * SHOT_ROW_PX))
+  return { width, height }
+}
+
 function timestampSlug(): string {
   const d = new Date()
   const p = (n: number, w = 2) => n.toString().padStart(w, '0')
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
 }
 
+/**
+ * Capture a content-tight PNG via Chrome DevTools Protocol.
+ * `--screenshot` always fills the whole window; CDP clips to scrollHeight so
+ * short documents do not keep a blank band under the last line.
+ */
 async function tryChromeScreenshot(
   htmlPath: string,
   pngPath: string,
@@ -953,27 +1032,170 @@ async function tryChromeScreenshot(
 ): Promise<string | undefined> {
   const chrome = resolveChromeBinary()
   if (!chrome) return undefined
+  mkdirSync(dirname(pngPath), { recursive: true })
+  const fileUrl = pathToFileUrl(htmlPath)
+  const port = 9200 + Math.floor(Math.random() * 1000)
+  const userDataDir = join(dirname(pngPath), `.chrome-shot-${process.pid}-${port}`)
+  mkdirSync(userDataDir, { recursive: true })
+
+  const proc = Bun.spawn(
+    [
+      chrome,
+      '--headless=new',
+      '--disable-gpu',
+      '--hide-scrollbars',
+      '--no-first-run',
+      '--no-default-browser-check',
+      `--user-data-dir=${userDataDir}`,
+      `--remote-debugging-port=${port}`,
+      `--window-size=${size.width},${Math.max(size.height, 600)}`,
+      '--force-device-scale-factor=1',
+      'about:blank',
+    ],
+    { stdout: 'ignore', stderr: 'pipe' },
+  )
+
   try {
-    mkdirSync(dirname(pngPath), { recursive: true })
-    const fileUrl = pathToFileUrl(htmlPath)
-    const proc = Bun.spawn(
-      [
-        chrome,
-        '--headless=new',
-        '--disable-gpu',
-        '--hide-scrollbars',
-        '--force-device-scale-factor=2',
-        `--screenshot=${pngPath}`,
-        `--window-size=${size.width},${size.height}`,
-        fileUrl,
-      ],
-      { stdout: 'ignore', stderr: 'ignore' },
-    )
-    const code = await proc.exited
-    if (code !== 0) return undefined
-    return pngPath
+    const wsUrl = await waitForChromeWs(port, 8000)
+    if (!wsUrl) return undefined
+    const ok = await captureViaCdp(wsUrl, fileUrl, pngPath, size.width)
+    return ok ? pngPath : undefined
   } catch {
     return undefined
+  } finally {
+    proc.kill()
+    try { await proc.exited } catch { /* ignore */ }
+    try {
+      const { rmSync } = await import('fs')
+      rmSync(userDataDir, { recursive: true, force: true })
+    } catch { /* ignore cleanup */ }
+  }
+}
+
+async function waitForChromeWs(port: number, timeoutMs: number): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/json/version`)
+      if (res.ok) {
+        const body = await res.json() as { webSocketDebuggerUrl?: string }
+        if (body.webSocketDebuggerUrl) return body.webSocketDebuggerUrl
+      }
+    } catch { /* chrome still starting */ }
+    await Bun.sleep(50)
+  }
+  return null
+}
+
+async function captureViaCdp(
+  browserWsUrl: string,
+  fileUrl: string,
+  pngPath: string,
+  cssWidth: number,
+): Promise<boolean> {
+  // Open a dedicated page target so we do not fight the about:blank default.
+  const listRes = await fetch(browserWsUrl.replace('ws://', 'http://').replace(/\/devtools\/browser.*/, '') + '/json/new?' + encodeURIComponent(fileUrl), {
+    method: 'PUT',
+  }).catch(() => null)
+
+  let pageWsUrl: string | null = null
+  if (listRes && listRes.ok) {
+    const page = await listRes.json() as { webSocketDebuggerUrl?: string }
+    pageWsUrl = page.webSocketDebuggerUrl ?? null
+  }
+  if (!pageWsUrl) {
+    // Fallback: list pages and use the first page target.
+    const base = browserWsUrl.replace('ws://', 'http://').replace(/\/devtools\/browser.*/, '')
+    const pagesRes = await fetch(`${base}/json/list`)
+    const pages = await pagesRes.json() as Array<{ type?: string; webSocketDebuggerUrl?: string; url?: string }>
+    const page = pages.find(p => p.type === 'page' && p.webSocketDebuggerUrl)
+    pageWsUrl = page?.webSocketDebuggerUrl ?? null
+  }
+  if (!pageWsUrl) return false
+
+  const ws = new WebSocket(pageWsUrl)
+  await new Promise<void>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('cdp connect timeout')), 5000)
+    ws.onopen = () => { clearTimeout(t); resolve() }
+    ws.onerror = () => { clearTimeout(t); reject(new Error('cdp connect error')) }
+  })
+
+  let nextId = 1
+  const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(String(ev.data)) as { id?: number; result?: unknown; error?: { message?: string } }
+      if (msg.id == null) return
+      const p = pending.get(msg.id)
+      if (!p) return
+      pending.delete(msg.id)
+      if (msg.error) p.reject(new Error(msg.error.message ?? 'cdp error'))
+      else p.resolve(msg.result)
+    } catch { /* ignore */ }
+  }
+
+  const send = (method: string, params?: Record<string, unknown>) =>
+    new Promise<unknown>((resolve, reject) => {
+      const id = nextId++
+      pending.set(id, { resolve, reject })
+      ws.send(JSON.stringify({ id, method, params }))
+      setTimeout(() => {
+        if (pending.has(id)) {
+          pending.delete(id)
+          reject(new Error(`cdp timeout: ${method}`))
+        }
+      }, 10000)
+    })
+
+  try {
+    await send('Page.enable')
+    await send('Runtime.enable')
+    // Navigate (in case /json/new did not load file://)
+    await send('Page.navigate', { url: fileUrl })
+    // Wait for load + fonts
+    await Bun.sleep(200)
+    await send('Runtime.evaluate', {
+      expression: 'document.fonts && document.fonts.ready ? document.fonts.ready.then(() => true) : true',
+      awaitPromise: true,
+    }).catch(() => undefined)
+
+    const metrics = await send('Runtime.evaluate', {
+      expression: `(() => {
+        const frame = document.querySelector('.shot-frame') || document.body;
+        const rect = frame.getBoundingClientRect();
+        // Width/height from the content frame only — never the Chrome window.
+        const w = Math.max(1, Math.ceil(rect.width));
+        const h = Math.max(1, Math.ceil(rect.height));
+        return { width: w, height: h + ${SHOT_BOTTOM_PAD_PX} };
+      })()`,
+      returnByValue: true,
+    }) as { result?: { value?: { width: number; height: number } } }
+
+    const box = metrics.result?.value
+    const width = Math.max(1, Math.ceil(box?.width ?? cssWidth))
+    const height = Math.max(1, Math.ceil(box?.height ?? 200))
+
+    // Device metrics: 1 CSS px = 1 device px for stable clip; scale=2 in capture.
+    await send('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      deviceScaleFactor: 2,
+      mobile: false,
+    })
+
+    const shot = await send('Page.captureScreenshot', {
+      format: 'png',
+      fromSurface: true,
+      captureBeyondViewport: true,
+      clip: { x: 0, y: 0, width, height, scale: 1 },
+    }) as { data?: string }
+
+    if (!shot.data) return false
+    const buf = Buffer.from(shot.data, 'base64')
+    writeFileSync(pngPath, buf)
+    return true
+  } finally {
+    try { ws.close() } catch { /* ignore */ }
   }
 }
 
