@@ -4,6 +4,7 @@
  * Pipeline:
  *   raw markdown
  *   → minimal fence-boundary repair (glued opens / stray closes / unclosed)
+ *   → escape `|` inside inline code on table rows (GFM cell pipes)
  *   → marked lexer (partial closing fences trimmed for streaming stability)
  *   → ANSI token renderer
  *
@@ -14,6 +15,7 @@
  */
 
 import { prepareMarkdownFences } from '../markdown/normalize/fences/index.js'
+import { escapePipesInTableInlineCode } from '../markdown/normalize/tables.js'
 import { lexMarkdownTokens } from '../markdown/parse/marked.js'
 import { formatTokens } from '../markdown/render/ansi.js'
 
@@ -28,8 +30,11 @@ export function renderMarkdown(text: string, options: MarkdownRenderOptions = {}
   if (!text || text.trim().length === 0) return text
 
   try {
-    // Tabs → spaces (matches pi), then repair fence boundaries before lex.
-    const lexText = prepareMarkdownFences(text.replace(/\t/g, '   '))
+    // Tabs → spaces (matches pi), then repair fence boundaries and table cell
+    // pipes inside inline code before lex.
+    const lexText = escapePipesInTableInlineCode(
+      prepareMarkdownFences(text.replace(/\t/g, '   ')),
+    )
     const tokens = lexMarkdownTokens(lexText, text)
     return formatTokens(tokens, options)
   } catch {
