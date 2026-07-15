@@ -17,7 +17,15 @@ pub struct OpenAiChunk {
     #[serde(default)]
     pub(crate) usage: Option<OpenAiUsage>,
     #[serde(default)]
+    pub(crate) incomplete_details: Option<OpenAiIncompleteDetails>,
+    #[serde(default)]
     pub error: Option<OpenAiErrorBody>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct OpenAiIncompleteDetails {
+    #[serde(default)]
+    pub reason: String,
 }
 
 #[derive(Deserialize)]

@@ -69,7 +69,18 @@ pub fn evaluate(input: &TriggerInput, config: &CompactionConfig) -> TriggerDecis
         return TriggerDecision::Overflow { context_tokens };
     }
 
-    // Case 3: Length-stop overflow (server truncated input, zero output).
+    // Case 3: Length-stop overflow. Some providers report a short, non-zero
+    // partial response when input plus output fills their total token budget.
+    // Treat any length stop beyond our configured window as overflow; requiring
+    // output=0 misses Codex Responses `response.incomplete` events.
+    if usage.stop_reason == StopReason::Length && context_tokens > config.context_window {
+        if input.overflow_recovery_attempted {
+            return TriggerDecision::OverflowExhausted { context_tokens };
+        }
+        return TriggerDecision::Overflow { context_tokens };
+    }
+
+    // A provider that clamps exactly to the window may still return no output.
     if usage.stop_reason == StopReason::Length && usage.output == 0 {
         let input_tokens = usage.input + usage.cache_read;
         if input_tokens >= config.context_window * 99 / 100 {

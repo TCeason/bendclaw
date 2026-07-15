@@ -63,6 +63,35 @@ async fn openai_sse_text_response() {
 }
 
 #[tokio::test]
+async fn openai_sse_preserves_incomplete_reason() {
+    let sse = openai_sse::body(vec![
+        openai_sse::text_chunk("partial", None),
+        format!(
+            "data: {}",
+            serde_json::json!({
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "length"}],
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "usage": {"prompt_tokens": 371_206, "completion_tokens": 360}
+            })
+        ),
+        openai_sse::done(),
+    ]);
+
+    let (message, _) = run_provider_sse(&OpenAiCompatProvider, openai_config(), &sse, 200)
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        message,
+        Message::Assistant {
+            stop_reason: StopReason::Length,
+            error_message: Some(ref reason),
+            ..
+        } if reason == "response incomplete: max_output_tokens"
+    ));
+}
+
+#[tokio::test]
 async fn openai_sse_cache_tokens_are_not_double_counted_as_input() {
     let sse = openai_sse::body(vec![
         openai_sse::text_chunk("cached", None),

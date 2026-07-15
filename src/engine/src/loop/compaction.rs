@@ -20,6 +20,10 @@ const OVERFLOW_EXHAUSTED_MESSAGE: &str =
     "Context overflow recovery failed after one compact-and-retry attempt. \
      Try reducing context or switching to a larger-context model.";
 
+const PREFLIGHT_CONTEXT_MESSAGE: &str =
+    "Context remains above the safe request budget after compaction. \
+     Reduce context or switch to a larger-context model.";
+
 /// Run the post-response compaction policy for one assistant message.
 pub(super) async fn post_response_compaction(
     controller: &mut Option<CompactionController>,
@@ -103,10 +107,10 @@ pub(super) async fn pre_prompt_compaction(
     config: &AgentLoopConfig,
     cancel: CancellationToken,
     tx: &mpsc::UnboundedSender<AgentEvent>,
-) {
+) -> bool {
     let ctrl = match controller.as_mut() {
         Some(ctrl) => ctrl,
-        None => return,
+        None => return true,
     };
 
     let summarizer_ctx = SummarizerContext {
@@ -126,19 +130,46 @@ pub(super) async fn pre_prompt_compaction(
         model: config.model.clone(),
     };
 
-    let estimated_tokens = tracker.estimate_context_tokens(messages);
+    let mut use_provider_usage = true;
+    loop {
+        let estimated_tokens = tracker.estimate_context_tokens(messages);
+        let response = if use_provider_usage {
+            use_provider_usage = false;
+            ctrl.before_prompt(
+                messages,
+                &current_model,
+                estimated_tokens,
+                Some(&summarizer_ctx),
+                cancel.clone(),
+            )
+            .await
+        } else {
+            ctrl.compact_on_estimate(
+                messages,
+                estimated_tokens,
+                Some(&summarizer_ctx),
+                cancel.clone(),
+            )
+            .await
+        };
 
-    let response = ctrl
-        .before_prompt(
-            messages,
-            &current_model,
-            estimated_tokens,
-            Some(&summarizer_ctx),
-            cancel,
-        )
-        .await;
+        emit_compaction_events(ctrl, tracker, messages, &response, tx);
 
-    emit_compaction_events(ctrl, tracker, messages, &response, tx);
+        let remaining = tracker.estimate_context_tokens(messages);
+        if remaining <= ctrl.config().trigger_threshold() {
+            return true;
+        }
+        if response.stats.is_none() || remaining >= estimated_tokens {
+            tx.send(AgentEvent::Error {
+                error: AgentErrorInfo {
+                    kind: AgentErrorKind::Runtime,
+                    message: PREFLIGHT_CONTEXT_MESSAGE.to_string(),
+                },
+            })
+            .ok();
+            return false;
+        }
+    }
 }
 
 /// Emit compaction lifecycle events and the overflow-exhausted notice.

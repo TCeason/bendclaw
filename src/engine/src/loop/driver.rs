@@ -39,11 +39,6 @@ pub async fn agent_loop(
         None => return vec![],
     };
 
-    // Compact existing context before adding the new prompt. This mirrors Pi's
-    // pre-prompt check and avoids sending an oversized request while ensuring
-    // the freshly submitted user prompt is never summarized away.
-    run_pre_prompt_compaction(context, config, &tx, &cancel).await;
-
     let mut new_messages: Vec<AgentMessage> = prompts.clone();
 
     // Add prompts to context
@@ -111,10 +106,6 @@ pub async fn agent_loop_continue(
 
     let mut new_messages: Vec<AgentMessage> = Vec::new();
 
-    // Continue sends the current context as-is, so proactively compact before
-    // the first LLM call when it is already over the threshold.
-    run_pre_prompt_compaction(context, config, &tx, &cancel).await;
-
     tx.send(AgentEvent::TurnStart).ok();
 
     run_loop(context, &mut new_messages, config, &tx, &cancel).await;
@@ -124,29 +115,6 @@ pub async fn agent_loop_continue(
     })
     .ok();
     new_messages
-}
-
-async fn run_pre_prompt_compaction(
-    context: &mut AgentContext,
-    config: &AgentLoopConfig,
-    tx: &mpsc::UnboundedSender<AgentEvent>,
-    cancel: &tokio_util::sync::CancellationToken,
-) {
-    let mut controller = config.context_config.as_ref().map(|ctx_cfg| {
-        crate::context::CompactionController::new(
-            crate::context::CompactionConfig::from_context_config(ctx_cfg),
-        )
-    });
-    let mut tracker = ContextTracker::new();
-    pre_prompt_compaction(
-        &mut controller,
-        &mut tracker,
-        &mut context.messages,
-        config,
-        cancel.clone(),
-        tx,
-    )
-    .await;
 }
 
 /// Main loop logic shared by agent_loop and agent_loop_continue.
@@ -251,7 +219,6 @@ async fn run_loop(
             }
             turn_number += 1;
 
-            // Build budget snapshot for the LLM call (same source as compaction)
             let tool_defs: Vec<ToolDefinition> = context
                 .tools
                 .iter()
@@ -266,6 +233,24 @@ async fn run_loop(
                 })
                 .collect();
             context_tracker.record_request_overhead(&context.system_prompt, &tool_defs);
+
+            // Every provider call gets a preflight check, not just the first
+            // call of a run. Tool results and injected steering can grow a long
+            // agent run past the threshold between turns.
+            if !pre_prompt_compaction(
+                &mut compaction_controller,
+                &mut context_tracker,
+                &mut context.messages,
+                config,
+                cancel.clone(),
+                tx,
+            )
+            .await
+            {
+                return;
+            }
+
+            // Build budget snapshot for the LLM call (same source as compaction)
             let budget_snapshot =
                 context_tracker.budget_snapshot(&context.messages, config.context_config.as_ref());
 

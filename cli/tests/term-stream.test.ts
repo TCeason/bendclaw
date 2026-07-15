@@ -87,6 +87,22 @@ describe('term stream machine', () => {
     expect(update.commitLines.some(l => l.kind === 'error')).toBe(true)
   })
 
+  test('assistant_completed surfaces the provider incomplete reason', () => {
+    const state = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
+
+    const update = reduceRunEvent(state, {
+      kind: 'assistant_completed',
+      payload: {
+        stop_reason: 'length',
+        error_message: 'response incomplete: max_output_tokens',
+      },
+    }, { termRows: 24 })
+
+    const committed = update.commitLines.map(l => l.text).join('\n')
+    expect(committed).toContain('incomplete response (max_output_tokens)')
+    expect(committed).not.toContain('reached the maximum output token limit')
+  })
+
   test('assistant_completed with normal stop appends no truncation notice', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()

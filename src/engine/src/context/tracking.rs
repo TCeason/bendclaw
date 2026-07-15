@@ -72,7 +72,8 @@ impl ContextTracker {
     /// trailing delta since that response.
     ///
     /// The latest valid provider usage is the anchor; only later messages are
-    /// estimated locally.
+    /// estimated locally. Without an anchor (including immediately after
+    /// compaction), include fixed request overhead in the local estimate.
     pub fn estimate_context_tokens(&self, messages: &[AgentMessage]) -> usize {
         if !self.baseline_stale {
             if let Some((baseline, idx)) = latest_provider_anchor(messages) {
@@ -80,7 +81,7 @@ impl ContextTracker {
                 return baseline + trailing;
             }
         }
-        total_tokens(messages)
+        total_tokens(messages).saturating_add(self.system_tool_overhead_tokens)
     }
 
     /// Build a budget snapshot from the current tracker state and config.

@@ -2031,7 +2031,9 @@ async fn test_non_overflow_error_compacts_on_estimate() {
             // Agent call: non-overflow error with zero usage.
             let message = Message::Assistant {
                 content: vec![Content::Text {
-                    text: String::new(),
+                    // The terminal error body pushes the post-response local
+                    // estimate over the threshold despite carrying zero usage.
+                    text: "x".repeat(1_500),
                 }],
                 stop_reason: StopReason::Error,
                 model: "mock".into(),
@@ -2064,13 +2066,16 @@ async fn test_non_overflow_error_compacts_on_estimate() {
         tool_output_max_lines: 50,
     });
 
-    // Start with empty history so pre-prompt compaction cannot fire. The large
-    // prompt alone pushes the post-response estimate over the ~875 threshold
-    // (window 1_000 - reserve 125), so any compaction must come from the
-    // post-response error fallback.
+    // Keep history plus prompt below the ~875 preflight threshold. The terminal
+    // error response above then pushes the post-response estimate over budget.
     let mut context = AgentContext {
         system_prompt: "test".into(),
-        messages: Vec::new(),
+        messages: vec![
+            AgentMessage::Llm(Message::user("x".repeat(500))),
+            AgentMessage::Llm(Message::user("x".repeat(500))),
+            AgentMessage::Llm(Message::user("x".repeat(500))),
+            AgentMessage::Llm(Message::user("x".repeat(500))),
+        ],
         tools: vec![],
         cwd: std::path::PathBuf::new(),
         path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
@@ -2079,7 +2084,7 @@ async fn test_non_overflow_error_compacts_on_estimate() {
 
     let prompt = AgentMessage::Llm(Message::user(format!(
         "trigger overload {}",
-        "x".repeat(4_000)
+        "x".repeat(1_000)
     )));
     let (tx, rx) = mpsc::unbounded_channel();
     let cancel = CancellationToken::new();
@@ -2087,10 +2092,8 @@ async fn test_non_overflow_error_compacts_on_estimate() {
     agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
     let events = collect_events(rx);
 
-    // History started empty, so pre-prompt compaction cannot fire — any
-    // compaction here is necessarily the post-response error fallback. (Driver
-    // emits compaction events before the terminal Error event, so event order
-    // is not a reliable discriminator; the empty-history setup is.)
+    // The preflight estimate remains below threshold; this compaction is the
+    // post-response non-overflow error fallback.
     assert!(
         events.iter().any(|e| matches!(e, AgentEvent::Error { .. })),
         "expected an error event"

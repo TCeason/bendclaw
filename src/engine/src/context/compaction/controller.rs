@@ -134,17 +134,29 @@ impl CompactionController {
         cancel: CancellationToken,
     ) -> CompactionResponse {
         if let Some(usage) = latest_assistant_usage(messages) {
-            // Prefer real provider usage when it carries an input signal.
+            // Prefer real provider usage when it carries an input signal, but
+            // do not let that anchor hide tool results or steering messages
+            // appended after the response. If provider usage does not trigger,
+            // evaluate the caller's anchor-plus-trailing estimate below.
             if usage.input > 0 || usage.cache_read > 0 {
-                return self
-                    .after_response(messages, &usage, current_model, summarizer_ctx, cancel)
+                let response = self
+                    .after_response(
+                        messages,
+                        &usage,
+                        current_model,
+                        summarizer_ctx,
+                        cancel.clone(),
+                    )
                     .await;
+                if response.stats.is_some()
+                    || response.reason.is_some()
+                    || response.overflow_exhausted
+                {
+                    return response;
+                }
             }
         }
 
-        // No usable usage — fall back to the local estimate for a threshold-only
-        // decision. Overflow detection requires real usage, so it is not
-        // attempted here.
         self.compact_on_estimate(messages, estimated_tokens, summarizer_ctx, cancel)
             .await
     }

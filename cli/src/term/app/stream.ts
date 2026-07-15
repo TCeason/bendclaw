@@ -169,9 +169,11 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
     // notice. `resolved_max_tokens` clamps the budget to the window, so this
     // only fires on a genuine max-output-tokens stop.
     if (p.stop_reason === 'length') {
-      const notice = buildError(
-        'Model stopped because it reached the maximum output token limit. The response may be incomplete.',
-      )
+      const reason = typeof p.error_message === 'string' ? p.error_message : ''
+      const message = reason.startsWith('response incomplete:')
+        ? `Provider returned an incomplete response (${reason.slice('response incomplete:'.length).trim()}). Context recovery may compact and retry.`
+        : 'Model stopped because it reached the maximum output token limit. The response may be incomplete.'
+      const notice = buildError(message)
       commitLines.push(...notice)
       if (!expandedCommitLines) expandedCommitLines = []
       expandedCommitLines.push(...notice)

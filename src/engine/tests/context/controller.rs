@@ -363,6 +363,39 @@ async fn before_prompt_uses_estimate_fallback_when_usage_missing() {
 }
 
 #[tokio::test]
+async fn before_prompt_checks_trailing_estimate_after_provider_usage() {
+    let config = config_small();
+    let mut ctrl = CompactionController::new(config);
+
+    let mut messages = vec![
+        user_msg(&varied_text(300)),
+        assistant_msg(&varied_text(300)),
+    ];
+    for _ in 0..20 {
+        messages.push(user_msg(&varied_text(300)));
+        messages.push(assistant_msg(&varied_text(300)));
+    }
+    // A valid provider anchor below threshold followed by enough local context
+    // to put the current request over threshold.
+    messages.push(assistant_msg_with_usage("anchor", 1_000, 100));
+    messages.push(user_msg(&varied_text(300)));
+    let original_count = messages.len();
+
+    let response = ctrl
+        .before_prompt(
+            &mut messages,
+            &model_id(),
+            9_000,
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+
+    assert!(response.stats.is_some());
+    assert!(messages.len() < original_count);
+}
+
+#[tokio::test]
 async fn before_prompt_estimate_fallback_skips_below_threshold() {
     let config = config_small();
     let mut ctrl = CompactionController::new(config);

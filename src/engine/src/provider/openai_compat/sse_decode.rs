@@ -42,6 +42,7 @@ pub(crate) async fn decode_sse_stream(
     let mut tool_call_buffers: Vec<ToolCallBuffer> = Vec::new();
     let mut response_id: Option<String> = None;
     let mut response_model: Option<String> = None;
+    let mut incomplete_reason: Option<String> = None;
 
     let _ = tx.send(StreamEvent::Start);
 
@@ -67,6 +68,7 @@ pub(crate) async fn decode_sse_stream(
                             compat,
                             &mut response_id,
                             &mut response_model,
+                            &mut incomplete_reason,
                         )?;
                     }
                 }
@@ -115,7 +117,7 @@ pub(crate) async fn decode_sse_stream(
             .unwrap_or_else(|| "openai".into()),
         usage,
         timestamp: now_ms(),
-        error_message: None,
+        error_message: incomplete_reason.map(|reason| format!("response incomplete: {reason}")),
         response_id,
     };
 
@@ -136,6 +138,7 @@ fn process_sse_chunk(
     compat: &OpenAiCompat,
     response_id: &mut Option<String>,
     response_model: &mut Option<String>,
+    incomplete_reason: &mut Option<String>,
 ) -> Result<(), ProviderError> {
     let chunk: OpenAiChunk = match serde_json::from_str(&sse.data) {
         Ok(c) => c,
@@ -144,6 +147,12 @@ fn process_sse_chunk(
             return Ok(());
         }
     };
+
+    if let Some(details) = &chunk.incomplete_details {
+        if !details.reason.is_empty() {
+            *incomplete_reason = Some(details.reason.clone());
+        }
+    }
 
     // Check for inline error (non-standard but used by some proxies)
     if let Some(err) = &chunk.error {

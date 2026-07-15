@@ -184,6 +184,36 @@ fn silent_overflow_detected() {
 }
 
 #[test]
+fn length_stop_with_partial_output_over_window_is_overflow() {
+    let config = default_config();
+    let input = TriggerInput {
+        usage: Some(make_usage(127_900, 200, StopReason::Length)),
+        current_model: model_id(),
+        last_compaction_ts: None,
+        overflow_recovery_attempted: false,
+    };
+
+    assert_eq!(evaluate(&input, &config), TriggerDecision::Overflow {
+        context_tokens: 128_100
+    });
+}
+
+#[test]
+fn length_stop_with_partial_output_below_window_is_threshold_not_overflow() {
+    let config = default_config();
+    let input = TriggerInput {
+        usage: Some(make_usage(112_000, 200, StopReason::Length)),
+        current_model: model_id(),
+        last_compaction_ts: None,
+        overflow_recovery_attempted: false,
+    };
+
+    assert_eq!(evaluate(&input, &config), TriggerDecision::Threshold {
+        context_tokens: 112_200
+    });
+}
+
+#[test]
 fn below_threshold_is_skip() {
     let config = default_config();
     // context_tokens = 50_000 + 1_000 = 51_000 < 111_616
