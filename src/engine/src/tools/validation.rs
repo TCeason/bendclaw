@@ -33,10 +33,11 @@ pub fn normalize_aliases(input: &Value, aliases: AliasMap) -> Value {
 /// Coerce the `edits` field for the Edit tool.
 ///
 /// Handles two common model mistakes:
-/// 1. `edits` is a JSON string instead of an array — parse it.
-/// 2. No `edits` field but top-level `old_text`/`new_text` — wrap into `edits[]`.
+/// 1. `edits` is a JSON string containing an array — parse it.
+/// 2. No `edits` array but top-level old/new text fields — wrap one edit.
 ///
-/// Also normalizes field names inside each edit entry (oldText/old_string → old_text).
+/// The public and canonical shape stays camelCase. Unrecognized malformed input
+/// is preserved so recursive schema validation can report the original value.
 pub fn coerce_edits(input: &Value) -> Value {
     let obj = match input.as_object() {
         Some(o) => o,
@@ -44,57 +45,49 @@ pub fn coerce_edits(input: &Value) -> Value {
     };
     let mut result = obj.clone();
 
-    // Case 1: edits is a JSON string — parse it
     if let Some(s) = result.get("edits").and_then(|v| v.as_str()) {
-        let s_owned = s.to_owned();
-        match serde_json::from_str::<Value>(&s_owned) {
-            Ok(parsed) if parsed.is_array() => {
+        if let Ok(parsed) = serde_json::from_str::<Value>(s) {
+            if parsed.is_array() {
                 result.insert("edits".to_string(), parsed);
             }
-            _ => {
-                // Parse failed or not an array — coerce to empty array so
-                // generic schema validation passes and the tool's own
-                // parse_edits reports a meaningful "edits[] must not be empty"
-                // error instead of a generic type-mismatch.
-                result.insert("edits".to_string(), Value::Array(vec![]));
-            }
         }
     }
 
-    // Case 2: no edits array, but top-level old_text/new_text present
-    if !result.get("edits").is_some_and(|v| v.is_array()) {
-        let old = result
-            .get("old_text")
-            .or_else(|| result.get("oldText"))
-            .or_else(|| result.get("old_string"))
-            .cloned();
-        let new = result
-            .get("new_text")
-            .or_else(|| result.get("newText"))
-            .or_else(|| result.get("new_string"))
-            .cloned();
-        if let (Some(o), Some(n)) = (old, new) {
-            result.insert(
-                "edits".to_string(),
-                serde_json::json!([{ "old_text": o, "new_text": n }]),
-            );
-            // Remove top-level keys so they don't confuse downstream
-            for key in [
-                "old_text",
-                "oldText",
-                "old_string",
-                "new_text",
-                "newText",
-                "new_string",
-            ] {
-                result.remove(key);
-            }
+    let old = result
+        .get("oldText")
+        .or_else(|| result.get("old_text"))
+        .or_else(|| result.get("old_string"))
+        .cloned();
+    let new = result
+        .get("newText")
+        .or_else(|| result.get("new_text"))
+        .or_else(|| result.get("new_string"))
+        .cloned();
+    if let (Some(old_text), Some(new_text)) = (old, new) {
+        let mut entries = result
+            .get("edits")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        entries.push(serde_json::json!({
+            "oldText": old_text,
+            "newText": new_text
+        }));
+        result.insert("edits".to_string(), Value::Array(entries));
+        for key in [
+            "oldText",
+            "old_text",
+            "old_string",
+            "newText",
+            "new_text",
+            "new_string",
+        ] {
+            result.remove(key);
         }
     }
 
-    // Case 3: normalize field names inside each edit entry
-    if let Some(arr) = result.get("edits").and_then(|v| v.as_array()).cloned() {
-        let normalized: Vec<Value> = arr
+    if let Some(entries) = result.get("edits").and_then(Value::as_array).cloned() {
+        let normalized = entries
             .into_iter()
             .map(|entry| normalize_edit_entry(&entry))
             .collect();
@@ -104,7 +97,6 @@ pub fn coerce_edits(input: &Value) -> Value {
     Value::Object(result)
 }
 
-/// Normalize a single edit entry's field names to canonical `old_text`/`new_text`.
 fn normalize_edit_entry(entry: &Value) -> Value {
     let obj = match entry.as_object() {
         Some(o) => o,
@@ -112,20 +104,18 @@ fn normalize_edit_entry(entry: &Value) -> Value {
     };
     let mut out = obj.clone();
 
-    // old_text aliases
-    if !out.contains_key("old_text") {
-        for alt in ["oldText", "old_string"] {
-            if let Some(val) = out.remove(alt) {
-                out.insert("old_text".to_string(), val);
+    if !out.contains_key("oldText") {
+        for alias in ["old_text", "old_string"] {
+            if let Some(value) = out.remove(alias) {
+                out.insert("oldText".to_string(), value);
                 break;
             }
         }
     }
-    // new_text aliases
-    if !out.contains_key("new_text") {
-        for alt in ["newText", "new_string"] {
-            if let Some(val) = out.remove(alt) {
-                out.insert("new_text".to_string(), val);
+    if !out.contains_key("newText") {
+        for alias in ["new_text", "new_string"] {
+            if let Some(value) = out.remove(alias) {
+                out.insert("newText".to_string(), value);
                 break;
             }
         }
@@ -135,19 +125,9 @@ fn normalize_edit_entry(entry: &Value) -> Value {
 
 /// Lightweight tool-input validation and type coercion.
 ///
-/// Inspired by Claude Code's `toolErrors.ts` (structured error messages) and
-/// Forge Code's `schema_coercion.rs` (best-effort type repair).  The goal is
-/// to catch the most common LLM mistakes — missing required params, wrong
-/// primitive types — *before* `tool.execute()` runs, and to silently fix
-/// trivial type mismatches (string→integer, string→boolean) so the model
-/// doesn't waste a round-trip.
-///
-/// Only the JSON Schema subset actually used by evot tools is supported:
-/// flat objects, `required`, `properties.*.type`, `properties.*.enum`.
-///
-/// Not supported (and silently ignored): nested/recursive schemas, `anyOf`,
-/// `oneOf`, `$ref`, `additionalProperties`.  Unknown `type` values are
-/// treated as valid to avoid false rejections.
+/// Validation follows nested object properties and array items, including
+/// nested `required` fields. Trivial string-to-primitive coercions are applied
+/// before validation. Unknown schema keywords remain permissive.
 use crate::types::Content;
 
 // ── public API ──────────────────────────────────────────────────────────
@@ -161,78 +141,31 @@ pub fn validate_and_coerce(
     schema: &Value,
     input: &Value,
 ) -> Result<Value, String> {
-    // If schema has no "properties" key we cannot validate — pass through.
-    let props = match schema.get("properties").and_then(|v| v.as_object()) {
-        Some(p) => p,
-        None => return Ok(input.clone()),
-    };
+    validate_and_coerce_with_received(tool_name, schema, input, input)
+}
 
-    let obj = match input.as_object() {
-        Some(o) => o,
-        None => {
-            return Err(format_error(tool_name, &[
-                "Tool input must be a JSON object".to_string(),
-            ]));
-        }
-    };
-
-    let mut errors: Vec<String> = Vec::new();
-    let mut coerced = obj.clone();
-
-    // ── required ────────────────────────────────────────────────────────
-    if let Some(req) = schema.get("required").and_then(|v| v.as_array()) {
-        for r in req {
-            if let Some(name) = r.as_str() {
-                if !coerced.contains_key(name) {
-                    errors.push(format!("The required parameter `{name}` is missing"));
-                }
-            }
-        }
+/// Validate prepared arguments while retaining the raw model arguments in any
+/// error. This keeps compatibility normalization separate from diagnostics.
+pub fn validate_and_coerce_with_received(
+    tool_name: &str,
+    schema: &Value,
+    input: &Value,
+    received: &Value,
+) -> Result<Value, String> {
+    if schema.get("properties").is_some() && !input.is_object() {
+        return Err(format_error(
+            tool_name,
+            &["Tool input must be a JSON object".to_string()],
+            received,
+        ));
     }
 
-    // ── per-property type check + coerce ────────────────────────────────
-    for (key, prop_schema) in props {
-        let val = match coerced.get(key) {
-            Some(v) => v.clone(),
-            None => continue, // missing optionals are fine
-        };
-
-        // type coerce first — so enum check below sees the coerced value
-        let val = if let Some(expected_type) = prop_schema.get("type").and_then(|v| v.as_str()) {
-            match try_coerce(&val, expected_type) {
-                CoerceResult::Ok(v) => {
-                    coerced.insert(key.clone(), v.clone());
-                    v
-                }
-                CoerceResult::AlreadyCorrect => val,
-                CoerceResult::Mismatch => {
-                    let actual = json_type_name(&val);
-                    errors.push(format!(
-                        "The parameter `{key}` type is expected as `{expected_type}` but provided as `{actual}`"
-                    ));
-                    continue;
-                }
-            }
-        } else {
-            val
-        };
-
-        // enum check (on the coerced value)
-        if let Some(allowed) = prop_schema.get("enum").and_then(|v| v.as_array()) {
-            if !allowed.contains(&val) {
-                let options: Vec<String> = allowed.iter().map(|v| format!("{v}")).collect();
-                errors.push(format!(
-                    "The parameter `{key}` value {val} is not one of the allowed values: [{}]",
-                    options.join(", ")
-                ));
-            }
-        }
-    }
-
+    let mut errors = Vec::new();
+    let coerced = validate_node(schema, input, "", &mut errors);
     if errors.is_empty() {
-        Ok(Value::Object(coerced))
+        Ok(coerced)
     } else {
-        Err(format_error(tool_name, &errors))
+        Err(format_error(tool_name, &errors, received))
     }
 }
 
@@ -257,6 +190,97 @@ pub fn truncate_error(text: &str) -> String {
 
 // ── internals ───────────────────────────────────────────────────────────
 
+fn validate_node(schema: &Value, input: &Value, path: &str, errors: &mut Vec<String>) -> Value {
+    let value = match schema.get("type").and_then(Value::as_str) {
+        Some(expected_type) => match try_coerce(input, expected_type, schema) {
+            CoerceResult::Ok(value) => value,
+            CoerceResult::AlreadyCorrect => input.clone(),
+            CoerceResult::Mismatch => {
+                errors.push(format!(
+                    "The parameter `{}` type is expected as `{expected_type}` but provided as `{}`",
+                    display_path(path),
+                    json_type_name(input)
+                ));
+                return input.clone();
+            }
+        },
+        None => input.clone(),
+    };
+
+    if let Some(allowed) = schema.get("enum").and_then(Value::as_array) {
+        if !allowed.contains(&value) {
+            let options = allowed.iter().map(Value::to_string).collect::<Vec<_>>();
+            errors.push(format!(
+                "The parameter `{}` value {value} is not one of the allowed values: [{}]",
+                display_path(path),
+                options.join(", ")
+            ));
+        }
+    }
+
+    if let (Some(properties), Some(object)) = (
+        schema.get("properties").and_then(Value::as_object),
+        value.as_object(),
+    ) {
+        if let Some(required) = schema.get("required").and_then(Value::as_array) {
+            for name in required.iter().filter_map(Value::as_str) {
+                if !object.contains_key(name) {
+                    errors.push(format!(
+                        "The required parameter `{}` is missing",
+                        child_path(path, name)
+                    ));
+                }
+            }
+        }
+
+        let mut coerced = object.clone();
+        for (name, property_schema) in properties {
+            if let Some(property_value) = object.get(name) {
+                let property_path = child_path(path, name);
+                let normalized =
+                    validate_node(property_schema, property_value, &property_path, errors);
+                coerced.insert(name.clone(), normalized);
+            }
+        }
+        return Value::Object(coerced);
+    }
+
+    if let (Some(item_schema), Some(items)) = (schema.get("items"), value.as_array()) {
+        return Value::Array(
+            items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    validate_node(
+                        item_schema,
+                        item,
+                        &format!("{}[{index}]", display_path(path)),
+                        errors,
+                    )
+                })
+                .collect(),
+        );
+    }
+
+    value
+}
+
+fn child_path(parent: &str, child: &str) -> String {
+    if parent.is_empty() {
+        child.to_string()
+    } else {
+        format!("{parent}.{child}")
+    }
+}
+
+fn display_path(path: &str) -> &str {
+    if path.is_empty() {
+        "root"
+    } else {
+        path
+    }
+}
+
 enum CoerceResult {
     /// Value was coerced to a new value.
     Ok(Value),
@@ -266,7 +290,7 @@ enum CoerceResult {
     Mismatch,
 }
 
-fn try_coerce(val: &Value, expected: &str) -> CoerceResult {
+fn try_coerce(val: &Value, expected: &str, schema: &Value) -> CoerceResult {
     // Already the right type?
     if type_matches(val, expected) {
         return CoerceResult::AlreadyCorrect;
@@ -311,12 +335,18 @@ fn try_coerce(val: &Value, expected: &str) -> CoerceResult {
                     return CoerceResult::Ok(v);
                 }
             }
-            // Otherwise wrap a bare scalar string as a single-element array.
-            // Tools taking array params (glob patterns/paths, grep includes)
-            // already accept the one-item form via their own normalization, so
-            // repairing "model passed one string" here avoids a false rejection
-            // before the call ever reaches the tool.
-            CoerceResult::Ok(Value::Array(vec![Value::String(s.to_string())]))
+            // Only array<string> accepts a bare scalar as one item. In
+            // particular, never turn malformed edit array<object> input into a
+            // string element: preserving that mismatch produces a useful error.
+            if schema
+                .get("items")
+                .and_then(|items| items.get("type"))
+                .and_then(Value::as_str)
+                == Some("string")
+            {
+                return CoerceResult::Ok(Value::Array(vec![Value::String(s.to_string())]));
+            }
+            CoerceResult::Mismatch
         }
         "object" => {
             if let Ok(v) = serde_json::from_str::<Value>(s) {
@@ -354,10 +384,16 @@ fn json_type_name(val: &Value) -> &'static str {
     }
 }
 
-fn format_error(tool_name: &str, issues: &[String]) -> String {
+fn format_error(tool_name: &str, issues: &[String], input: &Value) -> String {
     let label = if issues.len() == 1 { "issue" } else { "issues" };
     let body = issues.join("\n");
-    format!("InputValidationError: {tool_name} failed due to the following {label}:\n{body}")
+    let received = match serde_json::to_string_pretty(input) {
+        Ok(value) => value,
+        Err(_) => input.to_string(),
+    };
+    format!(
+        "InputValidationError: {tool_name} failed due to the following {label}:\n{body}\n\nReceived arguments:\n{received}"
+    )
 }
 
 // ── tool result size limiting ───────────────────────────────────────────

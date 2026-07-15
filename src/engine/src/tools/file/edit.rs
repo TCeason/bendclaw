@@ -86,6 +86,10 @@ impl AgentTool for EditFileTool {
         Some(&[("path", &["file_path", "filePath", "file"] as &[&str])])
     }
 
+    fn prepare_arguments(&self, args: &serde_json::Value) -> serde_json::Value {
+        crate::tools::validation::coerce_edits(args)
+    }
+
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
@@ -288,11 +292,17 @@ impl EditFileTool {
         }
         let mut edits = Vec::with_capacity(arr.len());
         for (i, entry) in arr.iter().enumerate() {
-            let old = entry["old_text"]
-                .as_str()
+            let old = entry
+                .get("oldText")
+                .or_else(|| entry.get("old_text"))
+                .or_else(|| entry.get("old_string"))
+                .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| ToolError::InvalidArgs(format!("edits[{i}] missing oldText")))?;
-            let new = entry["new_text"]
-                .as_str()
+            let new = entry
+                .get("newText")
+                .or_else(|| entry.get("new_text"))
+                .or_else(|| entry.get("new_string"))
+                .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| ToolError::InvalidArgs(format!("edits[{i}] missing newText")))?;
             let old_lf = normalize_to_lf(old);
             let new_lf = normalize_to_lf(new);

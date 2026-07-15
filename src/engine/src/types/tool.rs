@@ -161,6 +161,12 @@ pub trait AgentTool: Send + Sync {
     fn parameter_aliases(&self) -> Option<crate::tools::validation::AliasMap> {
         None
     }
+    /// Tool-specific compatibility shim for raw arguments before schema
+    /// validation. Implementations may normalize known legacy shapes, but must
+    /// leave unrecognized malformed input unchanged so validation can report it.
+    fn prepare_arguments(&self, args: &serde_json::Value) -> serde_json::Value {
+        args.clone()
+    }
     /// Preview the system command that will be executed, if applicable.
     ///
     /// Returns `None` for tools that don't invoke external commands.

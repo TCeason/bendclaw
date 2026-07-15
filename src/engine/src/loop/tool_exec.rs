@@ -294,18 +294,15 @@ async fn execute_single_tool(
                 None => args.clone(),
             };
 
-            // Step 2: Edit-specific coercion (edits string→array, legacy single-edit).
-            // Gate on the tool's canonical name, not the called name: a model
-            // resuming a session may call the alias ("Edit") it saw in history.
-            if tool.name() == "edit" {
-                normalized = crate::tools::validation::coerce_edits(&normalized);
-            }
+            // Step 2: Run the tool's compatibility shim before validation.
+            normalized = tool.prepare_arguments(&normalized);
 
             // Step 3: Schema pre-validation + type coercion
-            let validated_args = crate::tools::validation::validate_and_coerce(
+            let validated_args = crate::tools::validation::validate_and_coerce_with_received(
                 name,
                 &tool.parameters_schema(),
                 &normalized,
+                args,
             );
             match validated_args {
                 Err(validation_error) => (

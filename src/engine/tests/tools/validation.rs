@@ -2,6 +2,7 @@ use evotengine::tools::validation::coerce_edits;
 use evotengine::tools::validation::normalize_aliases;
 use evotengine::tools::validation::truncate_error;
 use evotengine::tools::validation::validate_and_coerce;
+use evotengine::tools::validation::validate_and_coerce_with_received;
 use serde_json::json;
 
 // ── helper: a typical tool schema ───────────────────────────────────────
@@ -34,6 +35,27 @@ fn memory_schema() -> serde_json::Value {
             "content": { "type": "string" }
         },
         "required": ["action", "scope"]
+    })
+}
+
+fn edit_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "path": { "type": "string" },
+            "edits": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "oldText": { "type": "string" },
+                        "newText": { "type": "string" }
+                    },
+                    "required": ["oldText", "newText"]
+                }
+            }
+        },
+        "required": ["path", "edits"]
     })
 }
 
@@ -161,6 +183,101 @@ fn type_mismatch_string_cannot_parse_as_integer() {
         err.contains("expected as `integer` but provided as `string`"),
         "got: {err}"
     );
+}
+
+#[test]
+fn nested_array_items_are_validated() {
+    let input = json!({
+        "path": "foo.rs",
+        "edits": ["oldText", ":", "before", "\"newText\":", "after"]
+    });
+    let err = match validate_and_coerce("edit", &edit_schema(), &input) {
+        Ok(_) => panic!("token array must be rejected"),
+        Err(error) => error,
+    };
+    assert!(
+        err.contains("`edits[0]` type is expected as `object` but provided as `string`"),
+        "got: {err}"
+    );
+    assert!(err.contains("Received arguments:"), "got: {err}");
+    assert!(err.contains("\"oldText\""), "got: {err}");
+}
+
+#[test]
+fn invalid_stringified_edit_is_not_wrapped_as_array_item() {
+    let input = json!({
+        "path": "foo.rs",
+        "edits": "not valid json"
+    });
+    let prepared = coerce_edits(&input);
+    let err = match validate_and_coerce("edit", &edit_schema(), &prepared) {
+        Ok(_) => panic!("invalid stringified edits must be rejected"),
+        Err(error) => error,
+    };
+    assert!(
+        err.contains("`edits` type is expected as `array` but provided as `string`"),
+        "got: {err}"
+    );
+    assert!(err.contains("not valid json"), "got: {err}");
+}
+
+#[test]
+fn nested_required_field_reports_full_path() {
+    let input = json!({
+        "path": "foo.rs",
+        "edits": [{ "oldText": "before" }]
+    });
+    let err = match validate_and_coerce("edit", &edit_schema(), &input) {
+        Ok(_) => panic!("missing nested field must be rejected"),
+        Err(error) => error,
+    };
+    assert!(
+        err.contains("required parameter `edits[0].newText` is missing"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn validation_error_preserves_raw_arguments_after_preparation() {
+    let raw = json!({
+        "path": "foo.rs",
+        "old_text": "before"
+    });
+    let prepared = json!({
+        "path": "foo.rs",
+        "edits": [{ "oldText": "before" }]
+    });
+    let err = match validate_and_coerce_with_received("edit", &edit_schema(), &prepared, &raw) {
+        Ok(_) => panic!("missing nested field must be rejected"),
+        Err(error) => error,
+    };
+    assert!(err.contains("edits[0].newText"), "got: {err}");
+    assert!(err.contains("\"old_text\": \"before\""), "got: {err}");
+    assert!(!err.contains("\"edits\":"), "got: {err}");
+}
+
+#[test]
+fn nested_values_are_coerced_recursively() {
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": { "count": { "type": "integer" } },
+                    "required": ["count"]
+                }
+            }
+        },
+        "required": ["items"]
+    });
+    let input = json!({ "items": [{ "count": "7" }] });
+    let result = match validate_and_coerce("test", &schema, &input) {
+        Ok(value) => value,
+        Err(error) => panic!("unexpected validation error: {error}"),
+    };
+    assert_eq!(result["items"][0]["count"], json!(7));
 }
 
 // ── enum validation ─────────────────────────────────────────────────────
@@ -455,9 +572,13 @@ fn coerce_edits_string_to_array() {
         "edits": "[{\"old_text\": \"a\", \"new_text\": \"b\"}]"
     });
     let result = coerce_edits(&input);
-    let edits = result["edits"].as_array().unwrap();
+    let edits = match result["edits"].as_array() {
+        Some(edits) => edits,
+        None => panic!("edits must be an array"),
+    };
     assert_eq!(edits.len(), 1);
-    assert_eq!(edits[0]["old_text"], json!("a"));
+    assert_eq!(edits[0]["oldText"], json!("a"));
+    assert_eq!(edits[0]["newText"], json!("b"));
 }
 
 #[test]
@@ -468,10 +589,13 @@ fn coerce_edits_top_level_old_new() {
         "new_text": "world"
     });
     let result = coerce_edits(&input);
-    let edits = result["edits"].as_array().unwrap();
+    let edits = match result["edits"].as_array() {
+        Some(edits) => edits,
+        None => panic!("edits must be an array"),
+    };
     assert_eq!(edits.len(), 1);
-    assert_eq!(edits[0]["old_text"], json!("hello"));
-    assert_eq!(edits[0]["new_text"], json!("world"));
+    assert_eq!(edits[0]["oldText"], json!("hello"));
+    assert_eq!(edits[0]["newText"], json!("world"));
     assert!(result.get("old_text").is_none());
 }
 
@@ -483,9 +607,32 @@ fn coerce_edits_top_level_old_text_camel() {
         "newText": "world"
     });
     let result = coerce_edits(&input);
-    let edits = result["edits"].as_array().unwrap();
-    assert_eq!(edits[0]["old_text"], json!("hello"));
-    assert_eq!(edits[0]["new_text"], json!("world"));
+    let edits = match result["edits"].as_array() {
+        Some(edits) => edits,
+        None => panic!("edits must be an array"),
+    };
+    assert_eq!(edits[0]["oldText"], json!("hello"));
+    assert_eq!(edits[0]["newText"], json!("world"));
+}
+
+#[test]
+fn coerce_edits_appends_top_level_replacement() {
+    let input = json!({
+        "path": "foo.rs",
+        "edits": [{ "oldText": "a", "newText": "b" }],
+        "oldText": "c",
+        "newText": "d"
+    });
+    let result = coerce_edits(&input);
+    assert_eq!(
+        result["edits"],
+        json!([
+            { "oldText": "a", "newText": "b" },
+            { "oldText": "c", "newText": "d" }
+        ])
+    );
+    assert!(result.get("oldText").is_none());
+    assert!(result.get("newText").is_none());
 }
 
 #[test]
@@ -501,29 +648,31 @@ fn coerce_edits_normalize_entry_field_names() {
         }]
     });
     let result = coerce_edits(&input);
-    let edits = result["edits"].as_array().unwrap();
-    assert_eq!(edits[0]["old_text"], json!("aaa"));
-    assert_eq!(edits[0]["new_text"], json!("bbb"));
-    assert_eq!(edits[1]["old_text"], json!("ccc"));
-    assert_eq!(edits[1]["new_text"], json!("ddd"));
+    let edits = match result["edits"].as_array() {
+        Some(edits) => edits,
+        None => panic!("edits must be an array"),
+    };
+    assert_eq!(edits[0]["oldText"], json!("aaa"));
+    assert_eq!(edits[0]["newText"], json!("bbb"));
+    assert_eq!(edits[1]["oldText"], json!("ccc"));
+    assert_eq!(edits[1]["newText"], json!("ddd"));
 }
 
 #[test]
-fn coerce_edits_invalid_string_becomes_empty_array() {
+fn coerce_edits_invalid_string_is_preserved_for_validation() {
     let input = json!({
         "path": "foo.rs",
         "edits": "not valid json"
     });
     let result = coerce_edits(&input);
-    let edits = result["edits"].as_array().unwrap();
-    assert!(edits.is_empty());
+    assert_eq!(result["edits"], json!("not valid json"));
 }
 
 #[test]
 fn coerce_edits_already_correct_unchanged() {
     let input = json!({
         "path": "foo.rs",
-        "edits": [{ "old_text": "x", "new_text": "y" }]
+        "edits": [{ "oldText": "x", "newText": "y" }]
     });
     let result = coerce_edits(&input);
     assert_eq!(result, input);
