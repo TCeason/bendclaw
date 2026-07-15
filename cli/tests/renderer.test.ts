@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach } from 'bun:test'
 import { Writable } from 'node:stream'
-import { TermRenderer, supportsSynchronizedOutput } from '../src/term/renderer.js'
+import { TermRenderer } from '../src/term/renderer.js'
 
 // Mock stdout that captures writes
 class MockStdout extends Writable {
@@ -152,49 +152,29 @@ describe('TermRenderer', () => {
       renderer.destroy()
     })
 
-    test('reanchors a frame that shrinks above the current viewport', async () => {
+    test('shrinking a visible frame clears removed rows without repainting the viewport', async () => {
       const { renderer, stdout } = createRenderer()
       stdout.rows = 8
       renderer.init()
 
-      let lines = Array.from({ length: 16 }, (_, i) => `old ${i}`)
+      let lines = Array.from({ length: 8 }, (_, i) => `old ${i}`)
       renderer.setRenderCallback(() => lines)
       await renderFrame(renderer)
 
       stdout.clear()
-      // Short frame already bottom-packed by the viewmodel (top pad + body +
-      // footer). After a shrink that leaves the logical tail above the old
-      // viewport, repaint that full screen from home without wiping scrollback.
-      lines = [
-        '',
-        '',
-        'history',
-        'Thinking...',
-        '────────',
-        '❯ ',
-        '────────',
-        'footer',
-      ]
+      lines = ['history', 'Thinking...', '────────', '❯ ', '────────', 'footer']
       await renderFrame(renderer)
 
       const out = stdout.output
-      expect(out).toContain('\x1b[2J\x1b[H')
-      expect(out).not.toContain('\x1b[3J')
-      expect(out).toContain('Thinking...')
+      expect(out).not.toContain('\x1b[2J\x1b[H')
+      expect(out).toContain('\x1b[2K')
+      expect(out).toContain('history')
       expect(out).toContain('footer')
-      // Only the visible tail is emitted after clearing; stale scrollback rows
-      // must not be replayed through the terminal.
-      expect(out).not.toContain('old 0')
-      // Content must sit under the top pad, not flush against the home row with
-      // a large blank band under the conversation.
-      const cleared = out.slice(out.indexOf('\x1b[2J\x1b[H') + '\x1b[2J\x1b[H'.length)
-      expect(cleared.startsWith('\r\n\r\nhistory')).toBe(true)
       renderer.destroy()
     })
 
     test('uses synchronized output wrapping', async () => {
-      const stdout = new MockStdout() as any
-      const renderer = new TermRenderer({ stdout, synchronizedOutput: true })
+      const { renderer, stdout } = createRenderer()
       renderer.init()
       renderer.setRenderCallback(() => ['hello'])
       stdout.clear()
@@ -203,44 +183,6 @@ describe('TermRenderer', () => {
       expect(out).toContain('\x1b[?2026h') // sync start
       expect(out).toContain('\x1b[?2026l') // sync end
       renderer.destroy()
-    })
-
-    test('disables synchronized output for Warp without changing frame content', async () => {
-      expect(supportsSynchronizedOutput({ TERM_PROGRAM: 'WarpTerminal' })).toBe(false)
-      expect(supportsSynchronizedOutput({ TERM_PROGRAM: 'iTerm.app' })).toBe(true)
-
-      const stdout = new MockStdout() as any
-      const renderer = new TermRenderer({ stdout, synchronizedOutput: false })
-      renderer.init()
-      renderer.setRenderCallback(() => ['hello'])
-      stdout.clear()
-      await renderFrame(renderer)
-
-      expect(stdout.output).toContain('hello')
-      expect(stdout.output).not.toContain('\x1b[?2026h')
-      expect(stdout.output).not.toContain('\x1b[?2026l')
-      renderer.destroy()
-    })
-
-    test('Warp capability is applied by the constructor default', async () => {
-      const previous = process.env.TERM_PROGRAM
-      process.env.TERM_PROGRAM = 'WarpTerminal'
-      try {
-        const stdout = new MockStdout() as any
-        const renderer = new TermRenderer({ stdout })
-        renderer.init()
-        renderer.setRenderCallback(() => ['hello'])
-        stdout.clear()
-        await renderFrame(renderer)
-
-        expect(stdout.output).toContain('hello')
-        expect(stdout.output).not.toContain('\x1b[?2026h')
-        expect(stdout.output).not.toContain('\x1b[?2026l')
-        renderer.destroy()
-      } finally {
-        if (previous === undefined) delete process.env.TERM_PROGRAM
-        else process.env.TERM_PROGRAM = previous
-      }
     })
   })
 

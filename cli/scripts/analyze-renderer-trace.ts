@@ -5,6 +5,7 @@ import { join } from 'path'
 import { sliceAnsi } from 'bun'
 import xterm from '@xterm/headless'
 import stripAnsi from 'strip-ansi'
+import stringWidth from 'string-width'
 import type { RendererTraceEntry } from '../src/term/renderer.js'
 
 function usage(): never {
@@ -62,6 +63,9 @@ let rightMarginFrames = 0
 let clearViewportFrames = 0
 let clearScrollbackFrames = 0
 let firstMismatch: { entry: RendererTraceEntry; expected: string[]; actual: string[] } | null = null
+let originKnown = false
+let verifiedFrames = 0
+let unverifiedOriginFrames = 0
 let terminal: InstanceType<typeof xterm.Terminal> | null = null
 let columns = 0
 let rows = 0
@@ -107,6 +111,26 @@ function expectedViewport(entry: RendererTraceEntry): string[] {
   return expected
 }
 
+function viewportsMatch(
+  entry: RendererTraceEntry,
+  expected: string[],
+  actual: string[],
+): boolean {
+  return expected.every((line, row) => {
+    const sourceIndex = entry.frameState.targetViewportTop + row
+    const source = logicalLines.get(sourceIndex) ?? ''
+    if (stringWidth(stripAnsi(source)) < entry.terminal.columns) {
+      return actual[row] === line
+    }
+    // With DECAWM disabled, terminals repeatedly overwrite the last cell when
+    // handed an over-width line. The renderer intentionally relies on that cell
+    // for clipping, so its final glyph is terminal-specific and not part of the
+    // stable logical viewport. Compare every addressable cell before it.
+    const stableColumns = Math.max(0, entry.terminal.columns - 1)
+    return sliceAnsi(actual[row] ?? '', 0, stableColumns) === sliceAnsi(line, 0, stableColumns)
+  })
+}
+
 for (const entry of entries) {
   branches.set(entry.branch, (branches.get(entry.branch) ?? 0) + 1)
   if (entry.frameState.newLines < entry.frameState.previousLines) shrinkFrames++
@@ -115,6 +139,7 @@ for (const entry of entries) {
   if (entry.frameState.maxVisibleWidth >= entry.terminal.columns) rightMarginFrames++
 
   const ansi = entry.ansiWrites.join('')
+  if (ansi.includes('\x1b[2J\x1b[H')) originKnown = true
   if (ansi.includes('\x1b[2J\x1b[H')) clearViewportFrames++
   if (ansi.includes('\x1b[3J')) clearScrollbackFrames++
 
@@ -137,10 +162,15 @@ for (const entry of entries) {
   await flush(terminal)
   updateLogicalFrame(entry)
 
-  if (!firstMismatch) {
+  if (!originKnown) {
+    unverifiedOriginFrames++
+  } else {
+    verifiedFrames++
+  }
+  if (originKnown && !firstMismatch) {
     const expected = expectedViewport(entry)
     const actual = viewport(terminal, rows)
-    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    if (!viewportsMatch(entry, expected, actual)) {
       firstMismatch = { entry, expected, actual }
     }
   }
@@ -159,6 +189,8 @@ console.log(JSON.stringify({
   osc133Frames: oscFrames,
   overWidthFrames,
   rightMarginFrames,
+  verifiedFrames,
+  unverifiedOriginFrames,
   firstReplayMismatch: firstMismatch
     ? {
         frame: firstMismatch.entry.frame,

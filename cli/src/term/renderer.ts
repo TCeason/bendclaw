@@ -2,8 +2,8 @@
  * TermRenderer — differential rendering engine for terminal output.
  *
  * Renders a full frame each cycle, diffs against the previous frame, and only
- * redraws changed lines. Uses synchronized output (DEC mode 2026) where the
- * terminal implements it without corrupting scrollback.
+ * redraws changed lines. Uses synchronized output (DEC mode 2026) to eliminate
+ * flicker.
  *
  * Two zones:
  *   - Frozen scrollback: lines that have been "frozen" scroll naturally into
@@ -20,11 +20,10 @@ import stripAnsi from 'strip-ansi'
 // --- Constants ---
 
 const MIN_RENDER_INTERVAL_MS = 16
-const DEC_SYNC_START = '\x1b[?2026h'
-const DEC_SYNC_END = '\x1b[?2026l'
+const SYNC_START = '\x1b[?2026h'
+const SYNC_END = '\x1b[?2026l'
 const CLEAR_LINE = '\x1b[2K'
 const CLEAR_SCREEN = '\x1b[2J\x1b[H\x1b[3J'
-const CLEAR_VIEWPORT = '\x1b[2J\x1b[H'
 const OSC133_MARKER = /\x1b\]133;[ABC]\x07/g
 const HIDE_CURSOR = '\x1b[?25l'
 const SHOW_CURSOR = '\x1b[?25h'
@@ -78,11 +77,6 @@ export interface RendererTraceEntry {
 export interface TermRendererOptions {
   stdout?: NodeJS.WriteStream
   trace?: (entry: RendererTraceEntry) => void
-  synchronizedOutput?: boolean
-}
-
-export function supportsSynchronizedOutput(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.TERM_PROGRAM !== 'WarpTerminal'
 }
 
 // --- Renderer ---
@@ -90,8 +84,6 @@ export function supportsSynchronizedOutput(env: NodeJS.ProcessEnv = process.env)
 export class TermRenderer {
   private stdout: NodeJS.WriteStream
   private trace: ((entry: RendererTraceEntry) => void) | null
-  private readonly syncStart: string
-  private readonly syncEnd: string
   private traceWrites: string[] | null = null
   private pendingTraceWrites: string[] = []
   private frameNumber = 0
@@ -114,12 +106,6 @@ export class TermRenderer {
   constructor(opts?: TermRendererOptions) {
     this.stdout = opts?.stdout ?? process.stdout
     this.trace = opts?.trace ?? null
-    // Warp has an open scrollback-duplication bug (warpdotdev/warp#11005).
-    // Avoid atomic scroll-and-repaint transactions there as a narrow workaround;
-    // other terminals retain flicker-free synchronized output.
-    const synchronizedOutput = opts?.synchronizedOutput ?? supportsSynchronizedOutput()
-    this.syncStart = synchronizedOutput ? DEC_SYNC_START : ''
-    this.syncEnd = synchronizedOutput ? DEC_SYNC_END : ''
   }
 
   // --- Accessors ---
@@ -215,7 +201,7 @@ export class TermRenderer {
    * Clear the viewport and scrollback. Used for /clear command.
    */
   clearScreen(): void {
-    this.write(this.syncStart + CLEAR_SCREEN + this.syncEnd)
+    this.write(SYNC_START + CLEAR_SCREEN + SYNC_END)
     this.previousLines = []
     this.hardwareCursorRow = 0
     this.maxLinesRendered = 0
@@ -336,40 +322,18 @@ export class TermRenderer {
 
     // --- Full render helper ---
     const fullRender = (clear: boolean, branch: string): void => {
-      let buffer = this.syncStart
+      let buffer = SYNC_START
       if (clear) buffer += CLEAR_SCREEN
       for (let i = 0; i < newLines.length; i++) {
         if (i > 0) buffer += '\r\n'
         buffer += newLines[i]
       }
-      buffer += this.syncEnd
+      buffer += SYNC_END
       this.write(buffer)
       this.hardwareCursorRow = Math.max(0, newLines.length - 1)
       this.maxLinesRendered = clear ? newLines.length : Math.max(this.maxLinesRendered, newLines.length)
       const bufferLength = Math.max(height, newLines.length)
       this.previousViewportTop = Math.max(0, bufferLength - height)
-      this.previousLines = newLines
-      this.previousWidth = width
-      this.previousHeight = height
-      this.positionHardwareCursor(cursorPos, newLines.length)
-      traceFrame(branch)
-    }
-
-    // Repaint only the visible tail. This is used when a shorter frame would
-    // otherwise remain mapped to the old, lower scrollback viewport and leave
-    // blank terminal rows below the prompt.
-    const renderTail = (branch: string): void => {
-      const viewportTop = Math.max(0, newLines.length - height)
-      let buffer = this.syncStart + CLEAR_VIEWPORT
-      for (let i = viewportTop; i < newLines.length; i++) {
-        if (i > viewportTop) buffer += '\r\n'
-        buffer += newLines[i]
-      }
-      buffer += this.syncEnd
-      this.write(buffer)
-      this.hardwareCursorRow = Math.max(0, newLines.length - 1)
-      this.maxLinesRendered = newLines.length
-      this.previousViewportTop = viewportTop
       this.previousLines = newLines
       this.previousWidth = width
       this.previousHeight = height
@@ -440,12 +404,7 @@ export class TermRenderer {
     // All changes are in deleted lines (content shrunk)
     if (firstChanged >= newLines.length) {
       if (this.previousLines.length > newLines.length) {
-        const targetViewportTop = Math.max(0, newLines.length - height)
-        if (targetViewportTop < prevViewportTop) {
-          renderTail('deleted_lines_viewport_up')
-          return
-        }
-        let buffer = this.syncStart
+        let buffer = SYNC_START
         // Move to end of new content (clamp to 0 for empty content)
         const targetRow = Math.max(0, newLines.length - 1)
         if (targetRow < prevViewportTop) {
@@ -470,7 +429,7 @@ export class TermRenderer {
         }
         const moveBack = Math.max(0, extraLines - 1 + clearStartOffset)
         if (moveBack > 0) buffer += `\x1b[${moveBack}A`
-        buffer += this.syncEnd
+        buffer += SYNC_END
         this.write(buffer)
         this.hardwareCursorRow = targetRow
       }
@@ -482,7 +441,6 @@ export class TermRenderer {
       return
     }
 
-    const targetViewportTop = Math.max(0, newLines.length - height)
     if (firstChanged < prevViewportTop) {
       const delta = newLines.length - this.previousLines.length
 
@@ -510,27 +468,14 @@ export class TermRenderer {
 
       if (delta === 0) {
         firstChanged = prevViewportTop
-      } else if (targetViewportTop < prevViewportTop) {
-        renderTail('off_viewport_shrink')
-        return
       } else {
         fullRender(true, 'off_viewport_redraw')
         return
       }
     }
 
-    // A frame can shrink from taller than the terminal to exactly one screen
-    // after streaming content is committed or interrupted. Its logical tail then
-    // belongs above the current scrollback viewport. Cursor-up cannot recover
-    // those rows, so an in-place diff would leave the prompt floating with blank
-    // rows below it. Repaint the new visible tail instead.
-    if (targetViewportTop < prevViewportTop) {
-      renderTail('viewport_moves_up')
-      return
-    }
-
     // --- Build differential update buffer ---
-    let buffer = this.syncStart
+    let buffer = SYNC_START
     const prevViewportBottom = prevViewportTop + height - 1
     const moveTargetRow = appendStart ? firstChanged - 1 : firstChanged
 
@@ -582,7 +527,7 @@ export class TermRenderer {
       buffer += `\x1b[${extraLines}A`
     }
 
-    buffer += this.syncEnd
+    buffer += SYNC_END
     this.write(buffer)
 
     // Update state

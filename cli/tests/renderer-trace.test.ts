@@ -257,7 +257,6 @@ describe('RendererTrace rolling storage', () => {
       const renderer = new TermRenderer({
         stdout,
         trace: entry => trace.log(entry),
-        synchronizedOutput: true,
       })
       let lines = ['history 0', 'history 1', 'body', '────────', '❯ ', '────────']
       renderer.setRenderCallback(() => lines)
@@ -297,6 +296,80 @@ describe('RendererTrace rolling storage', () => {
       const corruptReplay = analyzeRun(run)
       expect(corruptReplay.exitCode).not.toBe(0)
       expect(corruptReplay.stderr).toContain('Invalid JSONL')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('analyzer does not claim absolute viewport verification before a clear-home baseline', () => {
+    const root = mkdtempSync(join(tmpdir(), 'evot-renderer-origin-'))
+    try {
+      const trace = new RendererTrace({
+        rootDirectory: root,
+        segmentMaxBytes: 1_000_000,
+        retainSegments: 2,
+        retainRuns: 2,
+      })
+      trace.bind('00000000-0000-0000-0000-000000000007')
+      const stdout = new TraceStdout() as unknown as NodeJS.WriteStream
+      const renderer = new TermRenderer({ stdout, trace: entry => trace.log(entry) })
+      let lines = ['body', 'prompt']
+      renderer.setRenderCallback(() => lines)
+      renderer.init()
+      ;(renderer as any).doRender()
+      lines = ['body changed', 'prompt']
+      ;(renderer as any).doRender()
+      renderer.destroy()
+      trace.close()
+
+      const analyzed = analyzeRun(trace.filePath ?? '')
+      expect(analyzed.exitCode).toBe(0)
+      const summary = JSON.parse(analyzed.stdout)
+      expect(summary.verifiedFrames).toBe(0)
+      expect(summary.unverifiedOriginFrames).toBe(2)
+      expect(summary.firstReplayMismatch).toBeNull()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('analyzer tolerates only the unstable last cell of an over-width nowrap line', () => {
+    const root = mkdtempSync(join(tmpdir(), 'evot-renderer-nowrap-'))
+    try {
+      const trace = new RendererTrace({
+        rootDirectory: root,
+        segmentMaxBytes: 1_000_000,
+        retainSegments: 2,
+        retainRuns: 2,
+      })
+      trace.bind('00000000-0000-0000-0000-000000000006')
+      const stdout = new TraceStdout() as unknown as NodeJS.WriteStream
+      const overWidth = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx'
+      const renderer = new TermRenderer({ stdout, trace: entry => trace.log(entry) })
+      renderer.init()
+      renderer.clearScreen()
+      renderer.setRenderCallback(() => [overWidth, 'footer'])
+      ;(renderer as any).doRender()
+      renderer.destroy()
+      trace.close()
+
+      const run = trace.filePath ?? ''
+      const clean = analyzeRun(run)
+      expect(clean.exitCode).toBe(0)
+      expect(JSON.parse(clean.stdout).verifiedFrames).toBe(1)
+      expect(JSON.parse(clean.stdout).unverifiedOriginFrames).toBe(0)
+
+      const segment = join(run, segments(run)[0]!)
+      const records = readFileSync(segment, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+      const frame = records.find(record => record.kind === 'frame')
+      frame.ansiWrites = frame.ansiWrites.map((write: string) =>
+        write.replace(overWidth, `!${overWidth.slice(1)}`))
+      writeFileSync(segment, `${records.map(record => JSON.stringify(record)).join('\n')}\n`)
+
+      const corrupted = analyzeRun(run)
+      expect(corrupted.exitCode).not.toBe(0)
+      const summary = JSON.parse(corrupted.stdout.split('\n\n--- expected viewport ---')[0]!)
+      expect(summary.firstReplayMismatch).not.toBeNull()
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
