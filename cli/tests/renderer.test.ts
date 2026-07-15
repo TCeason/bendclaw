@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach } from 'bun:test'
 import { Writable } from 'node:stream'
-import { TermRenderer } from '../src/term/renderer.js'
+import { TermRenderer, supportsSynchronizedOutput } from '../src/term/renderer.js'
 
 // Mock stdout that captures writes
 class MockStdout extends Writable {
@@ -193,7 +193,8 @@ describe('TermRenderer', () => {
     })
 
     test('uses synchronized output wrapping', async () => {
-      const { renderer, stdout } = createRenderer()
+      const stdout = new MockStdout() as any
+      const renderer = new TermRenderer({ stdout, synchronizedOutput: true })
       renderer.init()
       renderer.setRenderCallback(() => ['hello'])
       stdout.clear()
@@ -202,6 +203,44 @@ describe('TermRenderer', () => {
       expect(out).toContain('\x1b[?2026h') // sync start
       expect(out).toContain('\x1b[?2026l') // sync end
       renderer.destroy()
+    })
+
+    test('disables synchronized output for Warp without changing frame content', async () => {
+      expect(supportsSynchronizedOutput({ TERM_PROGRAM: 'WarpTerminal' })).toBe(false)
+      expect(supportsSynchronizedOutput({ TERM_PROGRAM: 'iTerm.app' })).toBe(true)
+
+      const stdout = new MockStdout() as any
+      const renderer = new TermRenderer({ stdout, synchronizedOutput: false })
+      renderer.init()
+      renderer.setRenderCallback(() => ['hello'])
+      stdout.clear()
+      await renderFrame(renderer)
+
+      expect(stdout.output).toContain('hello')
+      expect(stdout.output).not.toContain('\x1b[?2026h')
+      expect(stdout.output).not.toContain('\x1b[?2026l')
+      renderer.destroy()
+    })
+
+    test('Warp capability is applied by the constructor default', async () => {
+      const previous = process.env.TERM_PROGRAM
+      process.env.TERM_PROGRAM = 'WarpTerminal'
+      try {
+        const stdout = new MockStdout() as any
+        const renderer = new TermRenderer({ stdout })
+        renderer.init()
+        renderer.setRenderCallback(() => ['hello'])
+        stdout.clear()
+        await renderFrame(renderer)
+
+        expect(stdout.output).toContain('hello')
+        expect(stdout.output).not.toContain('\x1b[?2026h')
+        expect(stdout.output).not.toContain('\x1b[?2026l')
+        renderer.destroy()
+      } finally {
+        if (previous === undefined) delete process.env.TERM_PROGRAM
+        else process.env.TERM_PROGRAM = previous
+      }
     })
   })
 

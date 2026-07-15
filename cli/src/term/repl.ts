@@ -11,6 +11,7 @@ import { assistantToolCalls } from './app/assistant-content.js'
 import { assistantMessageToOutputLines } from '../render/assistant.js'
 import { HistoryManager, parseHistoryItems } from '../session/history.js'
 import { ScreenLog } from '../session/screen-log.js'
+import { RendererTrace } from '../session/renderer-trace.js'
 import { findLastAssistantMarkdown } from '../session/assistant-markdown.js'
 import { isSlashCommand, resolveCommand, buildHardenPrompt } from '../commands/index.js'
 import { renderBanner } from './banner.js'
@@ -19,7 +20,6 @@ import {
   buildPromptBlocks,
   buildOverlayBlocks,
   updateLiveHeight,
-  bottomAnchorFiller,
   formatQueuedMessageLines,
   blocksToLines,
   type OverlayState,
@@ -136,7 +136,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const { agent } = opts
   const { version } = await import('../native/index.js')
   const appVersion = version()
-  const renderer = new TermRenderer()
+  const rendererTrace = new RendererTrace()
+  const renderer = new TermRenderer({
+    trace: rendererTrace.isEnabled ? entry => rendererTrace.log(entry) : undefined,
+  })
   renderer.init()
 
   let appState: AppState = {
@@ -529,22 +532,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       attachedAbove: spinnerBlock !== null || queueLines.length > 0,
     }))
 
-    const bodyLineCount = blocksToLines(blocks).length
-    const footerLineCount = blocksToLines(footerBlocks).length
-    // Pad above the body (not between body and footer). Short frames must end
-    // on the last terminal row with the transcript sitting directly above the
-    // prompt — a mid-frame gap pins content to the top and leaves a large blank
-    // band under the conversation.
-    const filler = bottomAnchorFiller(bodyLineCount, footerLineCount, renderer.termRows)
-    const frameBlocks: ViewBlock[] = []
-    if (filler > 0) {
-      frameBlocks.push({
-        lines: Array.from({ length: filler }, () => ({ spans: [{ text: '' }] })),
-        marginTop: 0,
-      })
-    }
-    frameBlocks.push(...blocks, ...footerBlocks)
-
+    const frameBlocks: ViewBlock[] = [...blocks, ...footerBlocks]
     return { lines: blocksToLines(frameBlocks) }
   }
 
@@ -762,6 +750,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
 
       sessionId = session.session_id
+      rendererTrace.bind(session.session_id)
       refreshConfigInfo()
       appState = { ...appState, sessionId: session.session_id, model: agent.model }
       const { messagesToOutputLines } = await import('../render/output.js')
@@ -893,6 +882,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       sessionId = stream.sessionId ?? sessionId
       appState = { ...appState, sessionId: sessionId }
       screenLog.bind(stream.sessionId)
+      rendererTrace.bind(stream.sessionId)
 
       for await (const event of stream) {
         if (destroyed) break
@@ -1136,10 +1126,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     renderer.requestRender()
   }
 
-  function formatLogPaths(logPath: string | null, markdownPath: string | null): string | null {
+  function formatLogPaths(
+    logPath: string | null,
+    markdownPath: string | null,
+    rendererPath: string | null = null,
+  ): string | null {
     if (!logPath) return null
     const lines = [`  Log: ${logPath}`]
     if (markdownPath) lines.push(`  Markdown: ${markdownPath}`)
+    if (rendererPath) lines.push(`  Renderer run: ${rendererPath}`)
     return lines.join('\n')
   }
 
@@ -1157,7 +1152,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const logPath = screenLog.filePath
       const markdownPath = screenLog.markdownTraceFilePath
       if (logPath) {
-        const text = formatLogPaths(logPath, markdownPath)
+        const text = formatLogPaths(logPath, markdownPath, rendererTrace.filePath)
         commitLines([{ id: 'sys-log', kind: 'system', text: text ?? `  Log: ${logPath}` }])
       }
       else commitLines([{ id: 'sys-log', kind: 'system', text: '  No active screen log.' }])
@@ -1569,6 +1564,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       // Start and bind a fresh empty session so /resume can see it immediately.
       const newSession = await agent.createSession()
       sessionId = newSession.session_id
+      rendererTrace.bind(newSession.session_id)
       appState = { ...createInitialState(newSession.model || appState.model, agent.cwd), sessionId }
       gitInfo.setCwd(agent.cwd)
       renderer.clearScreen()
@@ -1985,7 +1981,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const logPath = screenLog.filePath
       const markdownPath = screenLog.markdownTraceFilePath
       if (logPath) {
-        const text = formatLogPaths(logPath, markdownPath)
+        const text = formatLogPaths(logPath, markdownPath, rendererTrace.filePath)
         commitLines([{ id: 'sys-log', kind: 'system', text: text ?? `  Log: ${logPath}` }])
       }
       else if (sid) {
@@ -2226,6 +2222,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     cleanupPaste()
     disableRaw()
     renderer.destroy()
+    rendererTrace.close()
   }
 
   process.on('SIGINT', () => { cleanup(); fastExit(130) })
