@@ -37,8 +37,8 @@ impl CompactionController {
         &self.config
     }
 
-    /// Call after a successful (non-error, non-aborted) assistant response
-    /// to reset the overflow flag.
+    /// Call after an accepted, non-error, non-aborted assistant response to
+    /// reset the overflow flag.
     pub fn on_success(&mut self) {
         self.overflow_recovery_attempted = false;
     }
@@ -100,7 +100,6 @@ impl CompactionController {
             }
 
             TriggerDecision::Threshold { context_tokens } => {
-                self.overflow_recovery_attempted = false;
                 let stats = self.run_compaction(messages, summarizer_ctx, cancel).await;
                 CompactionResponse {
                     action: AfterResponseAction::Continue,
@@ -111,54 +110,6 @@ impl CompactionController {
                 }
             }
         }
-    }
-
-    /// Evaluate whether the context should be compacted *before* sending the
-    /// next prompt to the provider.
-    ///
-    /// Primary path: mirror the post-response threshold check using the latest
-    /// assistant provider usage retained in the transcript.
-    ///
-    /// Fallback path: when no usable provider usage is available (e.g. the last
-    /// turns were all errors with zero usage), fall back to the caller-supplied
-    /// `estimated_tokens` and compact on the threshold. Without this, a session
-    /// that hits repeated errors can never recover because every error turn
-    /// carries no usage and the pre-prompt check would skip forever. Mirrors
-    /// pi-mono's `_checkCompaction` error-estimate path.
-    pub async fn before_prompt(
-        &mut self,
-        messages: &mut Vec<AgentMessage>,
-        current_model: &ModelId,
-        estimated_tokens: usize,
-        summarizer_ctx: Option<&SummarizerContext>,
-        cancel: CancellationToken,
-    ) -> CompactionResponse {
-        if let Some(usage) = latest_assistant_usage(messages) {
-            // Prefer real provider usage when it carries an input signal, but
-            // do not let that anchor hide tool results or steering messages
-            // appended after the response. If provider usage does not trigger,
-            // evaluate the caller's anchor-plus-trailing estimate below.
-            if usage.input > 0 || usage.cache_read > 0 {
-                let response = self
-                    .after_response(
-                        messages,
-                        &usage,
-                        current_model,
-                        summarizer_ctx,
-                        cancel.clone(),
-                    )
-                    .await;
-                if response.stats.is_some()
-                    || response.reason.is_some()
-                    || response.overflow_exhausted
-                {
-                    return response;
-                }
-            }
-        }
-
-        self.compact_on_estimate(messages, estimated_tokens, summarizer_ctx, cancel)
-            .await
     }
 
     /// Estimate-based threshold compaction.
@@ -177,7 +128,6 @@ impl CompactionController {
         cancel: CancellationToken,
     ) -> CompactionResponse {
         if estimated_tokens > self.config.trigger_threshold() {
-            self.overflow_recovery_attempted = false;
             let stats = self.run_compaction(messages, summarizer_ctx, cancel).await;
             return CompactionResponse {
                 action: AfterResponseAction::Continue,
@@ -256,38 +206,6 @@ impl CompactionResponse {
             overflow_exhausted: false,
         }
     }
-}
-
-fn latest_assistant_usage(messages: &[AgentMessage]) -> Option<UsageSnapshot> {
-    for message in messages.iter().rev() {
-        let AgentMessage::Llm(crate::types::Message::Assistant {
-            usage,
-            stop_reason,
-            model,
-            provider,
-            timestamp,
-            error_message,
-            ..
-        }) = message
-        else {
-            continue;
-        };
-        return Some(UsageSnapshot {
-            input: usage.input as usize,
-            cache_read: usage.cache_read as usize,
-            cache_write: usage.cache_write as usize,
-            output: usage.output as usize,
-            total_tokens: usage.total_tokens as usize,
-            model: ModelId {
-                provider: provider.clone(),
-                model: model.clone(),
-            },
-            timestamp: *timestamp,
-            stop_reason: stop_reason.clone(),
-            error_message: error_message.clone(),
-        });
-    }
-    None
 }
 
 fn now_ms() -> u64 {

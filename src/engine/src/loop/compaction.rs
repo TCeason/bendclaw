@@ -20,10 +20,6 @@ const OVERFLOW_EXHAUSTED_MESSAGE: &str =
     "Context overflow recovery failed after one compact-and-retry attempt. \
      Try reducing context or switching to a larger-context model.";
 
-const PREFLIGHT_CONTEXT_MESSAGE: &str =
-    "Context remains above the safe request budget after compaction. \
-     Reduce context or switch to a larger-context model.";
-
 /// Run the post-response compaction policy for one assistant message.
 pub(super) async fn post_response_compaction(
     controller: &mut Option<CompactionController>,
@@ -36,12 +32,18 @@ pub(super) async fn post_response_compaction(
 ) -> bool {
     let ctrl = match controller.as_mut() {
         Some(ctrl) => ctrl,
-        None => return false,
+        None => {
+            emit_accepted_message(tx, assistant_message);
+            return false;
+        }
     };
 
     let usage = match usage_snapshot_from_message(assistant_message) {
         Some(usage) => usage,
-        None => return false,
+        None => {
+            emit_accepted_message(tx, assistant_message);
+            return false;
+        }
     };
 
     let current_model = ModelId {
@@ -80,18 +82,28 @@ pub(super) async fn post_response_compaction(
         response
     };
 
-    emit_compaction_events(ctrl, tracker, messages, &response, tx);
-
     let should_retry = response.action == AfterResponseAction::Retry;
     if !should_retry {
+        emit_accepted_message(tx, assistant_message);
+    }
+    emit_compaction_events(ctrl, tracker, messages, &response, tx);
+
+    if !should_retry {
         if let Message::Assistant { stop_reason, .. } = assistant_message {
-            if *stop_reason == StopReason::Stop {
+            if *stop_reason != StopReason::Error && *stop_reason != StopReason::Aborted {
                 ctrl.on_success();
             }
         }
     }
 
     should_retry
+}
+
+fn emit_accepted_message(tx: &mpsc::UnboundedSender<AgentEvent>, message: &Message) {
+    tx.send(AgentEvent::MessageEnd {
+        message: AgentMessage::Llm(message.clone()),
+    })
+    .ok();
 }
 
 /// Run the pre-prompt compaction policy before the first LLM call of a run.
@@ -120,54 +132,33 @@ pub(super) async fn pre_prompt_compaction(
         thinking_level: config.thinking_level,
     };
 
-    let current_model = ModelId {
-        provider: config
-            .model_config
-            .as_ref()
-            .map(|m| m.provider.clone())
-            .or_else(|| latest_assistant_provider(messages))
-            .unwrap_or_default(),
-        model: config.model.clone(),
-    };
-
-    let mut use_provider_usage = true;
     loop {
         let estimated_tokens = tracker.estimate_context_tokens(messages);
-        let response = if use_provider_usage {
-            use_provider_usage = false;
-            ctrl.before_prompt(
-                messages,
-                &current_model,
-                estimated_tokens,
-                Some(&summarizer_ctx),
-                cancel.clone(),
-            )
-            .await
-        } else {
-            ctrl.compact_on_estimate(
+        let response = ctrl
+            .compact_on_estimate(
                 messages,
                 estimated_tokens,
                 Some(&summarizer_ctx),
                 cancel.clone(),
             )
-            .await
-        };
+            .await;
 
         emit_compaction_events(ctrl, tracker, messages, &response, tx);
+
+        if cancel.is_cancelled() {
+            return false;
+        }
 
         let remaining = tracker.estimate_context_tokens(messages);
         if remaining <= ctrl.config().trigger_threshold() {
             return true;
         }
         if response.stats.is_none() || remaining >= estimated_tokens {
-            tx.send(AgentEvent::Error {
-                error: AgentErrorInfo {
-                    kind: AgentErrorKind::Runtime,
-                    message: PREFLIGHT_CONTEXT_MESSAGE.to_string(),
-                },
-            })
-            .ok();
-            return false;
+            // This is an estimate, not an authoritative provider limit. A
+            // conservative tokenizer or stale model catalog must not deadlock
+            // a resumable session. Let the provider decide; a real overflow is
+            // handled by the bounded post-response compact-and-retry path.
+            return true;
         }
     }
 }
@@ -220,15 +211,6 @@ fn emit_compaction_events(
         })
         .ok();
     }
-}
-
-fn latest_assistant_provider(messages: &[AgentMessage]) -> Option<String> {
-    for message in messages.iter().rev() {
-        if let AgentMessage::Llm(Message::Assistant { provider, .. }) = message {
-            return Some(provider.clone());
-        }
-    }
-    None
 }
 
 /// Whether the response is a provider error that is *not* a context overflow.

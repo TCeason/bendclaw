@@ -72,8 +72,16 @@ async fn auto_compaction_persists_structured_compact_item() -> TestResult {
             assistant("old assistant one"),
             user(&"old message two ".repeat(30_000)),
             assistant("old assistant two"),
-            user("old message three with enough content to be summarized"),
+            user(&"old message three ".repeat(30_000)),
             assistant_with_usage("old assistant three", 120_000),
+            user("old message four"),
+            assistant("old assistant four"),
+            user("old message five"),
+            assistant("old assistant five"),
+            user("old message six"),
+            assistant("old assistant six"),
+            user("old message seven"),
+            assistant("old assistant seven"),
         ])
         .await?;
 

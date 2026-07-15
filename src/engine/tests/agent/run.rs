@@ -1945,6 +1945,19 @@ async fn test_compaction_after_tool_use_waits_for_tool_results() {
             .any(|event| matches!(event, AgentEvent::ContextCompactionEnd { .. })),
         "expected compaction to run after the tool result was appended"
     );
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            AgentEvent::ContextCompactionStarted {
+                will_retry: true,
+                ..
+            } | AgentEvent::ContextCompactionEnd {
+                will_retry: true,
+                ..
+            }
+        )),
+        "preflight threshold compaction must never claim overflow retry"
+    );
 
     let captured_requests = requests.lock().clone();
     assert!(
@@ -2104,6 +2117,197 @@ async fn test_non_overflow_error_compacts_on_estimate() {
             .any(|e| matches!(e, AgentEvent::ContextCompactionEnd { .. })),
         "expected estimate-based compaction to run after a non-overflow error"
     );
+}
+
+#[tokio::test]
+async fn test_overflow_retry_never_completes_abandoned_partial_response() {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    use evotengine::context::ContextConfig;
+
+    struct LengthOverflowThenSuccess {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl StreamProvider for LengthOverflowThenSuccess {
+        async fn stream(
+            &self,
+            _config: StreamConfig,
+            tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+            _cancel: tokio_util::sync::CancellationToken,
+        ) -> Result<StreamOutcome, ProviderError> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            let text = if call == 0 {
+                "abandoned partial"
+            } else {
+                "recovered answer"
+            };
+            let _ = tx.send(StreamEvent::Start);
+            let _ = tx.send(StreamEvent::TextDelta {
+                content_index: 0,
+                delta: text.into(),
+            });
+            let message = Message::Assistant {
+                content: vec![Content::Text { text: text.into() }],
+                stop_reason: if call == 0 {
+                    StopReason::Length
+                } else {
+                    StopReason::Stop
+                },
+                model: "mock".into(),
+                provider: "mock".into(),
+                usage: if call == 0 {
+                    Usage {
+                        input: 1_100,
+                        output: 20,
+                        total_tokens: 1_120,
+                        ..Default::default()
+                    }
+                } else {
+                    Usage {
+                        input: 500,
+                        output: 20,
+                        total_tokens: 520,
+                        ..Default::default()
+                    }
+                },
+                timestamp: call as u64 + 1,
+                error_message: if call == 0 {
+                    Some("response incomplete: max_output_tokens".into())
+                } else {
+                    None
+                },
+                response_id: None,
+            };
+            let _ = tx.send(StreamEvent::Done {
+                message: message.clone(),
+            });
+            Ok(StreamOutcome::complete(message))
+        }
+    }
+
+    let provider = std::sync::Arc::new(LengthOverflowThenSuccess {
+        calls: AtomicUsize::new(0),
+    });
+    let mut config = make_config(MockProvider::text("unused"));
+    config.provider = provider.clone();
+    config.context_config = Some(ContextConfig {
+        max_context_tokens: 1_000,
+        system_prompt_tokens: 0,
+        keep_recent: 1,
+        keep_first: 1,
+        tool_output_max_lines: 50,
+    });
+
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: (0..10)
+            .map(|i| AgentMessage::Llm(Message::user(format!("history {i} {}", "x".repeat(100)))))
+            .collect(),
+        tools: vec![],
+        cwd: std::path::PathBuf::new(),
+        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+        prompt_cache_key: None,
+    };
+    let prompt = AgentMessage::Llm(Message::user("continue"));
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    let new_messages = agent_loop(
+        vec![prompt],
+        &mut context,
+        &config,
+        tx,
+        CancellationToken::new(),
+    )
+    .await;
+    let events = collect_events(rx);
+
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::ContextCompactionEnd {
+            will_retry: true,
+            ..
+        })));
+    let completed_assistant_texts: Vec<String> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::MessageEnd {
+                message: AgentMessage::Llm(Message::Assistant { content, .. }),
+            } => Some(
+                content
+                    .iter()
+                    .filter_map(|block| match block {
+                        Content::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<String>(),
+            ),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(completed_assistant_texts, vec!["recovered answer"]);
+    assert!(new_messages.iter().all(|message| !matches!(
+        message,
+        AgentMessage::Llm(Message::Assistant { content, .. })
+            if content.iter().any(|block| matches!(block, Content::Text { text } if text == "abandoned partial"))
+    )));
+    assert!(context.messages.iter().all(|message| !matches!(
+        message,
+        AgentMessage::Llm(Message::Assistant { content, .. })
+            if content.iter().any(|block| matches!(block, Content::Text { text } if text == "abandoned partial"))
+    )));
+}
+
+#[tokio::test]
+async fn test_preflight_no_progress_defers_to_provider() {
+    use evotengine::context::ContextConfig;
+
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("provider accepted request".into())])
+        .prior_messages(vec![
+            AgentMessage::Llm(Message::user("x".repeat(4_000))),
+            assistant_msg_for_test("pinned assistant"),
+        ])
+        .context_config(ContextConfig {
+            max_context_tokens: 1_000,
+            system_prompt_tokens: 0,
+            keep_recent: 10,
+            keep_first: 2,
+            tool_output_max_lines: 50,
+        })
+        .run("continue")
+        .await;
+
+    assert!(output
+        .events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::LlmCallStart { .. })));
+    assert!(output.messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::Llm(Message::Assistant { content, .. })
+            if content.iter().any(|block| matches!(block, Content::Text { text } if text == "provider accepted request"))
+    )));
+    assert!(output.events.iter().all(|event| !matches!(
+        event,
+        AgentEvent::Error { error }
+            if error.message.contains("safe request budget")
+    )));
+}
+
+fn assistant_msg_for_test(text: &str) -> AgentMessage {
+    AgentMessage::Llm(Message::Assistant {
+        content: vec![Content::Text { text: text.into() }],
+        stop_reason: StopReason::Stop,
+        model: "mock".into(),
+        provider: "mock".into(),
+        usage: Usage::default(),
+        timestamp: 0,
+        error_message: None,
+        response_id: None,
+    })
 }
 
 #[tokio::test]

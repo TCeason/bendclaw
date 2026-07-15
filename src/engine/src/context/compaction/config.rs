@@ -2,6 +2,39 @@
 
 use super::summarizer::SummarizerMode;
 
+pub const DEFAULT_SUMMARY_MAX_BYTES: usize = 4_000;
+const SUMMARY_TRUNCATION_MARKER: &str = "\n\n[… compaction summary truncated …]\n\n";
+
+/// Bound a compaction summary while retaining both its overview and latest
+/// conclusion. The limit is a byte budget and the result is always valid UTF-8.
+pub fn truncate_summary(summary: &str, max_bytes: usize) -> String {
+    if summary.len() <= max_bytes {
+        return summary.to_string();
+    }
+    if max_bytes == 0 {
+        return String::new();
+    }
+    if max_bytes <= SUMMARY_TRUNCATION_MARKER.len() {
+        return summary[..summary.floor_char_boundary(max_bytes)].to_string();
+    }
+
+    let content_budget = max_bytes - SUMMARY_TRUNCATION_MARKER.len();
+    let head_budget = content_budget * 2 / 3;
+    let head_end = summary.floor_char_boundary(head_budget);
+    let tail_budget = content_budget - head_end;
+    let mut tail_start = summary.len().saturating_sub(tail_budget);
+    while tail_start < summary.len() && !summary.is_char_boundary(tail_start) {
+        tail_start += 1;
+    }
+
+    format!(
+        "{}{}{}",
+        &summary[..head_end],
+        SUMMARY_TRUNCATION_MARKER,
+        &summary[tail_start..]
+    )
+}
+
 /// All compaction parameters in one place.
 #[derive(Debug, Clone)]
 pub struct CompactionConfig {
@@ -33,7 +66,8 @@ pub struct CompactionConfig {
     // — Summarizer —
     /// Summarization strategy for summary generation.
     pub summarizer_mode: SummarizerMode,
-    /// Max chars for stored last_summary (prevents unbounded growth).
+    /// Maximum UTF-8 bytes retained in a generated summary. The historical
+    /// field name is kept to avoid churn in callers.
     pub summary_max_chars: usize,
 }
 
@@ -50,7 +84,7 @@ impl CompactionConfig {
             tool_output_max_lines: 200,
             keep_recent_images: 2,
             summarizer_mode: SummarizerMode::default(),
-            summary_max_chars: 4000,
+            summary_max_chars: DEFAULT_SUMMARY_MAX_BYTES,
         }
     }
 

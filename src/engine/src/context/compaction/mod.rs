@@ -20,7 +20,9 @@ pub mod transforms;
 pub mod trigger;
 pub mod types;
 
+pub use config::truncate_summary;
 pub use config::CompactionConfig;
+pub use config::DEFAULT_SUMMARY_MAX_BYTES;
 pub use controller::CompactionController;
 pub use controller::CompactionResponse;
 pub use summarizer::SummarizerContext;

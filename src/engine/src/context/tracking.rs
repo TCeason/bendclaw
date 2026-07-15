@@ -50,11 +50,12 @@ impl ContextTracker {
     }
 
     /// Re-enable the provider anchor once a fresh response with real usage
-    /// lands after a compaction. Responses with no usable usage (e.g. empty or
-    /// error responses) are ignored so the stale pre-compaction anchor stays
-    /// suppressed until a genuine measurement arrives.
+    /// lands after a compaction. Responses without a provider input signal
+    /// (e.g. empty, error, or output-only synthetic responses) are ignored so
+    /// the stale pre-compaction anchor stays suppressed until a genuine
+    /// context measurement arrives.
     pub fn record_response(&mut self, usage: &Usage) {
-        if usage.context_tokens() > 0 {
+        if has_input_signal(usage) {
             self.baseline_stale = false;
         }
     }
@@ -121,8 +122,12 @@ fn latest_provider_anchor(messages: &[AgentMessage]) -> Option<(usize, usize)> {
             return None;
         };
         let anchor = usage.context_tokens() as usize;
-        (anchor > 0).then_some((anchor, idx))
+        has_input_signal(usage).then_some((anchor, idx))
     })
+}
+
+fn has_input_signal(usage: &Usage) -> bool {
+    usage.input > 0 || usage.cache_read > 0 || usage.cache_write > 0
 }
 
 impl Default for ContextTracker {

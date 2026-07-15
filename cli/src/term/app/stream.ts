@@ -105,7 +105,20 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
   }
 
   if (event.kind === 'llm_call_started' || event.kind === 'llm_call_retry' || event.kind === 'api_retry' || event.kind === 'context_compaction_started') {
-    const flushed = flushStreaming(state)
+    const abandonsPartial = event.kind === 'llm_call_started'
+      || (event.kind === 'context_compaction_started' && p.will_retry === true)
+      || event.kind === 'llm_call_retry'
+      || event.kind === 'api_retry'
+    const flushed = abandonsPartial
+      ? {
+          state: {
+            ...state,
+            appState: { ...state.appState, currentAssistantContent: [] },
+          },
+          lines: [] as OutputLine[],
+          expandedLines: undefined,
+        }
+      : flushStreaming(state)
     const activeLlmCall = event.kind === 'llm_call_started' || event.kind === 'llm_call_retry' || event.kind === 'api_retry'
     state = {
       ...flushed.state,

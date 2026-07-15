@@ -281,9 +281,10 @@ pub(super) async fn stream_assistant_response(
                             }
                             m.chunk_count = chunk_count;
                         }
-                        let am: AgentMessage = message.clone().into();
-                        partial_message = Some(am.clone());
-                        event_tx.send(AgentEvent::MessageEnd { message: am }).ok();
+                        if partial_message.is_none() {
+                            let am: AgentMessage = message.clone().into();
+                            event_tx.send(AgentEvent::MessageStart { message: am }).ok();
+                        }
                     }
                     StreamEvent::Error { message } => {
                         if let Ok(mut m) = metrics_handle.lock() {
@@ -293,16 +294,10 @@ pub(super) async fn stream_assistant_response(
                             }
                             m.chunk_count = chunk_count;
                         }
-                        let am: AgentMessage = message.clone().into();
                         if partial_message.is_none() {
-                            event_tx
-                                .send(AgentEvent::MessageStart {
-                                    message: am.clone(),
-                                })
-                                .ok();
+                            let am: AgentMessage = message.clone().into();
+                            event_tx.send(AgentEvent::MessageStart { message: am }).ok();
                         }
-                        partial_message = Some(am.clone());
-                        event_tx.send(AgentEvent::MessageEnd { message: am }).ok();
                     }
                 }
             }

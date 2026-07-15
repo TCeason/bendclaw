@@ -89,6 +89,57 @@ async fn compact_session_persists_structured_item_with_summary_override() -> Tes
 }
 
 #[tokio::test]
+async fn compact_context_view_bounds_legacy_oversized_summary() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+    let session = Session::new(
+        "sess-legacy-large-summary".into(),
+        "/tmp".into(),
+        "m".into(),
+        storage.clone(),
+    )
+    .await?;
+    let oversized = format!(
+        "overview {} latest critical conclusion",
+        "x".repeat(evot_engine::DEFAULT_SUMMARY_MAX_BYTES * 2)
+    );
+    session
+        .write_items(vec![
+            user("old"),
+            assistant("old reply"),
+            TranscriptItem::Compact {
+                id: "legacy-large".into(),
+                created_at: 0,
+                reason: CompactReason::Threshold,
+                summary: oversized,
+                first_kept_seq: 1,
+                tokens_before: 100,
+                tokens_after: 50,
+                messages_before: 2,
+                messages_after: 1,
+                split_turn: None,
+                details: Default::default(),
+            },
+        ])
+        .await?;
+
+    let session_id = session.session_id().await;
+    drop(session);
+    let reopened = Session::open(&session_id, storage)
+        .await?
+        .ok_or_else(|| std::io::Error::other("expected reopened session"))?;
+    let context = reopened.transcript().await;
+    let summary = match context.first() {
+        Some(TranscriptItem::User { text, .. }) => text,
+        _ => return Err(std::io::Error::other("expected compact summary user item").into()),
+    };
+    assert!(summary.len() <= evot_engine::DEFAULT_SUMMARY_MAX_BYTES + 100);
+    assert!(summary.contains("compaction summary truncated"));
+    assert!(summary.contains("latest critical conclusion"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn compact_context_view_uses_latest_compact_boundary() -> TestResult {
     let dir = TempDir::new()?;
     let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;

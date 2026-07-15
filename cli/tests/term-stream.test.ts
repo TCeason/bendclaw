@@ -64,6 +64,80 @@ describe('term stream machine', () => {
     expect(state.appState.currentAssistantContent.filter(block => block.type === 'text').map(block => block.text).join('')).toBe('')
   })
 
+  test('retrying overflow compaction discards the abandoned partial response', () => {
+    const initial = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
+    const partial = reduceRunEvent(initial, {
+      kind: 'assistant_delta',
+      payload: { content_index: 0, content_type: 'text', delta: 'abandoned partial' },
+    }, { termRows: 24 })
+
+    const compacting = reduceRunEvent(partial.state, {
+      kind: 'context_compaction_started',
+      payload: {
+        reason: 'overflow',
+        estimated_tokens: 1100,
+        context_window: 1000,
+        will_retry: true,
+      },
+    }, { termRows: 24 })
+
+    expect(compacting.commitLines.map(line => line.text).join('\n')).not.toContain('abandoned partial')
+    expect(compacting.state.appState.currentAssistantContent).toEqual([])
+  })
+
+  test('provider retry discards the abandoned attempt preview', () => {
+    const initial = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
+    const partial = reduceRunEvent(initial, {
+      kind: 'assistant_delta',
+      payload: { content_index: 0, content_type: 'text', delta: 'failed attempt' },
+    }, { termRows: 24 })
+
+    const retrying = reduceRunEvent(partial.state, {
+      kind: 'llm_call_retry',
+      payload: { attempt: 1, max_retries: 3, delay_ms: 10, error: 'retryable' },
+    }, { termRows: 24 })
+
+    expect(retrying.commitLines.map(line => line.text).join('\n')).not.toContain('failed attempt')
+    expect(retrying.state.appState.currentAssistantContent).toEqual([])
+  })
+
+  test('a new LLM call discards an incomplete prior attempt preview', () => {
+    const initial = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
+    const partial = reduceRunEvent(initial, {
+      kind: 'assistant_delta',
+      payload: { content_index: 0, content_type: 'text', delta: 'unaccepted attempt' },
+    }, { termRows: 24 })
+
+    const restarted = reduceRunEvent(partial.state, {
+      kind: 'llm_call_started',
+      payload: { attempt: 0 },
+    }, { termRows: 24 })
+
+    expect(restarted.commitLines.map(line => line.text).join('\n')).not.toContain('unaccepted attempt')
+    expect(restarted.state.appState.currentAssistantContent).toEqual([])
+  })
+
+  test('non-retrying threshold compaction preserves accepted partial content', () => {
+    const initial = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
+    const partial = reduceRunEvent(initial, {
+      kind: 'assistant_delta',
+      payload: { content_index: 0, content_type: 'text', delta: 'accepted answer' },
+    }, { termRows: 24 })
+
+    const compacting = reduceRunEvent(partial.state, {
+      kind: 'context_compaction_started',
+      payload: {
+        reason: 'threshold',
+        estimated_tokens: 900,
+        context_window: 1000,
+        will_retry: false,
+      },
+    }, { termRows: 24 })
+
+    expect(compacting.commitLines.map(line => line.text).join('\n')).toContain('accepted answer')
+    expect(compacting.state.appState.currentAssistantContent).toEqual([])
+  })
+
   test('assistant_completed with length stop appends a truncation notice', () => {
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()

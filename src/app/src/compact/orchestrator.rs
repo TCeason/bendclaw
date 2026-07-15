@@ -78,7 +78,11 @@ pub async fn compact_session(
             summary,
             details,
             ..
-        } => Some((*first_kept_seq, summary.clone(), details.clone())),
+        } => Some((
+            *first_kept_seq,
+            evot_engine::truncate_summary(summary, evot_engine::DEFAULT_SUMMARY_MAX_BYTES),
+            details.clone(),
+        )),
         _ => None,
     });
     let boundary_seq = previous.as_ref().map(|(seq, _, _)| *seq);
@@ -125,6 +129,7 @@ pub async fn compact_session(
             request.custom_instructions.as_deref(),
         )
     };
+    let summary = evot_engine::truncate_summary(&summary, evot_engine::DEFAULT_SUMMARY_MAX_BYTES);
     let new_context = build_new_context_items(&context_entries, plan.first_kept_seq, &summary);
     let messages_after = new_context.len();
     let tokens_after =

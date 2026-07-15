@@ -2,6 +2,7 @@
 
 use tokio_util::sync::CancellationToken;
 
+use super::config::truncate_summary;
 use super::config::CompactionConfig;
 use super::emergency;
 use super::memory;
@@ -68,6 +69,8 @@ pub async fn execute(
         emergency::summarize(&summarizer_input).summary
     };
 
+    let summary_text = truncate_summary(&summary_text, config.summary_max_chars);
+
     // Step 5: Build memory summary message
     let memory_summary_msg = AgentMessage::Llm(Message::User {
         content: vec![Content::Text {
@@ -78,17 +81,8 @@ pub async fn execute(
 
     // Step 6: Build new state
     let mut new_state = memory::build_state(evicted, split_prefix, prev_state);
-    // Store summary for incremental updates (capped at char boundary)
-    let capped_summary = if summary_text.len() > config.summary_max_chars {
-        let mut end = config.summary_max_chars;
-        while end > 0 && !summary_text.is_char_boundary(end) {
-            end -= 1;
-        }
-        summary_text[..end].to_string()
-    } else {
-        summary_text.clone()
-    };
-    new_state.last_summary = Some(capped_summary);
+    // Store the same bounded summary used by the context and persistence event.
+    new_state.last_summary = Some(summary_text.clone());
 
     // Step 7: Assemble final messages: pinned_head + memory_summary + retained_tail
     let mut result = Vec::with_capacity(plan.pinned_head.len() + 1 + plan.retained_tail.len());

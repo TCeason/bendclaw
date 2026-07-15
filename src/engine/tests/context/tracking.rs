@@ -138,6 +138,38 @@ fn empty_response_does_not_reenable_stale_anchor() {
 }
 
 #[test]
+fn output_only_usage_is_not_a_context_anchor() {
+    let tracker = ContextTracker::new();
+    let large_history = "x".repeat(40_000);
+    let mut output_only = assistant_with_input("synthetic", 0, 0);
+    if let AgentMessage::Llm(Message::Assistant { usage, .. }) = &mut output_only {
+        usage.output = 10;
+        usage.total_tokens = 10;
+    }
+    let messages = vec![user_msg(&large_history), output_only, user_msg("trailing")];
+
+    let estimate = tracker.estimate_context_tokens(&messages);
+    assert!(
+        estimate > 9_000,
+        "output-only usage must not collapse a large context estimate: {estimate}"
+    );
+}
+
+#[test]
+fn output_only_response_does_not_reenable_stale_anchor() {
+    let mut tracker = ContextTracker::new();
+    tracker.record_compaction_done();
+    tracker.record_response(&Usage {
+        output: 10,
+        total_tokens: 10,
+        ..Default::default()
+    });
+    let messages = vec![user_msg("q"), assistant_with_input("stale", 150_000, 0)];
+
+    assert!(tracker.estimate_context_tokens(&messages) < 1_000);
+}
+
+#[test]
 fn native_total_tokens_take_precedence_over_component_fallback() {
     let tracker = ContextTracker::new();
     let mut assistant = assistant_with_input("answer", 90_000, 10_000);

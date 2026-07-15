@@ -117,6 +117,48 @@ fn plan_evicts_middle_zone() {
 }
 
 #[test]
+fn no_plan_when_retention_budget_exceeds_available_tail() {
+    let mut config = config_small();
+    config.keep_first = 2;
+    config.keep_recent_tokens = 100_000;
+    config.keep_recent_min = 6;
+    let messages = vec![
+        user_msg("pinned user"),
+        assistant_msg("pinned assistant"),
+        user_msg("fresh prompt must remain"),
+    ];
+
+    assert!(planner::plan(&messages, &config).is_none());
+}
+
+#[test]
+fn plan_always_retains_the_newest_message() {
+    let mut config = config_small();
+    config.keep_recent_tokens = 0;
+    config.keep_recent_min = 0;
+    config.keep_first = 1;
+
+    let mut messages = vec![user_msg("pinned")];
+    for _ in 0..10 {
+        messages.push(user_msg(&big_text(300)));
+        messages.push(assistant_msg(&big_text(300)));
+    }
+    messages.push(user_msg("fresh prompt must survive preflight"));
+
+    let plan = match planner::plan(&messages, &config) {
+        Some(plan) => plan,
+        None => panic!("expected planner to evict middle context"),
+    };
+    assert!(plan.retained_tail.start < messages.len());
+    assert_eq!(plan.retained_tail.end, messages.len());
+    assert!(matches!(
+        &messages[plan.retained_tail.end - 1],
+        AgentMessage::Llm(Message::User { content, .. })
+            if matches!(content.first(), Some(Content::Text { text }) if text == "fresh prompt must survive preflight")
+    ));
+}
+
+#[test]
 fn plan_does_not_cut_at_tool_result() {
     let config = config_small();
     let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];

@@ -186,6 +186,47 @@ async fn executor_inserts_marker() {
 }
 
 #[tokio::test]
+async fn executor_bounds_summary_consistently() {
+    let mut config = config_small();
+    config.summary_max_chars = 256;
+    let mut messages = vec![user_msg("pinned")];
+    for i in 0..30 {
+        messages.push(user_msg(&format!("request {i} {}", "x".repeat(300))));
+    }
+    messages.push(assistant_msg("latest critical conclusion must survive"));
+    messages.push(user_msg("recent prompt"));
+    let plan = evotengine::context::compaction::types::CompactionPlan {
+        pinned_head: 0..1,
+        evict_zone: 1..32,
+        retained_tail: 32..33,
+        split_turn: None,
+    };
+
+    let outcome = executor::execute(
+        messages,
+        &plan,
+        &config,
+        None,
+        None,
+        CancellationToken::new(),
+    )
+    .await;
+    let summary = match outcome.stats.summary.as_deref() {
+        Some(summary) => summary,
+        None => panic!("expected summary"),
+    };
+    assert!(summary.len() <= config.summary_max_chars);
+    assert!(summary.contains("compaction summary truncated"));
+    assert!(summary.contains("latest critical conclusion must survive"));
+    assert_eq!(outcome.state.last_summary.as_deref(), Some(summary));
+    assert!(matches!(
+        outcome.messages.get(1),
+        Some(AgentMessage::Llm(Message::User { content, .. }))
+            if matches!(content.first(), Some(Content::Text { text }) if text == summary)
+    ));
+}
+
+#[tokio::test]
 async fn executor_tracks_file_ops_in_state() {
     let config = config_small();
     let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];

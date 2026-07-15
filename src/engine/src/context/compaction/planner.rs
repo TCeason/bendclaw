@@ -67,7 +67,7 @@ fn find_retention_boundary(
 ) -> usize {
     let len = messages.len();
     let mut accumulated_tokens = 0usize;
-    let mut candidate = len; // default: keep everything (no eviction)
+    let mut candidate = floor; // not enough history means keep everything
 
     for i in (floor..len).rev() {
         accumulated_tokens += message_tokens(&messages[i]);

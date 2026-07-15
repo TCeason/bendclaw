@@ -326,6 +326,18 @@ async fn run_loop(
                 }
             }
 
+            // Tool-use responses defer compaction until after tool results, but
+            // the assistant message itself is accepted before tool execution.
+            if has_tool_calls {
+                tx.send(AgentEvent::MessageEnd {
+                    message: agent_msg.clone(),
+                })
+                .ok();
+                if let Some(ctrl) = compaction_controller.as_mut() {
+                    ctrl.on_success();
+                }
+            }
+
             // Check for error/abort
             if let Message::Assistant {
                 ref stop_reason,
@@ -375,20 +387,6 @@ async fn run_loop(
                         tool_results.push(result);
                     }
                     pending.push(intervention.steering_message);
-
-                    let should_retry = post_response_compaction(
-                        &mut compaction_controller,
-                        &mut context_tracker,
-                        &mut context.messages,
-                        &message,
-                        config,
-                        cancel.clone(),
-                        tx,
-                    )
-                    .await;
-                    if should_retry {
-                        continue;
-                    }
 
                     // Track turn + emit TurnEnd, then continue inner loop.
                     if let Some(ref mut tracker) = tracker {
@@ -443,24 +441,6 @@ async fn run_loop(
                     let am: AgentMessage = result.clone().into();
                     context.messages.push(am.clone());
                     new_messages.push(am);
-                }
-
-                // Tool-use responses can independently cross the compaction
-                // threshold, but providers require every retained tool call to
-                // have its matching tool result. Run compaction only after the
-                // results are in context.
-                let should_retry = post_response_compaction(
-                    &mut compaction_controller,
-                    &mut context_tracker,
-                    &mut context.messages,
-                    &message,
-                    config,
-                    cancel.clone(),
-                    tx,
-                )
-                .await;
-                if should_retry {
-                    continue;
                 }
 
                 if steering_after_tools.is_none() {

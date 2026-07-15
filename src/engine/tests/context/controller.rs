@@ -48,19 +48,6 @@ fn big_text(n: usize) -> String {
     "x".repeat(n)
 }
 
-/// Build text with `n` distinct words. Kept distinct so the byte estimate
-/// reflects real text volume the way production content does.
-fn varied_text(n: usize) -> String {
-    let mut s = String::with_capacity(n * 8);
-    for i in 0..n {
-        if i > 0 {
-            s.push(' ');
-        }
-        s.push_str(&format!("token{i}word"));
-    }
-    s
-}
-
 fn model_id() -> ModelId {
     ModelId {
         provider: "test".into(),
@@ -270,155 +257,6 @@ async fn controller_allows_multiple_stateless_compactions() {
 }
 
 #[tokio::test]
-async fn before_prompt_skips_when_below_threshold() {
-    let config = config_small();
-    let mut ctrl = CompactionController::new(config);
-
-    let mut messages = vec![user_msg("hello"), assistant_msg("hi")];
-    let original_count = messages.len();
-
-    let response = ctrl
-        .before_prompt(
-            &mut messages,
-            &model_id(),
-            0,
-            None,
-            CancellationToken::new(),
-        )
-        .await;
-
-    assert_eq!(response.action, AfterResponseAction::Continue);
-    assert!(response.stats.is_none());
-    assert_eq!(messages.len(), original_count); // unchanged
-}
-
-#[tokio::test]
-async fn before_prompt_compacts_when_over_threshold() {
-    let config = config_small();
-    let mut ctrl = CompactionController::new(config);
-
-    // Build a context that is large enough to compact; the pre-prompt trigger
-    // uses the latest assistant provider usage rather than recomputing local
-    // estimates, matching the post-response trigger semantics.
-    let mut messages = vec![
-        user_msg(&varied_text(300)),
-        assistant_msg(&varied_text(300)),
-    ];
-    for _ in 0..20 {
-        messages.push(user_msg(&varied_text(300)));
-        messages.push(assistant_msg(&varied_text(300)));
-    }
-    messages.push(user_msg("recent"));
-    messages.push(assistant_msg_with_usage("recent answer", 8_500, 500));
-    let original_count = messages.len();
-
-    let response = ctrl
-        .before_prompt(
-            &mut messages,
-            &model_id(),
-            0,
-            None,
-            CancellationToken::new(),
-        )
-        .await;
-
-    assert_eq!(response.action, AfterResponseAction::Continue);
-    assert!(response.stats.is_some());
-    assert!(!response.overflow_exhausted);
-    assert!(messages.len() < original_count);
-}
-
-#[tokio::test]
-async fn before_prompt_uses_estimate_fallback_when_usage_missing() {
-    // Simulates a session where recent turns were errors carrying zero usage:
-    // latest_assistant_usage yields no input signal, so the pre-prompt check
-    // must fall back to the supplied estimate and still compact.
-    let config = config_small();
-    let mut ctrl = CompactionController::new(config);
-
-    let mut messages = vec![
-        user_msg(&varied_text(300)),
-        assistant_msg(&varied_text(300)),
-    ];
-    for _ in 0..20 {
-        messages.push(user_msg(&varied_text(300)));
-        messages.push(assistant_msg(&varied_text(300))); // zero usage
-    }
-    let original_count = messages.len();
-
-    // Estimate over the 8_000 threshold (window 10_000 - reserve 2_000).
-    let response = ctrl
-        .before_prompt(
-            &mut messages,
-            &model_id(),
-            9_000,
-            None,
-            CancellationToken::new(),
-        )
-        .await;
-
-    assert_eq!(response.action, AfterResponseAction::Continue);
-    assert!(response.stats.is_some());
-    assert!(messages.len() < original_count);
-}
-
-#[tokio::test]
-async fn before_prompt_checks_trailing_estimate_after_provider_usage() {
-    let config = config_small();
-    let mut ctrl = CompactionController::new(config);
-
-    let mut messages = vec![
-        user_msg(&varied_text(300)),
-        assistant_msg(&varied_text(300)),
-    ];
-    for _ in 0..20 {
-        messages.push(user_msg(&varied_text(300)));
-        messages.push(assistant_msg(&varied_text(300)));
-    }
-    // A valid provider anchor below threshold followed by enough local context
-    // to put the current request over threshold.
-    messages.push(assistant_msg_with_usage("anchor", 1_000, 100));
-    messages.push(user_msg(&varied_text(300)));
-    let original_count = messages.len();
-
-    let response = ctrl
-        .before_prompt(
-            &mut messages,
-            &model_id(),
-            9_000,
-            None,
-            CancellationToken::new(),
-        )
-        .await;
-
-    assert!(response.stats.is_some());
-    assert!(messages.len() < original_count);
-}
-
-#[tokio::test]
-async fn before_prompt_estimate_fallback_skips_below_threshold() {
-    let config = config_small();
-    let mut ctrl = CompactionController::new(config);
-
-    let mut messages = vec![user_msg("hello"), assistant_msg("hi")]; // zero usage
-    let original_count = messages.len();
-
-    let response = ctrl
-        .before_prompt(
-            &mut messages,
-            &model_id(),
-            1_000,
-            None,
-            CancellationToken::new(),
-        )
-        .await;
-
-    assert_eq!(response.action, AfterResponseAction::Continue);
-    assert!(response.stats.is_none());
-    assert_eq!(messages.len(), original_count);
-}
-
-#[tokio::test]
 async fn overflow_exhausted_signals_after_second_overflow() {
     let config = config_small();
     let mut ctrl = CompactionController::new(config);
@@ -475,6 +313,64 @@ async fn overflow_exhausted_signals_after_second_overflow() {
     assert_eq!(second.action, AfterResponseAction::Continue);
     assert!(second.overflow_exhausted);
     assert!(second.stats.is_none());
+}
+
+#[tokio::test]
+async fn estimate_compaction_does_not_reset_overflow_recovery() {
+    let config = config_small();
+    let mut ctrl = CompactionController::new(config);
+    let overflow_usage = UsageSnapshot {
+        input: 0,
+        cache_read: 0,
+        cache_write: 0,
+        output: 0,
+        total_tokens: 0,
+        model: model_id(),
+        timestamp: evotengine::context::now_ms() + 60_000,
+        stop_reason: StopReason::Error,
+        error_message: Some("prompt is too long: 50000 tokens > 10000 maximum".into()),
+    };
+    let mut messages = vec![user_msg(&big_text(200)), assistant_msg(&big_text(200))];
+    for _ in 0..20 {
+        messages.push(user_msg(&big_text(300)));
+        messages.push(assistant_msg(&big_text(300)));
+    }
+    messages.push(assistant_msg("first overflow"));
+
+    let first = ctrl
+        .after_response(
+            &mut messages,
+            &overflow_usage,
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(first.action, AfterResponseAction::Retry);
+
+    for _ in 0..20 {
+        messages.push(user_msg(&big_text(300)));
+        messages.push(assistant_msg(&big_text(300)));
+    }
+    let _ = ctrl
+        .compact_on_estimate(&mut messages, 9_000, None, CancellationToken::new())
+        .await;
+    messages.push(assistant_msg("second overflow"));
+
+    let second = ctrl
+        .after_response(
+            &mut messages,
+            &UsageSnapshot {
+                timestamp: overflow_usage.timestamp + 1,
+                ..overflow_usage
+            },
+            &model_id(),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(second.action, AfterResponseAction::Continue);
+    assert!(second.overflow_exhausted);
 }
 
 #[tokio::test]
