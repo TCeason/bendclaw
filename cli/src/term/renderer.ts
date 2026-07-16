@@ -23,7 +23,8 @@ const MIN_RENDER_INTERVAL_MS = 16
 const SYNC_START = '\x1b[?2026h'
 const SYNC_END = '\x1b[?2026l'
 const CLEAR_LINE = '\x1b[2K'
-const CLEAR_SCREEN = '\x1b[2J\x1b[H\x1b[3J'
+const CLEAR_VIEWPORT = '\x1b[2J\x1b[H'
+const CLEAR_SCREEN_AND_SCROLLBACK = `${CLEAR_VIEWPORT}\x1b[3J`
 const OSC133_MARKER = /\x1b\]133;[ABC]\x07/g
 const HIDE_CURSOR = '\x1b[?25l'
 const SHOW_CURSOR = '\x1b[?25h'
@@ -201,7 +202,7 @@ export class TermRenderer {
    * Clear the viewport and scrollback. Used for /clear command.
    */
   clearScreen(): void {
-    this.write(SYNC_START + CLEAR_SCREEN + SYNC_END)
+    this.write(SYNC_START + CLEAR_SCREEN_AND_SCROLLBACK + SYNC_END)
     this.previousLines = []
     this.hardwareCursorRow = 0
     this.maxLinesRendered = 0
@@ -323,9 +324,13 @@ export class TermRenderer {
     // --- Full render helper ---
     const fullRender = (clear: boolean, branch: string): void => {
       let buffer = SYNC_START
-      if (clear) buffer += CLEAR_SCREEN
-      for (let i = 0; i < newLines.length; i++) {
-        if (i > 0) buffer += '\r\n'
+      // Recovery redraws must not erase terminal scrollback. Content above the
+      // viewport is no longer addressable, so preserve it and repaint only the
+      // current viewport. Explicit /clear remains the sole ESC[3J path.
+      const renderStart = clear ? Math.max(0, newLines.length - height) : 0
+      if (clear) buffer += CLEAR_VIEWPORT
+      for (let i = renderStart; i < newLines.length; i++) {
+        if (i > renderStart) buffer += '\r\n'
         buffer += newLines[i]
       }
       buffer += SYNC_END

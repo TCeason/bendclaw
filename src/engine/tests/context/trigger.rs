@@ -152,35 +152,33 @@ fn overflow_exhausted_when_already_attempted() {
 }
 
 #[test]
-fn silent_overflow_exhausted_when_already_attempted() {
+fn successful_response_over_window_remains_accepted_after_retry() {
     let config = default_config();
-    // input exceeds context_window, but recovery was already attempted
     let input = TriggerInput {
         usage: Some(make_usage(130_000, 1_000, StopReason::Stop)),
         current_model: model_id(),
         last_compaction_ts: None,
         overflow_recovery_attempted: true,
     };
-    assert!(matches!(
-        evaluate(&input, &config),
-        TriggerDecision::OverflowExhausted { .. }
-    ));
+
+    assert_eq!(evaluate(&input, &config), TriggerDecision::Threshold {
+        context_tokens: 131_000
+    });
 }
 
 #[test]
-fn silent_overflow_detected() {
+fn successful_response_over_window_triggers_threshold_compaction() {
     let config = default_config();
-    // input exceeds context_window
     let input = TriggerInput {
         usage: Some(make_usage(130_000, 1_000, StopReason::Stop)),
         current_model: model_id(),
         last_compaction_ts: None,
         overflow_recovery_attempted: false,
     };
-    assert!(matches!(
-        evaluate(&input, &config),
-        TriggerDecision::Overflow { .. }
-    ));
+
+    assert_eq!(evaluate(&input, &config), TriggerDecision::Threshold {
+        context_tokens: 131_000
+    });
 }
 
 #[test]

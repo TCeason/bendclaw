@@ -194,7 +194,8 @@ describe('TermRenderer', () => {
     // renderer). A prior attempt to repaint in place instead desynced the
     // on-screen window from the terminal's real scrollback and made text
     // selections jump on scroll.
-    const CLEAR_SCREEN = '\x1b[2J\x1b[H\x1b[3J'
+    const CLEAR_VIEWPORT = '\x1b[2J\x1b[H'
+    const CLEAR_SCROLLBACK = '\x1b[3J'
 
     test('changing a line above the viewport triggers a full redraw', async () => {
       const { renderer, stdout } = createRenderer()
@@ -219,9 +220,11 @@ describe('TermRenderer', () => {
       await renderFrame(renderer)
 
       const out = stdout.output
-      expect(out).toContain(CLEAR_SCREEN)
-      // The reflowed line and the latest streamed line are both rendered.
-      expect(out).toContain('hist 5 REFLOWED')
+      expect(out).toContain(CLEAR_VIEWPORT)
+      expect(out).not.toContain(CLEAR_SCROLLBACK)
+      // Only the addressable viewport is repainted. The historical line stays
+      // in terminal scrollback rather than being erased and reconstructed.
+      expect(out).not.toContain('hist 5 REFLOWED')
       expect(out).toContain('s6')
       renderer.destroy()
     })
@@ -242,7 +245,9 @@ describe('TermRenderer', () => {
       await renderFrame(renderer)
 
       const out = stdout.output
-      expect(out).toContain(CLEAR_SCREEN)
+      expect(out).toContain(CLEAR_VIEWPORT)
+      expect(out).not.toContain(CLEAR_SCROLLBACK)
+      expect(out).not.toContain('h0-changed')
       expect(out).toContain('d')
       renderer.destroy()
     })
@@ -269,7 +274,7 @@ describe('TermRenderer', () => {
       await renderFrame(renderer)
 
       const out = stdout.output
-      expect(out).not.toContain(CLEAR_SCREEN)
+      expect(out).not.toContain(CLEAR_VIEWPORT)
       // Nothing visible changed, so no line content is reprinted either.
       expect(out).not.toContain('feature-branch')
       renderer.destroy()
@@ -291,7 +296,7 @@ describe('TermRenderer', () => {
       pending[1] = 'P1-REFLOWED'
       await renderFrame(renderer)
 
-      expect(stdout.output).not.toContain(CLEAR_SCREEN)
+      expect(stdout.output).not.toContain(CLEAR_VIEWPORT)
       renderer.destroy()
     })
 
@@ -316,7 +321,7 @@ describe('TermRenderer', () => {
       await renderFrame(renderer)
 
       const out = stdout.output
-      expect(out).not.toContain(CLEAR_SCREEN)
+      expect(out).not.toContain(CLEAR_VIEWPORT)
       // The grown banner line is off-screen, so it is never printed.
       expect(out).not.toContain('New version available')
       renderer.destroy()
@@ -337,7 +342,7 @@ describe('TermRenderer', () => {
       banner = ['banner']
       await renderFrame(renderer)
 
-      expect(stdout.output).not.toContain(CLEAR_SCREEN)
+      expect(stdout.output).not.toContain(CLEAR_VIEWPORT)
       renderer.destroy()
     })
 
@@ -363,7 +368,7 @@ describe('TermRenderer', () => {
       await renderFrame(renderer)
 
       const out = stdout.output
-      expect(out).not.toContain(CLEAR_SCREEN)
+      expect(out).not.toContain(CLEAR_VIEWPORT)
       // The visible changed row is repainted; the off-screen one is not.
       expect(out).toContain('P3-vis')
       expect(out).not.toContain('P1-off')
@@ -373,7 +378,7 @@ describe('TermRenderer', () => {
     // Ctrl+O expand: a tool block in the viewport grows from compact to
     // expanded with the prompt below it. The change starts inside the viewport,
     // so the renderer repaints in place from the first changed row down and
-    // scrolls the prompt naturally — no CLEAR_SCREEN, no jump to the top.
+    // scrolls the prompt naturally — no viewport clear, no jump to the top.
     test('expanding in-viewport content grows in place without clearing', async () => {
       const { renderer, stdout } = createRenderer()
       stdout.rows = 12
@@ -391,7 +396,7 @@ describe('TermRenderer', () => {
       await renderFrame(renderer)
 
       const out = stdout.output
-      expect(out).not.toContain(CLEAR_SCREEN)
+      expect(out).not.toContain(CLEAR_VIEWPORT)
       expect(out).toContain('out line 3')
       expect(out).toContain('prompt')
       renderer.destroy()
@@ -448,6 +453,7 @@ describe('TermRenderer', () => {
       const out = stdout.output
       expect(out).toContain('\x1b[2J') // clear screen
       expect(out).toContain('\x1b[H')  // cursor home
+      expect(out).toContain('\x1b[3J') // clear scrollback only on explicit clear
       renderer.destroy()
     })
   })

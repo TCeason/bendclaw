@@ -60,13 +60,14 @@ pub fn evaluate(input: &TriggerInput, config: &CompactionConfig) -> TriggerDecis
         return TriggerDecision::Skip;
     }
 
-    // Case 2: Silent overflow — usage.input exceeds context window.
+    // Case 2: A successful response must never be discarded solely because the
+    // reported usage exceeds our configured window. Providers can accept a
+    // larger effective window, and usage accounting may include cache tokens in
+    // a way that does not match the local catalog. Preserve the completed answer
+    // and compact it as a threshold event before the next turn.
     let context_tokens = calculate_context_tokens(usage);
     if usage.stop_reason == StopReason::Stop && context_tokens > config.context_window {
-        if input.overflow_recovery_attempted {
-            return TriggerDecision::OverflowExhausted { context_tokens };
-        }
-        return TriggerDecision::Overflow { context_tokens };
+        return TriggerDecision::Threshold { context_tokens };
     }
 
     // Case 3: Length-stop overflow. Some providers report a short, non-zero
