@@ -12,7 +12,7 @@ const selectorWithQuery = { kind: 'selector' as const, state: createSelectorStat
 const askUser = { kind: 'ask-user' as const, state: { questions: [], currentIndex: 0, answers: {} } as any }
 
 const kinds = (input: Parameters<typeof decideReplControl>[0]) => decideReplControl(input).map(a => a.kind)
-const base = { overlay: none, isLoading: false, hasStream: false, editor, exitHint: false, logMode: false }
+const base = { overlay: none, isLoading: false, hasStream: false, editor, exitHint: false, logMode: false, hasQueuedPrompt: false }
 
 describe('repl control', () => {
   test('ctrl-c interrupts loading stream', () => {
@@ -55,7 +55,17 @@ describe('repl control', () => {
     expect(kinds({ ...base, event: { type: 'escape' }, overlay: selector })).toEqual(['close-overlay'])
   })
 
-  test('escape interrupts loading stream without overlay', () => {
+  test('escape restores newest queued prompt without interrupting', () => {
+    expect(kinds({
+      ...base,
+      event: { type: 'escape' },
+      isLoading: true,
+      hasStream: true,
+      hasQueuedPrompt: true,
+    })).toEqual(['restore-queued'])
+  })
+
+  test('escape interrupts loading stream without queued prompts', () => {
     expect(kinds({ ...base, event: { type: 'escape' }, isLoading: true, hasStream: true })).toEqual(['interrupt'])
   })
 

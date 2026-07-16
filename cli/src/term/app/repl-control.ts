@@ -11,9 +11,11 @@ export type ReplControlInput = {
   editor: EditorState
   exitHint: boolean
   logMode: boolean
+  hasQueuedPrompt: boolean
 }
 
 export type ReplControlAction =
+  | { kind: 'restore-queued' }
   | { kind: 'interrupt' }
   | { kind: 'exit' }
   | { kind: 'show-exit-hint' }
@@ -32,7 +34,7 @@ export type ReplControlAction =
   | { kind: 'normal-key' }
 
 export function decideReplControl(input: ReplControlInput): ReplControlAction[] {
-  const { event, overlay, isLoading, hasStream, editor, exitHint, logMode } = input
+  const { event, overlay, isLoading, hasStream, editor, exitHint, logMode, hasQueuedPrompt } = input
   const actions: ReplControlAction[] = []
 
   if (event.type === 'ctrl' && event.key === 'c') {
@@ -49,6 +51,7 @@ export function decideReplControl(input: ReplControlInput): ReplControlAction[] 
       if (overlay.kind === 'selector' && overlay.state.query) return actions.concat({ kind: 'clear-selector-query' })
       return actions.concat({ kind: 'close-overlay' })
     }
+    if (isLoading && hasStream && hasQueuedPrompt) return actions.concat({ kind: 'restore-queued' })
     if (isLoading && hasStream) return actions.concat({ kind: 'interrupt' })
     if (!isEditorEmpty(editor)) return actions.concat({ kind: 'clear-editor' })
     if (logMode) return actions.concat({ kind: 'exit-log-mode' })
@@ -64,7 +67,7 @@ export function decideReplControl(input: ReplControlInput): ReplControlAction[] 
 
   if (isLoading) {
     if (event.type === 'enter') return actions.concat({ kind: 'loading-enter' })
-    if (event.type === 'char') return actions.concat({ kind: 'loading-char' })
+    if (event.type === 'char' || event.type === 'shift-char') return actions.concat({ kind: 'loading-char' })
     if (event.type === 'paste') return actions.concat({ kind: 'loading-paste' })
   }
 

@@ -1,14 +1,13 @@
 //! Agent run/resume/finish — submitting work to the agent loop.
 
-use std::sync::Arc;
-
-use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::agent::Agent;
 use super::handle::QueueMode;
 use super::handle::RunHandle;
+use super::PromptQueue;
+use super::QueueDrainMode;
 use crate::context::ContextConfig;
 use crate::r#loop::agent_loop;
 use crate::r#loop::agent_loop_continue;
@@ -41,9 +40,10 @@ impl Agent {
         self.cancel = Some(cancel.clone());
         self.is_streaming = true;
 
-        // Create per-run queues, draining any pre-queued messages
-        let run_steering = Arc::new(Mutex::new(self.steering_queue.lock().drain(..).collect()));
-        let run_follow_up = Arc::new(Mutex::new(self.follow_up_queue.lock().drain(..).collect()));
+        // Share the stable queues with the run handle. Entries can now be
+        // inspected or edited while the loop is active; no drain/copy handoff.
+        let run_steering = self.steering_queue.clone();
+        let run_follow_up = self.follow_up_queue.clone();
         let run_handle = RunHandle {
             steering_queue: run_steering.clone(),
             follow_up_queue: run_follow_up.clone(),
@@ -123,8 +123,8 @@ impl Agent {
         self.cancel = Some(cancel.clone());
         self.is_streaming = true;
 
-        let run_steering = Arc::new(Mutex::new(self.steering_queue.lock().drain(..).collect()));
-        let run_follow_up = Arc::new(Mutex::new(self.follow_up_queue.lock().drain(..).collect()));
+        let run_steering = self.steering_queue.clone();
+        let run_follow_up = self.follow_up_queue.clone();
         let run_handle = RunHandle {
             steering_queue: run_steering.clone(),
             follow_up_queue: run_follow_up.clone(),
@@ -193,8 +193,8 @@ impl Agent {
 
     fn build_config_with_queues(
         &self,
-        steering_queue: Arc<Mutex<Vec<AgentMessage>>>,
-        follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
+        steering_queue: PromptQueue,
+        follow_up_queue: PromptQueue,
     ) -> AgentLoopConfig {
         let steering_mode = self.steering_mode;
         let follow_up_mode = self.follow_up_mode;
@@ -210,17 +210,10 @@ impl Agent {
             convert_to_llm: None,
             transform_context: None,
             get_steering_messages: Some(Box::new(move || {
-                let mut queue = steering_queue.lock();
-                match steering_mode {
-                    QueueMode::OneAtATime => {
-                        if queue.is_empty() {
-                            vec![]
-                        } else {
-                            vec![queue.remove(0)]
-                        }
-                    }
-                    QueueMode::All => queue.drain(..).collect(),
-                }
+                steering_queue.drain_messages(match steering_mode {
+                    QueueMode::OneAtATime => QueueDrainMode::One,
+                    QueueMode::All => QueueDrainMode::All,
+                })
             })),
             context_config: if self.context_management_disabled {
                 None
@@ -237,17 +230,10 @@ impl Agent {
             tool_execution: self.tool_execution.clone(),
             retry_policy: self.retry_policy.clone(),
             get_follow_up_messages: Some(Box::new(move || {
-                let mut queue = follow_up_queue.lock();
-                match follow_up_mode {
-                    QueueMode::OneAtATime => {
-                        if queue.is_empty() {
-                            vec![]
-                        } else {
-                            vec![queue.remove(0)]
-                        }
-                    }
-                    QueueMode::All => queue.drain(..).collect(),
-                }
+                follow_up_queue.drain_messages(match follow_up_mode {
+                    QueueMode::OneAtATime => QueueDrainMode::One,
+                    QueueMode::All => QueueDrainMode::All,
+                })
             })),
             before_turn: self.before_turn.clone(),
             after_turn: self.after_turn.clone(),

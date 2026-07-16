@@ -1,24 +1,21 @@
 //! RunControl — app-level control plane for a Run.
 //!
-//! Lives across multiple internal engine turns (auto-continuation), so
-//! callers see a single, stable handle even when the runtime swaps the
-//! underlying engine `RunHandle` between turns.
+//! Lives across multiple internal engine turns. Prompt queues are owned at this
+//! level and injected into each engine instance, so messages remain editable and
+//! cannot disappear during the gap between turns.
 
 use std::sync::Arc;
 
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 
-/// Cloneable control handle for a Run from the app/CLI side.
-///
-/// Forwards `abort` to the current engine handle and to the run's own
-/// cancellation token. Steering / follow-up forward to the engine handle
-/// when one is set; if no engine is currently active (between auto-
-/// continuation turns), the call is a no-op.
+use super::queue::RunQueues;
+
 #[derive(Clone)]
 pub struct RunControl {
     cancel: CancellationToken,
     engine: Arc<Mutex<Option<evot_engine::RunHandle>>>,
+    queues: RunQueues,
 }
 
 impl RunControl {
@@ -26,27 +23,26 @@ impl RunControl {
         Self {
             cancel: CancellationToken::new(),
             engine: Arc::new(Mutex::new(None)),
+            queues: RunQueues::new(),
         }
     }
 
-    /// Swap in the engine handle for the next turn. Called by the runtime
-    /// at the start of every internal turn.
     pub(in crate::agent) fn install_engine(&self, handle: evot_engine::RunHandle) {
         *self.engine.lock() = Some(handle);
     }
 
-    /// Drop the current engine handle (e.g. between turns). The control
-    /// remains valid; abort still cancels via the run-level token.
     pub(in crate::agent) fn detach_engine(&self) {
         *self.engine.lock() = None;
     }
 
-    /// Abort the run. Cancels the current engine turn (if any) and marks
-    /// the run as cancelled so no further auto-continuation is scheduled.
+    pub(in crate::agent) fn queues(&self) -> RunQueues {
+        self.queues.clone()
+    }
+
     pub fn abort(&self) {
         self.cancel.cancel();
-        if let Some(h) = self.engine.lock().as_ref() {
-            h.abort();
+        if let Some(handle) = self.engine.lock().as_ref() {
+            handle.abort();
         }
     }
 
@@ -58,18 +54,88 @@ impl RunControl {
         self.cancel.clone()
     }
 
-    /// Forward a steering message to the active engine turn, if any.
-    pub fn steer(&self, msg: evot_engine::AgentMessage) {
-        if let Some(h) = self.engine.lock().as_ref() {
-            h.steer(msg);
+    pub fn steer(&self, msg: evot_engine::AgentMessage) -> evot_engine::PromptQueueEntry {
+        self.queues.enqueue_steering(msg)
+    }
+
+    pub fn follow_up(&self, msg: evot_engine::AgentMessage) -> evot_engine::PromptQueueEntry {
+        self.queues.enqueue_follow_up(msg)
+    }
+
+    pub fn queued_steering(&self) -> Vec<evot_engine::PromptQueueEntry> {
+        self.queues.list_steering()
+    }
+
+    pub fn queued_follow_ups(&self) -> Vec<evot_engine::PromptQueueEntry> {
+        self.queues.list_follow_up()
+    }
+
+    pub fn update_steering(
+        &self,
+        id: &str,
+        version: u64,
+        msg: evot_engine::AgentMessage,
+    ) -> Result<evot_engine::PromptQueueEntry, evot_engine::PromptQueueError> {
+        self.queues.update_steering(id, version, msg)
+    }
+
+    pub fn update_follow_up(
+        &self,
+        id: &str,
+        version: u64,
+        msg: evot_engine::AgentMessage,
+    ) -> Result<evot_engine::PromptQueueEntry, evot_engine::PromptQueueError> {
+        self.queues.update_follow_up(id, version, msg)
+    }
+
+    pub fn remove_steering(
+        &self,
+        id: &str,
+        version: Option<u64>,
+    ) -> Result<evot_engine::PromptQueueEntry, evot_engine::PromptQueueError> {
+        self.queues.remove_steering(id, version)
+    }
+
+    pub fn remove_follow_up(
+        &self,
+        id: &str,
+        version: Option<u64>,
+    ) -> Result<evot_engine::PromptQueueEntry, evot_engine::PromptQueueError> {
+        self.queues.remove_follow_up(id, version)
+    }
+
+    pub fn move_queued_prompt(
+        &self,
+        queue: &str,
+        id: &str,
+        version: u64,
+        direction: &str,
+    ) -> Result<evot_engine::PromptQueueEntry, evot_engine::PromptQueueError> {
+        match (queue, direction) {
+            ("steering", "up") => self.queues.move_steering_up(id, version),
+            ("steering", "down") => self.queues.move_steering_down(id, version),
+            ("follow_up", "up") => self.queues.move_follow_up_up(id, version),
+            ("follow_up", "down") => self.queues.move_follow_up_down(id, version),
+            _ => Err(evot_engine::PromptQueueError::NotFound(format!(
+                "invalid queue move: {queue}/{direction}"
+            ))),
         }
     }
 
-    /// Forward a follow-up message to the active engine turn, if any.
-    pub fn follow_up(&self, msg: evot_engine::AgentMessage) {
-        if let Some(h) = self.engine.lock().as_ref() {
-            h.follow_up(msg);
-        }
+    pub fn send_follow_up_now(
+        &self,
+        id: &str,
+        version: Option<u64>,
+    ) -> Result<evot_engine::PromptQueueEntry, evot_engine::PromptQueueError> {
+        self.queues.send_follow_up_now(id, version)
+    }
+
+    pub fn clear_steering(&self) {
+        self.queues.clear_steering()
+    }
+
+    pub fn clear_follow_up(&self) {
+        self.queues.clear_follow_up()
     }
 }
 

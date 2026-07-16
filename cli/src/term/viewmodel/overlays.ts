@@ -27,6 +27,7 @@ function buildHelpBlocks(columns: number): ViewBlock[] {
     ['Alt+Enter', 'Insert newline'],
     ['Ctrl+C', 'Clear / Exit (×2)'],
     ['Esc', 'Clear input / Dismiss / Interrupt'],
+    ['Ctrl+B', 'Focus queued prompts when non-empty'],
     ['↑ / ↓', 'History navigation / multi-line'],
     ['Tab', 'Complete command / path'],
     ['Ctrl+U', 'Clear line before cursor'],
@@ -135,12 +136,20 @@ function buildSelectorBlocks(state: SelectorState, _columns: number): ViewBlock[
   }
 
   lines.push(line(plain('')))
-  lines.push(line(
-    colored('↑↓', 'cyan'), dim(state.circularNavigation ? ' move · wraps   ' : ' move   '),
-    colored('enter', 'cyan'), dim(' select   '),
-    colored('type', 'cyan'), dim(' filter   '),
-    colored('esc', 'cyan'), dim(' close'),
-  ))
+  if (state.title === 'Prompt queue') {
+    lines.push(line(
+      colored('enter', 'cyan'), dim(' edit   '),
+      colored('del', 'cyan'), dim(' remove   '),
+      colored('esc', 'cyan'), dim(' close'),
+    ))
+  } else {
+    lines.push(line(
+      colored('↑↓', 'cyan'), dim(state.circularNavigation ? ' move · wraps   ' : ' move   '),
+      colored('enter', 'cyan'), dim(' select   '),
+      colored('type', 'cyan'), dim(' filter   '),
+      colored('esc', 'cyan'), dim(' close'),
+    ))
+  }
   return [block(lines, 1)]
 }
 

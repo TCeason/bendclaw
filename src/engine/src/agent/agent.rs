@@ -4,12 +4,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use parking_lot::Mutex;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::handle::QueueMode;
 use super::handle::RunHandle;
+use super::PromptQueue;
 use crate::context::ContextConfig;
 use crate::context::ExecutionLimits;
 use crate::provider::ModelConfig;
@@ -38,9 +38,9 @@ pub struct Agent {
     pub(super) cwd: PathBuf,
     pub(super) path_guard: Arc<PathGuard>,
 
-    // Queues (shared with the loop via Arc<Mutex>)
-    pub(super) steering_queue: Arc<Mutex<Vec<AgentMessage>>>,
-    pub(super) follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
+    // Queues (shared with the loop and run handles)
+    pub(super) steering_queue: PromptQueue,
+    pub(super) follow_up_queue: PromptQueue,
     pub(super) steering_mode: QueueMode,
     pub(super) follow_up_mode: QueueMode,
 
@@ -90,8 +90,8 @@ impl Agent {
             provider: Arc::new(provider),
             cwd: PathBuf::new(),
             path_guard: Arc::new(PathGuard::open()),
-            steering_queue: Arc::new(Mutex::new(Vec::new())),
-            follow_up_queue: Arc::new(Mutex::new(Vec::new())),
+            steering_queue: PromptQueue::new(),
+            follow_up_queue: PromptQueue::new(),
             steering_mode: QueueMode::OneAtATime,
             follow_up_mode: QueueMode::OneAtATime,
             context_config: None,
@@ -146,6 +146,14 @@ impl Agent {
 
     pub fn with_path_guard(mut self, guard: Arc<PathGuard>) -> Self {
         self.path_guard = guard;
+        self
+    }
+
+    /// Use caller-owned queues so control handles remain valid while an app
+    /// runtime swaps engine instances between turns.
+    pub fn with_prompt_queues(mut self, steering: PromptQueue, follow_up: PromptQueue) -> Self {
+        self.steering_queue = steering;
+        self.follow_up_queue = follow_up;
         self
     }
 
@@ -295,7 +303,7 @@ impl Agent {
         if let Some(ref h) = self.last_run_handle {
             h.steer(msg);
         } else {
-            self.steering_queue.lock().push(msg);
+            self.steering_queue.enqueue(msg);
         }
     }
 
@@ -304,19 +312,19 @@ impl Agent {
         if let Some(ref h) = self.last_run_handle {
             h.follow_up(msg);
         } else {
-            self.follow_up_queue.lock().push(msg);
+            self.follow_up_queue.enqueue(msg);
         }
     }
 
     pub fn clear_steering_queue(&self) {
-        self.steering_queue.lock().clear();
+        self.steering_queue.clear();
         if let Some(ref h) = self.last_run_handle {
             h.clear_steering();
         }
     }
 
     pub fn clear_follow_up_queue(&self) {
-        self.follow_up_queue.lock().clear();
+        self.follow_up_queue.clear();
         if let Some(ref h) = self.last_run_handle {
             h.clear_follow_up();
         }

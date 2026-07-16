@@ -101,7 +101,7 @@ pub(in crate::agent) trait TurnFactory: Send + Sync + 'static {
 }
 
 // ---------------------------------------------------------------------------
-// execute_run — public entry point: schedule a Run on a background task
+// execute_run — public entry point: schedule a Run asynchronously
 // ---------------------------------------------------------------------------
 
 pub(in crate::agent) struct ExecuteRunArgs {
@@ -300,7 +300,8 @@ async fn drive_one_turn(
         session,
     } = turn;
 
-    let mut engine = build_agent(options, history);
+    let mut engine = build_agent(options, history)
+        .with_prompt_queues(control.queues().steering(), control.queues().follow_up());
     let user_msg = evot_engine::AgentMessage::Llm(evot_engine::Message::User {
         content: input.clone(),
         timestamp: evot_engine::now_ms(),

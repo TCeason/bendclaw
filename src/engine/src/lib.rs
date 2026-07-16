@@ -9,6 +9,9 @@ pub mod tools;
 pub mod types;
 
 pub use agent::Agent;
+pub use agent::PromptQueue;
+pub use agent::PromptQueueEntry;
+pub use agent::PromptQueueError;
 pub use agent::RunHandle;
 pub use context::now_ms;
 pub use context::plan_session_compaction;

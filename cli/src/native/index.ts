@@ -6,7 +6,10 @@
 
 // @ts-ignore — binding.js is generated
 import { NapiAgent as RawAgent, version as rawVersion, startServer as rawStartServer, startServerBackground as rawStartServerBackground, fastExit as rawFastExit } from './binding.js'
-import type { NapiAgent as RawAgentType, NapiRun as RawRunType, NapiForkedAgent as RawForkedType } from './binding.d.ts'
+
+type RawAgentType = any
+type RawRunType = any
+type RawForkedType = any
 
 // ---------------------------------------------------------------------------
 // Event types (mirrors Rust RunEvent / RunEventPayload)
@@ -53,6 +56,14 @@ export type SubmitOutcome =
   | { kind: 'run'; stream: QueryStream }
   | { kind: 'command'; message: string }
 
+export interface QueuedPrompt {
+  id: string
+  version: number
+  message: Record<string, unknown>
+}
+
+export type PromptQueueKind = 'steering' | 'follow_up'
+
 export interface ModelOption {
   provider: string
   model: string
@@ -94,12 +105,36 @@ export class QueryStream {
     this.raw.abort()
   }
 
-  steer(text: string, contentJson?: string): void {
-    this.raw.steer(text, contentJson ?? null)
+  steer(text: string, contentJson?: string): QueuedPrompt {
+    return JSON.parse(this.raw.steer(text, contentJson ?? null)) as QueuedPrompt
   }
 
-  followUp(text: string): void {
-    this.raw.followUp(text)
+  followUp(text: string, contentJson?: string): QueuedPrompt {
+    return JSON.parse(this.raw.followUp(text, contentJson ?? null)) as QueuedPrompt
+  }
+
+  queuedPrompts(queue: PromptQueueKind): QueuedPrompt[] {
+    return JSON.parse(this.raw.queuedPrompts(queue)) as QueuedPrompt[]
+  }
+
+  updateQueuedPrompt(queue: PromptQueueKind, id: string, version: number, text: string): QueuedPrompt {
+    return JSON.parse(this.raw.updateQueuedPrompt(queue, id, version, text)) as QueuedPrompt
+  }
+
+  removeQueuedPrompt(queue: PromptQueueKind, id: string, version?: number): QueuedPrompt {
+    return JSON.parse(this.raw.removeQueuedPrompt(queue, id, version ?? null)) as QueuedPrompt
+  }
+
+  sendQueuedPromptNow(id: string, version?: number): QueuedPrompt {
+    return JSON.parse(this.raw.sendQueuedPromptNow(id, version ?? null)) as QueuedPrompt
+  }
+
+  moveQueuedPrompt(queue: PromptQueueKind, id: string, version: number, direction: 'up' | 'down'): QueuedPrompt {
+    return JSON.parse(this.raw.moveQueuedPrompt(queue, id, version, direction)) as QueuedPrompt
+  }
+
+  clearQueuedPrompts(queue: PromptQueueKind): void {
+    this.raw.clearQueuedPrompts(queue)
   }
 
   /** Respond to a host_tool_call event with a JSON-encoded response.

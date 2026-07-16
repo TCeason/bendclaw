@@ -169,9 +169,121 @@ impl NapiRun {
         self.handle.abort();
     }
 
+    /// List queued prompts as JSON. `queue` is `steering` or `follow_up`.
+    #[napi]
+    pub fn queued_prompts(&self, queue: String) -> Result<String> {
+        let entries = match queue.as_str() {
+            "steering" => self.handle.queued_steering(),
+            "follow_up" => self.handle.queued_follow_ups(),
+            _ => {
+                return Err(Error::from_reason(
+                    "queue must be 'steering' or 'follow_up'",
+                ))
+            }
+        };
+        serde_json::to_string(&entries)
+            .map_err(|error| Error::from_reason(format!("serialize queued prompts: {error}")))
+    }
+
+    /// Update a queued text prompt using optimistic version matching.
+    #[napi]
+    pub fn update_queued_prompt(
+        &self,
+        queue: String,
+        id: String,
+        version: f64,
+        text: String,
+    ) -> Result<String> {
+        let message = evot_engine::AgentMessage::Llm(evot_engine::Message::user(text));
+        let updated = match queue.as_str() {
+            "steering" => self.handle.update_steering(&id, version as u64, message),
+            "follow_up" => self.handle.update_follow_up(&id, version as u64, message),
+            _ => {
+                return Err(Error::from_reason(
+                    "queue must be 'steering' or 'follow_up'",
+                ))
+            }
+        }
+        .map_err(|error| Error::from_reason(error.to_string()))?;
+        serde_json::to_string(&updated)
+            .map_err(|error| Error::from_reason(format!("serialize queued prompt: {error}")))
+    }
+
+    #[napi]
+    pub fn remove_queued_prompt(
+        &self,
+        queue: String,
+        id: String,
+        version: Option<f64>,
+    ) -> Result<String> {
+        let version = version.map(|value| value as u64);
+        let removed = match queue.as_str() {
+            "steering" => self.handle.remove_steering(&id, version),
+            "follow_up" => self.handle.remove_follow_up(&id, version),
+            _ => {
+                return Err(Error::from_reason(
+                    "queue must be 'steering' or 'follow_up'",
+                ))
+            }
+        }
+        .map_err(|error| Error::from_reason(error.to_string()))?;
+        serde_json::to_string(&removed)
+            .map_err(|error| Error::from_reason(format!("serialize queued prompt: {error}")))
+    }
+
+    #[napi]
+    pub fn send_queued_prompt_now(&self, id: String, version: Option<f64>) -> Result<String> {
+        let sent = self
+            .handle
+            .send_follow_up_now(&id, version.map(|value| value as u64))
+            .map_err(|error| Error::from_reason(error.to_string()))?;
+        serde_json::to_string(&sent)
+            .map_err(|error| Error::from_reason(format!("serialize queued prompt: {error}")))
+    }
+
+    /// Move a queued prompt one position within its queue.
+    #[napi]
+    pub fn move_queued_prompt(
+        &self,
+        queue: String,
+        id: String,
+        version: f64,
+        direction: String,
+    ) -> Result<String> {
+        if !matches!(queue.as_str(), "steering" | "follow_up") {
+            return Err(Error::from_reason(
+                "queue must be 'steering' or 'follow_up'",
+            ));
+        }
+        if !matches!(direction.as_str(), "up" | "down") {
+            return Err(Error::from_reason("direction must be 'up' or 'down'"));
+        }
+        let moved = self
+            .handle
+            .move_queued_prompt(&queue, &id, version as u64, &direction)
+            .map_err(|error| Error::from_reason(error.to_string()))?;
+        serde_json::to_string(&moved)
+            .map_err(|error| Error::from_reason(format!("serialize queued prompt: {error}")))
+    }
+
+    /// Clear all prompts in `steering` or `follow_up`.
+    #[napi]
+    pub fn clear_queued_prompts(&self, queue: String) -> Result<()> {
+        match queue.as_str() {
+            "steering" => self.handle.clear_steering(),
+            "follow_up" => self.handle.clear_follow_up(),
+            _ => {
+                return Err(Error::from_reason(
+                    "queue must be 'steering' or 'follow_up'",
+                ))
+            }
+        }
+        Ok(())
+    }
+
     /// Send a steering message into the running agent loop.
     #[napi]
-    pub fn steer(&self, text: String, content_json: Option<String>) {
+    pub fn steer(&self, text: String, content_json: Option<String>) -> Result<String> {
         let content = if let Some(json) = content_json {
             if let Ok(blocks) = parse_content_blocks(&json) {
                 if blocks.is_empty() {
@@ -185,19 +297,34 @@ impl NapiRun {
         } else {
             vec![evot_engine::Content::Text { text }]
         };
-        self.handle
+        let entry = self
+            .handle
             .steer(evot_engine::AgentMessage::Llm(evot_engine::Message::User {
                 content,
                 timestamp: evot_engine::now_ms(),
             }));
+        serde_json::to_string(&entry)
+            .map_err(|error| Error::from_reason(format!("serialize queued prompt: {error}")))
     }
 
     /// Send a follow-up message (processed after current turn finishes).
     #[napi]
-    pub fn follow_up(&self, text: String) {
-        self.handle
-            .follow_up(evot_engine::AgentMessage::Llm(evot_engine::Message::user(
-                text,
-            )));
+    pub fn follow_up(&self, text: String, content_json: Option<String>) -> Result<String> {
+        let content = if let Some(json) = content_json {
+            match parse_content_blocks(&json) {
+                Ok(blocks) if !blocks.is_empty() => blocks,
+                _ => vec![evot_engine::Content::Text { text }],
+            }
+        } else {
+            vec![evot_engine::Content::Text { text }]
+        };
+        let entry =
+            self.handle
+                .follow_up(evot_engine::AgentMessage::Llm(evot_engine::Message::User {
+                    content,
+                    timestamp: evot_engine::now_ms(),
+                }));
+        serde_json::to_string(&entry)
+            .map_err(|error| Error::from_reason(format!("serialize queued prompt: {error}")))
     }
 }

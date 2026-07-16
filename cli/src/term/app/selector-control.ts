@@ -8,6 +8,7 @@ import {
   selectorUp,
   type SelectorState,
 } from '../selector.js'
+import { decideQueueSelectorAction, isQueueSelectorTitle, type ManagedQueuedPrompt } from './queue-manage.js'
 import { isResumeSelectorTitle } from './resume.js'
 
 export type SelectorControlAction =
@@ -18,6 +19,8 @@ export type SelectorControlAction =
   | { kind: 'history-preview'; label: string; text: string }
   | { kind: 'select-model'; spec: string }
   | { kind: 'delete-session'; sessionId: string; label: string; state: SelectorState }
+  | { kind: 'queue-edit'; entry: ManagedQueuedPrompt }
+  | { kind: 'queue-remove'; entry: ManagedQueuedPrompt; state: SelectorState }
   | { kind: 'none' }
 
 export function handleSelectorControl(state: SelectorState, event: KeyEvent): SelectorControlAction {
@@ -27,6 +30,11 @@ export function handleSelectorControl(state: SelectorState, event: KeyEvent): Se
     case 'down':
       return { kind: 'update', state: selectorDown(state) }
     case 'char':
+      if (isQueueSelectorTitle(state.title)) {
+        if (event.char === 'e') return selectAction(state)
+        if (event.char === 'x') return deleteAction(state)
+        return { kind: 'none' }
+      }
       return { kind: 'update', state: selectorType(state, event.char) }
     case 'backspace':
       return { kind: 'update', state: selectorBackspace(state) }
@@ -37,7 +45,9 @@ export function handleSelectorControl(state: SelectorState, event: KeyEvent): Se
     case 'delete':
       return deleteAction(state)
     case 'ctrl':
-      return event.key === 'd' ? deleteAction(state) : { kind: 'none' }
+      return isQueueSelectorTitle(state.title)
+        ? { kind: 'none' }
+        : event.key === 'd' ? deleteAction(state) : { kind: 'none' }
     default:
       return { kind: 'none' }
   }
@@ -48,6 +58,12 @@ function selectAction(state: SelectorState): SelectorControlAction {
   if (!selected) return { kind: 'close' }
 
   if (isResumeSelectorTitle(state.title)) return { kind: 'resume', sessionId: selected.id ?? selected.label }
+
+  if (isQueueSelectorTitle(state.title)) {
+    const action = decideQueueSelectorAction(selected, 'enter')
+    if (action.kind === 'edit') return { kind: 'queue-edit', entry: action.entry }
+    return { kind: 'none' }
+  }
 
   if (state.title.startsWith('History')) {
     if (selected.label === '…') return { kind: 'close' }
@@ -63,9 +79,20 @@ function selectAction(state: SelectorState): SelectorControlAction {
 }
 
 function deleteAction(state: SelectorState): SelectorControlAction {
-  if (!isResumeSelectorTitle(state.title)) return { kind: 'none' }
   const target = selectorSelect(state)
   if (!target?.id) return { kind: 'none' }
+
+  if (isQueueSelectorTitle(state.title)) {
+    const action = decideQueueSelectorAction(target, 'delete')
+    if (action.kind !== 'remove') return { kind: 'none' }
+    return {
+      kind: 'queue-remove',
+      entry: action.entry,
+      state: selectorRemoveItem(state, state.focusIndex),
+    }
+  }
+
+  if (!isResumeSelectorTitle(state.title)) return { kind: 'none' }
   return {
     kind: 'delete-session',
     sessionId: target.id,

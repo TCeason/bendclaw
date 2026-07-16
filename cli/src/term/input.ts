@@ -5,7 +5,9 @@
 
 export type KeyEvent =
   | { type: 'char'; char: string }
+  | { type: 'shift-char'; char: string }
   | { type: 'enter' }
+  | { type: 'ctrl-enter' }
   | { type: 'shift-enter' }
   | { type: 'alt-enter' }
   | { type: 'backspace' }
@@ -47,7 +49,7 @@ export function parseInput(data: Buffer): KeyEvent[] {
   while (i < str.length) {
     const ch = str[i]!
 
-    // Ctrl+letter (0x01-0x1a except special ones)
+    // Ctrl+letter (0x01-0x1a).
     if (ch.charCodeAt(0) >= 1 && ch.charCodeAt(0) <= 26) {
       const code = ch.charCodeAt(0)
       switch (code) {
@@ -277,6 +279,7 @@ function parseModifiedCursor(rest: string): ParsedSequence | null {
 function keyEventFromCodepoint(codepoint: number, modifier: number): KeyEvent | undefined {
   const normalizedModifier = modifier & ~(64 + 128) // ignore caps/num lock bits
   if (codepoint === 13 || codepoint === KITTY_KP_ENTER) {
+    if ((normalizedModifier & MOD_CTRL) !== 0) return { type: 'ctrl-enter' }
     if ((normalizedModifier & MOD_SHIFT) !== 0) return { type: 'shift-enter' }
     if ((normalizedModifier & MOD_ALT) !== 0) return { type: 'alt-enter' }
     return { type: 'enter' }
@@ -288,8 +291,11 @@ function keyEventFromCodepoint(codepoint: number, modifier: number): KeyEvent | 
   if (codepoint === 127) return { type: 'backspace' }
   if (codepoint === 27) return { type: 'escape' }
   if ((normalizedModifier & MOD_CTRL) !== 0) {
-    const key = ctrlKeyFromCodepoint(codepoint)
+    const key = modifiedKeyFromCodepoint(codepoint)
     if (key) return { type: 'ctrl', key }
+  }
+  if (normalizedModifier === MOD_SHIFT && codepoint >= 0x20 && codepoint <= 0x10ffff) {
+    return { type: 'shift-char', char: String.fromCodePoint(codepoint).toLowerCase() }
   }
   if (normalizedModifier === 0 && codepoint >= 0x20 && codepoint <= 0x10ffff) {
     const char = String.fromCodePoint(codepoint)
@@ -298,7 +304,7 @@ function keyEventFromCodepoint(codepoint: number, modifier: number): KeyEvent | 
   return undefined
 }
 
-function ctrlKeyFromCodepoint(codepoint: number): string | undefined {
+function modifiedKeyFromCodepoint(codepoint: number): string | undefined {
   if (codepoint >= 65 && codepoint <= 90) return String.fromCharCode(codepoint + 32)
   if (codepoint >= 97 && codepoint <= 122) return String.fromCharCode(codepoint)
   if (codepoint === 91) return '['

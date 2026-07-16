@@ -94,6 +94,31 @@ describe('repl selector control', () => {
     expect(handleSelectorControl(state, key('delete')).kind).toBe('none')
   })
 
+  test('queue selector supports selection, edit, and remove only', () => {
+    const state = createSelectorState('Prompt queue', [{
+      label: '1. later',
+      id: 'follow_up|q1|3',
+      searchText: 'later',
+    }])
+    expect(handleSelectorControl(state, key('enter'))).toEqual({
+      kind: 'queue-edit',
+      entry: { queue: 'follow_up', id: 'q1', version: 3, text: 'later' },
+    })
+    expect(handleSelectorControl(state, key('delete')).kind).toBe('queue-remove')
+    expect(handleSelectorControl(state, { type: 'shift-char', char: 'j' }).kind).toBe('none')
+    expect(handleSelectorControl(state, { type: 'ctrl-enter' }).kind).toBe('none')
+  })
+
+  test('queue e edits and x removes instead of filtering', () => {
+    const state = createSelectorState('Prompt queue', [{
+      label: '1. queued',
+      id: 'steering|q2|0',
+      searchText: 'queued',
+    }])
+    expect(handleSelectorControl(state, char('e')).kind).toBe('queue-edit')
+    expect(handleSelectorControl(state, char('x')).kind).toBe('queue-remove')
+  })
+
   test('other ctrl key is ignored', () => {
     const state = createSelectorState(RESUME_SELECTOR_TITLE, items)
     expect(handleSelectorControl(state, { type: 'ctrl', key: 'c' }).kind).toBe('none')

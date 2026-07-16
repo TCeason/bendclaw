@@ -5,7 +5,7 @@ import { createSpinnerState, advanceSpinner, formatSpinnerLine, spinnerStatsFrom
 import { createSelectorState, selectorExpandItems, selectorClearQuery, selectorFocusOn, type SelectorItem } from './selector.js'
 import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
 import { buildUserMessage, type OutputLine } from '../render/output.js'
-import { Agent, QueryStream, fastExit, type SessionMeta, type ConfigInfo } from '../native/index.js'
+import { Agent, QueryStream, fastExit, type SessionMeta, type ConfigInfo, type QueuedPrompt } from '../native/index.js'
 import { createInitialState, type AppState } from './app/state.js'
 import { assistantToolCalls } from './app/assistant-content.js'
 import { assistantMessageToOutputLines } from '../render/assistant.js'
@@ -97,10 +97,17 @@ import { handleSelectorControl } from './app/selector-control.js'
 import { decideReplControl, type ReplControlAction } from './app/repl-control.js'
 import { replaceOrPushStatusLine } from './app/status-line.js'
 import { mergeQueuedIntoEditorText } from './app/queue-restore.js'
+import {
+  createQueueSelectorState,
+  isQueueManageShortcut,
+  type ManagedQueuedPrompt,
+} from './app/queue-manage.js'
 import { extractAtPrefix, completeAtFile } from '../commands/file-completion.js'
 import { GitInfoProvider } from './git-info.js'
 
 const SPINNER_INTERVAL_MS = 100
+
+type QueuedUserMessage = QueuedPrompt & { text: string; queue: 'steering' | 'follow_up' }
 
 
 export interface ReplOptions {
@@ -274,7 +281,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   // Messages sent mid-stream: held in the prompt zone (pi-style ❯ queue) and
   // committed to history at the turn boundary, so they never render above the
   // still-streaming reply.
-  let queuedUserMessages: string[] = []
+  let queuedUserMessages: QueuedUserMessage[] = []
+  let editingQueuedPrompt: ManagedQueuedPrompt | null = null
+  let stashedQueueEditDraft = ''
   let expanded = false
   // Rendered-history cache — see HistoryRenderCache. Committed history is
   // append-only (or fully cleared), never mutated in place, so the flattened
@@ -390,7 +399,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       provider: configInfo?.provider ?? '',
       planning,
       logMode: logMode !== null,
-      queuedMessages: queuedUserMessages,
+      queuedMessages: queuedUserMessages.map(message => message.text),
       dashboardUrl: serverState?.address ?? null,
       exitHint,
       completionCandidates: editor.completionCandidates,
@@ -517,7 +526,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // Queue sits above the spinner (pi-style) so a message that left the input
     // box still has a labeled home, with an esc hint to pull it back.
     const footerBlocks: ViewBlock[] = []
-    const queueLines = formatQueuedMessageLines(queuedUserMessages)
+    const queueManagerOpen = overlay.kind === 'selector' && overlay.state.title === 'Prompt queue'
+    const queueLines = queueManagerOpen
+      ? []
+      : formatQueuedMessageLines(queuedUserMessages.map(message => message.text))
     if (queueLines.length > 0) {
       footerBlocks.push({
         lines: queueLines.map(text => ({ spans: [{ text, dim: true }] })),
@@ -940,9 +952,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           }
         }
 
-        // A new turn means the engine injected the queued steer and flushed the
-        // preceding text, so the queued message now lands below it.
-        if (event.kind === 'turn_started') drainQueuedUserMessages()
+        // Reconcile against the native queue instead of draining the visible
+        // copy wholesale: OneAtATime mode may consume only the first of several
+        // queued prompts at this boundary.
+        if (event.kind === 'turn_started') reconcileQueuedUserMessages()
 
         // writeLines are log-only: LLM/COMPACT/SPILL stats that don't render in
         // the TUI. Run them through the same formatting pipeline so screen.log
@@ -962,8 +975,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         appState = final.state.appState
         commitFlushResult(final)
       }
-      // Safety net: run settled without a further turn boundary.
-      drainQueuedUserMessages()
+      // Safety net: commit only prompts the engine actually consumed. A prompt
+      // queued during the final poll can still be pending when the run settles.
+      reconcileQueuedUserMessages()
+      restoreQueuedUserMessagesToEditor()
       completed = true
     } catch (err: any) {
       if (streamMachine) {
@@ -972,7 +987,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         commitFlushResult(final)
       }
       commitLines([{ id: 'sys-err', kind: 'error', text: err?.message ?? String(err) }])
-      drainQueuedUserMessages()
+      reconcileQueuedUserMessages()
+      restoreQueuedUserMessagesToEditor()
     } finally {
       unfreezeTerminalTitle()
       streamRef = null
@@ -988,6 +1004,26 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   function handleKey(event: KeyEvent) {
+    if (editingQueuedPrompt) {
+      if (event.type === 'escape' || (event.type === 'ctrl' && event.key === 'c')) {
+        cancelQueueEdit()
+        return
+      }
+      if (isQueueManageShortcut(event)) {
+        commitLines([{ id: 'sys-queue-edit-lock', kind: 'system', text: '  Finish or discard the queued prompt edit first.' }])
+        return
+      }
+    }
+    if (isQueueManageShortcut(event)) {
+      if (overlay.kind === 'selector' && overlay.state.title === 'Prompt queue') {
+        overlay = { kind: 'none' }
+        renderer.requestRender()
+      } else if (streamRef && queuedUserMessages.length > 0) {
+        openQueueSelector()
+      }
+      return
+    }
+
     const actions = decideReplControl({
       event,
       overlay,
@@ -996,6 +1032,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       editor,
       exitHint,
       logMode: logMode !== null,
+      hasQueuedPrompt: queuedUserMessages.length > 0,
     })
 
     for (const action of actions) {
@@ -1005,6 +1042,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function applyReplControlAction(action: ReplControlAction, event: KeyEvent): boolean {
     switch (action.kind) {
+      case 'restore-queued':
+        restoreLastQueuedUserMessageToEditor()
+        return true
       case 'interrupt':
         interruptStream('sys-int', '  Interrupted.')
         return true
@@ -1068,7 +1108,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         handleLoadingEnter()
         return true
       case 'loading-char':
-        if (event.type === 'char') {
+        if (event.type === 'char' || event.type === 'shift-char') {
           editor = insertText(editor, event.char)
           renderer.requestRender()
         }
@@ -1116,10 +1156,123 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     commitLines([{ id, kind: 'system', text }])
   }
 
+  function queueEntryText(entry: QueuedPrompt): string {
+    const message = entry.message as { role?: string; content?: Array<{ type?: string; text?: string }> }
+    const text = message.content
+      ?.filter(content => content.type === 'text' && typeof content.text === 'string')
+      .map(content => content.text)
+      .join('\n')
+      .trim()
+    return text || '(non-text prompt)'
+  }
+
+  function managedQueueEntries(): ManagedQueuedPrompt[] {
+    if (!streamRef) return []
+    const visible = new Map(queuedUserMessages.map(message => [message.id, message.text]))
+    try {
+      const collect = (queue: 'steering' | 'follow_up') => streamRef!
+        .queuedPrompts(queue)
+        .map(entry => ({
+          queue,
+          id: entry.id,
+          version: entry.version,
+          text: visible.get(entry.id) ?? queueEntryText(entry),
+        }))
+      return [...collect('steering'), ...collect('follow_up')]
+    } catch {
+      return []
+    }
+  }
+
+  function openQueueSelector() {
+    const entries = managedQueueEntries()
+    if (entries.length === 0) {
+      overlay = { kind: 'none' }
+      commitLines([{ id: 'sys-queue-empty', kind: 'system', text: '  No queued prompts.' }])
+      return
+    }
+    overlay = { kind: 'selector', state: createQueueSelectorState(entries) }
+    renderer.requestRender()
+  }
+
+  function editQueuedPrompt(entry: ManagedQueuedPrompt) {
+    if (!streamRef) return
+    editingQueuedPrompt = entry
+    stashedQueueEditDraft = getEditorText(editor)
+    clearAll()
+    editor = insertText(editor, entry.text)
+    overlay = { kind: 'none' }
+    commitLines([{ id: 'sys-queue-edit', kind: 'system', text: '  Editing queued prompt · Enter save · Esc discard' }])
+    renderer.requestRender()
+  }
+
+  function finishQueueEdit() {
+    editingQueuedPrompt = null
+    clearAll()
+    editor = insertText(editor, stashedQueueEditDraft)
+    stashedQueueEditDraft = ''
+    renderer.requestRender()
+  }
+
+  function cancelQueueEdit() {
+    finishQueueEdit()
+    commitLines([{ id: 'sys-queue-edit-cancel', kind: 'system', text: '  Queue edit discarded.' }])
+  }
+
+  function saveQueueEdit(text: string) {
+    if (!streamRef || !editingQueuedPrompt || !text.trim()) return
+    const entry = editingQueuedPrompt
+    try {
+      const updated = streamRef.updateQueuedPrompt(entry.queue, entry.id, entry.version, text)
+      queuedUserMessages = queuedUserMessages.map(message => message.id === entry.id
+        ? { ...message, version: updated.version, text }
+        : message)
+      finishQueueEdit()
+      commitLines([{ id: 'sys-queue-edit-save', kind: 'system', text: '  Queued prompt updated.' }])
+    } catch (err: any) {
+      const current = managedQueueEntries().find(candidate => candidate.id === entry.id)
+      if (current) editingQueuedPrompt = { ...current, text }
+      else finishQueueEdit()
+      commitLines([{ id: 'sys-queue-err', kind: 'system', text: chalk.red(`  Queue edit failed: ${err?.message ?? err}`) }])
+      renderer.requestRender()
+    }
+  }
+
+  function removeQueuedPrompt(entry: ManagedQueuedPrompt) {
+    if (!streamRef) return
+    try {
+      streamRef.removeQueuedPrompt(entry.queue, entry.id, entry.version)
+      queuedUserMessages = queuedUserMessages.filter(message => message.id !== entry.id)
+      openQueueSelector()
+    } catch (err: any) {
+      reconcileQueuedUserMessages()
+      commitLines([{ id: 'sys-queue-err', kind: 'system', text: chalk.red(`  Queue remove failed: ${err?.message ?? err}`) }])
+      openQueueSelector()
+    }
+  }
+
+  /** Pull the newest queued prompt back into the editor without
+   *  aborting the active run. Native optimistic version matching prevents an
+   *  already-consumed prompt from being silently edited. */
+  function restoreLastQueuedUserMessageToEditor() {
+    if (!streamRef || queuedUserMessages.length === 0) return
+    const queued = queuedUserMessages[queuedUserMessages.length - 1]!
+    try {
+      streamRef.removeQueuedPrompt(queued.queue, queued.id, queued.version)
+      queuedUserMessages = queuedUserMessages.slice(0, -1)
+      const next = mergeQueuedIntoEditorText([queued.text], getEditorText(editor))
+      editor = insertText(clearEditor(editor), next)
+      renderer.requestRender()
+    } catch {
+      // The engine already consumed it at a turn boundary; normal event handling
+      // will commit the visible copy to history.
+    }
+  }
+
   /** Move mid-stream queued messages into the input box after an interrupt. */
   function restoreQueuedUserMessagesToEditor() {
     if (queuedUserMessages.length === 0) return
-    const messages = queuedUserMessages
+    const messages = queuedUserMessages.map(message => message.text)
     queuedUserMessages = []
     const next = mergeQueuedIntoEditorText(messages, getEditorText(editor))
     editor = insertText(clearEditor(editor), next)
@@ -1147,6 +1300,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       : getExpandedText()
 
     const trimmed = (expandedText || '').trim()
+    if (editingQueuedPrompt) {
+      saveQueueEdit(expandedText)
+      return
+    }
     if (trimmed === '/log') {
       clearAll()
       const logPath = screenLog.filePath
@@ -1163,9 +1320,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if ((expandedText || imageBlocks) && streamRef) {
       if (imageBlocks) {
         const contentJson = JSON.stringify(imageBlocks)
-        streamRef.steer('', contentJson)
+        const queued = streamRef.followUp('', contentJson)
+        queuedUserMessages.push({ ...queued, text: displayText || '(image prompt)', queue: 'follow_up' })
       } else {
-        streamRef.steer(expandedText)
+        const queued = streamRef.followUp(expandedText)
+        if (displayText) queuedUserMessages.push({ ...queued, text: displayText, queue: 'follow_up' })
       }
       // Save to input history like a normal submission.
       if (displayText) {
@@ -1174,19 +1333,37 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       // Queue instead of committing now: history renders above the streaming
       // block, so an immediate commit lands above the incoming reply.
-      if (displayText) queuedUserMessages.push(displayText)
+      // Plain and structured prompts are follow-ups, matching grok's default
+      // "finish the current turn, then drain FIFO" behavior.
       clearAll()
       renderer.requestRender()
     }
   }
 
-  /** Commit queued mid-stream user messages into history. */
-  function drainQueuedUserMessages() {
-    if (queuedUserMessages.length === 0) return
-    const messages = queuedUserMessages
-    queuedUserMessages = []
-    for (const msg of messages) {
-      commitLines(buildUserMessage(msg))
+  /** Commit queued prompts that are no longer present in either native queue. */
+  function reconcileQueuedUserMessages() {
+    if (queuedUserMessages.length === 0 || !streamRef) return
+    let remainingIds: Set<string>
+    try {
+      remainingIds = new Set([
+        ...streamRef.queuedPrompts('steering'),
+        ...streamRef.queuedPrompts('follow_up'),
+      ].map(entry => entry.id))
+    } catch {
+      return
+    }
+    const remaining: QueuedUserMessage[] = []
+    for (const message of queuedUserMessages) {
+      if (remainingIds.has(message.id)) remaining.push(message)
+      else commitLines(buildUserMessage(message.text))
+    }
+    queuedUserMessages = remaining
+    if (remaining.length === 0 && overlay.kind === 'selector' && overlay.state.title === 'Prompt queue') {
+      overlay = { kind: 'none' }
+    }
+    if (editingQueuedPrompt && !remainingIds.has(editingQueuedPrompt.id)) {
+      finishQueueEdit()
+      commitLines([{ id: 'sys-queue-edit-consumed', kind: 'system', text: '  Queued prompt was already consumed; edit closed.' }])
     }
   }
 
@@ -1346,6 +1523,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         break
       }
       case 'char':
+      case 'shift-char':
         editor = insertText(editor, event.char)
         editor = refreshGhostHint(editor)
         renderer.requestRender()
@@ -2052,7 +2230,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
         if (event.kind === 'assistant_delta') renderer.requestRender()
         if (update.commitLines.length > 0) commitLines(update.commitLines)
-        if (event.kind === 'turn_started') drainQueuedUserMessages()
+        if (event.kind === 'turn_started') reconcileQueuedUserMessages()
         if (update.rerenderStatus) renderer.requestRender()
       }
 
@@ -2062,7 +2240,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         appState = final.state.appState
         commitFlushResult(final)
       }
-      drainQueuedUserMessages()
+      reconcileQueuedUserMessages()
+      restoreQueuedUserMessagesToEditor()
     } catch (err: any) {
       if (streamMachine) {
         const final = flushStreaming(streamMachine)
@@ -2070,7 +2249,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         commitFlushResult(final)
       }
       commitLines([{ id: 'sys-log-err', kind: 'system', text: chalk.red(`  Log query failed: ${err?.message ?? err}`) }])
-      drainQueuedUserMessages()
+      reconcileQueuedUserMessages()
+      restoreQueuedUserMessagesToEditor()
     } finally {
       streamRef = null
       isLoading = false
@@ -2132,6 +2312,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           }
         })
         renderer.requestRender()
+        return
+      case 'queue-edit':
+        editQueuedPrompt(action.entry)
+        return
+      case 'queue-remove':
+        removeQueuedPrompt(action.entry)
         return
       case 'none':
         return

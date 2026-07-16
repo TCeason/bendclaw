@@ -145,6 +145,16 @@ describe('parseInput', () => {
     test('Kitty CSI-u Ctrl+C', () => {
       expect(parse('\x1b[99;5u')).toEqual([{ type: 'ctrl', key: 'c' }])
     })
+
+    test('Kitty CSI-u Ctrl+Enter', () => {
+      expect(parse('\x1b[13;5u')).toEqual([{ type: 'ctrl-enter' }])
+    })
+
+    test('Kitty CSI-u Shift+J/K', () => {
+      expect(parse('\x1b[106;2u')).toEqual([{ type: 'shift-char', char: 'j' }])
+      expect(parse('\x1b[107;2u')).toEqual([{ type: 'shift-char', char: 'k' }])
+    })
+
   })
 
   describe('bracketed paste', () => {

@@ -30,6 +30,8 @@ mod model_metadata_test;
 mod orchestrator_compact_test;
 #[path = "run_ask_channel_test.rs"]
 mod run_ask_channel_test;
+#[path = "run_queue_test.rs"]
+mod run_queue_test;
 #[path = "search_test.rs"]
 mod search_test;
 #[path = "server_protocol_test.rs"]
