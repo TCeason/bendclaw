@@ -241,7 +241,7 @@ describe('formatSpinnerLine', () => {
     expect(line).toContain('cache 80k 80%')
   })
 
-  test('spinnerStatsFromLastUsage prefers last call and live ↓', () => {
+  test('spinnerStatsFromLastUsage hides prior usage until the active call completes', () => {
     const last = {
       inputTokens: 12_000,
       outputTokens: 800,
@@ -254,13 +254,19 @@ describe('formatSpinnerLine', () => {
       cacheReadTokens: 450_000,
       cacheWriteTokens: 0,
     })
-    expect(spinnerStatsFromLastUsage(last, 320)).toEqual({
-      inputTokens: 12_000,
+    expect(spinnerStatsFromLastUsage(last, 320, true)).toEqual({
+      inputTokens: 0,
       outputTokens: 320,
-      cacheReadTokens: 450_000,
+      cacheReadTokens: 0,
       cacheWriteTokens: 0,
     })
-    expect(spinnerStatsFromLastUsage(null, 50)).toEqual({
+    expect(spinnerStatsFromLastUsage(last, 0, true)).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    })
+    expect(spinnerStatsFromLastUsage(null, 50, true)).toEqual({
       inputTokens: 0,
       outputTokens: 50,
       cacheReadTokens: 0,

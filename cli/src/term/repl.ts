@@ -510,14 +510,19 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // Building it here and appending it after transient widgets prevents those
     // widgets from splitting the spinner/prompt pair.
     if (isLoading && overlay.kind !== 'ask-user') {
-      const activeLlmCall = toolCalls.length === 0 && (streamMachine?.activeLlmCall ?? false)
-      const liveOutputTokens = activeLlmCall ? spinnerState.tokenCount : 0
-      // Align with pi: absolute ↑/↓/cache from usage buckets, but cache hit % only
-      // from the latest completed LLM call — never session-cumulative averages.
+      const usagePending = streamMachine?.activeLlmCall ?? false
+      const liveOutputTokens = usagePending && toolCalls.length === 0 ? spinnerState.tokenCount : 0
+      // Usage arrives only when the provider completes this call. During an
+      // active call, show only its live output estimate; retaining the previous
+      // call here would present stale cache/input values as if they were current.
       const spinnerText = formatSpinnerLine(
         spinnerState,
         Date.now(),
-        spinnerStatsFromLastUsage(appState.currentRunStats.lastLlmUsage, liveOutputTokens),
+        spinnerStatsFromLastUsage(
+          appState.currentRunStats.lastLlmUsage,
+          liveOutputTokens,
+          usagePending,
+        ),
       )
       spinnerBlock = { lines: [{ spans: [{ text: spinnerText }] }], marginTop: 1 }
     }

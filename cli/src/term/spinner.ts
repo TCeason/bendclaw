@@ -114,7 +114,7 @@ export function isSlow(state: SpinnerState, now: number): boolean {
 }
 
 export interface SpinnerStats {
-  /** Uncached prompt tokens for the current run (or latest completed call). */
+  /** Uncached prompt tokens from completed provider usage. */
   inputTokens?: number
   outputTokens?: number
   cacheReadTokens?: number
@@ -228,8 +228,9 @@ export function formatCacheLabel(
 }
 
 /**
- * Pick spinner token stats from the last completed LLM call.
- * Live output estimates replace ↓ while the next call is streaming.
+ * Pick spinner token stats from completed provider usage.
+ * While an LLM call is active, its usage buckets are not known yet, so only
+ * show the live output estimate instead of mixing it with the previous call.
  */
 export function spinnerStatsFromLastUsage(
   last: {
@@ -239,12 +240,14 @@ export function spinnerStatsFromLastUsage(
     cacheWriteTokens: number
   } | null | undefined,
   liveOutputTokens = 0,
+  activeLlmCall = false,
 ): SpinnerStats {
+  const completedUsage = activeLlmCall ? null : last
   return {
-    inputTokens: last?.inputTokens ?? 0,
-    outputTokens: liveOutputTokens > 0 ? liveOutputTokens : (last?.outputTokens ?? 0),
-    cacheReadTokens: last?.cacheReadTokens ?? 0,
-    cacheWriteTokens: last?.cacheWriteTokens ?? 0,
+    inputTokens: completedUsage?.inputTokens ?? 0,
+    outputTokens: liveOutputTokens > 0 ? liveOutputTokens : (completedUsage?.outputTokens ?? 0),
+    cacheReadTokens: completedUsage?.cacheReadTokens ?? 0,
+    cacheWriteTokens: completedUsage?.cacheWriteTokens ?? 0,
   }
 }
 
