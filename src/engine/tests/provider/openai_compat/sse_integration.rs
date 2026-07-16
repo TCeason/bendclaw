@@ -146,6 +146,61 @@ async fn openai_sse_uses_first_non_empty_reasoning_alias_once() {
 }
 
 #[tokio::test]
+async fn openai_sse_interleaved_reasoning_and_text_append_in_arrival_order() {
+    let sse = openai_sse::body(vec![
+        openai_sse::reasoning_chunk(Some("plan "), None, None),
+        openai_sse::reasoning_chunk(Some("one"), None, None),
+        openai_sse::text_chunk("answer one", None),
+        openai_sse::reasoning_chunk(Some("plan two"), None, None),
+        openai_sse::text_chunk("answer ", None),
+        openai_sse::text_chunk("two", None),
+        openai_sse::finish_with_usage("stop", 50, 10),
+        openai_sse::done(),
+    ]);
+
+    let (message, events) = run_provider_sse(&OpenAiCompatProvider, openai_config(), &sse, 200)
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        message,
+        Message::Assistant { content, .. }
+            if matches!(content.as_slice(), [
+                Content::Thinking { thinking: first_thinking, .. },
+                Content::Text { text: first_text },
+                Content::Thinking { thinking: second_thinking, .. },
+                Content::Text { text: second_text },
+            ] if first_thinking == "plan one"
+                && first_text == "answer one"
+                && second_thinking == "plan two"
+                && second_text == "answer two")
+    ));
+
+    let indexed_deltas = events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::ThinkingDelta {
+                content_index,
+                delta,
+            } => Some((*content_index, "thinking", delta.as_str())),
+            StreamEvent::TextDelta {
+                content_index,
+                delta,
+            } => Some((*content_index, "text", delta.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(indexed_deltas, vec![
+        (0, "thinking", "plan "),
+        (0, "thinking", "one"),
+        (1, "text", "answer one"),
+        (2, "thinking", "plan two"),
+        (3, "text", "answer "),
+        (3, "text", "two"),
+    ]);
+}
+
+#[tokio::test]
 async fn xai_sse_prefers_reasoning_alias_when_multiple_are_present() {
     let sse = openai_sse::body(vec![
         openai_sse::reasoning_chunk(Some("duplicate"), Some("xai"), None),

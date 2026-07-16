@@ -246,20 +246,20 @@ fn process_sse_chunk(
                 .map(|value| (field, value))
         });
         if let Some((reasoning_field, reasoning_text)) = reasoning {
-            let thinking_idx = content
-                .iter()
-                .position(|c| matches!(c, Content::Thinking { .. }));
-            let idx = match thinking_idx {
-                Some(i) => i,
-                None => {
-                    content.push(Content::Thinking {
-                        thinking: String::new(),
-                        metadata: Some(ThinkingMetadata::OpenAiCompletions {
-                            field: reasoning_field,
-                        }),
-                    });
-                    content.len() - 1
-                }
+            // Only coalesce contiguous reasoning. Some compatible providers
+            // interleave reasoning and visible text; appending later reasoning
+            // to the first block makes the UI rewrite content above an answer
+            // that is already streaming below it.
+            let idx = if matches!(content.last(), Some(Content::Thinking { .. })) {
+                content.len() - 1
+            } else {
+                content.push(Content::Thinking {
+                    thinking: String::new(),
+                    metadata: Some(ThinkingMetadata::OpenAiCompletions {
+                        field: reasoning_field,
+                    }),
+                });
+                content.len() - 1
             };
             if let Some(Content::Thinking { thinking, .. }) = content.get_mut(idx) {
                 thinking.push_str(reasoning_text);
@@ -270,19 +270,16 @@ fn process_sse_chunk(
             });
         }
 
-        // Handle text content
+        // Handle text content. As with reasoning, preserve type transitions so
+        // every new delta extends the tail instead of mutating an earlier row.
         if let Some(text) = &delta.content {
-            let text_idx = content
-                .iter()
-                .position(|c| matches!(c, Content::Text { .. }));
-            let idx = match text_idx {
-                Some(i) => i,
-                None => {
-                    content.push(Content::Text {
-                        text: String::new(),
-                    });
-                    content.len() - 1
-                }
+            let idx = if matches!(content.last(), Some(Content::Text { .. })) {
+                content.len() - 1
+            } else {
+                content.push(Content::Text {
+                    text: String::new(),
+                });
+                content.len() - 1
             };
             if let Some(Content::Text { text: t }) = content.get_mut(idx) {
                 t.push_str(text);
