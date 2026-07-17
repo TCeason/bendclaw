@@ -1097,16 +1097,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         renderer.requestRender()
         return true
       case 'close-overlay': {
-        const redraw = overlay.kind === 'selector'
+        // The selector is part of the normal frame. Match pi's overlay lifecycle:
+        // removing it is a regular differential render, not a forced reset.
         // An ask overlay can be closed without a stream (e.g. leftover overlay);
         // resolve its awaiting promise so nothing stays suspended.
         if (overlay.kind === 'ask-user') resolvePendingAsk()
         overlay = { kind: 'none' }
-        if (redraw) {
-          renderer.fullRedraw()
-        } else {
-          renderer.requestRender()
-        }
+        renderer.requestRender()
         return true
       }
       case 'exit-log-mode':

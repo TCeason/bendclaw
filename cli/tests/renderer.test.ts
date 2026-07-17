@@ -93,14 +93,14 @@ describe('TermRenderer', () => {
       renderer.destroy()
     })
 
-    test('identical frames produce no output', async () => {
+    test('identical frames only refresh hardware cursor visibility', async () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()
       renderer.setRenderCallback(() => ['line1', 'line2'])
       await renderFrame(renderer)
       stdout.clear()
       await renderFrame(renderer)
-      expect(stdout.output).toBe('')
+      expect(stdout.output).toBe('\x1b[?25l')
       renderer.destroy()
     })
 
@@ -234,8 +234,7 @@ describe('TermRenderer', () => {
     // renderer). A prior attempt to repaint in place instead desynced the
     // on-screen window from the terminal's real scrollback and made text
     // selections jump on scroll.
-    const CLEAR_VIEWPORT = '\x1b[2J\x1b[H'
-    const CLEAR_SCROLLBACK = '\x1b[3J'
+    const CLEAR_SCREEN = '\x1b[2J\x1b[H\x1b[3J'
 
     test('changing a line above the viewport triggers a full redraw', async () => {
       const { renderer, stdout } = createRenderer()
@@ -260,11 +259,9 @@ describe('TermRenderer', () => {
       await renderFrame(renderer)
 
       const out = stdout.output
-      expect(out).toContain(CLEAR_VIEWPORT)
-      expect(out).not.toContain(CLEAR_SCROLLBACK)
-      // Only the addressable viewport is repainted. The historical line stays
-      // in terminal scrollback rather than being erased and reconstructed.
-      expect(out).not.toContain('hist 5 REFLOWED')
+      expect(out).toContain(CLEAR_SCREEN)
+      // pi rebuilds the full logical frame after clearing the terminal.
+      expect(out).toContain('hist 5 REFLOWED')
       expect(out).toContain('s6')
       renderer.destroy()
     })
@@ -285,20 +282,15 @@ describe('TermRenderer', () => {
       await renderFrame(renderer)
 
       const out = stdout.output
-      expect(out).toContain(CLEAR_VIEWPORT)
-      expect(out).not.toContain(CLEAR_SCROLLBACK)
-      expect(out).not.toContain('h0-changed')
+      expect(out).toContain(CLEAR_SCREEN)
+      expect(out).toContain('h0-changed')
       expect(out).toContain('d')
       renderer.destroy()
     })
 
-    // A change confined entirely above the viewport, with the frame's total line
-    // count unchanged, leaves the visible region byte-for-byte identical. The
-    // only differences are in scrollback, which no escape sequence can address
-    // without a destructive clear+reprint. Emitting that clear is what made the
-    // screen "jump" to the top on an off-screen banner update or early markdown
-    // reflow. The renderer must adopt the new lines silently and NOT redraw.
-    test('off-viewport change with unchanged line count does not redraw', async () => {
+    // Match pi: any changed line above the addressable viewport forces a full
+    // redraw, even when the visible suffix is unchanged.
+    test('off-viewport change with unchanged line count triggers full redraw', async () => {
       const { renderer, stdout } = createRenderer()
       stdout.rows = 10
       renderer.init()
@@ -314,13 +306,12 @@ describe('TermRenderer', () => {
       await renderFrame(renderer)
 
       const out = stdout.output
-      expect(out).not.toContain(CLEAR_VIEWPORT)
-      // Nothing visible changed, so no line content is reprinted either.
-      expect(out).not.toContain('feature-branch')
+      expect(out).toContain(CLEAR_SCREEN)
+      expect(out).toContain('feature-branch')
       renderer.destroy()
     })
 
-    test('off-viewport early reflow (count unchanged) does not redraw', async () => {
+    test('off-viewport early reflow (count unchanged) triggers full redraw', async () => {
       const { renderer, stdout } = createRenderer()
       stdout.rows = 10
       renderer.init()
@@ -336,16 +327,11 @@ describe('TermRenderer', () => {
       pending[1] = 'P1-REFLOWED'
       await renderFrame(renderer)
 
-      expect(stdout.output).not.toContain(CLEAR_VIEWPORT)
+      expect(stdout.output).toContain(CLEAR_SCREEN)
       renderer.destroy()
     })
 
-    // The real-world jump: an async banner GROWS a line mid-session (update
-    // notice / release notes arrive). The banner sits at row 0, long scrolled
-    // above the viewport, so the visible region is byte-identical — only its
-    // buffer indices shifted by +1. A common-suffix match proves the viewport
-    // is unchanged, so the renderer adopts silently instead of clearing.
-    test('off-viewport line-count GROWTH with identical viewport does not redraw', async () => {
+    test('off-viewport line-count GROWTH with identical viewport redraws like pi', async () => {
       const { renderer, stdout } = createRenderer()
       stdout.rows = 10
       renderer.init()
@@ -361,15 +347,12 @@ describe('TermRenderer', () => {
       await renderFrame(renderer)
 
       const out = stdout.output
-      expect(out).not.toContain(CLEAR_VIEWPORT)
-      // The grown banner line is off-screen, so it is never printed.
-      expect(out).not.toContain('New version available')
+      expect(out).toContain(CLEAR_SCREEN)
+      expect(out).toContain('New version available')
       renderer.destroy()
     })
 
-    // Same for a SHRINK: an off-screen banner line disappears. Buffer indices
-    // shift by -1 but the viewport is identical, so no clear.
-    test('off-viewport line-count SHRINK with identical viewport does not redraw', async () => {
+    test('off-viewport line-count SHRINK with identical viewport redraws like pi', async () => {
       const { renderer, stdout } = createRenderer()
       stdout.rows = 10
       renderer.init()
@@ -382,14 +365,11 @@ describe('TermRenderer', () => {
       banner = ['banner']
       await renderFrame(renderer)
 
-      expect(stdout.output).not.toContain(CLEAR_VIEWPORT)
+      expect(stdout.output).toContain(CLEAR_SCREEN)
       renderer.destroy()
     })
 
-    // A change that only reaches PART of the viewport, with the line count
-    // unchanged, repaints just the visible rows — the unaddressable scrollback
-    // above is left stale (invisible) rather than triggering a full clear.
-    test('partial-viewport reach (count unchanged) repaints visible rows without clearing', async () => {
+    test('partial-viewport reach redraws when the first change is above the viewport', async () => {
       const { renderer, stdout } = createRenderer()
       stdout.rows = 10
       renderer.init()
@@ -408,10 +388,9 @@ describe('TermRenderer', () => {
       await renderFrame(renderer)
 
       const out = stdout.output
-      expect(out).not.toContain(CLEAR_VIEWPORT)
-      // The visible changed row is repainted; the off-screen one is not.
+      expect(out).toContain(CLEAR_SCREEN)
+      expect(out).toContain('P1-off')
       expect(out).toContain('P3-vis')
-      expect(out).not.toContain('P1-off')
       renderer.destroy()
     })
 
@@ -436,48 +415,9 @@ describe('TermRenderer', () => {
       await renderFrame(renderer)
 
       const out = stdout.output
-      expect(out).not.toContain(CLEAR_VIEWPORT)
+      expect(out).not.toContain(CLEAR_SCREEN)
       expect(out).toContain('out line 3')
       expect(out).toContain('prompt')
-      renderer.destroy()
-    })
-  })
-
-  describe('freezeLines', () => {
-    test('frozen lines are not redrawn on next frame', async () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      let lines = ['frozen1', 'frozen2', 'active1']
-      renderer.setRenderCallback(() => lines)
-      await renderFrame(renderer)
-
-      // Freeze the first 2 lines
-      renderer.freezeLines(2)
-      stdout.clear()
-
-      // Change active content
-      lines = ['frozen1', 'frozen2', 'active-changed']
-      // After freeze, renderer only tracks ['active1'] as previous
-      // New callback returns 3 lines but renderer compares against ['active1']
-      renderer.setRenderCallback(() => ['active-changed'])
-      await renderFrame(renderer)
-      const out = stdout.output
-      expect(out).toContain('active-changed')
-      expect(out).not.toContain('frozen1')
-      expect(out).not.toContain('frozen2')
-      renderer.destroy()
-    })
-
-    test('freeze with count 0 does nothing', async () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      renderer.setRenderCallback(() => ['line1'])
-      await renderFrame(renderer)
-      stdout.clear()
-      renderer.freezeLines(0)
-      renderer.setRenderCallback(() => ['line1-changed'])
-      await renderFrame(renderer)
-      expect(stdout.output).toContain('line1-changed')
       renderer.destroy()
     })
   })
@@ -493,24 +433,7 @@ describe('TermRenderer', () => {
       const out = stdout.output
       expect(out).toContain('\x1b[2J') // clear screen
       expect(out).toContain('\x1b[H')  // cursor home
-      expect(out).toContain('\x1b[3J') // clear scrollback only on explicit clear
-      renderer.destroy()
-    })
-  })
-
-  describe('fullRedraw', () => {
-    test('force redraws all lines', async () => {
-      const { renderer, stdout } = createRenderer()
-      renderer.init()
-      renderer.setRenderCallback(() => ['line1', 'line2'])
-      await renderFrame(renderer)
-      stdout.clear()
-      renderer.fullRedraw()
-      await new Promise(resolve => process.nextTick(resolve))
-      await Bun.sleep(5)
-      const out = stdout.output
-      expect(out).toContain('line1')
-      expect(out).toContain('line2')
+      expect(out).toContain('\x1b[3J') // pi-style full terminal clear
       renderer.destroy()
     })
   })
@@ -524,6 +447,37 @@ describe('TermRenderer', () => {
       stdout.emit('resize')
       expect(renderer.termRows).toBe(40)
       expect(renderer.termCols).toBe(120)
+      renderer.destroy()
+    })
+
+    test('redundant resize event does not force a redraw', async () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      renderer.setRenderCallback(() => ['line1', 'line2'])
+      await renderFrame(renderer)
+
+      stdout.clear()
+      stdout.emit('resize')
+      await Bun.sleep(20)
+
+      expect(stdout.output).not.toContain('\x1b[2J')
+      expect(stdout.output).not.toContain('\x1b[3J')
+      renderer.destroy()
+    })
+
+    test('actual resize uses pi-style full redraw', async () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      renderer.setRenderCallback(() => ['line1', 'line2'])
+      await renderFrame(renderer)
+
+      stdout.clear()
+      stdout.columns = 120
+      stdout.emit('resize')
+      await Bun.sleep(20)
+
+      expect(stdout.output).toContain('\x1b[2J\x1b[H\x1b[3J')
+      expect(stdout.output).toContain('line1')
       renderer.destroy()
     })
 

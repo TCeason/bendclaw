@@ -5,12 +5,9 @@
  * redraws changed lines. Uses synchronized output (DEC mode 2026) to eliminate
  * flicker.
  *
- * Two zones:
- *   - Frozen scrollback: lines that have been "frozen" scroll naturally into
- *     the terminal's scrollback buffer and are never touched again.
- *   - Viewport: the active rendering area, redrawn each frame via diffing.
- *
- * Inspired by github.com/anthropics/claude-code (pi) TUI architecture.
+ * The cursor/viewport state machine intentionally follows pi-tui's renderer.
+ * Keep terminal behavior changes synchronized with:
+ *   ~/github/pi/packages/tui/src/tui.ts
  */
 
 import { performance } from 'node:perf_hooks'
@@ -177,27 +174,6 @@ export class TermRenderer {
     process.nextTick(() => this.scheduleRender())
   }
 
-  fullRedraw(): void {
-    this.requestRender(true)
-  }
-
-  /**
-   * Freeze the top `count` lines of the current viewport into scrollback.
-   * After freezing, those lines are no longer part of the diffed viewport —
-   * they live permanently in the terminal's scrollback buffer.
-   */
-  freezeLines(count: number): void {
-    if (count <= 0 || count > this.previousLines.length) return
-    // The frozen lines are already rendered on screen at their current position.
-    // We just need to adjust our tracking so we no longer diff them.
-    this.previousLines = this.previousLines.slice(count)
-    // Adjust cursor tracking: the hardware cursor row is relative to the
-    // full buffer, so subtract the frozen lines.
-    this.hardwareCursorRow = Math.max(0, this.hardwareCursorRow - count)
-    this.maxLinesRendered = Math.max(0, this.maxLinesRendered - count)
-    this.previousViewportTop = Math.max(0, this.previousViewportTop - count)
-  }
-
   /**
    * Clear the viewport and scrollback. Used for /clear command.
    */
@@ -228,7 +204,10 @@ export class TermRenderer {
   }
 
   private onResize = (): void => {
-    this.requestRender(true)
+    // Match pi: resize only schedules a normal frame. doRender compares the
+    // actual dimensions and decides whether a full redraw is necessary. Some
+    // terminals emit redundant resize events on focus/layout changes.
+    this.requestRender()
   }
 
   // --- Private: core render ---
@@ -321,16 +300,12 @@ export class TermRenderer {
       }
     }
 
-    // --- Full render helper ---
+    // --- Full render helper (kept in lockstep with pi-tui) ---
     const fullRender = (clear: boolean, branch: string): void => {
       let buffer = SYNC_START
-      // Recovery redraws must not erase terminal scrollback. Content above the
-      // viewport is no longer addressable, so preserve it and repaint only the
-      // current viewport. Explicit /clear remains the sole ESC[3J path.
-      const renderStart = clear ? Math.max(0, newLines.length - height) : 0
-      if (clear) buffer += CLEAR_VIEWPORT
-      for (let i = renderStart; i < newLines.length; i++) {
-        if (i > renderStart) buffer += '\r\n'
+      if (clear) buffer += CLEAR_SCREEN_AND_SCROLLBACK
+      for (let i = 0; i < newLines.length; i++) {
+        if (i > 0) buffer += '\r\n'
         buffer += newLines[i]
       }
       buffer += SYNC_END
@@ -358,8 +333,9 @@ export class TermRenderer {
       return
     }
 
-    // Height changed
-    if (heightChanged) {
+    // Height changed. Match pi's Termux exception: the software keyboard
+    // changes terminal height and replaying history on every toggle is worse.
+    if (heightChanged && !isTermuxSession()) {
       fullRender(true, 'height_change')
       return
     }
@@ -400,6 +376,7 @@ export class TermRenderer {
 
     // No changes
     if (firstChanged === -1) {
+      this.positionHardwareCursor(cursorPos, newLines.length)
       this.previousViewportTop = prevViewportTop
       this.previousHeight = height
       traceFrame('no_change')
@@ -438,6 +415,7 @@ export class TermRenderer {
         this.write(buffer)
         this.hardwareCursorRow = targetRow
       }
+      this.positionHardwareCursor(cursorPos, newLines.length)
       this.previousLines = newLines
       this.previousWidth = width
       this.previousHeight = height
@@ -446,37 +424,11 @@ export class TermRenderer {
       return
     }
 
+    // Differential rendering can only touch rows that were visible in the
+    // previous viewport. Match pi: any earlier change requires a full redraw.
     if (firstChanged < prevViewportTop) {
-      const delta = newLines.length - this.previousLines.length
-
-      let commonSuffix = 0
-      const maxSuffix = Math.min(newLines.length, this.previousLines.length)
-      while (
-        commonSuffix < maxSuffix &&
-        newLines[newLines.length - 1 - commonSuffix] ===
-          this.previousLines[this.previousLines.length - 1 - commonSuffix]
-      ) {
-        commonSuffix++
-      }
-      const visibleCount = this.previousLines.length - prevViewportTop
-      if (commonSuffix >= visibleCount) {
-        this.previousLines = newLines
-        this.previousWidth = width
-        this.previousHeight = height
-        this.hardwareCursorRow = Math.max(0, this.hardwareCursorRow + delta)
-        this.previousViewportTop = Math.max(0, prevViewportTop + delta)
-        this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length)
-        this.positionHardwareCursor(cursorPos, newLines.length)
-        traceFrame('off_viewport_adopt', firstChanged, lastChanged)
-        return
-      }
-
-      if (delta === 0) {
-        firstChanged = prevViewportTop
-      } else {
-        fullRender(true, 'off_viewport_redraw')
-        return
-      }
+      fullRender(true, 'off_viewport_redraw')
+      return
     }
 
     // --- Build differential update buffer ---
@@ -593,6 +545,10 @@ export class TermRenderer {
 }
 
 // --- Helpers ---
+
+function isTermuxSession(): boolean {
+  return Boolean(process.env.TERMUX_VERSION)
+}
 
 function safeDimension(n: number | undefined, fallback: number): number {
   return n != null && Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
