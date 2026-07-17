@@ -38,6 +38,21 @@ fn cache_config(cache: CacheConfig) -> StreamConfig {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn test_kimi_coding_request_uses_pi_catalog_limits() {
+    let config = StreamConfigBuilder::anthropic()
+        .model("kimi-for-coding")
+        .model_config(ModelConfig::anthropic("kimi-for-coding", "Kimi For Coding"))
+        .no_max_tokens()
+        .thinking(ThinkingLevel::Adaptive)
+        .build();
+
+    let body = build_request_body(&config, false);
+    assert_eq!(body["max_tokens"], 32_768);
+    assert_eq!(body["thinking"]["type"], "adaptive");
+    assert_eq!(body["output_config"]["effort"], "medium");
+}
+
+#[test]
 fn test_adaptive_thinking_sent_for_anthropic() {
     let config = StreamConfigBuilder::anthropic()
         .thinking(ThinkingLevel::Adaptive)

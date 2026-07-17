@@ -1,4 +1,5 @@
 use evotengine::provider::model::*;
+use evotengine::ThinkingLevel;
 
 #[test]
 fn model_config_anthropic() {
@@ -24,6 +25,31 @@ fn model_config_openai_responses() {
     let config = ModelConfig::openai_responses("gpt-5.5", "GPT-5.5");
     assert_eq!(config.api, ApiProtocol::OpenAiResponses);
     assert_eq!(config.provider, "openai");
+}
+
+#[test]
+fn model_config_kimi_coding_matches_pi_catalog() {
+    for id in ["k2p7", "kimi-for-coding", "kimi-for-coding-highspeed"] {
+        let config = ModelConfig::anthropic(id, id);
+        assert_eq!(config.context_window, 262_144, "{id}");
+        assert_eq!(config.max_tokens, 32_768, "{id}");
+        assert_eq!(
+            config.input,
+            vec![InputModality::Text, InputModality::Image],
+            "{id}"
+        );
+    }
+
+    let k3 = ModelConfig::anthropic("k3", "Kimi K3");
+    assert_eq!(k3.context_window, 1_048_576);
+    assert_eq!(k3.max_tokens, 131_072);
+    assert_eq!(k3.thinking_effort_override(ThinkingLevel::Max), Some("max"));
+    assert!(!k3.can_disable_thinking());
+
+    let thinking = ModelConfig::anthropic("kimi-k2-thinking", "Kimi K2 Thinking");
+    assert_eq!(thinking.context_window, 262_144);
+    assert_eq!(thinking.max_tokens, 32_768);
+    assert_eq!(thinking.input, vec![InputModality::Text]);
 }
 
 #[test]

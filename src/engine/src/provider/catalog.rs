@@ -84,6 +84,22 @@ pub fn normalize_model_id(model_id: &str) -> String {
 
 fn resolve_exact(id: &str) -> Option<ModelMetadata> {
     match id {
+        // Kimi Coding model metadata mirrors pi's generated
+        // `packages/ai/src/providers/kimi-coding.models.ts` catalog. These ids
+        // use the Anthropic Messages transport but must not inherit the
+        // conservative unknown-Anthropic fallback (200k context / 8k output).
+        "k2p7" | "kimi-for-coding" | "kimi-for-coding-highspeed" => {
+            Some(ModelMetadata::vision(262_144, 32_768))
+        }
+        "k3" => {
+            let mut levels = HashMap::new();
+            for level in ["off", "minimal", "low", "medium", "high", "xhigh"] {
+                levels.insert(level.into(), None);
+            }
+            levels.insert("max".into(), Some("max".into()));
+            Some(ModelMetadata::vision(1_048_576, 131_072).with_thinking_map(levels))
+        }
+        "kimi-k2-thinking" => Some(ModelMetadata::text_only(262_144, 32_768)),
         // Tiny fixture used by engine tests.
         #[cfg(test)]
         "tiny-context" => Some(ModelMetadata::text_only(128, 32_768)),
