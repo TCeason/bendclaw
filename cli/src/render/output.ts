@@ -151,9 +151,12 @@ export function buildUserMessage(text: string): OutputLine[] {
   return [{ id: genId('user'), kind: 'user', text, zoneStart: true, zoneEnd: true }]
 }
 
-export function buildAssistantLines(markdownText: string): OutputLine[] {
+export function buildAssistantLines(
+  markdownText: string,
+  options: { streaming?: boolean } = {},
+): OutputLine[] {
   if (!markdownText.trim()) return []
-  const rendered = renderMarkdown(markdownText)
+  const rendered = renderMarkdown(markdownText, { streaming: options.streaming })
   if (!rendered || !rendered.trim()) return []
   const cleaned = rendered.replace(/^\n+/, '').replace(/\n+$/, '')
   const parts = cleaned.split('\n')
@@ -169,9 +172,12 @@ export function buildAssistantLines(markdownText: string): OutputLine[] {
   }))
 }
 
-export function buildThinkingLines(text: string): OutputLine[] {
+export function buildThinkingLines(
+  text: string,
+  options: { streaming?: boolean } = {},
+): OutputLine[] {
   if (!text.trim()) return []
-  const rendered = renderThinkingMarkdown(text)
+  const rendered = renderThinkingMarkdown(text, { streaming: options.streaming })
   if (!rendered || !rendered.trim()) return []
   const cleaned = rendered.replace(/^\n+/, '').replace(/\n+$/, '')
   return cleaned.split('\n').map((line) => ({

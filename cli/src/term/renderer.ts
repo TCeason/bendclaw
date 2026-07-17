@@ -406,20 +406,9 @@ export class TermRenderer {
       return
     }
 
-    const targetViewportTop = Math.max(0, newLines.length - height)
-
     // All changes are in deleted lines (content shrunk)
     if (firstChanged >= newLines.length) {
       if (this.previousLines.length > newLines.length) {
-        // The logical viewport moved upward. Rows above prevViewportTop are no
-        // longer addressable relative to the old mapping, so clearing individual
-        // deleted rows would leave the prompt stranded above a blank band.
-        // Repaint only the new visible tail; fullRender(true) preserves terminal
-        // scrollback and never emits ESC[3J.
-        if (targetViewportTop < prevViewportTop) {
-          fullRender(true, 'deleted_lines_viewport_up')
-          return
-        }
         let buffer = SYNC_START
         // Move to end of new content (clamp to 0 for empty content)
         const targetRow = Math.max(0, newLines.length - 1)
@@ -488,16 +477,6 @@ export class TermRenderer {
         fullRender(true, 'off_viewport_redraw')
         return
       }
-    }
-
-    // A shrink can move the logical viewport upward even when the first changed
-    // row is still visible in the old viewport. Differential cursor movement is
-    // relative to that old mapping and cannot reclaim the rows above it; the
-    // result is a blank band between transcript and spinner. Repaint the new
-    // visible tail from home without touching terminal scrollback.
-    if (targetViewportTop < prevViewportTop) {
-      fullRender(true, 'viewport_moves_up')
-      return
     }
 
     // --- Build differential update buffer ---

@@ -24,6 +24,7 @@ import { formatTokens } from '../markdown/render/ansi.js'
  */
 export interface MarkdownRenderOptions {
   blockSpacing?: 'normal' | 'compact'
+  streaming?: boolean
 }
 
 export function renderMarkdown(text: string, options: MarkdownRenderOptions = {}): string {
@@ -36,14 +37,20 @@ export function renderMarkdown(text: string, options: MarkdownRenderOptions = {}
       prepareMarkdownFences(text.replace(/\t/g, '   ')),
     )
     const tokens = lexMarkdownTokens(lexText, text)
-    return formatTokens(tokens, options)
+    return formatTokens(tokens, {
+      blockSpacing: options.blockSpacing,
+      deferTrailingTable: options.streaming && !text.endsWith('\n\n'),
+    })
   } catch {
     return text
   }
 }
 
-export function renderThinkingMarkdown(text: string): string {
-  return renderMarkdown(text, { blockSpacing: 'compact' })
+export function renderThinkingMarkdown(
+  text: string,
+  options: { streaming?: boolean } = {},
+): string {
+  return renderMarkdown(text, { blockSpacing: 'compact', streaming: options.streaming })
 }
 
 // ---------------------------------------------------------------------------

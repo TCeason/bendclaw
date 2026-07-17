@@ -4,20 +4,22 @@ import type { UIAssistantBlock } from '../term/app/types.js'
 export function assistantMessageToOutputLines(
   content: UIAssistantBlock[],
   expandedTools = false,
+  options: { streaming?: boolean } = {},
 ): OutputLine[] {
-  return assistantContentToOutputLines(content, expandedTools)
+  return assistantContentToOutputLines(content, expandedTools, options)
 }
 
 /** Convert ordered assistant blocks to committed terminal output. */
 export function assistantContentToOutputLines(
   content: UIAssistantBlock[],
   expandedTools = false,
+  options: { streaming?: boolean } = {},
 ): OutputLine[] {
   return [...content]
     .sort((a, b) => a.contentIndex - b.contentIndex)
     .flatMap(block => {
-      if (block.type === 'thinking') return buildThinkingLines(block.text)
-      if (block.type === 'text') return buildAssistantLines(block.text)
+      if (block.type === 'thinking') return buildThinkingLines(block.text, options)
+      if (block.type === 'text') return buildAssistantLines(block.text, options)
       return buildToolCard(block.toolCall, expandedTools)
     })
 }

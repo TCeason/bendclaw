@@ -3,6 +3,9 @@ import { buildAssistantLines } from '../src/render/output.js'
 import { buildOutputBlocks } from '../src/term/viewmodel/output.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
 import { updateLiveHeight } from '../src/term/viewmodel/live-height.js'
+import { renderMarkdown } from '../src/render/markdown.js'
+import { withColumns } from './helpers/stdout-columns.js'
+import stripAnsi from 'strip-ansi'
 
 function renderedHeight(markdown: string): number {
   return blocksToLines(
@@ -38,6 +41,38 @@ describe('streaming markdown footer stability', () => {
       }
     }
     expect(sawParserShrink).toBe(true)
+  })
+
+  test('defers a trailing streaming table until its geometry is final', () => {
+    const restore = withColumns(184)
+    try {
+      const table = [
+        'Benchmark results:',
+        '',
+        '| Query | db0 (ms) | DuckDB (ms) | DuckDB/db0 |',
+        '|---|---:|---:|---:|',
+        '| Q01 | 90.55 | 106.07 | 1.171× |',
+        '| Q15 | 25.88 | 121.15 | 4.682× |',
+        '| Q23 | 8,600.92 | 11,359.96 | 1.321× |',
+        '| **Total** | **27,269.08** | **44,034.29** | **1.615×** |',
+      ].join('\n')
+
+      const streaming = stripAnsi(renderMarkdown(table, { streaming: true }))
+      expect(streaming).toContain('Benchmark results:')
+      expect(streaming).toContain('…')
+      expect(streaming).not.toContain('┌')
+      expect(streaming).not.toContain('Q15')
+
+      const terminated = stripAnsi(renderMarkdown(`${table}\n\n`, { streaming: true }))
+      expect(terminated).toContain('┌')
+      expect(terminated).toContain('Q15')
+      expect(terminated).toContain('27,269.08')
+
+      const final = stripAnsi(renderMarkdown(table))
+      expect(final).toBe(terminated.trimEnd())
+    } finally {
+      restore()
+    }
   })
 
   test('streaming does not hide valid numeric or fence-looking text', () => {

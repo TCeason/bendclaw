@@ -455,7 +455,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // Use the exact ordered committed-output pipeline for the live partial. This
     // keeps thinking/text/tool positions, margins, and prefixes stable through
     // completion instead of rendering tool calls in a detached layer.
-    return buildOutputBlocks(assistantMessageToOutputLines(content, expanded), {
+    return buildOutputBlocks(assistantMessageToOutputLines(content, expanded, {
+      // Only provider deltas are provisional. After assistant_completed the
+      // message may remain live while tools execute, but its Markdown geometry
+      // is final and trailing tables must become visible immediately.
+      streaming: spinnerState.streaming,
+    }), {
       columns: renderer.termCols,
     })
   }

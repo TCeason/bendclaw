@@ -173,21 +173,30 @@ describe('TermRenderer', () => {
       renderer.destroy()
     })
 
-    test('reanchors a viewport-up shrink instead of leaving a blank band', async () => {
+    test('shrinking a scrolled frame preserves physical scrollback', async () => {
       const { renderer, stdout } = createRenderer()
       stdout.rows = 8
       renderer.init()
 
-      let lines = Array.from({ length: 20 }, (_, i) => `old ${i}`)
+      const history = Array.from({ length: 14 }, (_, i) => `history ${i}`)
+      let lines = [
+        ...history,
+        'Thinking...',
+        '────────',
+        '❯ ',
+        '────────',
+        'footer',
+        '',
+      ]
       renderer.setRenderCallback(() => lines)
       await renderFrame(renderer)
 
       stdout.clear()
-      // Mirrors the observed transition: a completed live region disappears,
-      // moving the logical viewport up while spinner + prompt remain at the tail.
+      // Mirrors run completion: the stable history prefix is unchanged, the
+      // spinner disappears, and prompt + footer shift upward by one row.
+      // Clearing and re-homing here copies the old prompt into Warp scrollback.
       lines = [
-        ...Array.from({ length: 8 }, (_, i) => `history ${i}`),
-        'Thinking...',
+        ...history,
         '────────',
         '❯ ',
         '────────',
@@ -197,9 +206,9 @@ describe('TermRenderer', () => {
       await renderFrame(renderer)
 
       const out = stdout.output
-      expect(out).toContain('\x1b[2J\x1b[H')
+      expect(out).not.toContain('\x1b[2J')
+      expect(out).not.toContain('\x1b[H')
       expect(out).not.toContain('\x1b[3J')
-      expect(out).toContain('Thinking...')
       expect(out).toContain('footer')
       renderer.destroy()
     })

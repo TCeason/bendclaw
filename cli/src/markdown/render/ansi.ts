@@ -912,14 +912,35 @@ const BLOCK_TYPES = new Set([
 
 export interface FormatTokensOptions {
   blockSpacing?: 'normal' | 'compact'
+  /** Hold an unterminated trailing table out of the physical terminal until its
+   * geometry is final. A table taller than the viewport cannot be reflowed after
+   * its early rows enter scrollback. */
+  deferTrailingTable?: boolean
 }
 
 export function formatTokens(tokens: Token[], options: FormatTokensOptions = {}): string {
   const theme = getTheme()
   let out = ''
   let prevWasBlock = false
+  let deferredTableIndex = -1
+  if (options.deferTrailingTable) {
+    for (let index = tokens.length - 1; index >= 0; index--) {
+      const type = tokens[index]?.type
+      if (type === 'space' || type === 'html') continue
+      if (type === 'table') deferredTableIndex = index
+      break
+    }
+  }
 
-  for (const token of tokens) {
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]!
+    if (index === deferredTableIndex) {
+      const placeholder = theme.tableBorder.paint('…') + EOL
+      if (prevWasBlock && options.blockSpacing !== 'compact') out += EOL
+      out += placeholder
+      prevWasBlock = true
+      continue
+    }
     if (options.blockSpacing === 'compact' && (token.type === 'space' || token.type === 'html')) {
       continue
     }
