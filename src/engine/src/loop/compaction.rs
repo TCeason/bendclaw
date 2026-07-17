@@ -20,6 +20,9 @@ const OVERFLOW_EXHAUSTED_MESSAGE: &str =
     "Context overflow recovery failed after one compact-and-retry attempt. \
      Try reducing context or switching to a larger-context model.";
 
+const PREFLIGHT_CONTEXT_MESSAGE: &str =
+    "Context remains at or above the model window after compaction. The request was not sent because it would leave no usable output budget. Reduce context or switch to a larger-context model.";
+
 /// Run the post-response compaction policy for one assistant message.
 pub(super) async fn post_response_compaction(
     controller: &mut Option<CompactionController>,
@@ -55,6 +58,7 @@ pub(super) async fn post_response_compaction(
         model: config.model.clone(),
         api_key: config.api_key.clone(),
         thinking_level: config.thinking_level,
+        model_config: config.model_config.clone(),
     };
 
     let response = ctrl
@@ -75,7 +79,11 @@ pub(super) async fn post_response_compaction(
         && response.stats.is_none()
         && is_non_overflow_error(assistant_message)
     {
-        let estimated_tokens = tracker.estimate_context_tokens(messages);
+        let estimated_tokens = tracker.estimate_context_tokens_for_model(
+            messages,
+            target_provider(config),
+            Some(&config.model),
+        );
         ctrl.compact_on_estimate(messages, estimated_tokens, Some(&summarizer_ctx), cancel)
             .await
     } else {
@@ -130,10 +138,15 @@ pub(super) async fn pre_prompt_compaction(
         model: config.model.clone(),
         api_key: config.api_key.clone(),
         thinking_level: config.thinking_level,
+        model_config: config.model_config.clone(),
     };
 
     loop {
-        let estimated_tokens = tracker.estimate_context_tokens(messages);
+        let estimated_tokens = tracker.estimate_context_tokens_for_model(
+            messages,
+            target_provider(config),
+            Some(&config.model),
+        );
         let response = ctrl
             .compact_on_estimate(
                 messages,
@@ -149,15 +162,30 @@ pub(super) async fn pre_prompt_compaction(
             return false;
         }
 
-        let remaining = tracker.estimate_context_tokens(messages);
+        let remaining = tracker.estimate_context_tokens_for_model(
+            messages,
+            target_provider(config),
+            Some(&config.model),
+        );
         if remaining <= ctrl.config().trigger_threshold() {
             return true;
         }
         if response.stats.is_none() || remaining >= estimated_tokens {
-            // This is an estimate, not an authoritative provider limit. A
-            // conservative tokenizer or stale model catalog must not deadlock
-            // a resumable session. Let the provider decide; a real overflow is
-            // handled by the bounded post-response compact-and-retry path.
+            // Keep pi's permissive behavior for threshold-only estimates: a
+            // model-specific tokenizer or stale catalog may be conservative.
+            // Once the estimate reaches the full window, however, forwarding
+            // would clamp output to one token. Stop locally instead of turning
+            // a failed compaction into a successful empty provider response.
+            if remaining >= ctrl.config().context_window {
+                tx.send(AgentEvent::Error {
+                    error: AgentErrorInfo {
+                        kind: AgentErrorKind::Runtime,
+                        message: PREFLIGHT_CONTEXT_MESSAGE.to_string(),
+                    },
+                })
+                .ok();
+                return false;
+            }
             return true;
         }
     }
@@ -211,6 +239,13 @@ fn emit_compaction_events(
         })
         .ok();
     }
+}
+
+fn target_provider(config: &AgentLoopConfig) -> Option<&str> {
+    config
+        .model_config
+        .as_ref()
+        .map(|model| model.provider.as_str())
 }
 
 /// Whether the response is a provider error that is *not* a context overflow.

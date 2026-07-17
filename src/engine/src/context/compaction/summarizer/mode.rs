@@ -29,6 +29,10 @@ pub struct SummarizerContext {
     pub model: String,
     pub api_key: String,
     pub thinking_level: ThinkingLevel,
+    /// Full transport/provider metadata for the summarization request. Without
+    /// this, custom Anthropic-compatible channels silently fall back to the
+    /// default Anthropic base URL and compaction fails before the main request.
+    pub model_config: Option<crate::provider::ModelConfig>,
 }
 
 impl SummarizerMode {

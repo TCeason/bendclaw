@@ -319,10 +319,11 @@ fn base_input(conversation: &str) -> SummarizerInput {
     }
 }
 
-async fn summarize_capturing(
+async fn summarize_capturing_with_model_config(
     input: SummarizerInput,
     max_tokens: u32,
     replies: Vec<Reply>,
+    model_config: Option<evotengine::provider::ModelConfig>,
 ) -> (Result<SummarizerOutput, SummarizerError>, Captured) {
     let provider = Arc::new(RecordingProvider::new(replies));
     let captured = provider.captured();
@@ -331,9 +332,18 @@ async fn summarize_capturing(
         model: "test-model".into(),
         api_key: "test-key".into(),
         thinking_level: ThinkingLevel::Off,
+        model_config,
     };
     let result = llm::summarize(input, &ctx, max_tokens, CancellationToken::new()).await;
     (result, captured)
+}
+
+async fn summarize_capturing(
+    input: SummarizerInput,
+    max_tokens: u32,
+    replies: Vec<Reply>,
+) -> (Result<SummarizerOutput, SummarizerError>, Captured) {
+    summarize_capturing_with_model_config(input, max_tokens, replies, None).await
 }
 
 fn first_user_prompt(captured: &Captured) -> String {
@@ -352,6 +362,37 @@ fn first_user_prompt(captured: &Captured) -> String {
             .collect::<String>(),
         _ => String::new(),
     }
+}
+
+#[tokio::test]
+async fn llm_summarize_preserves_custom_transport_model_config() {
+    let model_config = evotengine::provider::ModelConfig::resolve(
+        evotengine::provider::ApiProtocol::AnthropicMessages,
+        "kimi-coding",
+        "kimi-for-coding",
+        "Kimi For Coding",
+        "https://api.kimi.com/coding",
+        None,
+    );
+    let (result, captured) = summarize_capturing_with_model_config(
+        base_input("[User]: compact this"),
+        4096,
+        vec![Reply::text("summary")],
+        Some(model_config),
+    )
+    .await;
+
+    assert!(result.is_ok());
+    let requests = captured.lock();
+    let request = requests
+        .first()
+        .unwrap_or_else(|| panic!("expected request"));
+    let config = request
+        .model_config
+        .as_ref()
+        .unwrap_or_else(|| panic!("expected model config"));
+    assert_eq!(config.provider, "kimi-coding");
+    assert_eq!(config.base_url, "https://api.kimi.com/coding");
 }
 
 #[tokio::test]

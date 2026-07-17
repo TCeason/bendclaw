@@ -170,6 +170,54 @@ fn output_only_response_does_not_reenable_stale_anchor() {
 }
 
 #[test]
+fn model_switch_does_not_reuse_foreign_usage_anchor() {
+    let tracker = ContextTracker::new();
+    let large_history = "x".repeat(40_000);
+    let mut old_model = assistant_with_input("old answer", 100, 0);
+    if let AgentMessage::Llm(Message::Assistant { model, .. }) = &mut old_model {
+        *model = "old-model".into();
+    }
+    let messages = vec![user_msg(&large_history), old_model, user_msg("next prompt")];
+
+    let old_estimate =
+        tracker.estimate_context_tokens_for_model(&messages, Some("test"), Some("old-model"));
+    let new_estimate =
+        tracker.estimate_context_tokens_for_model(&messages, Some("test"), Some("new-model"));
+
+    assert!(old_estimate < 1_000, "matching model should use its anchor");
+    assert!(
+        new_estimate > 9_000,
+        "new model must estimate the complete history instead of reusing foreign usage: {new_estimate}"
+    );
+}
+
+#[test]
+fn provider_switch_does_not_reuse_same_named_model_anchor() {
+    let tracker = ContextTracker::new();
+    let large_history = "x".repeat(40_000);
+    let mut foreign_provider = assistant_with_input("old answer", 100, 0);
+    if let AgentMessage::Llm(Message::Assistant {
+        provider, model, ..
+    }) = &mut foreign_provider
+    {
+        *provider = "old-provider".into();
+        *model = "shared-model".into();
+    }
+    let messages = vec![user_msg(&large_history), foreign_provider];
+
+    let estimate = tracker.estimate_context_tokens_for_model(
+        &messages,
+        Some("new-provider"),
+        Some("shared-model"),
+    );
+
+    assert!(
+        estimate > 9_000,
+        "same model id from another provider must not anchor context: {estimate}"
+    );
+}
+
+#[test]
 fn native_total_tokens_take_precedence_over_component_fallback() {
     let tracker = ContextTracker::new();
     let mut assistant = assistant_with_input("answer", 90_000, 10_000);

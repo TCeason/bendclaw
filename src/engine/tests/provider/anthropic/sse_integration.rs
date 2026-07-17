@@ -58,6 +58,40 @@ async fn anthropic_sse_text_response() {
 }
 
 #[tokio::test]
+async fn anthropic_sse_preserves_configured_provider_identity() {
+    let sse = anthropic_sse::body(vec![
+        anthropic_sse::message_start(100, 0),
+        anthropic_sse::text_block_start(0),
+        anthropic_sse::text_delta(0, "Hello"),
+        anthropic_sse::block_stop(0),
+        anthropic_sse::message_delta("end_turn", 1),
+        anthropic_sse::message_stop(),
+    ]);
+    let model_config = evotengine::provider::ModelConfig::resolve(
+        evotengine::provider::ApiProtocol::AnthropicMessages,
+        "kimi-coding",
+        "kimi-for-coding",
+        "Kimi For Coding",
+        "https://api.kimi.com/coding",
+        None,
+    );
+    let config = StreamConfigBuilder::anthropic()
+        .model("kimi-for-coding")
+        .model_config(model_config)
+        .cache_disabled()
+        .build();
+
+    let (msg, _) = run_provider_sse(&AnthropicProvider, config, &sse, 200)
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        msg,
+        Message::Assistant { provider, .. } if provider == "kimi-coding"
+    ));
+}
+
+#[tokio::test]
 async fn anthropic_sse_stream_without_message_stop_errors() {
     let sse = anthropic_sse::body(vec![
         anthropic_sse::message_start(100, 0),
@@ -436,6 +470,23 @@ async fn anthropic_sse_error_event() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+async fn anthropic_sse_usage_only_response_is_empty() {
+    let sse = anthropic_sse::body(vec![
+        anthropic_sse::message_start(41_187, 0),
+        anthropic_sse::message_delta("end_turn", 1),
+        anthropic_sse::message_stop(),
+    ]);
+
+    let config = StreamConfigBuilder::anthropic().cache_disabled().build();
+    let err = run_provider_sse(&AnthropicProvider, config, &sse, 200)
+        .await
+        .unwrap_err();
+
+    assert!(err.to_string().contains("Empty response from provider"));
+    assert!(evotengine::retry::should_retry(&err));
+}
+
+#[tokio::test]
 async fn anthropic_sse_cache_usage() {
     let sse = anthropic_sse::body(vec![
         anthropic_sse::message_start(100, 500),
@@ -568,6 +619,46 @@ async fn anthropic_http_400_context_overflow() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+async fn anthropic_json_fallback_empty_refusal_is_not_retried() {
+    let json = serde_json::json!({
+        "id": "msg_refusal",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "stop_reason": "refusal",
+        "usage": {"input_tokens": 100, "output_tokens": 1}
+    });
+    let config = StreamConfigBuilder::anthropic().cache_disabled().build();
+
+    let err = run_provider_json(&AnthropicProvider, config, &json.to_string(), 200)
+        .await
+        .unwrap_err();
+
+    assert!(err.to_string().contains("refusal"));
+    assert!(!evotengine::retry::should_retry(&err));
+}
+
+#[tokio::test]
+async fn anthropic_json_fallback_usage_only_is_empty() {
+    let json = serde_json::json!({
+        "id": "msg_empty",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 41187, "output_tokens": 1}
+    });
+    let config = StreamConfigBuilder::anthropic().cache_disabled().build();
+
+    let err = run_provider_json(&AnthropicProvider, config, &json.to_string(), 200)
+        .await
+        .unwrap_err();
+
+    assert!(err.to_string().contains("Empty response from provider"));
+    assert!(evotengine::retry::should_retry(&err));
+}
+
+#[tokio::test]
 async fn anthropic_json_fallback_success() {
     let json = serde_json::json!({
         "id": "msg_test",
@@ -584,13 +675,29 @@ async fn anthropic_json_fallback_success() {
         }
     });
 
-    let config = StreamConfigBuilder::anthropic().cache_disabled().build();
+    let config = StreamConfigBuilder::anthropic()
+        .model_config(evotengine::provider::ModelConfig::resolve(
+            evotengine::provider::ApiProtocol::AnthropicMessages,
+            "kimi-coding",
+            "kimi-for-coding",
+            "Kimi For Coding",
+            "https://api.kimi.com/coding",
+            None,
+        ))
+        .cache_disabled()
+        .build();
     let (msg, events) = run_provider_json(&AnthropicProvider, config, &json.to_string(), 200)
         .await
         .unwrap();
 
     match &msg {
-        Message::Assistant { content, usage, .. } => {
+        Message::Assistant {
+            content,
+            provider,
+            usage,
+            ..
+        } => {
+            assert_eq!(provider, "kimi-coding");
             assert_eq!(content.len(), 1);
             assert!(matches!(&content[0], Content::Text { text } if text == "Hello from JSON!"));
             assert_eq!(usage.input, 50);

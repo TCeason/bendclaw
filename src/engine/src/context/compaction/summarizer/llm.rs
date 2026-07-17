@@ -76,7 +76,7 @@ async fn call_provider(
         api_key: ctx.api_key.clone(),
         max_tokens: Some(max_tokens),
         temperature: Some(0.0),
-        model_config: None,
+        model_config: ctx.model_config.clone(),
         cache_config: CacheConfig::default(),
         prompt_cache_key: None,
     };

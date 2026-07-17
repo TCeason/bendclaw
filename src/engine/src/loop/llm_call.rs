@@ -318,20 +318,20 @@ pub(super) async fn stream_assistant_response(
                 let is_empty = match msg {
                     Message::Assistant {
                         content,
-                        usage,
                         stop_reason,
                         ..
                     } => {
-                        content.is_empty()
-                            && usage.input == 0
-                            && usage.output == 0
-                            && stop_reason != &StopReason::Error
+                        !content.iter().any(|block| match block {
+                            Content::Text { text } => !text.trim().is_empty(),
+                            Content::Thinking { thinking, .. } => !thinking.trim().is_empty(),
+                            Content::Image { .. } | Content::ToolCall { .. } => true,
+                        }) && stop_reason != &StopReason::Error
                     }
                     _ => false,
                 };
                 if is_empty {
                     Err(ProviderError::Network(
-                        "Empty response from provider (no content, no usage)".into(),
+                        "Empty response from provider (no content)".into(),
                     ))
                 } else {
                     result

@@ -76,8 +76,25 @@ impl ContextTracker {
     /// estimated locally. Without an anchor (including immediately after
     /// compaction), include fixed request overhead in the local estimate.
     pub fn estimate_context_tokens(&self, messages: &[AgentMessage]) -> usize {
+        self.estimate_context_tokens_for_model(messages, None, None)
+    }
+
+    /// Measure context for the model about to receive the request.
+    ///
+    /// Provider token counts are model-specific. After a model switch, reusing
+    /// the previous model's usage can severely undercount the same serialized
+    /// history, so only a matching model may anchor the estimate. With no
+    /// matching anchor, conservatively estimate the complete message list.
+    pub fn estimate_context_tokens_for_model(
+        &self,
+        messages: &[AgentMessage],
+        target_provider: Option<&str>,
+        target_model: Option<&str>,
+    ) -> usize {
         if !self.baseline_stale {
-            if let Some((baseline, idx)) = latest_provider_anchor(messages) {
+            if let Some((baseline, idx)) =
+                latest_provider_anchor(messages, target_provider, target_model)
+            {
                 let trailing: usize = messages[idx + 1..].iter().map(message_tokens).sum();
                 return baseline + trailing;
             }
@@ -90,8 +107,11 @@ impl ContextTracker {
         &self,
         messages: &[AgentMessage],
         ctx_config: Option<&ContextConfig>,
+        target_provider: Option<&str>,
+        target_model: Option<&str>,
     ) -> ContextBudgetSnapshot {
-        let estimated_tokens = self.estimate_context_tokens(messages);
+        let estimated_tokens =
+            self.estimate_context_tokens_for_model(messages, target_provider, target_model);
         let (system_prompt_tokens, budget_tokens, context_window) = ctx_config
             .map(|c| {
                 (
@@ -116,11 +136,26 @@ impl ContextTracker {
 /// The most recent assistant `usage` in the list, as (anchor_tokens, index).
 ///
 /// Uses provider total usage, falling back to normalized usage buckets.
-fn latest_provider_anchor(messages: &[AgentMessage]) -> Option<(usize, usize)> {
+fn latest_provider_anchor(
+    messages: &[AgentMessage],
+    target_provider: Option<&str>,
+    target_model: Option<&str>,
+) -> Option<(usize, usize)> {
     messages.iter().enumerate().rev().find_map(|(idx, msg)| {
-        let AgentMessage::Llm(Message::Assistant { usage, .. }) = msg else {
+        let AgentMessage::Llm(Message::Assistant {
+            usage,
+            provider,
+            model,
+            ..
+        }) = msg
+        else {
             return None;
         };
+        if target_provider.is_some_and(|target| provider != target)
+            || target_model.is_some_and(|target| model != target)
+        {
+            return None;
+        }
         let anchor = usage.context_tokens() as usize;
         has_input_signal(usage).then_some((anchor, idx))
     })

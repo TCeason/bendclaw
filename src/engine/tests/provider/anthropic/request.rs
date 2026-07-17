@@ -598,7 +598,7 @@ fn empty_text_messages() -> Vec<Message> {
 }
 
 #[test]
-fn test_cache_control_not_set_on_empty_text_block() {
+fn test_empty_text_message_is_removed_before_cache_breakpoint() {
     let config = StreamConfigBuilder::anthropic()
         .system_prompt("You are helpful.")
         .messages(empty_text_messages())
@@ -607,24 +607,22 @@ fn test_cache_control_not_set_on_empty_text_block() {
     let body = build_request_body(&config, false);
     let msgs = body["messages"].as_array().unwrap();
 
-    let empty_msg = &msgs[2];
-    let content = empty_msg["content"].as_array().unwrap();
-    assert!(
-        content.is_empty(),
-        "empty text blocks should be filtered out"
-    );
-
-    let cached_msg = &msgs[3];
-    let cached_content = cached_msg["content"].as_array().unwrap();
-    let last_block = cached_content.last().unwrap();
+    assert_eq!(msgs.len(), 3);
+    assert!(msgs.iter().all(|message| {
+        message["content"]
+            .as_array()
+            .is_some_and(|content| !content.is_empty())
+    }));
+    let cached_content = msgs[1]["content"].as_array().unwrap();
     assert_eq!(
-        last_block["cache_control"]["type"], "ephemeral",
-        "cache_control should land on the second-to-last message with content"
+        cached_content.last().unwrap()["cache_control"]["type"],
+        "ephemeral",
+        "cache_control should land on the second-to-last remaining message"
     );
 }
 
 #[test]
-fn test_cache_breakpoint_falls_back_when_second_to_last_is_empty() {
+fn test_cache_breakpoint_uses_second_to_last_after_empty_message_removal() {
     let config = StreamConfigBuilder::anthropic()
         .system_prompt("You are helpful.")
         .messages(vec![
@@ -642,7 +640,8 @@ fn test_cache_breakpoint_falls_back_when_second_to_last_is_empty() {
     let body = build_request_body(&config, false);
     let msgs = body["messages"].as_array().unwrap();
 
-    let cached_content = msgs[3]["content"].as_array().unwrap();
+    assert_eq!(msgs.len(), 3);
+    let cached_content = msgs[1]["content"].as_array().unwrap();
     assert_eq!(
         cached_content.last().unwrap()["cache_control"]["type"],
         "ephemeral"
@@ -650,7 +649,7 @@ fn test_cache_breakpoint_falls_back_when_second_to_last_is_empty() {
 }
 
 #[test]
-fn test_empty_assistant_preserved_as_placeholder() {
+fn test_empty_assistant_is_skipped_and_adjacent_users_are_merged() {
     let config = StreamConfigBuilder::anthropic()
         .cache_disabled()
         .messages(vec![
@@ -672,13 +671,102 @@ fn test_empty_assistant_preserved_as_placeholder() {
     let body = build_request_body(&config, false);
     let msgs = body["messages"].as_array().unwrap();
 
-    assert_eq!(msgs.len(), 3);
+    assert_eq!(msgs.len(), 1);
     assert_eq!(msgs[0]["role"], "user");
-    assert_eq!(msgs[1]["role"], "assistant");
-    assert_eq!(msgs[2]["role"], "user");
+    let user_content = msgs[0]["content"].as_array().unwrap();
+    assert_eq!(user_content.len(), 2);
+    assert_eq!(user_content[0]["text"], "first");
+    assert_eq!(user_content[1]["text"], "second");
+    assert!(!body.to_string().contains("[empty response]"));
+}
 
-    let assistant_content = msgs[1]["content"].as_array().unwrap();
-    assert_eq!(assistant_content[0]["text"], "[empty response]");
+#[test]
+fn test_legacy_empty_response_sentinel_is_removed_from_history() {
+    let config = StreamConfigBuilder::anthropic()
+        .cache_disabled()
+        .messages(vec![
+            Message::user("first"),
+            assistant("[empty response]"),
+            Message::user("continue"),
+        ])
+        .build();
+
+    let body = build_request_body(&config, false);
+    let msgs = body["messages"].as_array().unwrap();
+
+    assert_eq!(msgs.len(), 1);
+    let content = msgs[0]["content"].as_array().unwrap();
+    assert_eq!(content.len(), 2);
+    assert_eq!(content[0]["text"], "first");
+    assert_eq!(content[1]["text"], "continue");
+    assert!(!body.to_string().contains("[empty response]"));
+}
+
+#[test]
+fn test_legacy_sentinel_is_only_removed_as_sole_assistant_content() {
+    let config = StreamConfigBuilder::anthropic()
+        .cache_disabled()
+        .messages(vec![
+            Message::user("[empty response]"),
+            assistant("prefix [empty response] suffix"),
+            Message::user("middle"),
+            Message::Assistant {
+                content: vec![Content::Thinking {
+                    thinking: "[empty response]".into(),
+                    metadata: None,
+                }],
+                stop_reason: StopReason::Stop,
+                model: "test".into(),
+                provider: "other".into(),
+                usage: Usage::default(),
+                timestamp: 0,
+                error_message: None,
+                response_id: None,
+            },
+            Message::user("continue"),
+        ])
+        .build();
+
+    let body = build_request_body(&config, false);
+    let msgs = body["messages"].as_array().unwrap();
+
+    assert_eq!(msgs.len(), 5);
+    assert_eq!(msgs[0]["content"][0]["text"], "[empty response]");
+    assert_eq!(
+        msgs[1]["content"][0]["text"],
+        "prefix [empty response] suffix"
+    );
+    assert_eq!(msgs[3]["content"][0]["text"], "[empty response]");
+}
+
+#[test]
+fn test_empty_user_and_assistant_messages_are_skipped() {
+    let config = StreamConfigBuilder::anthropic()
+        .cache_disabled()
+        .messages(vec![
+            Message::User {
+                content: vec![Content::Text { text: "  ".into() }],
+                timestamp: 0,
+            },
+            Message::Assistant {
+                content: vec![],
+                stop_reason: StopReason::Error,
+                model: "test".into(),
+                provider: "test".into(),
+                usage: Usage::default(),
+                timestamp: 0,
+                error_message: Some("aborted".into()),
+                response_id: None,
+            },
+            Message::user("continue"),
+        ])
+        .build();
+
+    let body = build_request_body(&config, false);
+    let msgs = body["messages"].as_array().unwrap();
+
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0]["content"][0]["text"], "continue");
 }
 
 // ---------------------------------------------------------------------------

@@ -2262,6 +2262,244 @@ async fn test_overflow_retry_never_completes_abandoned_partial_response() {
 }
 
 #[tokio::test]
+async fn test_model_switch_compacts_before_clamp_can_fall_to_one() {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    use evotengine::context::ContextConfig;
+    use evotengine::provider::ModelConfig;
+
+    struct ModelSwitchProvider {
+        calls: AtomicUsize,
+        main_budgets: parking_lot::Mutex<Vec<u32>>,
+    }
+
+    #[async_trait::async_trait]
+    impl StreamProvider for ModelSwitchProvider {
+        async fn stream(
+            &self,
+            config: StreamConfig,
+            tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+            _cancel: tokio_util::sync::CancellationToken,
+        ) -> Result<StreamOutcome, ProviderError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let is_summary = config
+                .system_prompt
+                .starts_with("You are a context summarization");
+            if !is_summary {
+                self.main_budgets.lock().push(config.resolved_max_tokens());
+            }
+            let text = if is_summary {
+                "compacted history"
+            } else {
+                "answer after model switch"
+            };
+            let message = Message::Assistant {
+                content: vec![Content::Text { text: text.into() }],
+                stop_reason: StopReason::Stop,
+                model: config.model,
+                provider: "local".into(),
+                usage: Usage::default(),
+                timestamp: 1,
+                error_message: None,
+                response_id: None,
+            };
+            let _ = tx.send(StreamEvent::Start);
+            let _ = tx.send(StreamEvent::TextDelta {
+                content_index: 0,
+                delta: text.into(),
+            });
+            let _ = tx.send(StreamEvent::Done {
+                message: message.clone(),
+            });
+            Ok(StreamOutcome::complete(message))
+        }
+    }
+
+    let provider = std::sync::Arc::new(ModelSwitchProvider {
+        calls: AtomicUsize::new(0),
+        main_budgets: parking_lot::Mutex::new(Vec::new()),
+    });
+    let mut config = make_config(MockProvider::text("unused"));
+    config.provider = provider.clone();
+    config.model = "new-model".into();
+    let mut model_config = ModelConfig::local("", "new-model");
+    model_config.context_window = 10_000;
+    model_config.max_tokens = 500;
+    config.model_config = Some(model_config);
+    config.context_config = Some(ContextConfig {
+        max_context_tokens: 10_000,
+        system_prompt_tokens: 0,
+        keep_recent: 1,
+        keep_first: 1,
+        tool_output_max_lines: 50,
+    });
+
+    let old_assistant = AgentMessage::Llm(Message::Assistant {
+        content: vec![Content::Text {
+            text: "old answer ".repeat(100),
+        }],
+        stop_reason: StopReason::Stop,
+        model: "old-model".into(),
+        provider: "local".into(),
+        usage: Usage {
+            input: 100,
+            output: 10,
+            total_tokens: 110,
+            ..Default::default()
+        },
+        timestamp: 1,
+        error_message: None,
+        response_id: None,
+    });
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: vec![
+            AgentMessage::Llm(Message::user("pinned")),
+            AgentMessage::Llm(Message::user("x".repeat(80_000))),
+            AgentMessage::Llm(Message::user("recent ".repeat(1_700))),
+            old_assistant,
+        ],
+        tools: vec![],
+        cwd: std::path::PathBuf::new(),
+        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+        prompt_cache_key: None,
+    };
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    agent_loop(
+        vec![AgentMessage::Llm(Message::user("next prompt"))],
+        &mut context,
+        &config,
+        tx,
+        CancellationToken::new(),
+    )
+    .await;
+    let events = collect_events(rx);
+
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::ContextCompactionEnd { .. })));
+    assert!(provider.calls.load(Ordering::SeqCst) >= 2);
+    assert_eq!(provider.main_budgets.lock().as_slice(), &[500]);
+}
+
+#[tokio::test]
+async fn test_preflight_does_not_send_request_at_exact_window_limit() {
+    use evotengine::context::ContextConfig;
+
+    // Local estimate: prior user = 3956/4 + 4 = 993, current user =
+    // 8/4 + 4 = 6, system prompt = 4/4 = 1, totaling exactly 1000.
+    // Both messages are pinned by keep_first=2, so compaction cannot progress.
+    let output = TestHarness::new()
+        .responses(vec![MockResponse::Text("must not be sent".into())])
+        .prior_messages(vec![AgentMessage::Llm(Message::user("x".repeat(3_956)))])
+        .context_config(ContextConfig {
+            max_context_tokens: 1_000,
+            system_prompt_tokens: 0,
+            keep_recent: 1,
+            keep_first: 2,
+            tool_output_max_lines: 50,
+        })
+        .run("continue")
+        .await;
+
+    assert!(output.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Error { error } if error.message.contains("request was not sent")
+    )));
+    assert!(output
+        .events
+        .iter()
+        .all(|event| !matches!(event, AgentEvent::LlmCallStart { .. })));
+    assert!(output.messages.iter().all(|message| !matches!(
+        message,
+        AgentMessage::Llm(Message::Assistant { content, .. })
+            if content.iter().any(|block| matches!(block, Content::Text { text } if text == "must not be sent"))
+    )));
+}
+
+#[tokio::test]
+async fn test_preflight_failure_does_not_send_over_window_request() {
+    use evotengine::context::ContextConfig;
+
+    struct FailingSummarizerProvider {
+        main_calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl StreamProvider for FailingSummarizerProvider {
+        async fn stream(
+            &self,
+            config: StreamConfig,
+            _tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+            _cancel: tokio_util::sync::CancellationToken,
+        ) -> Result<StreamOutcome, ProviderError> {
+            if config
+                .system_prompt
+                .starts_with("You are a context summarization")
+            {
+                return Err(ProviderError::Api("summary endpoint failed".into()));
+            }
+            self.main_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(ProviderError::Api("main request must not run".into()))
+        }
+    }
+
+    let provider = std::sync::Arc::new(FailingSummarizerProvider {
+        main_calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let mut config = make_config(MockProvider::text("unused"));
+    config.provider = provider.clone();
+    config.context_config = Some(ContextConfig {
+        max_context_tokens: 1_000,
+        system_prompt_tokens: 0,
+        keep_recent: 1,
+        keep_first: 1,
+        tool_output_max_lines: 50,
+    });
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: vec![
+            AgentMessage::Llm(Message::user("pinned")),
+            AgentMessage::Llm(Message::user("x".repeat(8_000))),
+            AgentMessage::Llm(Message::user("recent ".repeat(200))),
+        ],
+        tools: vec![],
+        cwd: std::path::PathBuf::new(),
+        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+        prompt_cache_key: None,
+    };
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    agent_loop(
+        vec![AgentMessage::Llm(Message::user("next prompt"))],
+        &mut context,
+        &config,
+        tx,
+        CancellationToken::new(),
+    )
+    .await;
+    let events = collect_events(rx);
+
+    assert_eq!(
+        provider
+            .main_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Error { error }
+            if error.message.contains("request was not sent")
+    )));
+    assert!(events
+        .iter()
+        .all(|event| !matches!(event, AgentEvent::LlmCallStart { .. })));
+}
+
+#[tokio::test]
 async fn test_preflight_no_progress_defers_to_provider() {
     use evotengine::context::ContextConfig;
 
@@ -2272,7 +2510,7 @@ async fn test_preflight_no_progress_defers_to_provider() {
             assistant_msg_for_test("pinned assistant"),
         ])
         .context_config(ContextConfig {
-            max_context_tokens: 1_000,
+            max_context_tokens: 1_100,
             system_prompt_tokens: 0,
             keep_recent: 10,
             keep_first: 2,
@@ -2293,7 +2531,7 @@ async fn test_preflight_no_progress_defers_to_provider() {
     assert!(output.events.iter().all(|event| !matches!(
         event,
         AgentEvent::Error { error }
-            if error.message.contains("safe request budget")
+            if error.message.contains("request was not sent")
     )));
 }
 

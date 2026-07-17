@@ -251,8 +251,15 @@ async fn run_loop(
             }
 
             // Build budget snapshot for the LLM call (same source as compaction)
-            let budget_snapshot =
-                context_tracker.budget_snapshot(&context.messages, config.context_config.as_ref());
+            let budget_snapshot = context_tracker.budget_snapshot(
+                &context.messages,
+                config.context_config.as_ref(),
+                config
+                    .model_config
+                    .as_ref()
+                    .map(|model| model.provider.as_str()),
+                Some(&config.model),
+            );
 
             // Stream assistant response
             let assistant_result = stream_assistant_response(

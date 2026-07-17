@@ -83,10 +83,13 @@ pub(crate) async fn decode_sse_stream(
         ));
     }
 
-    // Detect empty response: no content and no usage from provider
-    if state.content.is_empty() && state.usage.input == 0 && state.usage.output == 0 {
+    // Usage does not make an empty completion valid. Some compatible proxies
+    // report input/output accounting (even output_tokens=1) while returning no
+    // content blocks. Accepting that response persists content=[] and poisons
+    // later prompts, so classify it as retryable regardless of token counts.
+    if !has_effective_content(&state.content) && state.stop_reason != StopReason::Error {
         return Err(ProviderError::Api(
-            "Empty response from provider (no content, no usage)".into(),
+            "Empty response from provider (no content)".into(),
         ));
     }
 
@@ -108,7 +111,11 @@ pub(crate) async fn decode_sse_stream(
         // substitute model from the `fallback` block, so the TUI shows what
         // really happened instead of the requested model.
         model: state.fallback_model.unwrap_or_else(|| config.model.clone()),
-        provider: "anthropic".into(),
+        provider: config
+            .model_config
+            .as_ref()
+            .map(|model| model.provider.clone())
+            .unwrap_or_else(|| "anthropic".into()),
         usage: state.usage,
         timestamp: now_ms(),
         error_message: state.error_message,
@@ -120,6 +127,14 @@ pub(crate) async fn decode_sse_stream(
     });
 
     Ok(StreamOutcome::from(message))
+}
+
+fn has_effective_content(content: &[Content]) -> bool {
+    content.iter().any(|block| match block {
+        Content::Text { text } => !text.trim().is_empty(),
+        Content::Thinking { thinking, .. } => !thinking.trim().is_empty(),
+        Content::Image { .. } | Content::ToolCall { .. } => true,
+    })
 }
 
 struct AnthropicSseState {

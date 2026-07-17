@@ -35,6 +35,28 @@ pub(crate) async fn handle_json_response(
     parse_success_response(value, tx, config)
 }
 
+fn json_has_effective_content(value: &serde_json::Value) -> bool {
+    value
+        .get("content")
+        .and_then(|content| content.as_array())
+        .is_some_and(|blocks| {
+            blocks.iter().any(
+                |block| match block.get("type").and_then(|kind| kind.as_str()) {
+                    Some("text") => block
+                        .get("text")
+                        .and_then(|text| text.as_str())
+                        .is_some_and(|text| !text.trim().is_empty()),
+                    Some("thinking") => block
+                        .get("thinking")
+                        .and_then(|thinking| thinking.as_str())
+                        .is_some_and(|thinking| !thinking.trim().is_empty()),
+                    Some("tool_use") => true,
+                    _ => false,
+                },
+            )
+        })
+}
+
 /// Check if the JSON body looks like an Anthropic error response.
 ///
 /// Anthropic errors have the shape:
@@ -59,6 +81,26 @@ fn parse_success_response(
     tx: mpsc::UnboundedSender<StreamEvent>,
     config: &StreamConfig,
 ) -> Result<Message, ProviderError> {
+    let stop_reason = match value.get("stop_reason").and_then(|reason| reason.as_str()) {
+        Some("end_turn" | "pause_turn" | "stop_sequence") | None => StopReason::Stop,
+        Some("tool_use") => StopReason::ToolUse,
+        Some("max_tokens") => StopReason::Length,
+        Some(reason @ ("refusal" | "sensitive")) => {
+            return Err(ProviderError::Api(format!(
+                "Provider ended the response with stop reason '{reason}' (safety filter / refusal)"
+            )));
+        }
+        Some(reason) => {
+            return Err(ProviderError::Api(format!(
+                "Unhandled Anthropic stop reason: {reason}"
+            )));
+        }
+    };
+    if !json_has_effective_content(&value) {
+        return Err(ProviderError::Api(
+            "Empty response from provider (no content)".into(),
+        ));
+    }
     let mut emitter = FallbackEmitter::new(tx);
 
     // Parse content blocks
@@ -132,13 +174,12 @@ fn parse_success_response(
         emitter.set_usage(usage);
     }
 
-    // Parse stop reason
-    let stop_reason = match value.get("stop_reason").and_then(|s| s.as_str()) {
-        Some("tool_use") => StopReason::ToolUse,
-        Some("max_tokens") => StopReason::Length,
-        _ => StopReason::Stop,
-    };
     emitter.set_stop_reason(stop_reason);
 
-    Ok(emitter.finalize(&config.model, "anthropic"))
+    let provider = config
+        .model_config
+        .as_ref()
+        .map(|model| model.provider.as_str())
+        .unwrap_or("anthropic");
+    Ok(emitter.finalize(&config.model, provider))
 }

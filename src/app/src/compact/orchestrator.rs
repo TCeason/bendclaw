@@ -227,6 +227,16 @@ async fn summarize_with_llm(
         model: summarizer.llm.model.clone(),
         api_key: summarizer.llm.api_key.clone(),
         thinking_level: summarizer.llm.thinking_level,
+        model_config: Some(crate::agent::run::runtime::build_model_config(
+            summarizer.llm.protocol.clone(),
+            &summarizer.llm.provider,
+            &summarizer.llm.model,
+            Some(&summarizer.llm.base_url),
+            summarizer.llm.compat_caps,
+            summarizer.llm.context_window,
+            summarizer.llm.max_tokens,
+            summarizer.llm.supports_image,
+        )),
     };
     let mode = evot_engine::SummarizerMode::Llm {
         max_tokens: summarizer.max_tokens,

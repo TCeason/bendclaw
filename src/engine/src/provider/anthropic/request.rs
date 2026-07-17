@@ -22,22 +22,24 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
     for msg in &config.messages {
         match msg {
             Message::User { content, .. } => {
+                let blocks = content_to_anthropic(content);
+                if blocks.is_empty() {
+                    continue;
+                }
                 messages.push(serde_json::json!({
                     "role": "user",
-                    "content": content_to_anthropic(content),
+                    "content": blocks,
                 }));
             }
             Message::Assistant { content, .. } => {
                 let blocks = content_to_anthropic(content);
-                // Empty assistant messages can arise from empty provider responses
-                // (e.g. proxy returning 200 with no actual content). Anthropic
-                // rejects truly empty content arrays, so emit a placeholder text
-                // block to preserve the required user/assistant alternation.
-                let blocks = if blocks.is_empty() {
-                    vec![serde_json::json!({"type": "text", "text": "[empty response]"})]
-                } else {
-                    blocks
-                };
+                // Match pi: aborted/empty assistant messages carry no semantic
+                // content and must not be turned into prompt text. Also discard
+                // the exact sentinel written by older evot builds so existing
+                // sessions can resume without teaching it to the model.
+                if blocks.is_empty() || is_legacy_empty_response(content) {
+                    continue;
+                }
                 messages.push(serde_json::json!({
                     "role": "assistant",
                     "content": blocks,
@@ -281,7 +283,7 @@ fn system_prompt_blocks(prompt: &str, cache_static: bool) -> Vec<serde_json::Val
 pub fn content_to_anthropic(content: &[Content]) -> Vec<serde_json::Value> {
     content
         .iter()
-        .filter(|c| !matches!(c, Content::Text { text } if text.is_empty()))
+        .filter(|c| !matches!(c, Content::Text { text } if text.trim().is_empty()))
         .map(|c| match c {
             Content::Text { text } => serde_json::json!({"type": "text", "text": text}),
             Content::Image { .. } => {
@@ -358,6 +360,10 @@ fn is_malformed_tool_input(value: &serde_json::Value) -> bool {
         // input should always be an object
         _ => true,
     }
+}
+
+fn is_legacy_empty_response(content: &[Content]) -> bool {
+    matches!(content, [Content::Text { text }] if text == "[empty response]")
 }
 
 /// Merge consecutive messages that share the same `role`.
