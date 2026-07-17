@@ -54,6 +54,21 @@ fn transform_message(
             }
             Content::Thinking { thinking, .. } if thinking.trim().is_empty() => None,
             Content::Thinking { thinking, .. } => Some(Content::Text { text: thinking }),
+            Content::ToolCall {
+                id,
+                name,
+                arguments,
+            } if target_api == ApiProtocol::OpenAiResponses && !same_model => {
+                Some(Content::ToolCall {
+                    id: id
+                        .split_once('|')
+                        .map(|(call_id, _)| call_id)
+                        .unwrap_or(&id)
+                        .to_string(),
+                    name,
+                    arguments,
+                })
+            }
             other => Some(other),
         })
         .collect();

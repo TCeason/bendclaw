@@ -6,6 +6,7 @@ fn default_registry_has_all_providers() {
     let registry = ProviderRegistry::default();
 
     assert!(registry.has(&ApiProtocol::AnthropicMessages));
+    assert!(registry.has(&ApiProtocol::OpenAiResponses));
     assert!(registry.has(&ApiProtocol::OpenAiCompletions));
     assert!(registry.has(&ApiProtocol::BedrockConverseStream));
 }
@@ -14,7 +15,7 @@ fn default_registry_has_all_providers() {
 fn registry_protocols() {
     let registry = ProviderRegistry::default();
     let protocols = registry.protocols();
-    assert_eq!(protocols.len(), 3);
+    assert_eq!(protocols.len(), 4);
 }
 
 #[test]

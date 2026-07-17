@@ -19,6 +19,7 @@ use crate::ThinkingLevel;
 #[serde(rename_all = "snake_case")]
 pub enum ApiProtocol {
     AnthropicMessages,
+    OpenAiResponses,
     OpenAiCompletions,
     BedrockConverseStream,
 }
@@ -27,6 +28,7 @@ impl std::fmt::Display for ApiProtocol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::AnthropicMessages => write!(f, "anthropic_messages"),
+            Self::OpenAiResponses => write!(f, "openai_responses"),
             Self::OpenAiCompletions => write!(f, "openai_completions"),
             Self::BedrockConverseStream => write!(f, "bedrock_converse_stream"),
         }
@@ -331,7 +333,9 @@ fn protocol_defaults(api: ApiProtocol) -> ModelMetadata {
         ApiProtocol::AnthropicMessages | ApiProtocol::BedrockConverseStream => {
             ModelMetadata::vision(200_000, 8192)
         }
-        ApiProtocol::OpenAiCompletions => ModelMetadata::text_only(128_000, 32_768),
+        ApiProtocol::OpenAiResponses | ApiProtocol::OpenAiCompletions => {
+            ModelMetadata::text_only(128_000, 32_768)
+        }
     }
 }
 
@@ -377,11 +381,26 @@ impl ModelConfig {
         )
     }
 
+    /// OpenAI-compatible Chat Completions configuration.
     pub fn openai(id: impl Into<String>, name: impl Into<String>) -> Self {
         let id = id.into();
         let name = name.into();
         Self::resolve(
             ApiProtocol::OpenAiCompletions,
+            "openai",
+            id.clone(),
+            name,
+            "https://api.openai.com/v1",
+            Some(OpenAiCompat::openai()),
+        )
+    }
+
+    /// Native OpenAI Responses configuration.
+    pub fn openai_responses(id: impl Into<String>, name: impl Into<String>) -> Self {
+        let id = id.into();
+        let name = name.into();
+        Self::resolve(
+            ApiProtocol::OpenAiResponses,
             "openai",
             id.clone(),
             name,
@@ -422,7 +441,9 @@ impl ModelConfig {
 
     fn honors_reasoning_effort(&self) -> bool {
         match self.api {
-            ApiProtocol::AnthropicMessages | ApiProtocol::BedrockConverseStream => true,
+            ApiProtocol::AnthropicMessages
+            | ApiProtocol::OpenAiResponses
+            | ApiProtocol::BedrockConverseStream => true,
             ApiProtocol::OpenAiCompletions => self
                 .compat
                 .as_ref()

@@ -20,6 +20,13 @@ fn model_config_openai() {
 }
 
 #[test]
+fn model_config_openai_responses() {
+    let config = ModelConfig::openai_responses("gpt-5.5", "GPT-5.5");
+    assert_eq!(config.api, ApiProtocol::OpenAiResponses);
+    assert_eq!(config.provider, "openai");
+}
+
+#[test]
 fn model_config_openai_current_gpt_models_use_catalog_limits() {
     for id in [
         "gpt-5.4",
@@ -187,6 +194,7 @@ fn api_protocol_display() {
         ApiProtocol::AnthropicMessages.to_string(),
         "anthropic_messages"
     );
+    assert_eq!(ApiProtocol::OpenAiResponses.to_string(), "openai_responses");
     assert_eq!(
         ApiProtocol::OpenAiCompletions.to_string(),
         "openai_completions"

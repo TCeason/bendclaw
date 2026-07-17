@@ -93,7 +93,7 @@ fn cycle_thinking_level_openai_with_effort_capability() -> TestResult {
     let dir = TempDir::new()?;
     let mut config = Config::new(dir.path().to_path_buf());
     config.providers.insert("openai".into(), ProviderProfile {
-        protocol: Protocol::OpenAi,
+        protocol: Protocol::OpenAiResponses,
         api_key: "test-key".into(),
         base_url: "https://api.openai.com/v1".into(),
         models: vec!["gpt-5.5".into()],
@@ -123,7 +123,7 @@ fn cycle_thinking_level_gpt_5_5_pro_cycles_medium_high_xhigh() -> TestResult {
     let dir = TempDir::new()?;
     let mut config = Config::new(dir.path().to_path_buf());
     config.providers.insert("openai".into(), ProviderProfile {
-        protocol: Protocol::OpenAi,
+        protocol: Protocol::OpenAiResponses,
         api_key: "test-key".into(),
         base_url: "https://api.openai.com/v1".into(),
         models: vec!["gpt-5.5-pro".into()],
@@ -155,7 +155,7 @@ fn cycle_thinking_level_gpt_5_6_cycles_xhigh_then_max() -> TestResult {
     let dir = TempDir::new()?;
     let mut config = Config::new(dir.path().to_path_buf());
     config.providers.insert("openai".into(), ProviderProfile {
-        protocol: Protocol::OpenAi,
+        protocol: Protocol::OpenAiResponses,
         api_key: "test-key".into(),
         base_url: "https://api.openai.com/v1".into(),
         models: vec!["gpt-5.6-sol".into()],
@@ -198,7 +198,7 @@ fn restore_thinking_level_ignores_unknown_or_unsupported() -> TestResult {
     let dir = TempDir::new()?;
     let mut config = Config::new(dir.path().to_path_buf());
     config.providers.insert("openai".into(), ProviderProfile {
-        protocol: Protocol::OpenAi,
+        protocol: Protocol::OpenAiResponses,
         api_key: "test-key".into(),
         base_url: "https://api.openai.com/v1".into(),
         models: vec!["gpt-5.5-pro".into()],

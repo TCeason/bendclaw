@@ -113,10 +113,11 @@ EVOT_LLM_ANTHROPIC_BASE_URL=your-anthropic-base-url
 EVOT_LLM_ANTHROPIC_MODEL=claude-opus-4-6
 # Multiple models: EVOT_LLM_ANTHROPIC_MODEL=claude-sonnet-4-6,claude-opus-4-6
 
-# Or OpenAI
+# Or OpenAI Responses (must be selected explicitly)
 # EVOT_LLM_OPENAI_API_KEY=sk-...
-# EVOT_LLM_OPENAI_BASE_URL=your-openai-base-url/v1
+# EVOT_LLM_OPENAI_BASE_URL=https://api.openai.com/v1
 # EVOT_LLM_OPENAI_MODEL=gpt-5.5
+# EVOT_LLM_OPENAI_PROTOCOL=openai_responses
 
 # Or DeepSeek (Anthropic-compatible)
 # EVOT_LLM_DEEPSEEK_API_KEY=sk-...

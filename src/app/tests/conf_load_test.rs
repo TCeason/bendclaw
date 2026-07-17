@@ -43,6 +43,10 @@ fn parse_protocol_valid() -> TestResult {
     use evot::conf::parse_protocol;
     assert_eq!(parse_protocol("anthropic")?, Protocol::Anthropic);
     assert_eq!(parse_protocol("openai")?, Protocol::OpenAi);
+    assert_eq!(
+        parse_protocol("openai_responses")?,
+        Protocol::OpenAiResponses
+    );
     assert!(parse_protocol("unknown").is_err());
     Ok(())
 }
@@ -183,6 +187,27 @@ model = "gpt-5"
     let config = config.with_model(Some("gpt-5".into()))?;
     assert_eq!(config.active_llm()?.api_key, "openai-key");
     assert_eq!(config.active_llm()?.model, "gpt-5");
+    assert_eq!(config.active_llm()?.protocol, Protocol::OpenAi);
+    Ok(())
+}
+
+#[test]
+fn explicit_openai_responses_protocol_loads_from_env() -> TestResult {
+    let _guard = env_lock()
+        .lock()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let temp = tempfile::tempdir()?;
+    let env_home = temp.path().join("home");
+    std::fs::create_dir_all(env_home.join(".evotai"))?;
+    std::fs::write(
+        env_home.join(".evotai").join("evot.env"),
+        "EVOT_LLM_PROVIDER=openai\nEVOT_LLM_OPENAI_API_KEY=key\nEVOT_LLM_OPENAI_BASE_URL=https://api.openai.com/v1\nEVOT_LLM_OPENAI_MODEL=gpt-5.5\nEVOT_LLM_OPENAI_PROTOCOL=openai_responses\n",
+    )?;
+    let original_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &env_home);
+    let result = Config::load();
+    restore_env_var("HOME", original_home);
+    assert_eq!(result?.active_llm()?.protocol, Protocol::OpenAiResponses);
     Ok(())
 }
 
@@ -941,7 +966,7 @@ fn make_multi_provider_config() -> Config {
     config
         .providers
         .insert("openai".into(), evot::conf::ProviderProfile {
-            protocol: Protocol::OpenAi,
+            protocol: Protocol::OpenAiResponses,
             api_key: "oai-key".into(),
             base_url: "https://api.openai.com/v1".into(),
             models: vec!["gpt-5.4".into()],
@@ -999,7 +1024,7 @@ fn set_model_switches_provider_by_model_name() -> TestResult {
     // Switch to openai by model name
     let llm = resolve_llm_config(&config, "gpt-5.4")?;
     assert_eq!(llm.provider, "openai");
-    assert_eq!(llm.protocol, Protocol::OpenAi);
+    assert_eq!(llm.protocol, Protocol::OpenAiResponses);
     assert_eq!(llm.api_key, "oai-key");
     assert_eq!(llm.base_url, "https://api.openai.com/v1");
     assert_eq!(llm.model, "gpt-5.4");
@@ -1028,7 +1053,7 @@ fn set_model_with_provider_prefix_overrides_model() -> TestResult {
     // Use provider:model to override model
     let llm = resolve_llm_config(&config, "openai:gpt-4o")?;
     assert_eq!(llm.provider, "openai");
-    assert_eq!(llm.protocol, Protocol::OpenAi);
+    assert_eq!(llm.protocol, Protocol::OpenAiResponses);
     assert_eq!(llm.api_key, "oai-key");
     assert_eq!(llm.base_url, "https://api.openai.com/v1");
     assert_eq!(llm.model, "gpt-4o"); // overridden, not the default gpt-5.4

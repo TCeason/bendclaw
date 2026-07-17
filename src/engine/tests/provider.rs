@@ -10,6 +10,8 @@ mod json_repair;
 mod model;
 #[path = "provider/openai_compat/mod.rs"]
 mod openai_compat;
+#[path = "provider/openai_responses/mod.rs"]
+mod openai_responses;
 #[path = "provider/registry.rs"]
 mod registry;
 #[path = "provider/stream_fallback.rs"]

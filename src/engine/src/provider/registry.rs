@@ -66,9 +66,11 @@ impl Default for ProviderRegistry {
         use crate::provider::AnthropicProvider;
         use crate::provider::BedrockProvider;
         use crate::provider::OpenAiCompatProvider;
+        use crate::provider::OpenAiResponsesProvider;
 
         let mut registry = Self::new();
         registry.register(ApiProtocol::AnthropicMessages, AnthropicProvider);
+        registry.register(ApiProtocol::OpenAiResponses, OpenAiResponsesProvider);
         registry.register(ApiProtocol::OpenAiCompletions, OpenAiCompatProvider);
         registry.register(ApiProtocol::BedrockConverseStream, BedrockProvider);
 

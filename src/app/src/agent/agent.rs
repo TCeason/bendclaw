@@ -628,6 +628,7 @@ impl Agent {
     fn compact_summarizer(&self) -> crate::compact::orchestrator::CompactSummarizer {
         use evot_engine::provider::AnthropicProvider;
         use evot_engine::provider::OpenAiCompatProvider;
+        use evot_engine::provider::OpenAiResponsesProvider;
 
         let llm = self.llm.read().clone();
         let provider =
@@ -636,6 +637,7 @@ impl Agent {
                 .clone()
                 .unwrap_or_else(|| match llm.protocol {
                     Protocol::Anthropic => Arc::new(AnthropicProvider),
+                    Protocol::OpenAiResponses => Arc::new(OpenAiResponsesProvider),
                     Protocol::OpenAi => Arc::new(OpenAiCompatProvider),
                 });
         crate::compact::orchestrator::CompactSummarizer {

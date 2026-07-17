@@ -1038,21 +1038,24 @@ pub fn build_model_config(
             "https://api.anthropic.com",
             None,
         ),
-        Protocol::OpenAi => {
-            // Preserve the pre-catalog default: native openai falls back to the
-            // public API host when no base_url is supplied. Other OpenAI-compat
-            // channels have no safe default host and must configure one.
-            let default_base = if provider == "openai" {
+        Protocol::OpenAiResponses => (
+            ApiProtocol::OpenAiResponses,
+            if provider == "openai" {
                 "https://api.openai.com/v1"
             } else {
                 ""
-            };
-            (
-                ApiProtocol::OpenAiCompletions,
-                default_base,
-                Some(OpenAiCompat::for_provider(provider)),
-            )
-        }
+            },
+            Some(OpenAiCompat::for_provider(provider)),
+        ),
+        Protocol::OpenAi => (
+            ApiProtocol::OpenAiCompletions,
+            if provider == "openai" {
+                "https://api.openai.com/v1"
+            } else {
+                ""
+            },
+            Some(OpenAiCompat::for_provider(provider)),
+        ),
     };
 
     let mut model_config = ModelConfig::resolve(
@@ -1085,7 +1088,7 @@ pub fn build_model_config(
         };
     }
 
-    if protocol == Protocol::OpenAi {
+    if matches!(protocol, Protocol::OpenAi | Protocol::OpenAiResponses) {
         if let Some(compat) = &mut model_config.compat {
             compat.caps |= compat_caps;
         }
@@ -1100,6 +1103,7 @@ pub(crate) fn build_agent(
 ) -> evot_engine::Agent {
     use evot_engine::provider::AnthropicProvider;
     use evot_engine::provider::OpenAiCompatProvider;
+    use evot_engine::provider::OpenAiResponsesProvider;
 
     let model_config = build_model_config(
         options.protocol.clone(),
@@ -1115,6 +1119,7 @@ pub(crate) fn build_agent(
     let provider_agent = match (options.provider_override, &options.protocol) {
         (Some(provider), _) => evot_engine::Agent::new(provider),
         (None, Protocol::Anthropic) => evot_engine::Agent::new(AnthropicProvider),
+        (None, Protocol::OpenAiResponses) => evot_engine::Agent::new(OpenAiResponsesProvider),
         (None, Protocol::OpenAi) => evot_engine::Agent::new(OpenAiCompatProvider),
     };
 

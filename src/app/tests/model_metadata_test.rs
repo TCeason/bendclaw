@@ -6,6 +6,7 @@
 
 use evot::agent::run::runtime::build_model_config;
 use evot::conf::Protocol;
+use evot_engine::provider::ApiProtocol;
 use evot_engine::provider::CompatCaps;
 use evot_engine::provider::InputModality;
 
@@ -81,7 +82,7 @@ fn explicit_context_window_and_max_tokens_apply() {
 #[test]
 fn native_openai_gpt_5_6_metadata_applies_without_explicit_overrides() {
     let mc = build_model_config(
-        Protocol::OpenAi,
+        Protocol::OpenAiResponses,
         "openai",
         "gpt-5.6-sol",
         Some("https://api.openai.com/v1"),
@@ -90,6 +91,7 @@ fn native_openai_gpt_5_6_metadata_applies_without_explicit_overrides() {
         None,
         None,
     );
+    assert_eq!(mc.api, ApiProtocol::OpenAiResponses);
     assert_eq!(mc.context_window, 272_000);
     assert_eq!(mc.max_tokens, 128_000);
     assert!(mc.supports_image());
@@ -155,6 +157,7 @@ fn openai_provider_grok_4_5_uses_catalog_metadata() {
         None,
         None,
     );
+    assert_eq!(mc.api, ApiProtocol::OpenAiCompletions);
     assert_eq!(mc.context_window, 500_000);
     assert_eq!(mc.max_tokens, 500_000);
     assert!(mc.reasoning);
@@ -188,7 +191,7 @@ fn openrouter_gpt_without_compat_caps_has_no_selectable_thinking() {
 #[test]
 fn openai_provider_defaults_base_url_when_missing() {
     let mc = build_model_config(
-        Protocol::OpenAi,
+        Protocol::OpenAiResponses,
         "openai",
         "gpt-5.6-sol",
         None,
@@ -198,7 +201,40 @@ fn openai_provider_defaults_base_url_when_missing() {
         None,
     );
     assert_eq!(mc.base_url, "https://api.openai.com/v1");
+    assert_eq!(mc.api, ApiProtocol::OpenAiResponses);
     assert_eq!(mc.context_window, 272_000);
+}
+
+#[test]
+fn custom_responses_endpoint_can_select_responses_explicitly() {
+    let mc = build_model_config(
+        Protocol::OpenAiResponses,
+        "azure-openai",
+        "gpt-5.5",
+        Some("https://example.openai.azure.com/openai/v1"),
+        CompatCaps::DEVELOPER_ROLE,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(mc.api, ApiProtocol::OpenAiResponses);
+    assert_eq!(mc.base_url, "https://example.openai.azure.com/openai/v1");
+}
+
+#[test]
+fn named_openai_can_explicitly_keep_chat_completions() {
+    let mc = build_model_config(
+        Protocol::OpenAi,
+        "openai",
+        "gpt-5.5",
+        Some("https://proxy.example.com/v1"),
+        CompatCaps::NONE,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(mc.api, ApiProtocol::OpenAiCompletions);
+    assert_eq!(mc.base_url, "https://proxy.example.com/v1");
 }
 
 #[test]
@@ -214,6 +250,7 @@ fn non_openai_opencompat_has_empty_default_base_url() {
         None,
     );
     assert_eq!(mc.base_url, "");
+    assert_eq!(mc.api, ApiProtocol::OpenAiCompletions);
 }
 
 #[test]

@@ -356,6 +356,12 @@ fn default_env_content() -> &'static str {
 # EVOT_LLM_ANTHROPIC_BASE_URL=https://api.anthropic.com
 # EVOT_LLM_ANTHROPIC_MODEL=claude-sonnet-4-20250514
 # Multiple models: EVOT_LLM_ANTHROPIC_MODEL=claude-sonnet-4-6,claude-opus-4-6
+# Or OpenAI Responses (must be selected explicitly)
+# EVOT_LLM_OPENAI_API_KEY=
+# EVOT_LLM_OPENAI_BASE_URL=https://api.openai.com/v1
+# EVOT_LLM_OPENAI_MODEL=gpt-5.5
+# EVOT_LLM_OPENAI_PROTOCOL=openai_responses
+
 # Per-provider reasoning effort (overrides the global level above):
 # EVOT_LLM_ANTHROPIC_THINKING_LEVEL=xhigh
 # EVOT_LLM_DEEPSEEK_THINKING_LEVEL=off
@@ -382,6 +388,7 @@ const PROVIDER_FIELDS: &[&str] = &[
     "_THINKING_LEVEL",
     "_CONTEXT_WINDOW",
     "_MAX_TOKENS",
+    "_SUPPORTS_IMAGE",
 ];
 
 /// Non-LLM keys we still care about.

@@ -16,10 +16,15 @@ use crate::gateway::channels::feishu::FeishuChannelConfig;
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum Protocol {
+    #[serde(rename = "anthropic")]
     Anthropic,
+    /// OpenAI-compatible Chat Completions API.
+    #[serde(rename = "openai")]
     OpenAi,
+    /// Native OpenAI Responses API.
+    #[serde(rename = "openai_responses")]
+    OpenAiResponses,
 }
 
 impl std::fmt::Display for Protocol {
@@ -27,12 +32,14 @@ impl std::fmt::Display for Protocol {
         match self {
             Self::Anthropic => write!(f, "anthropic"),
             Self::OpenAi => write!(f, "openai"),
+            Self::OpenAiResponses => write!(f, "openai_responses"),
         }
     }
 }
 
-/// Infer protocol from provider name. Only "anthropic" maps to Anthropic;
-/// everything else defaults to OpenAI-compatible.
+/// Infer the wire protocol from the provider name. Anthropic-named providers
+/// default to Anthropic Messages; every other provider retains the historical
+/// Chat Completions default. Responses must be selected explicitly.
 pub fn infer_protocol(name: &str) -> Protocol {
     if name.starts_with("anthropic") {
         Protocol::Anthropic
@@ -45,8 +52,9 @@ pub fn parse_protocol(value: &str) -> Result<Protocol> {
     match value.to_lowercase().as_str() {
         "anthropic" => Ok(Protocol::Anthropic),
         "openai" => Ok(Protocol::OpenAi),
+        "openai_responses" => Ok(Protocol::OpenAiResponses),
         other => Err(EvotError::Conf(format!(
-            "unknown protocol: {other} (valid: anthropic, openai)"
+            "unknown protocol: {other} (valid: anthropic, openai, openai_responses)"
         ))),
     }
 }

@@ -48,6 +48,7 @@ pub enum ImageSource {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ThinkingMetadata {
     Anthropic { signature: String },
+    OpenAiResponses { item: serde_json::Value },
     OpenAiCompletions { field: ReasoningField },
 }
 
@@ -66,6 +67,9 @@ impl ThinkingMetadata {
             (
                 Self::Anthropic { .. },
                 crate::provider::ApiProtocol::AnthropicMessages
+            ) | (
+                Self::OpenAiResponses { .. },
+                crate::provider::ApiProtocol::OpenAiResponses
             ) | (
                 Self::OpenAiCompletions { .. },
                 crate::provider::ApiProtocol::OpenAiCompletions
