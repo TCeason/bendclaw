@@ -173,6 +173,37 @@ describe('TermRenderer', () => {
       renderer.destroy()
     })
 
+    test('reanchors a viewport-up shrink instead of leaving a blank band', async () => {
+      const { renderer, stdout } = createRenderer()
+      stdout.rows = 8
+      renderer.init()
+
+      let lines = Array.from({ length: 20 }, (_, i) => `old ${i}`)
+      renderer.setRenderCallback(() => lines)
+      await renderFrame(renderer)
+
+      stdout.clear()
+      // Mirrors the observed transition: a completed live region disappears,
+      // moving the logical viewport up while spinner + prompt remain at the tail.
+      lines = [
+        ...Array.from({ length: 8 }, (_, i) => `history ${i}`),
+        'Thinking...',
+        '────────',
+        '❯ ',
+        '────────',
+        'footer',
+        '',
+      ]
+      await renderFrame(renderer)
+
+      const out = stdout.output
+      expect(out).toContain('\x1b[2J\x1b[H')
+      expect(out).not.toContain('\x1b[3J')
+      expect(out).toContain('Thinking...')
+      expect(out).toContain('footer')
+      renderer.destroy()
+    })
+
     test('uses synchronized output wrapping', async () => {
       const { renderer, stdout } = createRenderer()
       renderer.init()

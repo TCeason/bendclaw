@@ -493,8 +493,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // continuous, and any transient parser shrink is absorbed above the footer.
     const partialBlocks = buildPartialAssistantBlocks()
     blocks.push(...partialBlocks)
-    const liveContentHeight = cachedHistoryLines.length + blocksToLines(partialBlocks).length
-    const liveHeight = updateLiveHeight(liveContentMaxHeight, liveContentHeight, isLoading)
+    const livePartialHeight = blocksToLines(partialBlocks).length
+    const liveContentHeight = cachedHistoryLines.length + livePartialHeight
+    // The monotonic-height guard is only needed while visible partial content is
+    // being reparsed. At the start of a fresh LLM call currentAssistantContent is
+    // empty; retaining the previous call's peak then creates up to eight literal
+    // blank rows above Thinking…. Reset immediately until the first visible block.
+    const liveHeight = updateLiveHeight(
+      liveContentMaxHeight,
+      liveContentHeight,
+      isLoading && livePartialHeight > 0,
+    )
     liveContentMaxHeight = liveHeight.maxHeight
     if (liveHeight.padding > 0) {
       blocks.push({

@@ -18,7 +18,7 @@ describe('updateLiveHeight', () => {
     expect(updateLiveHeight(100, 20, true, 3)).toEqual({ maxHeight: 23, padding: 3 })
   })
 
-  test('resets after streaming ends', () => {
+  test('resets while a fresh call has no visible partial content', () => {
     expect(updateLiveHeight(12, 8, false)).toEqual({ maxHeight: 0, padding: 0 })
   })
 
