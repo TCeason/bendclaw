@@ -19,7 +19,9 @@ import { renderBanner } from './banner.js'
 import {
   buildOutputBlocks,
   buildPromptBlocks,
+  buildPromptFooterBlocks,
   buildOverlayBlocks,
+  buildSelectorRegionLines,
   updateLiveHeight,
   formatQueuedMessageLines,
   blocksToLines,
@@ -519,12 +521,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       })
     }
 
+    const contentLines = blocksToLines(blocks)
     const toolCalls = assistantToolCalls(streamMachine?.appState.currentAssistantContent ?? [])
     let spinnerBlock: ViewBlock | null = null
-    // Persistent run spinner. Keep one blank line above it to separate it from
-    // transcript content, but place it immediately against the prompt border.
-    // Building it here and appending it after transient widgets prevents those
-    // widgets from splitting the spinner/prompt pair.
+    // pi keeps statusContainer before editorContainer, so the active-run status
+    // remains visible even while a selector replaces the editor.
     if (isLoading && overlay.kind !== 'ask-user') {
       const usagePending = streamMachine?.activeLlmCall ?? false
       const liveOutputTokens = usagePending && toolCalls.length === 0 ? spinnerState.tokenCount : 0
@@ -546,32 +547,46 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
     }
 
-    // 4–5. Queue + spinner + prompt form the sticky footer unit. Modal
-    // selector/help/ask content is returned separately and composited into the
-    // visible viewport by TermRenderer, matching pi's overlay model.
-    const footerBlocks: ViewBlock[] = []
+    // Match pi's sibling order before editorContainer: pending messages, then
+    // status. The queue manager suppresses the duplicate pending-message copy
+    // because the selector itself is displaying those same entries.
+    const preEditorBlocks: ViewBlock[] = []
     const queueManagerOpen = overlay.kind === 'selector' && overlay.state.title === 'Prompt queue'
     const queueLines = queueManagerOpen
       ? []
       : formatQueuedMessageLines(queuedUserMessages.map(message => message.text))
     if (queueLines.length > 0) {
-      footerBlocks.push({
+      preEditorBlocks.push({
         lines: queueLines.map(text => ({ spans: [{ text, dim: true }] })),
         marginTop: 1,
       })
-      // Queue already owns the blank line above the footer unit.
+      // Queue already owns the blank line above the input unit.
       if (spinnerBlock) spinnerBlock = { ...spinnerBlock, marginTop: 0 }
     }
-    const overlayLines = blocksToLines(buildOverlayBlocks(overlay, renderer.termCols))
-    if (spinnerBlock) footerBlocks.push(spinnerBlock)
+    if (spinnerBlock) preEditorBlocks.push(spinnerBlock)
+
+    // A selector replaces only pi's editorContainer. Its preceding queue/status
+    // siblings and following footer sibling remain in normal document flow.
+    if (overlay.kind === 'selector') {
+      return {
+        lines: [
+          ...contentLines,
+          ...blocksToLines(preEditorBlocks),
+          ...buildSelectorRegionLines(overlay.state, renderer.termCols),
+          ...blocksToLines(buildPromptFooterBlocks(getPromptVM())),
+        ],
+      }
+    }
+
+    const modalLines = blocksToLines(buildOverlayBlocks(overlay, renderer.termCols))
+    const footerBlocks = [...preEditorBlocks]
     footerBlocks.push(...buildPromptBlocks(getPromptVM(), {
       attachedAbove: spinnerBlock !== null || queueLines.length > 0,
     }))
 
-    const frameBlocks: ViewBlock[] = [...blocks, ...footerBlocks]
     return {
-      lines: blocksToLines(frameBlocks),
-      ...(overlayLines.length > 0 ? { overlay: { lines: overlayLines } } : {}),
+      lines: [...contentLines, ...blocksToLines(footerBlocks)],
+      ...(modalLines.length > 0 ? { overlay: { lines: modalLines } } : {}),
     }
   }
 
@@ -1903,32 +1918,30 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         commitLines([{ id: 'sys-r-err', kind: 'system', text: chalk.red(`  Failed to list sessions: ${err?.message ?? err}`) }])
       }
     } else if (name === '/model' && !args) {
-      // Show model selector overlay, grouped by provider (droid-style):
-      // ── provider ── dividers with model-only labels underneath.
       const models = modelOptions(configInfo, agent.model)
       if (models.length > 1) {
         const activeSpec = currentModelSpec(configInfo, agent.model)
-        const items: SelectorItem[] = []
-        let lastProvider: string | null = null
-        for (const option of models) {
-          if (option.provider !== lastProvider) {
-            if (lastProvider !== null) {
-              items.push({ label: '', header: true, focusable: false })
-            }
-            items.push({ label: option.provider, header: true, focusable: false })
-            lastProvider = option.provider
-          }
-          items.push({
-            label: option.model,
-            id: option.spec,
-            selected: option.spec === activeSpec,
-            searchText: `${option.model} ${option.provider}`,
-          })
-        }
+        const sortedModels = [...models].sort((left, right) => {
+          const leftIsActive = left.spec === activeSpec
+          const rightIsActive = right.spec === activeSpec
+          if (leftIsActive !== rightIsActive) return leftIsActive ? -1 : 1
+          return left.provider.localeCompare(right.provider)
+        })
+        const items: SelectorItem[] = sortedModels.map(option => ({
+          label: option.model,
+          detail: option.provider,
+          id: option.spec,
+          selected: option.spec === activeSpec,
+          searchText: `${option.model} ${option.provider}`,
+        }))
         overlay = {
           kind: 'selector',
           state: selectorFocusOn(
-            { ...createSelectorState('Models', items), subtitle: 'Choose a provider and model for this session' },
+            {
+              ...createSelectorState('Models', items),
+              presentation: 'model',
+              circularNavigation: true,
+            },
             item => item.id === activeSpec,
           ),
         }

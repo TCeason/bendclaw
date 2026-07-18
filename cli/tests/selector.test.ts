@@ -9,9 +9,10 @@ import {
   selectorExpandItems,
   selectorFocusOn,
 } from '../src/term/selector.js'
-import { buildOverlayBlocks } from '../src/term/viewmodel/overlays.js'
+import { buildOverlayBlocks, buildSelectorRegionLines } from '../src/term/viewmodel/overlays.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
 import stripAnsi from 'strip-ansi'
+import stringWidth from 'string-width'
 import chalk from 'chalk'
 
 beforeAll(() => { chalk.level = 3 })
@@ -113,6 +114,77 @@ describe('selectorSelect', () => {
 })
 
 describe('renderSelector via viewmodel', () => {
+  test('renders the pi model selector as a full-width editor replacement', () => {
+    const state = {
+      ...createSelectorState('Models', [
+        { label: 'grok-4.5', detail: 'openai', selected: true },
+        { label: 'gpt-5.6-sol', detail: 'droid' },
+      ]),
+      presentation: 'model' as const,
+      circularNavigation: true,
+    }
+    const lines = buildSelectorRegionLines(state, 40)
+      .map(line => stripAnsi(line).replaceAll('\x1b_pi:c\x07', ''))
+
+    expect(lines[0]).toBe('')
+    expect(lines[1]).toBe('─'.repeat(40))
+    expect(lines[2]).toBe('')
+    expect(lines[3]).toBe('Only showing models from configured')
+    expect(lines[4]).toBe('providers. Use /login to add providers.')
+    expect(lines[6]).toStartWith('>  ')
+    expect(lines[8]).toBe('→ grok-4.5 [openai] ✓')
+    expect(lines[9]).toBe('  gpt-5.6-sol [droid]')
+    expect(lines[11]).toBe('  Model Name: grok-4.5')
+    expect(lines.at(-1)).toBe('─'.repeat(40))
+    expect(lines.join('\n')).not.toContain('Models  2')
+    expect(lines.join('\n')).not.toContain('enter select')
+  })
+
+  test('model filtering preserves pi provider badges', () => {
+    let state = {
+      ...createSelectorState('Models', [
+        { label: 'grok-4.5', detail: 'openai', searchText: 'grok-4.5 openai' },
+        { label: 'gpt-5.6-sol', detail: 'droid', searchText: 'gpt-5.6-sol droid' },
+      ]),
+      presentation: 'model' as const,
+    }
+    for (const char of 'droid') state = selectorType(state, char)
+
+    const text = buildSelectorRegionLines(state, 80)
+      .map(line => stripAnsi(line).replaceAll('\x1b_pi:c\x07', ''))
+      .join('\n')
+    expect(text).toContain('→ gpt-5.6-sol [droid]')
+    expect(text).not.toContain('gpt-5.6-sol droid]')
+  })
+
+  test('model filtering uses pi fuzzy matching and quality ordering', () => {
+    let state = {
+      ...createSelectorState('Models', [
+        { label: 'alpha-gpt', detail: 'provider', searchText: 'alpha-gpt provider' },
+        { label: 'gpt-alpha', detail: 'provider', searchText: 'gpt-alpha provider' },
+        { label: 'unrelated', detail: 'provider', searchText: 'unrelated provider' },
+      ]),
+      presentation: 'model' as const,
+    }
+    for (const char of 'gpt') state = selectorType(state, char)
+
+    expect(state.items.map(item => item.label)).toEqual(['gpt-alpha', 'alpha-gpt'])
+  })
+
+  test('model search input matches pi at extremely narrow widths', () => {
+    const state = {
+      ...createSelectorState('Models', [{ label: 'gpt', detail: 'openai' }]),
+      presentation: 'model' as const,
+    }
+
+    for (const width of [1, 2]) {
+      const lines = buildSelectorRegionLines(state, width)
+        .map(line => stripAnsi(line).replaceAll('\x1b_pi:c\x07', ''))
+      expect(lines).toContain('> ')
+      expect(lines.filter(line => line !== '> ').every(line => stringWidth(line) <= width)).toBe(true)
+    }
+  })
+
   test('contains title', () => {
     const state = createSelectorState('Pick model', items)
     const lines = blocksToLines(buildOverlayBlocks({ kind: 'selector', state }, 80))

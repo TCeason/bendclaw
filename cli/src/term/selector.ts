@@ -23,6 +23,9 @@ export interface SelectorState {
   title: string
   /** Optional secondary context displayed below the title. */
   subtitle?: string
+  /** Model selection uses pi's editor-replacement component instead of the
+   * generic titled selector. */
+  presentation?: 'model'
   /** Wraps up/down navigation between the first and last focusable items. */
   circularNavigation?: boolean
   query: string
@@ -164,11 +167,79 @@ function extractContext(source: string, query: string, width: number): string | 
   return snippet
 }
 
+function fuzzyMatchScore(query: string, text: string): number | null {
+  const normalizedQuery = query.toLowerCase()
+  const normalizedText = text.toLowerCase()
+  if (normalizedQuery.length === 0) return 0
+  if (normalizedQuery.length > normalizedText.length) return null
+
+  let queryIndex = 0
+  let score = 0
+  let lastMatchIndex = -1
+  let consecutiveMatches = 0
+  for (let index = 0; index < normalizedText.length && queryIndex < normalizedQuery.length; index++) {
+    if (normalizedText[index] !== normalizedQuery[queryIndex]) continue
+    const atWordBoundary = index === 0 || /[\s\-_./:]/.test(normalizedText[index - 1]!)
+    if (lastMatchIndex === index - 1) {
+      consecutiveMatches++
+      score -= consecutiveMatches * 5
+    } else {
+      consecutiveMatches = 0
+      if (lastMatchIndex >= 0) score += (index - lastMatchIndex - 1) * 2
+    }
+    if (atWordBoundary) score -= 10
+    score += index * 0.1
+    lastMatchIndex = index
+    queryIndex++
+  }
+
+  if (queryIndex < normalizedQuery.length) return null
+  if (normalizedQuery === normalizedText) score -= 100
+  return score
+}
+
+function modelFuzzyScore(query: string, item: SelectorItem): number | null {
+  const tokens = query.trim().split(/[\s/]+/).filter(Boolean)
+  if (tokens.length === 0) return 0
+  const text = item.searchText ?? `${item.label} ${item.detail ?? ''}`
+  let total = 0
+  for (const token of tokens) {
+    const primary = fuzzyMatchScore(token, text)
+    if (primary !== null) {
+      total += primary
+      continue
+    }
+    const alphaNumeric = /^(?<letters>[a-z]+)(?<digits>[0-9]+)$/i.exec(token)
+    const numericAlpha = /^(?<digits>[0-9]+)(?<letters>[a-z]+)$/i.exec(token)
+    const swapped = alphaNumeric
+      ? `${alphaNumeric.groups?.digits ?? ''}${alphaNumeric.groups?.letters ?? ''}`
+      : numericAlpha
+        ? `${numericAlpha.groups?.letters ?? ''}${numericAlpha.groups?.digits ?? ''}`
+        : ''
+    const swappedScore = swapped ? fuzzyMatchScore(swapped, text) : null
+    if (swappedScore === null) return null
+    total += swappedScore + 5
+  }
+  return total
+}
+
 function applyFilter(state: SelectorState, query: string): SelectorState {
   if (!query) {
     const focusIndex = firstFocusable(state.allItems)
     return { ...state, query, items: state.allItems, focusIndex, scrollOffset: ensureVisible(0, focusIndex, state.allItems.length) }
   }
+
+  if (state.presentation === 'model') {
+    const filtered = state.allItems
+      .filter(item => !item.header)
+      .map((item, index) => ({ item, index, score: modelFuzzyScore(query, item) }))
+      .filter((entry): entry is { item: SelectorItem; index: number; score: number } => entry.score !== null)
+      .sort((left, right) => left.score - right.score || left.index - right.index)
+      .map(entry => entry.item)
+    const focusIndex = firstFocusable(filtered)
+    return { ...state, query, items: filtered, focusIndex, scrollOffset: ensureVisible(0, focusIndex, filtered.length) }
+  }
+
   const lower = query.toLowerCase()
   const exact: SelectorItem[] = []
   const fuzzy: SelectorItem[] = []

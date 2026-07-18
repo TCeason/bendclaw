@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll } from 'bun:test'
-import { buildPromptBlocks, type PromptVMInput } from '../src/term/viewmodel/prompt.js'
+import { buildPromptBlocks, buildPromptFooterBlocks, type PromptVMInput } from '../src/term/viewmodel/prompt.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
 import stripAnsi from 'strip-ansi'
 import { CURSOR_MARKER } from '../src/term/renderer.js'
@@ -134,6 +134,20 @@ describe('buildPromptBlocks', () => {
   test('can attach the prompt border directly below a footer widget', () => {
     const blocks = buildPromptBlocks(defaultInput(), { attachedAbove: true })
     expect(blocks[0]!.marginTop).toBe(0)
+  })
+
+  test('footer remains available when a selector replaces only the editor', () => {
+    const lines = blocksToLines(buildPromptFooterBlocks(defaultInput({
+      provider: 'openai',
+      model: 'gpt-5.6-sol',
+    }))).map(line => stripAnsi(line))
+
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toContain('/Users/test/project (main)')
+    expect(lines[0]).toContain('gpt-5.6-sol@openai')
+    expect(lines[1]).toBe('')
+    expect(lines.join('\n')).not.toContain('Type a message...')
+    expect(lines.join('\n')).not.toContain('─')
   })
 
   test('footer shows context with model but not session token totals', () => {

@@ -1,4 +1,7 @@
-import { line, block, plain, dim, bold, colored, inverse, type ViewBlock, type StyledSpan, type StyledLine } from './types.js'
+import stringWidth from 'string-width'
+import { wrapTextWithAnsi } from '../../render/wrap.js'
+import { CURSOR_MARKER } from '../renderer.js'
+import { line, block, plain, dim, bold, colored, inverse, blocksToLines, styledLineToAnsi, type ViewBlock, type StyledSpan, type StyledLine } from './types.js'
 import { SELECTOR_VIEWPORT, type SelectorItem, type SelectorState } from '../selector.js'
 import type { AskState } from '../ask.js'
 
@@ -19,6 +22,95 @@ export function buildOverlayBlocks(overlay: OverlayState, columns: number): View
     case 'ask-user':
       return buildAskBlocks(overlay.state, columns)
   }
+}
+
+/** Render a selector in pi's editorContainer position, never as a modal. */
+export function buildSelectorRegionLines(state: SelectorState, columns: number): string[] {
+  const width = Number.isFinite(columns) ? Math.max(1, Math.floor(columns)) : 80
+  if (state.presentation === 'model') return ['', ...buildModelSelectorRegionLines(state, width)]
+
+  const border = styledLineToAnsi(line(dim('─'.repeat(width))))
+  return ['', border, ...blocksToLines(buildSelectorBlocks(state, width)), border]
+}
+
+/** Mirrors pi's ModelSelectorComponent hierarchy and line geometry. */
+function buildModelSelectorRegionLines(state: SelectorState, width: number): string[] {
+  const border = line(dim('─'.repeat(width)))
+  const lines: StyledLine[] = [
+    border,
+    line(plain('')),
+    line(colored('Only showing models from configured providers. Use /login to add providers.', 'yellow')),
+    line(plain('')),
+    buildModelSearchLine(state.query, width),
+    line(plain('')),
+  ]
+
+  const maxVisible = SELECTOR_VIEWPORT
+  const start = Math.max(
+    0,
+    Math.min(
+      state.focusIndex - Math.floor(maxVisible / 2),
+      state.items.length - maxVisible,
+    ),
+  )
+  const end = Math.min(start + maxVisible, state.items.length)
+
+  for (let index = start; index < end; index++) {
+    const item = state.items[index]!
+    const focused = index === state.focusIndex
+    lines.push(line(
+      focused ? colored('→ ', 'cyan') : plain('  '),
+      focused ? colored(item.label, 'cyan') : plain(item.label),
+      item.detail ? dim(` [${item.detail}]`) : plain(''),
+      ...(item.selected ? [colored(' ✓', 'green')] : []),
+    ))
+  }
+
+  if (start > 0 || end < state.items.length) {
+    lines.push(line(dim(`  (${state.focusIndex + 1}/${state.items.length})`)))
+  }
+
+  if (state.items.length === 0) {
+    lines.push(line(dim('  No matching models')))
+  } else {
+    const selected = state.items[state.focusIndex]
+    if (selected) {
+      lines.push(line(plain('')))
+      lines.push(line(dim(`  Model Name: ${selected.label}`)))
+    }
+  }
+
+  lines.push(line(plain('')))
+  lines.push(border)
+  return lines.flatMap((styledLine, index) => {
+    const rendered = styledLineToAnsi(styledLine)
+    if (!rendered) return ['']
+    // pi's Input owns horizontal scrolling and does not pass through Text's
+    // wrapping, even when the two-column prompt is wider than the viewport.
+    if (index === 4) return [rendered]
+    return wrapTextWithAnsi(rendered, width)
+  })
+}
+
+function buildModelSearchLine(query: string, width: number): StyledLine {
+  // pi's Input returns the two-column prompt unchanged when there is no room
+  // for input text or a cursor cell.
+  if (width <= 2) return line(plain('> '))
+
+  const availableTextWidth = width - 3
+  let visibleQuery = ''
+  for (const char of [...query].reverse()) {
+    if (stringWidth(char + visibleQuery) > availableTextWidth) break
+    visibleQuery = char + visibleQuery
+  }
+  const padding = Math.max(0, width - 3 - stringWidth(visibleQuery))
+  return line(
+    plain('> '),
+    plain(visibleQuery),
+    plain(CURSOR_MARKER),
+    inverse(' '),
+    plain(' '.repeat(padding)),
+  )
 }
 
 function buildHelpBlocks(columns: number): ViewBlock[] {

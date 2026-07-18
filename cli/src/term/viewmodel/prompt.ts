@@ -137,11 +137,16 @@ export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOpt
   // Queued mid-stream messages render above the spinner/prompt unit in
   // buildFrame (formatQueuedMessageLines), not under the status footer.
 
-  const footerBlocks = buildFooter(input, columns)
-  blocks.push(footerBlocks)
-  blocks.push(block([line(plain(''))]))
+  blocks.push(...buildPromptFooterBlocks(input))
 
   return blocks
+}
+
+/** Footer is a sibling of pi's editorContainer, so selectors that replace the
+ * editor still render the same session/status line below themselves. */
+export function buildPromptFooterBlocks(input: PromptVMInput): ViewBlock[] {
+  const columns = Number.isFinite(input.columns) ? Math.max(1, Math.floor(input.columns)) : 80
+  return [buildFooter(input, columns), block([line(plain(''))])]
 }
 
 function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
