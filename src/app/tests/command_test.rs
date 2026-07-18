@@ -54,29 +54,7 @@ fn parse_non_command_returns_none() {
     assert!(parse_command("hello").is_none());
     assert!(parse_command("").is_none());
     assert!(parse_command("/unknown").is_none());
+    assert!(parse_command("/history").is_none());
+    assert!(parse_command("/history 10").is_none());
     assert!(parse_command("clear").is_none());
-}
-
-#[test]
-fn parse_history() {
-    assert!(matches!(
-        parse_command("/history"),
-        Some(Command::History(20))
-    ));
-    assert!(matches!(
-        parse_command("/history 10"),
-        Some(Command::History(10))
-    ));
-}
-
-#[test]
-fn parse_history_invalid_arg_returns_usage_error() {
-    assert!(matches!(
-        parse_command("/history abc"),
-        Some(Command::UsageError(_))
-    ));
-    assert!(matches!(
-        parse_command("/history 0"),
-        Some(Command::UsageError(_))
-    ));
 }

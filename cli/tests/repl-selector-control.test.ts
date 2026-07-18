@@ -50,23 +50,6 @@ describe('repl selector control', () => {
     expect(action).toEqual({ kind: 'resume', sessionId: 'session-one' })
   })
 
-  test('history user enter returns goto action', () => {
-    const state = createSelectorState('History  (↩ goto · enter preview)', [{ label: '#12', detail: 'user hello' }])
-    expect(handleSelectorControl(state, key('enter'))).toEqual({ kind: 'history-goto', seq: '12' })
-  })
-
-  test('history assistant enter returns preview action', () => {
-    const state = createSelectorState('History  (↩ goto · enter preview)', [
-      { label: '#13', detail: '  assistant hello', role: 'assistant' } as SelectorItem,
-    ])
-    expect(handleSelectorControl(state, key('enter'))).toEqual({ kind: 'history-preview', label: '#13', text: 'hello' })
-  })
-
-  test('history ellipsis enter closes selector', () => {
-    const state = createSelectorState('History  (↩ goto · enter preview)', [{ label: '…', focusable: false }])
-    expect(handleSelectorControl(state, key('enter')).kind).toBe('close')
-  })
-
   test('model enter returns provider-qualified select-model action', () => {
     const state = createSelectorState('Select model', [{ label: 'claude', id: 'anthropic:claude', detail: 'anthropic' }])
     expect(handleSelectorControl(state, key('enter'))).toEqual({ kind: 'select-model', spec: 'anthropic:claude' })

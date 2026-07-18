@@ -7,7 +7,6 @@
 pub enum Command {
     Clear,
     Goto(u64),
-    History(usize),
     Compact {
         custom_instructions: Option<String>,
     },
@@ -46,16 +45,6 @@ pub fn parse_command(text: &str) -> Option<Command> {
         return Some(Command::Compact {
             custom_instructions: (!arg.is_empty()).then(|| arg.to_string()),
         });
-    }
-    if lower == "/history" || lower.starts_with("/history ") {
-        let arg = lower.strip_prefix("/history").map(|s| s.trim());
-        match arg {
-            Some(s) if !s.is_empty() => match s.parse::<usize>() {
-                Ok(n) if n > 0 => return Some(Command::History(n)),
-                _ => return Some(Command::UsageError("Usage: /history [count]".into())),
-            },
-            _ => return Some(Command::History(20)),
-        }
     }
     if lower == "/_dump" || lower.starts_with("/_dump ") {
         let arg = trimmed

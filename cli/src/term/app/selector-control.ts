@@ -15,8 +15,6 @@ export type SelectorControlAction =
   | { kind: 'update'; state: SelectorState }
   | { kind: 'close' }
   | { kind: 'resume'; sessionId: string }
-  | { kind: 'history-goto'; seq: string }
-  | { kind: 'history-preview'; label: string; text: string }
   | { kind: 'select-model'; spec: string }
   | { kind: 'delete-session'; sessionId: string; label: string; state: SelectorState }
   | { kind: 'queue-edit'; entry: ManagedQueuedPrompt }
@@ -63,16 +61,6 @@ function selectAction(state: SelectorState): SelectorControlAction {
     const action = decideQueueSelectorAction(selected, 'enter')
     if (action.kind === 'edit') return { kind: 'queue-edit', entry: action.entry }
     return { kind: 'none' }
-  }
-
-  if (state.title.startsWith('History')) {
-    if (selected.label === '…') return { kind: 'close' }
-    const role = (selected as { role?: string }).role
-    if (role === 'assistant') {
-      const text = (selected.detail ?? '').replace(/^\s*assistant\s+/, '')
-      return { kind: 'history-preview', label: selected.label, text }
-    }
-    return { kind: 'history-goto', seq: selected.label.replace('#', '') }
   }
 
   return { kind: 'select-model', spec: selected.id ?? selected.label }

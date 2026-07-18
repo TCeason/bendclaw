@@ -594,26 +594,6 @@ impl Agent {
                 };
                 Ok(Some(SubmitOutcome::Command(msg)))
             }
-            Command::History(limit) => {
-                let entries = session.recent_context_entries(usize::MAX).await?;
-                let user_entries: Vec<_> = entries
-                    .iter()
-                    .filter(|(_, item)| {
-                        matches!(item, crate::types::TranscriptItem::User { text, .. } if !text.starts_with("[Summary]"))
-                    })
-                    .collect();
-                if user_entries.is_empty() {
-                    return Ok(Some(SubmitOutcome::Command(
-                        "No messages in session.".into(),
-                    )));
-                }
-                let start = user_entries.len().saturating_sub(limit);
-                let mut lines = Vec::new();
-                for (seq, item) in &user_entries[start..] {
-                    lines.push(format!("  {}", format_history_entry(*seq, item)));
-                }
-                Ok(Some(SubmitOutcome::Command(lines.join("\n"))))
-            }
             Command::Dump { target } => {
                 let msg = self
                     .handle_dump_command(request.mode, session, target.as_deref())

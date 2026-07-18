@@ -327,14 +327,14 @@ impl Session {
             Some(_idx) => {
                 let resolved = crate::compact::context_view::resolve_context_entries(&entries);
                 for (seq, item) in resolved {
-                    if is_history_visible(&item) {
+                    if is_context_visible(&item) {
                         context.push((seq, item));
                     }
                 }
             }
             None => {
                 for entry in &entries {
-                    if is_history_visible(&entry.item) {
+                    if is_context_visible(&entry.item) {
                         context.push((entry.seq, entry.item.clone()));
                     }
                 }
@@ -346,10 +346,10 @@ impl Session {
     }
 }
 
-/// Whether an item should appear in `/history` output.
+/// Whether an item should appear in the resolved session context.
 /// Non-empty user and assistant messages are shown, but only user messages are
 /// addressable by `/goto` (see [`is_goto_target`]).
-fn is_history_visible(item: &TranscriptItem) -> bool {
+fn is_context_visible(item: &TranscriptItem) -> bool {
     match item {
         TranscriptItem::User { text, .. } => !text.trim().is_empty(),
         TranscriptItem::Assistant { content, .. } => {

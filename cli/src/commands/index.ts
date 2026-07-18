@@ -15,7 +15,6 @@ export const COMMANDS: SlashCommand[] = [
   { name: '/resume', description: 'Resume a session', usage: '/resume [id | query]', handler: 'builtin' },
   { name: '/new', description: 'Start a new session', handler: 'builtin' },
   { name: '/goto', description: 'Go to a message', usage: '/goto <message_number>', handler: 'builtin' },
-  { name: '/history', description: 'Show recent messages with seq numbers', usage: '/history [count]', handler: 'builtin' },
   { name: '/model', description: 'Show or change model', usage: '/model [name]', handler: 'builtin' },
   { name: '/plan', description: 'Enter planning mode', handler: 'builtin' },
   { name: '/harden', description: 'Stress-test the previous plan or current changes', usage: '/harden [plan | changes | arch | subject]', handler: 'builtin' },
@@ -108,16 +107,12 @@ function isSlashPrefix(text: string): boolean {
 }
 
 /**
- * Check if input looks like a slash command.
- * Only triggers when the first word is a valid slash prefix
- * AND matches a known command (visible + hidden) by exact or prefix match.
+ * Check if input has a valid slash-command shape.
+ * Unknown names still route through the command handler so they produce an
+ * explicit error instead of being submitted to the model.
  */
 export function isSlashCommand(input: string): boolean {
   const trimmed = input.trim()
   if (!isSlashPrefix(trimmed)) return false
-  const firstWord = trimmed.split(/\s+/)[0]!.toLowerCase()
-  if (firstWord === '/') return false
-  const allCmds = [...COMMANDS, ...HIDDEN_COMMANDS]
-  return allCmds.some(c => c.name === firstWord || c.aliases?.includes(firstWord))
-    || allCmds.some(c => c.name.startsWith(firstWord) || (c.aliases?.some(a => a.startsWith(firstWord)) ?? false))
+  return trimmed.split(/\s+/)[0] !== '/'
 }

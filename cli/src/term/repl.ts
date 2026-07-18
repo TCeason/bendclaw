@@ -10,7 +10,7 @@ import { Agent, QueryStream, fastExit, type SessionMeta, type ConfigInfo, type Q
 import { createInitialState, type AppState } from './app/state.js'
 import { assistantToolCalls } from './app/assistant-content.js'
 import { assistantMessageToOutputLines } from '../render/assistant.js'
-import { HistoryManager, parseHistoryItems } from '../session/history.js'
+import { HistoryManager } from '../session/history.js'
 import { ScreenLog } from '../session/screen-log.js'
 import { RendererTrace } from '../session/renderer-trace.js'
 import { findLastAssistantMarkdown } from '../session/assistant-markdown.js'
@@ -1832,34 +1832,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           commitLines([{ id: 'sys-goto-err', kind: 'system', text: chalk.red(`  Goto failed: ${err?.message ?? err}`) }])
         }
       }
-    } else if (name === '/history') {
-      try {
-        // Fetch a large set for search, display only the most recent entries
-        const displayLimit = args ? parseInt(args, 10) : 20
-        const searchLimit = Math.max(displayLimit, 200)
-        const searchCmd = `/history ${searchLimit}`
-        const outcome = await agent.submit(searchCmd, sessionId ?? undefined)
-        if (outcome.kind === 'command') {
-          const allItems = parseHistoryItems(outcome.message)
-          if (allItems.length === 0) {
-            commitLines([{ id: 'sys-hist', kind: 'system', text: `  ${outcome.message}` }])
-          } else {
-            // Mark user entries as goto-able, assistant as preview-only
-            const annotate = (items: typeof allItems) => items.map(item => ({
-              ...item,
-              detail: item.role === 'user' ? `↩ ${item.detail}` : `  ${item.detail}`,
-              focusable: item.role === 'user',
-            }))
-            const displayItems = allItems.slice(-displayLimit)
-            overlay = {
-              kind: 'selector',
-              state: createSelectorState('History  (↩ goto · enter preview)', annotate(displayItems), annotate(allItems)),
-            }
-          }
-        }
-      } catch (err: any) {
-        commitLines([{ id: 'sys-hist-err', kind: 'system', text: chalk.red(`  History failed: ${err?.message ?? err}`) }])
-      }
     } else if (name === '/env') {
       handleEnvCommand(args)
     } else if (name === '/harden') {
@@ -2318,16 +2290,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       case 'resume':
         overlay = { kind: 'none' }
         resumeSession({ session_id: action.sessionId } as SessionMeta).then(() => renderer.requestRender())
-        renderer.requestRender()
-        return
-      case 'history-goto':
-        overlay = { kind: 'none' }
-        handleSlashInput(`/goto ${action.seq}`)
-        renderer.requestRender()
-        return
-      case 'history-preview':
-        overlay = { kind: 'none' }
-        commitLines([{ id: 'sys-hist-preview', kind: 'system', text: `  ${action.label} assistant: ${action.text}` }])
         renderer.requestRender()
         return
       case 'select-model': {

@@ -90,6 +90,11 @@ describe('term commands', () => {
     expect(result.systemLines.length).toBe(0)
   })
 
+  test('removed /history command returns unknown-command message', () => {
+    const result = handleSlashCommand('/history', mkCtx())
+    expect(result.systemLines[0]?.text).toContain('Unknown command: /history')
+  })
+
   test('unknown command returns system message', () => {
     const result = handleSlashCommand('/wat', mkCtx())
     expect(result.systemLines[0]?.text).toContain('Unknown command')

@@ -314,7 +314,7 @@ pub struct ListTranscriptEntries {
 /// Build a run-finished usage summary by summing assistant-message usage.
 /// This is a convenience re-export so callers don't need to depend on metrics
 /// directly when they already have a `UsageSummary`.
-/// Short preview of a transcript item for `/history` output.
+/// Short preview of a transcript item for context navigation output.
 pub fn entry_preview(item: &TranscriptItem) -> String {
     let text = match item {
         TranscriptItem::User { text, .. } => text.clone(),

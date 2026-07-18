@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
-import { HistoryManager, parseHistoryItems } from '../src/session/history.js'
+import { HistoryManager } from '../src/session/history.js'
 import { mkdtempSync, rmSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -112,59 +112,5 @@ describe('HistoryManager', () => {
 
     const hm2 = new HistoryManager(historyPath, { explicitPath: true })
     expect(hm2.load()).toEqual(['first\\nline\nsecond line'])
-  })
-})
-
-describe('parseHistoryItems', () => {
-  test('parses typical history output', () => {
-    const msg = [
-      '    #1    user       hello world',
-      '    …   assistant  I can help with that',
-      '    #3    user       thanks',
-    ].join('\n')
-    expect(parseHistoryItems(msg)).toEqual([
-      { label: '#1', detail: 'user  hello world', role: 'user' },
-      { label: '…', detail: 'assistant  I can help with that', role: 'assistant' },
-      { label: '#3', detail: 'user  thanks', role: 'user' },
-    ])
-  })
-
-  test('returns empty array for no-messages text', () => {
-    expect(parseHistoryItems('No messages in session.')).toEqual([])
-  })
-
-  test('skips snapshot lines with ellipsis', () => {
-    const msg = [
-      '    …   user       old message',
-      '    #5    user       new message',
-    ].join('\n')
-    const items = parseHistoryItems(msg)
-    expect(items).toEqual([
-      { label: '…', detail: 'user  old message', role: 'user' },
-      { label: '#5', detail: 'user  new message', role: 'user' },
-    ])
-  })
-
-  test('handles single entry', () => {
-    expect(parseHistoryItems('    …   assistant  done')).toEqual([
-      { label: '…', detail: 'assistant  done', role: 'assistant' },
-    ])
-  })
-
-  test('returns empty for empty string', () => {
-    expect(parseHistoryItems('')).toEqual([])
-  })
-
-  test('parses all-snapshot entries after resume', () => {
-    const msg = [
-      '    …   user       hello world',
-      '    …   assistant  I can help with that',
-      '    …   user       thanks',
-    ].join('\n')
-    expect(parseHistoryItems(msg)).toEqual([
-      { label: '…', detail: 'user  hello world', role: 'user' },
-      { label: '…', detail: 'assistant  I can help with that', role: 'assistant' },
-      { label: '…', detail: 'user  thanks', role: 'user' },
-    ])
   })
 })

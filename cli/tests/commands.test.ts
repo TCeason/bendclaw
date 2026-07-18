@@ -63,6 +63,12 @@ describe('resolveCommand', () => {
     expect(result.kind).toBe('resolved')
   })
 
+  test('routes removed /history command to the unknown-command handler', () => {
+    expect(resolveCommand('/history')).toEqual({ kind: 'unknown' })
+    expect(isSlashCommand('/history')).toBe(true)
+    expect(isSlashCommand('/history 10')).toBe(true)
+  })
+
   test('returns unknown for unrecognized commands', () => {
     const result = resolveCommand('/foobar')
     expect(result).toEqual({ kind: 'unknown' })

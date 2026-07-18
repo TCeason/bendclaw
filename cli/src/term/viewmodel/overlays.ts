@@ -135,7 +135,6 @@ function buildHelpBlocks(columns: number): ViewBlock[] {
     ['/resume [id|query]', 'Resume session'],
     ['/new', 'Start new session'],
     ['/goto <n>', 'Go to message'],
-    ['/history [n]', 'Show recent messages'],
     ['/plan', 'Toggle planning mode'],
     ['/env', 'Manage variables'],
     ['/skill', 'Manage skills'],

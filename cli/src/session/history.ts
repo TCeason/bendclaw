@@ -62,32 +62,6 @@ function unescape(s: string): string {
   return result
 }
 
-export interface HistoryItem {
-  label: string
-  detail: string
-  role: 'user' | 'assistant'
-}
-
-/** Parse `/history` command output into selector items.
- *  Lines with `#<seq>` get label `#<seq>`, snapshot lines (…) get label `…`. */
-export function parseHistoryItems(message: string): HistoryItem[] {
-  const items: HistoryItem[] = []
-  for (const line of message.split('\n')) {
-    const numbered = line.match(/#(\d+)\s+(user|assistant)\s+(.*)/)
-    if (numbered) {
-      const role = numbered[2] as 'user' | 'assistant'
-      items.push({ label: `#${numbered[1]}`, detail: `${role}  ${numbered[3]!.trim()}`, role })
-      continue
-    }
-    const snapshot = line.match(/…\s+(user|assistant)\s+(.*)/)
-    if (snapshot) {
-      const role = snapshot[1] as 'user' | 'assistant'
-      items.push({ label: '…', detail: `${role}  ${snapshot[2]!.trim()}`, role })
-    }
-  }
-  return items
-}
-
 export class HistoryManager {
   private filePath: string
   private lastEntry: string | null = null
