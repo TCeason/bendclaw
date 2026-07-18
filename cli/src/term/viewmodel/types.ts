@@ -62,8 +62,8 @@ export function blocksToLines(blocks: ViewBlock[]): string[] {
       const rendered = styledLineToAnsi(line)
       // Safety: if a span contains embedded newlines, split so the renderer
       // treats each physical line independently (needed for CLEAR_LINE).
-      if (rendered.includes('\n')) {
-        for (const sub of rendered.split('\n')) result.push(sub)
+      if (rendered.includes('\n') || rendered.includes('\r')) {
+        for (const sub of rendered.split(/\r\n|\r|\n/)) result.push(sub)
       } else {
         result.push(rendered)
       }

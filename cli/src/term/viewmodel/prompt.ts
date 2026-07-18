@@ -1,4 +1,5 @@
 import stringWidth from 'string-width'
+import { wrapTextWithAnsi } from '../../render/wrap.js'
 import { COMMANDS, HIDDEN_COMMANDS } from '../../commands/index.js'
 import { CURSOR_MARKER } from '../renderer.js'
 import { line, block, plain, dim, colored, inverse, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
@@ -123,7 +124,8 @@ export function buildPromptBlocks(input: PromptVMInput, options: PromptLayoutOpt
   blocks.push(block(inputLines))
 
   if (input.completionCandidates.length > 1) {
-    blocks.push(block([line(dim('  ' + input.completionCandidates.join('  ')))]))
+    const candidates = `  ${input.completionCandidates.join('  ')}`
+    blocks.push(block(wrapTextWithAnsi(candidates, columns).map(text => line(dim(text)))))
   }
 
   blocks.push(block([line(dim(border))]))
@@ -198,31 +200,63 @@ function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
 
   let leftText = leftSpans.map(s => s.text).join('')
   const rightText = rightSpans.map(s => s.text).join('')
-  const totalWidth = leftText.length + rightText.length
+  const totalWidth = stringWidth(leftText) + stringWidth(rightText)
 
   if (totalWidth >= columns) {
-    // Overflow: drop right side. If left still too wide, truncate cwd.
-    let leftWidth = leftText.length
+    // Overflow: drop right side. If left still too wide, truncate cwd first.
+    let leftWidth = stringWidth(leftText)
     if (leftWidth >= columns) {
       const cwdIdx = leftSpans.findIndex(s => s.text === cwd)
       if (cwdIdx >= 0) {
-        const otherWidth = leftWidth - cwd.length
-        const maxCwd = Math.max(8, columns - otherWidth - 1)
-        if (cwd.length > maxCwd) {
-          const shortened = '...' + cwd.slice(cwd.length - maxCwd + 3)
-          leftSpans[cwdIdx] = dim(shortened)
-          leftWidth = leftSpans.map(s => s.text).join('').length
-        }
+        const otherWidth = leftWidth - stringWidth(cwd)
+        const maxCwd = Math.max(1, columns - otherWidth - 1)
+        leftSpans[cwdIdx] = dim(truncateTailToWidth(cwd, maxCwd))
+        leftText = leftSpans.map(s => s.text).join('')
+        leftWidth = stringWidth(leftText)
       }
-      // If still too wide, just let it be — terminal will clip the end
+      if (leftWidth > columns) {
+        return block([line(dim(truncateToWidth(leftText, columns)))])
+      }
     }
     return block([line(...leftSpans)])
   }
 
-  const gap = Math.max(1, columns - leftText.length - rightText.length)
+  const gap = Math.max(1, columns - stringWidth(leftText) - stringWidth(rightText))
   const spans: StyledSpan[] = [...leftSpans, plain(' '.repeat(gap)), ...rightSpans]
 
   return block([line(...spans)])
+}
+
+function truncateToWidth(text: string, width: number): string {
+  if (width <= 0) return ''
+  if (stringWidth(text) <= width) return text
+  if (width <= 3) return '.'.repeat(width)
+  let result = ''
+  let used = 0
+  for (const char of text) {
+    const charWidth = stringWidth(char)
+    if (used + charWidth > width - 3) break
+    result += char
+    used += charWidth
+  }
+  return `${result}...`
+}
+
+function truncateTailToWidth(text: string, width: number): string {
+  if (width <= 0) return ''
+  if (stringWidth(text) <= width) return text
+  if (width <= 3) return '.'.repeat(width)
+  let result = ''
+  let used = 0
+  const chars = [...text]
+  for (let index = chars.length - 1; index >= 0; index--) {
+    const char = chars[index]!
+    const charWidth = stringWidth(char)
+    if (used + charWidth > width - 3) break
+    result = char + result
+    used += charWidth
+  }
+  return `...${result}`
 }
 
 function formatContextTokens(count: number): string {

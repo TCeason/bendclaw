@@ -232,9 +232,10 @@ describe('RendererTrace rolling storage', () => {
       const entries = frameEntries(join(run ?? '', names[0]!))
       expect(entries).toHaveLength(2)
       expect(entries[0].branch).toBe('first_render')
-      expect(entries[0].viewportTail).toEqual(['history', 'prompt'])
+      const reset = '\x1b[0m\x1b]8;;\x07'
+      expect(entries[0].viewportTail).toEqual([`history${reset}`, `prompt${reset}`])
       expect(entries[1].viewportTail).toBeUndefined()
-      expect(entries[1].viewportPatch).toEqual({ start: 1, lines: ['answer', 'prompt'] })
+      expect(entries[1].viewportPatch).toEqual({ start: 1, lines: [`answer${reset}`, `prompt${reset}`] })
       expect(entries[0].terminal).toMatchObject({ columns: 40, rows: 6 })
       renderer.destroy()
       trace.close()

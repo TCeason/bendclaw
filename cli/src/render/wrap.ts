@@ -104,6 +104,29 @@ function visibleWidth(str: string): number {
   return width
 }
 
+export function normalizeTerminalOutput(str: string): string {
+  let normalized = str
+  if (/[\u0e33\u0eb3]/.test(normalized)) {
+    normalized = normalized.replace(/[\u0e33\u0eb3]/g, char =>
+      char === '\u0e33' ? '\u0e4d\u0e32' : '\u0ecd\u0eb2')
+  }
+  if (!normalized.includes('\t')) return normalized
+
+  let result = ''
+  let i = 0
+  while (i < normalized.length) {
+    const ansi = extractAnsiCode(normalized, i)
+    if (ansi) {
+      result += ansi.code
+      i += ansi.length
+      continue
+    }
+    result += normalized[i] === '\t' ? '   ' : normalized[i]
+    i++
+  }
+  return result
+}
+
 /** Extract an ANSI/OSC/APC escape sequence starting at `pos`, or null. */
 function extractAnsiCode(str: string, pos: number): { code: string, length: number } | null {
   if (pos >= str.length || str[pos] !== '\x1b') return null
@@ -460,7 +483,7 @@ export function wrapTextWithAnsi(text: string, width: number): string[] {
   if (!text) return ['']
   if (width <= 0) return [text]
 
-  const inputLines = text.split('\n')
+  const inputLines = text.split(/\r\n|\r|\n/)
   const result: string[] = []
   const tracker = new AnsiCodeTracker()
 

@@ -100,15 +100,21 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
       }
 
       case 'thinking': {
-        // First line of a thinking block gets a lightweight ✻ marker (dim, so it
-        // reads as secondary next to the assistant's cyan ⏺). Continuation lines
-        // align under it with a 2-col indent — same shape as assistant text.
+        // Keep reasoning rows within the terminal width just like pi's Text /
+        // Markdown components. A long unwrapped thinking line violates the
+        // renderer's one-logical-line-per-terminal-row invariant.
         const isBlockStart = prevKind !== 'thinking'
         const prefix = isBlockStart ? colored('✻ ', 'magenta', { dim: true }) : plain('  ')
-        const body = ol.thinkingStyle
-          ? { text: `${ol.text}`, italic: true, dim: true }
-          : dim(`${ol.text}`)
-        blocks.push(block([line(prefix, body)], isBlockStart ? 1 : 0))
+        const cols = initialContext.columns
+        const avail = cols ? Math.max(1, cols - 2) : 0
+        const wrapped = avail > 0 ? wrapTextWithAnsi(ol.text, avail) : [ol.text]
+        const thinkingLines = wrapped.map((text, index) => {
+          const body = ol.thinkingStyle
+            ? { text, italic: true, dim: true }
+            : dim(text)
+          return line(index === 0 ? prefix : plain('  '), body)
+        })
+        blocks.push(block(thinkingLines, isBlockStart ? 1 : 0))
         break
       }
 
@@ -121,7 +127,7 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
         break
 
       case 'verbose':
-        blocks.push(buildVerboseBlock(ol.text))
+        blocks.push(buildVerboseBlock(ol.text, initialContext.columns))
         break
 
       case 'error': {
@@ -142,9 +148,14 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
         break
       }
 
-      case 'system':
-        blocks.push(block(ol.text.split('\n').map(l => line(dim(l)))))
+      case 'system': {
+        const cols = initialContext.columns
+        const systemLines = cols
+          ? wrapTextWithAnsi(ol.text, Math.max(1, cols))
+          : ol.text.split(/\r\n|\r|\n/)
+        blocks.push(block(systemLines.map(l => line(dim(l)))))
         break
+      }
 
       default:
         break
@@ -225,7 +236,7 @@ function buildToolBlock(text: string, columns?: number): ViewBlock {
 function wrapToolLines(text: string, columns?: number): string[] {
   const width = columns ? Math.max(1, columns) : 0
   const out: string[] = []
-  for (const physical of text.split('\n')) {
+  for (const physical of text.split(/\r\n|\r|\n/)) {
     if (width <= 0 || stringWidth(physical) <= width) {
       out.push(physical)
       continue
@@ -235,7 +246,12 @@ function wrapToolLines(text: string, columns?: number): string[] {
   return out
 }
 
-function buildVerboseBlock(text: string): ViewBlock {
+function buildVerboseBlock(text: string, columns?: number): ViewBlock {
+  const width = columns ? Math.max(1, columns) : 0
+  if (width > 0 && stringWidth(stripAnsi(text)) > width) {
+    return block(wrapTextWithAnsi(text, width).map(part => line(dim(part))), 1)
+  }
+
   const naturalMatch = text.match(/^([●✓✗↻])\s+(LLM|COMPACT|SPILL)\s*(.*)$/)
   if (naturalMatch) {
     const status = naturalMatch[1]!
@@ -263,7 +279,7 @@ function buildVerboseBlock(text: string): ViewBlock {
     }
     return block([line(...spans)], 1)
   }
-  return block([line(dim(text))])
+  return block((width > 0 ? wrapTextWithAnsi(text, width) : [text]).map(part => line(dim(part))))
 }
 
 function verboseStatusColor(): 'cyan' {

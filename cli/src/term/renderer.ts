@@ -13,6 +13,7 @@
 import { performance } from 'node:perf_hooks'
 import stringWidth from 'string-width'
 import stripAnsi from 'strip-ansi'
+import { normalizeTerminalOutput, wrapTextWithAnsi } from '../render/wrap.js'
 
 // --- Constants ---
 
@@ -22,6 +23,7 @@ const SYNC_END = '\x1b[?2026l'
 const CLEAR_LINE = '\x1b[2K'
 const CLEAR_VIEWPORT = '\x1b[2J\x1b[H'
 const CLEAR_SCREEN_AND_SCROLLBACK = `${CLEAR_VIEWPORT}\x1b[3J`
+const SEGMENT_RESET = '\x1b[0m\x1b]8;;\x07'
 const OSC133_MARKER = /\x1b\]133;[ABC]\x07/g
 const HIDE_CURSOR = '\x1b[?25l'
 const SHOW_CURSOR = '\x1b[?25h'
@@ -30,12 +32,18 @@ const WRAP = '\x1b[?7h'     // Re-enable auto-wrap
 
 // --- Types ---
 
-export interface RenderFrame {
+export interface RenderOverlay {
   lines: string[]
 }
 
+export interface RenderFrame {
+  lines: string[]
+  /** Screen-relative modal content composited over the visible viewport. */
+  overlay?: RenderOverlay
+}
+
 /** Zero-width marker embedded in rendered output to indicate cursor position for IME. */
-export const CURSOR_MARKER = '\x1b]evot:c\x07'
+export const CURSOR_MARKER = '\x1b_pi:c\x07'
 
 export interface RendererTraceEntry {
   schemaVersion: 1
@@ -231,8 +239,12 @@ export class TermRenderer {
 
     // Get new frame from callback
     const raw = this.renderCallback()
-    const newLines = Array.isArray(raw) ? raw : raw.lines
+    const rendered = Array.isArray(raw) ? { lines: raw } : raw
+    let newLines = rendered.overlay
+      ? this.compositeOverlay(rendered.lines, rendered.overlay, width, height)
+      : rendered.lines
     const cursorPos = this.extractCursorPosition(newLines, height)
+    newLines = this.applyLineResets(newLines)
 
     const traceFrame = (
       branch: string,
@@ -498,7 +510,43 @@ export class TermRenderer {
     traceFrame('differential_update', firstChanged, lastChanged)
   }
 
-  // --- Private: cursor positioning for IME ---
+  // --- Private: viewport overlays and cursor positioning ---
+
+  /**
+   * Composite modal content into the visible viewport without changing the
+   * transcript's logical height. This follows pi's screen-relative overlay
+   * model: long transcripts keep their length, while short frames are padded to
+   * one terminal height only while the overlay is visible.
+   */
+  private compositeOverlay(
+    baseLines: string[],
+    overlay: RenderOverlay,
+    width: number,
+    height: number,
+  ): string[] {
+    const result = [...baseLines]
+    const workingHeight = Math.max(result.length, height)
+    while (result.length < workingHeight) result.push('')
+
+    const overlayWidth = Math.max(1, width - Math.min(4, Math.max(0, width - 1)))
+    const wrapped = overlay.lines.flatMap(line => wrapTextWithAnsi(line, overlayWidth))
+    const maxHeight = Math.max(1, height - Math.min(2, Math.max(0, height - 1)))
+    const visibleOverlay = wrapped.slice(0, maxHeight)
+    const viewportStart = Math.max(0, workingHeight - height)
+    const row = Math.max(0, Math.floor((height - visibleOverlay.length) / 2))
+
+    for (let index = 0; index < visibleOverlay.length; index++) {
+      const line = visibleOverlay[index]!
+      const lineWidth = stringWidth(stripAnsi(line))
+      const col = Math.max(0, Math.floor((width - Math.min(lineWidth, width)) / 2))
+      result[viewportStart + row + index] = `${' '.repeat(col)}${line}`
+    }
+    return result
+  }
+
+  private applyLineResets(lines: string[]): string[] {
+    return lines.map(line => normalizeTerminalOutput(line) + SEGMENT_RESET)
+  }
 
   private extractCursorPosition(lines: string[], height: number): { row: number; col: number } | null {
     const viewportTop = Math.max(0, lines.length - height)
@@ -507,7 +555,7 @@ export class TermRenderer {
       const markerIndex = line.indexOf(CURSOR_MARKER)
       if (markerIndex !== -1) {
         const beforeMarker = line.slice(0, markerIndex)
-        const col = stripAnsiVisibleWidth(beforeMarker)
+        const col = stringWidth(stripAnsi(beforeMarker))
         lines[row] = line.slice(0, markerIndex) + line.slice(markerIndex + CURSOR_MARKER.length)
         return { row, col }
       }
@@ -552,8 +600,4 @@ function isTermuxSession(): boolean {
 
 function safeDimension(n: number | undefined, fallback: number): number {
   return n != null && Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
-}
-
-function stripAnsiVisibleWidth(text: string): number {
-  return stringWidth(stripAnsi(text))
 }

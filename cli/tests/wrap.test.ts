@@ -51,6 +51,17 @@ describe('wrapTextWithAnsi', () => {
     expect(lines).toEqual(['line one', 'line two'])
   })
 
+  test('handles LF, CRLF, and CR as hard breaks', () => {
+    const lines = wrapTextWithAnsi('first\nsecond\r\nthird\rfourth', 40)
+    expect(lines).toEqual(['first', 'second', 'third', 'fourth'])
+  })
+
+  test('normalizes visible tabs without changing tabs inside control sequences', async () => {
+    const { normalizeTerminalOutput } = await import('../src/render/wrap.js')
+    const control = '\x1b]8;;https://example.test/a\tb\x07'
+    expect(normalizeTerminalOutput(`${control}label\ttext`)).toBe(`${control}label   text`)
+  })
+
   test('empty input returns a single empty line', () => {
     expect(wrapTextWithAnsi('', 10)).toEqual([''])
   })

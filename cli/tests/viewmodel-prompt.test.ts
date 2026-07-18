@@ -2,7 +2,9 @@ import { describe, test, expect, beforeAll } from 'bun:test'
 import { buildPromptBlocks, type PromptVMInput } from '../src/term/viewmodel/prompt.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
 import stripAnsi from 'strip-ansi'
+import { CURSOR_MARKER } from '../src/term/renderer.js'
 import chalk from 'chalk'
+import stringWidth from 'string-width'
 
 beforeAll(() => {
   chalk.level = 3
@@ -44,7 +46,7 @@ function render(input: PromptVMInput): string {
 }
 
 function renderPlain(input: PromptVMInput): string {
-  return stripAnsi(render(input))
+  return stripAnsi(render(input)).replaceAll(CURSOR_MARKER, '')
 }
 
 describe('buildPromptBlocks', () => {
@@ -181,6 +183,32 @@ describe('buildPromptBlocks', () => {
     }))
     expect(result).toContain('claude-sonnet')
     expect(result).not.toContain('•')
+  })
+
+  test('footer stays within terminal width for wide CJK cwd and long model', () => {
+    const columns = 40
+    const lines = renderPlain(defaultInput({
+      columns,
+      cwd: '/项目/非常长的中文目录名称/子目录',
+      gitBranch: 'feature/very-long-branch',
+      model: 'a-very-long-model-name-that-must-be-truncated',
+      provider: 'provider',
+      thinkingLevel: 'xhigh',
+    })).split('\n')
+
+    const footer = lines.at(-2)!
+    expect(stringWidth(footer)).toBeLessThanOrEqual(columns)
+  })
+
+  test('completion candidates wrap within terminal width', () => {
+    const columns = 24
+    const result = renderPlain(defaultInput({
+      columns,
+      completionCandidates: ['/very-long-command-one', '/very-long-command-two'],
+    }))
+    for (const line of result.split('\n')) {
+      expect(stringWidth(line)).toBeLessThanOrEqual(columns)
+    }
   })
 
   test('cursor is rendered with inverse', () => {

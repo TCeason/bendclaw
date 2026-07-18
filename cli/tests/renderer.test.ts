@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach } from 'bun:test'
 import { Writable } from 'node:stream'
-import { TermRenderer } from '../src/term/renderer.js'
+import stripAnsi from 'strip-ansi'
+import { TermRenderer, CURSOR_MARKER } from '../src/term/renderer.js'
 
 // Mock stdout that captures writes
 class MockStdout extends Writable {
@@ -422,6 +423,45 @@ describe('TermRenderer', () => {
     })
   })
 
+  describe('screen overlays', () => {
+    test('screen overlay does not inflate a long transcript frame', async () => {
+      const { renderer, stdout } = createRenderer()
+      stdout.rows = 8
+      stdout.columns = 40
+      renderer.init()
+      const history = Array.from({ length: 20 }, (_, index) => `history ${index}`)
+      let showOverlay = false
+      renderer.setRenderCallback(() => ({
+        lines: history,
+        ...(showOverlay ? { overlay: { lines: ['Pick model', '❯ model-a', '  model-b'] } } : {}),
+      }))
+      await renderFrame(renderer)
+
+      stdout.clear()
+      showOverlay = true
+      await renderFrame(renderer)
+
+      expect(stdout.output).toContain('Pick model')
+      expect((renderer as any).previousLines).toHaveLength(history.length)
+      renderer.destroy()
+    })
+
+    test('screen overlay pads only short frames to one viewport', async () => {
+      const { renderer, stdout } = createRenderer()
+      stdout.rows = 8
+      stdout.columns = 40
+      renderer.init()
+      renderer.setRenderCallback(() => ({
+        lines: ['history', 'prompt'],
+        overlay: { lines: ['Help', 'close'] },
+      }))
+      await renderFrame(renderer)
+
+      expect((renderer as any).previousLines).toHaveLength(stdout.rows)
+      renderer.destroy()
+    })
+  })
+
   describe('clearScreen', () => {
     test('clears screen and resets state', async () => {
       const { renderer, stdout } = createRenderer()
@@ -514,7 +554,32 @@ describe('TermRenderer', () => {
     })
   })
 
-  describe('line truncation', () => {
+  describe('terminal line safety', () => {
+    test('normalizes visible tabs and appends a segment reset to every line', async () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      renderer.setRenderCallback(() => ['left\tright'])
+      stdout.clear()
+      await renderFrame(renderer)
+
+      expect(stdout.output).not.toContain('\t')
+      expect(stdout.output).toContain('left   right\x1b[0m\x1b]8;;\x07')
+      renderer.destroy()
+    })
+
+    test('pi APC cursor marker is zero-width and removed before paint', async () => {
+      const { renderer, stdout } = createRenderer()
+      renderer.init()
+      renderer.setRenderCallback(() => [`ab${CURSOR_MARKER}cd`])
+      stdout.clear()
+      await renderFrame(renderer)
+
+      expect(stdout.output).not.toContain(CURSOR_MARKER)
+      expect(stripAnsi(stdout.output)).toContain('abcd')
+      expect(stdout.output).toContain('\x1b[3G')
+      renderer.destroy()
+    })
+
     test('lines wider than terminal are clipped by DECAWM off', async () => {
       const { renderer, stdout } = createRenderer()
       stdout.columns = 20

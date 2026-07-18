@@ -93,6 +93,18 @@ describe('buildOutputBlocks', () => {
     expect(lines[1]).toBe('  second line')
   })
 
+  test('long thinking lines wrap within terminal width', () => {
+    const lines = renderPlainWithColumns([{
+      id: 'thinking-long',
+      kind: 'thinking',
+      text: 'reasoning '.repeat(20),
+      thinkingStyle: true,
+    }], 40).split('\n').filter(Boolean)
+
+    expect(lines.length).toBeGreaterThan(1)
+    for (const line of lines) expect(stringWidth(line)).toBeLessThanOrEqual(40)
+  })
+
   test('thinking to text transition has the same blank-line boundary before commit', () => {
     const output = assistantMessageToOutputLines([
       { type: 'thinking', contentIndex: 0, text: 'Investigating config' },
@@ -263,6 +275,18 @@ describe('buildOutputBlocks', () => {
     const rendered = result.split('\n').filter(l => /[┌│├└]/.test(l))
     expect(rendered.length).toBe(boxRows.length)
     for (const l of rendered) expect(/^(⏺ |  )[┌│├└]/.test(l)).toBe(true)
+  })
+
+  test('long system and verbose lines wrap within terminal width', () => {
+    const columns = 32
+    const result = renderWithColumns([
+      { id: 'system-long', kind: 'system', text: `  ${'system detail '.repeat(12)}` },
+      { id: 'verbose-long', kind: 'verbose', text: `[LLM] ● ${'provider detail '.repeat(12)}` },
+    ], columns)
+
+    for (const line of stripAnsi(result).split('\n')) {
+      expect(stringWidth(line)).toBeLessThanOrEqual(columns)
+    }
   })
 
   test('system lines are dim', () => {

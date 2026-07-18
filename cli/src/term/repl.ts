@@ -5,6 +5,7 @@ import { createSpinnerState, advanceSpinner, formatSpinnerLine, spinnerStatsFrom
 import { createSelectorState, selectorExpandItems, selectorClearQuery, selectorFocusOn, type SelectorItem } from './selector.js'
 import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
 import { buildUserMessage, type OutputLine } from '../render/output.js'
+import { wrapTextWithAnsi } from '../render/wrap.js'
 import { Agent, QueryStream, fastExit, type SessionMeta, type ConfigInfo, type QueuedPrompt } from '../native/index.js'
 import { createInitialState, type AppState } from './app/state.js'
 import { assistantToolCalls } from './app/assistant-content.js'
@@ -538,12 +539,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           usagePending,
         ),
       )
-      spinnerBlock = { lines: [{ spans: [{ text: spinnerText }] }], marginTop: 1 }
+      spinnerBlock = {
+        lines: wrapTextWithAnsi(spinnerText, renderer.termCols).map(text => ({ spans: [{ text }] })),
+        marginTop: 1,
+      }
     }
 
-    // 4–5. Queue + overlay + spinner + prompt form the sticky footer unit.
-    // Queue sits above the spinner (pi-style) so a message that left the input
-    // box still has a labeled home, with an esc hint to pull it back.
+    // 4–5. Queue + spinner + prompt form the sticky footer unit. Modal
+    // selector/help/ask content is returned separately and composited into the
+    // visible viewport by TermRenderer, matching pi's overlay model.
     const footerBlocks: ViewBlock[] = []
     const queueManagerOpen = overlay.kind === 'selector' && overlay.state.title === 'Prompt queue'
     const queueLines = queueManagerOpen
@@ -557,14 +561,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       // Queue already owns the blank line above the footer unit.
       if (spinnerBlock) spinnerBlock = { ...spinnerBlock, marginTop: 0 }
     }
-    footerBlocks.push(...buildOverlayBlocks(overlay, renderer.termCols))
+    const overlayLines = blocksToLines(buildOverlayBlocks(overlay, renderer.termCols))
     if (spinnerBlock) footerBlocks.push(spinnerBlock)
     footerBlocks.push(...buildPromptBlocks(getPromptVM(), {
       attachedAbove: spinnerBlock !== null || queueLines.length > 0,
     }))
 
     const frameBlocks: ViewBlock[] = [...blocks, ...footerBlocks]
-    return { lines: blocksToLines(frameBlocks) }
+    return {
+      lines: blocksToLines(frameBlocks),
+      ...(overlayLines.length > 0 ? { overlay: { lines: overlayLines } } : {}),
+    }
   }
 
   renderer.setRenderCallback(buildFrame)
