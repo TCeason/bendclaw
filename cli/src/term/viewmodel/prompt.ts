@@ -1,6 +1,7 @@
 import stringWidth from 'string-width'
 import { COMMANDS, HIDDEN_COMMANDS } from '../../commands/index.js'
 import type { CompletionMenu } from '../input/editor.js'
+import { nextGraphemeBoundary, wrapEditorText } from '../input/grapheme.js'
 import { CURSOR_MARKER } from '../renderer.js'
 import { line, block, plain, dim, colored, inverse, type ViewBlock, type StyledLine, type StyledSpan } from './types.js'
 
@@ -106,10 +107,11 @@ function buildInputLines(input: PromptVMInput, columns: number): { lines: Styled
       }
 
       cursorIndex = lines.length
-      const cursorCol = input.cursorCol - chunk.start
+      const cursorCol = Math.max(0, input.cursorCol - chunk.start)
+      const cursorEnd = nextGraphemeBoundary(textChunk, cursorCol)
       const before = textChunk.slice(0, cursorCol)
-      const cursorChar = textChunk[cursorCol] ?? ' '
-      const after = textChunk.slice(cursorCol + 1)
+      const cursorChar = textChunk.slice(cursorCol, cursorEnd) || ' '
+      const after = textChunk.slice(cursorEnd)
       const spans: StyledSpan[] = [
         prefix,
         ...styleInputText(before),
@@ -293,19 +295,5 @@ function formatContextTokens(count: number): string {
 }
 
 export function wrapTextByWidth(text: string, width: number): { start: number; end: number }[] {
-  if (width <= 0 || text.length === 0) return [{ start: 0, end: text.length }]
-  const chunks: { start: number; end: number }[] = []
-  let start = 0
-  let used = 0
-  for (let index = 0; index < text.length; index++) {
-    const charWidth = stringWidth(text[index]!)
-    if (used + charWidth > width && index > start) {
-      chunks.push({ start, end: index })
-      start = index
-      used = 0
-    }
-    used += charWidth
-  }
-  chunks.push({ start, end: text.length })
-  return chunks
+  return wrapEditorText(text, width)
 }

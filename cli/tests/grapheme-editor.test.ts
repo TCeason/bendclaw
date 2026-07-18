@@ -1,0 +1,147 @@
+import { describe, expect, test } from 'bun:test'
+import chalk from 'chalk'
+import {
+  backspace,
+  createEditorState,
+  deleteForward,
+  deleteWordBefore,
+  getEditorText,
+  insertText,
+  moveDown,
+  moveLeft,
+  moveRight,
+  moveUp,
+} from '../src/term/input/editor.js'
+import { buildPromptBlocks, wrapTextByWidth, type PromptVMInput } from '../src/term/viewmodel/prompt.js'
+import { blocksToLines } from '../src/term/viewmodel/types.js'
+
+function promptInput(text: string, cursorCol: number, columns = 20): PromptVMInput {
+  return {
+    lines: [text],
+    cursorLine: 0,
+    cursorCol,
+    active: true,
+    completion: null,
+    ghostHint: '',
+    columns,
+    rows: 24,
+    placeholder: false,
+    model: 'test-model',
+    provider: '',
+    thinkingLevel: '',
+    planning: false,
+    logMode: false,
+    dashboardUrl: null,
+    exitHint: false,
+    cwd: '/tmp/project',
+    gitBranch: null,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    contextTokens: 0,
+    contextWindow: 0,
+  }
+}
+
+describe('grapheme-safe editor', () => {
+  test('moves across and deletes a ZWJ emoji as one character', () => {
+    const family = '👨‍👩‍👧‍👦'
+    let state = insertText(createEditorState(), `a${family}b`)
+
+    state = moveLeft(state)
+    expect(state.cursorCol).toBe(1 + family.length)
+    state = moveLeft(state)
+    expect(state.cursorCol).toBe(1)
+    state = moveRight(state)
+    expect(state.cursorCol).toBe(1 + family.length)
+
+    state = backspace(state)
+    expect(getEditorText(state)).toBe('ab')
+    expect(state.cursorCol).toBe(1)
+  })
+
+  test('keeps flags and combining marks intact', () => {
+    for (const grapheme of ['🇨🇳', 'e\u0301', '👍🏽']) {
+      let state = insertText(createEditorState(), `a${grapheme}b`)
+      state = moveLeft(state)
+      state = backspace(state)
+      expect(getEditorText(state)).toBe('ab')
+      expect(state.cursorCol).toBe(1)
+    }
+  })
+
+  test('forward delete removes one complete grapheme', () => {
+    const emoji = '👩🏽‍💻'
+    let state = insertText(createEditorState(), `a${emoji}b`)
+    state = moveLeft(moveLeft(state))
+    state = deleteForward(state)
+    expect(getEditorText(state)).toBe('ab')
+    expect(state.cursorCol).toBe(1)
+  })
+
+  test('treats paste and image references as atomic editor units', () => {
+    for (const ref of ['[Image #7]', '[Pasted text #4 +12 lines]']) {
+      let state = insertText(createEditorState(), `a${ref}b`)
+      state = moveLeft(state)
+      expect(state.cursorCol).toBe(1 + ref.length)
+      state = moveLeft(state)
+      expect(state.cursorCol).toBe(1)
+      state = moveRight(state)
+      state = backspace(state)
+      expect(getEditorText(state)).toBe('ab')
+
+      state = insertText(createEditorState(), `a${ref}b`)
+      state = { ...state, cursorCol: 1 }
+      state = deleteForward(state)
+      expect(getEditorText(state)).toBe('ab')
+      expect(state.cursorCol).toBe(1)
+    }
+  })
+
+  test('word deletion never splits references or grapheme clusters', () => {
+    for (const word of ['[Image #7]', '[Pasted text #4 +12 lines]', '👩🏽‍💻code']) {
+      let state = insertText(createEditorState(), `prefix ${word}`)
+      state = deleteWordBefore(state)
+      expect(getEditorText(state)).toBe('prefix ')
+      expect(state.cursorCol).toBe('prefix '.length)
+    }
+  })
+
+  test('retains the preferred visual column across soft-wrapped rows', () => {
+    let state = insertText(createEditorState(), 'abcdefghi')
+    state = { ...state, cursorCol: 7 }
+
+    state = moveUp(state, 4)
+    expect(state.cursorCol).toBe(3)
+    state = moveDown(state, 4)
+    expect(state.cursorCol).toBe(7)
+    state = moveDown(state, 4)
+    expect(state.cursorCol).toBe(9)
+    state = moveUp(state, 4)
+    expect(state.cursorCol).toBe(7)
+  })
+
+  test('navigates the fresh cursor row after an exact-width line', () => {
+    let state = insertText(createEditorState(), 'abcd')
+    state = moveUp(state, 4)
+    expect(state.cursorCol).toBe(0)
+    state = moveDown(state, 4)
+    expect(state.cursorCol).toBe(4)
+  })
+})
+
+describe('grapheme-safe prompt layout', () => {
+  test('never splits grapheme clusters across wrapped rows', () => {
+    const family = '👨‍👩‍👧‍👦'
+    const text = `a${family}b`
+    const chunks = wrapTextByWidth(text, 2)
+    expect(chunks.map(chunk => text.slice(chunk.start, chunk.end))).toEqual(['a', family, 'b'])
+  })
+
+  test('renders the complete grapheme under the cursor', () => {
+    chalk.level = 3
+    const emoji = '👩🏽‍💻'
+    const rendered = blocksToLines(buildPromptBlocks(promptInput(`${emoji}x`, 0))).join('\n')
+    expect(rendered).toContain(`\x1b[7m${emoji}`)
+  })
+})

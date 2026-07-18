@@ -26,6 +26,10 @@ describe('parseInput', () => {
     test('unicode character', () => {
       expect(parse('你')).toEqual([{ type: 'char', char: '你' }])
     })
+
+    test('non-BMP character is emitted as one event', () => {
+      expect(parse('😀')).toEqual([{ type: 'char', char: '😀' }])
+    })
   })
 
   describe('control characters', () => {

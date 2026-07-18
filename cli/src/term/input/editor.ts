@@ -1,6 +1,15 @@
 import { complete, getGhostHint } from '../../commands/completion.js'
 import { COMMANDS, HIDDEN_COMMANDS } from '../../commands/index.js'
 import { needsContinuation } from './continuation.js'
+import {
+  boundaryAtDisplayWidth,
+  displayWidthBefore,
+  nextSegmentBoundary,
+  previousSegmentBoundary,
+  segmentEditorText,
+  snapToSegmentBoundary,
+  wrapEditorText,
+} from './grapheme.js'
 
 export interface CompletionCandidate {
   label: string
@@ -19,6 +28,8 @@ export interface EditorState {
   lines: string[]
   cursorLine: number
   cursorCol: number
+  /** Display column retained while moving vertically across unequal rows. */
+  preferredVisualCol?: number
   ghostHint: string
   completion: CompletionMenu | null
 }
@@ -63,6 +74,7 @@ export function clearEditor(state: EditorState): EditorState {
     lines: [''],
     cursorLine: 0,
     cursorCol: 0,
+    preferredVisualCol: undefined,
     ghostHint: '',
     completion: null,
   }
@@ -100,11 +112,13 @@ export function backspace(state: EditorState): EditorState {
   if (state.cursorCol > 0) {
     const newLines = [...state.lines]
     const currentLine = newLines[state.cursorLine]!
-    newLines[state.cursorLine] = currentLine.slice(0, state.cursorCol - 1) + currentLine.slice(state.cursorCol)
+    const cursorCol = snapToSegmentBoundary(currentLine, state.cursorCol)
+    const previousCol = previousSegmentBoundary(currentLine, cursorCol)
+    newLines[state.cursorLine] = currentLine.slice(0, previousCol) + currentLine.slice(cursorCol)
     return withCompletionsCleared({
       ...state,
       lines: newLines,
-      cursorCol: state.cursorCol - 1,
+      cursorCol: previousCol,
     })
   }
 
@@ -124,7 +138,8 @@ export function backspace(state: EditorState): EditorState {
 
 export function moveLeft(state: EditorState): EditorState {
   if (state.cursorCol > 0) {
-    return withoutGhost({ ...state, cursorCol: state.cursorCol - 1 })
+    const line = state.lines[state.cursorLine]!
+    return withoutGhost({ ...state, cursorCol: previousSegmentBoundary(line, state.cursorCol) })
   }
   if (state.cursorLine > 0) {
     return withoutGhost({
@@ -137,9 +152,9 @@ export function moveLeft(state: EditorState): EditorState {
 }
 
 export function moveRight(state: EditorState): EditorState {
-  const lineLen = state.lines[state.cursorLine]!.length
-  if (state.cursorCol < lineLen) {
-    return withoutGhost({ ...state, cursorCol: state.cursorCol + 1 })
+  const line = state.lines[state.cursorLine]!
+  if (state.cursorCol < line.length) {
+    return withoutGhost({ ...state, cursorCol: nextSegmentBoundary(line, state.cursorCol) })
   }
   if (state.cursorLine < state.lines.length - 1) {
     return withoutGhost({ ...state, cursorLine: state.cursorLine + 1, cursorCol: 0 })
@@ -174,6 +189,7 @@ export function applyCompletion(state: EditorState): CompletionApplyResult {
       ...state,
       lines: newLines,
       cursorCol,
+      preferredVisualCol: undefined,
       ghostHint: '',
       completion: items.length > 1
         ? { items, selectedIndex: 0, replaceStart: result.wordStart, replaceEnd: cursorCol }
@@ -216,6 +232,7 @@ export function acceptCompletion(state: EditorState): EditorState {
     ...state,
     lines: newLines,
     cursorCol: menu.replaceStart + item.value.length,
+    preferredVisualCol: undefined,
     ghostHint: '',
     completion: null,
   }
@@ -312,9 +329,11 @@ export function clearLineAfter(state: EditorState): EditorState {
 export function deleteForward(state: EditorState): EditorState {
   const line = state.lines[state.cursorLine]!
   if (state.cursorCol < line.length) {
+    const cursorCol = snapToSegmentBoundary(line, state.cursorCol)
+    const nextCol = nextSegmentBoundary(line, cursorCol)
     const newLines = [...state.lines]
-    newLines[state.cursorLine] = line.slice(0, state.cursorCol) + line.slice(state.cursorCol + 1)
-    return withCompletionsCleared({ ...state, lines: newLines })
+    newLines[state.cursorLine] = line.slice(0, cursorCol) + line.slice(nextCol)
+    return withCompletionsCleared({ ...state, lines: newLines, cursorCol })
   }
   // Join with next line
   if (state.cursorLine < state.lines.length - 1) {
@@ -332,14 +351,21 @@ export function deleteForward(state: EditorState): EditorState {
 
 export function deleteWordBefore(state: EditorState): EditorState {
   const line = state.lines[state.cursorLine]!
-  let i = state.cursorCol
-  // skip trailing whitespace backward
-  while (i > 0 && line[i - 1] === ' ') i--
-  // skip word backward
-  while (i > 0 && line[i - 1] !== ' ') i--
+  const cursorCol = snapToSegmentBoundary(line, state.cursorCol)
+  const segments = segmentEditorText(line).filter(segment => segment.end <= cursorCol)
+  let segmentIndex = segments.length - 1
+
+  // Delete trailing whitespace, then the preceding run of non-whitespace
+  // segments. Paste/image references are one segment even though their display
+  // labels contain spaces, so Ctrl+W can never leave a partial reference.
+  while (segmentIndex >= 0 && /^\s+$/u.test(segments[segmentIndex]!.text)) segmentIndex--
+  while (segmentIndex >= 0 && !/^\s+$/u.test(segments[segmentIndex]!.text)) segmentIndex--
+
+  const deleteStart = segments[segmentIndex + 1]?.start ?? cursorCol
+  if (deleteStart === cursorCol) return state
   const newLines = [...state.lines]
-  newLines[state.cursorLine] = line.slice(0, i) + line.slice(state.cursorCol)
-  return withCompletionsCleared({ ...state, lines: newLines, cursorCol: i })
+  newLines[state.cursorLine] = line.slice(0, deleteStart) + line.slice(cursorCol)
+  return withCompletionsCleared({ ...state, lines: newLines, cursorCol: deleteStart })
 }
 
 // ---------------------------------------------------------------------------
@@ -362,18 +388,81 @@ export function insertNewline(state: EditorState): EditorState {
 // Multi-line cursor movement (up/down within multi-line editor)
 // ---------------------------------------------------------------------------
 
-export function moveUp(state: EditorState): EditorState {
-  if (state.cursorLine <= 0) return state
-  const newLine = state.cursorLine - 1
-  const newCol = Math.min(state.cursorCol, state.lines[newLine]!.length)
-  return withoutGhost({ ...state, cursorLine: newLine, cursorCol: newCol })
+export function moveUp(state: EditorState, width = Number.POSITIVE_INFINITY): EditorState {
+  const current = visualCursor(state, width)
+  const target = current.rowIndex > 0
+    ? current.rows[current.rowIndex - 1]
+    : state.cursorLine > 0
+      ? visualRows(state.lines[state.cursorLine - 1]!, state.cursorLine - 1, width).at(-1)
+      : undefined
+  if (!target) return state
+
+  const preferredVisualCol = state.preferredVisualCol ?? current.visualCol
+  return withoutGhost({
+    ...state,
+    cursorLine: target.lineIndex,
+    cursorCol: cursorAtVisualColumn(state.lines[target.lineIndex]!, target, preferredVisualCol),
+    preferredVisualCol,
+  }, true)
 }
 
-export function moveDown(state: EditorState): EditorState {
-  if (state.cursorLine >= state.lines.length - 1) return state
-  const newLine = state.cursorLine + 1
-  const newCol = Math.min(state.cursorCol, state.lines[newLine]!.length)
-  return withoutGhost({ ...state, cursorLine: newLine, cursorCol: newCol })
+export function moveDown(state: EditorState, width = Number.POSITIVE_INFINITY): EditorState {
+  const current = visualCursor(state, width)
+  const target = current.rowIndex < current.rows.length - 1
+    ? current.rows[current.rowIndex + 1]
+    : state.cursorLine < state.lines.length - 1
+      ? visualRows(state.lines[state.cursorLine + 1]!, state.cursorLine + 1, width)[0]
+      : undefined
+  if (!target) return state
+
+  const preferredVisualCol = state.preferredVisualCol ?? current.visualCol
+  return withoutGhost({
+    ...state,
+    cursorLine: target.lineIndex,
+    cursorCol: cursorAtVisualColumn(state.lines[target.lineIndex]!, target, preferredVisualCol),
+    preferredVisualCol,
+  }, true)
+}
+
+interface VisualRow {
+  lineIndex: number
+  start: number
+  end: number
+}
+
+function visualRows(text: string, lineIndex: number, width: number): VisualRow[] {
+  const finiteWidth = Number.isFinite(width)
+  const safeWidth = finiteWidth ? Math.max(1, Math.floor(width)) : Number.MAX_SAFE_INTEGER
+  const rows = wrapEditorText(text, safeWidth).map(chunk => ({ lineIndex, ...chunk }))
+  const last = rows[rows.length - 1]
+  if (finiteWidth && text.length > 0 && last
+    && displayWidthBefore(text.slice(last.start, last.end), last.end - last.start) >= safeWidth) {
+    rows.push({ lineIndex, start: text.length, end: text.length })
+  }
+  return rows
+}
+
+function visualCursor(state: EditorState, width: number): {
+  rows: VisualRow[]
+  rowIndex: number
+  visualCol: number
+} {
+  const text = state.lines[state.cursorLine]!
+  const cursorCol = snapToSegmentBoundary(text, state.cursorCol)
+  const rows = visualRows(text, state.cursorLine, width)
+  let rowIndex = rows.findIndex(row => cursorCol >= row.start && cursorCol < row.end)
+  if (rowIndex < 0) rowIndex = rows.length - 1
+  const row = rows[rowIndex]!
+  return {
+    rows,
+    rowIndex,
+    visualCol: displayWidthBefore(text.slice(row.start, row.end), cursorCol - row.start),
+  }
+}
+
+function cursorAtVisualColumn(text: string, row: VisualRow, visualCol: number): number {
+  const candidate = row.start + boundaryAtDisplayWidth(text.slice(row.start, row.end), visualCol)
+  return snapToSegmentBoundary(text, candidate)
 }
 
 // ---------------------------------------------------------------------------
@@ -387,15 +476,21 @@ function editorFromText(state: EditorState, text: string): EditorState {
     lines,
     cursorLine: lines.length - 1,
     cursorCol: lines[lines.length - 1]!.length,
+    preferredVisualCol: undefined,
     ghostHint: '',
     completion: null,
   }
 }
 
 function withCompletionsCleared(state: EditorState): EditorState {
-  return refreshGhostHint({ ...state, completion: null })
+  return refreshGhostHint({ ...state, preferredVisualCol: undefined, completion: null })
 }
 
-function withoutGhost(state: EditorState): EditorState {
-  return { ...state, ghostHint: '', completion: null }
+function withoutGhost(state: EditorState, preserveVisualColumn = false): EditorState {
+  return {
+    ...state,
+    preferredVisualCol: preserveVisualColumn ? state.preferredVisualCol : undefined,
+    ghostHint: '',
+    completion: null,
+  }
 }

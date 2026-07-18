@@ -1,6 +1,11 @@
 import { TermRenderer, type RenderFrame } from './renderer.js'
-import { parseInput, enableRawMode, enableEnhancedKeyboard, type KeyEvent } from './input.js'
-import { installBracketedPaste } from './bracketed-paste.js'
+import {
+  enableRawMode,
+  enableEnhancedKeyboard,
+  type EnhancedKeyboardSession,
+  type KeyEvent,
+} from './input.js'
+import { TerminalInputBuffer } from './input/buffer.js'
 import { createSpinnerState, advanceSpinner, formatSpinnerLine, spinnerStatsFromLastUsage } from './spinner.js'
 import { createSelectorState, selectorExpandItems, selectorClearQuery, selectorFocusOn, type SelectorItem } from './selector.js'
 import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
@@ -83,7 +88,6 @@ import {
   parsePasteRefs,
   stripImageRefs,
   deleteRefBackspace,
-  skipRefOnMove,
   resolveSubmitText,
 } from './input/paste_refs.js'
 import { getImageFromClipboard } from './input/clipboard_image.js'
@@ -167,6 +171,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let spinnerTimer: ReturnType<typeof setInterval> | null = null
   let titleFrozen = false
   let destroyed = false
+  let disableRaw: (() => void) | null = null
+  let enhancedKeyboard: EnhancedKeyboardSession | null = null
+  let inputBuffer: TerminalInputBuffer | null = null
+  let escapeFlushTimer: ReturnType<typeof setTimeout> | undefined
+  let onInputData: ((data: Buffer | string) => void) | null = null
   let sessionId: string | null = null
   let planning = false
   let logMode: import('../native/index.js').ForkedAgent | null = null
@@ -1445,6 +1454,34 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }).catch(() => {})
   }
 
+  function deleteAtCursor() {
+    const line = editor.lines[editor.cursorLine]!
+    const deletedRef = parsePasteRefs(line).find(ref => ref.start === editor.cursorCol)
+    if (deletedRef) {
+      pastedChunks.delete(deletedRef.id)
+      pastedImages.delete(deletedRef.id)
+    }
+    editor = deleteForward(editor)
+    renderer.requestRender()
+  }
+
+  function deleteWordAtCursor() {
+    const lineIndex = editor.cursorLine
+    const cursorCol = editor.cursorCol
+    const refs = parsePasteRefs(editor.lines[lineIndex]!)
+    const nextEditor = deleteWordBefore(editor)
+    if (nextEditor.cursorLine === lineIndex) {
+      for (const ref of refs) {
+        if (ref.start < cursorCol && ref.end > nextEditor.cursorCol) {
+          pastedChunks.delete(ref.id)
+          pastedImages.delete(ref.id)
+        }
+      }
+    }
+    editor = nextEditor
+    renderer.requestRender()
+  }
+
   function handleNormalKey(event: KeyEvent) {
     if (editor.completion) {
       if (event.type === 'up' || event.type === 'down') {
@@ -1474,12 +1511,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             cleanup()
             fastExit(0)
           }
-          editor = deleteForward(editor)
-          renderer.requestRender()
+          deleteAtCursor()
           return
         case 'w':
-          editor = deleteWordBefore(editor)
-          renderer.requestRender()
+          deleteWordAtCursor()
           return
         case 'a':
           editor = moveHome(editor)
@@ -1590,6 +1625,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         insertPaste(event.text)
         renderer.requestRender()
         break
+      case 'delete':
+        deleteAtCursor()
+        break
       case 'backspace': {
         const currentLine = editor.lines[editor.cursorLine]!
         const refs = parsePasteRefs(currentLine)
@@ -1602,7 +1640,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           }
           const lines = [...editor.lines]
           lines[editor.cursorLine] = refDel.newLine
-          editor = { ...editor, lines, cursorCol: refDel.newCursorCol, ghostHint: '', completion: null }
+          editor = {
+            ...editor,
+            lines,
+            cursorCol: refDel.newCursorCol,
+            preferredVisualCol: undefined,
+            ghostHint: '',
+            completion: null,
+          }
         } else {
           editor = backspace(editor)
         }
@@ -1613,30 +1658,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         }
         break
       }
-      case 'left': {
-        const line = editor.lines[editor.cursorLine]!
-        const refs = parsePasteRefs(line)
-        const skip = skipRefOnMove(editor.cursorCol, 'left', refs)
-        if (skip !== null) {
-          editor = { ...editor, cursorCol: skip, ghostHint: '' }
-        } else {
-          editor = moveLeft(editor)
-        }
+      case 'left':
+        editor = moveLeft(editor)
         renderer.requestRender()
         break
-      }
-      case 'right': {
-        const line = editor.lines[editor.cursorLine]!
-        const refs = parsePasteRefs(line)
-        const skip = skipRefOnMove(editor.cursorCol, 'right', refs)
-        if (skip !== null) {
-          editor = { ...editor, cursorCol: skip, ghostHint: '' }
-        } else {
-          editor = moveRight(editor)
-        }
+      case 'right':
+        editor = moveRight(editor)
         renderer.requestRender()
         break
-      }
       case 'home':
         editor = moveHome(editor)
         renderer.requestRender()
@@ -1646,13 +1675,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         renderer.requestRender()
         break
       case 'up': {
-        // Multi-line: move cursor up within editor, unless already at first line
-        if (editor.lines.length > 1 && editor.cursorLine > 0) {
-          editor = moveUp(editor)
+        const moved = moveUp(editor, Math.max(1, renderer.termCols - 2))
+        if (moved !== editor) {
+          editor = moved
           renderer.requestRender()
           break
         }
-        // At first line or single-line: history navigation
+        // At the top visual row: navigate history.
         const result = historyPrev(historyState, editor)
         if (result.changed) {
           historyState = result.history
@@ -1662,13 +1691,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         break
       }
       case 'down': {
-        // Multi-line: move cursor down within editor, unless already at last line
-        if (editor.lines.length > 1 && editor.cursorLine < editor.lines.length - 1) {
-          editor = moveDown(editor)
+        const moved = moveDown(editor, Math.max(1, renderer.termCols - 2))
+        if (moved !== editor) {
+          editor = moved
           renderer.requestRender()
           break
         }
-        // At last line or single-line: history navigation
+        // At the bottom visual row: navigate history.
         const result = historyNext(historyState, editor)
         if (result.changed) {
           historyState = result.history
@@ -2351,32 +2380,62 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
-  const disableRaw = enableRawMode(process.stdin)
-  const disableEnhancedKeyboard = enableEnhancedKeyboard(process.stdout)
-  const { stream: pasteStream, cleanup: cleanupPaste } = installBracketedPaste(process.stdin, () => {
-    // Empty paste — likely Cmd+V with image in clipboard
-    tryPasteImage()
+  disableRaw = enableRawMode(process.stdin)
+  const terminalInput = new TerminalInputBuffer({
+    onEmptyPaste: tryPasteImage,
+    onControl: event => enhancedKeyboard?.handleControl(event),
   })
-  pasteStream.on('data', (data: Buffer) => {
-    const events = parseInput(data)
-    for (const ev of events) handleKey(ev)
-  })
+  inputBuffer = terminalInput
+  const dispatchInputEvents = (events: KeyEvent[]) => {
+    for (const event of events) {
+      if (destroyed) break
+      handleKey(event)
+    }
+  }
+  const inputHandler = (data: Buffer | string) => {
+    if (escapeFlushTimer) {
+      clearTimeout(escapeFlushTimer)
+      escapeFlushTimer = undefined
+    }
+    dispatchInputEvents(terminalInput.write(data))
+    if (terminalInput.hasAmbiguousEscape) {
+      escapeFlushTimer = setTimeout(() => {
+        escapeFlushTimer = undefined
+        dispatchInputEvents(terminalInput.flushPending())
+      }, 10)
+    }
+  }
+  onInputData = inputHandler
+  process.stdin.on('data', inputHandler)
+  enhancedKeyboard = enableEnhancedKeyboard(process.stdout)
 
   process.stdout.write('\x1b[?2004h')
   renderer.requestRender()
 
   function cleanup() {
+    if (destroyed) return
     destroyed = true
     unfreezeTerminalTitle()
     stopSpinner()
     gitInfo.dispose()
     updateMgr.cleanup()
     if (exitHintTimer) clearTimeout(exitHintTimer)
+    if (escapeFlushTimer) {
+      clearTimeout(escapeFlushTimer)
+      escapeFlushTimer = undefined
+    }
+    if (onInputData) {
+      process.stdin.off('data', onInputData)
+      onInputData = null
+    }
+    inputBuffer?.discard()
+    inputBuffer = null
     process.stdout.write('\x1b[?2004l')
-    disableEnhancedKeyboard()
+    enhancedKeyboard?.dispose()
+    enhancedKeyboard = null
     setTerminalTitle()
-    cleanupPaste()
-    disableRaw()
+    disableRaw?.()
+    disableRaw = null
     renderer.destroy()
     rendererTrace.close()
   }

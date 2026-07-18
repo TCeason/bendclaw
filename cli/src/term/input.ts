@@ -28,14 +28,32 @@ export type KeyEvent =
 
 export type KeyHandler = (event: KeyEvent) => void
 
+export type TerminalControlEvent =
+  | { type: 'kitty-flags'; flags: number }
+  | { type: 'device-attributes' }
+
+export interface EnhancedKeyboardOptions {
+  negotiationTimeoutMs?: number
+}
+
+export interface EnhancedKeyboardSession {
+  /** Backward-compatible cleanup call. */
+  (): void
+  handleControl(event: TerminalControlEvent): void
+  dispose(): void
+}
+
 const MOD_SHIFT = 1
 const MOD_ALT = 2
 const MOD_CTRL = 4
 const KITTY_KP_ENTER = 57414
 const ENABLE_KITTY_DISAMBIGUATE = '\x1b[>1u'
+const QUERY_KITTY_KEYBOARD = '\x1b[?u'
+const QUERY_PRIMARY_DEVICE_ATTRIBUTES = '\x1b[c'
 const DISABLE_KITTY_KEYBOARD = '\x1b[<u'
 const ENABLE_MODIFY_OTHER_KEYS = '\x1b[>4;2m'
 const DISABLE_MODIFY_OTHER_KEYS = '\x1b[>4;0m'
+const DEFAULT_KEYBOARD_NEGOTIATION_TIMEOUT_MS = 150
 
 /**
  * Parse a raw stdin buffer into key events.
@@ -86,21 +104,8 @@ export function parseInput(data: Buffer): KeyEvent[] {
 
     // Escape sequences
     if (ch === '\x1b') {
-      // Check for custom paste markers from BracketedPasteTransform
-      const startMarker = '\x1b[_PASTE_START_\x1b\\'
-      if (str.slice(i, i + startMarker.length) === startMarker) {
-        const contentStart = i + startMarker.length
-        const endMarker = '\x1b[_PASTE_END_\x1b\\'
-        const endIdx = str.indexOf(endMarker, contentStart)
-        if (endIdx !== -1) {
-          const text = str.slice(contentStart, endIdx)
-          events.push({ type: 'paste', text })
-          i = endIdx + endMarker.length
-          continue
-        }
-      }
-
-      // Check for raw bracketed paste sequences (fallback if no transform)
+      // Check for raw bracketed paste sequences. TerminalInputBuffer normally
+      // reassembles these first; this remains useful for direct parser callers.
       const BP_OPEN = '\x1b[200~'
       const BP_CLOSE = '\x1b[201~'
       if (str.slice(i, i + BP_OPEN.length) === BP_OPEN) {
@@ -182,9 +187,12 @@ export function parseInput(data: Buffer): KeyEvent[] {
       continue
     }
 
-    // Regular character (including multi-byte UTF-8)
-    events.push({ type: 'char', char: ch })
-    i++
+    // Regular character. Advance by Unicode code point so non-BMP input is not
+    // split into separate surrogate events; grapheme grouping happens in the editor.
+    const codePoint = str.codePointAt(i)
+    const char = codePoint === undefined ? ch : String.fromCodePoint(codePoint)
+    events.push({ type: 'char', char })
+    i += char.length
   }
 
   return events
@@ -208,23 +216,68 @@ export function enableRawMode(stdin: NodeJS.ReadStream): () => void {
   }
 }
 
-/**
- * Ask modern terminals to report modified keys distinctly.
- *
- * This mirrors pi's approach in a lightweight way:
- * - Kitty keyboard protocol flag 1 reports ambiguous/modified keys as CSI-u.
- * - xterm modifyOtherKeys is a fallback for terminals without Kitty protocol.
- *
- * parseInput understands the resulting Shift+Enter, Ctrl+letter, arrows, and
- * common editing-key sequences used by evot. Cleanup restores the terminal modes.
- */
-export function enableEnhancedKeyboard(stdout: NodeJS.WriteStream = process.stdout): () => void {
-  stdout.write(ENABLE_KITTY_DISAMBIGUATE)
-  stdout.write(ENABLE_MODIFY_OTHER_KEYS)
-  return () => {
-    stdout.write(DISABLE_MODIFY_OTHER_KEYS)
-    stdout.write(DISABLE_KITTY_KEYBOARD)
+export function parseTerminalControlSequence(sequence: string): TerminalControlEvent | undefined {
+  const kittyFlags = sequence.match(/^\x1b\[\?(\d+)u$/)
+  if (kittyFlags) {
+    return { type: 'kitty-flags', flags: Number.parseInt(kittyFlags[1]!, 10) }
   }
+  if (/^\x1b\[\?[\d;]*c$/.test(sequence)) return { type: 'device-attributes' }
+  return undefined
+}
+
+/**
+ * Negotiate one enhanced-keyboard protocol. Kitty is requested first; terminals
+ * without support answer the DA sentinel (or time out), then fall back to
+ * modifyOtherKeys. The returned session consumes negotiation responses and
+ * restores only the mode that was actually active.
+ */
+export function enableEnhancedKeyboard(
+  stdout: NodeJS.WriteStream = process.stdout,
+  options: EnhancedKeyboardOptions = {},
+): EnhancedKeyboardSession {
+  type Mode = 'negotiating' | 'kitty' | 'modify-other-keys' | 'disposed'
+  let mode: Mode = 'negotiating'
+  const timeoutMs = options.negotiationTimeoutMs ?? DEFAULT_KEYBOARD_NEGOTIATION_TIMEOUT_MS
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  const clearTimer = () => {
+    if (!timer) return
+    clearTimeout(timer)
+    timer = undefined
+  }
+  const useModifyOtherKeys = () => {
+    if (mode !== 'negotiating') return
+    clearTimer()
+    // The Kitty push may already have changed terminal state even if its query
+    // response was lost. Pop it before enabling the xterm fallback.
+    stdout.write(DISABLE_KITTY_KEYBOARD)
+    stdout.write(ENABLE_MODIFY_OTHER_KEYS)
+    mode = 'modify-other-keys'
+  }
+
+  // Request Kitty flags, query the result, then issue DA as a widely-supported
+  // sentinel. Supporting terminals answer Kitty before DA; others answer DA.
+  stdout.write(`${ENABLE_KITTY_DISAMBIGUATE}${QUERY_KITTY_KEYBOARD}${QUERY_PRIMARY_DEVICE_ATTRIBUTES}`)
+  timer = setTimeout(useModifyOtherKeys, Math.max(0, timeoutMs))
+
+  const handleControl = (event: TerminalControlEvent) => {
+    if (mode !== 'negotiating') return
+    if (event.type === 'kitty-flags' && event.flags > 0) {
+      clearTimer()
+      mode = 'kitty'
+      return
+    }
+    useModifyOtherKeys()
+  }
+  const dispose = () => {
+    if (mode === 'disposed') return
+    clearTimer()
+    if (mode === 'kitty' || mode === 'negotiating') stdout.write(DISABLE_KITTY_KEYBOARD)
+    else if (mode === 'modify-other-keys') stdout.write(DISABLE_MODIFY_OTHER_KEYS)
+    mode = 'disposed'
+  }
+
+  return Object.assign(dispose, { handleControl, dispose })
 }
 
 interface ParsedSequence {
