@@ -701,6 +701,102 @@ describe('term stream machine', () => {
     expect(update.rerenderStatus).toBe(true)
   })
 
+  test('tool lifecycle does not alter footer token stats', () => {
+    const appState = createInitialState('model', '/tmp')
+    appState.sessionTokens = {
+      inputTokens: 120000,
+      outputTokens: 2400,
+      cacheReadTokens: 64000,
+      contextTokens: 98000,
+      contextWindow: 272000,
+    }
+    appState.currentAssistantContent = [{
+      type: 'tool_call',
+      contentIndex: 0,
+      toolCall: {
+        id: 'call-read',
+        name: 'read',
+        args: { path: 'src/a.ts' },
+        status: 'running',
+        startedAt: Date.now(),
+      },
+    }]
+    let state = createStreamMachineState(appState, createSpinnerState())
+
+    state = reduceRunEvent(state, {
+      kind: 'tool_progress',
+      payload: { tool_call_id: 'call-read', tool_name: 'read', text: 'reading' },
+    }, { termRows: 24 }).state
+    state = reduceRunEvent(state, {
+      kind: 'tool_finished',
+      payload: { tool_call_id: 'call-read', tool_name: 'read', content: 'done', is_error: false },
+    }, { termRows: 24 }).state
+
+    expect(state.appState.sessionTokens).toEqual({
+      inputTokens: 120000,
+      outputTokens: 2400,
+      cacheReadTokens: 64000,
+      contextTokens: 98000,
+      contextWindow: 272000,
+    })
+  })
+
+  test('tool completion preserves progress metadata and lets final metadata win', () => {
+    const appState = createInitialState('model', '/tmp')
+    appState.currentAssistantContent = [
+      {
+        type: 'tool_call', contentIndex: 0, toolCall: {
+          id: 'call-edit',
+          name: 'edit',
+          args: { path: 'src/a.ts' },
+          status: 'running',
+          startedAt: Date.now(),
+        },
+      },
+      {
+        type: 'tool_call', contentIndex: 1, toolCall: {
+          id: 'call-read',
+          name: 'read',
+          args: { path: 'src/b.ts' },
+          status: 'queued',
+        },
+      },
+    ]
+    let state = createStreamMachineState(appState, createSpinnerState())
+
+    state = reduceRunEvent(state, {
+      kind: 'tool_progress',
+      payload: {
+        tool_call_id: 'call-edit',
+        tool_name: 'edit',
+        details: { diff: '@@ -1 +1 @@\n-old\n+new', phase: 'preview' },
+      },
+    }, { termRows: 24 }).state
+    state = reduceRunEvent(state, {
+      kind: 'tool_finished',
+      payload: {
+        tool_call_id: 'call-edit',
+        tool_name: 'edit',
+        content: 'Updated src/a.ts.',
+        is_error: false,
+        duration_ms: 9,
+        details: { replacement_count: 1, added_lines: 1, removed_lines: 1, phase: 'final' },
+      },
+    }, { termRows: 24 }).state
+
+    const completed = findAssistantToolCall(state.appState.currentAssistantContent, 'call-edit')
+    expect(completed?.details).toEqual({
+      diff: '@@ -1 +1 @@\n-old\n+new',
+      phase: 'final',
+      replacement_count: 1,
+      added_lines: 1,
+      removed_lines: 1,
+    })
+    const card = completed ? buildToolCard(completed) : []
+    expect(card[1]!.text).toBe('  ✓ · 1 replacement · +1 −1 · 9ms')
+    expect(card.map(line => line.text).join('\n')).toContain('+new')
+  })
+
   test('spill progress commits visible event line', () => {
     const state = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
     const update = reduceRunEvent(state, {
@@ -739,11 +835,12 @@ describe('term stream machine', () => {
     expect(heartbeatBlock?.type === 'tool_call' ? heartbeatBlock.toolCall.progress : undefined).toBe('line 1\nline 2')
   })
 
-  test('queued and running tools leave execution activity to the persistent spinner', () => {
+  test('tool lifecycle keeps a stable headline and second-line status', () => {
     const queued = buildToolCard({ id: 'call-1', name: 'read', args: { path: 'src/a.rs' }, status: 'queued' })
-    const queuedText = queued.map(line => line.text).join('\n')
-    expect(queuedText).toContain('read  src/a.rs  preparing arguments...')
-    expect(queuedText).not.toContain('running')
+    expect(queued.map(line => line.text)).toEqual([
+      '◫ read  src/a.rs',
+      '  ○ · preparing arguments',
+    ])
 
     const running = buildToolCard({
       id: 'call-1',
@@ -753,20 +850,20 @@ describe('term stream machine', () => {
       startedAt: 1_000,
       progress: 'partial output',
     }, false, 2_500)
-    const runningText = running.map(line => line.text).join('\n')
-    expect(runningText).toContain('partial output')
-    expect(runningText).not.toContain('running...')
-    expect(runningText).not.toContain('● running')
+    expect(running[0]!.text).toBe('◫ read  src/a.rs')
+    expect(running[1]!.text).toBe('  ● · running')
+    expect(running.map(line => line.text).join('\n')).toContain('partial output')
 
     const completed = buildToolCard({
       id: 'call-1',
       name: 'read',
       args: { path: 'src/a.rs' },
       status: 'done',
-      result: 'done',
+      result: '[1 lines]\n   1 | done',
       durationMs: 12,
     })
-    expect(completed.map(line => line.text).join('\n')).toContain('✓ · 12ms')
+    expect(completed[0]!.text).toBe('◫ read  src/a.rs')
+    expect(completed[1]!.text).toBe('  ✓ · 1 line · 12ms')
   })
 
   test('queued tools stream only stable argument summaries', () => {
@@ -778,7 +875,7 @@ describe('term stream machine', () => {
       argsComplete: false,
     })
     const writeText = write.map(line => line.text).join('\n')
-    expect(writeText).toContain('write  src/a.ts  generating content... 3 lines')
+    expect(writeText).toContain('✎ write  src/a.ts\n  ○ · generating 3 lines')
     expect(writeText).not.toContain('+one')
     expect(writeText).not.toContain('+three')
 
@@ -793,7 +890,7 @@ describe('term stream machine', () => {
       argsComplete: false,
     })
     const editText = edit.map(line => line.text).join('\n')
-    expect(editText).toContain('edit  src/a.ts  preparing replacement 1...')
+    expect(editText).toContain('✎ edit  src/a.ts\n  ○ · preparing 1 replacement')
     expect(editText).not.toContain('-old line')
     expect(editText).not.toContain('+new line')
   })

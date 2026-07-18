@@ -166,15 +166,31 @@ describe('prompt footer', () => {
       inputTokens: 408000,
       outputTokens: 1100,
       cacheReadTokens: 89000,
-      contextTokens: 86400,
-      contextWindow: 320000,
+      contextTokens: 105800,
+      contextWindow: 272000,
       dashboardUrl: 'http://127.0.0.1:8788',
     }))
-    expect(plain).toContain('ctx 27%')
+    expect(plain).toContain('context: 38.9% (105.8k/272.0k)')
     expect(plain).toContain('↑408k')
     expect(plain).toContain('↓1.1k')
     expect(plain).toContain('cache 89k')
     expect(plain).toContain('http://127.0.0.1:8788')
+  })
+
+  test('matches the full context footer format from the terminal', () => {
+    const home = process.env.HOME || process.env.USERPROFILE || '/tmp/home'
+    const footer = blocksToLines(buildPromptFooterBlocks(defaultInput({
+      columns: 160,
+      cwd: `${home}/github/evotai/evot`,
+      gitBranch: 'main',
+      model: 'gpt-5.6-sol',
+      provider: 'anthropic',
+      thinkingLevel: 'high',
+      contextTokens: 105800,
+      contextWindow: 272000,
+    }))).map(stripAnsi)[0]!
+
+    expect(footer).toBe('~/github/evotai/evot (main) context: 38.9% (105.8k/272.0k) gpt-5.6-sol@anthropic • high')
   })
 
   test('drops low-priority segments as width narrows', () => {
@@ -190,7 +206,7 @@ describe('prompt footer', () => {
     }))
     const footer = plain.split('\n').at(-2)!
     expect(footer).toContain('/Users/test/project')
-    expect(footer).toContain('ctx 27%')
+    expect(footer).not.toContain('context:')
     expect(footer).not.toContain('dashboard')
     expect(footer).not.toContain('↑408k')
     expect(stringWidth(footer)).toBeLessThanOrEqual(45)

@@ -137,7 +137,7 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
         currentAssistantContent: updateAssistantToolCall(state.currentAssistantContent, id, current => ({
           ...current,
           progress: text && !/^Running\.\.\. \d+s$/.test(text.trim()) ? text : current.progress,
-          details: p.details ?? current.details,
+          details: mergeToolDetails(current.details, p.details),
         })),
       }
     }
@@ -149,20 +149,16 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
       const toolName = p.tool_name ?? current?.name ?? 'unknown'
       const durationMs = (p.duration_ms as number) ?? 0
 
+      const finalDetails = mergeToolDetails(current?.details, p.details)
       const finished: UIToolCall = {
         id,
         name: toolName,
         args: current?.args ?? (p.args as Record<string, unknown>) ?? {},
         status: isError ? 'error' : 'done',
         result: p.content,
-        details: p.details,
+        details: finalDetails,
         previewCommand: current?.previewCommand,
         durationMs,
-      }
-
-      const details = p.details as Record<string, any> | undefined
-      if (details?.diff && typeof details.diff === 'string') {
-        finished.details = { ...(finished.details as Record<string, unknown> ?? {}), diff: details.diff }
       }
 
       const stats = { ...state.currentRunStats }
@@ -421,6 +417,19 @@ export function applyEvent(state: AppState, event: RunEvent): AppState {
     default:
       return state
   }
+}
+
+function mergeToolDetails(current: unknown, next: unknown): unknown {
+  const currentRecord = asToolDetails(current)
+  const nextRecord = asToolDetails(next)
+  if (currentRecord && nextRecord) return { ...currentRecord, ...nextRecord }
+  return next ?? current
+}
+
+function asToolDetails(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
 }
 
 /** Rough token estimate: ~4 chars per token. */

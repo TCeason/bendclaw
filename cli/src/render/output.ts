@@ -14,10 +14,9 @@ import { truncate, formatDuration, toolResultLines, formatBashCommandDisplay, ex
 import type { UIMessage, UIToolCall } from '../term/app/types.js'
 
 // ---------------------------------------------------------------------------
-// Tool presentation — icon + primary-arg per tool, in the spirit of
-// pi-thinking-steps' semantic glyphs. The status (✓ / ✗ + duration) is
-// rendered inline on the same line at finish time, so a tool reads as a
-// single “card” line followed only by its real output.
+// Tool presentation — icon + primary argument per tool, followed by a stable
+// lifecycle status row. Optional reasons, progress, diffs, and result output
+// always render after those first two rows.
 // ---------------------------------------------------------------------------
 
 interface ToolGlyph { icon: string }
@@ -89,18 +88,27 @@ function toolDraftSummary(call: UIToolCall): string {
   if (name === 'write' || name === 'file_write') {
     const content = toolDraftText(call.args, ['content'])
     const count = content ? lineCount(content) : 0
-    return count > 0 ? `generating content... ${count} ${count === 1 ? 'line' : 'lines'}` : 'generating content...'
+    return count > 0 ? `generating ${count} ${count === 1 ? 'line' : 'lines'}` : 'generating content'
   }
   if (name === 'edit' || name === 'file_edit') {
     const edits = Array.isArray(call.args.edits) ? call.args.edits.length : 0
-    return edits > 0 ? `preparing replacement ${edits}...` : 'preparing replacement...'
+    return edits > 0 ? `preparing ${edits} ${edits === 1 ? 'replacement' : 'replacements'}` : 'preparing replacement'
   }
-  return 'preparing arguments...'
+  return 'preparing arguments'
 }
 
-function appendToolCallStatus(lines: OutputLine[], status: string): void {
-  const callLine = [...lines].reverse().find(line => line.kind === 'tool' && !line.text.startsWith('  '))
-  if (callLine) callLine.text = `${callLine.text}  ${status}`
+function toolStatusLine(mark: '○' | '●' | '✓' | '✗', parts: string[]): OutputLine {
+  const detail = parts.filter(Boolean).join(' · ')
+  return {
+    id: genId('tool-status'),
+    kind: 'tool',
+    text: `  ${mark}${detail ? ` · ${detail}` : ''}`,
+  }
+}
+
+function insertToolStatus(lines: OutputLine[], status: OutputLine): void {
+  const callIndex = lines.findIndex(line => line.kind === 'tool' && !line.text.startsWith('  '))
+  lines.splice(callIndex < 0 ? 0 : callIndex + 1, 0, status)
 }
 
 // ---------------------------------------------------------------------------
@@ -194,19 +202,16 @@ export function buildToolCall(
   previewCommand?: string,
   expanded?: boolean,
 ): OutputLine[] {
-  // Reason fields surface the model's justification up-front.
-  const lines: OutputLine[] = []
-  for (const line of formatReasonLines(args)) {
-    lines.push({ id: genId('tool'), kind: 'tool', text: `  ${line}` })
-  }
-  // Call line: `<glyph> <name>  <primary-arg>` — shown once the call is decoded.
-  // The footer spinner keeps animating through the queued gap; status (✓/✗)
-  // lands on the result line later.
-  lines.push({
+  // Keep the operation headline first so every lifecycle state has the same
+  // stable card geometry: headline → status → optional reason/output details.
+  const lines: OutputLine[] = [{
     id: genId('tool'),
     kind: 'tool',
     text: toolCallText(name, args, previewCommand, expanded),
-  })
+  }]
+  for (const reason of formatReasonLines(args)) {
+    lines.push({ id: genId('tool'), kind: 'tool', text: `  ${reason}` })
+  }
   // Expanded multi-line bash: keep newlines instead of flattening into a wall.
   // Collapse hint matches expanded tool results / progress cards.
   if (name.toLowerCase() === 'bash' && expanded) {
@@ -227,29 +232,33 @@ export function buildToolCall(
 }
 
 export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.now()): OutputLine[] {
-  const details = call.details as Record<string, unknown> | undefined
-  const diff = typeof details?.diff === 'string' ? details.diff : undefined
+  const details = asDetails(call.details)
+  const diff = typeof details.diff === 'string' ? details.diff : undefined
   const args = diff ? { ...call.args, diff } : call.args
   const lines = buildToolCall(call.name, args, call.previewCommand, expanded)
 
   if (call.status === 'queued') {
-    const status = call.argsComplete ? 'ready...' : toolDraftSummary(call)
-    appendToolCallStatus(lines, status)
+    const summary = call.argsComplete ? 'ready' : toolDraftSummary(call)
+    insertToolStatus(lines, toolStatusLine('○', [summary]))
     return lines
   }
 
   if (call.status !== 'running') {
-    lines.push(...buildToolResult(
+    const resultLines = buildToolResult(
       call.name,
       args,
       call.status,
       call.result,
       call.durationMs,
       expanded,
-    ))
+      details,
+    )
+    insertToolStatus(lines, resultLines.shift() ?? toolStatusLine(call.status === 'error' ? '✗' : '✓', []))
+    lines.push(...resultLines)
     return lines
   }
 
+  insertToolStatus(lines, toolStatusLine('●', ['running']))
   if (diff) {
     lines.push({ id: genId('tool-diff'), kind: 'tool', text: colorizeUnifiedDiff(diff) })
   }
@@ -260,7 +269,6 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
     }
   }
 
-  // Execution activity stays in the persistent run spinner below the card.
   return lines
 }
 
@@ -271,20 +279,13 @@ export function buildToolResult(
   result?: string,
   durationMs?: number,
   expanded?: boolean,
+  details: Record<string, unknown> = {},
 ): OutputLine[] {
-  const lines: OutputLine[] = []
-  const isError = status === 'error'
-
-  const resultInfo = result ? formatToolResultInfo(result) : ''
-  // The status line is appended at the END (after diff/output) so a tool reads
-  // top-to-bottom: command → output → closing status. Built here, pushed last.
-  const mark = isError ? '✗' : '✓'
-  const dur = durationMs !== undefined ? ` · ${formatDuration(durationMs)}` : ''
-  const statusLine: OutputLine = {
-    id: genId('tool'),
-    kind: 'tool',
-    text: `  ${mark}${dur}${resultInfo}`,
-  }
+  const exitCode = name.toLowerCase() === 'bash' ? detailNumber(details, 'exit_code') : undefined
+  const isError = status === 'error' || details.error === true || (exitCode !== undefined && exitCode !== 0)
+  const summary = toolResultSummary(name, args, result, details)
+  const duration = durationMs !== undefined ? formatDuration(durationMs) : ''
+  const lines: OutputLine[] = [toolStatusLine(isError ? '✗' : '✓', [summary, duration])]
 
   // Diff (for write/edit tools)
   const diff = args?.diff as string | undefined
@@ -325,8 +326,6 @@ export function buildToolResult(
     }
   }
 
-  // Closing status line, after the output.
-  lines.push(statusLine)
   return lines
 }
 
@@ -576,13 +575,150 @@ function parseJsonResult(content: string): unknown | undefined {
   }
 }
 
-function formatToolResultInfo(content: string): string {
-  const bytes = Buffer.byteLength(content, 'utf-8')
-  // The result body (or its head/tail) is rendered right below this line, so
-  // we don't restate its shape ("JSON · N keys"). Keep only what the body
-  // doesn't already convey: how many lines and how big.
-  const lineCount = content.replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n').length
-  return lineCount > 1 ? ` · ${lineCount} lines · ${humanBytes(bytes)}` : ` · ${humanBytes(bytes)}`
+function asDetails(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function detailNumber(details: Record<string, unknown>, key: string): number | undefined {
+  const value = details[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function resultLineCount(content: string): number {
+  const normalized = content.replace(/\r\n|\r/g, '\n').replace(/\n+$/, '')
+  return normalized ? normalized.split('\n').length : 0
+}
+
+function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : pluralForm}`
+}
+
+function readLineSummary(content: string): string | undefined {
+  const firstLine = content.replace(/\r\n|\r/g, '\n').split('\n', 1)[0] ?? ''
+  const full = /^\[(\d+) lines?\]$/.exec(firstLine)
+  if (full) return plural(Number(full[1]), 'line')
+  const range = /^\[Lines \d+-\d+ of (\d+)\]$/.exec(firstLine)
+  return range ? plural(Number(range[1]), 'line') : undefined
+}
+
+function resultProtocolLines(content: string): string[] {
+  return content.replace(/\r\n|\r/g, '\n').replace(/\n+$/, '').split('\n')
+}
+
+function isIncompleteResultLine(line: string): boolean {
+  return /^\.\.\. \((?:capped|search timed out|truncated)\b/.test(line)
+}
+
+function grepResultSummary(args: Record<string, unknown>, result: string): string | undefined {
+  const lines = resultProtocolLines(result)
+  const filesOnly = args.files_with_matches === true
+  const noMatches = lines.length === 1 && /^\(no matches(?:;|\))/.test(lines[0] ?? '')
+  if (noMatches) {
+    const summary = filesOnly ? '0 files' : '0 matches'
+    return `${summary}${lines[0]!.includes(';') ? ' shown' : ''}`
+  }
+
+  const incomplete = lines.some(isIncompleteResultLine)
+  const contentLines = lines.filter(line => !isIncompleteResultLine(line))
+  if (filesOnly) {
+    if (contentLines.some(line => line === '--' || line.length === 0)) return undefined
+    const count = contentLines.length
+    return `${plural(count, 'file')}${incomplete ? ' shown' : ''}`
+  }
+
+  let matches = 0
+  for (const line of contentLines) {
+    if (line === '--') continue
+    if (/^.+:\d+: /.test(line)) {
+      matches++
+      continue
+    }
+    if (/^.+-\d+- /.test(line)) continue
+    return undefined
+  }
+  return `${plural(matches, 'match', 'matches')}${incomplete ? ' shown' : ''}`
+}
+
+function globResultSummary(args: Record<string, unknown>, result: string): string | undefined {
+  const lines = resultProtocolLines(result)
+  const type = typeof args.type === 'string' ? args.type : 'f'
+  const noun = type === 'd' ? 'directory' : type === 'any' ? 'path' : 'file'
+  const noMatches = lines.length === 1 && /^\(no matches(?:;|\))/.test(lines[0] ?? '')
+  if (noMatches) {
+    const summary = plural(0, noun, type === 'd' ? 'directories' : `${noun}s`)
+    return `${summary}${lines[0]!.includes(';') ? ' shown' : ''}`
+  }
+
+  const incomplete = lines.some(isIncompleteResultLine)
+  const contentLines = lines.filter(line => !isIncompleteResultLine(line))
+  if (contentLines.some(line => line.length === 0)) return undefined
+  const count = contentLines.length
+  const summary = plural(count, noun, type === 'd' ? 'directories' : `${noun}s`)
+  return `${summary}${incomplete ? ' shown' : ''}`
+}
+
+function toolResultSummary(
+  name: string,
+  args: Record<string, unknown>,
+  result: string | undefined,
+  details: Record<string, unknown>,
+): string {
+  const normalizedName = name.toLowerCase()
+  const bytes = detailNumber(details, 'bytes')
+  const lines = result ? resultLineCount(result) : 0
+
+  if (normalizedName === 'bash') {
+    const exitCode = detailNumber(details, 'exit_code')
+    if (exitCode !== undefined) return `exit ${exitCode}`
+  }
+
+  if (normalizedName === 'read' || normalizedName === 'read_code') {
+    if (bytes !== undefined) return humanBytes(bytes)
+    if (result) return readLineSummary(result) ?? plural(lines, 'line')
+  }
+
+  if (normalizedName === 'write' || normalizedName === 'file_write') {
+    if (bytes !== undefined) return `${details.created === true ? 'created' : 'wrote'} ${humanBytes(bytes)}`
+  }
+
+  if (normalizedName === 'edit' || normalizedName === 'file_edit') {
+    const replacements = detailNumber(details, 'replacement_count')
+    const added = detailNumber(details, 'added_lines')
+    const removed = detailNumber(details, 'removed_lines')
+    const parts: string[] = []
+    if (replacements !== undefined) parts.push(plural(replacements, 'replacement'))
+    if (added !== undefined || removed !== undefined) parts.push(`+${added ?? 0} −${removed ?? 0}`)
+    if (parts.length > 0) return parts.join(' · ')
+  }
+
+  if (normalizedName === 'search') {
+    const hits = detailNumber(details, 'hits')
+    if (hits !== undefined) return plural(hits, 'hit')
+  }
+
+  if (normalizedName === 'grep' && result) {
+    const summary = grepResultSummary(args, result)
+    if (summary) return summary
+  }
+
+  if (normalizedName === 'glob' && result) {
+    const summary = globResultSummary(args, result)
+    if (summary) return summary
+  }
+
+  if (normalizedName === 'web_fetch' || normalizedName === 'webfetch') {
+    const status = detailNumber(details, 'status')
+    if (status !== undefined) return `HTTP ${status}${lines > 1 ? ` · ${plural(lines, 'line')}` : ''}`
+  }
+
+  if (lines > 1) {
+    return result
+      ? `${plural(lines, 'line')} · ${humanBytes(Buffer.byteLength(result, 'utf-8'))}`
+      : plural(lines, 'line')
+  }
+  return result ? humanBytes(Buffer.byteLength(result, 'utf-8')) : ''
 }
 
 function formatToolResultContent(content: string): string {

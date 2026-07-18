@@ -6,6 +6,7 @@ import {
   buildToolResult,
   buildToolProgress,
   buildToolCall,
+  buildToolCard,
   buildVerboseEvent,
   buildError,
   AssistantStreamBuffer,
@@ -172,11 +173,10 @@ describe('buildToolCall', () => {
 })
 
 describe('buildToolResult', () => {
-  test('emits a closing status line with mark and duration', () => {
+  test('emits the status first with mark and duration', () => {
     const lines = buildToolResult('bash', { command: 'ls -la' }, 'done', undefined, 42)
     expect(lines.length).toBeGreaterThanOrEqual(1)
-    // Status closes the block (after the output), indented, no glyph/command.
-    const status = lines[lines.length - 1]!
+    const status = lines[0]!
     expect(status.kind).toBe('tool')
     expect(status.text).toMatch(/^ {2}✓/)
     expect(status.text).toContain('42ms')
@@ -184,25 +184,155 @@ describe('buildToolResult', () => {
     expect(status.text).not.toContain('completed')
   })
 
-  test('error result status line uses ✗', () => {
+  test('error result status line uses ✗ and stays before output', () => {
     const lines = buildToolResult('bash', { command: 'fail' }, 'error', 'command not found', 10)
-    const status = lines[lines.length - 1]!
-    expect(status.text).toMatch(/^ {2}✗/)
-    expect(status.text).not.toContain('failed')
-    expect(lines.some((l) => l.kind === 'error')).toBe(true)
+    expect(lines[0]!.text).toMatch(/^ {2}✗/)
+    expect(lines[0]!.text).not.toContain('failed')
+    expect(lines.slice(1).some((line) => line.kind === 'error')).toBe(true)
   })
 
-  test('pretty prints JSON result body (status line no longer labels shape)', () => {
+  test('pretty prints JSON result body without generic shape labels', () => {
     const lines = buildToolResult('web_fetch', {}, 'done', '{"status":"ok","items":[1,2]}', undefined, true)
-    const status = lines[lines.length - 1]!
-    expect(status.text).toMatch(/^ {2}✓/)
-    // Shape labels ("JSON · N keys") removed — the body above conveys it.
-    expect(status.text).not.toContain('JSON')
-    expect(status.text).not.toContain('keys')
-    const all = lines.map(l => l.text).join('\n')
+    expect(lines[0]!.text).toMatch(/^ {2}✓/)
+    expect(lines[0]!.text).not.toContain('JSON')
+    expect(lines[0]!.text).not.toContain('keys')
+    const all = lines.map(line => line.text).join('\n')
     expect(all).toContain('  {')
     expect(all).toContain('    "status": "ok"')
     expect(all).toContain('    "items": [')
+  })
+
+  test('uses real tool metadata for semantic status summaries', () => {
+    const cases = [
+      {
+        call: { id: 'bash', name: 'bash', args: { command: 'true' }, status: 'done' as const, result: 'ok', details: { exit_code: 0 }, durationMs: 25 },
+        status: '  ✓ · exit 0 · 25ms',
+      },
+      {
+        call: { id: 'read', name: 'read', args: { path: 'a.ts' }, status: 'done' as const, result: 'body', details: { bytes: 2048 } },
+        status: '  ✓ · 2.0 KB',
+      },
+      {
+        call: { id: 'write', name: 'write', args: { path: 'a.ts' }, status: 'done' as const, result: 'Wrote file', details: { bytes: 1536, created: true } },
+        status: '  ✓ · created 1.5 KB',
+      },
+      {
+        call: { id: 'edit', name: 'edit', args: { path: 'a.ts' }, status: 'done' as const, details: { replacement_count: 2, added_lines: 3, removed_lines: 1 } },
+        status: '  ✓ · 2 replacements · +3 −1',
+      },
+      {
+        call: { id: 'search', name: 'search', args: { query: 'needle' }, status: 'done' as const, result: 'matches', details: { hits: 4 } },
+        status: '  ✓ · 4 hits',
+      },
+      {
+        call: { id: 'web', name: 'web_fetch', args: { url: 'https://example.com' }, status: 'done' as const, result: 'line one\nline two', details: { status: 200 } },
+        status: '  ✓ · HTTP 200 · 2 lines',
+      },
+    ]
+
+    for (const { call, status } of cases) {
+      const lines = buildToolCard(call)
+      expect(lines[1]!.text).toBe(status)
+    }
+  })
+
+  test('summarizes grep and glob output without counting protocol lines as results', () => {
+    const cases = [
+      {
+        call: { id: 'grep', name: 'grep', args: { pattern: 'needle' }, status: 'done' as const, result: 'src/a.ts:1: needle\nsrc/b.ts:2: needle' },
+        status: '  ✓ · 2 matches',
+      },
+      {
+        call: { id: 'grep-context', name: 'grep', args: { pattern: 'needle', context: 1 }, status: 'done' as const, result: 'src/a.ts-1- before\nsrc/a.ts:2: needle\n--\nsrc/b.ts:4: needle\nsrc/b.ts-5- after' },
+        status: '  ✓ · 2 matches',
+      },
+      {
+        call: { id: 'grep-files', name: 'grep', args: { pattern: 'needle', files_with_matches: true }, status: 'done' as const, result: 'src/a.ts\nsrc/b.ts' },
+        status: '  ✓ · 2 files',
+      },
+      {
+        call: { id: 'grep-capped', name: 'grep', args: { pattern: 'needle' }, status: 'done' as const, result: 'src/a.ts:1: needle\n... (capped at 100 matches — refine the pattern)' },
+        status: '  ✓ · 1 match shown',
+      },
+      {
+        call: { id: 'grep-zero', name: 'grep', args: { pattern: 'needle' }, status: 'done' as const, result: '(no matches)' },
+        status: '  ✓ · 0 matches',
+      },
+      {
+        call: { id: 'glob', name: 'glob', args: { pattern: ['**/*.ts'] }, status: 'done' as const, result: 'src/a.ts\nsrc/b.ts' },
+        status: '  ✓ · 2 files',
+      },
+      {
+        call: { id: 'glob-dirs', name: 'glob', args: { pattern: ['**'], type: 'd' }, status: 'done' as const, result: 'src\ntests' },
+        status: '  ✓ · 2 directories',
+      },
+      {
+        call: { id: 'glob-timeout', name: 'glob', args: { pattern: ['**'] }, status: 'done' as const, result: 'src/a.ts\n... (search timed out — results may be incomplete)' },
+        status: '  ✓ · 1 file shown',
+      },
+      {
+        call: { id: 'glob-zero-timeout', name: 'glob', args: { pattern: ['**'] }, status: 'done' as const, result: '(no matches; search timed out before completing)' },
+        status: '  ✓ · 0 files shown',
+      },
+    ]
+
+    for (const { call, status } of cases) {
+      expect(buildToolCard(call)[1]!.text).toBe(status)
+    }
+  })
+
+  test('falls back to neutral line counts for unknown grep output', () => {
+    const lines = buildToolCard({
+      id: 'grep-unknown',
+      name: 'grep',
+      args: { pattern: 'needle' },
+      status: 'done',
+      result: 'unstructured\noutput',
+    })
+    expect(lines[1]!.text).toBe('  ✓ · 2 lines · 19 B')
+  })
+
+  test('metadata can mark nominal tool results as failures', () => {
+    const bash = buildToolCard({
+      id: 'bash-error',
+      name: 'bash',
+      args: { command: 'false' },
+      status: 'done',
+      result: 'Exit code: 7',
+      details: { exit_code: 7 },
+    })
+    expect(bash[1]!.text).toBe('  ✗ · exit 7')
+
+    const web = buildToolCard({
+      id: 'web-error',
+      name: 'web_fetch',
+      args: { url: 'https://example.com/missing' },
+      status: 'done',
+      result: 'HTTP 404 error',
+      details: { status: 404, error: true },
+    })
+    expect(web[1]!.text).toBe('  ✗ · HTTP 404')
+  })
+
+  test('status remains second when reason, diff, and output details exist', () => {
+    const lines = buildToolCard({
+      id: 'edit-rich',
+      name: 'edit',
+      args: { path: 'a.ts', reason: 'fix behavior' },
+      status: 'done',
+      result: 'Updated a.ts.',
+      durationMs: 8,
+      details: {
+        diff: '@@ -1 +1 @@\n-old\n+new',
+        replacement_count: 1,
+        added_lines: 1,
+        removed_lines: 1,
+      },
+    })
+    expect(lines[0]!.text).toBe('✎ edit  a.ts')
+    expect(lines[1]!.text).toBe('  ✓ · 1 replacement · +1 −1 · 8ms')
+    expect(lines.slice(2).map(line => line.text).join('\n')).toContain('↳ reason: fix behavior')
+    expect(lines.slice(2).map(line => line.text).join('\n')).toContain('+new')
   })
 
   test('collapsed multiline result shows only the expand hint, no content preview', () => {

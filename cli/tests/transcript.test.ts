@@ -42,6 +42,35 @@ describe('transcript conversion', () => {
     expect(block?.type === 'tool_call' ? block.toolCall.status : undefined).toBe('done')
   })
 
+  test('restored tool details render the same semantic status as live cards', () => {
+    const messages = transcriptToMessages([
+      {
+        type: 'assistant',
+        content: [
+          { type: 'tool_call', id: 'call-edit', name: 'edit', input: { path: 'src/a.ts' } },
+        ],
+      },
+      {
+        type: 'tool_result',
+        tool_call_id: 'call-edit',
+        tool_name: 'edit',
+        content: 'Updated src/a.ts.',
+        is_error: false,
+        details: {
+          diff: '@@ -1 +1 @@\n-old\n+new',
+          replacement_count: 1,
+          added_lines: 1,
+          removed_lines: 1,
+        },
+      },
+    ])
+
+    const rendered = messagesToOutputLines(messages).map(line => line.text)
+    expect(rendered[0]).toBe('✎ edit  src/a.ts')
+    expect(rendered[1]).toBe('  ✓ · 1 replacement · +1 −1')
+    expect(rendered.join('\n')).toContain('+new')
+  })
+
   test('tool call without result remains queued', () => {
     const messages = transcriptToMessages([{
       type: 'assistant',

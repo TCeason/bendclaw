@@ -203,6 +203,14 @@ describe('buildOutputBlocks', () => {
     expect(result).not.toContain('\x1b[32m')
   })
 
+  test('tool queued and running marks use cyan', () => {
+    const result = render([
+      { id: 'queued', kind: 'tool', text: '  ○ · preparing arguments' },
+      { id: 'running', kind: 'tool', text: '  ● · running' },
+    ])
+    expect(result.match(/\x1b\[36m/g)).toHaveLength(2)
+  })
+
   test('tool status line ok mark uses green', () => {
     const result = render([{ id: 't1', kind: 'tool', text: '  ✓ · 1.2s' }])
     expect(result).toContain('\x1b[32m')

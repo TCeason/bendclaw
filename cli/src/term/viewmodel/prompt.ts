@@ -167,7 +167,7 @@ function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
   ]
   if (input.gitBranch) segments.push({ priority: 90, spans: [dim(` (${input.gitBranch})`)] })
   if (contextPercent > 0) {
-    const context = ` ctx ${contextPercent.toFixed(0)}%`
+    const context = ` context: ${contextPercent.toFixed(1)}% (${formatContextTokens(input.contextTokens)}/${formatContextTokens(input.contextWindow)})`
     const span = contextPercent > 90
       ? colored(context, 'red')
       : contextPercent > 70
@@ -283,6 +283,12 @@ function formatTokens(count: number): string {
   if (count < 1000) return `${count}`
   if (count < 10000) return `${(count / 1000).toFixed(1)}k`
   if (count < 1000000) return `${Math.round(count / 1000)}k`
+  return `${(count / 1000000).toFixed(1)}M`
+}
+
+function formatContextTokens(count: number): string {
+  if (count < 1000) return `${count}`
+  if (count < 1000000) return `${(count / 1000).toFixed(1)}k`
   return `${(count / 1000000).toFixed(1)}M`
 }
 
