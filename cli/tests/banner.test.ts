@@ -29,6 +29,7 @@ describe('renderBanner terminal width', () => {
 
     const columns = 40
     const banner = renderBanner({
+      version: 'test',
       model: 'model',
       cwd: root,
       configInfo: undefined,

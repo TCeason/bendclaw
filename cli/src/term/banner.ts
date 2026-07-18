@@ -1,8 +1,8 @@
 import chalk from 'chalk'
 import stringWidth from 'string-width'
 import { wrapTextWithAnsi } from '../render/wrap.js'
-import { version, type ConfigInfo } from '../native/index.js'
 import { getSkillNames, getContextFiles } from './banner-skills.js'
+import type { ConfigInfo } from '../native/index.js'
 
 function truncate(text: string, maxWidth: number): string {
   if (stringWidth(text) <= maxWidth) return text
@@ -22,6 +22,7 @@ function wrapBannerLine(text: string, columns: number): string[] {
 }
 
 export interface BannerOptions {
+  version: string
   model: string
   cwd: string
   configInfo: ConfigInfo | undefined
@@ -44,8 +45,7 @@ export interface BannerOptions {
 export function renderBanner(opts: BannerOptions): string {
   if (opts.quiet) return ''
 
-  const { model, cwd, configInfo, columns, serverState, releaseNotes, updateAvailable, skillsDirs } = opts
-  const ver = version()
+  const { version: ver, model, cwd, configInfo, columns, serverState, releaseNotes, updateAvailable, skillsDirs } = opts
 
   const lines: string[] = []
 

@@ -439,6 +439,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function currentBannerText(): string {
     return renderBanner({
+      version: appVersion,
       model: agent.model,
       cwd: agent.cwd,
       configInfo,
