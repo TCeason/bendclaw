@@ -42,6 +42,10 @@ import {
   moveHome,
   moveEnd,
   applyCompletion,
+  acceptCompletion,
+  closeCompletion,
+  moveCompletion,
+  showCompletions,
   refreshGhostHint,
   createHistoryState,
   pushHistory,
@@ -402,16 +406,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       provider: configInfo?.provider ?? '',
       planning,
       logMode: logMode !== null,
-      queuedMessages: queuedUserMessages.map(message => message.text),
       dashboardUrl: serverState?.address ?? null,
       exitHint,
-      completionCandidates: editor.completionCandidates,
+      completion: editor.completion,
       ghostHint: editor.ghostHint,
       columns: renderer.termCols,
-      isLoading,
+      rows: renderer.termRows,
       placeholder: isEditorEmpty(editor) && !isLoading,
       cwd: appState.cwd,
-      gitRepo: gitInfo.getRepo(),
       gitBranch: gitInfo.getBranch(),
       // Footer stats
       inputTokens: appState.sessionTokens.inputTokens,
@@ -1112,6 +1114,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         editor = clearEditor(editor)
         renderer.requestRender()
         return true
+      case 'close-completion':
+        editor = closeCompletion(editor)
+        renderer.requestRender()
+        return true
       case 'clear-exit-hint':
         exitHint = false
         return false
@@ -1411,7 +1417,48 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
+  function refreshFileCompletions(acceptSingle: boolean): void {
+    const lineIndex = editor.cursorLine
+    const cursorCol = editor.cursorCol
+    const beforeCursor = editor.lines[lineIndex]!.slice(0, cursorCol)
+    const prefix = extractAtPrefix(beforeCursor)
+    if (!prefix) return
+
+    fdAbort?.abort()
+    const controller = new AbortController()
+    fdAbort = controller
+    completeAtFile(beforeCursor, appState.cwd, controller.signal).then(result => {
+      if (controller.signal.aborted) return
+      const currentBefore = editor.lines[lineIndex]?.slice(0, cursorCol)
+      if (editor.cursorLine !== lineIndex || editor.cursorCol !== cursorCol || currentBefore !== beforeCursor) return
+      if (!result) {
+        editor = closeCompletion(editor)
+      } else {
+        const items = result.items.map(item => ({
+          label: item.label,
+          value: item.value + (item.isDirectory ? '' : ' '),
+        }))
+        editor = showCompletions(editor, items, result.prefixStart, cursorCol)
+        if (acceptSingle && items.length === 1) editor = acceptCompletion(editor)
+      }
+      renderer.requestRender()
+    }).catch(() => {})
+  }
+
   function handleNormalKey(event: KeyEvent) {
+    if (editor.completion) {
+      if (event.type === 'up' || event.type === 'down') {
+        editor = moveCompletion(editor, event.type === 'up' ? -1 : 1)
+        renderer.requestRender()
+        return
+      }
+      if (event.type === 'enter' || event.type === 'tab') {
+        editor = acceptCompletion(editor)
+        renderer.requestRender()
+        return
+      }
+    }
+
     if (event.type === 'ctrl') {
       switch (event.key) {
         case 'u':
@@ -1519,46 +1566,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         break
       }
       case 'tab': {
-        // Try @file completion first (async)
-        const currentLine = editor.lines[editor.cursorLine] ?? ''
-        const beforeCursor = currentLine.slice(0, editor.cursorCol)
-        const atPrefix = extractAtPrefix(beforeCursor)
-        if (atPrefix) {
-          // Cancel any previous fd search
-          if (fdAbort) fdAbort.abort()
-          fdAbort = new AbortController()
-          completeAtFile(beforeCursor, appState.cwd, fdAbort.signal).then(result => {
-            if (!result || result.items.length === 0) return
-            if (result.items.length === 1) {
-              // Single match — apply directly
-              const item = result.items[0]!
-              const line = editor.lines[editor.cursorLine] ?? ''
-              const newLine = line.slice(0, result.prefixStart) + item.value + (item.isDirectory ? '' : ' ') + line.slice(editor.cursorCol)
-              const newCol = result.prefixStart + item.value.length + (item.isDirectory ? 0 : 1)
-              const lines = [...editor.lines]
-              lines[editor.cursorLine] = newLine
-              editor = { ...editor, lines, cursorCol: newCol, ghostHint: '', completionCandidates: [] }
-            } else {
-              // Multiple matches — show candidates and apply common prefix
-              const labels = result.items.map(i => i.label)
-              const values = result.items.map(i => i.value)
-              const common = commonPrefixOf(values)
-              if (common.length > atPrefix.prefix.length) {
-                const line = editor.lines[editor.cursorLine] ?? ''
-                const newLine = line.slice(0, result.prefixStart) + common + line.slice(editor.cursorCol)
-                const newCol = result.prefixStart + common.length
-                const lines = [...editor.lines]
-                lines[editor.cursorLine] = newLine
-                editor = { ...editor, lines, cursorCol: newCol, ghostHint: '', completionCandidates: labels }
-              } else {
-                editor = { ...editor, completionCandidates: labels }
-              }
-            }
-            renderer.requestRender()
-          }).catch(() => { /* ignore */ })
+        const beforeCursor = editor.lines[editor.cursorLine]!.slice(0, editor.cursorCol)
+        if (extractAtPrefix(beforeCursor)) {
+          refreshFileCompletions(true)
           break
         }
-        // Sync slash/path completion
         const result = applyCompletion(editor)
         if (result.applied) {
           editor = result.state
@@ -1568,33 +1580,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       case 'char':
       case 'shift-char':
-        editor = insertText(editor, event.char)
-        editor = refreshGhostHint(editor)
+        editor = refreshGhostHint(insertText(editor, event.char))
         renderer.requestRender()
-        // Auto-trigger @file completion on any char while in @ context
-        {
-          const charLine = editor.lines[editor.cursorLine] ?? ''
-          const charBefore = charLine.slice(0, editor.cursorCol)
-          const charAtPrefix = extractAtPrefix(charBefore)
-          if (charAtPrefix) {
-            if (fdAbort) fdAbort.abort()
-            fdAbort = new AbortController()
-            completeAtFile(charBefore, appState.cwd, fdAbort.signal).then(atResult => {
-              if (!atResult || atResult.items.length === 0) {
-                if (editor.completionCandidates.length > 0) {
-                  editor = { ...editor, completionCandidates: [] }
-                  renderer.requestRender()
-                }
-                return
-              }
-              const labels = atResult.items.map(i => i.label)
-              editor = { ...editor, completionCandidates: labels }
-              renderer.requestRender()
-            }).catch(() => { /* ignore */ })
-          } else if (editor.completionCandidates.length > 0) {
-            editor = { ...editor, completionCandidates: [] }
-            renderer.requestRender()
-          }
+        if (extractAtPrefix(editor.lines[editor.cursorLine]!.slice(0, editor.cursorCol))) {
+          refreshFileCompletions(false)
         }
         break
       case 'paste':
@@ -1602,48 +1591,25 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         renderer.requestRender()
         break
       case 'backspace': {
-        // Check if we should delete an entire paste ref
         const currentLine = editor.lines[editor.cursorLine]!
         const refs = parsePasteRefs(currentLine)
         const refDel = deleteRefBackspace(currentLine, editor.cursorCol, refs)
         if (refDel) {
-          const deletedRef = refs.find(r => r.end === editor.cursorCol)
+          const deletedRef = refs.find(ref => ref.end === editor.cursorCol)
           if (deletedRef) {
             pastedChunks.delete(deletedRef.id)
             pastedImages.delete(deletedRef.id)
           }
-          const newLines = [...editor.lines]
-          newLines[editor.cursorLine] = refDel.newLine
-          editor = { ...editor, lines: newLines, cursorCol: refDel.newCursorCol, ghostHint: '', completionCandidates: [] }
+          const lines = [...editor.lines]
+          lines[editor.cursorLine] = refDel.newLine
+          editor = { ...editor, lines, cursorCol: refDel.newCursorCol, ghostHint: '', completion: null }
         } else {
           editor = backspace(editor)
         }
         editor = refreshGhostHint(editor)
         renderer.requestRender()
-        // Update @file candidates after backspace
-        {
-          const bsLine = editor.lines[editor.cursorLine] ?? ''
-          const bsBefore = bsLine.slice(0, editor.cursorCol)
-          const bsAtPrefix = extractAtPrefix(bsBefore)
-          if (bsAtPrefix) {
-            if (fdAbort) fdAbort.abort()
-            fdAbort = new AbortController()
-            completeAtFile(bsBefore, appState.cwd, fdAbort.signal).then(atResult => {
-              if (!atResult || atResult.items.length === 0) {
-                if (editor.completionCandidates.length > 0) {
-                  editor = { ...editor, completionCandidates: [] }
-                  renderer.requestRender()
-                }
-                return
-              }
-              const labels = atResult.items.map(i => i.label)
-              editor = { ...editor, completionCandidates: labels }
-              renderer.requestRender()
-            }).catch(() => { /* ignore */ })
-          } else if (editor.completionCandidates.length > 0) {
-            editor = { ...editor, completionCandidates: [] }
-            renderer.requestRender()
-          }
+        if (extractAtPrefix(editor.lines[editor.cursorLine]!.slice(0, editor.cursorCol))) {
+          refreshFileCompletions(false)
         }
         break
       }
@@ -2419,16 +2385,4 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   process.on('SIGTERM', () => { cleanup(); fastExit(143) })
 
   await new Promise<void>(() => {})
-}
-
-function commonPrefixOf(strings: string[]): string {
-  if (strings.length === 0) return ''
-  let prefix = strings[0]!
-  for (let i = 1; i < strings.length; i++) {
-    const s = strings[i]!
-    let j = 0
-    while (j < prefix.length && j < s.length && prefix[j] === s[j]) j++
-    prefix = prefix.slice(0, j)
-  }
-  return prefix
 }

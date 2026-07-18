@@ -5,6 +5,15 @@ import { createSelectorState } from '../src/term/selector.js'
 
 const editor = createEditorState()
 const textEditor = insertText(createEditorState(), 'hello')
+const completionEditor = {
+  ...editor,
+  completion: {
+    items: [{ label: '/help', value: '/help ', description: 'Show help' }],
+    selectedIndex: 0,
+    replaceStart: 0,
+    replaceEnd: 2,
+  },
+}
 const none = { kind: 'none' as const }
 const help = { kind: 'help' as const }
 const selector = { kind: 'selector' as const, state: createSelectorState('T', [{ label: 'one' }]) }
@@ -53,6 +62,10 @@ describe('repl control', () => {
 
   test('escape closes overlay without query', () => {
     expect(kinds({ ...base, event: { type: 'escape' }, overlay: selector })).toEqual(['close-overlay'])
+  })
+
+  test('escape closes completion before clearing input', () => {
+    expect(kinds({ ...base, event: { type: 'escape' }, editor: completionEditor })).toEqual(['close-completion'])
   })
 
   test('escape restores newest queued prompt without interrupting', () => {

@@ -1,12 +1,26 @@
 import { complete, getGhostHint } from '../../commands/completion.js'
+import { COMMANDS, HIDDEN_COMMANDS } from '../../commands/index.js'
 import { needsContinuation } from './continuation.js'
+
+export interface CompletionCandidate {
+  label: string
+  value: string
+  description?: string
+}
+
+export interface CompletionMenu {
+  items: CompletionCandidate[]
+  selectedIndex: number
+  replaceStart: number
+  replaceEnd: number
+}
 
 export interface EditorState {
   lines: string[]
   cursorLine: number
   cursorCol: number
   ghostHint: string
-  completionCandidates: string[]
+  completion: CompletionMenu | null
 }
 
 /** Check if current editor content needs continuation (unclosed fence, trailing backslash). */
@@ -22,7 +36,7 @@ export interface HistoryState {
 
 export interface CompletionApplyResult {
   applied: boolean
-  candidates: string[]
+  state: EditorState
 }
 
 export function createEditorState(): EditorState {
@@ -31,7 +45,7 @@ export function createEditorState(): EditorState {
     cursorLine: 0,
     cursorCol: 0,
     ghostHint: '',
-    completionCandidates: [],
+    completion: null,
   }
 }
 
@@ -50,7 +64,7 @@ export function clearEditor(state: EditorState): EditorState {
     cursorLine: 0,
     cursorCol: 0,
     ghostHint: '',
-    completionCandidates: [],
+    completion: null,
   }
 }
 
@@ -141,29 +155,84 @@ export function moveEnd(state: EditorState): EditorState {
   return withoutGhost({ ...state, cursorCol: state.lines[state.cursorLine]!.length })
 }
 
-export function applyCompletion(state: EditorState): CompletionApplyResult & { state: EditorState } {
+export function applyCompletion(state: EditorState): CompletionApplyResult {
+  if (state.completion) return { state: acceptCompletion(state), applied: true }
+
   const currentLine = state.lines[state.cursorLine]!
   const result = complete(currentLine, state.cursorCol)
-  if (!result) {
-    return { state, applied: false, candidates: [] }
-  }
+  if (!result) return { state, applied: false }
 
   const before = currentLine.slice(0, result.wordStart)
   const after = currentLine.slice(state.cursorCol)
-  const newLine = before + result.replacement + after
   const newLines = [...state.lines]
-  newLines[state.cursorLine] = newLine
+  newLines[state.cursorLine] = before + result.replacement + after
+  const cursorCol = before.length + result.replacement.length
+  const items = result.candidates.map(completionCandidate)
 
   return {
     state: {
       ...state,
       lines: newLines,
-      cursorCol: before.length + result.replacement.length,
+      cursorCol,
       ghostHint: '',
-      completionCandidates: result.candidates,
+      completion: items.length > 1
+        ? { items, selectedIndex: 0, replaceStart: result.wordStart, replaceEnd: cursorCol }
+        : null,
     },
     applied: true,
-    candidates: result.candidates,
+  }
+}
+
+export function showCompletions(
+  state: EditorState,
+  items: CompletionCandidate[],
+  replaceStart: number,
+  replaceEnd = state.cursorCol,
+): EditorState {
+  return {
+    ...state,
+    ghostHint: '',
+    completion: items.length > 0
+      ? { items, selectedIndex: 0, replaceStart, replaceEnd }
+      : null,
+  }
+}
+
+export function moveCompletion(state: EditorState, delta: number): EditorState {
+  const menu = state.completion
+  if (!menu || menu.items.length === 0) return state
+  const selectedIndex = (menu.selectedIndex + delta + menu.items.length) % menu.items.length
+  return { ...state, completion: { ...menu, selectedIndex } }
+}
+
+export function acceptCompletion(state: EditorState): EditorState {
+  const menu = state.completion
+  const item = menu?.items[menu.selectedIndex]
+  if (!menu || !item) return state
+  const currentLine = state.lines[state.cursorLine]!
+  const newLines = [...state.lines]
+  newLines[state.cursorLine] = currentLine.slice(0, menu.replaceStart) + item.value + currentLine.slice(menu.replaceEnd)
+  return {
+    ...state,
+    lines: newLines,
+    cursorCol: menu.replaceStart + item.value.length,
+    ghostHint: '',
+    completion: null,
+  }
+}
+
+export function closeCompletion(state: EditorState): EditorState {
+  return state.completion ? { ...state, completion: null } : state
+}
+
+function completionCandidate(value: string): CompletionCandidate {
+  const command = [...COMMANDS, ...HIDDEN_COMMANDS].find(
+    item => item.name === value || item.aliases?.includes(value),
+  )
+  return {
+    label: value,
+    value: command ? `${value} ` : value,
+    description: command?.description,
   }
 }
 
@@ -192,47 +261,25 @@ export function pushHistory(state: HistoryState, entry: string): HistoryState {
 }
 
 export function historyPrev(history: HistoryState, editor: EditorState): { history: HistoryState; editor: EditorState; changed: boolean } {
-  if (history.index <= 0) {
-    return { history, editor, changed: false }
-  }
+  if (history.index <= 0) return { history, editor, changed: false }
 
-  let nextHistory = history
-  if (history.index === history.entries.length) {
-    nextHistory = { ...history, savedInput: getEditorText(editor) }
-  }
-  const nextIndex = nextHistory.index - 1
-  const entry = nextHistory.entries[nextIndex]!
-  const lines = entry.split('\n')
-  const lastLine = lines[lines.length - 1]!
+  const savedInput = history.index === history.entries.length ? getEditorText(editor) : history.savedInput
+  const index = history.index - 1
   return {
-    history: { ...nextHistory, index: nextIndex },
-    editor: withoutGhost({ ...editor, lines, cursorLine: lines.length - 1, cursorCol: lastLine.length, completionCandidates: [] }),
+    history: { ...history, index, savedInput },
+    editor: editorFromText(editor, history.entries[index]!),
     changed: true,
   }
 }
 
 export function historyNext(history: HistoryState, editor: EditorState): { history: HistoryState; editor: EditorState; changed: boolean } {
-  if (history.index >= history.entries.length) {
-    return { history, editor, changed: false }
-  }
+  if (history.index >= history.entries.length) return { history, editor, changed: false }
 
-  const nextIndex = history.index + 1
-  if (nextIndex === history.entries.length) {
-    const lines = history.savedInput.split('\n')
-    const lastLine = lines[lines.length - 1]!
-    return {
-      history: { ...history, index: nextIndex },
-      editor: withoutGhost({ ...editor, lines, cursorLine: lines.length - 1, cursorCol: lastLine.length, completionCandidates: [] }),
-      changed: true,
-    }
-  }
-
-  const entry = history.entries[nextIndex]!
-  const lines = entry.split('\n')
-  const lastLine = lines[lines.length - 1]!
+  const index = history.index + 1
+  const text = index === history.entries.length ? history.savedInput : history.entries[index]!
   return {
-    history: { ...history, index: nextIndex },
-    editor: withoutGhost({ ...editor, lines, cursorLine: lines.length - 1, cursorCol: lastLine.length, completionCandidates: [] }),
+    history: { ...history, index },
+    editor: editorFromText(editor, text),
     changed: true,
   }
 }
@@ -333,10 +380,22 @@ export function moveDown(state: EditorState): EditorState {
 // Helpers
 // ---------------------------------------------------------------------------
 
+function editorFromText(state: EditorState, text: string): EditorState {
+  const lines = text.split('\n')
+  return {
+    ...state,
+    lines,
+    cursorLine: lines.length - 1,
+    cursorCol: lines[lines.length - 1]!.length,
+    ghostHint: '',
+    completion: null,
+  }
+}
+
 function withCompletionsCleared(state: EditorState): EditorState {
-  return refreshGhostHint({ ...state, completionCandidates: [] })
+  return refreshGhostHint({ ...state, completion: null })
 }
 
 function withoutGhost(state: EditorState): EditorState {
-  return { ...state, ghostHint: '' }
+  return { ...state, ghostHint: '', completion: null }
 }

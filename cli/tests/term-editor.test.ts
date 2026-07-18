@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  acceptCompletion,
   applyCompletion,
   backspace,
   clearEditor,
+  closeCompletion,
   createEditorState,
   createHistoryState,
   getEditorText,
@@ -14,8 +16,10 @@ import {
   moveHome,
   moveLeft,
   moveRight,
+  moveCompletion,
   pushHistory,
   refreshGhostHint,
+  showCompletions,
 } from '../src/term/input/editor.js'
 
 describe('term input editor', () => {
@@ -60,12 +64,40 @@ describe('term input editor', () => {
     expect(isEditorEmpty(state)).toBe(true)
   })
 
-  test('applyCompletion updates candidates', () => {
-    let state = createEditorState()
-    state = insertText(state, '/he')
-    const result = applyCompletion(state)
+  test('completes a unique command immediately', () => {
+    const result = applyCompletion(insertText(createEditorState(), '/he'))
     expect(result.applied).toBe(true)
-    expect(getEditorText(result.state).startsWith('/help')).toBe(true)
+    expect(getEditorText(result.state)).toBe('/help ')
+    expect(result.state.completion).toBeNull()
+  })
+
+  test('opens, navigates, accepts and closes a completion menu', () => {
+    const items = [
+      { label: '/help', value: '/help ', description: 'Show help' },
+      { label: '/harden', value: '/harden ', description: 'Harden changes' },
+    ]
+    let state = insertText(createEditorState(), '/h')
+    state = showCompletions(state, items, 0, 2)
+    expect(state.completion?.selectedIndex).toBe(0)
+
+    state = moveCompletion(state, 1)
+    expect(state.completion?.selectedIndex).toBe(1)
+    state = acceptCompletion(state)
+    expect(getEditorText(state)).toBe('/harden ')
+    expect(state.completion).toBeNull()
+
+    state = showCompletions(state, items, 0, state.cursorCol)
+    expect(closeCompletion(state).completion).toBeNull()
+  })
+
+  test('editing clears an open completion menu', () => {
+    const state = showCompletions(
+      insertText(createEditorState(), '/h'),
+      [{ label: '/help', value: '/help ' }],
+      0,
+      2,
+    )
+    expect(insertText(state, 'e').completion).toBeNull()
   })
 
   test('refreshGhostHint does not crash', () => {

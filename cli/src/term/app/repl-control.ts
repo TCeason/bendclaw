@@ -20,6 +20,7 @@ export type ReplControlAction =
   | { kind: 'exit' }
   | { kind: 'show-exit-hint' }
   | { kind: 'clear-editor' }
+  | { kind: 'close-completion' }
   | { kind: 'clear-exit-hint' }
   | { kind: 'cancel-ask' }
   | { kind: 'clear-selector-query' }
@@ -51,6 +52,7 @@ export function decideReplControl(input: ReplControlInput): ReplControlAction[] 
       if (overlay.kind === 'selector' && overlay.state.query) return actions.concat({ kind: 'clear-selector-query' })
       return actions.concat({ kind: 'close-overlay' })
     }
+    if (editor.completion) return actions.concat({ kind: 'close-completion' })
     if (isLoading && hasStream && hasQueuedPrompt) return actions.concat({ kind: 'restore-queued' })
     if (isLoading && hasStream) return actions.concat({ kind: 'interrupt' })
     if (!isEditorEmpty(editor)) return actions.concat({ kind: 'clear-editor' })

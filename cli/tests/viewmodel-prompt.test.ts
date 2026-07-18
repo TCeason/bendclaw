@@ -1,42 +1,38 @@
-import { describe, test, expect, beforeAll } from 'bun:test'
-import { buildPromptBlocks, buildPromptFooterBlocks, type PromptVMInput } from '../src/term/viewmodel/prompt.js'
-import { blocksToLines } from '../src/term/viewmodel/types.js'
-import stripAnsi from 'strip-ansi'
-import { CURSOR_MARKER } from '../src/term/renderer.js'
+import { beforeAll, describe, expect, test } from 'bun:test'
 import chalk from 'chalk'
 import stringWidth from 'string-width'
+import stripAnsi from 'strip-ansi'
+import { CURSOR_MARKER } from '../src/term/renderer.js'
+import { blocksToLines } from '../src/term/viewmodel/types.js'
+import { buildPromptBlocks, buildPromptFooterBlocks, type PromptVMInput } from '../src/term/viewmodel/prompt.js'
 
-beforeAll(() => {
-  chalk.level = 3
-})
+beforeAll(() => { chalk.level = 3 })
 
-function defaultInput(overrides?: Partial<PromptVMInput>): PromptVMInput {
+function defaultInput(overrides: Partial<PromptVMInput> = {}): PromptVMInput {
   return {
     lines: [''],
     cursorLine: 0,
     cursorCol: 0,
     active: true,
-    model: 'claude-sonnet',
-    provider: '',
-    planning: false,
-    logMode: false,
-    queuedMessages: [],
-    dashboardUrl: null,
-    exitHint: false,
-    completionCandidates: [],
+    completion: null,
     ghostHint: '',
     columns: 80,
-    isLoading: false,
+    rows: 24,
     placeholder: true,
+    model: 'claude-sonnet',
+    provider: '',
+    thinkingLevel: '',
+    planning: false,
+    logMode: false,
+    dashboardUrl: null,
+    exitHint: false,
     cwd: '/Users/test/project',
-    gitRepo: 'project',
     gitBranch: 'main',
     inputTokens: 0,
     outputTokens: 0,
     cacheReadTokens: 0,
     contextTokens: 0,
     contextWindow: 0,
-    thinkingLevel: '',
     ...overrides,
   }
 }
@@ -49,259 +45,175 @@ function renderPlain(input: PromptVMInput): string {
   return stripAnsi(render(input)).replaceAll(CURSOR_MARKER, '')
 }
 
-describe('buildPromptBlocks', () => {
-  test('contains top border', () => {
-    const result = renderPlain(defaultInput())
-    const lines = result.split('\n')
-    const borderLines = lines.filter(l => l.match(/^─+$/))
-    expect(borderLines.length).toBeGreaterThanOrEqual(1)
+function completion(labels: string[], selectedIndex = 0) {
+  return {
+    items: labels.map(label => ({ label, value: `${label} `, description: `Description for ${label}` })),
+    selectedIndex,
+    replaceStart: 0,
+    replaceEnd: 2,
+  }
+}
+
+describe('prompt editor', () => {
+  test('renders border, prompt, cursor and placeholder', () => {
+    const ansi = render(defaultInput())
+    const plain = stripAnsi(ansi).replaceAll(CURSOR_MARKER, '')
+    expect(plain).toContain('─'.repeat(80))
+    expect(plain).toContain('❯')
+    expect(plain).toContain('Type a message...')
+    expect(ansi).toContain('\x1b[7m')
   })
 
-  test('shows cursor prefix ❯', () => {
-    const result = renderPlain(defaultInput())
-    expect(result).toContain('❯')
+  test('renders input and known command styling', () => {
+    const input = defaultInput({ lines: ['/plan remove unwraps'], cursorCol: 5, placeholder: false })
+    expect(renderPlain(input)).toContain('/plan remove unwraps')
+    expect(render(input)).toContain('\x1b[36m')
   })
 
-  test('shows placeholder when empty', () => {
-    const result = renderPlain(defaultInput())
-    expect(result).toContain('Type a message...')
+  test('does not style unknown slash text as a command', () => {
+    const ansi = render(defaultInput({ lines: ['/unknown text'], cursorCol: 8, placeholder: false }))
+    expect(ansi).not.toContain('\x1b[36m/unknown')
   })
 
-  test('no placeholder when text entered', () => {
-    const result = renderPlain(defaultInput({ lines: ['hello'], cursorCol: 5, placeholder: false }))
-    expect(result).not.toContain('Type a message...')
-    expect(result).toContain('hello')
+  test('wraps ASCII and CJK input within terminal width', () => {
+    for (const text of ['a'.repeat(50), '改进不过测试一定要在目录']) {
+      const plain = renderPlain(defaultInput({ columns: 20, lines: [text], cursorCol: text.length, placeholder: false }))
+      for (const row of plain.split('\n')) expect(stringWidth(row)).toBeLessThanOrEqual(20)
+    }
   })
 
-  test('shows [plan] when planning', () => {
-    const result = renderPlain(defaultInput({ planning: true }))
-    expect(result).toContain('[plan]')
+  test('puts an end cursor on a fresh row when the previous row is full', () => {
+    const ansi = render(defaultInput({ columns: 20, lines: ['a'.repeat(18)], cursorCol: 18, placeholder: false }))
+    const rows = stripAnsi(ansi).split('\n').filter(row => row.startsWith('❯ ') || row.startsWith('  '))
+    expect(rows.length).toBeGreaterThanOrEqual(2)
+    expect(ansi).toContain('\x1b[7m')
   })
 
-  test('no [plan] when not planning', () => {
-    const result = renderPlain(defaultInput({ planning: false }))
-    expect(result).not.toContain('[plan]')
+  test('limits long input to 30 percent of terminal rows and follows the cursor', () => {
+    const lines = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`)
+    const plain = renderPlain(defaultInput({
+      lines,
+      cursorLine: 11,
+      cursorCol: lines[11]!.length,
+      rows: 20,
+      placeholder: false,
+    }))
+    expect(plain).toContain('↑ 6 lines')
+    expect(plain).not.toContain('line 1\n')
+    expect(plain).toContain('line 12')
   })
 
-  test('shows [log] when logMode', () => {
-    const result = renderPlain(defaultInput({ logMode: true }))
-    expect(result).toContain('[log]')
+  test('shows lines below when the cursor is near the top', () => {
+    const lines = Array.from({ length: 10 }, (_, index) => `row ${index + 1}`)
+    const plain = renderPlain(defaultInput({ lines, cursorLine: 0, cursorCol: 0, rows: 20, placeholder: false }))
+    expect(plain).toContain('↓ 4 lines')
+    expect(plain).toContain('row 1')
+    expect(plain).not.toContain('row 10')
+  })
+
+  test('renders a five-row completion viewport with descriptions and position', () => {
+    const plain = renderPlain(defaultInput({ completion: completion(['/a', '/b', '/c', '/d', '/e', '/f'], 5) }))
+    expect(plain).not.toContain('/a')
+    expect(plain).toContain('/f')
+    expect(plain).toContain('Description for /f')
+    expect(plain).toContain('6/6')
+  })
+
+  test('keeps completion rows within terminal width', () => {
+    const plain = renderPlain(defaultInput({
+      columns: 24,
+      completion: completion(['/very-long-command-one', '/very-long-command-two']),
+    }))
+    for (const row of plain.split('\n')) expect(stringWidth(row)).toBeLessThanOrEqual(24)
+  })
+
+  test('preserves prompt spacing and attached layout', () => {
+    expect(buildPromptBlocks(defaultInput())[0]!.marginTop).toBe(1)
+    expect(buildPromptBlocks(defaultInput(), { attachedAbove: true })[0]!.marginTop).toBe(0)
   })
 
   test('shows exit hint', () => {
-    const result = renderPlain(defaultInput({ exitHint: true }))
-    expect(result).toContain('Press Ctrl+C again to exit')
+    expect(renderPlain(defaultInput({ exitHint: true }))).toContain('Press Ctrl+C again to exit')
   })
 
-  test('shows queued messages above the prompt via buildFrame helper contract', () => {
-    // Queue rendering moved out of the prompt footer (easy to miss under the
-    // status line) into formatQueuedMessageLines above the spinner. Prompt
-    // itself no longer embeds queued text.
-    const result = renderPlain(defaultInput({ queuedMessages: ['msg1', 'msg2'] }))
-    expect(result).not.toContain('msg1')
-    expect(result).not.toContain('msg2')
-    expect(result).not.toContain('Queued:')
+  test('uses fallback dimensions for non-finite terminal sizes', () => {
+    const plain = renderPlain(defaultInput({ columns: Infinity, rows: Infinity }))
+    expect(plain.split('\n')).toContain('─'.repeat(80))
+  })
+})
+
+describe('prompt footer', () => {
+  test('renders modes, repository state and model identity', () => {
+    const plain = renderPlain(defaultInput({
+      planning: true,
+      logMode: true,
+      provider: 'anthropic',
+      thinkingLevel: 'xhigh',
+      columns: 160,
+    }))
+    expect(plain).toContain('[log] [plan]')
+    expect(plain).toContain('/Users/test/project (main)')
+    expect(plain).toContain('claude-sonnet@anthropic • xhigh')
   })
 
-  test('shows dashboard link when url is set', () => {
-    const result = renderPlain(defaultInput({ dashboardUrl: 'http://127.0.0.1:8788', columns: 200 }))
-    expect(result).toContain('dashboard')
-    expect(result).toContain('http://127.0.0.1:8788')
+  test('labels disabled thinking', () => {
+    expect(renderPlain(defaultInput({ thinkingLevel: 'off' }))).toContain('thinking off')
   })
 
-  test('hides dashboard link when url is null', () => {
-    const result = renderPlain(defaultInput({ dashboardUrl: null, columns: 200 }))
-    expect(result).not.toContain('http://')
-  })
-
-  test('shows completion candidates', () => {
-    const result = renderPlain(defaultInput({ completionCandidates: ['/help', '/model', '/resume'] }))
-    expect(result).toContain('/help')
-    expect(result).toContain('/model')
-    expect(result).toContain('/resume')
-  })
-
-  test('adds one top margin so the prompt is always separated from messages', () => {
-    // Mirrors pi's always-present widgetContainerAbove spacer: one guaranteed
-    // blank line between the message area and the prompt border, regardless of
-    // loading state or how the preceding block ended.
-    const [promptBlock] = buildPromptBlocks(defaultInput({ isLoading: true }))
-    expect(promptBlock?.marginTop).toBe(1)
-    const [idleBlock] = buildPromptBlocks(defaultInput({ isLoading: false }))
-    expect(idleBlock?.marginTop).toBe(1)
-  })
-
-  test('can attach the prompt border directly below a footer widget', () => {
-    const blocks = buildPromptBlocks(defaultInput(), { attachedAbove: true })
-    expect(blocks[0]!.marginTop).toBe(0)
-  })
-
-  test('footer remains available when a selector replaces only the editor', () => {
-    const lines = blocksToLines(buildPromptFooterBlocks(defaultInput({
-      provider: 'openai',
-      model: 'gpt-5.6-sol',
-    }))).map(line => stripAnsi(line))
-
-    expect(lines).toHaveLength(2)
-    expect(lines[0]).toContain('/Users/test/project (main)')
-    expect(lines[0]).toContain('gpt-5.6-sol@openai')
-    expect(lines[1]).toBe('')
-    expect(lines.join('\n')).not.toContain('Type a message...')
-    expect(lines.join('\n')).not.toContain('─')
-  })
-
-  test('footer shows context with model but not session token totals', () => {
-    const result = renderPlain(defaultInput({
-      model: 'claude-sonnet',
+  test('renders context, token stats and dashboard when space allows', () => {
+    const plain = renderPlain(defaultInput({
+      columns: 220,
       inputTokens: 408000,
       outputTokens: 1100,
       cacheReadTokens: 89000,
       contextTokens: 86400,
       contextWindow: 320000,
+      dashboardUrl: 'http://127.0.0.1:8788',
     }))
-    expect(result).toContain('context: 27.0% (86.4k/320.0k)')
-    expect(result).toContain('claude-sonnet')
-    expect(result).not.toContain('↑408k')
-    expect(result).not.toContain('↓1.1k')
-    expect(result).not.toContain('R89k')
+    expect(plain).toContain('ctx 27%')
+    expect(plain).toContain('↑408k')
+    expect(plain).toContain('↓1.1k')
+    expect(plain).toContain('cache 89k')
+    expect(plain).toContain('http://127.0.0.1:8788')
   })
 
-  test('footer labels the model with its provider', () => {
-    const result = renderPlain(defaultInput({
+  test('drops low-priority segments as width narrows', () => {
+    const plain = renderPlain(defaultInput({
+      columns: 45,
       provider: 'anthropic',
-      model: 'claude-sonnet',
-    }))
-    expect(result).toContain('claude-sonnet@anthropic')
-  })
-
-  test('footer shows thinking level next to model when set', () => {
-    const result = renderPlain(defaultInput({
-      model: 'claude-opus-4-8',
       thinkingLevel: 'xhigh',
+      inputTokens: 408000,
+      outputTokens: 1100,
+      dashboardUrl: 'http://127.0.0.1:8788',
+      contextTokens: 86400,
+      contextWindow: 320000,
     }))
-    expect(result).toContain('claude-opus-4-8 • xhigh')
+    const footer = plain.split('\n').at(-2)!
+    expect(footer).toContain('/Users/test/project')
+    expect(footer).toContain('ctx 27%')
+    expect(footer).not.toContain('dashboard')
+    expect(footer).not.toContain('↑408k')
+    expect(stringWidth(footer)).toBeLessThanOrEqual(45)
   })
 
-  test('footer shows "thinking off" when level is off', () => {
-    const result = renderPlain(defaultInput({
-      model: 'claude-opus-4-8',
-      thinkingLevel: 'off',
-    }))
-    expect(result).toContain('claude-opus-4-8 • thinking off')
-  })
-
-  test('footer omits thinking indicator when level is empty', () => {
-    const result = renderPlain(defaultInput({
-      model: 'claude-sonnet',
-      thinkingLevel: '',
-    }))
-    expect(result).toContain('claude-sonnet')
-    expect(result).not.toContain('•')
-  })
-
-  test('footer stays within terminal width for wide CJK cwd and long model', () => {
-    const columns = 40
-    const lines = renderPlain(defaultInput({
+  test('truncates a wide CJK cwd only after optional segments are gone', () => {
+    const columns = 24
+    const footer = blocksToLines(buildPromptFooterBlocks(defaultInput({
       columns,
       cwd: '/项目/非常长的中文目录名称/子目录',
       gitBranch: 'feature/very-long-branch',
-      model: 'a-very-long-model-name-that-must-be-truncated',
+      model: 'a-very-long-model-name',
       provider: 'provider',
-      thinkingLevel: 'xhigh',
-    })).split('\n')
-
-    const footer = lines.at(-2)!
+    }))).map(stripAnsi)[0]!
     expect(stringWidth(footer)).toBeLessThanOrEqual(columns)
+    expect(footer).toStartWith('…')
   })
 
-  test('completion candidates wrap within terminal width', () => {
-    const columns = 24
-    const result = renderPlain(defaultInput({
-      columns,
-      completionCandidates: ['/very-long-command-one', '/very-long-command-two'],
-    }))
-    for (const line of result.split('\n')) {
-      expect(stringWidth(line)).toBeLessThanOrEqual(columns)
-    }
-  })
-
-  test('cursor is rendered with inverse', () => {
-    const result = render(defaultInput({ lines: ['abc'], cursorCol: 1, placeholder: false }))
-    expect(result).toContain('\x1b[7m')
-  })
-
-  test('ghost hint is dim', () => {
-    const result = render(defaultInput({ lines: ['/he'], cursorCol: 3, placeholder: false }))
-    // ghost hint depends on getGhostHint — just verify no crash
-    expect(result).toBeTruthy()
-  })
-
-  test('highlights known slash command in theme color', () => {
-    const plainResult = renderPlain(defaultInput({ lines: ['/plan remove unwraps'], cursorCol: 5, placeholder: false }))
-    const ansiResult = render(defaultInput({ lines: ['/plan remove unwraps'], cursorCol: 5, placeholder: false }))
-
-    expect(plainResult).toContain('/plan remove unwraps')
-    expect(plainResult).not.toContain('command matched:')
-    expect(ansiResult).toContain('\x1b[36m')
-  })
-
-  test('does not highlight unknown slash text as command', () => {
-    const ansiResult = render(defaultInput({ lines: ['/unknown text'], cursorCol: 8, placeholder: false }))
-    expect(ansiResult).not.toContain('\x1b[36m/unknown')
-  })
-
-  test('handles non-finite columns', () => {
-    const result = renderPlain(defaultInput({ columns: Infinity }))
-    const lines = result.split('\n')
-    expect(lines.some(l => l === '─'.repeat(80))).toBe(true)
-  })
-
-  test('wraps long ascii input across multiple visual lines', () => {
-    // columns=20 -> 18 cols available for text after the prefix.
-    const text = 'a'.repeat(50)
-    const result = renderPlain(defaultInput({ columns: 20, lines: [text], cursorCol: 50, placeholder: false }))
-    const lines = result.split('\n')
-    // First wrapped row uses '❯ ' prefix, continuation rows use '  '.
-    const firstRow = lines.find(l => l.startsWith('❯ '))
-    const contRows = lines.filter(l => /^  a+/.test(l))
-    expect(firstRow).toBeTruthy()
-    // Visible width of each input row should not exceed the terminal width.
-    for (const row of [firstRow!, ...contRows]) {
-      expect(row.length).toBeLessThanOrEqual(20)
-    }
-    // Joining row contents (minus prefix) reproduces the original text.
-    const joined = (firstRow!.slice(2) + contRows.map(r => r.slice(2)).join('')).replace(/\s+$/, '')
-    expect(joined.startsWith('a'.repeat(50))).toBe(true)
-  })
-
-  test('cursor at end of overflow text appears on a fresh wrap row', () => {
-    // Available width = 20 - 2 = 18. Use exactly 18 chars so cursor at end
-    // would otherwise overflow the row.
-    const text = 'a'.repeat(18)
-    const result = render(defaultInput({ columns: 20, lines: [text], cursorCol: 18, placeholder: false }))
-    const plainResult = stripAnsi(result)
-    const rows = plainResult.split('\n')
-    // We expect at least two input rows (the filled row + an empty wrap row
-    // hosting the cursor).
-    const inputRows = rows.filter(r => r.startsWith('❯ ') || /^  /.test(r))
-    expect(inputRows.length).toBeGreaterThanOrEqual(2)
-    // Inverse escape (cursor) should appear in the output.
-    expect(result).toContain('\x1b[7m')
-  })
-
-  test('wraps wide CJK characters without overflowing terminal width', () => {
-    // Each CJK char has display width 2, so 18 cols hold 9 chars.
-    const text = '改进不过测试一定要在目录'
-    const result = renderPlain(defaultInput({ columns: 20, lines: [text], cursorCol: text.length, placeholder: false }))
-    const rows = result.split('\n')
-    const inputRows = rows.filter(r => r.startsWith('❯ ') || /^  \S/.test(r))
-    expect(inputRows.length).toBeGreaterThanOrEqual(2)
-    // Visible width of each row should fit within the terminal.
-    for (const r of inputRows) {
-      // Approximate visible width via string-width is fine, but here we just
-      // check character count doesn't exceed columns (since CJK is 2 cols
-      // each, this is a conservative bound).
-      expect(r.length).toBeLessThanOrEqual(20)
-    }
+  test('footer remains available without the editor', () => {
+    const lines = blocksToLines(buildPromptFooterBlocks(defaultInput({ provider: 'openai', model: 'gpt-5.6-sol' }))).map(stripAnsi)
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toContain('gpt-5.6-sol@openai')
+    expect(lines[1]).toBe('')
+    expect(lines.join('\n')).not.toContain('Type a message...')
   })
 })
