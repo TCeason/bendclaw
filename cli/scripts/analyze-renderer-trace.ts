@@ -88,7 +88,11 @@ const logicalLines = new Map<number, string>()
 function updateLogicalFrame(entry: RendererTraceEntry): void {
   if (entry.viewportTail) {
     logicalLines.clear()
-    const start = entry.frameState.targetViewportTop
+    // viewportTail describes what is physically visible. After a one-line
+    // shrink, pi-style rendering intentionally keeps the existing viewport
+    // origin and clears the bottom row, so this can differ from the logical
+    // bottom-aligned targetViewportTop.
+    const start = entry.frameState.previousViewportTopAfter
     entry.viewportTail.forEach((line, index) => logicalLines.set(start + index, line))
   }
   if (entry.viewportPatch) {
@@ -104,7 +108,7 @@ function updateLogicalFrame(entry: RendererTraceEntry): void {
 function expectedViewport(entry: RendererTraceEntry): string[] {
   const expected: string[] = []
   for (let row = 0; row < entry.terminal.rows; row++) {
-    const index = entry.frameState.targetViewportTop + row
+    const index = entry.frameState.previousViewportTopAfter + row
     const line = logicalLines.get(index) ?? ''
     expected.push(stripAnsi(sliceAnsi(line, 0, entry.terminal.columns)))
   }
@@ -117,7 +121,7 @@ function viewportsMatch(
   actual: string[],
 ): boolean {
   return expected.every((line, row) => {
-    const sourceIndex = entry.frameState.targetViewportTop + row
+    const sourceIndex = entry.frameState.previousViewportTopAfter + row
     const source = logicalLines.get(sourceIndex) ?? ''
     if (stringWidth(stripAnsi(source)) < entry.terminal.columns) {
       return actual[row] === line

@@ -104,6 +104,18 @@ export class GitInfoProvider {
     return () => this.callbacks.delete(callback)
   }
 
+  /**
+   * Re-read repository metadata immediately. Tool subprocesses can switch HEAD
+   * and finish before the debounced filesystem watcher fires; callers use this
+   * at tool completion so the footer never shows the previous branch.
+   */
+  refresh(): boolean {
+    if (this.disposed) return false
+    const changed = this.refreshSync()
+    if (changed) this.notifyChange()
+    return changed
+  }
+
   setCwd(cwd: string): void {
     if (this.cwd === cwd) return
     this.cwd = cwd

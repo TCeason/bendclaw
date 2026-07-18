@@ -955,6 +955,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         appState = update.state.appState
         spinnerState = update.state.spinnerState
 
+        // Git commands run inside tool subprocesses. Refresh synchronously when
+        // any tool settles instead of waiting for the debounced HEAD watcher;
+        // otherwise the completed answer can still render the previous branch.
+        if (event.kind === 'tool_finished') gitInfo.refresh()
+
         // Request re-render on each delta so streaming text appears
         if (event.kind === 'assistant_delta') {
           renderer.requestRender()

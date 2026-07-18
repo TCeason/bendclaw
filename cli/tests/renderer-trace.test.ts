@@ -302,6 +302,50 @@ describe('RendererTrace rolling storage', () => {
     }
   })
 
+  test('analyzer replays a visible shrink using the retained physical viewport origin', () => {
+    const root = mkdtempSync(join(tmpdir(), 'evot-renderer-shrink-origin-'))
+    try {
+      const trace = new RendererTrace({
+        rootDirectory: root,
+        segmentMaxBytes: 1_000_000,
+        retainSegments: 2,
+        retainRuns: 2,
+      })
+      trace.bind('00000000-0000-0000-0000-000000000008')
+      const stdout = new TraceStdout() as unknown as NodeJS.WriteStream
+      const renderer = new TermRenderer({ stdout, trace: entry => trace.log(entry) })
+      let lines = Array.from({ length: 10 }, (_, index) => `line ${index}`)
+      renderer.setRenderCallback(() => lines)
+      renderer.init()
+      renderer.clearScreen()
+      ;(renderer as any).doRender()
+
+      // Remove a live footer row and repaint the rows above it. The renderer
+      // keeps viewportTop=4 even though the logical target moves from 4 to 3.
+      lines = [
+        ...lines.slice(0, 4),
+        'line 4 changed',
+        ...lines.slice(5, -1),
+      ]
+      ;(renderer as any).doRender()
+      renderer.destroy()
+      trace.close()
+
+      const run = trace.filePath ?? ''
+      const entries = frameEntries(join(run, segments(run)[0]!))
+      const shrink = entries.at(-1)!
+      expect(shrink.frameState.newLines).toBe(9)
+      expect(shrink.frameState.targetViewportTop).toBe(3)
+      expect(shrink.frameState.previousViewportTopAfter).toBe(4)
+
+      const analyzed = analyzeRun(run)
+      expect(analyzed.exitCode).toBe(0)
+      expect(JSON.parse(analyzed.stdout).firstReplayMismatch).toBeNull()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   test('analyzer does not claim absolute viewport verification before a clear-home baseline', () => {
     const root = mkdtempSync(join(tmpdir(), 'evot-renderer-origin-'))
     try {

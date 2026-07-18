@@ -153,7 +153,9 @@ export class RendererTrace {
   private updateSnapshot(entry: RendererTraceEntry): void {
     if (entry.viewportTail) {
       this.logicalLines.clear()
-      const start = entry.frameState.targetViewportTop
+      // A checkpoint paints the physical viewport, whose origin can remain one
+      // row below the bottom-aligned logical target after content shrinks.
+      const start = entry.frameState.previousViewportTopAfter
       entry.viewportTail.forEach((line, index) => this.logicalLines.set(start + index, line))
     }
     if (entry.viewportPatch) {
@@ -167,7 +169,7 @@ export class RendererTrace {
 
     const tail: string[] = []
     for (let row = 0; row < entry.terminal.rows; row++) {
-      const index = entry.frameState.targetViewportTop + row
+      const index = entry.frameState.previousViewportTopAfter + row
       tail.push(this.logicalLines.get(index) ?? '')
     }
     this.snapshot = { entry, viewportTail: tail }
