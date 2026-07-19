@@ -27,10 +27,14 @@ function loadBinding() {
 
   // Search order:
   // 1. cli/ root (dev mode, relative to this file) — so local builds win
-  // 2. EVOT_HOME/lib/ (installed)
+  // 2. lib paired with the current executable (installed/custom install)
+  // 3. EVOT_HOME/lib/ (fallback)
   const evotHome = process.env.EVOT_HOME || join(homedir(), '.evotai')
+  const executableDir = dirname(process.execPath)
   const candidates = [
     join(__dirname, '..', '..', filename),
+    join(executableDir, 'lib', filename),
+    join(executableDir, '..', 'lib', filename),
     join(evotHome, 'lib', filename),
   ]
 

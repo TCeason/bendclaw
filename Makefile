@@ -117,17 +117,25 @@ build-cli: build-napi
 
 install: build-cli
 	@mkdir -p $(HOME)/.evotai/bin $(HOME)/.evotai/lib
-	rm -f $(HOME)/.evotai/bin/evot
-	cp cli/dist/evot $(HOME)/.evotai/bin/evot
-	cp cli/evot-napi.*.node $(HOME)/.evotai/lib/
-	@if [ "$$(uname -s)" = "Darwin" ]; then \
-		xattr -cr $(HOME)/.evotai/bin/evot; \
-		codesign --force --sign - $(HOME)/.evotai/bin/evot; \
-		for f in $(HOME)/.evotai/lib/evot-napi.*.node; do \
-			xattr -cr "$$f"; \
-			codesign --force --sign - "$$f"; \
-		done; \
-	fi
+	@set -e; \
+	BIN_STAGE="$(HOME)/.evotai/bin/.evot.new.$$$$"; \
+	cp cli/dist/evot "$$BIN_STAGE"; \
+	chmod +x "$$BIN_STAGE"; \
+	for src in cli/evot-napi.*.node; do \
+		dst="$(HOME)/.evotai/lib/$$(basename "$$src")"; \
+		stage="$$dst.new.$$$$"; \
+		cp "$$src" "$$stage"; \
+		if [ "$$(uname -s)" = "Darwin" ]; then \
+			xattr -cr "$$stage"; \
+			codesign --force --sign - "$$stage"; \
+		fi; \
+		mv -f "$$stage" "$$dst"; \
+	done; \
+	if [ "$$(uname -s)" = "Darwin" ]; then \
+		xattr -cr "$$BIN_STAGE"; \
+		codesign --force --sign - "$$BIN_STAGE"; \
+	fi; \
+	mv -f "$$BIN_STAGE" "$(HOME)/.evotai/bin/evot"
 	@INSTALL_DIR="$(HOME)/.evotai/bin"; \
 	ENV_FILE="$(HOME)/.evotai/evot.env"; \
 	echo ""; \

@@ -97,7 +97,15 @@ SHA_URL="${URL}.sha256"
 info "Installing ${BINARY} v${VERSION} for ${TARGET}..."
 
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+BINARY_STAGE=""
+LIB_STAGE=""
+cleanup() {
+  rm -rf "$TMP"
+  [ -z "$BINARY_STAGE" ] || rm -f "$BINARY_STAGE"
+  [ -z "$LIB_STAGE" ] || rm -rf "$LIB_STAGE"
+}
+trap cleanup 0
+trap 'exit 1' HUP INT TERM
 
 download "$URL" "$TMP/$ASSET"
 
@@ -118,40 +126,79 @@ if [ -n "$EXPECTED_SHA" ]; then
   info "Checksum verified"
 fi
 
-# --- Install ---
+# --- Validate package ---
 
 tar -xzf "$TMP/$ASSET" -C "$TMP"
 
-mkdir -p "$INSTALL_DIR"
-# On Linux, a running binary cannot be overwritten in place (ETXTBSY).
-# Remove first so the kernel unlinks the old inode while the running process
-# keeps its file descriptor; then copy the new binary to a fresh inode.
-rm -f "$INSTALL_DIR/$BINARY"
-cp "$TMP/bin/$BINARY" "$INSTALL_DIR/$BINARY"
-chmod +x "$INSTALL_DIR/$BINARY"
+[ -f "$TMP/bin/$BINARY" ] || error "Release archive does not contain bin/$BINARY"
+chmod +x "$TMP/bin/$BINARY"
 
-# Copy lib files (napi bindings)
-# rm before cp to ensure a fresh inode — avoids macOS kernel code-signing cache mismatch
-LIB_DIR="${INSTALL_DIR%/bin}/lib"
-if [ -d "$TMP/lib" ]; then
-  mkdir -p "$LIB_DIR"
-  for f in "$TMP"/lib/*; do
-    rm -f "$LIB_DIR/$(basename "$f")"
-    cp "$f" "$LIB_DIR/"
-  done
-fi
-
-# macOS: remove quarantine attributes and ad-hoc codesign
+# Preserve the signatures produced by the release workflow. Clearing download
+# attributes is safe, but re-signing here can make macOS reject a reused inode.
 if [ "$os" = "darwin" ]; then
-  xattr -cr "$INSTALL_DIR/$BINARY" 2>/dev/null || true
-  codesign -s - --force "$INSTALL_DIR/$BINARY" 2>/dev/null || true
-  for f in "$LIB_DIR"/*.node; do
-    if [ -f "$f" ]; then
-      xattr -cr "$f" 2>/dev/null || true
-      codesign -s - --force "$f" 2>/dev/null || true
-    fi
+  xattr -cr "$TMP/bin/$BINARY" 2>/dev/null || true
+  if [ -d "$TMP/lib" ]; then
+    xattr -cr "$TMP/lib" 2>/dev/null || true
+  fi
+fi
+
+CANDIDATE_VERSION="$(EVOT_HOME="$TMP" "$TMP/bin/$BINARY" --version 2>&1)" \
+  || error "Downloaded evot failed to start: $CANDIDATE_VERSION"
+[ "$CANDIDATE_VERSION" = "evot v$VERSION" ] \
+  || error "Downloaded version mismatch (expected evot v$VERSION, got $CANDIDATE_VERSION)"
+
+# --- Install ---
+
+mkdir -p "$INSTALL_DIR"
+case "$(basename "$INSTALL_DIR")" in
+  bin) EVOT_HOME_DIR="$(dirname "$INSTALL_DIR")" ;;
+  *)   EVOT_HOME_DIR="$INSTALL_DIR" ;;
+esac
+LIB_DIR="$EVOT_HOME_DIR/lib"
+mkdir -p "$LIB_DIR"
+
+# Stage on the destination filesystems, then rename into place. This keeps the
+# old executable usable while /update runs and always gives macOS a fresh inode.
+BINARY_STAGE="$INSTALL_DIR/.evot.new.$$"
+LIB_STAGE="$LIB_DIR/.evot-install.$$"
+mkdir -p "$LIB_STAGE"
+cp "$TMP/bin/$BINARY" "$BINARY_STAGE"
+chmod +x "$BINARY_STAGE"
+
+if [ -d "$TMP/lib" ]; then
+  for f in "$TMP"/lib/*; do
+    [ -f "$f" ] || continue
+    cp "$f" "$LIB_STAGE/"
   done
 fi
+
+if [ "$os" = "darwin" ]; then
+  xattr -cr "$BINARY_STAGE" 2>/dev/null || true
+  xattr -cr "$LIB_STAGE" 2>/dev/null || true
+  codesign --verify --strict "$BINARY_STAGE" >/dev/null 2>&1 \
+    || error "Downloaded evot has an invalid macOS signature"
+  for f in "$LIB_STAGE"/*.node; do
+    [ -f "$f" ] || continue
+    codesign --verify --strict "$f" >/dev/null 2>&1 \
+      || error "Downloaded $(basename "$f") has an invalid macOS signature"
+  done
+fi
+
+# Install bindings first and the executable last. mv performs an atomic rename
+# within each destination directory instead of overwriting an existing inode.
+for f in "$LIB_STAGE"/*; do
+  [ -f "$f" ] || continue
+  mv -f "$f" "$LIB_DIR/$(basename "$f")"
+done
+rmdir "$LIB_STAGE"
+LIB_STAGE=""
+mv -f "$BINARY_STAGE" "$INSTALL_DIR/$BINARY"
+BINARY_STAGE=""
+
+INSTALLED_VERSION="$(EVOT_HOME="$EVOT_HOME_DIR" "$INSTALL_DIR/$BINARY" --version 2>&1)" \
+  || error "Installed evot failed to start: $INSTALLED_VERSION"
+[ "$INSTALLED_VERSION" = "evot v$VERSION" ] \
+  || error "Installed version mismatch (expected evot v$VERSION, got $INSTALLED_VERSION)"
 
 ok "  ✓ Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
 
