@@ -24,9 +24,6 @@ export interface PromptVMInput {
   exitHint: boolean
   cwd: string
   gitBranch: string | null
-  inputTokens: number
-  outputTokens: number
-  cacheReadTokens: number
   contextTokens: number
   contextWindow: number
 }
@@ -184,8 +181,6 @@ function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
     segments.push({ priority: 60, spans: [dim(` • ${thinking}`)] })
   }
 
-  const stats = footerStats(input)
-  if (stats) segments.push({ priority: 50, spans: [dim(` ${stats}`)] })
   if (input.dashboardUrl) {
     segments.push({
       priority: 40,
@@ -213,14 +208,6 @@ function buildFooter(input: PromptVMInput, columns: number): ViewBlock {
 interface FooterSegment {
   priority: number
   spans: StyledSpan[]
-}
-
-function footerStats(input: PromptVMInput): string {
-  const parts: string[] = []
-  if (input.inputTokens > 0) parts.push(`↑${formatTokens(input.inputTokens)}`)
-  if (input.outputTokens > 0) parts.push(`↓${formatTokens(input.outputTokens)}`)
-  if (input.cacheReadTokens > 0) parts.push(`cache ${formatTokens(input.cacheReadTokens)}`)
-  return parts.join(' ')
 }
 
 function footerWidth(segments: FooterSegment[]): number {
@@ -279,13 +266,6 @@ function truncateTailToWidth(text: string, width: number): string {
     used += charWidth
   }
   return `…${result}`
-}
-
-function formatTokens(count: number): string {
-  if (count < 1000) return `${count}`
-  if (count < 10000) return `${(count / 1000).toFixed(1)}k`
-  if (count < 1000000) return `${Math.round(count / 1000)}k`
-  return `${(count / 1000000).toFixed(1)}M`
 }
 
 function formatContextTokens(count: number): string {

@@ -28,6 +28,14 @@ describe('repl control', () => {
     expect(kinds({ ...base, event: { type: 'ctrl', key: 'c' }, isLoading: true, hasStream: true })).toEqual(['interrupt'])
   })
 
+  test('escape cancels manual compaction without requiring a query stream', () => {
+    expect(kinds({ ...base, event: { type: 'escape' }, isLoading: true, isCompacting: true })).toEqual(['interrupt'])
+  })
+
+  test('ctrl-c cancels manual compaction before exit handling', () => {
+    expect(kinds({ ...base, event: { type: 'ctrl', key: 'c' }, isLoading: true, isCompacting: true })).toEqual(['interrupt'])
+  })
+
   test('ctrl-c shows exit hint on empty editor', () => {
     expect(kinds({ ...base, event: { type: 'ctrl', key: 'c' } })).toEqual(['show-exit-hint'])
   })

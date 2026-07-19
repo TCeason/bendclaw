@@ -28,9 +28,6 @@ function defaultInput(overrides: Partial<PromptVMInput> = {}): PromptVMInput {
     exitHint: false,
     cwd: '/Users/test/project',
     gitBranch: 'main',
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
     contextTokens: 0,
     contextWindow: 0,
     ...overrides,
@@ -160,21 +157,18 @@ describe('prompt footer', () => {
     expect(renderPlain(defaultInput({ thinkingLevel: 'off' }))).toContain('thinking off')
   })
 
-  test('renders context, token stats and dashboard when space allows', () => {
+  test('renders context and dashboard when space allows', () => {
     const plain = renderPlain(defaultInput({
       columns: 220,
-      inputTokens: 408000,
-      outputTokens: 1100,
-      cacheReadTokens: 89000,
       contextTokens: 105800,
       contextWindow: 272000,
       dashboardUrl: 'http://127.0.0.1:8788',
     }))
     expect(plain).toContain('context: 38.9% (105.8k/272.0k)')
-    expect(plain).toContain('↑408k')
-    expect(plain).toContain('↓1.1k')
-    expect(plain).toContain('cache 89k')
     expect(plain).toContain('http://127.0.0.1:8788')
+    // Session token totals are call/log data, not footer state.
+    expect(plain).not.toContain('↑')
+    expect(plain).not.toContain('cache')
   })
 
   test('matches the full context footer format from the terminal', () => {
@@ -198,8 +192,6 @@ describe('prompt footer', () => {
       columns: 45,
       provider: 'anthropic',
       thinkingLevel: 'xhigh',
-      inputTokens: 408000,
-      outputTokens: 1100,
       dashboardUrl: 'http://127.0.0.1:8788',
       contextTokens: 86400,
       contextWindow: 320000,
@@ -208,7 +200,6 @@ describe('prompt footer', () => {
     expect(footer).toContain('/Users/test/project')
     expect(footer).not.toContain('context:')
     expect(footer).not.toContain('dashboard')
-    expect(footer).not.toContain('↑408k')
     expect(stringWidth(footer)).toBeLessThanOrEqual(45)
   })
 

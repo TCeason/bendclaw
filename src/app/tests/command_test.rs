@@ -50,6 +50,21 @@ fn parse_goto_invalid_arg_returns_usage_error() {
 }
 
 #[test]
+fn parse_compact_with_optional_instructions() {
+    assert!(matches!(
+        parse_command("/compact"),
+        Some(Command::Compact {
+            custom_instructions: None
+        })
+    ));
+    assert!(matches!(
+        parse_command("/COMPACT preserve implementation details"),
+        Some(Command::Compact { custom_instructions: Some(ref value) })
+            if value == "preserve implementation details"
+    ));
+}
+
+#[test]
 fn parse_non_command_returns_none() {
     assert!(parse_command("hello").is_none());
     assert!(parse_command("").is_none());

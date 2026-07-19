@@ -74,6 +74,15 @@ describe('resolveCommand', () => {
     expect(result).toEqual({ kind: 'unknown' })
   })
 
+  test('resolves /compact with optional instructions', () => {
+    expect(resolveCommand('/compact')).toEqual({ kind: 'resolved', name: '/compact', args: '' })
+    expect(resolveCommand('/compact preserve implementation details')).toEqual({
+      kind: 'resolved',
+      name: '/compact',
+      args: 'preserve implementation details',
+    })
+  })
+
   test('resolves /copy command', () => {
     const result = resolveCommand('/copy')
     expect(result).toEqual({ kind: 'resolved', name: '/copy', args: '' })

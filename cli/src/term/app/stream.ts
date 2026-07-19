@@ -123,7 +123,12 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
     state = {
       ...flushed.state,
       activeLlmCall,
-      spinnerState: activeLlmCall ? resetStreamStats(flushed.state.spinnerState) : flushed.state.spinnerState,
+      // Each provider attempt starts in the waiting phase: the request is in
+      // flight and no content has arrived. Auto-compaction is local work and
+      // gets its own executing label instead of masquerading as thinking.
+      spinnerState: activeLlmCall
+        ? setSpinnerPhase(resetStreamStats(flushed.state.spinnerState), 'waiting')
+        : setSpinnerPhase(resetStreamStats(flushed.state.spinnerState), 'executing', 'compact'),
     }
     commitLines.push(...flushed.lines)
     mergeFlushExpanded(flushed)
@@ -139,7 +144,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
       if (textDelta) {
         state = {
           ...state,
-          spinnerState: recordStreamDelta(state.spinnerState, textDelta),
+          spinnerState: setSpinnerPhase(recordStreamDelta(state.spinnerState, textDelta), 'responding'),
         }
         rerenderStatus = true
       }
@@ -148,7 +153,7 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
       if (thinkingDelta) {
         state = {
           ...state,
-          spinnerState: recordStreamDelta(state.spinnerState, thinkingDelta, Date.now()),
+          spinnerState: setSpinnerPhase(recordStreamDelta(state.spinnerState, thinkingDelta, Date.now()), 'thinking'),
         }
         rerenderStatus = true
       }
@@ -157,7 +162,16 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
 
   if (event.kind === 'assistant_tool_call') {
     // Tool argument events are model output, including the final decoded call.
-    // Do not claim execution has started until the engine emits tool_started.
+    // Do not claim execution has started until the engine emits tool_started —
+    // but do treat them as live stream activity so the spinner leaves the
+    // waiting phase and stall detection stays anchored to the last delta.
+    state = {
+      ...state,
+      spinnerState: setSpinnerPhase(
+        recordStreamDelta(state.spinnerState, (p.delta as string) ?? ''),
+        'responding',
+      ),
+    }
     rerenderStatus = true
   }
 
@@ -219,7 +233,10 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
 
   if (event.kind === 'context_compaction_completed') {
     const flushed = flushStreaming(state)
-    state = flushed.state
+    state = {
+      ...flushed.state,
+      spinnerState: setSpinnerPhase(resetStreamStats(flushed.state.spinnerState), 'preparing'),
+    }
     commitLines.push(...flushed.lines)
     mergeFlushExpanded(flushed)
     const newEvents = state.appState.verboseEvents.slice(prev.appState.verboseEvents.length)
@@ -230,11 +247,11 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
 
   if (event.kind === 'tool_started') {
     const toolName = (p.tool_name as string) ?? 'unknown'
-    const isAskUser = toolName === 'AskUser' || toolName === 'ask_user'
-    const spinnerPhase = isAskUser ? 'thinking' : 'executing'
+    // ask_user maps to executing like any tool: its label is "Waiting for
+    // you…" and its slow threshold is infinite, so it never turns red.
     state = {
       ...state,
-      spinnerState: setSpinnerPhase(state.spinnerState, spinnerPhase, toolName),
+      spinnerState: setSpinnerPhase(resetStreamStats(state.spinnerState), 'executing', toolName),
     }
     rerenderStatus = true
   }
@@ -251,13 +268,14 @@ export function reduceRunEvent(prev: StreamMachineState, event: RunEvent, _ctx: 
   if (event.kind === 'tool_finished') {
     const toolCalls = assistantToolCalls(state.appState.currentAssistantContent)
     // Prefer a still-running tool. A decoded queued call has not started yet,
-    // so keep Thinking rather than claiming its side effect is in progress.
+    // so fall back to preparing (engine-side work before the next step) rather
+    // than claiming its side effect is in progress.
     const running = toolCalls.find(call => call.status === 'running' && call.startedAt !== undefined)
     state = {
       ...state,
       spinnerState: running
-        ? setSpinnerPhase(state.spinnerState, 'executing', running.name)
-        : setSpinnerPhase(state.spinnerState, 'thinking'),
+        ? setSpinnerPhase(resetStreamStats(state.spinnerState), 'executing', running.name)
+        : setSpinnerPhase(resetStreamStats(state.spinnerState), 'preparing'),
     }
     // Tool-bearing assistant messages stay live through execution. Commit the
     // complete ordered message when the last tool settles, exactly once.

@@ -12,6 +12,7 @@ export type ReplControlInput = {
   exitHint: boolean
   logMode: boolean
   hasQueuedPrompt: boolean
+  isCompacting?: boolean
 }
 
 export type ReplControlAction =
@@ -35,8 +36,12 @@ export type ReplControlAction =
   | { kind: 'normal-key' }
 
 export function decideReplControl(input: ReplControlInput): ReplControlAction[] {
-  const { event, overlay, isLoading, hasStream, editor, exitHint, logMode, hasQueuedPrompt } = input
+  const { event, overlay, isLoading, hasStream, editor, exitHint, logMode, hasQueuedPrompt, isCompacting } = input
   const actions: ReplControlAction[] = []
+
+  if (isCompacting && (event.type === 'escape' || (event.type === 'ctrl' && event.key === 'c'))) {
+    return [{ kind: 'interrupt' }]
+  }
 
   if (event.type === 'ctrl' && event.key === 'c') {
     if (isLoading && hasStream) return [{ kind: 'interrupt' }]

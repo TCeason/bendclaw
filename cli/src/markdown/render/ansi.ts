@@ -910,6 +910,70 @@ const BLOCK_TYPES = new Set([
   'paragraph', 'code', 'heading', 'list', 'blockquote', 'hr', 'table',
 ])
 
+// ---------------------------------------------------------------------------
+// Per-token render cache (streaming hot path)
+//
+// The live assistant message is re-rendered on every paint while it grows.
+// Lexing must stay whole-document (later input can move earlier block
+// boundaries), but formatting one top-level token is a pure function of
+// (token.raw, theme, terminal width). Stable tokens — finished paragraphs,
+// highlighted code fences, built tables — are therefore reused across paints,
+// and only the still-growing tail token re-formats. The tail is deliberately
+// never cached: its raw changes on every delta and would only churn the LRU.
+// ---------------------------------------------------------------------------
+const TOKEN_CACHE_MAX = 500
+const tokenRenderCache = new Map<string, string>()
+let tokenCacheTheme: Theme | null = null
+let tokenCacheWidth = -1
+
+function tokenCacheKey(token: Token): string | null {
+  const raw = (token as { raw?: string }).raw
+  if (typeof raw !== 'string' || raw.length === 0) return null
+  // Long raws (big code fences) are keyed by length + hash + boundary chars
+  // instead of the full text to keep key comparison cheap.
+  const body = raw.length > 4096
+    ? `#${raw.length}:${hashString(raw)}:${raw.slice(0, 32)}:${raw.slice(-32)}`
+    : raw
+  return `${token.type}\0${body}`
+}
+
+function hashString(s: string): string {
+  let h = 0
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) - h + s.charCodeAt(i)) | 0
+  }
+  return h.toString(36)
+}
+
+function cachedFormatToken(token: Token, theme: Theme, cacheable: boolean): string {
+  const key = cacheable ? tokenCacheKey(token) : null
+  if (key !== null) {
+    const hit = tokenRenderCache.get(key)
+    if (hit !== undefined) {
+      // LRU touch.
+      tokenRenderCache.delete(key)
+      tokenRenderCache.set(key, hit)
+      return hit
+    }
+  }
+  const rendered = formatToken(token, 0, null, null, theme)
+  if (key !== null) {
+    tokenRenderCache.set(key, rendered)
+    if (tokenRenderCache.size > TOKEN_CACHE_MAX) {
+      const first = tokenRenderCache.keys().next().value
+      if (first !== undefined) tokenRenderCache.delete(first)
+    }
+  }
+  return rendered
+}
+
+/** Clear the per-token render cache (for tests). */
+export function clearTokenRenderCache(): void {
+  tokenRenderCache.clear()
+  tokenCacheTheme = null
+  tokenCacheWidth = -1
+}
+
 export interface FormatTokensOptions {
   blockSpacing?: 'normal' | 'compact'
   /** Hold an unterminated trailing table out of the physical terminal until its
@@ -920,6 +984,14 @@ export interface FormatTokensOptions {
 
 export function formatTokens(tokens: Token[], options: FormatTokensOptions = {}): string {
   const theme = getTheme()
+  // Rendered output wraps at terminal width and paints with the active theme;
+  // either changing invalidates every cached token.
+  const width = terminalContentWidth()
+  if (theme !== tokenCacheTheme || width !== tokenCacheWidth) {
+    tokenRenderCache.clear()
+    tokenCacheTheme = theme
+    tokenCacheWidth = width
+  }
   let out = ''
   let prevWasBlock = false
   let deferredTableIndex = -1
@@ -930,6 +1002,16 @@ export function formatTokens(tokens: Token[], options: FormatTokensOptions = {})
       if (type === 'table') deferredTableIndex = index
       break
     }
+  }
+
+  // The trailing content token is still growing during streaming; formatting
+  // it is never cached (see cache note above).
+  let lastContentIndex = -1
+  for (let index = tokens.length - 1; index >= 0; index--) {
+    const type = tokens[index]?.type
+    if (type === 'space' || type === 'html') continue
+    lastContentIndex = index
+    break
   }
 
   for (let index = 0; index < tokens.length; index++) {
@@ -944,7 +1026,7 @@ export function formatTokens(tokens: Token[], options: FormatTokensOptions = {})
     if (options.blockSpacing === 'compact' && (token.type === 'space' || token.type === 'html')) {
       continue
     }
-    const rendered = formatToken(token, 0, null, null, theme)
+    const rendered = cachedFormatToken(token, theme, index !== lastContentIndex)
     if (!rendered) continue
     const isBlock = BLOCK_TYPES.has(token.type)
     // Insert blank line between consecutive block-level elements

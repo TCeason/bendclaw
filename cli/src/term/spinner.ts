@@ -15,8 +15,32 @@ function getSpinnerChars(): string[] {
 const SPINNER_CHARS = getSpinnerChars()
 const SPINNER_FRAMES = [...SPINNER_CHARS, ...[...SPINNER_CHARS].reverse()]
 const SLOW_THRESHOLD_MS = 8000
+// Actions that legitimately run long get wider thresholds so routine
+// execution is not painted red as "slow": bash commands regularly outlive 8s
+// (builds, test suites), and manual compaction includes an LLM summarization
+// pass with a 30s budget before its deterministic fallback kicks in.
+const SLOW_THRESHOLD_BY_TOOL_MS: Record<string, number> = {
+  bash: 30_000,
+  compact: 30_000,
+  ask_user: Number.POSITIVE_INFINITY,
+  askuser: Number.POSITIVE_INFINITY,
+}
 
-export type SpinnerPhase = 'thinking' | 'executing'
+function slowThresholdMs(state: SpinnerState): number {
+  if (state.phase === 'executing' && state.toolName) {
+    return SLOW_THRESHOLD_BY_TOOL_MS[state.toolName.toLowerCase()] ?? SLOW_THRESHOLD_MS
+  }
+  return SLOW_THRESHOLD_MS
+}
+
+/**
+ * Run phases surfaced on the spinner line. `preparing` covers local work
+ * (context assembly between tool results and the next provider request),
+ * `waiting` is a request in flight with no content yet, `thinking` /
+ * `responding` distinguish reasoning deltas from answer/tool-call deltas, and
+ * `executing` is tool execution.
+ */
+export type SpinnerPhase = 'preparing' | 'waiting' | 'thinking' | 'responding' | 'executing'
 
 /**
  * Map a tool name to a human action label shown on the spinner while it runs.
@@ -33,6 +57,7 @@ export function toolActionLabel(toolName: string): string {
     case 'web_fetch': case 'webfetch': return 'Fetching'
     case 'plan': return 'Planning'
     case 'skill': return 'Loading skill'
+    case 'compact': return 'Compacting'
     case 'ask_user': case 'askuser': return 'Waiting for you'
     default: return 'Working'
   }
@@ -53,7 +78,7 @@ export interface SpinnerState {
 export function createSpinnerState(): SpinnerState {
   return {
     frame: 0,
-    phase: 'thinking',
+    phase: 'preparing',
     phaseStartedAt: Date.now(),
     lastTokenAt: null,
     streaming: false,
@@ -104,13 +129,15 @@ export function resetStreamStats(state: SpinnerState): SpinnerState {
 }
 
 export function isSlow(state: SpinnerState, now: number): boolean {
-  if (state.streaming) return false
-  const elapsed = now - state.phaseStartedAt
-  if (elapsed <= SLOW_THRESHOLD_MS) return false
-  if (state.phase === 'thinking' && state.lastTokenAt != null) {
-    return (now - state.lastTokenAt) > SLOW_THRESHOLD_MS
+  const threshold = slowThresholdMs(state)
+  // While the model is emitting, health is measured from the last token:
+  // a flowing stream is never slow, and a stalled one is surfaced instead of
+  // being hidden behind the streaming flag forever.
+  if ((state.phase === 'thinking' || state.phase === 'responding') && state.lastTokenAt != null) {
+    return now - state.lastTokenAt > threshold
   }
-  return true
+  if (state.streaming) return false
+  return now - state.phaseStartedAt > threshold
 }
 
 export interface SpinnerStats {
@@ -126,13 +153,23 @@ export function formatSpinnerLine(state: SpinnerState, now: number, stats?: Spin
   const slow = isSlow(state, now)
   const char = SPINNER_FRAMES[state.frame]!
 
-  const isTool = state.phase === 'executing'
   const action = state.toolName ? toolActionLabel(state.toolName) : 'Working'
   let label: string
-  if (slow) {
-    label = isTool ? `${action} slow…` : 'LLM slow…'
-  } else {
-    label = isTool ? `${action}…` : 'Thinking…'
+  switch (state.phase) {
+    case 'executing':
+      label = slow ? `${action} slow…` : `${action}…`
+      break
+    case 'waiting':
+      label = slow ? 'LLM slow…' : 'Waiting for model…'
+      break
+    case 'thinking':
+      label = slow ? 'Stream stalled…' : 'Thinking…'
+      break
+    case 'responding':
+      label = slow ? 'Stream stalled…' : 'Responding…'
+      break
+    default:
+      label = slow ? 'Preparing slow…' : 'Preparing…'
   }
 
   const status = formatFixedDuration(elapsed)
@@ -193,7 +230,8 @@ function formatSpinnerTokenSuffix(state: SpinnerState, now: number, stats?: Spin
 }
 
 function formatLiveTokPerSec(state: SpinnerState, now: number): string {
-  if (!state.streaming || state.phase !== 'thinking' || !state.streamStartedAt || state.tokenCount <= 0) return ''
+  const emitting = state.phase === 'thinking' || state.phase === 'responding'
+  if (!state.streaming || !emitting || !state.streamStartedAt || state.tokenCount <= 0) return ''
   const elapsedMs = Math.max(0, now - state.streamStartedAt)
   if (elapsedMs < 500) return ''
   const rate = state.tokenCount / (elapsedMs / 1000)

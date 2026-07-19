@@ -20,6 +20,7 @@ export const COMMANDS: SlashCommand[] = [
   { name: '/harden', description: 'Stress-test the previous plan or current changes', usage: '/harden [plan | changes | arch | subject]', handler: 'builtin' },
   { name: '/skill', description: 'Manage skills', usage: '/skill [list | install <source> | remove <name>]', handler: 'builtin' },
   { name: '/copy', description: 'Copy last agent message (Markdown source) to clipboard', handler: 'builtin' },
+  { name: '/compact', description: 'Compact session context', usage: '/compact [instructions]', handler: 'builtin' },
   { name: '/clear', description: 'Clear session context', handler: 'builtin' },
 ]
 
@@ -29,7 +30,7 @@ export const HIDDEN_COMMANDS: SlashCommand[] = [
   { name: '/act', description: 'Return to normal action mode', handler: 'builtin' },
   { name: '/done', description: 'Exit log/plan mode', handler: 'builtin' },
   { name: '/env', description: 'Manage variables', usage: '/env [set K=V | del K | load FILE]', handler: 'builtin' },
-  { name: '/log', description: 'Analyze session log / share / shot last markdown', usage: '/log [up [id] | dl <url> | shot [id] | query]', handler: 'builtin' },
+  { name: '/log', description: 'Analyze session log / share / shot last markdown', usage: '/log [up [id] | dl <url> | shot | query]', handler: 'builtin' },
   { name: '/update', description: 'Update evot to latest version', handler: 'builtin' },
   { name: '/_dump', description: 'Dump system prompt + tools + skills as JSON', usage: '/_dump [path]', handler: 'builtin' },
 ]

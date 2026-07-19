@@ -4,13 +4,11 @@
  *
  * Content resolution (full turn, not a single stream-flush chunk):
  *   1. in-memory history painted lines (OutputLine.text as committed) — preferred
- *   2. markdown.log `[rendered lines]` (exact TUI paint, including ANSI)
- *   3. re-render joined rawMarkdown (fallback when no painted lines exist)
- *   4. explicit messageId: the turn group containing that chunk
+ *   2. re-render joined rawMarkdown (fallback when no painted lines exist,
+ *      e.g. slim resume fixtures without painted text)
  *
  * Paint pipeline:
  *   preferred: history OutputLines → buildOutputBlocks → blocksToLines
- *           or markdown.log rendered lines (already final ANSI)
  *   fallback:  raw markdown → buildAssistantLines → buildOutputBlocks → blocksToLines
  *   then: ansiToHtml → self-contained HTML (+ optional Chrome PNG)
  */
@@ -26,10 +24,6 @@ import {
   findLastAssistantTurn,
   type AssistantMarkdownLine,
 } from '../session/assistant-markdown.js'
-import {
-  readMarkdownTurnFile,
-  type MarkdownTurn,
-} from '../session/markdown-trace.js'
 import { buildAssistantLines, type OutputLine } from '../render/output.js'
 import { buildOutputBlocks } from '../term/viewmodel/output.js'
 import { blocksToLines } from '../term/viewmodel/types.js'
@@ -59,21 +53,16 @@ export const SHOT_BOTTOM_PAD_PX = 20
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 
-export type ShotSource =
-  | { kind: 'turn'; turn: MarkdownTurn; logPath?: string }
-  | {
-      kind: 'history'
-      rawMarkdown: string
-      id?: string
-      chunkCount: number
-      /** Committed TUI lines (preferred 1:1 path). */
-      paintedLines?: AssistantMarkdownLine[]
-    }
+export interface ShotSource {
+  rawMarkdown: string
+  id?: string
+  chunkCount: number
+  /** Committed TUI lines (preferred 1:1 path). */
+  paintedLines?: AssistantMarkdownLine[]
+}
 
 export interface ResolveShotSourceOptions {
-  markdownLogPath?: string | null
   historyLines?: readonly AssistantMarkdownLine[]
-  messageId?: string
 }
 
 /** Optional session/context fields shown in the shot HTML header. */
@@ -107,98 +96,33 @@ export interface MarkdownShotResult {
 }
 
 /**
- * Resolve the full last assistant turn.
- *
- * Priority:
- *   - explicit messageId → that single markdown.log chunk
- *   - history painted lines → full turn after last user (preferred live path)
- *   - markdown.log → trailing stream flushes grouped by time gap
+ * Resolve the full last assistant turn from committed history: painted lines
+ * (exact TUI wrap/layout) preferred, joined raw markdown as fallback.
  */
 export function resolveShotSource(opts: ResolveShotSourceOptions): ShotSource | null {
-  const logPath = opts.markdownLogPath?.trim() || null
-  const messageId = opts.messageId?.trim() || undefined
+  if (!opts.historyLines || opts.historyLines.length === 0) return null
 
-  // Explicit id always reads from the log (single chunk / turn group).
-  if (messageId && logPath) {
-    const turn = readMarkdownTurnFile(logPath, messageId)
-    if (turn) return { kind: 'turn', turn, logPath }
-  }
-
-  // Live history: prefer committed painted lines (exact TUI wrap/layout).
-  if (opts.historyLines && opts.historyLines.length > 0 && !messageId) {
-    const painted = findLastAssistantPaintedTurn(opts.historyLines)
-    if (painted) {
-      return {
-        kind: 'history',
-        rawMarkdown: painted.rawMarkdown,
-        id: painted.id,
-        chunkCount: painted.chunkCount,
-        paintedLines: painted.lines,
-      }
-    }
-    const turn = findLastAssistantTurn(opts.historyLines)
-    if (turn) {
-      return {
-        kind: 'history',
-        rawMarkdown: turn.rawMarkdown,
-        id: turn.id,
-        chunkCount: turn.chunkCount,
-      }
+  const painted = findLastAssistantPaintedTurn(opts.historyLines)
+  if (painted) {
+    return {
+      rawMarkdown: painted.rawMarkdown,
+      id: painted.id,
+      chunkCount: painted.chunkCount,
+      paintedLines: painted.lines,
     }
   }
-
-  // Offline / no history: group trailing log chunks into one turn.
-  if (logPath) {
-    const turn = readMarkdownTurnFile(logPath, messageId)
-    if (turn) return { kind: 'turn', turn, logPath }
-  }
-
-  // History fallback even when messageId was requested but missing from log.
-  if (opts.historyLines && opts.historyLines.length > 0) {
-    const painted = findLastAssistantPaintedTurn(opts.historyLines)
-    if (painted) {
-      return {
-        kind: 'history',
-        rawMarkdown: painted.rawMarkdown,
-        id: painted.id,
-        chunkCount: painted.chunkCount,
-        paintedLines: painted.lines,
-      }
-    }
-    const turn = findLastAssistantTurn(opts.historyLines)
-    if (turn) {
-      return {
-        kind: 'history',
-        rawMarkdown: turn.rawMarkdown,
-        id: turn.id,
-        chunkCount: turn.chunkCount,
-      }
+  const turn = findLastAssistantTurn(opts.historyLines)
+  if (turn) {
+    return {
+      rawMarkdown: turn.rawMarkdown,
+      id: turn.id,
+      chunkCount: turn.chunkCount,
     }
   }
-
   return null
 }
 
-function sourceRaw(source: ShotSource): string {
-  return source.kind === 'turn' ? source.turn.rawMarkdown : source.rawMarkdown
-}
-
-function sourceMeta(source: ShotSource): {
-  messageId: string
-  lastMessageId?: string
-  ts?: string
-  rendererVersion?: string
-  chunkCount: number
-} {
-  if (source.kind === 'turn') {
-    return {
-      messageId: source.turn.messageId,
-      lastMessageId: source.turn.lastMessageId,
-      ts: source.turn.ts,
-      rendererVersion: source.turn.rendererVersion,
-      chunkCount: source.turn.traces.length,
-    }
-  }
+function sourceMeta(source: ShotSource): { messageId: string; chunkCount: number } {
   return {
     messageId: source.id ?? 'history-last',
     chunkCount: source.chunkCount,
@@ -208,34 +132,6 @@ function sourceMeta(source: ShotSource): {
 /** True when the string still carries SGR color/attr codes (not just OSC zones). */
 function hasSgr(s: string): boolean {
   return /\x1b\[[0-9;]*m/.test(s)
-}
-
-/** Collect markdown.log `[rendered lines]` for a turn (may be color-stripped). */
-function collectRenderedLines(turn: MarkdownTurn): string[] {
-  const lines = turn.traces.flatMap(t => t.renderedLines ?? [])
-  while (lines.length > 0 && lines[0] === '') lines.shift()
-  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
-  return lines
-}
-
-/**
- * Join markdown.log `[rendered lines]` only when they still carry SGR colors.
- * Older logs kept OSC zone markers but stripped colors — those fall through so
- * we re-render with theme colors at the original content width.
- */
-function renderedLinesAnsi(turn: MarkdownTurn): string | null {
-  const lines = collectRenderedLines(turn)
-  if (lines.length === 0) return null
-  const joined = lines.join('\n')
-  if (!hasSgr(joined)) return null
-  return joined
-}
-
-/** Infer the live TUI column budget from layout-only rendered lines. */
-function layoutHintColumns(turn: MarkdownTurn, fallback: number): number {
-  const lines = collectRenderedLines(turn)
-  if (lines.length === 0) return fallback
-  return Math.max(fallback, ansiMaxColumns(lines.join('\n')))
 }
 
 /**
@@ -294,77 +190,14 @@ export function paintHistoryLines(
 }
 
 /**
- * Re-render each stream-flush chunk separately (with continuation spacers),
- * matching how the TUI commits multi-chunk answers — not one joined document.
- */
-export function renderTurnChunksAnsi(turn: MarkdownTurn, columns: number = SHOT_COLUMNS): string {
-  const prevLevel = chalk.level
-  const prevColumns = process.stdout.columns
-  chalk.level = 3
-  try {
-    Object.defineProperty(process.stdout, 'columns', {
-      value: columns,
-      configurable: true,
-      writable: true,
-      enumerable: true,
-    })
-    const outputLines: OutputLine[] = []
-    let chunkIndex = 0
-    for (const trace of turn.traces) {
-      const raw = trace.rawMarkdown
-      if (!raw || !raw.trim()) continue
-      if (chunkIndex > 0) {
-        outputLines.push({
-          id: `sep-${chunkIndex}`,
-          kind: 'assistant',
-          text: '',
-          isContinuationSpacer: true,
-        })
-      }
-      const lines = buildAssistantLines(raw)
-      outputLines.push(...lines)
-      chunkIndex++
-    }
-    if (outputLines.length === 0) return ''
-    const blocks = buildOutputBlocks(outputLines, { columns })
-    return blocksToLines(blocks).join('\n')
-  } finally {
-    chalk.level = prevLevel
-    try {
-      Object.defineProperty(process.stdout, 'columns', {
-        value: prevColumns,
-        configurable: true,
-        writable: true,
-        enumerable: true,
-      })
-    } catch {
-      /* ignore */
-    }
-  }
-}
-
-/**
- * Render a shot source to final TUI ANSI.
- *
- * Order:
- *   1. history painted lines (live /log shot)
- *   2. markdown.log rendered lines with SGR colors (exact prior paint)
- *   3. per-chunk re-render at layout-hint width (color-stripped logs)
- *   4. raw re-render at `columns`
+ * Render a shot source to final TUI ANSI: history painted lines when present
+ * (live /log shot), otherwise a raw re-render at `columns`.
  */
 export function renderShotAnsi(source: ShotSource, columns: number = SHOT_COLUMNS): string {
-  if (source.kind === 'history' && source.paintedLines && source.paintedLines.length > 0) {
+  if (source.paintedLines && source.paintedLines.length > 0) {
     return paintHistoryLines(source.paintedLines, columns)
   }
-  if (source.kind === 'turn') {
-    const painted = renderedLinesAnsi(source.turn)
-    if (painted) return painted
-    // Color-stripped log: re-render each flush chunk with theme colors at the
-    // original content width. Per-chunk (not joined) matches TUI multi-⏺ layout.
-    const width = layoutHintColumns(source.turn, columns)
-    return renderTurnChunksAnsi(source.turn, width)
-  }
-  return renderAssistantAnsi(sourceRaw(source), columns)
+  return renderAssistantAnsi(source.rawMarkdown, columns)
 }
 
 /**
@@ -507,17 +340,15 @@ export function buildShotHtml(
   // laid out at the live terminal width). Size the canvas to the content.
   const contentCols = Math.max(columns, ansiMaxColumns(ansi))
   const bodyHtml = `<pre class="term">${ansiToHtml(ansi)}</pre>`
-  const idLabel = meta.lastMessageId && meta.lastMessageId !== meta.messageId
-    ? `${meta.messageId}…${meta.lastMessageId}`
-    : meta.messageId
+  const idLabel = meta.messageId
   const modelLabel = formatShotModelLabel(opts?.header)
   const titleBits = ['evot shot', modelLabel, idLabel].filter(Boolean)
   const metaLine = buildShotMetaLine({
     header: opts?.header,
     chunkCount: meta.chunkCount,
-    ts: meta.ts,
   })
-  const heroTime = buildShotHeroTime(meta.ts)
+  // The shot renders the live turn, so "now" is the honest capture time.
+  const heroTime = buildShotHeroTime(new Date().toISOString())
   const canvasCh = Math.max(48, contentCols + 4)
 
   return `<!DOCTYPE html>
@@ -685,7 +516,7 @@ ${bodyHtml}
 export async function writeMarkdownShot(opts: WriteMarkdownShotOptions): Promise<MarkdownShotResult> {
   const source = resolveShotSource(opts)
   if (!source) {
-    throw new Error('No assistant markdown found to shoot (no markdown.log entry and no history).')
+    throw new Error('No assistant markdown found to shoot in committed history.')
   }
 
   const meta = sourceMeta(source)

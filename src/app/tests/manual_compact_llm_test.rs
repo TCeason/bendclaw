@@ -73,6 +73,13 @@ async fn manual_compact_uses_llm_summary() -> TestResult {
         _ => None,
     });
     assert!(matches!(summary, Some(summary) if summary.contains("MANUAL LLM SUMMARY")));
+    let cancel = tokio_util::sync::CancellationToken::new();
+    cancel.cancel();
+    let cancelled = agent.compact(&session.session_id, None, cancel).await?;
+    assert!(matches!(
+        cancelled,
+        evot::compact::orchestrator::ManualCompactionOutcome::Cancelled
+    ));
 
     Ok(())
 }

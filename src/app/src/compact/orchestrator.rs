@@ -46,6 +46,42 @@ pub struct CompactSummarizer {
     pub provider: std::sync::Arc<dyn evot_engine::provider::StreamProvider>,
     pub llm: LlmConfig,
     pub max_tokens: u32,
+    /// Maximum wall-clock time for one LLM summarization pass. Expiry uses the
+    /// deterministic fallback; explicit user cancellation still cancels the
+    /// entire compaction without writing a marker.
+    pub timeout: std::time::Duration,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ManualCompactionOutcome {
+    Compacted {
+        summary: String,
+        tokens_before: usize,
+        tokens_after: usize,
+        messages_before: usize,
+        messages_after: usize,
+        context_window: usize,
+        used_fallback: bool,
+    },
+    NothingToCompact,
+    Cancelled,
+}
+
+/// Result from the compaction orchestrator. `status` distinguishes cancellation
+/// from an ordinary no-op so callers never report Esc as "Nothing to compact".
+#[derive(Debug, PartialEq, Eq)]
+pub enum CompactSessionStatus {
+    Compacted,
+    NothingToCompact,
+    Cancelled,
+}
+
+#[derive(Debug)]
+pub struct CompactSessionOutcome {
+    pub status: CompactSessionStatus,
+    pub item: Option<TranscriptItem>,
+    pub used_fallback: bool,
 }
 
 pub async fn compact_session(
@@ -53,8 +89,22 @@ pub async fn compact_session(
     request: ManualCompactRequest,
     cancel: CancellationToken,
 ) -> Result<Option<TranscriptItem>> {
+    Ok(compact_session_with_status(session, request, cancel)
+        .await?
+        .item)
+}
+
+pub async fn compact_session_with_status(
+    session: &Arc<Session>,
+    request: ManualCompactRequest,
+    cancel: CancellationToken,
+) -> Result<CompactSessionOutcome> {
     if cancel.is_cancelled() {
-        return Ok(None);
+        return Ok(CompactSessionOutcome {
+            status: CompactSessionStatus::Cancelled,
+            item: None,
+            used_fallback: false,
+        });
     }
 
     let entries = session.load_all_entries().await?;
@@ -94,17 +144,30 @@ pub async fn compact_session(
         request.settings.keep_recent_min_messages,
     ) {
         Some(plan) => plan,
-        None => return Ok(None),
+        None => {
+            return Ok(CompactSessionOutcome {
+                status: CompactSessionStatus::NothingToCompact,
+                item: None,
+                used_fallback: false,
+            })
+        }
     };
 
     if cancel.is_cancelled() {
-        return Ok(None);
+        return Ok(CompactSessionOutcome {
+            status: CompactSessionStatus::Cancelled,
+            item: None,
+            used_fallback: false,
+        });
     }
 
-    let summary = if let Some(summary) = request.summary_override.filter(|s| !s.trim().is_empty()) {
+    let has_summarizer = request.summarizer.is_some();
+    let summary_override = request.summary_override.filter(|s| !s.trim().is_empty());
+    let mut used_fallback = !has_summarizer && summary_override.is_none();
+    let summary = if let Some(summary) = summary_override {
         summary
     } else if let Some(summarizer) = request.summarizer.as_ref() {
-        summarize_with_llm(
+        let generated = summarize_with_llm(
             &compact_entries,
             &plan,
             previous.as_ref().map(|(_, s, _)| s.as_str()),
@@ -112,15 +175,26 @@ pub async fn compact_session(
             summarizer,
             cancel.clone(),
         )
-        .await
-        .unwrap_or_else(|| {
-            build_summary(
-                &compact_entries,
-                &plan,
-                previous.as_ref().map(|(_, s, _)| s.as_str()),
-                request.custom_instructions.as_deref(),
-            )
-        })
+        .await;
+        if cancel.is_cancelled() {
+            return Ok(CompactSessionOutcome {
+                status: CompactSessionStatus::Cancelled,
+                item: None,
+                used_fallback: false,
+            });
+        }
+        match generated {
+            Some(summary) => summary,
+            None => {
+                used_fallback = true;
+                build_summary(
+                    &compact_entries,
+                    &plan,
+                    previous.as_ref().map(|(_, s, _)| s.as_str()),
+                    request.custom_instructions.as_deref(),
+                )
+            }
+        }
     } else {
         build_summary(
             &compact_entries,
@@ -174,9 +248,20 @@ pub async fn compact_session(
         details,
     };
 
+    if cancel.is_cancelled() {
+        return Ok(CompactSessionOutcome {
+            status: CompactSessionStatus::Cancelled,
+            item: None,
+            used_fallback: false,
+        });
+    }
     session.write_items(vec![item.clone()]).await?;
     session.replace_transcript(new_context).await;
-    Ok(Some(item))
+    Ok(CompactSessionOutcome {
+        status: CompactSessionStatus::Compacted,
+        item: Some(item),
+        used_fallback,
+    })
 }
 
 async fn summarize_with_llm(
@@ -241,11 +326,29 @@ async fn summarize_with_llm(
     let mode = evot_engine::SummarizerMode::Llm {
         max_tokens: summarizer.max_tokens,
     };
-    mode.summarize(input, Some(&ctx), cancel)
-        .await
-        .ok()
-        .map(|output| output.summary)
-        .filter(|summary| !summary.trim().is_empty())
+    let llm_cancel = cancel.child_token();
+    let summarize = mode.summarize(input, Some(&ctx), llm_cancel.clone());
+    let result = tokio::select! {
+        _ = cancel.cancelled() => {
+            llm_cancel.cancel();
+            return None;
+        }
+        result = tokio::time::timeout(summarizer.timeout, summarize) => result,
+    };
+    match result {
+        Ok(Ok(output)) if !output.summary.trim().is_empty() => Some(output.summary),
+        Ok(_) => None,
+        Err(_) => {
+            llm_cancel.cancel();
+            tracing::warn!(
+                stage = "compact",
+                status = "summary_timeout",
+                timeout_ms = summarizer.timeout.as_millis() as u64,
+                "LLM compaction summary timed out; using deterministic fallback"
+            );
+            None
+        }
+    }
 }
 
 fn format_entry_for_summary(entry: &evot_engine::CompactEntry) -> String {

@@ -17,6 +17,15 @@ function positiveEnv(name: string, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : fallback
 }
 
+/** EVOT_TUI_TRACE=1 opts in, =0 force-disables; an explicit rootDirectory
+ *  (tests, tooling) also opts in unless force-disabled. */
+function rendererTraceEnabled(options: RendererTraceOptions): boolean {
+  const env = process.env.EVOT_TUI_TRACE
+  if (env === '0') return false
+  if (env === '1') return true
+  return options.rootDirectory !== undefined
+}
+
 function segmentMaxBytes(): number {
   return positiveEnv('EVOT_TUI_TRACE_SEGMENT_MB', DEFAULT_SEGMENT_MB) * 1024 * 1024
 }
@@ -34,14 +43,19 @@ export interface RendererTraceOptions {
 }
 
 /**
- * Default-on renderer diagnostics backed by modular rolling storage.
+ * Opt-in renderer diagnostics backed by modular rolling storage.
+ *
+ * Disabled by default: every traced frame serializes and appends JSON on the
+ * TUI thread, which is measurable overhead during streaming. Enable with
+ * EVOT_TUI_TRACE=1 (or by passing an explicit rootDirectory, as tests and
+ * tooling do); EVOT_TUI_TRACE=0 force-disables either way.
  *
  * Each process creates an isolated managed run under ~/.evotai/logs/renderer.
  * Segments roll independently of screen/markdown logs and begin with a replay
  * checkpoint, so retained segments stay analyzable after older ones are removed.
  */
 export class RendererTrace {
-  private readonly enabled = process.env.EVOT_TUI_TRACE !== '0'
+  private readonly enabled: boolean
   private writer: RollingLogWriter | null = null
   private boundSessionId: string | null = null
   private buffer: RendererTraceEntry[] = []
@@ -49,7 +63,9 @@ export class RendererTrace {
   private logicalLines = new Map<number, string>()
   private snapshot: TraceSnapshot | null = null
 
-  constructor(private readonly options: RendererTraceOptions = {}) {}
+  constructor(private readonly options: RendererTraceOptions = {}) {
+    this.enabled = rendererTraceEnabled(options)
+  }
 
   get isEnabled(): boolean {
     return this.enabled

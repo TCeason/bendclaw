@@ -11,6 +11,8 @@ use std::sync::Arc;
 
 use evot::agent::session::Session;
 use evot::compact::orchestrator::compact_session;
+use evot::compact::orchestrator::compact_session_with_status;
+use evot::compact::orchestrator::CompactSessionStatus;
 use evot::compact::orchestrator::CompactSettings;
 use evot::compact::orchestrator::CompactSummarizer;
 use evot::compact::orchestrator::ManualCompactRequest;
@@ -35,6 +37,38 @@ use tokio_util::sync::CancellationToken;
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
 const KEEP_RECENT_TOKENS: usize = 1;
+
+struct FailingProvider;
+
+#[async_trait::async_trait]
+impl StreamProvider for FailingProvider {
+    async fn stream(
+        &self,
+        _config: StreamConfig,
+        _tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+        _cancel: CancellationToken,
+    ) -> std::result::Result<StreamOutcome, ProviderError> {
+        Err(ProviderError::Api("summary unavailable".into()))
+    }
+}
+
+struct BlockingProvider {
+    started: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait::async_trait]
+impl StreamProvider for BlockingProvider {
+    async fn stream(
+        &self,
+        _config: StreamConfig,
+        _tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+        cancel: CancellationToken,
+    ) -> std::result::Result<StreamOutcome, ProviderError> {
+        self.started.notify_waiters();
+        cancel.cancelled().await;
+        Err(ProviderError::Cancelled)
+    }
+}
 
 /// Provider that records requests and replies with scripted text, in order.
 struct CapturingProvider {
@@ -112,6 +146,7 @@ fn summarizer(provider: Arc<CapturingProvider>) -> CompactSummarizer {
         provider,
         llm: test_llm(),
         max_tokens: 4096,
+        timeout: std::time::Duration::from_secs(60),
     }
 }
 
@@ -130,6 +165,131 @@ async fn new_session() -> std::result::Result<Arc<Session>, Box<dyn std::error::
     let storage = open_storage(&StorageConfig::fs(path))?;
     let session = Session::new("sess-orch".into(), "/tmp".into(), "m".into(), storage).await?;
     Ok(session)
+}
+
+#[tokio::test]
+async fn failed_llm_compaction_reports_deterministic_fallback() -> TestResult {
+    let session = new_session().await?;
+    session
+        .write_items(vec![
+            user("old request with enough content to summarize"),
+            assistant("old assistant reply"),
+            user("recent request"),
+            assistant("recent answer"),
+        ])
+        .await?;
+
+    let result = compact_session_with_status(
+        &session,
+        ManualCompactRequest {
+            reason: CompactReason::Manual,
+            custom_instructions: None,
+            summary_override: None,
+            summarizer: Some(CompactSummarizer {
+                provider: Arc::new(FailingProvider),
+                llm: test_llm(),
+                max_tokens: 4096,
+                timeout: std::time::Duration::from_secs(60),
+            }),
+            settings: settings(),
+        },
+        CancellationToken::new(),
+    )
+    .await?;
+
+    assert_eq!(result.status, CompactSessionStatus::Compacted);
+    assert!(result.used_fallback);
+    assert!(matches!(result.item, Some(TranscriptItem::Compact { .. })));
+    Ok(())
+}
+
+#[tokio::test]
+async fn timed_out_llm_compaction_uses_deterministic_fallback() -> TestResult {
+    let session = new_session().await?;
+    session
+        .write_items(vec![
+            user("old request with enough content to summarize"),
+            assistant("old assistant reply"),
+            user("recent request"),
+            assistant("recent answer"),
+        ])
+        .await?;
+
+    let started = Arc::new(tokio::sync::Notify::new());
+    let result = compact_session_with_status(
+        &session,
+        ManualCompactRequest {
+            reason: CompactReason::Manual,
+            custom_instructions: None,
+            summary_override: None,
+            summarizer: Some(CompactSummarizer {
+                provider: Arc::new(BlockingProvider { started }),
+                llm: test_llm(),
+                max_tokens: 4096,
+                timeout: std::time::Duration::from_millis(10),
+            }),
+            settings: settings(),
+        },
+        CancellationToken::new(),
+    )
+    .await?;
+
+    assert_eq!(result.status, CompactSessionStatus::Compacted);
+    assert!(result.used_fallback);
+    assert!(matches!(result.item, Some(TranscriptItem::Compact { .. })));
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancelled_llm_compaction_does_not_write_a_marker() -> TestResult {
+    let session = new_session().await?;
+    session
+        .write_items(vec![
+            user("old request with enough content to summarize"),
+            assistant("old assistant reply"),
+            user("recent request"),
+            assistant("recent answer"),
+        ])
+        .await?;
+
+    let started = Arc::new(tokio::sync::Notify::new());
+    let cancel = CancellationToken::new();
+    let compact_session = session.clone();
+    let compact_cancel = cancel.clone();
+    let provider = Arc::new(BlockingProvider {
+        started: started.clone(),
+    });
+    let task = tokio::spawn(async move {
+        compact_session_with_status(
+            &compact_session,
+            ManualCompactRequest {
+                reason: CompactReason::Manual,
+                custom_instructions: None,
+                summary_override: None,
+                summarizer: Some(CompactSummarizer {
+                    provider,
+                    llm: test_llm(),
+                    max_tokens: 4096,
+                    timeout: std::time::Duration::from_secs(60),
+                }),
+                settings: settings(),
+            },
+            compact_cancel,
+        )
+        .await
+    });
+
+    started.notified().await;
+    cancel.cancel();
+    let result = task.await??;
+    assert_eq!(result.status, CompactSessionStatus::Cancelled);
+    assert!(result.item.is_none());
+    assert!(!session
+        .load_all_entries()
+        .await?
+        .iter()
+        .any(|entry| matches!(entry.item, TranscriptItem::Compact { .. })));
+    Ok(())
 }
 
 #[tokio::test]

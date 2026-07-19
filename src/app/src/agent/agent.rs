@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 
 use parking_lot::RwLock;
 
@@ -141,8 +140,17 @@ pub enum SubmitOutcome {
 struct ActiveRun {
     run_id: String,
     handle: RunControl,
-    done: Arc<AtomicBool>,
+    completed: tokio_util::sync::CancellationToken,
 }
+
+enum AbortRunOutcome {
+    Stopped,
+    Cancelled,
+    TimedOut,
+}
+
+const RUN_ABORT_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+const COMPACTION_SUMMARY_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct Agent {
     llm: RwLock<LlmConfig>,
@@ -423,7 +431,7 @@ impl Agent {
     /// Send a steering message to the active run for a session.
     pub fn steer(&self, session_id: &str, input: Vec<evot_engine::Content>) {
         if let Some(ar) = self.active_runs.lock().get(session_id) {
-            if !ar.done.load(Ordering::Relaxed) {
+            if !ar.completed.is_cancelled() {
                 ar.handle
                     .steer(evot_engine::AgentMessage::Llm(evot_engine::Message::User {
                         content: input,
@@ -436,7 +444,7 @@ impl Agent {
     /// Send a follow-up message to the active run for a session.
     pub fn follow_up(&self, session_id: &str, text: impl Into<String>) {
         if let Some(ar) = self.active_runs.lock().get(session_id) {
-            if !ar.done.load(Ordering::Relaxed) {
+            if !ar.completed.is_cancelled() {
                 ar.handle
                     .follow_up(evot_engine::AgentMessage::Llm(evot_engine::Message::user(
                         text,
@@ -457,7 +465,7 @@ impl Agent {
     pub fn has_active_run(&self, session_id: &str) -> bool {
         let mut map = self.active_runs.lock();
         if let Some(ar) = map.get(session_id) {
-            if ar.done.load(Ordering::Relaxed) {
+            if ar.completed.is_cancelled() {
                 map.remove(session_id);
                 return false;
             }
@@ -465,6 +473,66 @@ impl Agent {
         } else {
             false
         }
+    }
+
+    async fn abort_run_and_wait(
+        &self,
+        session_id: &str,
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> AbortRunOutcome {
+        let active = {
+            let map = self.active_runs.lock();
+            map.get(session_id).map(|active| {
+                active.handle.abort();
+                active.completed.clone()
+            })
+        };
+        let Some(completed) = active else {
+            return AbortRunOutcome::Stopped;
+        };
+        if completed.is_cancelled() {
+            return AbortRunOutcome::Stopped;
+        }
+
+        tokio::select! {
+            _ = cancel.cancelled() => AbortRunOutcome::Cancelled,
+            _ = completed.cancelled() => AbortRunOutcome::Stopped,
+            _ = tokio::time::sleep(RUN_ABORT_WAIT_TIMEOUT) => {
+                tracing::warn!(
+                    stage = "compact",
+                    status = "run_abort_timeout",
+                    session_id = %session_id,
+                    timeout_ms = RUN_ABORT_WAIT_TIMEOUT.as_millis() as u64,
+                );
+                AbortRunOutcome::TimedOut
+            }
+        }
+    }
+
+    /// Manually compact an existing session with an abortable lifecycle.
+    pub async fn compact(
+        &self,
+        session_id: &str,
+        custom_instructions: Option<String>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<crate::compact::orchestrator::ManualCompactionOutcome> {
+        match self.abort_run_and_wait(session_id, &cancel).await {
+            AbortRunOutcome::Stopped => {}
+            AbortRunOutcome::Cancelled => {
+                return Ok(crate::compact::orchestrator::ManualCompactionOutcome::Cancelled)
+            }
+            AbortRunOutcome::TimedOut => {
+                return Err(EvotError::Run(format!(
+                    "active run did not stop within {} seconds; compaction was not started",
+                    RUN_ABORT_WAIT_TIMEOUT.as_secs()
+                )))
+            }
+        }
+        let Some(session) = self.load_session(session_id).await? else {
+            return Ok(crate::compact::orchestrator::ManualCompactionOutcome::NothingToCompact);
+        };
+        self.compact_resolved_session(&session, custom_instructions, cancel)
+            .await
     }
 
     // -- query ---------------------------------------------------------------
@@ -548,50 +616,23 @@ impl Agent {
                 custom_instructions,
             } => {
                 let session_id = session.session_id().await;
-                self.abort_run(&session_id);
-                let context_window = self.resolved_context_window() as usize;
-                let request = crate::compact::orchestrator::ManualCompactRequest {
-                    reason: crate::types::CompactReason::Manual,
-                    custom_instructions,
-                    summary_override: None,
-                    summarizer: Some(self.compact_summarizer()),
-                    settings: crate::compact::orchestrator::CompactSettings {
-                        context_window,
-                        ..Default::default()
-                    },
-                };
-                let result = crate::compact::orchestrator::compact_session(
-                    session,
-                    request,
-                    tokio_util::sync::CancellationToken::new(),
-                )
-                .await?;
-                session.save().await?;
-                let msg = match result {
-                    Some(crate::types::TranscriptItem::Compact {
-                        tokens_before,
-                        tokens_after,
-                        messages_before,
-                        messages_after,
-                        ..
-                    }) => {
-                        let mut line = format!(
-                            "Session compacted: {tokens_before} → {tokens_after} tokens, {messages_before} → {messages_after} messages."
-                        );
-                        // Mirror pi's overflow guidance: if the compacted
-                        // context still exceeds the model window, tell the user
-                        // rather than letting the next request fail with a
-                        // near-zero output budget.
-                        if context_window > 0 && tokens_after >= context_window {
-                            line.push_str(&format!(
-                                "\nWarning: context is still {tokens_after} tokens, above this model's {context_window}-token window. \
-                                 Switch to a larger-context model or start a new session to continue."
-                            ));
-                        }
-                        line
+                let cancel = tokio_util::sync::CancellationToken::new();
+                let outcome = match self.abort_run_and_wait(&session_id, &cancel).await {
+                    AbortRunOutcome::Stopped => {
+                        self.compact_resolved_session(session, custom_instructions, cancel)
+                            .await?
                     }
-                    _ => "Nothing to compact.".into(),
+                    AbortRunOutcome::Cancelled => {
+                        crate::compact::orchestrator::ManualCompactionOutcome::Cancelled
+                    }
+                    AbortRunOutcome::TimedOut => {
+                        return Err(EvotError::Run(format!(
+                            "active run did not stop within {} seconds; compaction was not started",
+                            RUN_ABORT_WAIT_TIMEOUT.as_secs()
+                        )))
+                    }
                 };
+                let msg = format_manual_compaction_outcome(&outcome);
                 Ok(Some(SubmitOutcome::Command(msg)))
             }
             Command::Dump { target } => {
@@ -604,6 +645,59 @@ impl Agent {
     }
 
     // -- run execution (private) ----------------------------------------------
+
+    async fn compact_resolved_session(
+        &self,
+        session: &Arc<Session>,
+        custom_instructions: Option<String>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<crate::compact::orchestrator::ManualCompactionOutcome> {
+        if cancel.is_cancelled() {
+            return Ok(crate::compact::orchestrator::ManualCompactionOutcome::Cancelled);
+        }
+        let context_window = self.resolved_context_window() as usize;
+        let request = crate::compact::orchestrator::ManualCompactRequest {
+            reason: crate::types::CompactReason::Manual,
+            custom_instructions,
+            summary_override: None,
+            summarizer: Some(self.compact_summarizer()),
+            settings: crate::compact::orchestrator::CompactSettings {
+                context_window,
+                ..Default::default()
+            },
+        };
+        let result = crate::compact::orchestrator::compact_session_with_status(
+            session,
+            request,
+            cancel.clone(),
+        )
+        .await?;
+        if result.status == crate::compact::orchestrator::CompactSessionStatus::Cancelled {
+            return Ok(crate::compact::orchestrator::ManualCompactionOutcome::Cancelled);
+        }
+        session.save().await?;
+        match result.item {
+            Some(crate::types::TranscriptItem::Compact {
+                summary,
+                tokens_before,
+                tokens_after,
+                messages_before,
+                messages_after,
+                ..
+            }) => Ok(
+                crate::compact::orchestrator::ManualCompactionOutcome::Compacted {
+                    summary,
+                    tokens_before,
+                    tokens_after,
+                    messages_before,
+                    messages_after,
+                    context_window,
+                    used_fallback: result.used_fallback,
+                },
+            ),
+            _ => Ok(crate::compact::orchestrator::ManualCompactionOutcome::NothingToCompact),
+        }
+    }
 
     fn compact_summarizer(&self) -> crate::compact::orchestrator::CompactSummarizer {
         use evot_engine::provider::AnthropicProvider;
@@ -624,6 +718,7 @@ impl Agent {
             provider,
             llm,
             max_tokens: 4096,
+            timeout: COMPACTION_SUMMARY_TIMEOUT,
         }
     }
 
@@ -652,16 +747,17 @@ impl Agent {
             model = %self.llm.read().model,
         );
 
-        // Shared done flag — set by on_complete, checked at registration
-        let done = Arc::new(AtomicBool::new(false));
+        // Completion is a one-shot signal, not a polled flag. This avoids a
+        // manual compaction waiting forever on stale run state.
+        let completed = tokio_util::sync::CancellationToken::new();
 
-        // Build cleanup callback — mark done, remove only if still this run
+        // Build cleanup callback — signal completion, remove only if still this run
         let active_runs = self.active_runs.clone();
         let sid = session_id.clone();
         let rid = run_id.clone();
-        let done_flag = done.clone();
+        let completed_signal = completed.clone();
         let on_complete: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-            done_flag.store(true, Ordering::Release);
+            completed_signal.cancel();
             let mut map = active_runs.lock();
             if let Some(ar) = map.get(&sid) {
                 if ar.run_id == rid {
@@ -687,14 +783,19 @@ impl Agent {
             on_complete: Some(on_complete),
         });
 
-        // Register active run — skip if on_complete already fired
-        if !done.load(Ordering::Acquire) {
-            self.active_runs.lock().insert(session_id, ActiveRun {
+        // Register while holding the same map lock used by on_complete. The
+        // completion token is cancelled before that callback takes the lock, so
+        // this ordering closes the check/insert race that could leave a finished
+        // run registered forever.
+        let mut active_runs = self.active_runs.lock();
+        if !completed.is_cancelled() {
+            active_runs.insert(session_id, ActiveRun {
                 run_id,
                 handle: run.handle(),
-                done,
+                completed,
             });
         }
+        drop(active_runs);
 
         Ok(run)
     }
@@ -830,6 +931,14 @@ impl Agent {
                 let entries = session.load_all_entries().await?;
                 Ok(entries.into_iter().map(|e| e.item).collect())
             }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    pub async fn load_context_transcript(&self, id: &str) -> Result<Vec<TranscriptItem>> {
+        let storage = self.storage.read().clone();
+        match Session::open(id, storage).await? {
+            Some(session) => Ok(session.transcript().await),
             None => Ok(Vec::new()),
         }
     }
@@ -1097,6 +1206,44 @@ impl TurnFactory for AgentTurnFactory {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn format_manual_compaction_outcome(
+    outcome: &crate::compact::orchestrator::ManualCompactionOutcome,
+) -> String {
+    match outcome {
+        crate::compact::orchestrator::ManualCompactionOutcome::Compacted {
+            tokens_before,
+            tokens_after,
+            messages_before,
+            messages_after,
+            context_window,
+            used_fallback,
+            ..
+        } => {
+            let mut line = format!(
+                "Session compacted: {tokens_before} → {tokens_after} tokens, {messages_before} → {messages_after} messages."
+            );
+            if *used_fallback {
+                line.push_str(
+                    "\nNote: the LLM summary was unavailable; a deterministic fallback summary was used.",
+                );
+            }
+            if *context_window > 0 && tokens_after >= context_window {
+                line.push_str(&format!(
+                    "\nWarning: context is still {tokens_after} tokens, above this model's {context_window}-token window. \
+                     Switch to a larger-context model or start a new session to continue."
+                ));
+            }
+            line
+        }
+        crate::compact::orchestrator::ManualCompactionOutcome::NothingToCompact => {
+            "Nothing to compact.".into()
+        }
+        crate::compact::orchestrator::ManualCompactionOutcome::Cancelled => {
+            "Compaction cancelled.".into()
+        }
+    }
+}
 
 fn format_history_entry(seq: u64, item: &crate::types::TranscriptItem) -> String {
     let is_user = matches!(item, crate::types::TranscriptItem::User { .. });

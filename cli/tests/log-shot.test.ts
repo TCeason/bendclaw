@@ -4,14 +4,6 @@ import {
   findLastAssistantTurn,
 } from '../src/session/assistant-markdown.js'
 import {
-  parseMarkdownTraces,
-  lastMarkdownTrace,
-  findMarkdownTrace,
-  lastMarkdownTurn,
-  markdownTurnContaining,
-  parseMarkdownTraceTs,
-} from '../src/session/markdown-trace.js'
-import {
   resolveShotSource,
   buildShotHtml,
   ansiToHtml,
@@ -20,9 +12,11 @@ import {
   writeMarkdownShot,
   formatShotModelLabel,
   buildShotHeaderSpans,
+  buildShotHeroTime,
+  buildShotMetaLine,
   shotWindowSize,
 } from '../src/commands/log-shot.js'
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'fs'
+import { mkdtempSync, readFileSync, rmSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -77,134 +71,6 @@ describe('findLastAssistantTurn', () => {
   })
 })
 
-const SAMPLE_TRACE = `--- markdown trace asst-1 ---
-ts: 2026-07-09 12:00:00.000
-schema_version: 1
-renderer_version: test-renderer
-
-[raw markdown]
-## Hello
-
-| A | B |
-|---|---|
-| 1 | 2 |
-
-[rendered lines]
-Hello
-┌───┬───┐
---- end markdown trace asst-1 ---
-
---- markdown trace asst-2 ---
-ts: 2026-07-09 12:01:00.000
-schema_version: 1
-renderer_version: test-renderer
-
-[raw markdown]
-second message
-
-[rendered lines]
-second message
---- end markdown trace asst-2 ---
-`
-
-/** Two stream-flush chunks of one turn, then a later turn. */
-const STREAMED_TURN_TRACE = `--- markdown trace asst-10 ---
-ts: 2026-07-09 14:05:54.000
-schema_version: 1
-renderer_version: test-renderer
-
-[raw markdown]
-# Snowflake MV
-
-intro
-
-[rendered lines]
-Snowflake MV
---- end markdown trace asst-10 ---
-
---- markdown trace asst-11 ---
-ts: 2026-07-09 14:05:58.000
-schema_version: 1
-renderer_version: test-renderer
-
-[raw markdown]
-## Conclusion
-
-done
-
-[rendered lines]
-Conclusion
---- end markdown trace asst-11 ---
-
---- markdown trace asst-20 ---
-ts: 2026-07-09 14:10:00.000
-schema_version: 1
-renderer_version: test-renderer
-
-[raw markdown]
-unrelated later answer
-
-[rendered lines]
-unrelated later answer
---- end markdown trace asst-20 ---
-`
-
-describe('parseMarkdownTraces', () => {
-  test('parses multiple complete traces', () => {
-    const all = parseMarkdownTraces(SAMPLE_TRACE)
-    expect(all).toHaveLength(2)
-    expect(all[0]!.messageId).toBe('asst-1')
-    expect(all[0]!.rawMarkdown).toContain('## Hello')
-    expect(all[0]!.renderedLines[0]).toBe('Hello')
-    expect(all[0]!.rendererVersion).toBe('test-renderer')
-    expect(all[1]!.messageId).toBe('asst-2')
-    expect(all[1]!.rawMarkdown).toBe('second message')
-  })
-
-  test('lastMarkdownTrace returns the final entry', () => {
-    const last = lastMarkdownTrace(SAMPLE_TRACE)
-    expect(last?.messageId).toBe('asst-2')
-  })
-
-  test('findMarkdownTrace by id', () => {
-    expect(findMarkdownTrace(SAMPLE_TRACE, 'asst-1')?.rawMarkdown).toContain('## Hello')
-    expect(findMarkdownTrace(SAMPLE_TRACE, 'missing')).toBeNull()
-  })
-
-  test('skips incomplete trailing block', () => {
-    const incomplete = SAMPLE_TRACE + `\n--- markdown trace asst-3 ---\n[raw markdown]\nno end\n`
-    expect(parseMarkdownTraces(incomplete)).toHaveLength(2)
-  })
-})
-
-describe('lastMarkdownTurn', () => {
-  test('parseMarkdownTraceTs handles log timestamps', () => {
-    const t = parseMarkdownTraceTs('2026-07-09 14:05:54.842')
-    expect(t).not.toBeNull()
-    expect(new Date(t!).getFullYear()).toBe(2026)
-  })
-
-  test('groups trailing stream flushes within the gap, not older turns', () => {
-    const all = parseMarkdownTraces(STREAMED_TURN_TRACE)
-    // last alone is asst-20; turn group of last is just asst-20 (gap from 11 is 4+ min)
-    const turn = lastMarkdownTurn(all)
-    expect(turn).not.toBeNull()
-    expect(turn!.messageId).toBe('asst-20')
-    expect(turn!.traces).toHaveLength(1)
-    expect(turn!.rawMarkdown).toBe('unrelated later answer')
-  })
-
-  test('joins consecutive flushes of the same turn', () => {
-    const all = parseMarkdownTraces(STREAMED_TURN_TRACE).slice(0, 2)
-    const turn = lastMarkdownTurn(all)
-    expect(turn).not.toBeNull()
-    expect(turn!.traces).toHaveLength(2)
-    expect(turn!.messageId).toBe('asst-10')
-    expect(turn!.lastMessageId).toBe('asst-11')
-    expect(turn!.rawMarkdown).toBe('# Snowflake MV\n\nintro\n## Conclusion\n\ndone')
-  })
-})
-
 describe('log-shot ansi + render', () => {
   test('ansiToHtml preserves truecolor fg (chalk.hex style)', () => {
     const html = ansiToHtml('\x1b[38;2;106;106;106m```\x1b[39m plain')
@@ -246,63 +112,34 @@ describe('log-shot ansi + render', () => {
     expect(ansi).toContain('177;185;249')
   })
 
-  test('resolveShotSource prefers history full turn over single log chunk', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'evot-shot-'))
-    try {
-      const logPath = join(dir, 's.markdown.log')
-      writeFileSync(logPath, STREAMED_TURN_TRACE)
-      const source = resolveShotSource({
-        markdownLogPath: logPath,
-        historyLines: [
-          { kind: 'user', id: 'u1' },
-          { kind: 'assistant', id: 'h1', rawMarkdown: '# Full\n\n' },
-          { kind: 'assistant', id: 'h2', rawMarkdown: 'body from history' },
-        ],
-      })
-      expect(source?.kind).toBe('history')
-      if (source?.kind === 'history') {
-        expect(source.rawMarkdown).toBe('# Full\n\nbody from history')
-        expect(source.chunkCount).toBe(2)
-      }
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
-
-  test('resolveShotSource falls back to log turn grouping', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'evot-shot-'))
-    try {
-      const logPath = join(dir, 's.markdown.log')
-      // only the two-chunk turn
-      const onlyTurn = STREAMED_TURN_TRACE.split('--- markdown trace asst-20 ---')[0]!
-      writeFileSync(logPath, onlyTurn)
-      const source = resolveShotSource({
-        markdownLogPath: logPath,
-        historyLines: [],
-      })
-      expect(source?.kind).toBe('turn')
-      if (source?.kind === 'turn') {
-        expect(source.turn.traces).toHaveLength(2)
-        expect(source.turn.rawMarkdown).toContain('# Snowflake MV')
-        expect(source.turn.rawMarkdown).toContain('## Conclusion')
-      }
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
-
-  test('resolveShotSource falls back to history when no log', () => {
+  test('resolveShotSource uses the last committed history turn', () => {
     const source = resolveShotSource({
-      markdownLogPath: null,
+      historyLines: [
+        { kind: 'user', id: 'u1' },
+        { kind: 'assistant', id: 'h1', rawMarkdown: '# Full\n\n' },
+        { kind: 'assistant', id: 'h2', rawMarkdown: 'body from history' },
+      ],
+    })
+    expect(source).not.toBeNull()
+    expect(source?.rawMarkdown).toBe('# Full\n\nbody from history')
+    expect(source?.chunkCount).toBe(2)
+    expect(source?.paintedLines).toHaveLength(2)
+  })
+
+  test('resolveShotSource returns null without committed history', () => {
+    expect(resolveShotSource({ historyLines: [] })).toBeNull()
+    expect(resolveShotSource({})).toBeNull()
+  })
+
+  test('resolveShotSource falls back to raw history when painted text is absent', () => {
+    const source = resolveShotSource({
       historyLines: [{ kind: 'assistant', id: 'mem', rawMarkdown: 'from memory' }],
     })
-    expect(source?.kind).toBe('history')
-    if (source?.kind === 'history') {
-      expect(source.rawMarkdown).toBe('from memory')
-      expect(source.id).toBe('mem')
-      expect(source.chunkCount).toBe(1)
-      expect(source.paintedLines?.length).toBe(1)
-    }
+    expect(source).not.toBeNull()
+    expect(source?.rawMarkdown).toBe('from memory')
+    expect(source?.id).toBe('mem')
+    expect(source?.chunkCount).toBe(1)
+    expect(source?.paintedLines?.length).toBe(1)
   })
 
   test('buildShotHtml matches TUI: ⏺, gold heading, slate canvas, full turn content', () => {
@@ -390,66 +227,13 @@ describe('log-shot ansi + render', () => {
     // (no markdown re-lex into headings/tables).
     expect(ansi).toContain('Incremental MV')
     expect(ansi).toContain('⏺')
-    expect(source!.kind).toBe('history')
-    if (source!.kind === 'history') {
-      expect(source!.paintedLines?.[0]?.text).toBe(painted)
-    }
+    expect(source!.paintedLines?.[0]?.text).toBe(painted)
   })
 
-  test('color-stripped log re-renders with theme colors at layout width', () => {
-    // OSC only, no SGR — mirrors pre-ANSI-preserve markdown.log entries.
-    const log = `--- markdown trace asst-c1 ---
-ts: 2026-07-09 14:00:00.000
-schema_version: 1
-renderer_version: test
-
-[raw markdown]
-## Title
-
-plain body with enough width xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-[rendered lines]
-\x1b]133;A\x07⏺ Title
-  plain body with enough width xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
---- end markdown trace asst-c1 ---
-`
-    const dir = mkdtempSync(join(tmpdir(), 'evot-shot-color-'))
-    try {
-      const logPath = join(dir, 'c.markdown.log')
-      writeFileSync(logPath, log)
-      const source = resolveShotSource({ markdownLogPath: logPath })
-      expect(source?.kind).toBe('turn')
-      const html = buildShotHtml(source!, { columns: 40 })
-      expect(html).toContain('color:#f0c674') // heading gold
-      expect(html).toContain('⏺')
-      expect(html).toContain('Title')
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
-
-  test('messageId expands to the full turn group, not a single chunk', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'evot-shot-id-'))
-    try {
-      const logPath = join(dir, 's.markdown.log')
-      writeFileSync(logPath, STREAMED_TURN_TRACE)
-      const source = resolveShotSource({
-        markdownLogPath: logPath,
-        messageId: 'asst-10',
-      })
-      expect(source?.kind).toBe('turn')
-      if (source?.kind === 'turn') {
-        expect(source.turn.traces.length).toBeGreaterThan(1)
-        expect(source.turn.messageId).toBe('asst-10')
-        expect(source.turn.rawMarkdown).toContain('Conclusion')
-      }
-      // Direct helper
-      const all = parseMarkdownTraces(STREAMED_TURN_TRACE)
-      const group = markdownTurnContaining(all, 'asst-11')
-      expect(group?.traces.map(t => t.messageId)).toEqual(['asst-10', 'asst-11'])
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
+  test('shot header helpers show capture time and only useful turn metadata', () => {
+    expect(buildShotHeroTime('2026-07-09T14:05:54')).toContain('2026-07-09 14:05')
+    expect(buildShotMetaLine({ chunkCount: 1 })).toBe('')
+    expect(buildShotMetaLine({ chunkCount: 2 })).toBe('2 chunks')
   })
 
   test('table cells keep TUI alignment metrics in HTML', () => {
@@ -474,14 +258,15 @@ plain body with enough width xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
     expect(html).toContain('white-space: pre;')
   })
 
-  test('writeMarkdownShot writes full-turn HTML from log', async () => {
+  test('writeMarkdownShot writes full-turn HTML from history', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'evot-shot-out-'))
     try {
-      const logPath = join(dir, 's.markdown.log')
-      const onlyTurn = STREAMED_TURN_TRACE.split('--- markdown trace asst-20 ---')[0]!
-      writeFileSync(logPath, onlyTurn)
       const result = await writeMarkdownShot({
-        markdownLogPath: logPath,
+        historyLines: [
+          { kind: 'user', id: 'u1' },
+          { kind: 'assistant', id: 'asst-10', rawMarkdown: '# Snowflake MV\n\nintro' },
+          { kind: 'assistant', id: 'asst-11', rawMarkdown: '## Conclusion\n\ndone' },
+        ],
         outDir: join(dir, 'shots'),
         png: false,
         open: false,

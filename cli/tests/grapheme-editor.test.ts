@@ -35,9 +35,6 @@ function promptInput(text: string, cursorCol: number, columns = 20): PromptVMInp
     exitHint: false,
     cwd: '/tmp/project',
     gitBranch: null,
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
     contextTokens: 0,
     contextWindow: 0,
   }

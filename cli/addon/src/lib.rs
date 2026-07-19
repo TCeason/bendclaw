@@ -1,4 +1,5 @@
 mod agent;
+mod compaction;
 mod convert;
 mod exit;
 mod fork;
@@ -8,6 +9,7 @@ mod server;
 mod tracing;
 
 pub use agent::NapiAgent;
+pub use compaction::NapiCompaction;
 pub use exit::fast_exit;
 pub use fork::NapiForkedAgent;
 pub use run::NapiRun;

@@ -1147,13 +1147,13 @@ describe('term stream machine', () => {
     expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-read')?.startedAt).toBeUndefined()
   })
 
-  test('tool argument deltas stay in thinking phase until the call is complete', () => {
+  test('tool argument deltas stay in the responding phase until execution starts', () => {
     let state = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
     state = reduceRunEvent(state, {
       kind: 'assistant_tool_call',
       payload: { content_index: 0, tool_call_id: 'call-edit', tool_name: 'edit', phase: 'start' },
     }, { termRows: 24 }).state
-    expect(state.spinnerState.phase).toBe('thinking')
+    expect(state.spinnerState.phase).toBe('responding')
 
     state = reduceRunEvent(state, {
       kind: 'assistant_tool_call',
@@ -1165,7 +1165,7 @@ describe('term stream machine', () => {
         delta: '{"path":"src/a.ts"',
       },
     }, { termRows: 24 }).state
-    expect(state.spinnerState.phase).toBe('thinking')
+    expect(state.spinnerState.phase).toBe('responding')
 
     state = reduceRunEvent(state, {
       kind: 'assistant_tool_call',
@@ -1177,7 +1177,7 @@ describe('term stream machine', () => {
         args: { path: 'src/a.ts', edits: [] },
       },
     }, { termRows: 24 }).state
-    expect(state.spinnerState.phase).toBe('thinking')
+    expect(state.spinnerState.phase).toBe('responding')
 
     state = reduceRunEvent(state, {
       kind: 'tool_started',
@@ -1186,21 +1186,40 @@ describe('term stream machine', () => {
     expect(state.spinnerState.phase).toBe('executing')
   })
 
+  test('tool execution resets provider stream timing', () => {
+    const initial = createStreamMachineState(createInitialState('m', '/tmp'), {
+      ...createSpinnerState(),
+      phase: 'responding',
+      streaming: true,
+      lastTokenAt: 123,
+      streamStartedAt: 100,
+      tokenCount: 8,
+    })
+    const update = reduceRunEvent(initial, {
+      kind: 'tool_started',
+      payload: { tool_name: 'read', tool_call_id: 'call-1' },
+    } as any, { termRows: 24 })
+    expect(update.state.spinnerState.phase).toBe('executing')
+    expect(update.state.spinnerState.streaming).toBe(false)
+    expect(update.state.spinnerState.lastTokenAt).toBeNull()
+    expect(update.state.spinnerState.tokenCount).toBe(0)
+  })
+
   test('spinner enters executing phase only when tool_started arrives', () => {
     // A decoded call is still queued; execution starts at tool_started.
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
-    expect(state.spinnerState.phase).toBe('thinking')
+    expect(state.spinnerState.phase).toBe('preparing')
 
     state = reduceRunEvent(state, {
       kind: 'assistant_tool_call',
       payload: { content_index: 0, tool_call_id: 'call-read', tool_name: 'read', phase: 'end', args: { path: 'src/a.rs' } },
     }, { termRows: 24 }).state
 
-    // Queued, not yet running — keep the run spinner in its thinking phase.
+    // Queued, not yet running — model output phase, not execution.
     expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-read')?.status).toBe('queued')
-    expect(state.spinnerState.phase).toBe('thinking')
+    expect(state.spinnerState.phase).toBe('responding')
 
     state = reduceRunEvent(state, {
       kind: 'tool_started',
@@ -1210,7 +1229,7 @@ describe('term stream machine', () => {
     expect(state.spinnerState.phase).toBe('executing')
   })
 
-  test('spinner returns to thinking when a tool finishes and another is still queued', () => {
+  test('spinner returns to preparing when a tool finishes and another is still queued', () => {
     // Serial tools: queued B has not started, so do not claim it is executing.
     let state = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
     for (const [contentIndex, id, name] of [[0, 'call-read', 'read'], [1, 'call-edit', 'edit']] as const) {
@@ -1230,7 +1249,7 @@ describe('term stream machine', () => {
 
     expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-read')?.status).toBe('done')
     expect(findAssistantToolCall(state.appState.currentAssistantContent, 'call-edit')?.status).toBe('queued')
-    expect(state.spinnerState.phase).toBe('thinking')
+    expect(state.spinnerState.phase).toBe('preparing')
   })
 
   test('large streamed tool args stay as raw fragments and finalize once', () => {

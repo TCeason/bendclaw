@@ -1,11 +1,11 @@
 /**
- * ScreenLog — writes OutputLines to ~/.evotai/logs/{session_id}.screen.log.
+ * ScreenLog — writes rendered output lines to ~/.evotai/logs/{session_id}.screen.log.
  *
- * Session-level logger that records the expanded (full) version of all
- * screen output for post-hoc debugging.  Callers use:
+ * Session-level logger that records the expanded (full) version of all screen
+ * output for post-hoc debugging and `/log <query>` analysis. Callers use:
  *
  *   screenLog.bind(sessionId)   — attach to a session (lazy, idempotent)
- *   screenLog.logMarkdownTrace(entry) — append human-readable markdown trace
+ *   screenLog.logLines(lines)   — append rendered lines (ANSI stripped)
  *
  * All I/O errors are silently swallowed so callers never need try/catch.
  */
@@ -21,22 +21,10 @@ function logsDir(): string {
   return join(homeDir(), '.evotai', 'logs')
 }
 
-const MARKDOWN_TRACE_SCHEMA_VERSION = 1
-const MARKDOWN_TRACE_FILE_SUFFIX = 'markdown.log'
-
-export interface MarkdownTraceEntry {
-  messageId: string
-  rendererVersion: string
-  rawMarkdown: string
-  renderedLines: string[]
-}
-
 export class ScreenLog {
   private path: string | null = null
-  private markdownTracePath: string | null = null
   private boundSessionId: string | null = null
   private buffer: string[] = []
-  private markdownTraceBuffer: MarkdownTraceEntry[] = []
 
   /** Bind (or re-bind) to a session. Flushes any buffered lines. */
   bind(sessionId: string): void {
@@ -45,16 +33,11 @@ export class ScreenLog {
       const dir = logsDir()
       mkdirSync(dir, { recursive: true })
       this.path = join(dir, `${sessionId}.screen.log`)
-      this.markdownTracePath = join(dir, `${sessionId}.${MARKDOWN_TRACE_FILE_SUFFIX}`)
       this.boundSessionId = sessionId
       // Flush lines that were logged before bind
       if (this.buffer.length > 0) {
         for (const line of this.buffer) this.appendLine(line)
         this.buffer = []
-      }
-      if (this.markdownTraceBuffer.length > 0) {
-        for (const entry of this.markdownTraceBuffer) this.appendMarkdownTrace(entry)
-        this.markdownTraceBuffer = []
       }
     } catch { /* silently ignore */ }
   }
@@ -63,11 +46,7 @@ export class ScreenLog {
     return this.path
   }
 
-  get markdownTraceFilePath(): string | null {
-    return this.markdownTracePath
-  }
-
-  /** Append rendered lines (with ANSI-stripped) to the log. Buffers if not yet bound. */
+  /** Append rendered lines (with ANSI stripped) to the log. Buffers if not yet bound. */
   logLines(rendered: string[]): void {
     if (rendered.length === 0) return
     for (const raw of rendered) {
@@ -80,43 +59,11 @@ export class ScreenLog {
     }
   }
 
-  logMarkdownTrace(entry: MarkdownTraceEntry): void {
-    if (!entry.rawMarkdown.trim()) return
-    if (this.markdownTracePath) {
-      this.appendMarkdownTrace(entry)
-    } else {
-      this.markdownTraceBuffer.push(entry)
-    }
-  }
-
   private appendLine(line: string): void {
     if (!this.path) return
     try {
       const ts = formatTimestamp()
       appendFileSync(this.path, `[${ts}] ${line}\n`, { mode: 0o600 })
-    } catch { /* silently ignore */ }
-  }
-
-  private appendMarkdownTrace(entry: MarkdownTraceEntry): void {
-    if (!this.markdownTracePath) return
-    try {
-      const trace = [
-        `--- markdown trace ${entry.messageId} ---`,
-        `ts: ${formatTimestamp()}`,
-        `schema_version: ${MARKDOWN_TRACE_SCHEMA_VERSION}`,
-        `renderer_version: ${entry.rendererVersion}`,
-        '',
-        '[raw markdown]',
-        entry.rawMarkdown,
-        '',
-        '[rendered lines]',
-        // Keep ANSI so /log shot can replay the exact TUI paint (wrap + colors).
-        // stripAnsi is only for the human-readable screen.log path above.
-        ...entry.renderedLines,
-        `--- end markdown trace ${entry.messageId} ---`,
-        '',
-      ].join('\n')
-      appendFileSync(this.markdownTracePath, trace, { mode: 0o600 })
     } catch { /* silently ignore */ }
   }
 }

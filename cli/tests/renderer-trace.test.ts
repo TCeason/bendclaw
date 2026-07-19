@@ -190,13 +190,22 @@ describe('RollingLogWriter', () => {
 })
 
 describe('RendererTrace rolling storage', () => {
-  test('is enabled by default and can be explicitly disabled', () => {
+  test('is disabled by default and opts in via EVOT_TUI_TRACE=1', () => {
     const previous = process.env.EVOT_TUI_TRACE
     delete process.env.EVOT_TUI_TRACE
     try {
+      const dflt = new RendererTrace()
+      expect(dflt.isEnabled).toBe(false)
+      dflt.bind('default-off')
+      expect(dflt.filePath).toBeNull()
+      process.env.EVOT_TUI_TRACE = '1'
       expect(new RendererTrace().isEnabled).toBe(true)
+      // Explicit rootDirectory (tests/tooling) opts in without the env var…
+      delete process.env.EVOT_TUI_TRACE
+      expect(new RendererTrace({ rootDirectory: '/tmp/unused' }).isEnabled).toBe(true)
+      // …but =0 force-disables either way.
       process.env.EVOT_TUI_TRACE = '0'
-      const disabled = new RendererTrace()
+      const disabled = new RendererTrace({ rootDirectory: '/tmp/unused' })
       expect(disabled.isEnabled).toBe(false)
       disabled.bind('disabled')
       expect(disabled.filePath).toBeNull()

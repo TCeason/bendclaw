@@ -77,6 +77,11 @@ describe('term commands', () => {
     expect(result.newSession).toBeUndefined()
   })
 
+  test('/compact defers to the async app command path', () => {
+    const result = handleSlashCommand('/compact preserve decisions', mkCtx())
+    expect(result.systemLines.length).toBe(0)
+  })
+
   test('/resume defers to async handler', () => {
     const result = handleSlashCommand('/resume abc', mkCtx())
     // /resume is now handled asynchronously in handleSlashInput

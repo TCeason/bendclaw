@@ -14,7 +14,7 @@ describe('createSpinnerState', () => {
   test('creates initial state', () => {
     const state = createSpinnerState()
     expect(state.frame).toBe(0)
-    expect(state.phase).toBe('thinking')
+    expect(state.phase).toBe('preparing')
     expect(state.streaming).toBe(false)
     expect(state.toolName).toBeNull()
     expect(state.tokenCount).toBe(0)
@@ -41,7 +41,7 @@ describe('advanceSpinner', () => {
     const state = { ...createSpinnerState(), tokenCount: 42 }
     const next = advanceSpinner(state)
     expect(next.tokenCount).toBe(42)
-    expect(next.phase).toBe('thinking')
+    expect(next.phase).toBe('preparing')
   })
 })
 
@@ -60,7 +60,6 @@ describe('setSpinnerPhase', () => {
     expect(next.phase).toBe('thinking')
     expect(next.toolName).toBeNull()
   })
-
   test('resets phaseStartedAt on change', () => {
     const state = { ...createSpinnerState(), phaseStartedAt: 1000 }
     const next = setSpinnerPhase(state, 'executing', 'read')
@@ -69,7 +68,7 @@ describe('setSpinnerPhase', () => {
 
   test('returns same state if phase unchanged', () => {
     const state = createSpinnerState()
-    const next = setSpinnerPhase(state, 'thinking')
+    const next = setSpinnerPhase(state, 'preparing')
     expect(next).toBe(state) // same reference
   })
 })
@@ -94,22 +93,25 @@ describe('isSlow', () => {
     expect(isSlow(state, Date.now())).toBe(false)
   })
 
-  test('not slow when recent tokens received (thinking phase)', () => {
+  test('not slow when recent tokens received while emitting', () => {
     const now = Date.now()
     const state = {
       ...createSpinnerState(),
+      phase: 'thinking' as const,
       phaseStartedAt: now - 9000,
       lastTokenAt: now - 1000, // 1s ago — recent
     }
     expect(isSlow(state, now)).toBe(false)
   })
 
-  test('slow when tokens are stale (thinking phase)', () => {
+  test('slow when the stream stalls (stale tokens)', () => {
     const now = Date.now()
     const state = {
       ...createSpinnerState(),
+      phase: 'responding' as const,
       phaseStartedAt: now - 9000,
-      lastTokenAt: now - 9000, // 9s ago — stale
+      lastTokenAt: now - 9000, // 9s ago — stalled
+      streaming: true,
     }
     expect(isSlow(state, now)).toBe(true)
   })
@@ -120,17 +122,41 @@ describe('isSlow', () => {
       ...createSpinnerState(),
       phase: 'executing' as const,
       phaseStartedAt: now - 9000,
-      toolName: 'bash',
+      toolName: 'edit',
     }
     expect(isSlow(state, now)).toBe(true)
+  })
+
+  test('long-running tools use wider slow thresholds', () => {
+    const now = Date.now()
+    const executing = (toolName: string, elapsedMs: number) => ({
+      ...createSpinnerState(),
+      phase: 'executing' as const,
+      phaseStartedAt: now - elapsedMs,
+      toolName,
+    })
+    // bash regularly outlives 8s (builds, tests) — slow only after 30s.
+    expect(isSlow(executing('bash', 9_000), now)).toBe(false)
+    expect(isSlow(executing('bash', 31_000), now)).toBe(true)
+    // compact includes an LLM summarization pass with a 30s budget.
+    expect(isSlow(executing('compact', 29_000), now)).toBe(false)
+    expect(isSlow(executing('compact', 31_000), now)).toBe(true)
+    // Waiting on the user is never "slow".
+    expect(isSlow(executing('ask_user', 3_600_000), now)).toBe(false)
   })
 })
 
 describe('formatSpinnerLine', () => {
-  test('contains Thinking label when thinking', () => {
-    const state = createSpinnerState()
-    const line = stripAnsi(formatSpinnerLine(state, Date.now()))
-    expect(line).toContain('Thinking…')
+  test('labels each run phase', () => {
+    const now = Date.now()
+    const at = (phase: 'preparing' | 'waiting' | 'thinking' | 'responding') => ({
+      ...createSpinnerState(),
+      phase,
+    })
+    expect(stripAnsi(formatSpinnerLine(at('preparing'), now))).toContain('Preparing…')
+    expect(stripAnsi(formatSpinnerLine(at('waiting'), now))).toContain('Waiting for model…')
+    expect(stripAnsi(formatSpinnerLine(at('thinking'), now))).toContain('Thinking…')
+    expect(stripAnsi(formatSpinnerLine(at('responding'), now))).toContain('Responding…')
   })
 
   test('contains action label when executing', () => {
@@ -160,9 +186,22 @@ describe('formatSpinnerLine', () => {
 
   test('contains slow label after threshold', () => {
     const now = Date.now()
-    const state = { ...createSpinnerState(), phaseStartedAt: now - 9000 }
-    const line = stripAnsi(formatSpinnerLine(state, now))
-    expect(line).toContain('LLM slow…')
+    const waiting = { ...createSpinnerState(), phase: 'waiting' as const, phaseStartedAt: now - 9000 }
+    expect(stripAnsi(formatSpinnerLine(waiting, now))).toContain('LLM slow…')
+    const preparing = { ...createSpinnerState(), phaseStartedAt: now - 9000 }
+    expect(stripAnsi(formatSpinnerLine(preparing, now))).toContain('Preparing slow…')
+  })
+
+  test('labels a stalled stream', () => {
+    const now = Date.now()
+    const state = {
+      ...createSpinnerState(),
+      phase: 'responding' as const,
+      streaming: true,
+      lastTokenAt: now - 9000,
+      phaseStartedAt: now - 20000,
+    }
+    expect(stripAnsi(formatSpinnerLine(state, now))).toContain('Stream stalled…')
   })
 
   test('contains action slow label', () => {
@@ -170,7 +209,7 @@ describe('formatSpinnerLine', () => {
     const state = {
       ...createSpinnerState(),
       phase: 'executing' as const,
-      phaseStartedAt: now - 9000,
+      phaseStartedAt: now - 31000,
       toolName: 'bash',
     }
     const line = stripAnsi(formatSpinnerLine(state, now))
@@ -276,7 +315,7 @@ describe('formatSpinnerLine', () => {
 
   test('shows live tok/s while streaming text', () => {
     const start = 10_000
-    let state = createSpinnerState()
+    let state = setSpinnerPhase(createSpinnerState(), 'responding')
     state = recordStreamDelta(state, 'x'.repeat(400), start)
     const line = stripAnsi(formatSpinnerLine(state, start + 2000))
     expect(line).toContain('↓ 100 tokens')

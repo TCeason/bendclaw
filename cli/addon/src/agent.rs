@@ -13,6 +13,7 @@ use tokio::sync::mpsc as tokio_mpsc;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 
+use crate::compaction::NapiCompaction;
 use crate::convert::parse_content_blocks;
 use crate::fork::NapiForkedAgent;
 use crate::host::parse_host_tool_specs;
@@ -219,6 +220,18 @@ impl NapiAgent {
             .load_transcript(&session_id)
             .await
             .map_err(|e| Error::from_reason(format!("load transcript: {e}")))?;
+
+        serde_json::to_string(&items).map_err(|e| Error::from_reason(format!("serialize: {e}")))
+    }
+
+    /// Load the effective context transcript for a session, after control markers.
+    #[napi]
+    pub async fn load_context_transcript(&self, session_id: String) -> Result<String> {
+        let items = self
+            .agent
+            .load_context_transcript(&session_id)
+            .await
+            .map_err(|e| Error::from_reason(format!("load context transcript: {e}")))?;
 
         serde_json::to_string(&items).map_err(|e| Error::from_reason(format!("serialize: {e}")))
     }
@@ -431,6 +444,16 @@ impl NapiAgent {
             .into_iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect()
+    }
+
+    /// Start an abortable manual session compaction.
+    #[napi]
+    pub fn compact(
+        &self,
+        session_id: String,
+        custom_instructions: Option<String>,
+    ) -> NapiCompaction {
+        NapiCompaction::start(self.agent.clone(), session_id, custom_instructions)
     }
 
     /// Send a steering message into a running session.

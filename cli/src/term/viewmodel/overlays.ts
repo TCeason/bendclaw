@@ -146,6 +146,7 @@ function buildHelpBlocks(columns: number): ViewBlock[] {
     ['/env', 'Manage variables'],
     ['/skill', 'Manage skills'],
     ['/copy', 'Copy last agent message (Markdown)'],
+    ['/compact', 'Compact session context'],
     ['/update', 'Update evot'],
     ['/clear', 'Clear session context'],
     ['/exit', 'Exit'],

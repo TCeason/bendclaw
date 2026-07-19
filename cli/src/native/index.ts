@@ -177,6 +177,36 @@ export type ContentBlock = TextContentBlock | ImageContentBlock
 // Agent — main entry point
 // ---------------------------------------------------------------------------
 
+export type ManualCompactionOutcome =
+  | {
+      status: 'compacted'
+      summary: string
+      tokens_before: number
+      tokens_after: number
+      messages_before: number
+      messages_after: number
+      context_window: number
+      used_fallback: boolean
+    }
+  | { status: 'nothing_to_compact' }
+  | { status: 'cancelled' }
+
+export class CompactionTask {
+  private raw: any
+
+  constructor(raw: any) {
+    this.raw = raw
+  }
+
+  async result(): Promise<ManualCompactionOutcome> {
+    return JSON.parse(await this.raw.result()) as ManualCompactionOutcome
+  }
+
+  abort(): void {
+    this.raw.abort()
+  }
+}
+
 export class Agent {
   private raw: RawAgentType
 
@@ -259,6 +289,11 @@ export class Agent {
     return JSON.parse(json) as TranscriptItem[]
   }
 
+  async loadContextTranscript(sessionId: string): Promise<TranscriptItem[]> {
+    const json = await this.raw.loadContextTranscript(sessionId)
+    return JSON.parse(json) as TranscriptItem[]
+  }
+
   async findSession(sessionId: string): Promise<SessionMeta | null> {
     const json = await this.raw.findSession(sessionId)
     return json ? JSON.parse(json) as SessionMeta : null
@@ -327,6 +362,10 @@ export class Agent {
    */
   skillsDirs(): string[] {
     return this.raw.skillsDirs()
+  }
+
+  compact(sessionId: string, customInstructions?: string): CompactionTask {
+    return new CompactionTask(this.raw.compact(sessionId, customInstructions || null))
   }
 
   steer(sessionId: string, text: string, contentJson?: string): void {

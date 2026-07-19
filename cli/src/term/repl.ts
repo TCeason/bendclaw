@@ -6,14 +6,15 @@ import {
   type KeyEvent,
 } from './input.js'
 import { TerminalInputBuffer } from './input/buffer.js'
-import { createSpinnerState, advanceSpinner, formatSpinnerLine, spinnerStatsFromLastUsage } from './spinner.js'
+import { createSpinnerState, advanceSpinner, formatSpinnerLine, setSpinnerPhase, spinnerStatsFromLastUsage } from './spinner.js'
 import { createSelectorState, selectorExpandItems, selectorClearQuery, selectorFocusOn, type SelectorItem } from './selector.js'
 import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
-import { buildUserMessage, type OutputLine } from '../render/output.js'
+import { buildAssistantLines, buildUserMessage, messagesToOutputLines, type OutputLine } from '../render/output.js'
 import { wrapTextWithAnsi } from '../render/wrap.js'
-import { Agent, QueryStream, fastExit, type SessionMeta, type ConfigInfo, type QueuedPrompt } from '../native/index.js'
+import { Agent, QueryStream, fastExit, type CompactionTask, type ManualCompactionOutcome, type SessionMeta, type ConfigInfo, type QueuedPrompt } from '../native/index.js'
 import { createInitialState, type AppState } from './app/state.js'
 import { assistantToolCalls } from './app/assistant-content.js'
+import type { UIAssistantBlock } from './app/types.js'
 import { assistantMessageToOutputLines } from '../render/assistant.js'
 import { HistoryManager } from '../session/history.js'
 import { ScreenLog } from '../session/screen-log.js'
@@ -114,11 +115,13 @@ import {
   type ManagedQueuedPrompt,
 } from './app/queue-manage.js'
 import { extractAtPrefix, completeAtFile } from '../commands/file-completion.js'
+import { transcriptToMessages } from '../session/transcript.js'
 import { GitInfoProvider } from './git-info.js'
 
 const SPINNER_INTERVAL_MS = 100
 
 type QueuedUserMessage = QueuedPrompt & { text: string; queue: 'steering' | 'follow_up' }
+type QueuedCompactionSubmission = { displayText: string; expandedText: string; contentJson?: string }
 
 
 export interface ReplOptions {
@@ -127,27 +130,6 @@ export interface ReplOptions {
   continueLatest?: boolean
   serverPort?: number
   envFile?: string
-}
-
-function getGitVersion(cwd: string): string | null {
-  try {
-    const result = Bun.spawnSync(['git', 'rev-parse', '--short=12', 'HEAD'], { cwd, stdout: 'pipe', stderr: 'pipe' })
-    if (result.exitCode !== 0) return null
-    const sha = result.stdout.toString().trim()
-    return sha || null
-  } catch {
-    return null
-  }
-}
-
-function isGitDirty(cwd: string): boolean {
-  try {
-    const result = Bun.spawnSync(['git', 'status', '--porcelain'], { cwd, stdout: 'pipe', stderr: 'pipe' })
-    if (result.exitCode !== 0) return false
-    return result.stdout.toString().length > 0
-  } catch {
-    return false
-  }
 }
 
 export async function startRepl(opts: ReplOptions): Promise<void> {
@@ -168,6 +150,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let historyState: HistoryState
   let isLoading = false
   let streamRef: QueryStream | null = null
+  let compactionTask: CompactionTask | null = null
+  let queuedCompactionSubmissions: QueuedCompactionSubmission[] = []
   let spinnerTimer: ReturnType<typeof setInterval> | null = null
   let titleFrozen = false
   let destroyed = false
@@ -318,24 +302,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const expandedLines: OutputLine[] = []
   let fdAbort: AbortController | null = null
   const screenLog = new ScreenLog()
-  const gitVersion = getGitVersion(agent.cwd)
-  const gitDirty = isGitDirty(agent.cwd)
-  const markdownRendererVersion = `evot-${appVersion}:markdown-trace-v2${gitVersion ? `:git-${gitVersion}` : ''}${gitDirty ? ':dirty' : ''}`
-  let markdownTraceId = 0
   let liveContentMaxHeight = 0
   let liveContentWidth = renderer.termCols
-
-  function logMarkdownTrace(outputLines: OutputLine[], renderedLines: string[]) {
-    const raw = outputLines.find(line => line.kind === 'assistant' && line.rawMarkdown)?.rawMarkdown
-    if (!raw) return
-    const firstLine = outputLines.find(line => line.kind === 'assistant' && line.rawMarkdown === raw)
-    screenLog.logMarkdownTrace({
-      messageId: firstLine?.id ?? `markdown-${++markdownTraceId}`,
-      rendererVersion: markdownRendererVersion,
-      rawMarkdown: raw,
-      renderedLines,
-    })
-  }
 
   // Server state
   let serverState: ServerState | null = null
@@ -424,10 +392,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       placeholder: isEditorEmpty(editor) && !isLoading,
       cwd: appState.cwd,
       gitBranch: gitInfo.getBranch(),
-      // Footer stats
-      inputTokens: appState.sessionTokens.inputTokens,
-      outputTokens: appState.sessionTokens.outputTokens,
-      cacheReadTokens: appState.sessionTokens.cacheReadTokens,
+      // Footer shows session state only (context/model/thinking). Per-call
+      // token usage renders on the spinner; session totals belong to logs.
       contextTokens: appState.sessionTokens.contextTokens,
       contextWindow: appState.sessionTokens.contextWindow,
       thinkingLevel: configInfo?.thinkingLevel ?? '',
@@ -465,19 +431,45 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   // --- buildFrame: the single render callback for the new differential renderer ---
+  // Live-partial memo: spinner ticks (10/s) and keystrokes repaint the frame
+  // without changing the assistant content. The reducer replaces the content
+  // array on every real change, so reference equality is an exact dirty check
+  // and pure-repaint frames skip the Markdown pipeline entirely.
+  const EMPTY_ASSISTANT_CONTENT: UIAssistantBlock[] = []
+  let partialBlocksMemo: {
+    content: UIAssistantBlock[]
+    expanded: boolean
+    streaming: boolean
+    columns: number
+    blocks: ViewBlock[]
+  } | null = null
+
   function buildPartialAssistantBlocks(): ViewBlock[] {
-    const content = streamMachine?.appState.currentAssistantContent ?? []
+    const content = streamMachine?.appState.currentAssistantContent ?? EMPTY_ASSISTANT_CONTENT
+    // Only provider deltas are provisional. After assistant_completed the
+    // message may remain live while tools execute, but its Markdown geometry
+    // is final and trailing tables must become visible immediately.
+    const streaming = spinnerState.streaming
+    const columns = renderer.termCols
+    if (
+      partialBlocksMemo
+      && partialBlocksMemo.content === content
+      && partialBlocksMemo.expanded === expanded
+      && partialBlocksMemo.streaming === streaming
+      && partialBlocksMemo.columns === columns
+    ) {
+      return partialBlocksMemo.blocks
+    }
     // Use the exact ordered committed-output pipeline for the live partial. This
     // keeps thinking/text/tool positions, margins, and prefixes stable through
     // completion instead of rendering tool calls in a detached layer.
-    return buildOutputBlocks(assistantMessageToOutputLines(content, expanded, {
-      // Only provider deltas are provisional. After assistant_completed the
-      // message may remain live while tools execute, but its Markdown geometry
-      // is final and trailing tables must become visible immediately.
-      streaming: spinnerState.streaming,
+    const blocks = buildOutputBlocks(assistantMessageToOutputLines(content, expanded, {
+      streaming,
     }), {
-      columns: renderer.termCols,
+      columns,
     })
+    partialBlocksMemo = { content, expanded, streaming, columns, blocks }
+    return blocks
   }
 
   function buildFrame(): RenderFrame {
@@ -546,11 +538,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const spinnerText = formatSpinnerLine(
         spinnerState,
         Date.now(),
-        spinnerStatsFromLastUsage(
-          appState.currentRunStats.lastLlmUsage,
-          liveOutputTokens,
-          usagePending,
-        ),
+        // Manual compaction reports no per-call usage of its own; showing the
+        // previous run's tokens here would misattribute them to compaction.
+        compactionTask
+          ? undefined
+          : spinnerStatsFromLastUsage(
+              appState.currentRunStats.lastLlmUsage,
+              liveOutputTokens,
+              usagePending,
+            ),
       )
       spinnerBlock = {
         lines: wrapTextWithAnsi(spinnerText, renderer.termCols).map(text => ({ spans: [{ text }] })),
@@ -565,7 +561,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const queueManagerOpen = overlay.kind === 'selector' && overlay.state.title === 'Prompt queue'
     const queueLines = queueManagerOpen
       ? []
-      : formatQueuedMessageLines(queuedUserMessages.map(message => message.text))
+      : formatQueuedMessageLines([
+          ...queuedUserMessages.map(message => message.text),
+          ...queuedCompactionSubmissions.map(message => message.displayText),
+        ])
     if (queueLines.length > 0) {
       preEditorBlocks.push({
         lines: queueLines.map(text => ({ spans: [{ text, dim: true }] })),
@@ -632,7 +631,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const blocks = buildOutputBlocks(visible, context)
     const rendered = blocksToLines(blocks)
     screenLog.logLines(rendered)
-    logMarkdownTrace(outputLines, rendered)
     // Trigger re-render — buildFrame will pick up the new lines
     renderer.requestRender()
   }
@@ -850,6 +848,103 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
+  async function rebuildAfterManualCompaction(outcome: Extract<ManualCompactionOutcome, { status: 'compacted' }>) {
+    if (!sessionId) return
+    const transcript = await agent.loadContextTranscript(sessionId)
+    const messages = transcriptToMessages(transcript as any).filter(message =>
+      !(message.role === 'user' && message.text.startsWith('The conversation history before this point was compacted into the following summary:')),
+    )
+    const { shown, hidden } = selectResumeMessages(messages)
+
+    appState = {
+      ...appState,
+      messages,
+      sessionTokens: {
+        ...appState.sessionTokens,
+        contextTokens: outcome.tokens_after,
+        contextWindow: outcome.context_window || appState.sessionTokens.contextWindow,
+      },
+    }
+    renderer.clearScreen()
+    compactLines.length = 0
+    expandedLines.length = 0
+    resetHistoryCache()
+    if (hidden > 0) restoreLines([resumeElidedLine(hidden)])
+    restoreLines(messagesToOutputLines(shown))
+
+    const label = { id: 'sys-compact-label', kind: 'system' as const, text: '  [compaction]' }
+    const status = {
+      id: 'sys-compact-result',
+      kind: 'system' as const,
+      text: `  Compacted from ${outcome.tokens_before.toLocaleString()} to ${outcome.tokens_after.toLocaleString()} tokens (ctrl+o to expand)`,
+    }
+    compactLines.push(label, status)
+    expandedLines.push(
+      label,
+      { ...status, text: `  Compacted from ${outcome.tokens_before.toLocaleString()} to ${outcome.tokens_after.toLocaleString()} tokens` },
+      ...buildAssistantLines(outcome.summary),
+    )
+    if (outcome.used_fallback) {
+      const fallback = {
+        id: 'sys-compact-fallback',
+        kind: 'system' as const,
+        text: '  Note: the LLM summary was unavailable; a deterministic fallback summary was used.',
+      }
+      compactLines.push(fallback)
+      expandedLines.push(fallback)
+    }
+    if (outcome.context_window > 0 && outcome.tokens_after >= outcome.context_window) {
+      const warning = {
+        id: 'sys-compact-warning',
+        kind: 'error' as const,
+        text: `Context is still ${outcome.tokens_after.toLocaleString()} tokens, above this model's ${outcome.context_window.toLocaleString()}-token window. Switch to a larger-context model or start a new session.`,
+      }
+      compactLines.push(warning)
+      expandedLines.push(warning)
+    }
+    renderer.requestRender()
+  }
+
+  async function submitQueuedAfterCompaction() {
+    const submissions = queuedCompactionSubmissions
+    queuedCompactionSubmissions = []
+    for (const submission of submissions) {
+      commitLines(buildUserMessage(submission.displayText))
+      await runQuery(submission.expandedText, submission.contentJson)
+    }
+  }
+
+  async function runManualCompaction(customInstructions: string) {
+    if (!sessionId) {
+      commitLines([{ id: 'sys-compact', kind: 'system', text: '  Nothing to compact: no active session.' }])
+      return
+    }
+
+    isLoading = true
+    spinnerState = setSpinnerPhase(createSpinnerState(), 'executing', 'compact')
+    startSpinner()
+    compactionTask = agent.compact(sessionId, customInstructions || undefined)
+    renderer.requestRender()
+    try {
+      const outcome = await compactionTask.result()
+      if (outcome.status === 'compacted') {
+        await rebuildAfterManualCompaction(outcome)
+      } else if (outcome.status === 'cancelled') {
+        commitLines([{ id: 'sys-compact-cancelled', kind: 'system', text: '  Compaction cancelled.' }])
+      } else {
+        commitLines([{ id: 'sys-compact-empty', kind: 'system', text: '  Nothing to compact.' }])
+      }
+    } catch (err: any) {
+      commitLines([{ id: 'sys-compact-err', kind: 'error', text: `Compact failed: ${err?.message ?? err}` }])
+    } finally {
+      compactionTask = null
+      isLoading = false
+      stopSpinner()
+      renderer.requestRender()
+    }
+    await submitQueuedAfterCompaction()
+  }
+
   /** Get expanded text — resolves paste refs, strips only resolved image refs. */
   function getExpandedText(resolvedImageIds?: Set<number>): string {
     return resolveSubmitText(getEditorText(editor), pastedChunks, resolvedImageIds ?? null)
@@ -1003,7 +1098,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             const blocks = buildOutputBlocks(visible, context)
             const rendered = blocksToLines(blocks)
             screenLog.logLines(rendered)
-            logMarkdownTrace(visible, rendered)
             renderer.requestRender()
           } else {
             commitLines(update.commitLines)
@@ -1091,6 +1185,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       exitHint,
       logMode: logMode !== null,
       hasQueuedPrompt: queuedUserMessages.length > 0,
+      isCompacting: compactionTask !== null,
     })
 
     for (const action of actions) {
@@ -1104,6 +1199,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         restoreLastQueuedUserMessageToEditor()
         return true
       case 'interrupt':
+        if (compactionTask) {
+          compactionTask.abort()
+          return true
+        }
         interruptStream('sys-int', '  Interrupted.')
         return true
       case 'exit':
@@ -1340,12 +1439,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function formatLogPaths(
     logPath: string | null,
-    markdownPath: string | null,
     rendererPath: string | null = null,
   ): string | null {
     if (!logPath) return null
     const lines = [`  Log: ${logPath}`]
-    if (markdownPath) lines.push(`  Markdown: ${markdownPath}`)
     if (rendererPath) lines.push(`  Renderer run: ${rendererPath}`)
     return lines.join('\n')
   }
@@ -1359,6 +1456,31 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       : getExpandedText()
 
     const trimmed = (expandedText || '').trim()
+    // A slash command may be typed with images attached; probe the visible
+    // draft too so "/compact" plus an image ref is still treated as a command.
+    const commandProbe = trimmed || displayText.trim()
+    if (compactionTask) {
+      if (commandProbe && isSlashCommand(commandProbe)) {
+        // Not silently swallowed: commands cannot run mid-compaction and are
+        // not queueable prompts. Keep the draft in the editor for later.
+        commitLines([{ id: 'sys-compact-cmd', kind: 'system', text: "  Commands don't run during compaction. Press Esc to cancel it, or wait for it to finish." }])
+        renderer.requestRender()
+        return
+      }
+      if (trimmed || imageBlocks) {
+        const queuedDisplay = displayText || '(image prompt)'
+        queuedCompactionSubmissions.push({
+          displayText: queuedDisplay,
+          expandedText,
+          ...(imageBlocks ? { contentJson: JSON.stringify(imageBlocks) } : {}),
+        })
+        historyMgr.append(queuedDisplay)
+        historyState = pushHistory(historyState, queuedDisplay)
+        clearAll()
+        renderer.requestRender()
+      }
+      return
+    }
     if (editingQueuedPrompt) {
       saveQueueEdit(expandedText)
       return
@@ -1366,12 +1488,20 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (trimmed === '/log') {
       clearAll()
       const logPath = screenLog.filePath
-      const markdownPath = screenLog.markdownTraceFilePath
       if (logPath) {
-        const text = formatLogPaths(logPath, markdownPath, rendererTrace.filePath)
+        const text = formatLogPaths(logPath, rendererTrace.filePath)
         commitLines([{ id: 'sys-log', kind: 'system', text: text ?? `  Log: ${logPath}` }])
       }
       else commitLines([{ id: 'sys-log', kind: 'system', text: '  No active screen log.' }])
+      renderer.requestRender()
+      return
+    }
+
+    // Slash commands are not model input: queueing one as follow-up text
+    // would send "/compact" to the LLM as conversation. Keep the draft in the
+    // editor and tell the user instead.
+    if (commandProbe && isSlashCommand(commandProbe) && streamRef) {
+      commitLines([{ id: 'sys-cmd-busy', kind: 'system', text: "  Commands don't queue while a response is running. Press Esc to interrupt, or wait for the turn to finish." }])
       renderer.requestRender()
       return
     }
@@ -1827,6 +1957,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           commitLines([{ id: 'sys-goto-err', kind: 'system', text: chalk.red(`  Goto failed: ${err?.message ?? err}`) }])
         }
       }
+    } else if (name === '/compact') {
+      await runManualCompaction(args)
     } else if (name === '/env') {
       handleEnvCommand(args)
     } else if (name === '/harden') {
@@ -2077,17 +2209,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const sid = sessionId
 
     if (query === 'shot' || query.startsWith('shot ')) {
-      // /log shot [messageId] — export last (or specified) assistant markdown as HTML/PNG
-      const messageId = query.slice(4).trim() || undefined
-      const markdownPath =
-        screenLog.markdownTraceFilePath
-        ?? (sid ? join(logDir, `${sid}.markdown.log`) : null)
+      // /log shot exports the latest committed assistant turn from in-memory
+      // history. This keeps renderer diagnostics off the TUI hot path.
+      const unsupportedTarget = query.slice(4).trim()
+      if (unsupportedTarget) {
+        commitLines([{ id: 'sys-log-shot-target', kind: 'system', text: '  /log shot exports the latest assistant turn; message ids are no longer supported.' }])
+        return
+      }
       try {
         const { writeMarkdownShot } = await import('../commands/log-shot.js')
         const result = await writeMarkdownShot({
-          markdownLogPath: markdownPath,
           historyLines: compactLines,
-          messageId,
           columns: renderer.termCols,
           open: false,
           header: {
@@ -2161,16 +2293,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
     } else if (!query) {
       const logPath = screenLog.filePath
-      const markdownPath = screenLog.markdownTraceFilePath
       if (logPath) {
-        const text = formatLogPaths(logPath, markdownPath, rendererTrace.filePath)
+        const text = formatLogPaths(logPath, rendererTrace.filePath)
         commitLines([{ id: 'sys-log', kind: 'system', text: text ?? `  Log: ${logPath}` }])
       }
       else if (sid) {
-        const text = formatLogPaths(
-          join(logDir, `${sid}.screen.log`),
-          join(logDir, `${sid}.markdown.log`),
-        )
+        const text = formatLogPaths(join(logDir, `${sid}.screen.log`))
         commitLines([{ id: 'sys-log', kind: 'system', text: text ?? `  Log: ${join(logDir, `${sid}.screen.log`)}` }])
       }
       else commitLines([{ id: 'sys-log', kind: 'system', text: `  Log dir: ${logDir} (no active session)` }])
@@ -2184,7 +2312,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         'This session is not persisted and does not affect the main session context.',
         '',
         `Screen log file to analyze:\n${logPath}`,
-        `Raw markdown trace, if present:\n${join(logDir, `${sid}.markdown.log`)}`,
         '',
         'Rules:',
         '- Read relevant log sections before answering; do not guess',
@@ -2410,7 +2537,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   function cleanup() {
     if (destroyed) return
     destroyed = true
+    queuedCompactionSubmissions = []
     unfreezeTerminalTitle()
+    compactionTask?.abort()
+    streamRef?.abort()
     stopSpinner()
     gitInfo.dispose()
     updateMgr.cleanup()

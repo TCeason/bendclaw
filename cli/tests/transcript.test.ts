@@ -93,6 +93,16 @@ describe('transcript conversion', () => {
     expect(messages[0]?.text).toBe('old answer')
   })
 
+  test('keeps compact transcript markers out of ordinary resumed messages', () => {
+    const messages = transcriptToMessages([{
+      type: 'compact',
+      summary: 'summary text',
+      tokens_before: 12345,
+    } as any])
+
+    expect(messages).toEqual([])
+  })
+
   test('does not replay historical runtime errors on resume', () => {
     const messages = transcriptToMessages([
       {
