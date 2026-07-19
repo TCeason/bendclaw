@@ -132,15 +132,18 @@ describe('renderSelector via viewmodel', () => {
     expect(lines[3]).toBe('Only showing models from configured')
     expect(lines[4]).toBe('providers. Use /login to add providers.')
     expect(lines[6]).toStartWith('>  ')
-    expect(lines[8]).toBe('→ grok-4.5 [openai] ✓')
-    expect(lines[9]).toBe('  gpt-5.6-sol [droid]')
-    expect(lines[11]).toBe('  Model Name: grok-4.5')
+    expect(lines[8]).toBe('  openai')
+    expect(lines[9]).toBe('→ grok-4.5 ✓')
+    expect(lines[10]).toBe('')
+    expect(lines[11]).toBe('  droid')
+    expect(lines[12]).toBe('  gpt-5.6-sol')
+    expect(lines[14]).toBe('  Model Name: grok-4.5')
     expect(lines.at(-1)).toBe('─'.repeat(40))
     expect(lines.join('\n')).not.toContain('Models  2')
     expect(lines.join('\n')).not.toContain('enter select')
   })
 
-  test('model filtering preserves pi provider badges', () => {
+  test('model filtering keeps provider groups without repeated badges', () => {
     let state = {
       ...createSelectorState('Models', [
         { label: 'grok-4.5', detail: 'openai', searchText: 'grok-4.5 openai' },
@@ -153,11 +156,39 @@ describe('renderSelector via viewmodel', () => {
     const text = buildSelectorRegionLines(state, 80)
       .map(line => stripAnsi(line).replaceAll('\x1b_pi:c\x07', ''))
       .join('\n')
-    expect(text).toContain('→ gpt-5.6-sol [droid]')
-    expect(text).not.toContain('gpt-5.6-sol droid]')
+    expect(text).toContain('  droid\n→ gpt-5.6-sol')
+    expect(text).not.toContain('[droid]')
   })
 
-  test('model filtering uses pi fuzzy matching and quality ordering', () => {
+  test('model selector renders one weak header per provider with blank group separators', () => {
+    const state = {
+      ...createSelectorState('Models', [
+        { label: 'gpt-5.6-sol', detail: 'openai', selected: true },
+        { label: 'grok-4.5', detail: 'openai' },
+        { label: 'claude-opus-4-8', detail: 'anthropic' },
+        { label: 'claude-sonnet-5', detail: 'anthropic' },
+      ]),
+      presentation: 'model' as const,
+    }
+    const lines = buildSelectorRegionLines(state, 80)
+      .map(line => stripAnsi(line).replaceAll('\x1b_pi:c\x07', ''))
+    const listStart = lines.indexOf('  openai')
+
+    expect(lines.slice(listStart, listStart + 8)).toEqual([
+      '  openai',
+      '→ gpt-5.6-sol ✓',
+      '  grok-4.5',
+      '',
+      '  anthropic',
+      '  claude-opus-4-8',
+      '  claude-sonnet-5',
+      '',
+    ])
+    expect(lines.join('\n')).not.toContain('[openai]')
+    expect(lines.join('\n')).not.toContain('[anthropic]')
+  })
+
+  test('model filtering uses fuzzy matching and quality ordering within a provider', () => {
     let state = {
       ...createSelectorState('Models', [
         { label: 'alpha-gpt', detail: 'provider', searchText: 'alpha-gpt provider' },

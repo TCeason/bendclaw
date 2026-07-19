@@ -78,7 +78,7 @@ import { askStateToResponse } from './app/ask-user.js'
 import { createExtensionHost, type ExtensionHost } from '../ext/index.js'
 import type { AskUserAnswer, AskUserParams } from '../ext/index.js'
 import { extractPlanItems, type PlanModeItem } from './plan-mode.js'
-import { currentModelSpec, formatModelLabel, modelOptions, selectModelOption } from './app/provider.js'
+import { currentModelSpec, formatModelLabel, modelOptions, selectModelOption, sortModelOptionsForSelector } from './app/provider.js'
 import chalk from 'chalk'
 import {
   shouldCollapse,
@@ -1888,12 +1888,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const models = modelOptions(configInfo, agent.model)
       if (models.length > 1) {
         const activeSpec = currentModelSpec(configInfo, agent.model)
-        const sortedModels = [...models].sort((left, right) => {
-          const leftIsActive = left.spec === activeSpec
-          const rightIsActive = right.spec === activeSpec
-          if (leftIsActive !== rightIsActive) return leftIsActive ? -1 : 1
-          return left.provider.localeCompare(right.provider)
-        })
+        const sortedModels = sortModelOptionsForSelector(models, activeSpec)
         const items: SelectorItem[] = sortedModels.map(option => ({
           label: option.model,
           detail: option.provider,

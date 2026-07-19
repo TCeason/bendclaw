@@ -230,11 +230,20 @@ function applyFilter(state: SelectorState, query: string): SelectorState {
   }
 
   if (state.presentation === 'model') {
+    const providerOrder = new Map<string, number>()
+    for (const item of state.allItems) {
+      const provider = item.detail ?? ''
+      if (!providerOrder.has(provider)) providerOrder.set(provider, providerOrder.size)
+    }
     const filtered = state.allItems
       .filter(item => !item.header)
       .map((item, index) => ({ item, index, score: modelFuzzyScore(query, item) }))
       .filter((entry): entry is { item: SelectorItem; index: number; score: number } => entry.score !== null)
-      .sort((left, right) => left.score - right.score || left.index - right.index)
+      .sort((left, right) => {
+        const leftProvider = providerOrder.get(left.item.detail ?? '') ?? Number.MAX_SAFE_INTEGER
+        const rightProvider = providerOrder.get(right.item.detail ?? '') ?? Number.MAX_SAFE_INTEGER
+        return leftProvider - rightProvider || left.score - right.score || left.index - right.index
+      })
       .map(entry => entry.item)
     const focusIndex = firstFocusable(filtered)
     return { ...state, query, items: filtered, focusIndex, scrollOffset: ensureVisible(0, focusIndex, filtered.length) }

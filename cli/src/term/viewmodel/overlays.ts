@@ -55,13 +55,20 @@ function buildModelSelectorRegionLines(state: SelectorState, width: number): str
   )
   const end = Math.min(start + maxVisible, state.items.length)
 
+  let visibleProvider: string | undefined
   for (let index = start; index < end; index++) {
     const item = state.items[index]!
+    const provider = item.detail?.trim()
+    if (provider && provider !== visibleProvider) {
+      if (visibleProvider !== undefined) lines.push(line(plain('')))
+      lines.push(line(dim(`  ${provider}`)))
+      visibleProvider = provider
+    }
+
     const focused = index === state.focusIndex
     lines.push(line(
       focused ? colored('→ ', 'cyan') : plain('  '),
       focused ? colored(item.label, 'cyan') : plain(item.label),
-      item.detail ? dim(` [${item.detail}]`) : plain(''),
       ...(item.selected ? [colored(' ✓', 'green')] : []),
     ))
   }
