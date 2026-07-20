@@ -363,10 +363,7 @@ impl Session {
                 return Ok(());
             }
 
-            if let Some(expected) = expected_seq {
-                return Err(stale_write_error(is_compaction, expected, state.next_seq));
-            }
-            if attempt == MAX_CONFLICT_RETRIES {
+            if expected_seq.is_none() && attempt == MAX_CONFLICT_RETRIES {
                 return Err(crate::error::EvotError::Session(
                     "transcript remained busy after conflict retries".to_string(),
                 ));
@@ -381,7 +378,12 @@ impl Session {
                     limit: None,
                 })
                 .await?;
-            state.next_seq = persisted.iter().map(|entry| entry.seq).max().unwrap_or(0);
+            let persisted_seq = persisted.iter().map(|entry| entry.seq).max().unwrap_or(0);
+            if let Some(expected) = expected_seq {
+                return Err(stale_write_error(is_compaction, expected, persisted_seq));
+            }
+
+            state.next_seq = persisted_seq;
             state.transcript = crate::compact::context_view::resolve_context_items(&persisted);
             state.engine_transcript =
                 crate::compact::context_view::resolve_engine_context(&persisted);

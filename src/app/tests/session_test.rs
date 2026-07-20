@@ -989,6 +989,12 @@ async fn strict_turn_write_rejects_external_advancement_without_losing_message()
         .err()
         .ok_or_else(|| missing_error("expected strict generation conflict"))?;
     assert!(error.to_string().contains("stale transcript write"));
+    assert!(
+        error
+            .to_string()
+            .contains("expected transcript seq 0, current seq 1"),
+        "conflict should report the persisted generation: {error}"
+    );
 
     let entries = first_storage
         .list_entries(ListTranscriptEntries {
