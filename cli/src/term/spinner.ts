@@ -172,7 +172,7 @@ export function formatSpinnerLine(state: SpinnerState, now: number, stats?: Spin
       label = slow ? 'Preparing slow…' : 'Preparing…'
   }
 
-  const status = formatFixedDuration(elapsed)
+  const status = humanDuration(elapsed)
   const tokenSuffix = formatSpinnerTokenSuffix(state, now, stats)
 
   if (slow) {
@@ -195,10 +195,6 @@ function glimmerText(text: string, pos: number): string {
     }
   }
   return result
-}
-
-function formatFixedDuration(ms: number): string {
-  return humanDuration(ms).padStart(5)
 }
 
 function humanDuration(ms: number): string {

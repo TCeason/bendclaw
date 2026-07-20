@@ -406,6 +406,11 @@ export function buildToolCall(
 }
 
 export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.now()): OutputLine[] {
+  // ask_user owns an interactive overlay and commits the selected answer (or
+  // cancellation) separately. Rendering its engine-side lifecycle as a generic
+  // tool card duplicates that UI with an unhelpful `ready/running` card.
+  if (isAskUserTool(call.name)) return []
+
   const details = asDetails(call.details)
   const diff = typeof details.diff === 'string' ? details.diff : undefined
   const args = diff ? { ...call.args, diff } : call.args
@@ -737,6 +742,11 @@ export class AssistantStreamBuffer {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function isAskUserTool(name: string): boolean {
+  const normalized = name.toLowerCase().replace(/_/g, '')
+  return normalized === 'askuser'
+}
 
 function humanBytes(n: number): string {
   if (n < 1024) return `${n} B`

@@ -216,6 +216,15 @@ describe('formatSpinnerLine', () => {
     expect(line).toContain('Running command slow…')
   })
 
+  test('does not insert duration padding after the opening parenthesis', () => {
+    const now = Date.now()
+    const subsecond = { ...createSpinnerState(), phaseStartedAt: now - 99 }
+    const seconds = { ...createSpinnerState(), phaseStartedAt: now - 3800 }
+
+    expect(stripAnsi(formatSpinnerLine(subsecond, now))).toContain('(99ms)')
+    expect(stripAnsi(formatSpinnerLine(seconds, now))).toContain('(3.8s)')
+  })
+
   test('contains duration', () => {
     const now = Date.now()
     const state = { ...createSpinnerState(), phaseStartedAt: now - 2500 }

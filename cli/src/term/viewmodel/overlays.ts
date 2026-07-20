@@ -24,6 +24,14 @@ export function buildOverlayBlocks(overlay: OverlayState, columns: number): View
   }
 }
 
+export function buildAskRegionLines(state: AskState, columns: number): string[] {
+  const width = Number.isFinite(columns) ? Math.max(1, Math.floor(columns)) : 80
+  const border = styledLineToAnsi(line(dim('─'.repeat(width))))
+  const body = blocksToLines(buildAskBlocks(state, width))
+    .flatMap(rendered => wrapTextWithAnsi(rendered, width))
+  return ['', border, ...body, border]
+}
+
 /** Render a selector in pi's editorContainer position, never as a modal. */
 export function buildSelectorRegionLines(state: SelectorState, columns: number): string[] {
   const width = Number.isFinite(columns) ? Math.max(1, Math.floor(columns)) : 80

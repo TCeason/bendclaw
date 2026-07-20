@@ -236,6 +236,16 @@ describe('buildToolResult', () => {
     }
   })
 
+  test('hides ask_user lifecycle cards because the interactive overlay owns its UI', () => {
+    const calls = [
+      { id: 'ask-queued', name: 'ask_user', args: { questions: [] }, status: 'queued' as const },
+      { id: 'ask-running', name: 'AskUser', args: { questions: [] }, status: 'running' as const },
+      { id: 'ask-done', name: 'askuser', args: { questions: [] }, status: 'done' as const, result: 'answered' },
+    ]
+
+    for (const call of calls) expect(buildToolCard(call)).toEqual([])
+  })
+
   test('summarizes grep and glob output without counting protocol lines as results', () => {
     const cases = [
       {

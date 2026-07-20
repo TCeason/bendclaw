@@ -28,6 +28,7 @@ import {
   buildPromptFooterBlocks,
   buildOverlayBlocks,
   buildSelectorRegionLines,
+  buildAskRegionLines,
   updateLiveHeight,
   formatQueuedMessageLines,
   blocksToLines,
@@ -279,8 +280,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
   let streamMachine: StreamMachineState | null = null
   // Messages sent mid-stream: held in the prompt zone (pi-style ❯ queue) and
-  // committed to history at the turn boundary, so they never render above the
-  // still-streaming reply.
+  // committed to history when steering consumes them at the next safe boundary,
+  // so they never render above the still-streaming reply.
   let queuedUserMessages: QueuedUserMessage[] = []
   let editingQueuedPrompt: ManagedQueuedPrompt | null = null
   let stashedQueueEditDraft = ''
@@ -583,6 +584,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           ...contentLines,
           ...blocksToLines(preEditorBlocks),
           ...buildSelectorRegionLines(overlay.state, renderer.termCols),
+          ...blocksToLines(buildPromptFooterBlocks(getPromptVM())),
+        ],
+      }
+    }
+
+    if (overlay.kind === 'ask-user') {
+      return {
+        lines: [
+          ...contentLines,
+          ...blocksToLines(preEditorBlocks),
+          ...buildAskRegionLines(overlay.state, renderer.termCols),
           ...blocksToLines(buildPromptFooterBlocks(getPromptVM())),
         ],
       }
@@ -1509,11 +1521,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if ((expandedText || imageBlocks) && streamRef) {
       if (imageBlocks) {
         const contentJson = JSON.stringify(imageBlocks)
-        const queued = streamRef.followUp('', contentJson)
-        queuedUserMessages.push({ ...queued, text: displayText || '(image prompt)', queue: 'follow_up' })
+        const queued = streamRef.steer('', contentJson)
+        queuedUserMessages.push({ ...queued, text: displayText || '(image prompt)', queue: 'steering' })
       } else {
-        const queued = streamRef.followUp(expandedText)
-        if (displayText) queuedUserMessages.push({ ...queued, text: displayText, queue: 'follow_up' })
+        const queued = streamRef.steer(expandedText)
+        if (displayText) queuedUserMessages.push({ ...queued, text: displayText, queue: 'steering' })
       }
       // Save to input history like a normal submission.
       if (displayText) {
@@ -1522,8 +1534,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       // Queue instead of committing now: history renders above the streaming
       // block, so an immediate commit lands above the incoming reply.
-      // Plain and structured prompts are follow-ups, matching grok's default
-      // "finish the current turn, then drain FIFO" behavior.
+      // Plain and structured prompts are steering messages: consume them FIFO
+      // at the next safe turn/tool boundary instead of waiting for the current
+      // agent task to finish naturally.
       clearAll()
       renderer.requestRender()
     }

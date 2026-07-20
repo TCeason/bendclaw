@@ -18,7 +18,7 @@ import {
   handleAskKeyEvent,
 } from '../src/term/ask.js'
 import { askStateToResponse } from '../src/term/app/ask-user.js'
-import { buildOverlayBlocks } from '../src/term/viewmodel/overlays.js'
+import { buildOverlayBlocks, buildAskRegionLines } from '../src/term/viewmodel/overlays.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
 import stripAnsi from 'strip-ansi'
 import chalk from 'chalk'
@@ -438,6 +438,17 @@ describe('renderAsk via viewmodel', () => {
     expect(text).toContain('• Which language?')
     expect(text).toContain('→ Rust')
     expect(text).not.toContain('• Which style?')
+  })
+
+  test('renders ask_user as a full-width editor replacement rather than a centered modal', () => {
+    const state = createAskState(singleQuestion)
+    const lines = buildAskRegionLines(state, 40).map(line => stripAnsi(line))
+
+    expect(lines[0]).toBe('')
+    expect(lines[1]).toBe('─'.repeat(40))
+    expect(lines.join('\n')).toContain('Which language?')
+    expect(lines.join('\n')).toContain('Rust')
+    expect(lines.at(-1)).toBe('─'.repeat(40))
   })
 
   test('other mode shows cursor before placeholder when empty', () => {
