@@ -6,7 +6,6 @@ use std::time::Duration;
 use parking_lot::RwLock;
 
 use super::run::control::RunControl;
-use super::run::convert;
 use super::run::run::Run;
 use super::run::runtime;
 use super::run::runtime::TurnFactory;
@@ -347,7 +346,11 @@ impl Agent {
     /// of effort. Empty when the model does not honor a reasoning effort (e.g.
     /// an OpenAI-compatible provider without the reasoning-effort capability).
     pub fn supported_thinking_levels(&self) -> Vec<evot_engine::ThinkingLevel> {
-        let llm = self.llm.read();
+        let llm = self.llm.read().clone();
+        Self::supported_thinking_levels_for(&llm)
+    }
+
+    fn supported_thinking_levels_for(llm: &LlmConfig) -> Vec<evot_engine::ThinkingLevel> {
         super::run::runtime::build_model_config(
             llm.protocol.clone(),
             &llm.provider,
@@ -359,6 +362,48 @@ impl Agent {
             llm.supports_image,
         )
         .supported_thinking_levels()
+    }
+
+    /// Replace the LLM config while inheriting the session's current thinking
+    /// level. Unsupported levels are clamped using pi's ordering: first search
+    /// upward from the requested effort, then downward. Models without
+    /// selectable reasoning always use `Off`.
+    fn set_llm_preserving_thinking(&self, mut llm: LlmConfig) {
+        use evot_engine::ThinkingLevel;
+
+        let current = self.llm.read().thinking_level;
+        let supported = Self::supported_thinking_levels_for(&llm);
+        llm.thinking_level = if supported.is_empty() {
+            ThinkingLevel::Off
+        } else if current == ThinkingLevel::Adaptive {
+            // Adaptive is evot's provider-selected effort. Preserve it across
+            // switches between reasoning models; non-reasoning models were
+            // handled above.
+            ThinkingLevel::Adaptive
+        } else if supported.contains(&current) {
+            current
+        } else {
+            const ORDERED: [ThinkingLevel; 7] = [
+                ThinkingLevel::Off,
+                ThinkingLevel::Minimal,
+                ThinkingLevel::Low,
+                ThinkingLevel::Medium,
+                ThinkingLevel::High,
+                ThinkingLevel::Xhigh,
+                ThinkingLevel::Max,
+            ];
+            let requested = ORDERED
+                .iter()
+                .position(|level| *level == current)
+                .unwrap_or(0);
+            ORDERED[requested..]
+                .iter()
+                .chain(ORDERED[..requested].iter().rev())
+                .find(|level| supported.contains(level))
+                .copied()
+                .unwrap_or(ThinkingLevel::Off)
+        };
+        self.set_llm(llm);
     }
 
     /// The active model's resolved context window in tokens, after applying
@@ -398,15 +443,15 @@ impl Agent {
     }
 
     /// Set the active model by spec (e.g. "deepseek-chat" or "openrouter:google/gemini-2.5-pro").
-    /// Resolves provider+model from config. Falls back to just updating the model name.
-    pub fn set_model_by_spec(&self, config: &Config, spec: &str) {
-        if let Ok((provider_name, model_override)) = config.resolve_model_spec(spec) {
-            if let Ok(llm) = config.build_llm(&provider_name, model_override) {
-                self.set_llm(llm);
-                return;
-            }
-        }
-        self.set_model(spec.to_string());
+    ///
+    /// Resolution and provider config errors are returned before mutating the
+    /// active LLM. Explicit `provider:model` remains the escape hatch for model
+    /// ids not listed in config, as long as the provider itself exists.
+    pub fn set_model_by_spec(&self, config: &Config, spec: &str) -> Result<()> {
+        let (provider_name, model_override) = config.resolve_model_spec(spec)?;
+        let llm = config.build_llm(&provider_name, model_override)?;
+        self.set_llm_preserving_thinking(llm);
+        Ok(())
     }
 
     /// Switch provider by spec. Unlike `set_model_by_spec`, this fails if the spec
@@ -414,7 +459,7 @@ impl Agent {
     pub fn set_provider_by_spec(&self, config: &Config, spec: &str) -> Result<()> {
         let (provider_name, model_override) = config.resolve_model_spec(spec)?;
         let llm = config.build_llm(&provider_name, model_override)?;
-        self.set_llm(llm);
+        self.set_llm_preserving_thinking(llm);
         Ok(())
     }
 
@@ -551,7 +596,7 @@ impl Agent {
         request: QueryRequest,
         session: Arc<Session>,
     ) -> Result<SubmitOutcome> {
-        // Intercept gateway commands (/clear, /goto, ...)
+        // Intercept gateway commands (/clear, /compact, ...)
         if let Some(outcome) = self.maybe_handle_command(&request, &session).await? {
             return Ok(outcome);
         }
@@ -583,34 +628,6 @@ impl Agent {
                 session.write_clear_marker().await?;
                 session.save().await?;
                 Ok(Some(SubmitOutcome::Command("Session cleared.".into())))
-            }
-            Command::Goto(seq) => {
-                if !session.is_valid_context_seq(seq).await? {
-                    let max = session.max_seq().await;
-                    return Ok(Some(SubmitOutcome::Command(format!(
-                        "Invalid message number. Only user messages (1-{max}) are valid goto targets."
-                    ))));
-                }
-                let session_id = session.session_id().await;
-                self.abort_run(&session_id);
-                session.write_goto_marker(seq).await?;
-                session.save().await?;
-                // Show context window around the goto point
-                let entries = session.recent_context_entries(5).await?;
-                let mut lines = vec![format!("Moved to message #{seq}.")];
-                for (s, item) in &entries {
-                    let is_target = *s == seq;
-                    let marker = if is_target { " ←" } else { "" };
-                    lines.push(format!("  {}{}", format_history_entry(*s, item), marker));
-                }
-                // If target wasn't in the window (it's now in snapshot with seq=0),
-                // show it explicitly
-                if !entries.iter().any(|(s, _)| *s == seq) {
-                    if let Some(item) = session.get_item_at(seq).await? {
-                        lines.push(format!("  target: {} ←", format_history_entry(seq, &item)));
-                    }
-                }
-                Ok(Some(SubmitOutcome::Command(lines.join("\n"))))
             }
             Command::Compact {
                 custom_instructions,
@@ -1134,8 +1151,7 @@ impl Agent {
 
         // No longer need turn tracking — engine handles it.
 
-        let prior_transcripts = session.transcript().await;
-        let prior_messages = convert::into_agent_messages(&prior_transcripts);
+        let (prior_messages, compaction_state, transcript_seq) = session.context_snapshot().await;
         let prior_messages = evot_engine::sanitize_tool_pairs(prior_messages);
 
         Ok(runtime::TurnInput {
@@ -1167,10 +1183,12 @@ impl Agent {
                     .map(|root| root.join("sessions").join(session_id).join("tool-results")),
                 prompt_cache_key: Some(session_id.to_string()),
                 provider_override: self.provider_override.read().clone(),
+                compaction_state,
             },
             history: prior_messages,
             input,
             session,
+            transcript_seq,
         })
     }
 }
@@ -1242,24 +1260,6 @@ fn format_manual_compaction_outcome(
         crate::compact::orchestrator::ManualCompactionOutcome::Cancelled => {
             "Compaction cancelled.".into()
         }
-    }
-}
-
-fn format_history_entry(seq: u64, item: &crate::types::TranscriptItem) -> String {
-    let is_user = matches!(item, crate::types::TranscriptItem::User { .. });
-    let role = match item {
-        crate::types::TranscriptItem::User { .. } => "user",
-        crate::types::TranscriptItem::Assistant { .. } => "assistant",
-        _ => {
-            debug_assert!(false, "history entry must be user or assistant");
-            "unknown"
-        }
-    };
-    let preview = crate::types::entry_preview(item);
-    if seq == 0 || !is_user {
-        format!("  …   {:<10} {}", role, preview)
-    } else {
-        format!("#{:<4} {:<10} {}", seq, role, preview)
     }
 }
 

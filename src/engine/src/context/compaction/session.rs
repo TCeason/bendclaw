@@ -118,7 +118,7 @@ fn find_first_kept(
     keep_recent_min_messages: usize,
 ) -> usize {
     let mut accumulated = 0usize;
-    let mut candidate = entries.len();
+    let mut candidate = boundary;
 
     for i in (boundary..entries.len()).rev() {
         accumulated += message_tokens(&entries[i].message);
@@ -130,7 +130,7 @@ fn find_first_kept(
         }
     }
 
-    candidate.max(boundary).min(entries.len().saturating_sub(1))
+    candidate.max(boundary)
 }
 
 fn snap_forward_to_cut(entries: &[CompactEntry], start: usize, end: usize) -> usize {
@@ -201,9 +201,14 @@ fn extract_file_ops_from_message(message: &AgentMessage, ops: &mut FileOps) {
             .or_else(|| arguments.get("filename"))
             .and_then(|v| v.as_str());
         let Some(path) = path else { continue };
+        // `bash` is intentionally absent: its argument is `command`, not a
+        // path, so treating it as a file mutation only produced noise.
         match name.as_str() {
-            "edit" | "write" | "bash" => {
+            "edit" => {
                 ops.edited.insert(path.to_string());
+            }
+            "write" => {
+                ops.written.insert(path.to_string());
             }
             "read" | "grep" | "glob" => {
                 ops.read.insert(path.to_string());

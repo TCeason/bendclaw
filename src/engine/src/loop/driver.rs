@@ -139,9 +139,13 @@ async fn run_loop(
     let mut thinking_only_guard = ThinkingOnlyGuard::new();
     let mut context_tracker = ContextTracker::new();
     let mut compaction_controller = config.context_config.as_ref().map(|ctx_cfg| {
-        crate::context::CompactionController::new(
+        let controller = crate::context::CompactionController::new(
             crate::context::CompactionConfig::from_context_config(ctx_cfg),
-        )
+        );
+        match config.initial_compaction_state.clone() {
+            Some(state) => controller.with_state(state),
+            None => controller,
+        }
     });
 
     // Check for steering messages at start

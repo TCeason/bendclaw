@@ -14,6 +14,7 @@ base64 = "0.22"
 chrono.workspace = true
 clap.workspace = true
 futures.workspace = true
+fs2 = "=0.4.3"
 indexmap.workspace = true
 native-tls = "0.2"
 parking_lot.workspace = true

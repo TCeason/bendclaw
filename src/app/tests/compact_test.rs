@@ -55,10 +55,7 @@ async fn compact_session_persists_structured_item_with_summary_override() -> Tes
     .ok_or_else(|| std::io::Error::other("expected compaction"))?;
 
     let TranscriptItem::Compact {
-        summary,
-        first_kept_seq,
-        reason,
-        ..
+        summary, reason, ..
     } = compact
     else {
         return Err(std::io::Error::other("expected compact item").into());
@@ -66,7 +63,6 @@ async fn compact_session_persists_structured_item_with_summary_override() -> Tes
 
     assert_eq!(summary, "LLM supplied summary");
     assert_eq!(reason, CompactReason::Threshold);
-    assert!(first_kept_seq > 1);
 
     let raw = session.load_all_entries().await?;
     assert!(matches!(
@@ -89,7 +85,7 @@ async fn compact_session_persists_structured_item_with_summary_override() -> Tes
 }
 
 #[tokio::test]
-async fn compact_context_view_bounds_legacy_oversized_summary() -> TestResult {
+async fn compact_context_view_bounds_oversized_summary() -> TestResult {
     let dir = TempDir::new()?;
     let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
     let session = Session::new(
@@ -104,23 +100,28 @@ async fn compact_context_view_bounds_legacy_oversized_summary() -> TestResult {
         "x".repeat(evot_engine::DEFAULT_SUMMARY_MAX_BYTES * 2)
     );
     session
-        .write_items(vec![
-            user("old"),
-            assistant("old reply"),
-            TranscriptItem::Compact {
-                id: "legacy-large".into(),
-                created_at: 0,
-                reason: CompactReason::Threshold,
-                summary: oversized,
-                first_kept_seq: 1,
-                tokens_before: 100,
-                tokens_after: 50,
-                messages_before: 2,
-                messages_after: 1,
-                split_turn: None,
-                details: Default::default(),
-            },
-        ])
+        .write_items(vec![user("old"), assistant("old reply")])
+        .await?;
+    let summary_item = evot::compact::context_view::compact_summary_item(&oversized);
+    let (_, _, expected_seq) = session.context_snapshot().await;
+    let item = TranscriptItem::Compact {
+        id: "large".into(),
+        created_at: 0,
+        reason: CompactReason::Threshold,
+        summary: oversized,
+        tokens_before: 100,
+        tokens_after: 50,
+        messages_before: 2,
+        messages_after: 1,
+        messages: vec![summary_item.clone()],
+        engine_messages: evot::agent::run::convert::into_agent_messages(std::slice::from_ref(
+            &summary_item,
+        )),
+        state: Box::default(),
+        details: Default::default(),
+    };
+    session
+        .write_compact(item, vec![summary_item], expected_seq)
         .await?;
 
     let session_id = session.session_id().await;
@@ -136,6 +137,87 @@ async fn compact_context_view_bounds_legacy_oversized_summary() -> TestResult {
     assert!(summary.len() <= evot_engine::DEFAULT_SUMMARY_MAX_BYTES + 100);
     assert!(summary.contains("compaction summary truncated"));
     assert!(summary.contains("latest critical conclusion"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn compact_after_clear_does_not_inherit_previous_summary() -> TestResult {
+    let dir = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
+    let session = Session::new(
+        "sess-compact-after-clear".into(),
+        "/tmp".into(),
+        "m".into(),
+        storage,
+    )
+    .await?;
+
+    session
+        .write_items(vec![user("old request"), assistant("old response")])
+        .await?;
+    let old_summary =
+        evot::compact::context_view::compact_summary_item("OLD BRANCH SUMMARY MUST NOT RETURN");
+    let (_, _, expected_seq) = session.context_snapshot().await;
+    session
+        .write_compact(
+            TranscriptItem::Compact {
+                id: "old-compact".into(),
+                created_at: 1,
+                reason: CompactReason::Manual,
+                summary: "OLD BRANCH SUMMARY MUST NOT RETURN".into(),
+                tokens_before: 100,
+                tokens_after: 10,
+                messages_before: 2,
+                messages_after: 1,
+                messages: vec![old_summary.clone()],
+                engine_messages: evot::agent::run::convert::into_agent_messages(
+                    std::slice::from_ref(&old_summary),
+                ),
+                state: Box::new(evot_engine::CompactionState {
+                    generation: 1,
+                    last_summary: Some("OLD BRANCH SUMMARY MUST NOT RETURN".into()),
+                    context_summary_message: old_summary.as_user_text(),
+                    ..Default::default()
+                }),
+                details: Default::default(),
+            },
+            vec![old_summary],
+            expected_seq,
+        )
+        .await?;
+    session.write_clear_marker().await?;
+    session
+        .write_items(vec![
+            user("new branch request with enough content to summarize"),
+            assistant("new branch response with enough content to summarize"),
+            user("new retained request"),
+            assistant("new retained response"),
+        ])
+        .await?;
+
+    let compact = compact_session(
+        &session,
+        ManualCompactRequest {
+            reason: CompactReason::Manual,
+            custom_instructions: None,
+            summary_override: None,
+            summarizer: None,
+            settings: CompactSettings {
+                keep_recent_tokens: KEEP_RECENT_TOKENS,
+                keep_recent_min_messages: 2,
+                context_window: 0,
+            },
+        },
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await?
+    .ok_or_else(|| std::io::Error::other("expected post-clear compaction"))?;
+
+    let TranscriptItem::Compact { summary, .. } = compact else {
+        return Err(std::io::Error::other("expected compact item").into());
+    };
+    assert!(!summary.contains("OLD BRANCH SUMMARY MUST NOT RETURN"));
+    assert!(summary.contains("new branch request"));
     Ok(())
 }
 

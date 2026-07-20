@@ -102,6 +102,11 @@ pub struct CompactionState {
     /// LLM-generated summary from last compaction (for incremental updates).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_summary: Option<String>,
+    /// Exact text of the summary message currently present in the LLM context.
+    /// Before the next compaction this message is removed and `last_summary` is
+    /// supplied to the summarizer instead, preventing duplicate old summaries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_summary_message: Option<String>,
 }
 
 /// Tracked file operations, accumulated across compactions.

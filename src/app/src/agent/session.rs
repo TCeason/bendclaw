@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use chrono::Utc;
+use tokio::sync::Mutex;
 use tokio::sync::RwLock;
 
 use super::session_locator::SessionLocator;
@@ -14,8 +15,18 @@ use crate::types::TranscriptItem;
 pub struct Session {
     storage: Arc<dyn Storage>,
     meta: RwLock<SessionMeta>,
-    transcript: RwLock<Vec<TranscriptItem>>,
-    next_seq: RwLock<u64>,
+    state: Mutex<SessionState>,
+}
+
+struct SessionState {
+    transcript: Vec<TranscriptItem>,
+    engine_transcript: Vec<evot_engine::AgentMessage>,
+    next_seq: u64,
+    /// Cross-compaction state derived from the latest persisted `Compact`
+    /// item. Seeds the engine's in-run auto-compaction so a follow-up
+    /// compaction updates the previous summary instead of re-summarizing it
+    /// as plain conversation text.
+    compact_seed: Option<evot_engine::CompactionState>,
 }
 
 impl Session {
@@ -23,13 +34,19 @@ impl Session {
         storage: Arc<dyn Storage>,
         meta: SessionMeta,
         transcript: Vec<TranscriptItem>,
+        engine_transcript: Vec<evot_engine::AgentMessage>,
         next_seq: u64,
+        compact_seed: Option<evot_engine::CompactionState>,
     ) -> Arc<Self> {
         Arc::new(Self {
             storage,
             meta: RwLock::new(meta),
-            transcript: RwLock::new(transcript),
-            next_seq: RwLock::new(next_seq),
+            state: Mutex::new(SessionState {
+                transcript,
+                engine_transcript,
+                next_seq,
+                compact_seed,
+            }),
         })
     }
 
@@ -64,7 +81,7 @@ impl Session {
             .with_provider(provider)
             .with_source(source);
         storage.save_session(meta.clone()).await?;
-        Ok(Self::init(storage, meta, Vec::new(), 0))
+        Ok(Self::init(storage, meta, Vec::new(), Vec::new(), 0, None))
     }
 
     pub async fn open(session_id: &str, storage: Arc<dyn Storage>) -> Result<Option<Arc<Self>>> {
@@ -84,8 +101,17 @@ impl Session {
 
         let next_seq = entries.last().map(|e| e.seq).unwrap_or(0);
         let transcript = crate::compact::context_view::resolve_context_items(&entries);
+        let engine_transcript = crate::compact::context_view::resolve_engine_context(&entries);
+        let compact_seed = compact_seed_from_entries(&entries);
 
-        Ok(Some(Self::init(storage, meta, transcript, next_seq)))
+        Ok(Some(Self::init(
+            storage,
+            meta,
+            transcript,
+            engine_transcript,
+            next_seq,
+            compact_seed,
+        )))
     }
 
     /// Open an existing session by locator, or create a new one.
@@ -133,12 +159,81 @@ impl Session {
     }
 
     pub async fn set_model_selection(&self, provider: String, model: String) -> Result<()> {
-        self.update_meta(|meta| {
-            meta.provider = provider;
-            meta.model = model;
-            Ok(())
-        })
-        .await
+        let audit_provider = provider.clone();
+        let audit_model = model.clone();
+        let (changed, prev_provider, prev_model) = self
+            .update_meta(|meta| {
+                let previous = (meta.provider.clone(), meta.model.clone());
+                let changed = previous.0 != provider || previous.1 != model;
+                meta.provider = provider;
+                meta.model = model;
+                Ok((changed, previous.0, previous.1))
+            })
+            .await?;
+        // Metadata is the authoritative model selection. The transcript audit
+        // is diagnostic only, so a failed audit append must not report that an
+        // already-persisted model switch failed.
+        if changed && !prev_model.is_empty() {
+            if let Err(error) = self
+                .write_items(vec![TranscriptItem::Stats {
+                    kind: "model_change".to_string(),
+                    data: serde_json::json!({
+                        "from_provider": prev_provider,
+                        "from_model": prev_model,
+                        "to_provider": audit_provider,
+                        "to_model": audit_model,
+                    }),
+                }])
+                .await
+            {
+                tracing::warn!(%error, "failed to persist model change audit");
+            }
+        }
+        Ok(())
+    }
+
+    /// Return Engine history, compaction seed, and transcript generation atomically.
+    pub async fn context_snapshot(
+        &self,
+    ) -> (
+        Vec<evot_engine::AgentMessage>,
+        Option<evot_engine::CompactionState>,
+        u64,
+    ) {
+        let state = self.state.lock().await;
+        (
+            state.engine_transcript.clone(),
+            state.compact_seed.clone(),
+            state.next_seq,
+        )
+    }
+
+    /// Snapshot both context representations for manual compaction.
+    pub async fn compaction_snapshot(
+        &self,
+    ) -> (
+        Vec<TranscriptItem>,
+        Vec<evot_engine::AgentMessage>,
+        Option<evot_engine::CompactionState>,
+        u64,
+    ) {
+        let state = self.state.lock().await;
+        (
+            state
+                .transcript
+                .iter()
+                .filter(|item| item.is_context_item())
+                .cloned()
+                .collect(),
+            state.engine_transcript.clone(),
+            state.compact_seed.clone(),
+            state.next_seq,
+        )
+    }
+
+    /// Cross-compaction seed for the engine's auto-compaction (see field doc).
+    pub async fn compaction_seed(&self) -> Option<evot_engine::CompactionState> {
+        self.state.lock().await.compact_seed.clone()
     }
 
     /// Set the session's persisted thinking level (lowercase level name, or
@@ -147,26 +242,155 @@ impl Session {
         self.meta.write().await.thinking_level = level;
     }
 
-    /// Append items to the transcript and persist them (append-only).
+    /// Append one logical transcript batch. Sequence allocation, persistence,
+    /// and publication to the in-memory context are serialized as one commit.
     pub async fn write_items(&self, items: Vec<TranscriptItem>) -> Result<()> {
+        if items.iter().any(|item| {
+            matches!(
+                item,
+                TranscriptItem::Compact { .. } | TranscriptItem::Marker { .. }
+            )
+        }) {
+            return Err(crate::error::EvotError::Session(
+                "control points require an atomic Session API".to_string(),
+            ));
+        }
+        self.commit_items(items, None, None, false).await
+    }
+
+    /// Append against the exact generation used to build an active Engine turn.
+    pub async fn write_items_at(
+        &self,
+        items: Vec<TranscriptItem>,
+        expected_seq: u64,
+    ) -> Result<()> {
+        self.commit_items(items, None, Some(expected_seq), false)
+            .await
+    }
+
+    /// Persist a compact control point and publish its replacement context in
+    /// the same Session transaction. `expected_seq` is the storage generation
+    /// used to build the compaction plan; if another write advanced the session,
+    /// the stale plan is rejected before its marker is persisted.
+    pub async fn write_compact(
+        &self,
+        item: TranscriptItem,
+        new_context: Vec<TranscriptItem>,
+        expected_seq: u64,
+    ) -> Result<()> {
+        if !matches!(item, TranscriptItem::Compact { .. }) {
+            return Err(crate::error::EvotError::Session(
+                "write_compact requires a compact item".to_string(),
+            ));
+        }
+        self.commit_items(vec![item], Some(new_context), Some(expected_seq), true)
+            .await
+    }
+
+    async fn commit_items(
+        &self,
+        items: Vec<TranscriptItem>,
+        replacement: Option<Vec<TranscriptItem>>,
+        expected_seq: Option<u64>,
+        is_compaction: bool,
+    ) -> Result<()> {
+        const MAX_CONFLICT_RETRIES: usize = 8;
+
         if items.is_empty() {
             return Ok(());
         }
 
-        let session_id = self.meta.read().await.session_id.clone();
-        let turn = self.meta.read().await.turns;
+        let (session_id, turn) = {
+            let meta = self.meta.read().await;
+            (meta.session_id.clone(), meta.turns)
+        };
+        let mut state = self.state.lock().await;
 
-        {
-            let mut transcript = self.transcript.write().await;
-            transcript.extend(items.iter().cloned());
+        for attempt in 0..=MAX_CONFLICT_RETRIES {
+            if let Some(expected) = expected_seq {
+                if state.next_seq != expected {
+                    return Err(stale_write_error(is_compaction, expected, state.next_seq));
+                }
+            }
+            let entries = items
+                .iter()
+                .enumerate()
+                .map(|(offset, item)| {
+                    TranscriptEntry::new(
+                        session_id.clone(),
+                        None,
+                        state
+                            .next_seq
+                            .saturating_add(offset as u64)
+                            .saturating_add(1),
+                        turn,
+                        item.clone(),
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            // Storage is authoritative. Do not advance sequence numbers,
+            // context, or compaction state until the complete logical batch is
+            // accepted against the same persisted generation.
+            if self
+                .storage
+                .compare_and_append_entries(state.next_seq, entries)
+                .await?
+            {
+                state.next_seq = state.next_seq.saturating_add(items.len() as u64);
+                update_compact_seed(&mut state.compact_seed, &items);
+                match replacement.clone() {
+                    Some(context) => {
+                        state.engine_transcript =
+                            compact_engine_messages(&items).unwrap_or_else(|| {
+                                crate::agent::run::convert::into_agent_messages(&context)
+                            });
+                        state.transcript = context;
+                    }
+                    None => {
+                        state.engine_transcript.extend(
+                            crate::agent::run::convert::into_agent_messages(
+                                &items
+                                    .iter()
+                                    .filter(|item| item.is_context_item())
+                                    .cloned()
+                                    .collect::<Vec<_>>(),
+                            ),
+                        );
+                        state.transcript.extend(items.clone());
+                    }
+                }
+                return Ok(());
+            }
+
+            if let Some(expected) = expected_seq {
+                return Err(stale_write_error(is_compaction, expected, state.next_seq));
+            }
+            if attempt == MAX_CONFLICT_RETRIES {
+                return Err(crate::error::EvotError::Session(
+                    "transcript remained busy after conflict retries".to_string(),
+                ));
+            }
+
+            let persisted = self
+                .storage
+                .list_entries(ListTranscriptEntries {
+                    session_id: session_id.clone(),
+                    run_id: None,
+                    after_seq: None,
+                    limit: None,
+                })
+                .await?;
+            state.next_seq = persisted.iter().map(|entry| entry.seq).max().unwrap_or(0);
+            state.transcript = crate::compact::context_view::resolve_context_items(&persisted);
+            state.engine_transcript =
+                crate::compact::context_view::resolve_engine_context(&persisted);
+            state.compact_seed = compact_seed_from_entries(&persisted);
         }
 
-        for item in &items {
-            let seq = self.next_seq().await;
-            let entry = TranscriptEntry::new(session_id.clone(), None, seq, turn, item.clone());
-            self.storage.append_entry(entry).await?;
-        }
-        Ok(())
+        Err(crate::error::EvotError::Session(
+            "unreachable transcript commit state".to_string(),
+        ))
     }
 
     /// Increment the turn counter. Call once per real conversation turn.
@@ -184,7 +408,7 @@ impl Session {
 
     /// Persist session meta (title, updated_at, context usage, etc.).
     pub async fn save(&self) -> Result<()> {
-        let transcript = self.transcript.read().await;
+        let transcript = self.state.lock().await.transcript.clone();
         let mut meta = self.meta.write().await;
         // Build title from first + last user messages so the resume list
         // shows both the original topic and the most recent activity.
@@ -231,71 +455,23 @@ impl Session {
     }
 
     pub async fn transcript(&self) -> Vec<TranscriptItem> {
-        self.transcript.read().await.clone()
+        self.state.lock().await.transcript.clone()
     }
 
     pub async fn session_id(&self) -> String {
         self.meta.read().await.session_id.clone()
     }
 
-    async fn next_seq(&self) -> u64 {
-        let mut s = self.next_seq.write().await;
-        *s += 1;
-        *s
-    }
-
     // -- marker methods -------------------------------------------------------
 
-    /// Write a `/clear` marker — resets context to empty.
+    /// Write a `/clear` marker and publish an empty context atomically.
     pub async fn write_clear_marker(&self) -> Result<()> {
         let item = TranscriptItem::Marker {
             kind: crate::types::MarkerKind::Clear,
-            target_seq: None,
             messages: vec![],
         };
-        self.write_items(vec![item]).await?;
-        // Replace in-memory transcript with the empty baseline.
-        *self.transcript.write().await = vec![];
-        Ok(())
-    }
-
-    /// Write a `/goto` marker — resets context to the snapshot at `target_seq`.
-    pub async fn write_goto_marker(&self, target_seq: u64) -> Result<()> {
-        let entries = self.load_all_entries().await?;
-        let snapshot = resolve_snapshot_at(&entries, target_seq);
-        let item = TranscriptItem::Marker {
-            kind: crate::types::MarkerKind::Goto,
-            target_seq: Some(target_seq),
-            messages: snapshot.clone(),
-        };
-        self.write_items(vec![item]).await?;
-        // Replace in-memory transcript with the restored baseline.
-        *self.transcript.write().await = snapshot;
-        Ok(())
-    }
-
-    /// Replace the in-memory context view after a control operation.
-    pub async fn replace_transcript(&self, messages: Vec<TranscriptItem>) {
-        *self.transcript.write().await = messages;
-    }
-
-    /// Check whether `seq` points to a valid goto-able message in storage.
-    pub async fn is_valid_context_seq(&self, seq: u64) -> Result<bool> {
-        let entries = self.load_all_entries().await?;
-        Ok(entries
-            .iter()
-            .any(|e| e.seq == seq && is_goto_target(&e.item)))
-    }
-
-    /// Get the transcript item at a specific seq number.
-    pub async fn get_item_at(&self, seq: u64) -> Result<Option<TranscriptItem>> {
-        let entries = self.load_all_entries().await?;
-        Ok(entries.into_iter().find(|e| e.seq == seq).map(|e| e.item))
-    }
-
-    /// Current max seq number.
-    pub async fn max_seq(&self) -> u64 {
-        *self.next_seq.read().await
+        self.commit_items(vec![item], Some(Vec::new()), None, false)
+            .await
     }
 
     /// Load all raw transcript entries from storage.
@@ -310,64 +486,54 @@ impl Session {
             })
             .await
     }
+}
 
-    /// Return the most recent user/assistant messages visible in the current context.
-    ///
-    /// - Snapshot baseline messages have `seq = 0` (not addressable by `/goto`).
-    /// - Post-marker messages have their real `seq` (addressable by `/goto`).
-    /// - Empty messages are excluded.
-    pub async fn recent_context_entries(&self, limit: usize) -> Result<Vec<(u64, TranscriptItem)>> {
-        let entries = self.load_all_entries().await?;
+fn compact_engine_messages(items: &[TranscriptItem]) -> Option<Vec<evot_engine::AgentMessage>> {
+    items.iter().rev().find_map(|item| match item {
+        TranscriptItem::Compact {
+            engine_messages, ..
+        } => Some(engine_messages.clone()),
+        _ => None,
+    })
+}
 
-        let last_control = entries.iter().rposition(|e| is_control_point(&e.item));
+fn stale_write_error(is_compaction: bool, expected: u64, current: u64) -> crate::error::EvotError {
+    let operation = if is_compaction {
+        "stale compaction plan"
+    } else {
+        "stale transcript write"
+    };
+    crate::error::EvotError::Session(format!(
+        "{operation}: expected transcript seq {expected}, current seq {current}"
+    ))
+}
 
-        let mut context: Vec<(u64, TranscriptItem)> = Vec::new();
-
-        match last_control {
-            Some(_idx) => {
-                let resolved = crate::compact::context_view::resolve_context_entries(&entries);
-                for (seq, item) in resolved {
-                    if is_context_visible(&item) {
-                        context.push((seq, item));
-                    }
-                }
-            }
-            None => {
-                for entry in &entries {
-                    if is_context_visible(&entry.item) {
-                        context.push((entry.seq, entry.item.clone()));
-                    }
-                }
-            }
+fn update_compact_seed(seed: &mut Option<evot_engine::CompactionState>, items: &[TranscriptItem]) {
+    for item in items {
+        match item {
+            TranscriptItem::Compact { state, .. } => *seed = Some(state.as_ref().clone()),
+            TranscriptItem::Marker { .. } => *seed = None,
+            _ => {}
         }
-
-        let start = context.len().saturating_sub(limit);
-        Ok(context[start..].to_vec())
     }
 }
 
-/// Whether an item should appear in the resolved session context.
-/// Non-empty user and assistant messages are shown, but only user messages are
-/// addressable by `/goto` (see [`is_goto_target`]).
-fn is_context_visible(item: &TranscriptItem) -> bool {
-    match item {
-        TranscriptItem::User { text, .. } => !text.trim().is_empty(),
-        TranscriptItem::Assistant { content, .. } => {
-            !crate::types::assistant_text(content).trim().is_empty()
-        }
-        _ => false,
-    }
+/// Build the engine compaction seed from the active transcript branch.
+/// A clear marker breaks the summary chain; compact entries before it must not
+/// be reintroduced into later auto-compactions after a restart.
+fn compact_seed_from_entries(entries: &[TranscriptEntry]) -> Option<evot_engine::CompactionState> {
+    let active_start = entries
+        .iter()
+        .rposition(|entry| matches!(entry.item, TranscriptItem::Marker { .. }))
+        .map(|index| index.saturating_add(1))
+        .unwrap_or(0);
+    let active = &entries[active_start..];
+    active.iter().rev().find_map(|entry| match &entry.item {
+        TranscriptItem::Compact { state, .. } => Some(state.as_ref().clone()),
+        _ => None,
+    })
 }
 
-/// Whether an item is a valid `/goto` target — only non-empty user messages.
-fn is_goto_target(item: &TranscriptItem) -> bool {
-    matches!(item, TranscriptItem::User { text, .. } if !text.trim().is_empty())
-}
-
-/// Build a title from the first and last user messages.
-///
-/// - Single user message → that message (truncated to 56 chars).
-/// - Multiple distinct messages → `head … tail` format.
 fn build_title(items: &[TranscriptItem]) -> Option<String> {
     let user_texts: Vec<String> = items
         .iter()
@@ -420,18 +586,4 @@ fn last_context_usage(items: &[TranscriptItem]) -> Option<(usize, usize)> {
         }
         None
     })
-}
-
-/// Returns true if this item is a control point (Compact or Marker).
-fn is_control_point(item: &TranscriptItem) -> bool {
-    matches!(
-        item,
-        TranscriptItem::Compact { .. } | TranscriptItem::Marker { .. }
-    )
-}
-
-/// Resolve the context snapshot as it was at `target_seq`.
-/// Used by `/goto` to compute the baseline at a historical point.
-fn resolve_snapshot_at(entries: &[TranscriptEntry], target_seq: u64) -> Vec<TranscriptItem> {
-    crate::compact::context_view::resolve_snapshot_at(entries, target_seq)
 }

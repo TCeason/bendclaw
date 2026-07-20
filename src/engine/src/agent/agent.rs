@@ -46,6 +46,8 @@ pub struct Agent {
 
     // Context, limits & caching
     pub context_config: Option<ContextConfig>,
+    /// Cross-compaction state restored from a persisted session.
+    pub(super) compaction_state: Option<crate::context::CompactionState>,
     pub(super) context_management_disabled: bool,
     pub execution_limits: Option<ExecutionLimits>,
     pub cache_config: CacheConfig,
@@ -95,6 +97,7 @@ impl Agent {
             steering_mode: QueueMode::OneAtATime,
             follow_up_mode: QueueMode::OneAtATime,
             context_config: None,
+            compaction_state: None,
             context_management_disabled: false,
             execution_limits: Some(ExecutionLimits::default()),
             cache_config: CacheConfig::default(),
@@ -169,6 +172,16 @@ impl Agent {
 
     pub fn with_context_config(mut self, config: ContextConfig) -> Self {
         self.context_config = Some(config);
+        self
+    }
+
+    /// Seed cross-compaction state (previous summary, cumulative file ops)
+    /// restored from a persisted session.
+    pub fn with_compaction_state_opt(
+        mut self,
+        state: Option<crate::context::CompactionState>,
+    ) -> Self {
+        self.compaction_state = state;
         self
     }
 

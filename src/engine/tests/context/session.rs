@@ -69,19 +69,9 @@ fn empty_returns_none() {
 }
 
 #[test]
-fn large_budget_still_plans_progress() {
-    // The session planner is only invoked when compaction is wanted, so it
-    // guarantees forward progress: even with a huge budget it keeps at most
-    // `len - 1` entries rather than returning `None`. This documents the
-    // `find_first_kept` clamp behavior.
+fn large_budget_returns_none_without_forced_eviction() {
     let entries = transcript(vec![user("hi"), assistant("there"), user("more")]);
-    let plan = match plan_session_compaction(&entries, None, 100_000, 2) {
-        Some(plan) => plan,
-        None => panic!("session planner guarantees progress when invoked"),
-    };
-    // At least the final entry is retained.
-    assert!(plan.first_kept < entries.len());
-    assert_eq!(plan.first_kept_seq, entries[plan.first_kept].seq);
+    assert!(plan_session_compaction(&entries, None, 100_000, 2).is_none());
 }
 
 #[test]

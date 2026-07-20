@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import stripAnsi from 'strip-ansi'
 import { createSpinnerState } from '../src/term/spinner.js'
 import { createInitialState } from '../src/term/app/state.js'
 import { createStreamMachineState, reduceRunEvent, flushStreaming } from '../src/term/app/stream.js'
@@ -866,18 +867,26 @@ describe('term stream machine', () => {
     expect(completed[1]!.text).toBe('  ✓ · 1 line · 12ms')
   })
 
-  test('queued tools stream only stable argument summaries', () => {
-    const write = buildToolCard({
+  test('queued write streams a bounded content preview while edit stays a stable summary', () => {
+    const content = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join('\n')
+    const writeCall = {
       id: 'call-write',
       name: 'write',
-      args: { path: 'src/a.ts', content: 'one\ntwo\nthree' },
-      status: 'queued',
+      args: { path: 'src/a.txt', content },
+      status: 'queued' as const,
       argsComplete: false,
-    })
+    }
+    const write = buildToolCard(writeCall)
     const writeText = write.map(line => line.text).join('\n')
-    expect(writeText).toContain('✎ write  src/a.ts\n  ○ · generating 3 lines')
-    expect(writeText).not.toContain('+one')
-    expect(writeText).not.toContain('+three')
+    expect(writeText).toContain('✎ write  src/a.txt\n  ○ · generating 12 lines')
+    expect(writeText).toContain('  line 1')
+    expect(writeText).toContain('  line 10')
+    expect(writeText).not.toContain('  line 11')
+    expect(writeText).toContain('... (2 more lines, 12 total, ctrl+o to expand)')
+
+    const expandedWriteText = buildToolCard(writeCall, true).map(line => line.text).join('\n')
+    expect(expandedWriteText).toContain('  line 12')
+    expect(expandedWriteText).toContain('(ctrl+o to collapse)')
 
     const edit = buildToolCard({
       id: 'call-edit',
@@ -893,6 +902,99 @@ describe('term stream machine', () => {
     expect(editText).toContain('✎ edit  src/a.ts\n  ○ · preparing 1 replacement')
     expect(editText).not.toContain('-old line')
     expect(editText).not.toContain('+new line')
+  })
+
+  test('streamed write argument deltas update the visible content preview', () => {
+    let state = createStreamMachineState(createInitialState('model', '/tmp'), createSpinnerState())
+    state = reduceRunEvent(state, {
+      kind: 'assistant_tool_call',
+      payload: { content_index: 0, tool_call_id: 'call-write-live', tool_name: 'write', phase: 'start' },
+    }, { termRows: 24 }).state
+
+    state = reduceRunEvent(state, {
+      kind: 'assistant_tool_call',
+      payload: {
+        content_index: 0,
+        tool_call_id: 'call-write-live',
+        tool_name: 'write',
+        phase: 'delta',
+        delta: '{"path":"src/live.ts","content":"const one = 1\\n',
+      },
+    }, { termRows: 24 }).state
+
+    let call = findAssistantToolCall(state.appState.currentAssistantContent, 'call-write-live')
+    expect(call?.args.content).toBe('const one = 1\n')
+    expect(stripAnsi(call ? buildToolCard(call).map(line => line.text).join('\n') : '')).toContain('const one = 1')
+
+    state = reduceRunEvent(state, {
+      kind: 'assistant_tool_call',
+      payload: {
+        content_index: 0,
+        tool_call_id: 'call-write-live',
+        tool_name: 'write',
+        phase: 'delta',
+        delta: 'const two = 2"}',
+      },
+    }, { termRows: 24 }).state
+
+    call = findAssistantToolCall(state.appState.currentAssistantContent, 'call-write-live')
+    const text = stripAnsi(call ? buildToolCard(call).map(line => line.text).join('\n') : '')
+    expect(text).toContain('generating 2 lines')
+    expect(text).toContain('const one = 1')
+    expect(text).toContain('const two = 2')
+  })
+
+  test('running write keeps the streamed content preview until the diff arrives', () => {
+    const base = {
+      id: 'call-write-running',
+      name: 'write',
+      args: { path: 'src/a.ts', content: 'const one = 1\nconst two = 2' },
+      status: 'running' as const,
+      argsComplete: true,
+      startedAt: 1_000,
+    }
+
+    // tool_started fired, engine preview diff not delivered yet: the streamed
+    // content must stay visible instead of collapsing to a bare status row.
+    const noDiff = stripAnsi(buildToolCard(base).map(line => line.text).join('\n'))
+    expect(noDiff).toContain('● · running')
+    expect(noDiff).toContain('const one = 1')
+
+    // Once the authoritative diff arrives it replaces the content preview.
+    const withDiff = stripAnsi(buildToolCard({
+      ...base,
+      details: { diff: '@@ -0,0 +1,2 @@\n+const one = 1\n+const two = 2', preview: true },
+    }).map(line => line.text).join('\n'))
+    expect(withDiff).toContain('+const one = 1')
+    expect(withDiff.split('const two = 2').length).toBe(2)
+  })
+
+  test('oversized write content renders a plain (unhighlighted) preview', () => {
+    const content = `const first = 1\n${'x'.repeat(250 * 1024)}`
+    const card = buildToolCard({
+      id: 'call-write-huge',
+      name: 'write',
+      args: { path: 'src/a.ts', content },
+      status: 'queued',
+      argsComplete: false,
+    })
+    const previewLines = card.filter(line => line.toolCodePreview)
+    expect(previewLines[0]?.text).toBe('  const first = 1')
+    expect(previewLines.every(line => !line.text.includes('\x1b['))).toBe(true)
+  })
+
+  test('write preview sanitizes terminal controls from model output', () => {
+    const text = buildToolCard({
+      id: 'call-write-controls',
+      name: 'write',
+      args: { path: 'src/a.txt', content: 'safe\x1b]133;A\x07visible' },
+      status: 'queued',
+      argsComplete: false,
+    }).map(line => line.text).join('\n')
+
+    expect(text).toContain('safe�]133;A�visible')
+    expect(text).not.toContain('\x1b')
+    expect(text).not.toContain('\x07')
   })
 
   test('completed edit keeps the final authoritative diff unchanged', () => {

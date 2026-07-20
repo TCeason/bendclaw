@@ -62,7 +62,9 @@ impl NapiAgent {
     #[napi(setter)]
     pub fn set_model(&mut self, model: String) -> Result<()> {
         let config = self.load_config()?;
-        self.agent.set_model_by_spec(&config, &model);
+        self.agent
+            .set_model_by_spec(&config, &model)
+            .map_err(|e| Error::from_reason(format!("model switch failed: {e}")))?;
         Ok(())
     }
 

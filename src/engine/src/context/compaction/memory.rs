@@ -120,6 +120,7 @@ pub fn build_state(
         timestamp: now_ms(),
         generation: prev_state.map(|s| s.generation + 1).unwrap_or(1),
         last_summary: None,
+        context_summary_message: None,
     }
 }
 

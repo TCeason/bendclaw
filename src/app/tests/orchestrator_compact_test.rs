@@ -370,7 +370,7 @@ async fn second_compaction_passes_previous_summary() -> TestResult {
 
     let provider2 = Arc::new(CapturingProvider::new(vec!["SECOND PASS SUMMARY"]));
     let captured2 = provider2.captured();
-    compact_session(
+    let second = compact_session(
         &session,
         ManualCompactRequest {
             reason: CompactReason::Manual,
@@ -390,6 +390,22 @@ async fn second_compaction_passes_previous_summary() -> TestResult {
         "second pass should embed previous summary: {prompt}"
     );
     assert!(prompt.contains("FIRST PASS SUMMARY"));
+    let TranscriptItem::Compact {
+        state,
+        messages,
+        engine_messages,
+        ..
+    } = second
+    else {
+        return Err(std::io::Error::other("expected structured compact item").into());
+    };
+    assert_eq!(state.generation, 2);
+    assert_eq!(state.last_summary.as_deref(), Some("SECOND PASS SUMMARY"));
+    assert!(!messages.is_empty());
+    assert_eq!(engine_messages.len(), messages.len());
+    assert!(messages
+        .iter()
+        .any(|item| matches!(item, TranscriptItem::User { text, .. } if text == "newest request")));
     Ok(())
 }
 

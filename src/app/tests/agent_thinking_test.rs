@@ -184,6 +184,65 @@ fn cycle_thinking_level_gpt_5_6_cycles_xhigh_then_max() -> TestResult {
 }
 
 #[test]
+fn model_switch_preserves_or_clamps_thinking_and_fails_fast() -> TestResult {
+    let dir = TempDir::new()?;
+    let mut config = anthropic_config(&dir);
+    config.providers.insert("openai".into(), ProviderProfile {
+        protocol: Protocol::OpenAiResponses,
+        api_key: "test-key".into(),
+        base_url: "https://api.openai.com/v1".into(),
+        models: vec!["gpt-5.5-pro".into()],
+        compat_caps: CompatCaps::REASONING_EFFORT,
+        thinking_level: None,
+        context_window: None,
+        max_tokens: None,
+        supports_image: None,
+    });
+    config.providers.insert("deepseek".into(), ProviderProfile {
+        protocol: Protocol::OpenAi,
+        api_key: "test-key".into(),
+        base_url: "https://api.deepseek.com".into(),
+        models: vec!["deepseek-chat".into()],
+        compat_caps: Default::default(),
+        thinking_level: None,
+        context_window: None,
+        max_tokens: None,
+        supports_image: None,
+    });
+
+    let agent = Agent::new(&config, "/work")?;
+
+    // gpt-5.5-pro has a Medium floor. Pi-compatible clamping searches upward
+    // first, so an inherited Low becomes Medium rather than a config default.
+    agent.set_thinking_level(ThinkingLevel::Low);
+    agent.set_model_by_spec(&config, "gpt-5.5-pro")?;
+    assert_eq!(agent.llm().provider, "openai");
+    assert_eq!(agent.llm().thinking_level, ThinkingLevel::Medium);
+
+    // A supported session preference survives a provider/model switch.
+    agent.set_thinking_level(ThinkingLevel::High);
+    agent.set_model_by_spec(&config, "claude-opus-4-6")?;
+    assert_eq!(agent.llm().provider, "anthropic");
+    assert_eq!(agent.llm().thinking_level, ThinkingLevel::High);
+
+    // Models without selectable reasoning clamp to Off.
+    agent.set_model_by_spec(&config, "deepseek-chat")?;
+    assert_eq!(agent.llm().provider, "deepseek");
+    assert_eq!(agent.llm().thinking_level, ThinkingLevel::Off);
+
+    // Unknown model specs fail before mutating active state, whether bare or
+    // provider-qualified.
+    let before = agent.llm();
+    assert!(agent.set_model_by_spec(&config, "missing-model").is_err());
+    assert!(agent
+        .set_model_by_spec(&config, "missing-provider:model")
+        .is_err());
+    assert_eq!(agent.llm().provider, before.provider);
+    assert_eq!(agent.llm().model, before.model);
+    Ok(())
+}
+
+#[test]
 fn restore_thinking_level_applies_supported_name() -> TestResult {
     let dir = TempDir::new()?;
     let agent = Agent::new(&anthropic_config(&dir), "/work")?;

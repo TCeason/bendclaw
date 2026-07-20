@@ -72,6 +72,9 @@ pub struct EngineOptions {
     pub spill_dir: Option<std::path::PathBuf>,
     pub prompt_cache_key: Option<String>,
     pub provider_override: Option<Arc<dyn evot_engine::provider::StreamProvider>>,
+    /// Cross-compaction state restored from the session's latest `Compact`
+    /// item, so in-run auto-compaction updates the previous summary.
+    pub compaction_state: Option<evot_engine::CompactionState>,
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +86,8 @@ pub(in crate::agent) struct TurnInput {
     pub history: Vec<evot_engine::AgentMessage>,
     pub input: Vec<evot_engine::Content>,
     pub session: Arc<Session>,
+    /// Persisted transcript generation used to build `history`.
+    pub transcript_seq: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +149,8 @@ enum RuntimeEvent {
         reason: crate::types::CompactReason,
         result: crate::types::CompactionResult,
         summary: Option<String>,
+        messages: Vec<evot_engine::AgentMessage>,
+        state: evot_engine::CompactionState,
         context_window: usize,
         will_retry: bool,
     },
@@ -298,6 +305,7 @@ async fn drive_one_turn(
         history,
         input,
         session,
+        transcript_seq,
     } = turn;
 
     let mut engine = build_agent(options, history)
@@ -319,6 +327,8 @@ async fn drive_one_turn(
     // First user content is part of this turn's transcript record.
     let mut turn_transcripts: Vec<TranscriptItem> = vec![TranscriptItem::user_from_content(&input)];
     let mut saved_count: usize = 0;
+    let mut expected_seq = transcript_seq;
+    let mut persistence_failed = false;
     let mut turn_count: u32 = 0;
     let mut outcome = TurnOutcome {
         turn_count: 0,
@@ -330,16 +340,19 @@ async fn drive_one_turn(
         transcript: Vec::new(),
     };
 
-    let flush = |session: &Arc<Session>, items: &[TranscriptItem], saved: &mut usize| {
+    let flush = |session: &Arc<Session>,
+                 items: &[TranscriptItem],
+                 saved: &mut usize,
+                 expected: &mut u64| {
         let new_items = items[*saved..].to_vec();
         let session = Arc::clone(session);
-        *saved = items.len();
+        let batch_len = new_items.len();
+        let current_expected = *expected;
         async move {
             if !new_items.is_empty() {
-                session.write_items(new_items).await
-            } else {
-                Ok(())
+                session.write_items_at(new_items, current_expected).await?;
             }
+            Ok::<usize, crate::error::EvotError>(batch_len)
         }
     };
 
@@ -356,6 +369,8 @@ async fn drive_one_turn(
                 reason,
                 result,
                 summary,
+                messages,
+                state,
                 context_window,
                 will_retry,
             } => {
@@ -363,42 +378,44 @@ async fn drive_one_turn(
                     outcome.compact_records.push(record);
                 }
 
-                if let crate::types::CompactionResult::Compacted { .. } = result {
-                    if let Err(e) = flush(&session, &turn_transcripts, &mut saved_count).await {
-                        tracing::warn!(
-                            stage = "run",
-                            status = "pre_compact_flush_failed",
-                            run_id = %run_id,
-                            session_id = %session_id,
-                            error = %e,
-                        );
-                    } else {
-                        let request = crate::compact::orchestrator::ManualCompactRequest {
-                            reason: reason.clone(),
-                            custom_instructions: None,
-                            summary_override: summary.clone(),
-                            summarizer: None,
-                            settings: crate::compact::orchestrator::CompactSettings {
-                                context_window,
-                                ..Default::default()
-                            },
-                        };
-                        if let Err(e) = crate::compact::orchestrator::compact_session(
-                            &session,
-                            request,
-                            control.cancel_token(),
-                        )
-                        .await
-                        {
-                            tracing::warn!(
-                                stage = "run",
-                                status = "structured_compact_persist_failed",
-                                run_id = %run_id,
-                                session_id = %session_id,
-                                error = %e,
-                            );
+                if matches!(result, crate::types::CompactionResult::Compacted { .. }) {
+                    match flush(
+                        &session,
+                        &turn_transcripts,
+                        &mut saved_count,
+                        &mut expected_seq,
+                    )
+                    .await
+                    {
+                        Ok(written) => {
+                            saved_count = saved_count.saturating_add(written);
+                            expected_seq = expected_seq.saturating_add(written as u64);
+                        }
+                        Err(error) => {
+                            emit_persistence_error(tx, run_id, session_id, turn_count, &error);
+                            control.abort();
+                            persistence_failed = true;
+                            break;
                         }
                     }
+
+                    let new_context = from_agent_messages(&messages);
+                    let item = automatic_compact_item(
+                        reason.clone(),
+                        &result,
+                        summary.clone(),
+                        new_context.clone(),
+                        messages,
+                        state,
+                    );
+                    if let Err(error) = session.write_compact(item, new_context, expected_seq).await
+                    {
+                        emit_persistence_error(tx, run_id, session_id, turn_count, &error);
+                        control.abort();
+                        persistence_failed = true;
+                        break;
+                    }
+                    expected_seq = expected_seq.saturating_add(1);
                 }
 
                 turn_transcripts.push(
@@ -412,14 +429,24 @@ async fn drive_one_turn(
                 );
             }
             RuntimeEvent::TurnEnded => {
-                if let Err(e) = flush(&session, &turn_transcripts, &mut saved_count).await {
-                    tracing::error!(
-                        stage = "run",
-                        status = "incremental_save_failed",
-                        run_id = %run_id,
-                        session_id = %session_id,
-                        error = %e,
-                    );
+                match flush(
+                    &session,
+                    &turn_transcripts,
+                    &mut saved_count,
+                    &mut expected_seq,
+                )
+                .await
+                {
+                    Ok(written) => {
+                        saved_count = saved_count.saturating_add(written);
+                        expected_seq = expected_seq.saturating_add(written as u64);
+                    }
+                    Err(error) => {
+                        emit_persistence_error(tx, run_id, session_id, turn_count, &error);
+                        control.abort();
+                        persistence_failed = true;
+                        break;
+                    }
                 }
             }
             RuntimeEvent::EngineCompleted {
@@ -444,15 +471,20 @@ async fn drive_one_turn(
         }
     }
 
-    // Final flush in case engine ended without a TurnEnded event.
-    if let Err(e) = flush(&session, &turn_transcripts, &mut saved_count).await {
-        tracing::warn!(
-            stage = "run",
-            status = "final_flush_failed",
-            run_id = %run_id,
-            session_id = %session_id,
-            error = %e,
-        );
+    // Final flush in case engine ended without a TurnEnded event. A failed
+    // strict write must not be retried against stale state.
+    if !persistence_failed {
+        if let Err(error) = flush(
+            &session,
+            &turn_transcripts,
+            &mut saved_count,
+            &mut expected_seq,
+        )
+        .await
+        {
+            emit_persistence_error(tx, run_id, session_id, turn_count, &error);
+            control.abort();
+        }
     }
 
     control.detach_engine();
@@ -932,7 +964,8 @@ fn map_agent_event(
         evot_engine::AgentEvent::ContextCompactionEnd {
             reason,
             stats,
-            messages: _,
+            messages,
+            state,
             summary,
             context_window,
             will_retry,
@@ -962,6 +995,8 @@ fn map_agent_event(
                     reason: reason.clone(),
                     result: result.clone(),
                     summary: summary.clone(),
+                    messages: messages.clone(),
+                    state: state.clone(),
                     context_window: *context_window,
                     will_retry: *will_retry,
                 },
@@ -980,6 +1015,72 @@ fn map_agent_event(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn automatic_compact_item(
+    reason: crate::types::CompactReason,
+    result: &crate::types::CompactionResult,
+    summary: Option<String>,
+    messages: Vec<TranscriptItem>,
+    engine_messages: Vec<evot_engine::AgentMessage>,
+    state: evot_engine::CompactionState,
+) -> TranscriptItem {
+    let (messages_before, messages_after, tokens_before, tokens_after) = match result {
+        crate::types::CompactionResult::Compacted {
+            before_message_count,
+            after_message_count,
+            before_tokens,
+            after_tokens,
+            ..
+        } => (
+            *before_message_count,
+            *after_message_count,
+            *before_tokens,
+            *after_tokens,
+        ),
+        crate::types::CompactionResult::NoOp => (0, 0, 0, 0),
+    };
+    let details = crate::types::CompactDetails {
+        read_files: state.file_ops.read_only().into_iter().cloned().collect(),
+        modified_files: state.file_ops.modified().into_iter().cloned().collect(),
+    };
+    TranscriptItem::Compact {
+        id: crate::types::new_id(),
+        created_at: evot_engine::now_ms(),
+        reason,
+        summary: summary
+            .or_else(|| state.last_summary.clone())
+            .unwrap_or_default(),
+        tokens_before,
+        tokens_after,
+        messages_before,
+        messages_after,
+        messages,
+        engine_messages,
+        state: Box::new(state),
+        details,
+    }
+}
+
+fn emit_persistence_error(
+    tx: &mpsc::UnboundedSender<RunEvent>,
+    run_id: &str,
+    session_id: &str,
+    turn: u32,
+    error: &crate::error::EvotError,
+) {
+    tracing::error!(
+        stage = "run",
+        status = "persistence_failed",
+        run_id,
+        session_id,
+        error = %error,
+    );
+    let _ = tx.send(
+        RunEventContext::new(run_id, session_id, turn).event(RunEventPayload::Error {
+            message: format!("session persistence failed: {error}"),
+        }),
+    );
+}
 
 fn map_compact_reason(reason: evot_engine::CompactReason) -> crate::types::CompactReason {
     match reason {
@@ -1116,6 +1217,13 @@ pub(crate) fn build_agent(
         options.supports_image,
     );
 
+    let mut context_config =
+        evot_engine::context::ContextConfig::from_context_window(model_config.context_window);
+    // Persisted compaction checkpoints are represented as summary + retained
+    // tail. Do not pin an unsummarized head that the checkpoint schema cannot
+    // reconstruct on the next turn.
+    context_config.keep_first = 0;
+
     let provider_agent = match (options.provider_override, &options.protocol) {
         (Some(provider), _) => evot_engine::Agent::new(provider),
         (None, Protocol::Anthropic) => evot_engine::Agent::new(AnthropicProvider),
@@ -1143,6 +1251,7 @@ pub(crate) fn build_agent(
         .with_model(&options.model)
         .with_api_key(&options.api_key)
         .with_model_config(model_config)
+        .with_context_config(context_config)
         .with_system_prompt(&options.system_prompt)
         .with_messages(prior_messages)
         .with_execution_limits_opt(limits)
@@ -1151,6 +1260,7 @@ pub(crate) fn build_agent(
         .with_path_guard(options.path_guard)
         .with_skills(skills)
         .with_thinking(options.thinking_level)
+        .with_compaction_state_opt(options.compaction_state)
         .with_prompt_cache_key_opt(options.prompt_cache_key)
         .with_spill_opt(
             options

@@ -50,10 +50,6 @@ impl RunControl {
         self.cancel.is_cancelled()
     }
 
-    pub(in crate::agent) fn cancel_token(&self) -> CancellationToken {
-        self.cancel.clone()
-    }
-
     pub fn steer(&self, msg: evot_engine::AgentMessage) -> evot_engine::PromptQueueEntry {
         self.queues.enqueue_steering(msg)
     }

@@ -20,6 +20,8 @@ pub use context::sanitize_tool_pairs;
 pub use context::truncate_summary;
 pub use context::CompactEntry;
 pub use context::CompactReason;
+pub use context::CompactionState;
+pub use context::FileOps;
 pub use context::SessionCompactPlan;
 pub use context::SessionSplitTurn;
 pub use context::SummarizerContext;

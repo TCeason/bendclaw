@@ -82,7 +82,10 @@ pub async fn execute(
     // Step 6: Build new state
     let mut new_state = memory::build_state(evicted, split_prefix, prev_state);
     // Store the same bounded summary used by the context and persistence event.
+    // The exact context message lets the next compaction remove this copy before
+    // supplying `last_summary` to the incremental summarizer.
     new_state.last_summary = Some(summary_text.clone());
+    new_state.context_summary_message = Some(summary_text.clone());
 
     // Step 7: Assemble final messages: pinned_head + memory_summary + retained_tail
     let mut result = Vec::with_capacity(plan.pinned_head.len() + 1 + plan.retained_tail.len());

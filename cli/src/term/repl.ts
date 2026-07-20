@@ -1944,20 +1944,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       renderer.requestRender()
     }
 
-    if (name === '/goto') {
-      if (!args) {
-        commitLines([{ id: 'sys-goto', kind: 'system', text: '  Usage: /goto <message_number>' }])
-      } else {
-        try {
-          const outcome = await agent.submit(`/goto ${args}`, sessionId ?? undefined)
-          if (outcome.kind === 'command') {
-            commitLines([{ id: 'sys-goto', kind: 'system', text: `  ${outcome.message}` }])
-          }
-        } catch (err: any) {
-          commitLines([{ id: 'sys-goto-err', kind: 'system', text: chalk.red(`  Goto failed: ${err?.message ?? err}`) }])
-        }
-      }
-    } else if (name === '/compact') {
+    if (name === '/compact') {
       await runManualCompaction(args)
     } else if (name === '/env') {
       handleEnvCommand(args)

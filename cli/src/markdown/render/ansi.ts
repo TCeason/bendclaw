@@ -195,6 +195,23 @@ export function highlightCodeLine(line: string, lang: string | undefined): strin
   }
 }
 
+/**
+ * Highlight a complete source fragment while preserving cross-line grammar
+ * state (block comments, template strings, heredocs, etc.). Write-tool previews
+ * use this for their stable prefix and once arguments are complete.
+ */
+export function highlightCode(text: string, lang: string | undefined): string {
+  const resolved = resolveLanguage(lang)
+  if (resolved === 'json') return highlightJsonCode(text)
+  if (!highlighter || !resolved || resolved === 'plaintext') return text
+  try {
+    if (!highlighter.supportsLanguage(resolved)) return text
+    return highlighter.highlight(text, { language: resolved })
+  } catch {
+    return text
+  }
+}
+
 type LineCommentMarker = '--' | '//' | '#'
 
 interface TrailingCodeComment {

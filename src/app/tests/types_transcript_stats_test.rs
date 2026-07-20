@@ -261,12 +261,13 @@ fn compact_item_is_not_context() {
         created_at: 0,
         reason: evot::types::CompactReason::Manual,
         summary: "hi".into(),
-        first_kept_seq: 1,
         tokens_before: 10,
         tokens_after: 5,
         messages_before: 2,
         messages_after: 1,
-        split_turn: None,
+        messages: vec![],
+        engine_messages: vec![],
+        state: Box::default(),
         details: evot::types::CompactDetails::default(),
     };
     assert!(!item.is_context_item());

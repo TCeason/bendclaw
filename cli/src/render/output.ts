@@ -10,6 +10,7 @@
 
 import { renderMarkdown, renderThinkingMarkdown } from './markdown.js'
 import { colorizeUnifiedDiff } from './diff.js'
+import { highlightCode, highlightCodeLine } from '../markdown/render/ansi.js'
 import { truncate, formatDuration, toolResultLines, formatBashCommandDisplay, expandLinesHint, COLLAPSE_HINT } from './format.js'
 import type { UIMessage, UIToolCall } from '../term/app/types.js'
 
@@ -76,11 +77,182 @@ function toolDraftText(args: Record<string, unknown>, keys: string[]): string {
 }
 
 function lineCount(text: string): number {
-  let count = 1
-  for (let index = 0; index < text.length; index++) {
-    if (text.charCodeAt(index) === 10) count++
+  return writePreviewLines(text).length
+}
+
+const WRITE_PREVIEW_LINES = 10
+const WRITE_STREAM_CONTEXT_LINES = 50
+const WRITE_PREVIEW_CACHE_LIMIT = 64
+// Above this size, skip syntax highlighting entirely: a synchronous full-file
+// highlight of a huge generated file would stall the event loop for seconds.
+const WRITE_HIGHLIGHT_MAX_BYTES = 200 * 1024
+
+type WritePreviewCache = {
+  path: string
+  language: string | undefined
+  rawContent: string
+  argsComplete: boolean
+  /** Content exceeded WRITE_HIGHLIGHT_MAX_BYTES — render unhighlighted. */
+  plain: boolean
+  displayLines: string[]
+  highlightedLines: string[]
+}
+
+const writePreviewCache = new Map<string, WritePreviewCache>()
+
+const WRITE_LANGUAGE_BY_EXTENSION: Record<string, string> = {
+  bash: 'bash', c: 'c', cc: 'cpp', cpp: 'cpp', cs: 'csharp', css: 'css',
+  go: 'go', h: 'c', hpp: 'cpp', html: 'html', java: 'java', js: 'javascript',
+  json: 'json', jsonc: 'jsonc', jsx: 'javascript', kt: 'kotlin', lua: 'lua',
+  md: 'markdown', mjs: 'javascript', php: 'php', proto: 'proto', py: 'python',
+  rb: 'ruby', rs: 'rust', scss: 'scss', sh: 'bash', sql: 'sql', swift: 'swift',
+  toml: 'toml', ts: 'typescript', tsx: 'typescript', txt: 'plaintext',
+  xml: 'xml', yaml: 'yaml', yml: 'yaml', zsh: 'bash',
+}
+
+function writeLanguage(path: string): string | undefined {
+  const filename = path.split(/[\\/]/).pop()?.toLowerCase() ?? ''
+  if (filename === 'dockerfile') return 'dockerfile'
+  if (filename === 'makefile') return 'makefile'
+  const dot = filename.lastIndexOf('.')
+  return dot >= 0 ? WRITE_LANGUAGE_BY_EXTENSION[filename.slice(dot + 1)] : undefined
+}
+
+function normalizeWritePreviewText(text: string): string {
+  return text
+    .replace(/\r/g, '')
+    .replace(/\t/g, '   ')
+    // Tool arguments are untrusted model output. Never pass embedded terminal
+    // controls through the preview; only line feeds are meaningful here.
+    .replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '�')
+}
+
+function writePreviewLines(content: string): string[] {
+  if (!content) return []
+  const lines = normalizeWritePreviewText(content).split('\n')
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+  return lines
+}
+
+function allWritePreviewLines(content: string): string[] {
+  return content ? normalizeWritePreviewText(content).split('\n') : []
+}
+
+function highlightWriteLines(lines: string[], language: string | undefined): string[] {
+  const highlighted = highlightCode(lines.join('\n'), language).split('\n')
+  // The highlighter must preserve line structure; if it ever reflows newlines,
+  // fall back to per-line highlighting so display/highlight arrays stay in
+  // lockstep (trim and slice below index both arrays by the same offsets).
+  if (highlighted.length !== lines.length) {
+    return lines.map(line => highlightCodeLine(line, language))
   }
-  return count
+  return highlighted
+}
+
+function rebuildWritePreview(path: string, content: string, argsComplete: boolean): WritePreviewCache {
+  const language = writeLanguage(path)
+  const displayLines = allWritePreviewLines(content)
+  const plain = content.length > WRITE_HIGHLIGHT_MAX_BYTES
+  return {
+    path,
+    language,
+    rawContent: content,
+    argsComplete,
+    plain,
+    displayLines,
+    highlightedLines: plain ? [...displayLines] : highlightWriteLines(displayLines, language),
+  }
+}
+
+function refreshWritePreviewPrefix(cache: WritePreviewCache): void {
+  const count = Math.min(WRITE_STREAM_CONTEXT_LINES, cache.displayLines.length)
+  if (count === 0) return
+  const highlighted = highlightWriteLines(cache.displayLines.slice(0, count), cache.language)
+  for (let index = 0; index < count; index++) {
+    cache.highlightedLines[index] = highlighted[index]
+      ?? highlightCodeLine(cache.displayLines[index] ?? '', cache.language)
+  }
+}
+
+function cachedWritePreview(call: UIToolCall, path: string, content: string): WritePreviewCache {
+  let cache = writePreviewCache.get(call.id)
+  if (
+    !cache
+    || cache.path !== path
+    || !content.startsWith(cache.rawContent)
+    || (call.argsComplete === true && !cache.argsComplete)
+  ) {
+    // Final arguments are authoritative: rebuild the complete fragment once so
+    // cross-line syntax state is exact before execution begins.
+    cache = rebuildWritePreview(path, content, call.argsComplete === true)
+  } else if (content.length > cache.rawContent.length) {
+    // Highlight the receiving/new lines cheaply, then refresh the first 50 as
+    // one source fragment so block comments and multiline strings stay correct.
+    // This mirrors pi's bounded streaming strategy.
+    const delta = normalizeWritePreviewText(content.slice(cache.rawContent.length))
+    cache.rawContent = content
+    if (cache.displayLines.length === 0) {
+      cache.displayLines.push('')
+      cache.highlightedLines.push('')
+    }
+    const parts = delta.split('\n')
+    const last = cache.displayLines.length - 1
+    const { plain, language } = cache
+    const highlightLine = (line: string): string =>
+      plain ? line : highlightCodeLine(line, language)
+    cache.displayLines[last] += parts[0] ?? ''
+    cache.highlightedLines[last] = highlightLine(cache.displayLines[last]!)
+    for (let index = 1; index < parts.length; index++) {
+      const line = parts[index] ?? ''
+      cache.displayLines.push(line)
+      cache.highlightedLines.push(highlightLine(line))
+    }
+    if (!cache.plain) refreshWritePreviewPrefix(cache)
+  }
+
+  writePreviewCache.delete(call.id)
+  writePreviewCache.set(call.id, cache)
+  while (writePreviewCache.size > WRITE_PREVIEW_CACHE_LIMIT) {
+    const oldest = writePreviewCache.keys().next().value
+    if (oldest === undefined) break
+    writePreviewCache.delete(oldest)
+  }
+  return cache
+}
+
+/**
+ * Streamed content preview for a write call: shown while arguments stream
+ * (queued) and while the tool is running until the authoritative diff arrives.
+ */
+function appendWriteContentPreview(lines: OutputLine[], call: UIToolCall, expanded?: boolean): void {
+  const name = call.name.toLowerCase()
+  if (name !== 'write' && name !== 'file_write') return
+  const content = toolDraftText(call.args, ['content'])
+  if (!content) return
+
+  const path = toolDraftText(call.args, ['path', 'file', 'file_path'])
+  const cache = cachedWritePreview(call, path, content)
+  let total = cache.highlightedLines.length
+  while (total > 0 && cache.displayLines[total - 1] === '') total--
+  if (total === 0) return
+
+  const visibleLines = cache.highlightedLines.slice(0, total)
+  const shown = expanded ? visibleLines : visibleLines.slice(0, WRITE_PREVIEW_LINES)
+  lines.push({ id: genId('tool-preview-space'), kind: 'tool', text: '' })
+  for (const text of shown) {
+    lines.push({ id: genId('tool-preview'), kind: 'tool', text: `  ${text}`, toolCodePreview: true })
+  }
+
+  const remaining = total - shown.length
+  if (remaining > 0) {
+    lines.push({
+      id: genId('tool-hint'),
+      kind: 'tool_result',
+      text: `  ... (${remaining} more ${remaining === 1 ? 'line' : 'lines'}, ${total} total, ctrl+o to expand)`,
+    })
+  } else if (expanded && total > 1) {
+    lines.push({ id: genId('tool-hint'), kind: 'tool_result', text: `  ${COLLAPSE_HINT}` })
+  }
 }
 
 function toolDraftSummary(call: UIToolCall): string {
@@ -122,6 +294,8 @@ export interface OutputLine {
   rawMarkdown?: string
   /** Thinking text already contains markdown ANSI; apply only the outer pi tint. */
   thinkingStyle?: boolean
+  /** Tool line containing pre-styled source code from a streamed write call. */
+  toolCodePreview?: boolean
   codeBlockId?: string
   codeLanguage?: string
   /** Visual spacer inserted between streamed markdown chunks. It creates a
@@ -240,10 +414,13 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
   if (call.status === 'queued') {
     const summary = call.argsComplete ? 'ready' : toolDraftSummary(call)
     insertToolStatus(lines, toolStatusLine('○', [summary]))
+    appendWriteContentPreview(lines, call, expanded)
     return lines
   }
 
   if (call.status !== 'running') {
+    // The call has settled; its streaming preview cache is no longer needed.
+    writePreviewCache.delete(call.id)
     const resultLines = buildToolResult(
       call.name,
       args,
@@ -261,6 +438,10 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
   insertToolStatus(lines, toolStatusLine('●', ['running']))
   if (diff) {
     lines.push({ id: genId('tool-diff'), kind: 'tool', text: colorizeUnifiedDiff(diff) })
+  } else {
+    // Keep the streamed content visible between tool_started and the engine's
+    // preview diff so the card never blanks out mid-transition (pi behavior).
+    appendWriteContentPreview(lines, call, expanded)
   }
   if (call.progress && !call.progress.startsWith('__evot_spill_event__ ')) {
     const progressLines = toolResultLines(formatToolResultContent(call.progress), false, call.name, expanded)

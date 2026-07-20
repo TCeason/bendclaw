@@ -93,11 +93,53 @@ impl Storage for MemoryStorage {
         Ok(removed)
     }
 
-    async fn append_entry(&self, entry: TranscriptEntry) -> Result<()> {
-        if let Ok(mut entries) = self.entries.lock() {
-            entries.push(entry);
+    async fn append_entries(&self, batch: Vec<TranscriptEntry>) -> Result<()> {
+        let expected_seq = batch
+            .first()
+            .map(|entry| entry.seq.saturating_sub(1))
+            .unwrap_or(0);
+        if !self.compare_and_append_entries(expected_seq, batch).await? {
+            return Err(crate::error::EvotError::Store(format!(
+                "transcript sequence conflict: expected seq {expected_seq}"
+            )));
         }
         Ok(())
+    }
+
+    async fn compare_and_append_entries(
+        &self,
+        expected_seq: u64,
+        batch: Vec<TranscriptEntry>,
+    ) -> Result<bool> {
+        let Some(first) = batch.first() else {
+            return Ok(true);
+        };
+        if batch
+            .iter()
+            .any(|entry| entry.session_id != first.session_id)
+            || batch
+                .windows(2)
+                .any(|pair| pair[1].seq != pair[0].seq.saturating_add(1))
+        {
+            return Err(crate::error::EvotError::Store(
+                "invalid transcript batch".to_string(),
+            ));
+        }
+        let mut entries = self
+            .entries
+            .lock()
+            .map_err(|_| crate::error::EvotError::Store("entries lock poisoned".to_string()))?;
+        let persisted_seq = entries
+            .iter()
+            .filter(|entry| entry.session_id == first.session_id)
+            .map(|entry| entry.seq)
+            .max()
+            .unwrap_or(0);
+        if persisted_seq != expected_seq || first.seq != expected_seq.saturating_add(1) {
+            return Ok(false);
+        }
+        entries.extend(batch);
+        Ok(true)
     }
 
     async fn list_entries(&self, params: ListTranscriptEntries) -> Result<Vec<TranscriptEntry>> {

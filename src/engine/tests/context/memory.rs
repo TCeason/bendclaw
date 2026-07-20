@@ -183,6 +183,7 @@ fn memory_accumulates_state_from_prev() {
         timestamp: 1000,
         generation: 1,
         last_summary: None,
+        context_summary_message: None,
     };
 
     let evicted = vec![

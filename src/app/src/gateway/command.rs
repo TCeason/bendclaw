@@ -1,4 +1,4 @@
-//! Gateway command parsing for `/clear`, `/goto`, etc.
+//! Gateway command parsing for `/clear`, `/compact`, etc.
 
 // ---------------------------------------------------------------------------
 // Command — parsed gateway commands
@@ -6,7 +6,6 @@
 
 pub enum Command {
     Clear,
-    Goto(u64),
     Compact {
         custom_instructions: Option<String>,
     },
@@ -25,16 +24,6 @@ pub fn parse_command(text: &str) -> Option<Command> {
 
     if lower == "/clear" {
         return Some(Command::Clear);
-    }
-    if lower == "/goto" || lower.starts_with("/goto ") {
-        let arg = lower.strip_prefix("/goto").map(|s| s.trim());
-        match arg {
-            Some(s) if !s.is_empty() => match s.parse::<u64>() {
-                Ok(seq) if seq > 0 => return Some(Command::Goto(seq)),
-                _ => return Some(Command::UsageError("Usage: /goto <message_number>".into())),
-            },
-            _ => return Some(Command::UsageError("Usage: /goto <message_number>".into())),
-        }
     }
     if lower == "/compact" || lower.starts_with("/compact ") {
         let arg = trimmed

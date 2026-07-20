@@ -228,6 +228,106 @@ async fn controller_does_not_retry_twice() {
 }
 
 #[tokio::test]
+async fn controller_state_carries_across_compactions_and_seed() {
+    use evotengine::context::CompactionState;
+
+    // Seed: as if restored from a persisted session that compacted 3 times.
+    let mut seeded = CompactionState {
+        generation: 3,
+        last_summary: Some("PREVIOUS SUMMARY".into()),
+        context_summary_message: Some("RESTORED SUMMARY MESSAGE".into()),
+        ..Default::default()
+    };
+    seeded.file_ops.read.insert("src/seeded.rs".to_string());
+
+    let mut ctrl = CompactionController::new(config_small()).with_state(seeded);
+
+    let mut messages = vec![
+        user_msg("RESTORED SUMMARY MESSAGE"),
+        user_msg(&big_text(200)),
+        assistant_msg(&big_text(200)),
+    ];
+    // A tool call in the evict zone so file-op accumulation is observable.
+    messages.push(AgentMessage::Llm(Message::Assistant {
+        content: vec![Content::ToolCall {
+            id: "call-read".into(),
+            name: "read".into(),
+            arguments: serde_json::json!({ "path": "src/evicted.rs" }),
+        }],
+        stop_reason: evotengine::StopReason::Stop,
+        model: "test".into(),
+        provider: "test".into(),
+        usage: Usage::default(),
+        timestamp: 0,
+        error_message: None,
+        response_id: None,
+    }));
+    messages.push(AgentMessage::Llm(Message::ToolResult {
+        tool_call_id: "call-read".into(),
+        tool_name: "read".into(),
+        content: vec![Content::Text {
+            text: "contents".into(),
+        }],
+        is_error: false,
+        timestamp: 0,
+        retention: Default::default(),
+    }));
+    for _ in 0..20 {
+        messages.push(user_msg(&big_text(300)));
+        messages.push(assistant_msg(&big_text(300)));
+    }
+    messages.push(user_msg("recent"));
+    messages.push(assistant_msg("recent answer"));
+
+    let stats = ctrl
+        .force_compact(&mut messages, None, CancellationToken::new())
+        .await;
+    assert!(stats.is_some());
+
+    let state = ctrl.state();
+    // Generation continues from the seed instead of restarting at 1.
+    assert_eq!(state.generation, 4);
+    // File ops accumulate: seeded entry + the newly evicted read.
+    assert!(state.file_ops.read.contains("src/seeded.rs"));
+    assert!(state.file_ops.read.contains("src/evicted.rs"));
+    // The new summary replaces the seeded one for the next round. The restored
+    // summary message is removed before planning, while its semantic content is
+    // merged exactly once through `previous_summary`.
+    let summary = state.last_summary.as_deref().unwrap_or_default();
+    assert_eq!(summary.matches("PREVIOUS SUMMARY").count(), 1);
+    assert!(!summary.contains("RESTORED SUMMARY MESSAGE"));
+    assert_eq!(state.context_summary_message.as_deref(), Some(summary));
+    assert!(!messages.iter().any(
+        |message| matches!(message, AgentMessage::Llm(Message::User { content, .. })
+            if matches!(content.as_slice(), [Content::Text { text }] if text == "RESTORED SUMMARY MESSAGE"))
+    ));
+}
+
+#[tokio::test]
+async fn controller_restores_seeded_summary_when_there_is_no_plan() {
+    use evotengine::context::CompactionState;
+
+    let seeded = CompactionState {
+        last_summary: Some("previous".into()),
+        context_summary_message: Some("summary message".into()),
+        ..Default::default()
+    };
+    let mut ctrl = CompactionController::new(config_small()).with_state(seeded);
+    let mut messages = vec![user_msg("summary message"), user_msg("recent")];
+
+    let stats = ctrl
+        .force_compact(&mut messages, None, CancellationToken::new())
+        .await;
+
+    assert!(stats.is_none());
+    assert_eq!(messages.len(), 2);
+    assert!(
+        matches!(&messages[0], AgentMessage::Llm(Message::User { content, .. })
+        if matches!(content.as_slice(), [Content::Text { text }] if text == "summary message"))
+    );
+}
+
+#[tokio::test]
 async fn controller_allows_multiple_stateless_compactions() {
     let config = config_small();
     let mut ctrl = CompactionController::new(config);

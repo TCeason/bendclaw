@@ -2,6 +2,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
+use fs2::FileExt;
 use tokio::fs;
 
 use crate::error::EvotError;
@@ -77,38 +78,147 @@ impl FsStorage {
         }
     }
 
-    async fn append_jsonl<T: serde::Serialize>(&self, path: PathBuf, value: &T) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await?;
+    async fn append_transcript_batch(
+        &self,
+        path: PathBuf,
+        expected_seq: Option<u64>,
+        entries: Vec<TranscriptEntry>,
+    ) -> Result<bool> {
+        if entries.is_empty() {
+            return Ok(true);
         }
-        let mut line = serde_json::to_string(value)?;
-        line.push('\n');
-        use tokio::io::AsyncWriteExt;
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .await?;
-        file.write_all(line.as_bytes()).await?;
-        Ok(())
+        let mut line = serde_json::to_vec(&entries)?;
+        line.push(b'\n');
+
+        tokio::task::spawn_blocking(move || -> Result<bool> {
+            use std::io::Write;
+
+            let Some(parent) = path.parent() else {
+                return Err(EvotError::Store(
+                    "transcript path has no parent directory".to_string(),
+                ));
+            };
+            std::fs::create_dir_all(parent)?;
+            let lock_path = parent.join("transcript.lock");
+            let lock_file = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(lock_path)?;
+            lock_file.lock_exclusive()?;
+
+            let content = match std::fs::read(&path) {
+                Ok(content) => content,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                Err(error) => return Err(EvotError::Io(error)),
+            };
+            let valid_len = if content.is_empty() || content.last() == Some(&b'\n') {
+                content.len()
+            } else {
+                content
+                    .iter()
+                    .rposition(|byte| *byte == b'\n')
+                    .map(|index| index.saturating_add(1))
+                    .unwrap_or(0)
+            };
+            if valid_len != content.len() {
+                let file = std::fs::OpenOptions::new().write(true).open(&path)?;
+                file.set_len(valid_len as u64)?;
+            }
+
+            let content = super::migrate::migrate_if_needed(&path, content[..valid_len].to_vec())?;
+
+            if let Some(expected) = expected_seq {
+                let persisted_seq = parse_current_transcript(&content)?
+                    .iter()
+                    .map(|entry| entry.seq)
+                    .max()
+                    .unwrap_or(0);
+                let first_seq = entries.first().map(|entry| entry.seq).unwrap_or(0);
+                if persisted_seq != expected || first_seq != expected.saturating_add(1) {
+                    FileExt::unlock(&lock_file)?;
+                    return Ok(false);
+                }
+            }
+
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)?;
+            file.write_all(&line)?;
+            FileExt::unlock(&lock_file)?;
+            Ok(true)
+        })
+        .await
+        .map_err(|error| EvotError::Store(format!("transcript writer task failed: {error}")))?
     }
 
-    async fn read_jsonl<T: serde::de::DeserializeOwned>(&self, path: &Path) -> Result<Vec<T>> {
-        match fs::read_to_string(path).await {
-            Ok(content) => {
-                // Skip blank and unparseable lines rather than failing the whole
-                // read — one bad entry must not make an entire session unloadable.
-                let values = content
-                    .lines()
-                    .filter(|line| !line.trim().is_empty())
-                    .filter_map(|line| serde_json::from_str(line).ok())
-                    .collect();
-                Ok(values)
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-            Err(e) => Err(EvotError::Io(e)),
-        }
+    async fn read_transcript(&self, path: PathBuf) -> Result<Vec<TranscriptEntry>> {
+        tokio::task::spawn_blocking(move || -> Result<Vec<TranscriptEntry>> {
+            let Some(parent) = path.parent() else {
+                return Err(EvotError::Store(
+                    "transcript path has no parent directory".to_string(),
+                ));
+            };
+            std::fs::create_dir_all(parent)?;
+            let lock_file = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(parent.join("transcript.lock"))?;
+            FileExt::lock_exclusive(&lock_file)?;
+            let content = match std::fs::read(&path) {
+                Ok(content) => content,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                Err(error) => return Err(EvotError::Io(error)),
+            };
+            let content = super::migrate::migrate_if_needed(&path, content)?;
+            let entries = parse_current_transcript(&content)?;
+            FileExt::unlock(&lock_file)?;
+            Ok(entries)
+        })
+        .await
+        .map_err(|error| EvotError::Store(format!("transcript reader task failed: {error}")))?
     }
+}
+
+fn parse_current_transcript(content: &[u8]) -> Result<Vec<TranscriptEntry>> {
+    let mut entries = Vec::new();
+    for line in content.split(|byte| *byte == b'\n') {
+        if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) else {
+            continue;
+        };
+        let serde_json::Value::Array(_) = value else {
+            return Err(EvotError::Store(
+                "legacy transcript was not migrated".to_string(),
+            ));
+        };
+        let batch: Vec<TranscriptEntry> = serde_json::from_value(value)?;
+        entries.extend(batch);
+    }
+    Ok(entries)
+}
+
+fn validate_transcript_batch(entries: &[TranscriptEntry], session_id: &str) -> Result<()> {
+    if entries.iter().any(|entry| entry.session_id != session_id) {
+        return Err(EvotError::Store(
+            "transcript batch contains multiple session ids".to_string(),
+        ));
+    }
+    if entries
+        .windows(2)
+        .any(|pair| pair[1].seq != pair[0].seq.saturating_add(1))
+    {
+        return Err(EvotError::Store(
+            "transcript batch sequence numbers are not contiguous".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -166,14 +276,47 @@ impl Storage for FsStorage {
         }
     }
 
-    async fn append_entry(&self, entry: TranscriptEntry) -> Result<()> {
-        self.append_jsonl(self.transcript_path(&entry.session_id)?, &entry)
-            .await
+    async fn append_entries(&self, entries: Vec<TranscriptEntry>) -> Result<()> {
+        let Some(first) = entries.first() else {
+            return Ok(());
+        };
+        validate_transcript_batch(&entries, &first.session_id)?;
+        let expected_seq = first.seq.saturating_sub(1);
+        if !self
+            .append_transcript_batch(
+                self.transcript_path(&first.session_id)?,
+                Some(expected_seq),
+                entries,
+            )
+            .await?
+        {
+            return Err(EvotError::Store(format!(
+                "transcript sequence conflict: expected seq {expected_seq}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn compare_and_append_entries(
+        &self,
+        expected_seq: u64,
+        entries: Vec<TranscriptEntry>,
+    ) -> Result<bool> {
+        let Some(first) = entries.first() else {
+            return Ok(true);
+        };
+        validate_transcript_batch(&entries, &first.session_id)?;
+        self.append_transcript_batch(
+            self.transcript_path(&first.session_id)?,
+            Some(expected_seq),
+            entries,
+        )
+        .await
     }
 
     async fn list_entries(&self, params: ListTranscriptEntries) -> Result<Vec<TranscriptEntry>> {
         let mut entries = self
-            .read_jsonl::<TranscriptEntry>(&self.transcript_path(&params.session_id)?)
+            .read_transcript(self.transcript_path(&params.session_id)?)
             .await?;
 
         if let Some(run_id) = &params.run_id {
@@ -228,7 +371,7 @@ impl Storage for FsStorage {
 
         for session in &sessions {
             let entries: Vec<TranscriptEntry> = match self.transcript_path(&session.session_id) {
-                Ok(path) => match self.read_jsonl(&path).await {
+                Ok(path) => match self.read_transcript(path).await {
                     Ok(e) => e,
                     Err(e) => {
                         tracing::warn!(

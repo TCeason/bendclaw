@@ -47,10 +47,14 @@ async fn manual_compact_uses_llm_summary() -> TestResult {
 
     loaded
         .write_items(vec![
-            user(&"old manual compact message ".repeat(5000)),
+            user("old manual compact message"),
             assistant("old assistant"),
-            user("recent manual compact request"),
+            user(&"recent manual compact request ".repeat(5000)),
             assistant("recent answer"),
+            user("latest retained request"),
+            assistant("latest retained answer"),
+            user("final retained request"),
+            assistant("final retained answer"),
         ])
         .await?;
 

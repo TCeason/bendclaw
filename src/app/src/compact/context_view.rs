@@ -1,14 +1,17 @@
 use crate::types::TranscriptEntry;
 use crate::types::TranscriptItem;
-use crate::types::UsageSummary;
 
 const SUMMARY_PREFIX: &str =
     "The conversation history before this point was compacted into the following summary:\n\n";
 
-pub fn compact_summary_item(summary: &str) -> TranscriptItem {
+pub fn compact_summary_text(summary: &str) -> String {
     let summary = evot_engine::truncate_summary(summary, evot_engine::DEFAULT_SUMMARY_MAX_BYTES);
+    format!("{SUMMARY_PREFIX}{summary}")
+}
+
+pub fn compact_summary_item(summary: &str) -> TranscriptItem {
     TranscriptItem::User {
-        text: format!("{SUMMARY_PREFIX}{summary}"),
+        text: compact_summary_text(summary),
         content: vec![],
     }
 }
@@ -18,25 +21,13 @@ pub fn resolve_context_entries(entries: &[TranscriptEntry]) -> Vec<(u64, Transcr
 
     match last_control {
         Some(idx) => match &entries[idx].item {
-            TranscriptItem::Compact {
-                summary,
-                first_kept_seq,
-                ..
-            } => {
-                let compact_seq = entries[idx].seq;
-                let mut items = vec![(0, compact_summary_item(summary))];
-                for entry in entries {
-                    if entry.seq >= *first_kept_seq
-                        && entry.seq < compact_seq
-                        && entry.item.is_context_item()
-                    {
-                        // These entries are retained from before the compact
-                        // control point. Their assistant usage reflects the
-                        // pre-compaction context and must not be reused as a
-                        // fresh pre-prompt baseline.
-                        items.push((entry.seq, clear_assistant_usage(entry.item.clone())));
-                    }
-                }
+            TranscriptItem::Compact { messages, .. } => {
+                let mut items = messages
+                    .iter()
+                    .filter(|item| item.is_context_item())
+                    .cloned()
+                    .map(|item| (0, item))
+                    .collect::<Vec<_>>();
                 for entry in &entries[idx + 1..] {
                     if entry.item.is_context_item() {
                         items.push((entry.seq, entry.item.clone()));
@@ -75,6 +66,36 @@ pub fn resolve_context_items(entries: &[TranscriptEntry]) -> Vec<TranscriptItem>
         .collect()
 }
 
+/// Resolve the exact Engine context at the latest control point.
+pub fn resolve_engine_context(entries: &[TranscriptEntry]) -> Vec<evot_engine::AgentMessage> {
+    let last_control = entries
+        .iter()
+        .rposition(|entry| is_control_point(&entry.item));
+    let mut messages = match last_control {
+        Some(index) => match &entries[index].item {
+            TranscriptItem::Compact {
+                engine_messages, ..
+            } => engine_messages.clone(),
+            TranscriptItem::Marker { messages, .. } => {
+                crate::agent::run::convert::into_agent_messages(messages)
+            }
+            _ => Vec::new(),
+        },
+        None => Vec::new(),
+    };
+    let start = last_control
+        .map(|index| index.saturating_add(1))
+        .unwrap_or(0);
+    messages.extend(crate::agent::run::convert::into_agent_messages(
+        &entries[start..]
+            .iter()
+            .filter(|entry| entry.item.is_context_item())
+            .map(|entry| entry.item.clone())
+            .collect::<Vec<_>>(),
+    ));
+    messages
+}
+
 pub fn resolve_snapshot_at(entries: &[TranscriptEntry], target_seq: u64) -> Vec<TranscriptItem> {
     let scoped: Vec<TranscriptEntry> = entries
         .iter()
@@ -89,27 +110,4 @@ fn is_control_point(item: &TranscriptItem) -> bool {
         item,
         TranscriptItem::Compact { .. } | TranscriptItem::Marker { .. }
     )
-}
-
-fn clear_assistant_usage(item: TranscriptItem) -> TranscriptItem {
-    match item {
-        TranscriptItem::Assistant {
-            content,
-            stop_reason,
-            model,
-            provider,
-            timestamp,
-            error_message,
-            ..
-        } => TranscriptItem::Assistant {
-            content,
-            stop_reason,
-            usage: UsageSummary::default(),
-            model,
-            provider,
-            timestamp,
-            error_message,
-        },
-        other => other,
-    }
 }

@@ -112,22 +112,43 @@ async fn auto_compaction_persists_structured_compact_item() -> TestResult {
         .find_map(|entry| match &entry.item {
             TranscriptItem::Compact {
                 summary,
-                first_kept_seq,
+                messages,
+                engine_messages,
+                state,
                 ..
-            } => Some((summary, first_kept_seq)),
+            } => Some((summary, messages, engine_messages, state)),
             _ => None,
         })
         .ok_or_else(|| std::io::Error::other("missing structured compact item"))?;
     assert_eq!(compact.0, "AUTO SUMMARY FROM LLM");
-    assert!(*compact.1 > 1);
+    assert!(!compact.1.is_empty());
+    assert!(!compact.2.is_empty());
+    assert_eq!(
+        compact.3.last_summary.as_deref(),
+        Some("AUTO SUMMARY FROM LLM")
+    );
+
+    let expected_engine_context = compact.2.clone();
 
     let resumed = agent
         .load_session(&session.session_id)
         .await?
         .ok_or_else(|| std::io::Error::other("missing resumed session"))?;
+    let (resumed_engine_context, resumed_state, _) = resumed.context_snapshot().await;
+    assert_eq!(resumed_engine_context, expected_engine_context);
+    assert_eq!(
+        resumed_state.and_then(|state| state.last_summary),
+        Some("AUTO SUMMARY FROM LLM".to_string())
+    );
     let transcript = resumed.transcript().await;
     assert!(
         matches!(&transcript[0], TranscriptItem::User { text, .. } if text.contains("AUTO SUMMARY FROM LLM"))
+    );
+    assert!(
+        transcript.iter().all(|item| {
+            !matches!(item, TranscriptItem::User { text, .. } if text.starts_with("old message one "))
+        }),
+        "the Engine-only pinned head must not reappear after resume"
     );
 
     Ok(())

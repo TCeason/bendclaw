@@ -14,7 +14,17 @@ pub fn summarize(input: &SummarizerInput) -> SummarizerOutput {
         input.evicted_count
     ));
 
-    // Section 2: Completed user requests
+    // Section 2: Previous compacted context. Overflow recovery has no LLM
+    // available to merge summaries, so preserve it explicitly.
+    if let Some(previous) = input
+        .previous_summary
+        .as_deref()
+        .filter(|summary| !summary.trim().is_empty())
+    {
+        sections.push(format!("Previous compacted context:\n{previous}"));
+    }
+
+    // Section 3: Completed user requests
     if !input.completed_requests.is_empty() {
         let mut s = String::from("Completed requests (do not revisit):");
         for req in &input.completed_requests {

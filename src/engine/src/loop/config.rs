@@ -50,6 +50,11 @@ pub struct AgentLoopConfig {
     /// Context window configuration (auto-compaction).
     pub context_config: Option<ContextConfig>,
 
+    /// Cross-compaction state restored from a persisted session (previous
+    /// summary, cumulative file ops). Lets in-run auto-compaction update the
+    /// existing summary instead of re-summarizing it as conversation text.
+    pub initial_compaction_state: Option<crate::context::CompactionState>,
+
     /// Execution limits (max turns, tokens, duration).
     pub execution_limits: Option<ExecutionLimits>,
 

@@ -14,8 +14,6 @@ use super::UsageSummary;
 pub enum MarkerKind {
     /// Clear the context — start fresh.
     Clear,
-    /// Go to a specific message — restore that point's context snapshot.
-    Goto,
 }
 
 // ---------------------------------------------------------------------------
@@ -108,12 +106,6 @@ pub enum CompactReason {
     Manual,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompactSplitTurn {
-    pub turn_start_seq: u64,
-    pub cut_seq: u64,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CompactDetails {
     #[serde(default)]
@@ -172,13 +164,17 @@ pub enum TranscriptItem {
         created_at: u64,
         reason: CompactReason,
         summary: String,
-        first_kept_seq: u64,
         tokens_before: usize,
         tokens_after: usize,
         messages_before: usize,
         messages_after: usize,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        split_turn: Option<CompactSplitTurn>,
+        /// App-layer replacement context used by transcript views.
+        messages: Vec<TranscriptItem>,
+        /// Exact Engine replacement context. This preserves retention,
+        /// timestamps, and sanitized tool-pair boundaries across resume.
+        engine_messages: Vec<evot_engine::AgentMessage>,
+        /// Exact Engine cross-compaction state.
+        state: Box<evot_engine::CompactionState>,
         #[serde(default)]
         details: CompactDetails,
     },
@@ -188,14 +184,10 @@ pub enum TranscriptItem {
         kind: String,
         data: serde_json::Value,
     },
-    /// Unified marker that resets the current context baseline.
-    /// Clear and Goto carry a concrete baseline snapshot. Compaction is a
+    /// Unified marker that resets the current context baseline. Compaction is a
     /// first-class `TranscriptItem::Compact` entry instead of a marker kind.
     Marker {
         kind: MarkerKind,
-        /// For Goto: the target seq the user requested (audit only).
-        #[serde(skip_serializing_if = "Option::is_none")]
-        target_seq: Option<u64>,
         /// Context snapshot at the time of the marker.
         messages: Vec<TranscriptItem>,
     },

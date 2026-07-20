@@ -141,7 +141,6 @@ function buildHelpBlocks(columns: number): ViewBlock[] {
     ['/model <name>', 'Switch model'],
     ['/resume [id|query]', 'Resume session'],
     ['/new', 'Start new session'],
-    ['/goto <n>', 'Go to message'],
     ['/plan', 'Toggle planning mode'],
     ['/env', 'Manage variables'],
     ['/skill', 'Manage skills'],

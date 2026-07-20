@@ -17,7 +17,19 @@ pub trait Storage: Send + Sync {
 
     async fn delete_session(&self, session_id: &str) -> Result<bool>;
 
-    async fn append_entry(&self, entry: TranscriptEntry) -> Result<()>;
+    async fn append_entry(&self, entry: TranscriptEntry) -> Result<()> {
+        self.append_entries(vec![entry]).await
+    }
+    /// Append one logical transcript batch. Implementations must preserve the
+    /// order of entries and avoid interleaving another batch within it.
+    async fn append_entries(&self, entries: Vec<TranscriptEntry>) -> Result<()>;
+    /// Atomically append a batch only when the persisted transcript still ends
+    /// at `expected_seq`. Returns `false` when another writer won the race.
+    async fn compare_and_append_entries(
+        &self,
+        expected_seq: u64,
+        entries: Vec<TranscriptEntry>,
+    ) -> Result<bool>;
     async fn list_entries(&self, params: ListTranscriptEntries) -> Result<Vec<TranscriptEntry>>;
 
     async fn load_variables(&self) -> Result<Vec<VariableRecord>>;

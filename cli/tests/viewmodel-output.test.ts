@@ -153,6 +153,19 @@ describe('buildOutputBlocks', () => {
     expect(lines[1]!.startsWith('        ')).toBe(true)
   })
 
+  test('streamed write code preview preserves ANSI syntax highlighting', () => {
+    const highlighted = '\x1b[31mconst\x1b[39m value = 1'
+    const result = render([{
+      id: 'write-preview',
+      kind: 'tool',
+      text: `  ${highlighted}`,
+      toolCodePreview: true,
+    }])
+
+    expect(result).toContain(highlighted)
+    expect(result).not.toContain('\x1b[2m')
+  })
+
   test('long diff line wraps instead of truncating', () => {
     const longAdded = 'x'.repeat(200)
     const diff = `@@ -1,1 +1,1 @@\n-short old line\n+${longAdded}`

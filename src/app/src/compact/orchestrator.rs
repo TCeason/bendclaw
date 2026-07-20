@@ -9,7 +9,6 @@ use crate::conf::LlmConfig;
 use crate::error::Result;
 use crate::types::CompactDetails;
 use crate::types::CompactReason;
-use crate::types::CompactSplitTurn;
 use crate::types::TranscriptItem;
 
 #[derive(Debug, Clone)]
@@ -107,39 +106,38 @@ pub async fn compact_session_with_status(
         });
     }
 
-    let entries = session.load_all_entries().await?;
-    let context_entries = super::context_view::resolve_context_entries(&entries);
-    let compact_entries: Vec<evot_engine::CompactEntry> = context_entries
-        .iter()
-        .filter_map(|(seq, item)| {
-            if *seq == 0 {
-                return None;
+    let (mut app_context, mut engine_context, previous_state, expected_seq) =
+        session.compaction_snapshot().await;
+    if let Some(summary_message) = previous_state
+        .as_ref()
+        .and_then(|state| state.context_summary_message.as_deref())
+    {
+        if let Some(index) = engine_context
+            .iter()
+            .position(|message| is_exact_user_text(message, summary_message))
+        {
+            engine_context.remove(index);
+            if index < app_context.len() {
+                app_context.remove(index);
             }
-            Some(evot_engine::CompactEntry {
-                seq: *seq,
-                message: convert::agent_message_from_transcript(item),
-            })
+        }
+    }
+    let compact_entries = engine_context
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, message)| evot_engine::CompactEntry {
+            seq: index.saturating_add(1) as u64,
+            message,
         })
-        .collect();
-
-    let previous = entries.iter().rev().find_map(|entry| match &entry.item {
-        TranscriptItem::Compact {
-            first_kept_seq,
-            summary,
-            details,
-            ..
-        } => Some((
-            *first_kept_seq,
-            evot_engine::truncate_summary(summary, evot_engine::DEFAULT_SUMMARY_MAX_BYTES),
-            details.clone(),
-        )),
-        _ => None,
-    });
-    let boundary_seq = previous.as_ref().map(|(seq, _, _)| *seq);
+        .collect::<Vec<_>>();
+    let previous_summary = previous_state
+        .as_ref()
+        .and_then(|state| state.last_summary.as_deref());
 
     let plan = match evot_engine::plan_session_compaction(
         &compact_entries,
-        boundary_seq,
+        None,
         request.settings.keep_recent_tokens,
         request.settings.keep_recent_min_messages,
     ) {
@@ -170,7 +168,7 @@ pub async fn compact_session_with_status(
         let generated = summarize_with_llm(
             &compact_entries,
             &plan,
-            previous.as_ref().map(|(_, s, _)| s.as_str()),
+            previous_summary,
             request.custom_instructions.as_deref(),
             summarizer,
             cancel.clone(),
@@ -190,7 +188,7 @@ pub async fn compact_session_with_status(
                 build_summary(
                     &compact_entries,
                     &plan,
-                    previous.as_ref().map(|(_, s, _)| s.as_str()),
+                    previous_summary,
                     request.custom_instructions.as_deref(),
                 )
             }
@@ -199,20 +197,24 @@ pub async fn compact_session_with_status(
         build_summary(
             &compact_entries,
             &plan,
-            previous.as_ref().map(|(_, s, _)| s.as_str()),
+            previous_summary,
             request.custom_instructions.as_deref(),
         )
     };
     let summary = evot_engine::truncate_summary(&summary, evot_engine::DEFAULT_SUMMARY_MAX_BYTES);
-    let new_context = build_new_context_items(&context_entries, plan.first_kept_seq, &summary);
+    let summary_item = compact_summary_item(&summary);
+    let summary_message = convert::agent_message_from_transcript(&summary_item);
+    let mut new_context = vec![summary_item];
+    new_context.extend(app_context[plan.first_kept..].iter().cloned());
+    let mut new_engine_context = vec![summary_message];
+    new_engine_context.extend(engine_context[plan.first_kept..].iter().cloned());
     let messages_after = new_context.len();
-    let tokens_after =
-        evot_engine::context::total_tokens(&convert::into_agent_messages(&new_context));
+    let tokens_after = evot_engine::context::total_tokens(&new_engine_context);
 
     let mut details = CompactDetails::default();
-    if let Some((_, _, prev_details)) = previous {
-        details.read_files = prev_details.read_files;
-        details.modified_files = prev_details.modified_files;
+    if let Some(previous) = previous_state.as_ref() {
+        details.read_files = previous.file_ops.read.iter().cloned().collect();
+        details.modified_files = previous.file_ops.modified().into_iter().cloned().collect();
     }
     for file in plan.file_ops.read_only() {
         if !details.read_files.contains(file) {
@@ -229,22 +231,36 @@ pub async fn compact_session_with_status(
     details.modified_files.sort();
     details.modified_files.dedup();
 
-    let split_turn = plan.split_turn.map(|split| CompactSplitTurn {
-        turn_start_seq: split.turn_start_seq,
-        cut_seq: split.cut_seq,
-    });
+    let mut state = previous_state.unwrap_or_default();
+    state
+        .file_ops
+        .read
+        .extend(plan.file_ops.read.iter().cloned());
+    state
+        .file_ops
+        .written
+        .extend(plan.file_ops.written.iter().cloned());
+    state
+        .file_ops
+        .edited
+        .extend(plan.file_ops.edited.iter().cloned());
+    state.timestamp = evot_engine::now_ms();
+    state.generation = state.generation.saturating_add(1);
+    state.last_summary = Some(summary.clone());
+    state.context_summary_message = new_engine_context.first().and_then(exact_user_text);
 
     let item = TranscriptItem::Compact {
         id: crate::types::new_id(),
-        created_at: evot_engine::now_ms(),
+        created_at: state.timestamp,
         reason: request.reason,
         summary,
-        first_kept_seq: plan.first_kept_seq,
         tokens_before: plan.tokens_before,
         tokens_after,
         messages_before: plan.messages_before,
         messages_after,
-        split_turn,
+        messages: new_context.clone(),
+        engine_messages: new_engine_context,
+        state: Box::new(state),
         details,
     };
 
@@ -255,13 +271,28 @@ pub async fn compact_session_with_status(
             used_fallback: false,
         });
     }
-    session.write_items(vec![item.clone()]).await?;
-    session.replace_transcript(new_context).await;
+    session
+        .write_compact(item.clone(), new_context, expected_seq)
+        .await?;
     Ok(CompactSessionOutcome {
         status: CompactSessionStatus::Compacted,
         item: Some(item),
         used_fallback,
     })
+}
+
+fn is_exact_user_text(message: &evot_engine::AgentMessage, expected: &str) -> bool {
+    exact_user_text(message).is_some_and(|text| text == expected)
+}
+
+fn exact_user_text(message: &evot_engine::AgentMessage) -> Option<String> {
+    let evot_engine::AgentMessage::Llm(evot_engine::Message::User { content, .. }) = message else {
+        return None;
+    };
+    match content.as_slice() {
+        [evot_engine::Content::Text { text }] => Some(text.clone()),
+        _ => None,
+    }
 }
 
 async fn summarize_with_llm(
@@ -366,20 +397,6 @@ fn format_entry_for_summary(entry: &evot_engine::CompactEntry) -> String {
             format!("Tool result {tool_name}: {}", content_text(content))
         }
     }
-}
-
-fn build_new_context_items(
-    context_entries: &[(u64, TranscriptItem)],
-    first_kept_seq: u64,
-    summary: &str,
-) -> Vec<TranscriptItem> {
-    let mut items = vec![compact_summary_item(summary)];
-    for (seq, item) in context_entries {
-        if *seq >= first_kept_seq && item.is_context_item() {
-            items.push(item.clone());
-        }
-    }
-    items
 }
 
 fn build_summary(

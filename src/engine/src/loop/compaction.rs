@@ -220,6 +220,7 @@ fn emit_compaction_events(
             reason,
             stats: stats.clone(),
             messages: messages.to_vec(),
+            state: ctrl.state().clone(),
             summary: stats.summary.clone(),
             context_window: ctrl.config().context_window,
             will_retry,

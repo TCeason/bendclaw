@@ -119,7 +119,9 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
       }
 
       case 'tool':
-        blocks.push(buildToolBlock(ol.text, initialContext.columns))
+        blocks.push(ol.toolCodePreview
+          ? buildToolCodePreviewBlock(ol.text, initialContext.columns)
+          : buildToolBlock(ol.text, initialContext.columns))
         break
 
       case 'tool_result':
@@ -171,6 +173,10 @@ export function buildOutputBlocks(lines: OutputLine[], context: OutputContext | 
   }
 
   return blocks
+}
+
+function buildToolCodePreviewBlock(text: string, columns?: number): ViewBlock {
+  return block(wrapToolLines(text, columns).map(part => line(plain(part))))
 }
 
 function buildToolBlock(text: string, columns?: number): ViewBlock {

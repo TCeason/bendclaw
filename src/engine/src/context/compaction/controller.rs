@@ -16,6 +16,10 @@ pub struct CompactionController {
     config: CompactionConfig,
     overflow_recovery_attempted: bool,
     last_compaction_ts: Option<u64>,
+    /// Cross-compaction state (previous summary, cumulative file ops).
+    /// Seeded from the session's last compaction on resume so follow-up
+    /// compactions update the existing summary instead of restarting.
+    state: CompactionState,
 }
 
 impl CompactionController {
@@ -24,7 +28,19 @@ impl CompactionController {
             config,
             overflow_recovery_attempted: false,
             last_compaction_ts: None,
+            state: CompactionState::default(),
         }
+    }
+
+    /// Seed cross-compaction state (e.g. restored from a persisted session).
+    pub fn with_state(mut self, state: CompactionState) -> Self {
+        self.state = state;
+        self
+    }
+
+    /// Current cross-compaction state (for persistence by the caller).
+    pub fn state(&self) -> &CompactionState {
+        &self.state
     }
 
     /// Update config (e.g., when model changes and context_window differs).
@@ -157,29 +173,65 @@ impl CompactionController {
         summarizer_ctx: Option<&SummarizerContext>,
         cancel: CancellationToken,
     ) -> Option<CompactionStats> {
-        let plan = planner::plan(messages, &self.config)?;
+        // A resumed context already contains the previous summary as a user
+        // message. Remove only the exact message recorded in state so the
+        // summarizer receives it once via `previous_summary`, not again as
+        // ordinary conversation text.
+        let removed_summary = self
+            .state
+            .context_summary_message
+            .as_deref()
+            .and_then(|summary| {
+                messages
+                    .iter()
+                    .position(|message| is_exact_user_text(message, summary))
+            })
+            .map(|index| (index, messages.remove(index)));
+
+        let Some(plan) = planner::plan(messages, &self.config) else {
+            restore_removed_summary(messages, removed_summary);
+            return None;
+        };
 
         // For overflow, summarizer_ctx is None which triggers emergency summary.
         let outcome = executor::execute(
             std::mem::take(messages),
             &plan,
             &self.config,
-            None,
+            Some(&self.state),
             summarizer_ctx,
             cancel,
         )
         .await;
 
-        // If stats are default (all zeros), LLM failed — compaction didn't happen
+        // If stats are default (all zeros), LLM failed — compaction didn't happen.
         if outcome.stats.before_message_count == 0 {
             *messages = outcome.messages;
+            restore_removed_summary(messages, removed_summary);
             return None;
         }
 
         *messages = outcome.messages;
+        self.state = outcome.state;
         self.last_compaction_ts = Some(now_ms());
 
         Some(outcome.stats)
+    }
+}
+
+fn is_exact_user_text(message: &AgentMessage, expected: &str) -> bool {
+    let AgentMessage::Llm(crate::types::Message::User { content, .. }) = message else {
+        return false;
+    };
+    matches!(content.as_slice(), [crate::types::Content::Text { text }] if text == expected)
+}
+
+fn restore_removed_summary(
+    messages: &mut Vec<AgentMessage>,
+    removed: Option<(usize, AgentMessage)>,
+) {
+    if let Some((index, message)) = removed {
+        messages.insert(index.min(messages.len()), message);
     }
 }
 
