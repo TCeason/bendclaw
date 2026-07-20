@@ -132,35 +132,16 @@ EVOT_LLM_ANTHROPIC_MODEL=claude-opus-4-6
 # EVOT_LLM_XIAOMI_MODEL=mimo-v2.5-pro
 ```
 
-> Use `--model provider:model` for one-off overrides.
-
 **2. Run**
 
 ```bash
-evot                                          # interactive REPL
-evot -p "summarize today's PRs"               # one-shot task
-evot -p "review this" -f ./src/main.rs        # attach file context
-evot -p "continue work" -c                    # continue latest session in cwd
-evot -p "continue work" -r my-session         # resume or create session
+evot                 # interactive TUI
+evot -c              # continue latest session in cwd
 ```
 
-> In the REPL: `/help` lists commands, Shift+Tab cycles the reasoning effort.
-
-<details>
-<summary><b>CLI flags & options</b></summary>
-
-| Flag | Description |
-|------|-------------|
-| `-p, --prompt` | Run a single prompt and exit |
-| `-f, --file <path>` | Attach file/directory context (repeatable) |
-| `-c, --continue` | Continue the latest session in the current directory |
-| `-r, --resume <id>` | Resume or create a session |
-| `--model <model>` | Override the configured model |
-| `--env-file <path>` | Path to a custom `evot.env` |
-| `--skills <dir>` | Add a skills directory (repeatable) |
-| `--verbose` | Enable info-level logging |
-
-</details>
+> In the TUI: `/help` lists commands, Shift+Tab cycles the reasoning effort.
+>
+> One-shot: `evot -p "..."` · resume by id: `evot -r <id>` · model override: `--model provider:model`
 
 ## Development
 
