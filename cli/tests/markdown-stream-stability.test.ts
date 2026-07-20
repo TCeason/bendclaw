@@ -43,33 +43,37 @@ describe('streaming markdown footer stability', () => {
     expect(sawParserShrink).toBe(true)
   })
 
-  test('defers a trailing streaming table until its geometry is final', () => {
+  test('renders and reflows a trailing table during streaming like pi', () => {
     const restore = withColumns(184)
     try {
-      const table = [
+      const prefix = [
         'Benchmark results:',
         '',
         '| Query | db0 (ms) | DuckDB (ms) | DuckDB/db0 |',
         '|---|---:|---:|---:|',
         '| Q01 | 90.55 | 106.07 | 1.171× |',
+      ].join('\n')
+      const grown = [
+        prefix,
         '| Q15 | 25.88 | 121.15 | 4.682× |',
         '| Q23 | 8,600.92 | 11,359.96 | 1.321× |',
         '| **Total** | **27,269.08** | **44,034.29** | **1.615×** |',
       ].join('\n')
 
-      const streaming = stripAnsi(renderMarkdown(table, { streaming: true }))
-      expect(streaming).toContain('Benchmark results:')
-      expect(streaming).toContain('…')
-      expect(streaming).not.toContain('┌')
-      expect(streaming).not.toContain('Q15')
+      const first = stripAnsi(renderMarkdown(prefix, { streaming: true }))
+      expect(first).toContain('Benchmark results:')
+      expect(first).toContain('┌')
+      expect(first).toContain('Q01')
+      expect(first).not.toContain('Q15')
 
-      const terminated = stripAnsi(renderMarkdown(`${table}\n\n`, { streaming: true }))
-      expect(terminated).toContain('┌')
-      expect(terminated).toContain('Q15')
-      expect(terminated).toContain('27,269.08')
+      const streaming = stripAnsi(renderMarkdown(grown, { streaming: true }))
+      expect(streaming).toContain('┌')
+      expect(streaming).toContain('Q15')
+      expect(streaming).toContain('27,269.08')
+      expect(streaming).not.toContain('…')
 
-      const final = stripAnsi(renderMarkdown(table))
-      expect(final).toBe(terminated.trimEnd())
+      const final = stripAnsi(renderMarkdown(grown))
+      expect(streaming).toBe(final)
     } finally {
       restore()
     }

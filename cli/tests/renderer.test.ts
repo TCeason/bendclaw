@@ -2,6 +2,8 @@ import { describe, test, expect, beforeEach } from 'bun:test'
 import { Writable } from 'node:stream'
 import stripAnsi from 'strip-ansi'
 import { TermRenderer, CURSOR_MARKER } from '../src/term/renderer.js'
+import { renderMarkdown } from '../src/render/markdown.js'
+import { withColumns } from './helpers/stdout-columns.js'
 
 // Mock stdout that captures writes
 class MockStdout extends Writable {
@@ -120,6 +122,41 @@ describe('TermRenderer', () => {
       expect(out).not.toContain('line1')
       expect(out).not.toContain('line2')
       renderer.destroy()
+    })
+
+    test('streaming table reflows visible rows through differential updates', async () => {
+      const restore = withColumns(80)
+      const { renderer, stdout } = createRenderer()
+      stdout.rows = 16
+      stdout.columns = 80
+      renderer.init()
+      let markdown = [
+        '| Name | Value |',
+        '| --- | --- |',
+        '| first | short |',
+      ].join('\n')
+      renderer.setRenderCallback(() => [
+        ...stripAnsi(renderMarkdown(markdown, { streaming: true })).split('\n'),
+        'prompt',
+      ])
+
+      try {
+        await renderFrame(renderer)
+        stdout.clear()
+        markdown += '\n| second | a much wider value that changes the live column geometry |'
+        await renderFrame(renderer)
+
+        const out = stdout.output
+        expect(out).not.toContain('\x1b[2J\x1b[H')
+        // The wider cell changes existing column geometry, so the header and
+        // prior rows are repainted together with the newly arrived row.
+        expect(out).toContain('Name')
+        expect(out).toContain('second')
+        expect(out).toContain('prompt')
+      } finally {
+        renderer.destroy()
+        restore()
+      }
     })
 
     test('changed middle line only redraws that line', async () => {

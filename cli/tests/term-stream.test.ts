@@ -361,14 +361,12 @@ describe('term stream machine', () => {
     expect(partial).toContain('x_11 = 11')
   })
 
-  test('overflow drain never tears a table mid-stream (rendered whole at end)', () => {
+  test('streaming keeps a tall table intact in the dynamic message', () => {
     // Regression: a table taller than the viewport, preceded by non-pipe lines
     // (a numbered list) that used to reset the old pipe-table guard's counter.
-    // With no last-resort split, the table has no internal blank line, so no
-    // safe commit boundary exists inside it — it stays fully pending and renders
-    // as one whole marked parse (box-drawn), never split into a committed head
-    // and an orphan tail that lost its header/separator (which showed as raw
-    // `| ... |` rows on screen).
+    // The whole assistant message remains dynamic, so each frame reparses a
+    // complete table prefix and the renderer can diff/reflow it like pi instead
+    // of committing an orphan tail without its header/separator.
     const appState = createInitialState('model', '/tmp')
     const spinner = createSpinnerState()
     let state = createStreamMachineState(appState, spinner)
@@ -378,8 +376,8 @@ describe('term stream machine', () => {
       '| 类别 | 总量 | 训练 | 覆盖 |\n|------|------|------|------|\n' +
       Array.from({ length: 10 }, (_, i) => `| item_${i} | ${i} | ${i} 步 | ok |`).join('\n')
 
-    // Feed char-by-char through the real reducer at a small viewport (termRows
-    // 10 → threshold max(8, 10-6)=8) so the overflow valve is exercised.
+    // Feed char-by-char through the real reducer at a small viewport. No delta
+    // may move part of the table into committed history while it is streaming.
     const committed: OutputLine[] = []
     for (const ch of msg) {
       const update = reduceRunEvent(state, { kind: 'assistant_delta', payload: { content_index: 0, content_type: 'text', delta: ch } }, { termRows: 10 })

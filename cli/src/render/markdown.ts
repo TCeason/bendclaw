@@ -39,7 +39,6 @@ export function renderMarkdown(text: string, options: MarkdownRenderOptions = {}
     const tokens = lexMarkdownTokens(lexText, text)
     return formatTokens(tokens, {
       blockSpacing: options.blockSpacing,
-      deferTrailingTable: options.streaming && !text.endsWith('\n\n'),
     })
   } catch {
     return text

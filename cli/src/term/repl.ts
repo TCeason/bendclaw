@@ -447,9 +447,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function buildPartialAssistantBlocks(): ViewBlock[] {
     const content = streamMachine?.appState.currentAssistantContent ?? EMPTY_ASSISTANT_CONTENT
-    // Only provider deltas are provisional. After assistant_completed the
-    // message may remain live while tools execute, but its Markdown geometry
-    // is final and trailing tables must become visible immediately.
+    // Only provider deltas are provisional. The entire partial message stays in
+    // the dynamic zone and is reparsed on every content delta, matching pi: a
+    // growing table can update its rows and column geometry through line diffs.
     const streaming = spinnerState.streaming
     const columns = renderer.termCols
     if (
