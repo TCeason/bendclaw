@@ -113,11 +113,11 @@ EVOT_LLM_ANTHROPIC_BASE_URL=your-anthropic-base-url
 EVOT_LLM_ANTHROPIC_MODEL=claude-opus-4-6
 # Multiple models: EVOT_LLM_ANTHROPIC_MODEL=claude-sonnet-4-6,claude-opus-4-6
 
-# Or OpenAI Responses (must be selected explicitly)
+# Or OpenAI Chat Completions
 # EVOT_LLM_OPENAI_API_KEY=sk-...
-# EVOT_LLM_OPENAI_BASE_URL=https://api.openai.com/v1
+# EVOT_LLM_OPENAI_BASE_URL=your-openai-compatible-base-url
 # EVOT_LLM_OPENAI_MODEL=gpt-5.5
-# EVOT_LLM_OPENAI_PROTOCOL=openai_responses
+# EVOT_LLM_OPENAI_PROTOCOL=openai
 
 # Or DeepSeek (Anthropic-compatible)
 # EVOT_LLM_DEEPSEEK_API_KEY=sk-...
@@ -125,11 +125,11 @@ EVOT_LLM_ANTHROPIC_MODEL=claude-opus-4-6
 # EVOT_LLM_DEEPSEEK_PROTOCOL=anthropic
 # EVOT_LLM_DEEPSEEK_MODEL=deepseek-v4-pro
 
-# Or Xiaomi MiMo-V2.5-Pro (Anthropic-compatible)
-# EVOT_LLM_XIAOMI_API_KEY=tp-...
-# EVOT_LLM_XIAOMI_BASE_URL=https://token-plan-cn.xiaomimimo.com/anthropic
-# EVOT_LLM_XIAOMI_PROTOCOL=anthropic
-# EVOT_LLM_XIAOMI_MODEL=mimo-v2.5-pro
+# Or Kimi Coding (Anthropic-compatible)
+# EVOT_LLM_KIMI_API_KEY=sk-...
+# EVOT_LLM_KIMI_BASE_URL=https://api.kimi.com/coding
+# EVOT_LLM_KIMI_PROTOCOL=anthropic
+# EVOT_LLM_KIMI_MODEL=kimi-for-coding
 ```
 
 **2. Run**
