@@ -110,13 +110,13 @@ Create `~/.evotai/evot.env`:
 # Anthropic (default)
 EVOT_LLM_ANTHROPIC_API_KEY=sk-ant-...
 EVOT_LLM_ANTHROPIC_BASE_URL=your-anthropic-base-url
-EVOT_LLM_ANTHROPIC_MODEL=claude-opus-4-6
-# Multiple models: EVOT_LLM_ANTHROPIC_MODEL=claude-sonnet-4-6,claude-opus-4-6
+EVOT_LLM_ANTHROPIC_MODEL=claude-opus-4.8
+# Multiple models: EVOT_LLM_ANTHROPIC_MODEL=claude-sonnet-5.0,claude-opus-4.8,claude-fable-5
 
 # Or OpenAI Chat Completions
 # EVOT_LLM_OPENAI_API_KEY=sk-...
 # EVOT_LLM_OPENAI_BASE_URL=your-openai-compatible-base-url
-# EVOT_LLM_OPENAI_MODEL=gpt-5.5
+# EVOT_LLM_OPENAI_MODEL=gpt-5.6-sol
 # EVOT_LLM_OPENAI_PROTOCOL=openai
 
 # Or DeepSeek (Anthropic-compatible)
