@@ -175,15 +175,35 @@ function buildHelpBlocks(columns: number): ViewBlock[] {
 
 function highlightSpans(text: string, query: string, base: Partial<StyledSpan>): StyledSpan[] {
   if (!query) return [{ text, ...base }]
+  const tokens = query.toLowerCase().trim().split(/\s+/).filter(Boolean)
+  if (tokens.length === 0) return [{ text, ...base }]
+
+  // Mark every occurrence of every keyword so multi-token filters light up all
+  // matched fragments, not only the first contiguous phrase.
   const lower = text.toLowerCase()
-  const lowerQuery = query.toLowerCase()
-  const idx = lower.indexOf(lowerQuery)
-  if (idx === -1) return [{ text, ...base }]
+  const marks = new Array<boolean>(text.length).fill(false)
+  for (const token of tokens) {
+    if (!token) continue
+    let from = 0
+    while (from < lower.length) {
+      const idx = lower.indexOf(token, from)
+      if (idx === -1) break
+      for (let i = idx; i < idx + token.length; i++) marks[i] = true
+      from = idx + token.length
+    }
+  }
+
   const spans: StyledSpan[] = []
-  if (idx > 0) spans.push({ text: text.slice(0, idx), ...base })
-  spans.push({ text: text.slice(idx, idx + lowerQuery.length), fg: 'yellow', bold: true })
-  if (idx + lowerQuery.length < text.length) spans.push({ text: text.slice(idx + lowerQuery.length), ...base })
-  return spans
+  let index = 0
+  while (index < text.length) {
+    const marked = marks[index] === true
+    let end = index + 1
+    while (end < text.length && (marks[end] === true) === marked) end++
+    const slice = text.slice(index, end)
+    spans.push(marked ? { text: slice, fg: 'yellow', bold: true } : { text: slice, ...base })
+    index = end
+  }
+  return spans.length > 0 ? spans : [{ text, ...base }]
 }
 
 function buildSelectorBlocks(state: SelectorState, _columns: number): ViewBlock[] {

@@ -434,6 +434,50 @@ describe('searchText field', () => {
     expect(state.items.map(i => i.label)).toEqual(['abc12345'])
   })
 
+  test('multi-keyword filter requires every whitespace-separated token', () => {
+    const testItems = [
+      {
+        label: 'aaa11111',
+        detail: 'Payment retry',
+        searchText: 'aaa11111 Payment retry timeout on checkout /work/shop rust',
+      },
+      {
+        label: 'bbb22222',
+        detail: 'Payment success',
+        searchText: 'bbb22222 Payment success path /work/shop rust',
+      },
+      {
+        label: 'ccc33333',
+        detail: 'Auth timeout',
+        searchText: 'ccc33333 Auth timeout login flow /work/auth golang',
+      },
+    ]
+    let state = createSelectorState('Resume session', testItems)
+    for (const char of 'payment timeout') state = selectorType(state, char)
+
+    expect(state.query).toBe('payment timeout')
+    expect(state.items.map(i => i.label)).toEqual(['aaa11111'])
+  })
+
+  test('multi-keyword filter is order-independent', () => {
+    const testItems = [
+      {
+        label: 'aaa11111',
+        detail: 'Payment retry',
+        searchText: 'aaa11111 Payment retry timeout on checkout',
+      },
+      {
+        label: 'bbb22222',
+        detail: 'Unrelated',
+        searchText: 'bbb22222 something else entirely',
+      },
+    ]
+    let state = createSelectorState('Resume session', testItems)
+    for (const char of 'timeout payment') state = selectorType(state, char)
+
+    expect(state.items.map(i => i.label)).toEqual(['aaa11111'])
+  })
+
   test('falls back to label+detail when no searchText', () => {
     const mixed = [
       { label: 'with-search', detail: 'visible', searchText: 'hidden keyword' },

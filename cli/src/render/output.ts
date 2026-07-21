@@ -46,6 +46,23 @@ function toolPrimaryArg(
     const command = previewCommand ?? (args?.command as string) ?? ''
     return formatBashCommandDisplay(command, expanded).headline
   }
+  if (n === 'skill') {
+    // Prefer live args + structured details/path; fall back to the engine's
+    // `loading skill: name (path)` preview so name+path stay visible for both
+    // in-progress and completed cards.
+    const fromArgs = typeof args?.skill_name === 'string'
+      ? args.skill_name.replace(/^\//, '').trim()
+      : ''
+    const fromDetails = typeof args?.skill === 'string' ? args.skill.trim() : ''
+    const skillName = fromArgs || fromDetails
+    const path = typeof args?.path === 'string' && args.path.trim()
+      ? args.path.trim()
+      : skillPathFromPreview(previewCommand)
+    if (skillName && path) return `${skillName}  ${path}`
+    if (skillName) return skillName
+    if (path) return path
+    return skillNameFromPreview(previewCommand)
+  }
   const path = (args?.path ?? args?.file ?? args?.file_path) as string | undefined
   if (path) return path
   const pattern = (args?.pattern ?? args?.query ?? args?.url) as string | undefined
@@ -53,6 +70,19 @@ function toolPrimaryArg(
   // so the tail is never lost. Newlines collapse to a single logical line.
   if (pattern) return String(pattern).replace(/\r?\n/g, ' ').trim()
   return ''
+}
+
+/** Parse `loading skill: name (path)` / `loading skill: name` from the engine. */
+function skillNameFromPreview(previewCommand?: string): string {
+  if (!previewCommand) return ''
+  const match = /^loading skill:\s*(.+?)(?:\s+\(.+\))?\s*$/.exec(previewCommand)
+  return match?.[1]?.trim() ?? ''
+}
+
+function skillPathFromPreview(previewCommand?: string): string {
+  if (!previewCommand) return ''
+  const match = /^loading skill:\s*.+?\s+\((.+)\)\s*$/.exec(previewCommand)
+  return match?.[1]?.trim() ?? ''
 }
 
 /** Tool call line text: `<glyph> <name>  <primary-arg>`. The viewmodel paints
@@ -413,7 +443,19 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
 
   const details = asDetails(call.details)
   const diff = typeof details.diff === 'string' ? details.diff : undefined
-  const args = diff ? { ...call.args, diff } : call.args
+  // Skill cards need name + install path on the headline. Path arrives via
+  // tool-result details (or the engine preview); fold them into args so
+  // toolPrimaryArg can render both without a separate channel.
+  const skillName = typeof details.skill === 'string' ? details.skill : undefined
+  const skillPath = typeof details.path === 'string' ? details.path : undefined
+  const args = (diff || skillName || skillPath)
+    ? {
+        ...call.args,
+        ...(diff ? { diff } : {}),
+        ...(skillName ? { skill: skillName } : {}),
+        ...(skillPath ? { path: skillPath } : {}),
+      }
+    : call.args
   const lines = buildToolCall(call.name, args, call.previewCommand, expanded)
 
   if (call.status === 'queued') {

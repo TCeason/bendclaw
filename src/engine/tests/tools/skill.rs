@@ -136,6 +136,8 @@ async fn execute_returns_instructions() {
     assert!(text.contains("# Weather"));
     assert!(text.contains("Do stuff."));
     assert_eq!(result.retention, Retention::CurrentRun);
+    assert_eq!(result.details["skill"], "weather");
+    assert_eq!(result.details["path"], "/test/skills/weather");
 }
 
 #[tokio::test]

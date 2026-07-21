@@ -186,6 +186,15 @@ impl AgentTool for SkillTool {
             )
         };
 
+        let details = if skill.base_dir.as_os_str().is_empty() {
+            serde_json::json!({ "skill": name })
+        } else {
+            serde_json::json!({
+                "skill": name,
+                "path": skill.base_dir.display().to_string(),
+            })
+        };
+
         Ok(ToolResult {
             content: vec![Content::Text {
                 text: format!(
@@ -196,7 +205,7 @@ impl AgentTool for SkillTool {
                     instructions = skill.instructions,
                 ),
             }],
-            details: serde_json::json!({ "skill": name }),
+            details,
             retention: Retention::CurrentRun,
         })
     }

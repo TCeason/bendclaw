@@ -146,5 +146,11 @@ function inferPreviewCommand(name: string, args: Record<string, unknown>): strin
     const count = edits?.length ?? 1
     return path ? `edit ${path} (${count} replacement(s))` : undefined
   }
+  if (n === 'skill') {
+    const raw = args.skill_name as string | undefined
+    if (!raw) return undefined
+    const skillName = raw.replace(/^\//, '').trim()
+    return skillName ? `loading skill: ${skillName}` : undefined
+  }
   return undefined
 }

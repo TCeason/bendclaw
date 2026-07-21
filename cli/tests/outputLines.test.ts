@@ -345,6 +345,38 @@ describe('buildToolResult', () => {
     expect(lines.slice(2).map(line => line.text).join('\n')).toContain('+new')
   })
 
+  test('skill card shows skill name and install path on the headline', () => {
+    const running = buildToolCard({
+      id: 'skill-running',
+      name: 'skill',
+      args: { skill_name: 'review' },
+      status: 'running',
+      previewCommand: 'loading skill: review (/Users/bohu/.evotai/skills/review)',
+    })
+    expect(running[0]!.text).toBe('· skill  review  /Users/bohu/.evotai/skills/review')
+
+    const done = buildToolCard({
+      id: 'skill-done',
+      name: 'skill',
+      args: { skill_name: 'review' },
+      status: 'done',
+      result: 'Activated skill: review\n\n---\ninstructions',
+      durationMs: 0,
+      details: { skill: 'review', path: '/Users/bohu/.evotai/skills/review' },
+    })
+    expect(done[0]!.text).toBe('· skill  review  /Users/bohu/.evotai/skills/review')
+
+    const nameOnly = buildToolCard({
+      id: 'skill-builtin',
+      name: 'skill',
+      args: { skill_name: '/weather' },
+      status: 'done',
+      result: 'Activated skill: weather',
+      details: { skill: 'weather' },
+    })
+    expect(nameOnly[0]!.text).toBe('· skill  weather')
+  })
+
   test('collapsed multiline result shows only the expand hint, no content preview', () => {
     const result = JSON.stringify({ a: 1, b: 2, c: 3, d: 4, e: 5, f: 6 }, null, 2)
     const lines = buildToolResult('edit', {}, 'done', result)

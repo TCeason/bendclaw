@@ -169,13 +169,48 @@ function isSubsequence(text: string, query: string): boolean {
   return j === query.length
 }
 
+/** Split a free-text filter into whitespace-separated keywords. */
+function queryTokens(query: string): string[] {
+  return query.toLowerCase().trim().split(/\s+/).filter(Boolean)
+}
+
+/** True when every token is a substring of `text` (already lowercased). */
+function matchesAllTokens(text: string, tokens: string[]): boolean {
+  if (tokens.length === 0) return true
+  return tokens.every(token => text.includes(token))
+}
+
 function extractContext(source: string, query: string, width: number): string | null {
   const lower = source.toLowerCase()
-  const idx = lower.indexOf(query.toLowerCase())
+  const tokens = queryTokens(query)
+  if (tokens.length === 0) return null
+
+  // Prefer a snippet around the first multi-token hit; fall back to the first
+  // individual token so multi-keyword filters still surface useful context.
+  let idx = -1
+  let matchLen = 0
+  if (tokens.length === 1) {
+    idx = lower.indexOf(tokens[0]!)
+    matchLen = tokens[0]!.length
+  } else {
+    const joined = tokens.join(' ')
+    idx = lower.indexOf(joined)
+    matchLen = joined.length
+    if (idx === -1) {
+      for (const token of tokens) {
+        const tokenIdx = lower.indexOf(token)
+        if (tokenIdx !== -1) {
+          idx = tokenIdx
+          matchLen = token.length
+          break
+        }
+      }
+    }
+  }
   if (idx === -1) return null
-  const half = Math.floor((width - query.length) / 2)
+  const half = Math.floor((width - matchLen) / 2)
   const start = Math.max(0, idx - half)
-  const end = Math.min(source.length, idx + query.length + half)
+  const end = Math.min(source.length, idx + matchLen + half)
   let snippet = source.slice(start, end).replace(/\n/g, ' ')
   if (start > 0) snippet = '…' + snippet
   if (end < source.length) snippet = snippet + '…'
@@ -264,15 +299,18 @@ function applyFilter(state: SelectorState, query: string): SelectorState {
     return { ...state, query, items: filtered, focusIndex, scrollOffset: ensureVisible(0, focusIndex, filtered.length) }
   }
 
-  const lower = query.toLowerCase()
+  // Whitespace-separated keywords are AND-matched as independent substrings.
+  // A single token still supports fuzzy subsequence matching for short labels
+  // (e.g. model pickers without searchText).
+  const tokens = queryTokens(query)
   const exact: SelectorItem[] = []
   const fuzzy: SelectorItem[] = []
   for (const item of state.allItems) {
     if (item.header) continue
     const text = searchableText(item)
-    if (text.includes(lower)) {
+    if (matchesAllTokens(text, tokens)) {
       exact.push(withContext(item, query))
-    } else if (!item.searchText && isSubsequence(text, lower)) {
+    } else if (tokens.length === 1 && !item.searchText && isSubsequence(text, tokens[0]!)) {
       fuzzy.push(item)
     }
   }
