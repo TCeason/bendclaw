@@ -472,3 +472,32 @@ describe('RendererTrace rolling storage', () => {
     }
   })
 })
+
+describe('renderer overwide line tracing', () => {
+  test('records overwideLines when a rendered line exceeds terminal width', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'evot-overwide-'))
+    try {
+      const stdout = new TraceStdout()
+      stdout.columns = 10
+      stdout.rows = 8
+      const entries: RendererTraceEntry[] = []
+      const renderer = new TermRenderer({
+        stdout: stdout as unknown as NodeJS.WriteStream,
+        trace: entry => entries.push(entry),
+      })
+      renderer.init()
+      renderer.setRenderCallback(() => ['this-line-is-definitely-wider-than-ten'])
+      renderer.requestRender()
+      await new Promise(resolve => process.nextTick(resolve))
+      await Bun.sleep(20)
+      renderer.destroy()
+      expect(entries.length).toBeGreaterThan(0)
+      const first = entries[0]!
+      expect(first.frameState.overwideLines.length).toBeGreaterThan(0)
+      expect(first.frameState.overwideLines[0]!.width).toBeGreaterThan(10)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+

@@ -10,6 +10,7 @@ import {
   snapToSegmentBoundary,
   wrapEditorText,
 } from './grapheme.js'
+import { findWordBackward, findWordForward } from './word-navigation.js'
 
 export interface CompletionCandidate {
   label: string
@@ -155,6 +156,37 @@ export function moveRight(state: EditorState): EditorState {
   const line = state.lines[state.cursorLine]!
   if (state.cursorCol < line.length) {
     return withoutGhost({ ...state, cursorCol: nextSegmentBoundary(line, state.cursorCol) })
+  }
+  if (state.cursorLine < state.lines.length - 1) {
+    return withoutGhost({ ...state, cursorLine: state.cursorLine + 1, cursorCol: 0 })
+  }
+  return state
+}
+
+/** Alt/Ctrl+Left — word-aware left, crossing line boundaries at start-of-line. */
+export function moveWordLeft(state: EditorState): EditorState {
+  const line = state.lines[state.cursorLine]!
+  const cursorCol = snapToSegmentBoundary(line, state.cursorCol)
+  if (cursorCol > 0) {
+    return withoutGhost({ ...state, cursorCol: findWordBackward(line, cursorCol) })
+  }
+  if (state.cursorLine > 0) {
+    const prevLine = state.lines[state.cursorLine - 1]!
+    return withoutGhost({
+      ...state,
+      cursorLine: state.cursorLine - 1,
+      cursorCol: prevLine.length,
+    })
+  }
+  return state
+}
+
+/** Alt/Ctrl+Right — word-aware right, crossing line boundaries at end-of-line. */
+export function moveWordRight(state: EditorState): EditorState {
+  const line = state.lines[state.cursorLine]!
+  const cursorCol = snapToSegmentBoundary(line, state.cursorCol)
+  if (cursorCol < line.length) {
+    return withoutGhost({ ...state, cursorCol: findWordForward(line, cursorCol) })
   }
   if (state.cursorLine < state.lines.length - 1) {
     return withoutGhost({ ...state, cursorLine: state.cursorLine + 1, cursorCol: 0 })
@@ -346,7 +378,7 @@ export function deleteForward(state: EditorState): EditorState {
 }
 
 // ---------------------------------------------------------------------------
-// Ctrl+W — delete word before cursor
+// Ctrl+W / Alt+Backspace — delete word before cursor
 // ---------------------------------------------------------------------------
 
 export function deleteWordBefore(state: EditorState): EditorState {
@@ -362,10 +394,36 @@ export function deleteWordBefore(state: EditorState): EditorState {
   while (segmentIndex >= 0 && !/^\s+$/u.test(segments[segmentIndex]!.text)) segmentIndex--
 
   const deleteStart = segments[segmentIndex + 1]?.start ?? cursorCol
-  if (deleteStart === cursorCol) return state
+  if (deleteStart === cursorCol) {
+    // At start of line: join with previous line (same as backspace).
+    if (state.cursorLine === 0) return state
+    return backspace(state)
+  }
   const newLines = [...state.lines]
   newLines[state.cursorLine] = line.slice(0, deleteStart) + line.slice(cursorCol)
   return withCompletionsCleared({ ...state, lines: newLines, cursorCol: deleteStart })
+}
+
+// ---------------------------------------------------------------------------
+// Alt+D — delete word after cursor
+// ---------------------------------------------------------------------------
+
+export function deleteWordForward(state: EditorState): EditorState {
+  const line = state.lines[state.cursorLine]!
+  const cursorCol = snapToSegmentBoundary(line, state.cursorCol)
+  const segments = segmentEditorText(line).filter(segment => segment.start >= cursorCol)
+  let segmentIndex = 0
+
+  // Delete leading whitespace, then the following run of non-whitespace
+  // segments. Paste/image references stay atomic.
+  while (segmentIndex < segments.length && /^\s+$/u.test(segments[segmentIndex]!.text)) segmentIndex++
+  while (segmentIndex < segments.length && !/^\s+$/u.test(segments[segmentIndex]!.text)) segmentIndex++
+
+  const deleteEnd = segmentIndex > 0 ? segments[segmentIndex - 1]!.end : cursorCol
+  if (deleteEnd === cursorCol) return deleteForward(state)
+  const newLines = [...state.lines]
+  newLines[state.cursorLine] = line.slice(0, cursorCol) + line.slice(deleteEnd)
+  return withCompletionsCleared({ ...state, lines: newLines, cursorCol })
 }
 
 // ---------------------------------------------------------------------------

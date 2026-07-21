@@ -3,6 +3,13 @@
  * Parses keypresses and emits structured events.
  */
 
+import {
+  parseOsc11BackgroundColor,
+  parseTerminalColorSchemeReport,
+  type RgbColor,
+  type TerminalColorScheme,
+} from './terminal-colors.js'
+
 export type KeyEvent =
   | { type: 'char'; char: string }
   | { type: 'shift-char'; char: string }
@@ -19,6 +26,11 @@ export type KeyEvent =
   | { type: 'down' }
   | { type: 'left' }
   | { type: 'right' }
+  | { type: 'word-left' }
+  | { type: 'word-right' }
+  | { type: 'alt-backspace' }
+  | { type: 'alt-d' }
+  | { type: 'undo' }
   | { type: 'home' }
   | { type: 'end' }
   | { type: 'page-up' }
@@ -31,6 +43,8 @@ export type KeyHandler = (event: KeyEvent) => void
 export type TerminalControlEvent =
   | { type: 'kitty-flags'; flags: number }
   | { type: 'device-attributes' }
+  | { type: 'osc11-background'; rgb: RgbColor }
+  | { type: 'color-scheme'; scheme: TerminalColorScheme }
 
 export interface EnhancedKeyboardOptions {
   negotiationTimeoutMs?: number
@@ -67,9 +81,9 @@ export function parseInput(data: Buffer): KeyEvent[] {
   while (i < str.length) {
     const ch = str[i]!
 
-    // Ctrl+letter (0x01-0x1a).
-    if (ch.charCodeAt(0) >= 1 && ch.charCodeAt(0) <= 26) {
-      const code = ch.charCodeAt(0)
+    // Ctrl+letter (0x01-0x1a) and Ctrl+_ (0x1f).
+    const code = ch.charCodeAt(0)
+    if ((code >= 1 && code <= 26) || code === 31) {
       switch (code) {
         case 3: // Ctrl+C
           events.push({ type: 'ctrl', key: 'c' })
@@ -94,6 +108,9 @@ export function parseInput(data: Buffer): KeyEvent[] {
           break
         case 23: // Ctrl+W
           events.push({ type: 'ctrl', key: 'w' })
+          break
+        case 31: // Ctrl+_ — traditional undo binding (pi uses Ctrl+-)
+          events.push({ type: 'undo' })
           break
         default:
           events.push({ type: 'ctrl', key: String.fromCharCode(code + 96) })
@@ -174,6 +191,17 @@ export function parseInput(data: Buffer): KeyEvent[] {
         continue
       }
 
+      // Alt+letter / Alt+Backspace (ESC + char). Common for word ops without
+      // Kitty: alt+b/f left/right, alt+d delete-word-forward, alt+BS delete-word-back.
+      if (i + 1 < str.length) {
+        const next = str[i + 1]!
+        const nextCode = next.charCodeAt(0)
+        if (next === 'b' || next === 'B') { events.push({ type: 'word-left' }); i += 2; continue }
+        if (next === 'f' || next === 'F') { events.push({ type: 'word-right' }); i += 2; continue }
+        if (next === 'd' || next === 'D') { events.push({ type: 'alt-d' }); i += 2; continue }
+        if (nextCode === 0x7f || nextCode === 0x08) { events.push({ type: 'alt-backspace' }); i += 2; continue }
+      }
+
       // Bare escape
       events.push({ type: 'escape' })
       i++
@@ -222,6 +250,11 @@ export function parseTerminalControlSequence(sequence: string): TerminalControlE
     return { type: 'kitty-flags', flags: Number.parseInt(kittyFlags[1]!, 10) }
   }
   if (/^\x1b\[\?[\d;]*c$/.test(sequence)) return { type: 'device-attributes' }
+
+  const rgb = parseOsc11BackgroundColor(sequence)
+  if (rgb) return { type: 'osc11-background', rgb }
+  const scheme = parseTerminalColorSchemeReport(sequence)
+  if (scheme) return { type: 'color-scheme', scheme }
   return undefined
 }
 
@@ -262,12 +295,20 @@ export function enableEnhancedKeyboard(
 
   const handleControl = (event: TerminalControlEvent) => {
     if (mode !== 'negotiating') return
-    if (event.type === 'kitty-flags' && event.flags > 0) {
-      clearTimer()
-      mode = 'kitty'
+    // Theme/DSR replies share the control channel; only keyboard negotiation
+    // responses should resolve or abandon the Kitty push.
+    if (event.type === 'kitty-flags') {
+      if (event.flags > 0) {
+        clearTimer()
+        mode = 'kitty'
+        return
+      }
+      useModifyOtherKeys()
       return
     }
-    useModifyOtherKeys()
+    if (event.type === 'device-attributes') {
+      useModifyOtherKeys()
+    }
   }
   const dispose = () => {
     if (mode === 'disposed') return
@@ -313,20 +354,41 @@ function parseModifyOtherKeys(rest: string): ParsedSequence | null {
 function parseModifiedCursor(rest: string): ParsedSequence | null {
   // Modified arrows: ESC [ 1 ; <modifier> A/B/C/D
   // Modified Home/End: ESC [ 1 ; <modifier> H/F
-  const match = rest.match(/^1;\d+(?::(\d+))?([ABCDFH])/)
-  if (!match) return null
-  const eventType = match[1] ? Number.parseInt(match[1], 10) : 1
-  if (eventType === 3) return { length: match[0].length }
-  const final = match[2]!
-  const eventByFinal: Record<string, KeyEvent> = {
-    A: { type: 'up' },
-    B: { type: 'down' },
-    C: { type: 'right' },
-    D: { type: 'left' },
-    F: { type: 'end' },
-    H: { type: 'home' },
+  // Also CSI <code> ; <modifier> ~ for Delete (3~) with modifiers.
+  const arrowMatch = rest.match(/^1;(\d+)(?::(\d+))?([ABCDFH])/)
+  if (arrowMatch) {
+    const modifier = Number.parseInt(arrowMatch[1]!, 10) - 1
+    const eventType = arrowMatch[2] ? Number.parseInt(arrowMatch[2], 10) : 1
+    if (eventType === 3) return { length: arrowMatch[0].length }
+    const final = arrowMatch[3]!
+    return { length: arrowMatch[0].length, event: modifiedArrowEvent(final, modifier) }
   }
-  return { length: match[0].length, event: eventByFinal[final] }
+
+  // Alt/Ctrl+Delete: ESC [ 3 ; <modifier> ~
+  const deleteMatch = rest.match(/^3;(\d+)(?::(\d+))?~/)
+  if (deleteMatch) {
+    const modifier = Number.parseInt(deleteMatch[1]!, 10) - 1
+    const eventType = deleteMatch[2] ? Number.parseInt(deleteMatch[2], 10) : 1
+    if (eventType === 3) return { length: deleteMatch[0].length }
+    if ((modifier & MOD_ALT) !== 0) return { length: deleteMatch[0].length, event: { type: 'alt-d' } }
+    return { length: deleteMatch[0].length, event: { type: 'delete' } }
+  }
+
+  return null
+}
+
+function modifiedArrowEvent(final: string, modifier: number): KeyEvent {
+  const normalized = modifier & ~(64 + 128)
+  const wordMod = (normalized & MOD_ALT) !== 0 || (normalized & MOD_CTRL) !== 0
+  switch (final) {
+    case 'A': return { type: 'up' }
+    case 'B': return { type: 'down' }
+    case 'C': return { type: wordMod ? 'word-right' : 'right' }
+    case 'D': return { type: wordMod ? 'word-left' : 'left' }
+    case 'F': return { type: 'end' }
+    case 'H': return { type: 'home' }
+    default: return { type: 'escape' }
+  }
 }
 
 function keyEventFromCodepoint(codepoint: number, modifier: number): KeyEvent | undefined {
@@ -341,10 +403,30 @@ function keyEventFromCodepoint(codepoint: number, modifier: number): KeyEvent | 
     if ((normalizedModifier & MOD_SHIFT) !== 0) return { type: 'shift-tab' }
     return { type: 'tab' }
   }
-  if (codepoint === 127) return { type: 'backspace' }
+  // Backspace / Delete with modifiers
+  if (codepoint === 127 || codepoint === 8) {
+    if ((normalizedModifier & MOD_ALT) !== 0) return { type: 'alt-backspace' }
+    return { type: 'backspace' }
+  }
   if (codepoint === 27) return { type: 'escape' }
+
+  // Kitty CSI-u encodes arrows as special codepoints 57348–57351 (or use modified cursor).
+  // Also handle letter keys with alt for word ops (alt+b/f/d).
+  if ((normalizedModifier & MOD_ALT) !== 0 && !(normalizedModifier & MOD_CTRL)) {
+    const ch = codepoint >= 65 && codepoint <= 90
+      ? String.fromCharCode(codepoint + 32)
+      : codepoint >= 97 && codepoint <= 122
+        ? String.fromCharCode(codepoint)
+        : undefined
+    if (ch === 'b') return { type: 'word-left' }
+    if (ch === 'f') return { type: 'word-right' }
+    if (ch === 'd') return { type: 'alt-d' }
+  }
+
   if ((normalizedModifier & MOD_CTRL) !== 0) {
     const key = modifiedKeyFromCodepoint(codepoint)
+    // Ctrl+- is undo (matches pi). Ctrl+_ (0x1f / codepoint 95) also maps to '-'.
+    if (key === '-') return { type: 'undo' }
     if (key) return { type: 'ctrl', key }
   }
   if (normalizedModifier === MOD_SHIFT && codepoint >= 0x20 && codepoint <= 0x10ffff) {

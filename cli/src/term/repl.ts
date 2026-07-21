@@ -4,8 +4,11 @@ import {
   enableEnhancedKeyboard,
   type EnhancedKeyboardSession,
   type KeyEvent,
+  type TerminalControlEvent,
 } from './input.js'
 import { TerminalInputBuffer } from './input/buffer.js'
+import { schemeFromRgbColor } from './terminal-colors.js'
+import { setDetectedThemeScheme } from '../render/theme.js'
 import { createSpinnerState, advanceSpinner, formatSpinnerLine, setSpinnerPhase, spinnerStatsFromLastUsage } from './spinner.js'
 import { createSelectorState, selectorExpandItems, selectorClearQuery, selectorFocusOn, type SelectorItem } from './selector.js'
 import { createAskState, handleAskKeyEvent, type AskQuestion } from './ask.js'
@@ -62,13 +65,17 @@ import {
   clearLineAfter,
   deleteForward,
   deleteWordBefore,
+  deleteWordForward,
   insertNewline,
   moveUp,
   moveDown,
+  moveWordLeft,
+  moveWordRight,
   editorNeedsContinuation,
   type EditorState,
   type HistoryState,
 } from './input/editor.js'
+import { UndoStack } from './input/undo-stack.js'
 import {
   createStreamMachineState,
   reduceRunEvent,
@@ -148,6 +155,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
   let spinnerState = createSpinnerState()
   let editor: EditorState = createEditorState()
+  // Undo stack lives outside EditorState so snapshots stay plain data. Cleared
+  // on submit/clear so a previous prompt cannot be restored into a new one.
+  const editorUndo = new UndoStack<EditorState>()
   let historyState: HistoryState
   let isLoading = false
   let streamRef: QueryStream | null = null
@@ -298,6 +308,24 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   function resetHistoryCache() {
     compactHistoryCache.reset()
     expandedHistoryCache.reset()
+  }
+
+  function mutateEditor(mutator: (state: EditorState) => EditorState): void {
+    const previous = editor
+    const next = mutator(previous)
+    if (next === previous) return
+    // Only snapshot content-changing mutations for undo; pure cursor moves skip.
+    if (getEditorText(next) !== getEditorText(previous)) {
+      editorUndo.push(previous)
+    }
+    editor = next
+  }
+
+  function undoEditor(): boolean {
+    const previous = editorUndo.pop()
+    if (!previous) return false
+    editor = previous
+    return true
   }
   const compactLines: OutputLine[] = []
   const expandedLines: OutputLine[] = []
@@ -979,6 +1007,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   /** Clear editor and paste state. */
   function clearAll() {
     editor = clearEditor(editor)
+    editorUndo.clear()
     pastedChunks.clear()
     pastedImages.clear()
   }
@@ -991,9 +1020,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const numLines = (cleaned.match(/\n/g) || []).length
       pastedChunks.set(id, cleaned)
       const ref = formatPastedTextRef(id, numLines)
-      editor = insertText(editor, ref)
+      mutateEditor(state => insertText(state, ref))
     } else {
-      editor = insertText(editor, cleaned)
+      mutateEditor(state => insertText(state, cleaned))
     }
   }
 
@@ -1005,7 +1034,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       // Store to disk immediately so images survive past session memory
       const filePath = await storeImage(img.base64, img.mediaType)
       pastedImages.set(id, { id, base64: img.base64, mediaType: img.mediaType, filePath: filePath ?? undefined })
-      editor = insertText(editor, formatImageRef(id))
+      mutateEditor(state => insertText(state, formatImageRef(id)))
       renderer.requestRender()
     }
   }
@@ -1613,7 +1642,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       pastedChunks.delete(deletedRef.id)
       pastedImages.delete(deletedRef.id)
     }
-    editor = deleteForward(editor)
+    mutateEditor(state => deleteForward(state))
     renderer.requestRender()
   }
 
@@ -1621,16 +1650,30 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const lineIndex = editor.cursorLine
     const cursorCol = editor.cursorCol
     const refs = parsePasteRefs(editor.lines[lineIndex]!)
-    const nextEditor = deleteWordBefore(editor)
-    if (nextEditor.cursorLine === lineIndex) {
+    mutateEditor(state => deleteWordBefore(state))
+    if (editor.cursorLine === lineIndex) {
       for (const ref of refs) {
-        if (ref.start < cursorCol && ref.end > nextEditor.cursorCol) {
+        if (ref.start < cursorCol && ref.end > editor.cursorCol) {
           pastedChunks.delete(ref.id)
           pastedImages.delete(ref.id)
         }
       }
     }
-    editor = nextEditor
+    renderer.requestRender()
+  }
+
+  function deleteWordForwardAtCursor() {
+    const lineIndex = editor.cursorLine
+    const before = editor.lines[lineIndex]!
+    const refs = parsePasteRefs(before)
+    mutateEditor(state => deleteWordForward(state))
+    const after = editor.lines[editor.cursorLine] ?? ''
+    for (const ref of refs) {
+      if (!after.includes(ref.match)) {
+        pastedChunks.delete(ref.id)
+        pastedImages.delete(ref.id)
+      }
+    }
     renderer.requestRender()
   }
 
@@ -1651,11 +1694,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (event.type === 'ctrl') {
       switch (event.key) {
         case 'u':
-          editor = clearLineBefore(editor)
+          mutateEditor(state => clearLineBefore(state))
           renderer.requestRender()
           return
         case 'k':
-          editor = clearLineAfter(editor)
+          mutateEditor(state => clearLineAfter(state))
           renderer.requestRender()
           return
         case 'd':
@@ -1686,6 +1729,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         case 'o':
           toggleExpanded()
           return
+        case '-':
+          if (undoEditor()) renderer.requestRender()
+          return
         default:
           return
       }
@@ -1697,7 +1743,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         if (!rawText) return
         // Check for continuation (unclosed fences, trailing backslash)
         if (editorNeedsContinuation(editor)) {
-          editor = insertNewline(editor)
+          mutateEditor(state => insertNewline(state))
           renderer.requestRender()
           return
         }
@@ -1744,7 +1790,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       case 'shift-enter':
       case 'alt-enter': {
-        editor = insertNewline(editor)
+        mutateEditor(state => insertNewline(state))
         renderer.requestRender()
         break
       }
@@ -1758,8 +1804,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           refreshFileCompletions(true)
           break
         }
+        const previous = editor
         const result = applyCompletion(editor)
         if (result.applied) {
+          if (getEditorText(result.state) !== getEditorText(previous)) {
+            editorUndo.push(previous)
+          }
           editor = result.state
           renderer.requestRender()
         }
@@ -1767,7 +1817,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       case 'char':
       case 'shift-char':
-        editor = refreshGhostHint(insertText(editor, event.char))
+        mutateEditor(state => refreshGhostHint(insertText(state, event.char)))
         renderer.requestRender()
         if (extractAtPrefix(editor.lines[editor.cursorLine]!.slice(0, editor.cursorCol))) {
           refreshFileCompletions(false)
@@ -1790,18 +1840,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             pastedChunks.delete(deletedRef.id)
             pastedImages.delete(deletedRef.id)
           }
-          const lines = [...editor.lines]
-          lines[editor.cursorLine] = refDel.newLine
-          editor = {
-            ...editor,
-            lines,
+          mutateEditor(state => ({
+            ...state,
+            lines: state.lines.map((line, index) =>
+              index === state.cursorLine ? refDel.newLine : line),
             cursorCol: refDel.newCursorCol,
             preferredVisualCol: undefined,
             ghostHint: '',
             completion: null,
-          }
+          }))
         } else {
-          editor = backspace(editor)
+          mutateEditor(state => backspace(state))
         }
         editor = refreshGhostHint(editor)
         renderer.requestRender()
@@ -1810,6 +1859,23 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         }
         break
       }
+      case 'word-left':
+        editor = moveWordLeft(editor)
+        renderer.requestRender()
+        break
+      case 'word-right':
+        editor = moveWordRight(editor)
+        renderer.requestRender()
+        break
+      case 'alt-backspace':
+        deleteWordAtCursor()
+        break
+      case 'alt-d':
+        deleteWordForwardAtCursor()
+        break
+      case 'undo':
+        if (undoEditor()) renderer.requestRender()
+        break
       case 'left':
         editor = moveLeft(editor)
         renderer.requestRender()
@@ -2508,10 +2574,30 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
+  function applyDetectedTheme(scheme: 'dark' | 'light'): void {
+    // Committed history is pre-painted ANSI; a scheme change must rebuild it.
+    if (!setDetectedThemeScheme(scheme)) return
+    resetHistoryCache()
+    partialBlocksMemo = null
+    renderer.requestRender(true)
+  }
+
+  function handleTerminalControl(event: TerminalControlEvent): void {
+    if (event.type === 'osc11-background') {
+      applyDetectedTheme(schemeFromRgbColor(event.rgb))
+      return
+    }
+    if (event.type === 'color-scheme') {
+      applyDetectedTheme(event.scheme)
+      return
+    }
+    enhancedKeyboard?.handleControl(event)
+  }
+
   disableRaw = enableRawMode(process.stdin)
   const terminalInput = new TerminalInputBuffer({
     onEmptyPaste: tryPasteImage,
-    onControl: event => enhancedKeyboard?.handleControl(event),
+    onControl: handleTerminalControl,
   })
   inputBuffer = terminalInput
   const dispatchInputEvents = (events: KeyEvent[]) => {
@@ -2536,6 +2622,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   onInputData = inputHandler
   process.stdin.on('data', inputHandler)
   enhancedKeyboard = enableEnhancedKeyboard(process.stdout)
+  // Query terminal theme (OSC 11 + color-scheme DSR) and subscribe to mode 2031
+  // palette-change notifications. Unsupported terminals simply never reply.
+  process.stdout.write('\x1b]11;?\x07\x1b[?996n\x1b[?2031h')
 
   process.stdout.write('\x1b[?2004h')
   renderer.requestRender()
@@ -2562,6 +2651,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     inputBuffer?.discard()
     inputBuffer = null
     process.stdout.write('\x1b[?2004l')
+    process.stdout.write('\x1b[?2031l')
     enhancedKeyboard?.dispose()
     enhancedKeyboard = null
     setTerminalTitle()

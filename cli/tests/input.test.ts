@@ -203,4 +203,31 @@ describe('parseInput', () => {
       ])
     })
   })
+
+  describe('word / undo key sequences', () => {
+    test('legacy alt/ctrl arrows become word moves', () => {
+      expect(parse('\x1b[1;3D')).toEqual([{ type: 'word-left' }])
+      expect(parse('\x1b[1;5C')).toEqual([{ type: 'word-right' }])
+      expect(parse('\x1b[1;3C')).toEqual([{ type: 'word-right' }])
+    })
+
+    test('ESC+letter word ops', () => {
+      expect(parse('\x1bb')).toEqual([{ type: 'word-left' }])
+      expect(parse('\x1bf')).toEqual([{ type: 'word-right' }])
+      expect(parse('\x1bd')).toEqual([{ type: 'alt-d' }])
+      expect(parse('\x1b\x7f')).toEqual([{ type: 'alt-backspace' }])
+    })
+
+    test('Kitty CSI-u alt letter and ctrl+- undo', () => {
+      expect(parse('\x1b[98;3u')).toEqual([{ type: 'word-left' }]) // alt+b
+      expect(parse('\x1b[102;3u')).toEqual([{ type: 'word-right' }]) // alt+f
+      expect(parse('\x1b[100;3u')).toEqual([{ type: 'alt-d' }]) // alt+d
+      expect(parse('\x1b[45;5u')).toEqual([{ type: 'undo' }]) // ctrl+-
+      expect(parse('\x1f')).toEqual([{ type: 'undo' }]) // ctrl+_
+    })
+
+    test('Alt+Delete becomes alt-d', () => {
+      expect(parse('\x1b[3;3~')).toEqual([{ type: 'alt-d' }])
+    })
+  })
 })

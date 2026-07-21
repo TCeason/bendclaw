@@ -79,4 +79,26 @@ describe('enhanced keyboard negotiation', () => {
     await Bun.sleep(5)
     expect(stdout.writes).toEqual([QUERY, DISABLE_KITTY])
   })
+
+  test('parses OSC 11 and color-scheme control sequences', () => {
+    expect(parseTerminalControlSequence('\x1b]11;rgb:0000/0000/0000\x07')).toEqual({
+      type: 'osc11-background',
+      rgb: { r: 0, g: 0, b: 0 },
+    })
+    expect(parseTerminalControlSequence('\x1b[?997;2n')).toEqual({
+      type: 'color-scheme',
+      scheme: 'light',
+    })
+  })
+
+  test('theme control events do not abandon Kitty negotiation', () => {
+    const stdout = new CapturingStdout()
+    const session = enableEnhancedKeyboard(stdout as unknown as NodeJS.WriteStream, { negotiationTimeoutMs: 1000 })
+    session.handleControl({ type: 'osc11-background', rgb: { r: 0, g: 0, b: 0 } })
+    session.handleControl({ type: 'color-scheme', scheme: 'dark' })
+    expect(stdout.writes).toEqual([QUERY])
+    session.handleControl({ type: 'kitty-flags', flags: 1 })
+    session.dispose()
+    expect(stdout.writes).toEqual([QUERY, DISABLE_KITTY])
+  })
 })

@@ -67,7 +67,7 @@ function graphemeWidth(segment: string): number {
 }
 
 /** Visible width of a string in terminal columns (ANSI/OSC/APC stripped). */
-function visibleWidth(str: string): number {
+export function visibleWidth(str: string): number {
   if (str.length === 0) return 0
   if (isPrintableAscii(str)) return str.length
 

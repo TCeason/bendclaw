@@ -13,7 +13,7 @@
 import { performance } from 'node:perf_hooks'
 import stringWidth from 'string-width'
 import stripAnsi from 'strip-ansi'
-import { normalizeTerminalOutput, wrapTextWithAnsi } from '../render/wrap.js'
+import { normalizeTerminalOutput, wrapTextWithAnsi, visibleWidth } from '../render/wrap.js'
 
 // --- Constants ---
 
@@ -74,6 +74,7 @@ export interface RendererTraceEntry {
     targetViewportTop: number
     maxVisibleWidth: number
     osc133Markers: number
+    overwideLines: Array<{ row: number; width: number }>
   }
   viewportTail?: string[]
   viewportPatch?: { start: number; lines: string[] }
@@ -246,6 +247,19 @@ export class TermRenderer {
     const cursorPos = this.extractCursorPosition(newLines, height)
     newLines = this.applyLineResets(newLines)
 
+    // Soft overwide-line guard: DECAWM is off, so overflows are silent. When
+    // tracing or EVOT_DEBUG=1, surface them so layout bugs are not invisible.
+    if (this.trace || process.env.EVOT_DEBUG === '1') {
+      for (let row = 0; row < newLines.length; row++) {
+        const lineWidth = visibleWidth(newLines[row]!)
+        if (lineWidth > width && process.env.EVOT_DEBUG === '1') {
+          process.stderr.write(
+            `[evot] overwide render line row=${row} width=${lineWidth} > terminal=${width}\n`,
+          )
+        }
+      }
+    }
+
     const traceFrame = (
       branch: string,
       firstChanged: number | null = null,
@@ -262,6 +276,11 @@ export class TermRenderer {
         (count, line) => count + (line.match(OSC133_MARKER)?.length ?? 0),
         0,
       )
+      const overwideLines: Array<{ row: number; width: number }> = []
+      for (let row = 0; row < newLines.length; row++) {
+        const lineWidth = visibleWidth(newLines[row]!)
+        if (lineWidth > width) overwideLines.push({ row, width: lineWidth })
+      }
       const differential = branch === 'differential_update'
         || branch === 'deleted_lines_diff'
         || branch === 'no_change'
@@ -298,6 +317,7 @@ export class TermRenderer {
           targetViewportTop: viewportTop,
           maxVisibleWidth,
           osc133Markers,
+          overwideLines,
         },
         ...(differential
           ? { viewportPatch: { start: patchStart, lines: newLines.slice(patchStart, patchEnd) } }
