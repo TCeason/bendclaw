@@ -642,5 +642,8 @@ async fn openai_json_fallback_error() {
     .await
     .unwrap_err();
 
-    assert!(matches!(err, evotengine::provider::ProviderError::Api(_)));
+    assert!(matches!(
+        err,
+        evotengine::provider::ProviderError::Transient(_)
+    ));
 }

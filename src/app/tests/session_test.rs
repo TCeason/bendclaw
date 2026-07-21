@@ -955,18 +955,18 @@ async fn independent_storage_handles_cannot_duplicate_sequences() -> TestResult 
 }
 
 #[tokio::test]
-async fn strict_turn_write_rejects_external_advancement_without_losing_message() -> TestResult {
+async fn turn_write_rebases_after_external_advancement_without_losing_messages() -> TestResult {
     let dir = TempDir::new()?;
     let first_storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
     let first = Session::new(
-        "sess-strict-turn".into(),
+        "sess-rebased-turn".into(),
         "/tmp".into(),
         "model".into(),
         first_storage.clone(),
     )
     .await?;
     let second_storage = open_storage(&StorageConfig::fs(dir.path().to_path_buf()))?;
-    let second = Session::open("sess-strict-turn", second_storage)
+    let second = Session::open("sess-rebased-turn", second_storage)
         .await?
         .ok_or_else(|| missing_error("missing second session handle"))?;
     let (_, _, expected_seq) = first.context_snapshot().await;
@@ -977,7 +977,7 @@ async fn strict_turn_write_rejects_external_advancement_without_losing_message()
             content: vec![],
         }])
         .await?;
-    let error = first
+    let resulting_seq = first
         .write_items_at(
             vec![TranscriptItem::User {
                 text: "stale run".into(),
@@ -985,29 +985,29 @@ async fn strict_turn_write_rejects_external_advancement_without_losing_message()
             }],
             expected_seq,
         )
-        .await
-        .err()
-        .ok_or_else(|| missing_error("expected strict generation conflict"))?;
-    assert!(error.to_string().contains("stale transcript write"));
-    assert!(
-        error
-            .to_string()
-            .contains("expected transcript seq 0, current seq 1"),
-        "conflict should report the persisted generation: {error}"
-    );
+        .await?;
+    assert_eq!(resulting_seq, 2);
 
     let entries = first_storage
         .list_entries(ListTranscriptEntries {
-            session_id: "sess-strict-turn".into(),
+            session_id: "sess-rebased-turn".into(),
             run_id: None,
             after_seq: None,
             limit: None,
         })
         .await?;
-    assert_eq!(entries.len(), 1);
+    assert_eq!(entries.len(), 2);
+    assert_eq!(
+        entries.iter().map(|entry| entry.seq).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
     assert!(matches!(
         &entries[0].item,
         TranscriptItem::User { text, .. } if text == "external"
+    ));
+    assert!(matches!(
+        &entries[1].item,
+        TranscriptItem::User { text, .. } if text == "stale run"
     ));
     Ok(())
 }

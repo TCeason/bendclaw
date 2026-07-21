@@ -255,15 +255,19 @@ impl Session {
                 "control points require an atomic Session API".to_string(),
             ));
         }
-        self.commit_items(items, None, None, false).await
+        self.commit_items(items, None, None, false).await?;
+        Ok(())
     }
 
-    /// Append against the exact generation used to build an active Engine turn.
+    /// Append items produced by an Engine turn and return the resulting
+    /// transcript generation. If another writer advanced the session after the
+    /// turn was built, reload the persisted transcript and append this logical
+    /// batch at the new tail instead of surfacing a sequence conflict.
     pub async fn write_items_at(
         &self,
         items: Vec<TranscriptItem>,
         expected_seq: u64,
-    ) -> Result<()> {
+    ) -> Result<u64> {
         self.commit_items(items, None, Some(expected_seq), false)
             .await
     }
@@ -284,7 +288,8 @@ impl Session {
             ));
         }
         self.commit_items(vec![item], Some(new_context), Some(expected_seq), true)
-            .await
+            .await?;
+        Ok(())
     }
 
     async fn commit_items(
@@ -293,23 +298,25 @@ impl Session {
         replacement: Option<Vec<TranscriptItem>>,
         expected_seq: Option<u64>,
         is_compaction: bool,
-    ) -> Result<()> {
+    ) -> Result<u64> {
         const MAX_CONFLICT_RETRIES: usize = 8;
 
+        let mut state = self.state.lock().await;
         if items.is_empty() {
-            return Ok(());
+            return Ok(state.next_seq);
         }
 
         let (session_id, turn) = {
             let meta = self.meta.read().await;
             (meta.session_id.clone(), meta.turns)
         };
-        let mut state = self.state.lock().await;
 
         for attempt in 0..=MAX_CONFLICT_RETRIES {
-            if let Some(expected) = expected_seq {
-                if state.next_seq != expected {
-                    return Err(stale_write_error(is_compaction, expected, state.next_seq));
+            if is_compaction {
+                if let Some(expected) = expected_seq {
+                    if state.next_seq != expected {
+                        return Err(stale_write_error(true, expected, state.next_seq));
+                    }
                 }
             }
             let entries = items
@@ -360,13 +367,7 @@ impl Session {
                         state.transcript.extend(items.clone());
                     }
                 }
-                return Ok(());
-            }
-
-            if expected_seq.is_none() && attempt == MAX_CONFLICT_RETRIES {
-                return Err(crate::error::EvotError::Session(
-                    "transcript remained busy after conflict retries".to_string(),
-                ));
+                return Ok(state.next_seq);
             }
 
             let persisted = self
@@ -379,10 +380,20 @@ impl Session {
                 })
                 .await?;
             let persisted_seq = persisted.iter().map(|entry| entry.seq).max().unwrap_or(0);
-            if let Some(expected) = expected_seq {
-                return Err(stale_write_error(is_compaction, expected, persisted_seq));
+            if is_compaction {
+                if let Some(expected) = expected_seq {
+                    return Err(stale_write_error(true, expected, persisted_seq));
+                }
+            }
+            if attempt == MAX_CONFLICT_RETRIES {
+                return Err(crate::error::EvotError::Session(
+                    "transcript remained busy after conflict retries".to_string(),
+                ));
             }
 
+            // Ordinary turn writes are append-only. Rebase them onto the latest
+            // persisted tail and retry so concurrent writers preserve both
+            // logical batches. Context-replacing compactions remain strict.
             state.next_seq = persisted_seq;
             state.transcript = crate::compact::context_view::resolve_context_items(&persisted);
             state.engine_transcript =
@@ -473,7 +484,8 @@ impl Session {
             messages: vec![],
         };
         self.commit_items(vec![item], Some(Vec::new()), None, false)
-            .await
+            .await?;
+        Ok(())
     }
 
     /// Load all raw transcript entries from storage.

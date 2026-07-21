@@ -71,7 +71,8 @@ pub fn should_retry(error: &ProviderError) -> bool {
     match error {
         ProviderError::RateLimited { .. }
         | ProviderError::Network(_)
-        | ProviderError::Overloaded(_) => true,
+        | ProviderError::Overloaded(_)
+        | ProviderError::Transient(_) => true,
         // A bare Api error that is really a context overflow must never retry,
         // even if its wording also contains a transient phrase like "try again".
         // Overflow is handled by compaction, not retry.
@@ -107,13 +108,6 @@ fn is_retryable_api_message(message: &str) -> bool {
         // or proxy defect even when usage accounting is present. Retry before
         // an empty assistant message can be accepted into session history.
         || lower.contains("empty response from provider")
-        // Malformed tool-call output is a transient model defect, not a client
-        // error: sampling is non-deterministic, so re-running the same call
-        // usually yields valid JSON. Common with smaller local models. Retrying
-        // is far better than surfacing a fatal error to the user.
-        || lower.contains("malformed tool_use")
-        || lower.contains("invalid_tool_call")
-        || lower.contains("could not recover a valid tool call")
         || has_retryable_http_status(&lower)
 }
 

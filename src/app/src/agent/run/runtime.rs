@@ -328,6 +328,7 @@ async fn drive_one_turn(
     let mut turn_transcripts: Vec<TranscriptItem> = vec![TranscriptItem::user_from_content(&input)];
     let mut saved_count: usize = 0;
     let mut expected_seq = transcript_seq;
+    let mut transcript_rebased = false;
     let mut persistence_failed = false;
     let mut turn_count: u32 = 0;
     let mut outcome = TurnOutcome {
@@ -349,10 +350,12 @@ async fn drive_one_turn(
         let batch_len = new_items.len();
         let current_expected = *expected;
         async move {
-            if !new_items.is_empty() {
-                session.write_items_at(new_items, current_expected).await?;
-            }
-            Ok::<usize, crate::error::EvotError>(batch_len)
+            let next_seq = if new_items.is_empty() {
+                current_expected
+            } else {
+                session.write_items_at(new_items, current_expected).await?
+            };
+            Ok::<(usize, u64), crate::error::EvotError>((batch_len, next_seq))
         }
     };
 
@@ -387,9 +390,11 @@ async fn drive_one_turn(
                     )
                     .await
                     {
-                        Ok(written) => {
+                        Ok((written, next_seq)) => {
+                            transcript_rebased |=
+                                next_seq != expected_seq.saturating_add(written as u64);
                             saved_count = saved_count.saturating_add(written);
-                            expected_seq = expected_seq.saturating_add(written as u64);
+                            expected_seq = next_seq;
                         }
                         Err(error) => {
                             emit_persistence_error(tx, run_id, session_id, turn_count, &error);
@@ -399,23 +404,34 @@ async fn drive_one_turn(
                         }
                     }
 
-                    let new_context = from_agent_messages(&messages);
-                    let item = automatic_compact_item(
-                        reason.clone(),
-                        &result,
-                        summary.clone(),
-                        new_context.clone(),
-                        messages,
-                        state,
-                    );
-                    if let Err(error) = session.write_compact(item, new_context, expected_seq).await
-                    {
-                        emit_persistence_error(tx, run_id, session_id, turn_count, &error);
-                        control.abort();
-                        persistence_failed = true;
-                        break;
+                    if transcript_rebased {
+                        tracing::warn!(
+                            stage = "run",
+                            status = "compaction_skipped_after_rebase",
+                            run_id,
+                            session_id,
+                            "skipping stale automatic compaction after concurrent transcript activity"
+                        );
+                    } else {
+                        let new_context = from_agent_messages(&messages);
+                        let item = automatic_compact_item(
+                            reason.clone(),
+                            &result,
+                            summary.clone(),
+                            new_context.clone(),
+                            messages,
+                            state,
+                        );
+                        if let Err(error) =
+                            session.write_compact(item, new_context, expected_seq).await
+                        {
+                            emit_persistence_error(tx, run_id, session_id, turn_count, &error);
+                            control.abort();
+                            persistence_failed = true;
+                            break;
+                        }
+                        expected_seq = expected_seq.saturating_add(1);
                     }
-                    expected_seq = expected_seq.saturating_add(1);
                 }
 
                 turn_transcripts.push(
@@ -437,9 +453,11 @@ async fn drive_one_turn(
                 )
                 .await
                 {
-                    Ok(written) => {
+                    Ok((written, next_seq)) => {
+                        transcript_rebased |=
+                            next_seq != expected_seq.saturating_add(written as u64);
                         saved_count = saved_count.saturating_add(written);
-                        expected_seq = expected_seq.saturating_add(written as u64);
+                        expected_seq = next_seq;
                     }
                     Err(error) => {
                         emit_persistence_error(tx, run_id, session_id, turn_count, &error);

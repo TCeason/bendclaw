@@ -250,9 +250,26 @@ impl Storage for FsStorage {
                     continue;
                 }
             }
-            let path = entry.path().join("session.json");
+            let session_dir = entry.path();
+            let path = session_dir.join("session.json");
             match self.read_json::<SessionMeta>(&path).await {
-                Ok(Some(session)) => sessions.push(session),
+                Ok(Some(mut session)) => {
+                    // Match pi's recent-session semantics: transcript activity is
+                    // authoritative even while a long run has not reached its
+                    // final metadata save yet.
+                    if let Ok(metadata) = fs::metadata(session_dir.join("transcript.jsonl")).await {
+                        if let Ok(modified) = metadata.modified() {
+                            let modified = chrono::DateTime::<chrono::Utc>::from(modified);
+                            let saved = chrono::DateTime::parse_from_rfc3339(&session.updated_at)
+                                .ok()
+                                .map(|value| value.with_timezone(&chrono::Utc));
+                            if saved.is_none_or(|value| modified > value) {
+                                session.updated_at = modified.to_rfc3339();
+                            }
+                        }
+                    }
+                    sessions.push(session);
+                }
                 Ok(None) => {}
                 Err(e) => {
                     tracing::warn!(path = ?path, "skipping malformed session.json: {e}");

@@ -61,6 +61,41 @@ async fn open_storage_returns_working_backend() -> TestResult {
 }
 
 #[tokio::test]
+async fn list_sessions_uses_transcript_activity_for_running_sessions() -> TestResult {
+    let root = TempDir::new()?;
+    let storage = open_storage(&StorageConfig::fs(root.path().to_path_buf()))?;
+
+    let mut running = SessionMeta::new("sess-running".into(), "/work".into(), "model".into());
+    running.created_at = "2026-01-01T00:00:00Z".into();
+    running.updated_at = "2026-01-01T00:00:00Z".into();
+    storage.save_session(running).await?;
+
+    let mut idle = SessionMeta::new("sess-idle".into(), "/work".into(), "model".into());
+    idle.created_at = "2026-01-02T00:00:00Z".into();
+    idle.updated_at = "2026-01-02T00:00:00Z".into();
+    storage.save_session(idle).await?;
+
+    storage
+        .append_entry(TranscriptEntry::new(
+            "sess-running".into(),
+            None,
+            1,
+            1,
+            TranscriptItem::User {
+                text: "still active".into(),
+                content: vec![],
+            },
+        ))
+        .await?;
+
+    let sessions = storage.list_sessions(ListSessions { limit: 0 }).await?;
+    assert_eq!(sessions.len(), 2);
+    assert_eq!(sessions[0].session_id, "sess-running");
+    assert!(sessions[0].updated_at > sessions[1].updated_at);
+    Ok(())
+}
+
+#[tokio::test]
 async fn list_entries_reads_legacy_object_lines_and_skips_corruption() -> TestResult {
     // Historical transcripts stored one entry per line. Current transcripts
     // store an atomic array batch per line; both shapes must remain readable.

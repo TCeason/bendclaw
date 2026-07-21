@@ -6,6 +6,11 @@ use std::time::Duration;
 pub enum ProviderError {
     #[error("API error: {0}")]
     Api(String),
+    /// A provider-declared transient failure. The original payload is retained
+    /// for diagnostics, while retry policy can rely on this semantic variant
+    /// instead of matching provider-specific message text.
+    #[error("API error: {0}")]
+    Transient(String),
     #[error("Overloaded: {0}")]
     Overloaded(String),
     #[error("Network error: {0}")]
@@ -71,14 +76,39 @@ impl ProviderError {
 
 pub fn classify_sse_error_event(message: &str) -> ProviderError {
     if is_context_overflow_message(message) {
-        ProviderError::ContextOverflow {
+        return ProviderError::ContextOverflow {
             message: message.to_string(),
-        }
-    } else if is_overloaded_message(message) {
-        ProviderError::Overloaded(message.to_string())
-    } else {
-        ProviderError::Api(message.to_string())
+        };
     }
+    if is_overloaded_message(message) {
+        return ProviderError::Overloaded(message.to_string());
+    }
+
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(message) {
+        if provider_error_type(&value).is_some_and(is_transient_provider_error_type) {
+            return ProviderError::Transient(message.to_string());
+        }
+    }
+
+    ProviderError::Api(message.to_string())
+}
+
+/// Extract the provider's semantic error type from common JSON envelopes.
+/// Nested `error.type` takes precedence over the outer event type (`"error"`).
+pub(crate) fn provider_error_type(value: &serde_json::Value) -> Option<&str> {
+    value
+        .pointer("/error/type")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| value.get("type").and_then(serde_json::Value::as_str))
+}
+
+/// Provider-declared transient error types. These are protocol fields, not
+/// human-readable messages, so classification remains stable if wording changes.
+pub(crate) fn is_transient_provider_error_type(error_type: &str) -> bool {
+    matches!(
+        error_type,
+        "api_error" | "server_error" | "invalid_tool_call"
+    )
 }
 
 pub async fn classify_eventsource_error(error: reqwest_eventsource::Error) -> ProviderError {

@@ -176,8 +176,29 @@ fn overloaded_api_message_is_retryable() {
 
 #[test]
 fn structured_server_error_with_empty_message_is_retryable() {
-    let err = ProviderError::Api(r#"{"error": {"message": "", "type": "server_error"}}"#.into());
+    let err = classify_sse_error_event(
+        r#"{"type":"error","error":{"message":"","type":"server_error"}}"#,
+    );
+    assert!(matches!(err, ProviderError::Transient(_)));
     assert!(evotengine::retry::should_retry(&err));
+}
+
+#[test]
+fn kiro_api_error_is_structurally_retryable() {
+    let payload = r#"{"type":"error","error":{"type":"api_error","message":"Kiro returned invalid JSON for tool edit: Unterminated string starting at: line 1 column 378 (char 377)"}}"#;
+    let err = classify_sse_error_event(payload);
+
+    assert!(matches!(&err, ProviderError::Transient(raw) if raw == payload));
+    assert!(evotengine::retry::should_retry(&err));
+}
+
+#[test]
+fn structured_invalid_request_error_remains_non_retryable() {
+    let err = classify_sse_error_event(
+        r#"{"type":"error","error":{"type":"invalid_request_error","message":"missing required field"}}"#,
+    );
+    assert!(matches!(err, ProviderError::Api(_)));
+    assert!(!evotengine::retry::should_retry(&err));
 }
 
 #[test]
@@ -212,16 +233,11 @@ fn stream_interrupted_api_error_is_retryable() {
 }
 
 #[test]
-fn malformed_tool_call_api_error_is_retryable() {
-    // A malformed tool_use JSON error is a transient model-output defect, not a
-    // client error: sampling is non-deterministic so re-running usually yields
-    // valid JSON. This is common with smaller local models (e.g. qwen3-4b),
-    // where the gateway rejects the tool call outright instead of emitting
-    // recoverable deltas. Retrying beats surfacing a fatal error.
-    let err = ProviderError::Api(
-        r#"{"type": "error", "error": {"type": "invalid_tool_call", "message": "malformed tool_use JSON; could not recover a valid tool call"}}"#
-            .into(),
+fn malformed_tool_call_error_type_is_retryable() {
+    let err = classify_sse_error_event(
+        r#"{"type":"error","error":{"type":"invalid_tool_call","message":"wording may change"}}"#,
     );
+    assert!(matches!(err, ProviderError::Transient(_)));
     assert!(evotengine::retry::should_retry(&err));
 }
 

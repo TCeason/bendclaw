@@ -84,7 +84,7 @@ fn classify_internal_server_error_json_is_retryable() {
         }
     });
     let err = classify_json_error(&value);
-    assert!(matches!(err, ProviderError::Api(_)));
+    assert!(matches!(err, ProviderError::Transient(_)));
     assert!(evotengine::retry::should_retry(&err));
 }
 

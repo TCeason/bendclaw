@@ -675,6 +675,7 @@ impl StreamProvider for FailThenSucceedProvider {
                     retry_after_ms: *retry_after_ms,
                 },
                 ProviderError::Network(msg) => ProviderError::Network(msg.clone()),
+                ProviderError::Transient(msg) => ProviderError::Transient(msg.clone()),
                 ProviderError::Auth(msg) => ProviderError::Auth(msg.clone()),
                 other => ProviderError::Other(other.to_string()),
             });
@@ -770,6 +771,76 @@ async fn test_retry_on_rate_limit_succeeds() {
             .load(std::sync::atomic::Ordering::SeqCst),
         3
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_provider_declared_transient_error_retries_then_succeeds() {
+    let payload = r#"{"type":"error","error":{"type":"api_error","message":"wording is not used for retry classification"}}"#;
+    let provider: std::sync::Arc<FailThenSucceedProvider> =
+        std::sync::Arc::new(FailThenSucceedProvider {
+            fail_count: std::sync::atomic::AtomicUsize::new(0),
+            max_failures: 1,
+            error: ProviderError::Transient(payload.into()),
+            inner: MockProvider::text("Success after transient error"),
+        });
+
+    let config = AgentLoopConfig {
+        provider: provider.clone(),
+        model: "mock".into(),
+        api_key: "test".into(),
+        thinking_level: ThinkingLevel::Off,
+        max_tokens: None,
+        temperature: None,
+        model_config: None,
+        convert_to_llm: None,
+        transform_context: None,
+        get_steering_messages: None,
+        get_follow_up_messages: None,
+        context_config: None,
+        initial_compaction_state: None,
+        execution_limits: None,
+        cache_config: CacheConfig::default(),
+        tool_execution: ToolExecutionStrategy::default(),
+        retry_policy: evotengine::RetryPolicy::new(1),
+        before_turn: None,
+        after_turn: None,
+        input_filters: vec![],
+        spill: None,
+    };
+    let mut context = AgentContext {
+        system_prompt: "test".into(),
+        messages: Vec::new(),
+        tools: Vec::new(),
+        cwd: std::path::PathBuf::new(),
+        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
+        prompt_cache_key: None,
+    };
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    let messages = agent_loop(
+        vec![AgentMessage::Llm(Message::user("hi"))],
+        &mut context,
+        &config,
+        tx,
+        CancellationToken::new(),
+    )
+    .await;
+
+    assert_eq!(messages.len(), 2);
+    assert_eq!(
+        provider
+            .fail_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+    let retry_errors = collect_events(rx)
+        .into_iter()
+        .filter_map(|event| match event {
+            AgentEvent::LlmCallRetry { error, .. } => Some(error),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(retry_errors, vec![format!("API error: {payload}")]);
 }
 
 #[tokio::test]

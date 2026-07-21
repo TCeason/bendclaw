@@ -10,6 +10,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 use super::error::is_context_overflow_message;
+use super::error::is_transient_provider_error_type;
+use super::error::provider_error_type;
 use super::error::ProviderError;
 
 /// A parsed SSE event with event type and data.
@@ -163,7 +165,8 @@ pub fn extract_json_error_message(value: &serde_json::Value) -> Option<String> {
 ///
 /// - Context overflow messages → [`ProviderError::ContextOverflow`]
 /// - Overloaded messages → [`ProviderError::Overloaded`]
-/// - Everything else → [`ProviderError::Api`] (retry depends on explicit transient wording)
+/// - Provider-declared transient types → [`ProviderError::Transient`]
+/// - Everything else → [`ProviderError::Api`]
 pub fn classify_json_error(value: &serde_json::Value) -> ProviderError {
     let message = extract_json_error_message(value).unwrap_or_else(|| value.to_string());
 
@@ -171,6 +174,8 @@ pub fn classify_json_error(value: &serde_json::Value) -> ProviderError {
         ProviderError::ContextOverflow { message }
     } else if crate::provider::error::is_overloaded_message(&message) {
         ProviderError::Overloaded(message)
+    } else if provider_error_type(value).is_some_and(is_transient_provider_error_type) {
+        ProviderError::Transient(message)
     } else {
         ProviderError::Api(message)
     }

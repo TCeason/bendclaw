@@ -465,6 +465,31 @@ async fn anthropic_sse_error_event() {
     assert!(evotengine::retry::should_retry(&err));
 }
 
+#[tokio::test]
+async fn anthropic_sse_kiro_api_error_is_structurally_retryable() {
+    let payload = serde_json::json!({
+        "type": "error",
+        "error": {
+            "type": "api_error",
+            "message": "Kiro returned invalid JSON for tool edit: Unterminated string starting at: line 1 column 378 (char 377)"
+        }
+    })
+    .to_string();
+    let error_event = format!("event: error\ndata: {payload}");
+    let sse = anthropic_sse::body(vec![anthropic_sse::message_start(50, 0), error_event]);
+
+    let config = StreamConfigBuilder::anthropic().cache_disabled().build();
+    let err = run_provider_sse(&AnthropicProvider, config, &sse, 200)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        &err,
+        evotengine::provider::ProviderError::Transient(raw) if raw == &payload
+    ));
+    assert!(evotengine::retry::should_retry(&err));
+}
+
 // ---------------------------------------------------------------------------
 // SSE streaming — usage with cache
 // ---------------------------------------------------------------------------
