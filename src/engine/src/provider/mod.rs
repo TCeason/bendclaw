@@ -10,6 +10,7 @@ pub mod openai_responses;
 pub mod registry;
 pub mod stream_fallback;
 pub mod stream_http;
+pub mod thinking;
 pub mod traits;
 
 pub use anthropic::AnthropicProvider;

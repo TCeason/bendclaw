@@ -12,7 +12,6 @@ use serde::Serialize;
 
 use super::catalog::ModelMetadata;
 use super::catalog::{self};
-use crate::ThinkingLevel;
 
 /// Which API protocol a model uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -80,6 +79,8 @@ pub enum MaxTokensField {
 pub enum ThinkingFormat {
     #[default]
     OpenAi,
+    OpenRouter,
+    DeepSeek,
     Xai,
     Qwen,
 }
@@ -247,6 +248,7 @@ impl OpenAiCompat {
     pub fn openrouter() -> Self {
         Self {
             max_tokens_field: MaxTokensField::MaxCompletionTokens,
+            thinking_format: ThinkingFormat::OpenRouter,
             ..Default::default()
         }
     }
@@ -262,7 +264,15 @@ impl OpenAiCompat {
         Self {
             caps: CompatCaps::USAGE_IN_STREAMING | CompatCaps::REASONING_CONTENT_REQUIRED,
             max_tokens_field: MaxTokensField::MaxCompletionTokens,
-            ..Default::default()
+            thinking_format: ThinkingFormat::DeepSeek,
+        }
+    }
+
+    pub fn moonshot() -> Self {
+        Self {
+            caps: CompatCaps::USAGE_IN_STREAMING | CompatCaps::REASONING_CONTENT_REQUIRED,
+            max_tokens_field: MaxTokensField::MaxTokens,
+            thinking_format: ThinkingFormat::DeepSeek,
         }
     }
 
@@ -284,6 +294,7 @@ impl OpenAiCompat {
             "groq" => Self::groq(),
             "cerebras" => Self::cerebras(),
             "openrouter" => Self::openrouter(),
+            "moonshotai" | "moonshotai-cn" => Self::moonshot(),
             "mistral" => Self::mistral(),
             "zai" => Self::zai(),
             "minimax" => Self::minimax(),
@@ -318,6 +329,12 @@ pub struct ModelConfig {
     /// - key absent — protocol default
     #[serde(default)]
     pub thinking_level_map: HashMap<String, Option<String>>,
+    /// Anthropic adaptive thinking (`thinking.type: adaptive`).
+    #[serde(default)]
+    pub force_adaptive_thinking: bool,
+    /// Whether this model accepts a temperature parameter.
+    #[serde(default = "default_supports_temperature")]
+    pub supports_temperature: bool,
 }
 
 fn default_reasoning_capability() -> bool {
@@ -326,6 +343,10 @@ fn default_reasoning_capability() -> bool {
 
 fn default_input_modalities() -> Vec<InputModality> {
     vec![InputModality::Text]
+}
+
+fn default_supports_temperature() -> bool {
+    true
 }
 
 fn protocol_defaults(api: ApiProtocol) -> ModelMetadata {
@@ -339,6 +360,22 @@ fn protocol_defaults(api: ApiProtocol) -> ModelMetadata {
     }
 }
 
+fn supports_openai_none_reasoning(id: &str) -> bool {
+    matches!(
+        id,
+        "gpt-5.1"
+            | "gpt-5.2"
+            | "gpt-5.3-codex"
+            | "gpt-5.4"
+            | "gpt-5.4-mini"
+            | "gpt-5.4-nano"
+            | "gpt-5.5"
+            | "gpt-5.6-sol"
+            | "gpt-5.6-terra"
+            | "gpt-5.6-luna"
+    )
+}
+
 impl ModelConfig {
     /// Compose a runtime config from protocol defaults + model catalog + transport.
     pub fn resolve(
@@ -350,12 +387,37 @@ impl ModelConfig {
         compat: Option<OpenAiCompat>,
     ) -> Self {
         let id = model_id.into();
+        let provider = provider.into();
+        let normalized_id = catalog::normalize_model_id(&id);
+        let family_id = normalized_id
+            .strip_prefix("moonshotai/")
+            .unwrap_or(&normalized_id);
         let metadata = catalog::resolve(&id).unwrap_or_else(|| protocol_defaults(api));
+        let mut thinking_level_map = metadata.thinking_level_map;
+
+        // Kimi K3 uses the same sparse reasoning ramp through Kimi Coding,
+        // Moonshot, and OpenRouter. Context/output limits remain independently
+        // sourced because transport catalogs can advertise different limits.
+        if matches!(family_id, "k3" | "kimi-k3") {
+            thinking_level_map = catalog::kimi_k3_thinking_level_map();
+        }
+
+        // pi applies these constraints after composing model + provider + API.
+        if provider == "openai" && normalized_id == "gpt-5.5" {
+            thinking_level_map.insert("minimal".into(), None);
+        }
+        if api == ApiProtocol::OpenAiResponses
+            && provider == "openai"
+            && supports_openai_none_reasoning(&normalized_id)
+        {
+            thinking_level_map.insert("off".into(), Some("none".into()));
+        }
+
         Self {
             id,
             name: name.into(),
             api,
-            provider: provider.into(),
+            provider,
             base_url: base_url.into(),
             context_window: metadata.context_window,
             max_tokens: metadata.max_tokens,
@@ -364,7 +426,9 @@ impl ModelConfig {
             cost: CostConfig::default(),
             headers: HashMap::new(),
             compat,
-            thinking_level_map: metadata.thinking_level_map,
+            thinking_level_map,
+            force_adaptive_thinking: metadata.force_adaptive_thinking,
+            supports_temperature: metadata.supports_temperature,
         }
     }
 
@@ -423,53 +487,6 @@ impl ModelConfig {
             base_url,
             Some(OpenAiCompat::default()),
         )
-    }
-
-    pub fn supported_thinking_levels(&self) -> Vec<ThinkingLevel> {
-        use crate::ThinkingLevel::*;
-        if !self.reasoning {
-            return Vec::new();
-        }
-        if self.api == ApiProtocol::OpenAiCompletions && !self.honors_reasoning_effort() {
-            return Vec::new();
-        }
-        [Off, Low, Medium, High, Xhigh, Max]
-            .into_iter()
-            .filter(|level| self.level_selectable(*level))
-            .collect()
-    }
-
-    fn honors_reasoning_effort(&self) -> bool {
-        match self.api {
-            ApiProtocol::AnthropicMessages
-            | ApiProtocol::OpenAiResponses
-            | ApiProtocol::BedrockConverseStream => true,
-            ApiProtocol::OpenAiCompletions => self
-                .compat
-                .as_ref()
-                .map(|c| c.caps.contains(CompatCaps::REASONING_EFFORT))
-                .unwrap_or(false),
-        }
-    }
-
-    fn level_selectable(&self, level: ThinkingLevel) -> bool {
-        match self.thinking_level_map.get(level.as_str()) {
-            Some(Some(effort)) => {
-                !(level == ThinkingLevel::Xhigh
-                    && effort == "max"
-                    && self.thinking_level_map.contains_key("max"))
-            }
-            Some(None) => false,
-            None => !matches!(level, ThinkingLevel::Xhigh | ThinkingLevel::Max),
-        }
-    }
-
-    pub fn thinking_effort_override(&self, level: ThinkingLevel) -> Option<&str> {
-        self.thinking_level_map.get(level.as_str())?.as_deref()
-    }
-
-    pub fn can_disable_thinking(&self) -> bool {
-        !matches!(self.thinking_level_map.get("off"), Some(None))
     }
 
     pub fn supports_image(&self) -> bool {

@@ -2,7 +2,7 @@ import { padRight, relativeTime } from '../../render/format.js'
 import type { SessionMeta, SessionWithText } from '../../native/index.js'
 import type { SelectorItem } from '../selector.js'
 
-export const RESUME_SELECTOR_TITLE = 'Resume session  (^D delete)'
+export const RESUME_SELECTOR_TITLE = 'Resume session  (Ctrl+D delete)'
 
 export type SessionPrefixResolution =
   | { kind: 'matched'; session: SessionMeta }

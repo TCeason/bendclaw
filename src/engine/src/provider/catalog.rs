@@ -21,6 +21,11 @@ pub struct ModelMetadata {
     pub reasoning: bool,
     pub input: Vec<InputModality>,
     pub thinking_level_map: HashMap<String, Option<String>>,
+    /// Anthropic adaptive thinking (`thinking.type: adaptive` + `output_config.effort`).
+    /// When false, budget-based thinking is used for Anthropic transports.
+    pub force_adaptive_thinking: bool,
+    /// Whether the Anthropic model accepts a temperature parameter.
+    pub supports_temperature: bool,
 }
 
 impl ModelMetadata {
@@ -31,6 +36,8 @@ impl ModelMetadata {
             reasoning: true,
             input: vec![InputModality::Text],
             thinking_level_map: HashMap::new(),
+            force_adaptive_thinking: false,
+            supports_temperature: true,
         }
     }
 
@@ -41,6 +48,8 @@ impl ModelMetadata {
             reasoning: true,
             input: vec![InputModality::Text, InputModality::Image],
             thinking_level_map: HashMap::new(),
+            force_adaptive_thinking: false,
+            supports_temperature: true,
         }
     }
 
@@ -51,6 +60,16 @@ impl ModelMetadata {
 
     pub fn with_thinking_map(mut self, map: HashMap<String, Option<String>>) -> Self {
         self.thinking_level_map = map;
+        self
+    }
+
+    pub fn with_adaptive_thinking(mut self, force: bool) -> Self {
+        self.force_adaptive_thinking = force;
+        self
+    }
+
+    pub fn with_temperature(mut self, supported: bool) -> Self {
+        self.supports_temperature = supported;
         self
     }
 }
@@ -82,6 +101,18 @@ pub fn normalize_model_id(model_id: &str) -> String {
     normalized
 }
 
+pub(crate) fn kimi_k3_thinking_level_map() -> HashMap<String, Option<String>> {
+    let mut levels = HashMap::new();
+    levels.insert("off".into(), None);
+    levels.insert("minimal".into(), None);
+    levels.insert("low".into(), Some("low".into()));
+    levels.insert("medium".into(), None);
+    levels.insert("high".into(), Some("high".into()));
+    levels.insert("xhigh".into(), None);
+    levels.insert("max".into(), Some("max".into()));
+    levels
+}
+
 fn resolve_exact(id: &str) -> Option<ModelMetadata> {
     match id {
         // Kimi Coding model metadata mirrors pi's generated
@@ -89,24 +120,22 @@ fn resolve_exact(id: &str) -> Option<ModelMetadata> {
         // use the Anthropic Messages transport but must not inherit the
         // conservative unknown-Anthropic fallback (200k context / 8k output).
         "k2p7" | "kimi-for-coding" | "kimi-for-coding-highspeed" => {
-            Some(ModelMetadata::vision(262_144, 32_768))
+            Some(ModelMetadata::vision(262_144, 32_768).with_adaptive_thinking(true))
         }
-        "k3" => {
-            let mut levels = HashMap::new();
-            for level in ["off", "minimal", "low", "medium", "high", "xhigh"] {
-                levels.insert(level.into(), None);
-            }
-            levels.insert("max".into(), Some("max".into()));
-            Some(ModelMetadata::vision(1_048_576, 131_072).with_thinking_map(levels))
+        "k3" => Some(
+            ModelMetadata::vision(1_048_576, 131_072)
+                .with_thinking_map(kimi_k3_thinking_level_map())
+                .with_adaptive_thinking(true),
+        ),
+        "kimi-k2-thinking" => {
+            Some(ModelMetadata::text_only(262_144, 32_768).with_adaptive_thinking(true))
         }
-        "kimi-k2-thinking" => Some(ModelMetadata::text_only(262_144, 32_768)),
         // Tiny fixture used by engine tests.
         #[cfg(test)]
         "tiny-context" => Some(ModelMetadata::text_only(128, 32_768)),
         _ => None,
     }
 }
-
 fn resolve_openai_family(id: &str) -> Option<ModelMetadata> {
     let (context_window, max_tokens) = match id {
         "gpt-5.4" | "gpt-5.5" | "gpt-5.6-luna" | "gpt-5.6-sol" | "gpt-5.6-terra" => {
@@ -140,23 +169,31 @@ fn openai_thinking_level_map(id: &str) -> HashMap<String, Option<String>> {
     let default = if id == "gpt-5.4" { "xhigh" } else { "medium" };
     map.insert("adaptive".into(), Some(default.into()));
 
-    if id.starts_with("gpt-5.6-") {
-        map.insert("off".into(), Some("none".into()));
+    // xhigh only on gpt-5.2+ (pi's supportsOpenAiXhigh).
+    if supports_openai_xhigh(id) {
         map.insert("xhigh".into(), Some("xhigh".into()));
+    }
+
+    // max only on gpt-5.6 family.
+    if id.contains("gpt-5.6") {
         map.insert("max".into(), Some("max".into()));
-    } else {
-        map.insert("xhigh".into(), Some("xhigh".into()));
     }
 
     if id.ends_with("gpt-5.5-pro") {
         map.insert("off".into(), None);
         map.insert("minimal".into(), None);
         map.insert("low".into(), None);
-    } else if id == "gpt-5.5" {
-        map.insert("minimal".into(), None);
     }
 
     map
+}
+
+fn supports_openai_xhigh(id: &str) -> bool {
+    id.contains("gpt-5.2")
+        || id.contains("gpt-5.3")
+        || id.contains("gpt-5.4")
+        || id.contains("gpt-5.5")
+        || id.contains("gpt-5.6")
 }
 
 fn resolve_anthropic_family(id: &str) -> Option<ModelMetadata> {
@@ -168,9 +205,8 @@ fn resolve_anthropic_family(id: &str) -> Option<ModelMetadata> {
         return None;
     };
 
-    let million_ctx = family == "fable"
-        || (family == "opus" && (major, minor) >= (4, 6))
-        || (family == "sonnet" && ((major, minor) >= (4, 6) || major >= 5));
+    let adaptive = is_anthropic_adaptive(family, major, minor);
+    let million_ctx = adaptive;
     let (context_window, max_tokens) = if million_ctx {
         (1_000_000, 128_000)
     } else if major >= 4 {
@@ -179,10 +215,19 @@ fn resolve_anthropic_family(id: &str) -> Option<ModelMetadata> {
         (200_000, 8192)
     };
 
+    let supports_temperature = !(family == "opus" && major == 4 && matches!(minor, 7 | 8));
     Some(
         ModelMetadata::vision(context_window, max_tokens)
-            .with_thinking_map(anthropic_thinking_level_map(family, major, minor)),
+            .with_thinking_map(anthropic_thinking_level_map(family, major, minor))
+            .with_adaptive_thinking(adaptive)
+            .with_temperature(supports_temperature),
     )
+}
+
+fn is_anthropic_adaptive(family: &str, major: u32, minor: u32) -> bool {
+    family == "fable"
+        || (family == "opus" && (major, minor) >= (4, 6))
+        || (family == "sonnet" && ((major, minor) >= (4, 6) || major >= 5))
 }
 
 fn anthropic_thinking_level_map(
@@ -191,9 +236,7 @@ fn anthropic_thinking_level_map(
     minor: u32,
 ) -> HashMap<String, Option<String>> {
     let mut map = HashMap::new();
-    let adaptive = family == "fable"
-        || (family == "opus" && (major, minor) >= (4, 6))
-        || (family == "sonnet" && ((major, minor) >= (4, 6) || major >= 5));
+    let adaptive = is_anthropic_adaptive(family, major, minor);
     if adaptive {
         map.insert("max".into(), Some("max".into()));
     }
@@ -243,26 +286,5 @@ fn resolve_grok_family(id: &str) -> Option<ModelMetadata> {
             Some(ModelMetadata::text_only(200_000, 200_000).with_reasoning(false))
         }
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resolves_grok_under_any_prefix() {
-        for id in ["grok-4.5", "xai/grok-4.5", "x-ai/grok-4.5"] {
-            let meta = resolve(id).expect(id);
-            assert_eq!(meta.context_window, 500_000, "{id}");
-            assert!(meta.reasoning, "{id}");
-        }
-    }
-
-    #[test]
-    fn resolves_openai_prefixed_gpt() {
-        let meta = resolve("openai/gpt-5.6-sol").unwrap();
-        assert_eq!(meta.context_window, 272_000);
-        assert_eq!(meta.max_tokens, 128_000);
     }
 }

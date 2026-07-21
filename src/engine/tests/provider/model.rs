@@ -44,6 +44,11 @@ fn model_config_kimi_coding_matches_pi_catalog() {
     assert_eq!(k3.context_window, 1_048_576);
     assert_eq!(k3.max_tokens, 131_072);
     assert_eq!(k3.thinking_effort_override(ThinkingLevel::Max), Some("max"));
+    assert_eq!(k3.thinking_effort_override(ThinkingLevel::Low), Some("low"));
+    assert_eq!(
+        k3.thinking_effort_override(ThinkingLevel::High),
+        Some("high")
+    );
     assert!(!k3.can_disable_thinking());
 
     let thinking = ModelConfig::anthropic("kimi-k2-thinking", "Kimi K2 Thinking");
@@ -154,6 +159,11 @@ fn openai_compat_variants() {
         deepseek.max_tokens_field,
         MaxTokensField::MaxCompletionTokens
     );
+    assert_eq!(deepseek.thinking_format, ThinkingFormat::DeepSeek);
+
+    let moonshot = OpenAiCompat::for_provider("moonshotai");
+    assert_eq!(moonshot.max_tokens_field, MaxTokensField::MaxTokens);
+    assert_eq!(moonshot.thinking_format, ThinkingFormat::DeepSeek);
 
     let zai = OpenAiCompat::zai();
     assert!(zai.caps.contains(CompatCaps::USAGE_IN_STREAMING));
@@ -244,12 +254,12 @@ fn supported_thinking_levels_anthropic_use_model_specific_extended_tiers() {
 
     let opus_4_6 = ModelConfig::anthropic("claude-opus-4-6", "Opus 4.6");
     assert_eq!(opus_4_6.supported_thinking_levels(), vec![
-        Off, Low, Medium, High, Max
+        Off, Minimal, Low, Medium, High, Max
     ]);
 
     let opus_4_8 = ModelConfig::anthropic("claude-opus-4-8", "Opus 4.8");
     assert_eq!(opus_4_8.supported_thinking_levels(), vec![
-        Off, Low, Medium, High, Xhigh, Max
+        Off, Minimal, Low, Medium, High, Xhigh, Max
     ]);
 }
 
@@ -258,12 +268,7 @@ fn supported_thinking_levels_openai_with_effort_includes_xhigh_when_mapped() {
     use evotengine::ThinkingLevel::*;
     // GPT-5 family advertises reasoning effort and maps xhigh explicitly.
     let config = ModelConfig::openai("gpt-5.5", "GPT-5.5");
-    assert!(config
-        .compat
-        .as_ref()
-        .unwrap()
-        .caps
-        .contains(CompatCaps::REASONING_EFFORT));
+    assert!(config.honors_reasoning_effort());
     assert_eq!(config.supported_thinking_levels(), vec![
         Off, Low, Medium, High, Xhigh
     ]);
@@ -276,26 +281,19 @@ fn supported_thinking_levels_openai_without_xhigh_map_stops_at_high() {
     // entry should not offer xhigh (it would collapse onto high).
     let mut config = ModelConfig::local("", "some-reasoner");
     config.thinking_level_map.clear();
-    if let Some(compat) = &mut config.compat {
-        compat.caps |= CompatCaps::REASONING_EFFORT;
-    }
+    config.compat = Some(OpenAiCompat::openai());
     assert_eq!(config.supported_thinking_levels(), vec![
-        Off, Low, Medium, High
+        Off, Minimal, Low, Medium, High
     ]);
 }
 
 #[test]
 fn supported_thinking_levels_openai_without_effort_capability_is_empty() {
-    // deepseek's OpenAI-compat profile lacks REASONING_EFFORT, so the reasoning
-    // effort field is inert and no levels should be selectable.
+    // Unknown deepseek id has no catalog effort flag and deepseek transport
+    // lacks REASONING_EFFORT, so no levels are selectable.
     let mut config = ModelConfig::local("", "deepseek-chat");
     config.compat = Some(OpenAiCompat::deepseek());
-    assert!(!config
-        .compat
-        .as_ref()
-        .unwrap()
-        .caps
-        .contains(CompatCaps::REASONING_EFFORT));
+    assert!(!config.honors_reasoning_effort());
     assert!(config.supported_thinking_levels().is_empty());
 }
 
@@ -311,13 +309,24 @@ fn supported_thinking_levels_gpt_5_5_pro_drops_off_minimal_low() {
 }
 
 #[test]
-fn supported_thinking_levels_gpt_5_5_drops_minimal_only() {
+fn gpt_5_5_minimal_constraint_is_first_party_only() {
     use evotengine::ThinkingLevel::*;
-    // gpt-5.5 (non-pro) drops only `minimal`; minimal is never in the ramp
-    // anyway, so the full off..xhigh cycle remains.
-    let config = ModelConfig::openai("gpt-5.5", "GPT-5.5");
-    assert_eq!(config.supported_thinking_levels(), vec![
+
+    let first_party = ModelConfig::openai("gpt-5.5", "GPT-5.5");
+    assert_eq!(first_party.supported_thinking_levels(), vec![
         Off, Low, Medium, High, Xhigh
+    ]);
+
+    let openrouter = ModelConfig::resolve(
+        ApiProtocol::OpenAiCompletions,
+        "openrouter",
+        "openai/gpt-5.5",
+        "GPT-5.5",
+        "https://openrouter.ai/api/v1",
+        Some(OpenAiCompat::openrouter()),
+    );
+    assert_eq!(openrouter.supported_thinking_levels(), vec![
+        Off, Minimal, Low, Medium, High, Xhigh
     ]);
 }
 
@@ -329,7 +338,7 @@ fn supported_thinking_levels_gpt_5_6_includes_xhigh_and_max() {
         let config = ModelConfig::openai(id, id);
         assert_eq!(
             config.supported_thinking_levels(),
-            vec![Off, Low, Medium, High, Xhigh, Max],
+            vec![Off, Minimal, Low, Medium, High, Xhigh, Max],
             "{id}"
         );
         assert_eq!(config.thinking_effort_override(Max), Some("max"), "{id}");
@@ -345,7 +354,7 @@ fn openrouter_prefixed_gpt_5_6_gets_catalog_limits_and_reasoning_metadata() {
     assert_eq!(config.context_window, 272_000);
     assert_eq!(config.max_tokens, 128_000);
     assert_eq!(config.supported_thinking_levels(), vec![
-        Off, Low, Medium, High, Xhigh, Max
+        Off, Minimal, Low, Medium, High, Xhigh, Max
     ]);
 }
 
@@ -353,20 +362,23 @@ fn openrouter_prefixed_gpt_5_6_gets_catalog_limits_and_reasoning_metadata() {
 fn grok_cli_models_use_catalog_context_and_reasoning_metadata() {
     use evotengine::ThinkingLevel::*;
 
+    // Model metadata survives any route, but xAI Chat Completions cannot carry
+    // an effort parameter, so it must not expose a no-op selector.
     let mut grok = ModelConfig::local("", "grok-4.5");
-    grok.compat = Some(OpenAiCompat::grok_cli());
+    grok.compat = Some(OpenAiCompat::xai());
     assert_eq!(grok.context_window, 500_000);
     assert_eq!(grok.max_tokens, 500_000);
     assert!(grok.reasoning);
-    assert_eq!(grok.supported_thinking_levels(), vec![Low, Medium, High]);
+    assert!(!grok.honors_reasoning_effort());
+    assert!(grok.supported_thinking_levels().is_empty());
     assert_eq!(grok.thinking_effort_override(Adaptive), Some("high"));
 
     let mut composer = ModelConfig::local("", "grok-composer-2.5-fast");
-    composer.compat = Some(OpenAiCompat::grok_cli());
+    composer.compat = Some(OpenAiCompat::xai());
     assert_eq!(composer.context_window, 200_000);
     assert_eq!(composer.max_tokens, 200_000);
     assert!(!composer.reasoning);
-    assert!(composer.supported_thinking_levels().is_empty());
+    assert_eq!(composer.supported_thinking_levels(), vec![Off]);
 }
 
 #[test]
@@ -378,8 +390,23 @@ fn openai_channel_uses_model_catalog_for_grok() {
     assert_eq!(config.context_window, 500_000);
     assert_eq!(config.max_tokens, 500_000);
     assert!(config.reasoning);
+    assert!(config.honors_reasoning_effort());
     assert_eq!(config.supported_thinking_levels(), vec![Low, Medium, High]);
     assert_eq!(config.thinking_effort_override(Adaptive), Some("high"));
+}
+
+#[test]
+fn clamp_thinking_level_nearest_neighbor() {
+    use evotengine::ThinkingLevel::*;
+    let config = ModelConfig::openai("gpt-5.5-pro", "GPT-5.5 Pro");
+    assert_eq!(config.clamp_thinking_level(Low), Medium);
+    assert_eq!(config.clamp_thinking_level(Off), Medium);
+    assert_eq!(config.clamp_thinking_level(Xhigh), Xhigh);
+    assert_eq!(config.effective_thinking_level(Off), Medium);
+    assert_eq!(config.effective_thinking_level(Adaptive), Adaptive);
+
+    let composer = ModelConfig::local("", "grok-composer-2.5-fast");
+    assert_eq!(composer.effective_thinking_level(Adaptive), Off);
 }
 
 #[test]

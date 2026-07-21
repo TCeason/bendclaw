@@ -83,13 +83,20 @@ pub(super) async fn stream_assistant_response(
     let mut attempt = 0;
     let shared_metrics = std::sync::Arc::new(std::sync::Mutex::new(LlmCallMetrics::default()));
     let result = loop {
-        // Temperature is incompatible with extended thinking — the Anthropic
-        // API requires temperature=1 (the default) when thinking is enabled.
-        // Suppress any user-configured temperature to avoid API errors.
-        let effective_temperature = if config.thinking_level == ThinkingLevel::Off {
-            config.temperature
-        } else {
+        let thinking_level = crate::provider::thinking::effective_thinking_level(
+            config.thinking_level,
+            config.model_config.as_ref(),
+        );
+        // Anthropic rejects temperature while thinking is enabled, and Opus
+        // 4.7/4.8 reject it entirely. Other protocols retain their temperature.
+        let suppress_temperature = config.model_config.as_ref().is_some_and(|model| {
+            model.api == crate::provider::ApiProtocol::AnthropicMessages
+                && (thinking_level != ThinkingLevel::Off || !model.supports_temperature)
+        });
+        let effective_temperature = if suppress_temperature {
             None
+        } else {
+            config.temperature
         };
 
         let stream_config = StreamConfig {
@@ -97,7 +104,7 @@ pub(super) async fn stream_assistant_response(
             system_prompt: context.system_prompt.clone(),
             messages: llm_messages.clone(),
             tools: tool_defs.clone(),
-            thinking_level: config.thinking_level,
+            thinking_level,
             api_key: config.api_key.clone(),
             max_tokens: config.max_tokens,
             temperature: effective_temperature,

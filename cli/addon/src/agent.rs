@@ -510,7 +510,7 @@ fn display_thinking_level(llm: &evot::conf::LlmConfig) -> String {
         llm.max_tokens,
         llm.supports_image,
     );
-    if model_config.supported_thinking_levels().is_empty() {
+    if !model_config.reasoning || model_config.supported_thinking_levels().is_empty() {
         return String::new();
     }
     llm.thinking_level.as_str().to_string()

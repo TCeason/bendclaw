@@ -243,31 +243,59 @@ fn apply_reasoning_effort(
     config: &StreamConfig,
     compat: &OpenAiCompat,
 ) {
-    if !config
-        .model_config
-        .as_ref()
-        .map(|model| model.reasoning)
-        .unwrap_or(true)
-        || !compat.has_cap(CompatCaps::REASONING_EFFORT)
-    {
+    let model = config.model_config.as_ref();
+    if !model.map(|m| m.reasoning).unwrap_or(true) {
         return;
     }
 
-    let effort = match config
-        .model_config
-        .as_ref()
-        .and_then(|mc| mc.thinking_effort_override(config.thinking_level))
-    {
-        Some(effort) => effort,
-        None => match config.thinking_level {
-            ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
-            ThinkingLevel::Medium => "medium",
-            ThinkingLevel::High | ThinkingLevel::Xhigh | ThinkingLevel::Adaptive => "high",
-            ThinkingLevel::Max => "max",
-            ThinkingLevel::Off => return,
+    let level = crate::provider::thinking::effective_thinking_level(config.thinking_level, model);
+    let mapped = model.and_then(|mc| mc.thinking_effort_override(level));
+    let effort = match mapped {
+        Some(effort) => Some(effort.to_string()),
+        None => match level {
+            ThinkingLevel::Minimal => Some("minimal".into()),
+            ThinkingLevel::Low => Some("low".into()),
+            ThinkingLevel::Medium => Some("medium".into()),
+            ThinkingLevel::High | ThinkingLevel::Adaptive => Some("high".into()),
+            ThinkingLevel::Xhigh => Some("xhigh".into()),
+            ThinkingLevel::Max => Some("max".into()),
+            ThinkingLevel::Off => model
+                .filter(|m| m.can_disable_thinking())
+                .map(|_| "none".into()),
         },
     };
-    body["reasoning_effort"] = serde_json::json!(effort);
+
+    match compat.thinking_format {
+        crate::provider::model::ThinkingFormat::OpenRouter => {
+            if let Some(effort) = effort {
+                body["reasoning"] = serde_json::json!({ "effort": effort });
+            }
+        }
+        crate::provider::model::ThinkingFormat::DeepSeek => {
+            body["thinking"] = if level == ThinkingLevel::Off {
+                serde_json::json!({ "type": "disabled" })
+            } else {
+                serde_json::json!({ "type": "enabled" })
+            };
+            if level != ThinkingLevel::Off && compat.has_cap(CompatCaps::REASONING_EFFORT) {
+                if let Some(effort) = effort {
+                    body["reasoning_effort"] = serde_json::json!(effort);
+                }
+            }
+        }
+        crate::provider::model::ThinkingFormat::OpenAi
+            if compat.has_cap(CompatCaps::REASONING_EFFORT) =>
+        {
+            // OpenAI-style transports only send an off value when the model map
+            // explicitly supplies one. An absent mapping means omit the field.
+            if level != ThinkingLevel::Off || mapped.is_some() {
+                if let Some(effort) = effort {
+                    body["reasoning_effort"] = serde_json::json!(effort);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn tool_result_images_as_user_content(tool_name: &str, content: &[Content]) -> Vec<Content> {

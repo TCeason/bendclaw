@@ -134,10 +134,7 @@ fn grok_provider_uses_cli_model_metadata_without_env_overrides() {
     assert_eq!(mc.context_window, 500_000);
     assert_eq!(mc.max_tokens, 500_000);
     assert!(mc.reasoning);
-    assert!(mc
-        .compat
-        .as_ref()
-        .is_some_and(|compat| compat.caps.contains(CompatCaps::REASONING_EFFORT)));
+    assert!(mc.honors_reasoning_effort());
     assert_eq!(mc.supported_thinking_levels(), vec![Low, Medium, High]);
 }
 
@@ -170,9 +167,11 @@ fn openai_provider_grok_4_5_uses_catalog_metadata() {
 }
 
 #[test]
-fn openrouter_gpt_without_compat_caps_has_no_selectable_thinking() {
-    // Catalog may mark GPT models as reasoning-capable, but the openrouter
-    // transport does not advertise reasoning_effort unless COMPAT_CAPS is set.
+fn openrouter_gpt_uses_model_effort_without_compat_caps() {
+    use evot_engine::ThinkingLevel::*;
+
+    // Model capability survives routing through a self-hosted proxy whose
+    // transport profile does not advertise reasoning effort.
     let mc = build_model_config(
         Protocol::OpenAi,
         "openrouter",
@@ -185,7 +184,10 @@ fn openrouter_gpt_without_compat_caps_has_no_selectable_thinking() {
     );
     assert_eq!(mc.context_window, 272_000);
     assert!(mc.reasoning);
-    assert!(mc.supported_thinking_levels().is_empty());
+    assert!(mc.honors_reasoning_effort());
+    assert_eq!(mc.supported_thinking_levels(), vec![
+        Off, Minimal, Low, Medium, High, Xhigh, Max
+    ]);
 }
 
 #[test]

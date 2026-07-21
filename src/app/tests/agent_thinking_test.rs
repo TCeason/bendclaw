@@ -43,6 +43,7 @@ fn cycle_thinking_level_anthropic_walks_full_ramp_and_wraps() -> TestResult {
     // Adaptive (default) is not a stop in the cycle, so the first press lands
     // on the first supported level.
     assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Off));
+    assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Minimal));
     assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Low));
     assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::Medium));
     assert_eq!(agent.cycle_thinking_level(), Some(ThinkingLevel::High));
@@ -170,6 +171,7 @@ fn cycle_thinking_level_gpt_5_6_cycles_xhigh_then_max() -> TestResult {
 
     assert_eq!(agent.supported_thinking_levels(), vec![
         ThinkingLevel::Off,
+        ThinkingLevel::Minimal,
         ThinkingLevel::Low,
         ThinkingLevel::Medium,
         ThinkingLevel::High,

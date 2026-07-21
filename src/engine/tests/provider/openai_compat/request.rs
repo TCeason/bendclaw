@@ -94,7 +94,7 @@ fn test_off_thinking_omits_reasoning_effort() {
 }
 
 #[test]
-fn test_gpt_5_6_off_thinking_sends_none_reasoning_effort() {
+fn test_gpt_5_6_chat_completions_off_omits_reasoning_effort() {
     let model_config = ModelConfig::openai("gpt-5.6-sol", "GPT-5.6 Sol");
     let config = StreamConfigBuilder::openai()
         .model("gpt-5.6-sol")
@@ -103,7 +103,20 @@ fn test_gpt_5_6_off_thinking_sends_none_reasoning_effort() {
         .build();
 
     let body = build_request_body(&config, &OpenAiCompat::openai());
-    assert_eq!(body["reasoning_effort"], "none");
+    assert!(body.get("reasoning_effort").is_none());
+}
+
+#[test]
+fn test_unsupported_off_is_clamped_before_request() {
+    let model_config = ModelConfig::openai("gpt-5.5-pro", "GPT-5.5 Pro");
+    let config = StreamConfigBuilder::openai()
+        .model("gpt-5.5-pro")
+        .model_config(model_config)
+        .thinking(ThinkingLevel::Off)
+        .build();
+
+    let body = build_request_body(&config, &OpenAiCompat::openai());
+    assert_eq!(body["reasoning_effort"], "medium");
 }
 
 #[test]
@@ -132,17 +145,78 @@ fn test_non_reasoning_model_omits_reasoning_effort_even_when_endpoint_supports_i
 }
 
 #[test]
-fn test_grok_4_5_high_thinking_sends_high_reasoning_effort() {
+fn test_xai_transport_omits_chat_completions_reasoning_effort() {
     let mut model_config = ModelConfig::local("", "grok-4.5");
-    model_config.compat = Some(OpenAiCompat::grok_cli());
+    model_config.compat = Some(OpenAiCompat::xai());
     let config = StreamConfigBuilder::openai()
         .model("grok-4.5")
         .model_config(model_config)
         .thinking(ThinkingLevel::High)
         .build();
 
-    let body = build_request_body(&config, &OpenAiCompat::grok_cli());
-    assert_eq!(body["reasoning_effort"], "high");
+    let body = build_request_body(&config, &OpenAiCompat::xai());
+    assert!(body.get("reasoning_effort").is_none());
+    assert!(body.get("reasoning").is_none());
+}
+
+#[test]
+fn test_openrouter_uses_nested_reasoning_effort() {
+    let model_config = ModelConfig::resolve(
+        evotengine::provider::ApiProtocol::OpenAiCompletions,
+        "openrouter",
+        "openai/gpt-5.6-sol",
+        "GPT-5.6 Sol",
+        "https://openrouter.ai/api/v1",
+        Some(OpenAiCompat::openrouter()),
+    );
+    let config = StreamConfigBuilder::openai()
+        .model("openai/gpt-5.6-sol")
+        .model_config(model_config)
+        .thinking(ThinkingLevel::Max)
+        .build();
+
+    let body = build_request_body(&config, &OpenAiCompat::openrouter());
+    assert_eq!(body["reasoning"]["effort"], "max");
+    assert!(body.get("reasoning_effort").is_none());
+}
+
+#[test]
+fn test_kimi_k3_uses_transport_specific_reasoning_format() {
+    let moonshot_model = ModelConfig::resolve(
+        evotengine::provider::ApiProtocol::OpenAiCompletions,
+        "moonshotai",
+        "kimi-k3",
+        "Kimi K3",
+        "https://api.moonshot.ai/v1",
+        Some(OpenAiCompat::moonshot()),
+    );
+    let moonshot_config = StreamConfigBuilder::openai()
+        .model("kimi-k3")
+        .model_config(moonshot_model)
+        .thinking(ThinkingLevel::High)
+        .build();
+    let moonshot_body = build_request_body(&moonshot_config, &OpenAiCompat::moonshot());
+    assert_eq!(moonshot_body["thinking"]["type"], "enabled");
+    assert!(moonshot_body.get("reasoning_effort").is_none());
+    assert!(moonshot_body.get("reasoning").is_none());
+
+    let openrouter_model = ModelConfig::resolve(
+        evotengine::provider::ApiProtocol::OpenAiCompletions,
+        "openrouter",
+        "moonshotai/kimi-k3",
+        "Kimi K3",
+        "https://openrouter.ai/api/v1",
+        Some(OpenAiCompat::openrouter()),
+    );
+    let openrouter_config = StreamConfigBuilder::openai()
+        .model("moonshotai/kimi-k3")
+        .model_config(openrouter_model)
+        .thinking(ThinkingLevel::High)
+        .build();
+    let openrouter_body = build_request_body(&openrouter_config, &OpenAiCompat::openrouter());
+    assert_eq!(openrouter_body["reasoning"]["effort"], "high");
+    assert!(openrouter_body.get("thinking").is_none());
+    assert!(openrouter_body.get("reasoning_effort").is_none());
 }
 
 #[test]

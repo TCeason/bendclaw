@@ -88,18 +88,19 @@ describe('repl selector control', () => {
       entry: { queue: 'follow_up', id: 'q1', version: 3, text: 'later' },
     })
     expect(handleSelectorControl(state, key('delete')).kind).toBe('queue-remove')
+    expect(handleSelectorControl(state, { type: 'ctrl', key: 'd' }).kind).toBe('queue-remove')
     expect(handleSelectorControl(state, { type: 'shift-char', char: 'j' }).kind).toBe('none')
     expect(handleSelectorControl(state, { type: 'ctrl-enter' }).kind).toBe('none')
   })
 
-  test('queue e edits and x removes instead of filtering', () => {
+  test('queue character keys do not define alternate edit or remove shortcuts', () => {
     const state = createSelectorState('Prompt queue', [{
       label: '1. queued',
       id: 'steering|q2|0',
       searchText: 'queued',
     }])
-    expect(handleSelectorControl(state, char('e')).kind).toBe('queue-edit')
-    expect(handleSelectorControl(state, char('x')).kind).toBe('queue-remove')
+    expect(handleSelectorControl(state, char('e')).kind).toBe('none')
+    expect(handleSelectorControl(state, char('x')).kind).toBe('none')
   })
 
   test('other ctrl key is ignored', () => {

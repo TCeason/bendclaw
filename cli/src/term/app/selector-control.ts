@@ -28,11 +28,7 @@ export function handleSelectorControl(state: SelectorState, event: KeyEvent): Se
     case 'down':
       return { kind: 'update', state: selectorDown(state) }
     case 'char':
-      if (isQueueSelectorTitle(state.title)) {
-        if (event.char === 'e') return selectAction(state)
-        if (event.char === 'x') return deleteAction(state)
-        return { kind: 'none' }
-      }
+      if (isQueueSelectorTitle(state.title)) return { kind: 'none' }
       return { kind: 'update', state: selectorType(state, event.char) }
     case 'backspace':
       return { kind: 'update', state: selectorBackspace(state) }
@@ -43,9 +39,7 @@ export function handleSelectorControl(state: SelectorState, event: KeyEvent): Se
     case 'delete':
       return deleteAction(state)
     case 'ctrl':
-      return isQueueSelectorTitle(state.title)
-        ? { kind: 'none' }
-        : event.key === 'd' ? deleteAction(state) : { kind: 'none' }
+      return event.key === 'd' ? deleteAction(state) : { kind: 'none' }
     default:
       return { kind: 'none' }
   }

@@ -76,7 +76,8 @@ describe('repl resume helpers', () => {
     expect(items[3]!.contextPrefix).toBe('/other · ')
   })
 
-  test('isResumeSelectorTitle accepts resume title', () => {
+  test('resume title shows the portable Ctrl+D delete shortcut', () => {
+    expect(RESUME_SELECTOR_TITLE).toBe('Resume session  (Ctrl+D delete)')
     expect(isResumeSelectorTitle(RESUME_SELECTOR_TITLE)).toBe(true)
     expect(isResumeSelectorTitle('Select model')).toBe(false)
   })

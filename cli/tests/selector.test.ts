@@ -257,6 +257,15 @@ describe('renderSelector via viewmodel', () => {
     expect(text).toContain('esc close')
   })
 
+  test('shows queue actions with the shared Ctrl+D remove shortcut', () => {
+    const state = createSelectorState('Prompt queue', items)
+    const lines = blocksToLines(buildOverlayBlocks({ kind: 'selector', state }, 80))
+    const text = lines.map(l => stripAnsi(l)).join('\n')
+    expect(text).toContain('enter edit')
+    expect(text).toContain('Ctrl+D remove')
+    expect(text).not.toContain('del remove')
+  })
+
   test('shows search query when filtering', () => {
     let state = createSelectorState('T', items)
     state = selectorType(state, 'g')

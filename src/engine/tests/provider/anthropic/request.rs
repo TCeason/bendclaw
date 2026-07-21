@@ -49,12 +49,14 @@ fn test_kimi_coding_request_uses_pi_catalog_limits() {
     let body = build_request_body(&config, false);
     assert_eq!(body["max_tokens"], 32_768);
     assert_eq!(body["thinking"]["type"], "adaptive");
-    assert_eq!(body["output_config"]["effort"], "medium");
+    assert_eq!(body["output_config"]["effort"], "high");
 }
 
 #[test]
-fn test_adaptive_thinking_sent_for_anthropic() {
+fn test_adaptive_thinking_sent_for_anthropic_adaptive_model() {
     let config = StreamConfigBuilder::anthropic()
+        .model("claude-opus-4-8")
+        .model_config(ModelConfig::anthropic("claude-opus-4-8", "Opus 4.8"))
         .thinking(ThinkingLevel::Adaptive)
         .build();
 
@@ -62,13 +64,59 @@ fn test_adaptive_thinking_sent_for_anthropic() {
     assert_eq!(body["thinking"]["type"], "adaptive");
     assert_eq!(body["thinking"]["display"], "summarized");
     assert!(body["thinking"].get("budget_tokens").is_none());
-    // Adaptive is bounded with medium effort (matches pi's default).
-    assert_eq!(body["output_config"]["effort"], "medium");
+    // Adaptive defaults to high effort (pi mapThinkingLevelToEffort default).
+    assert_eq!(body["output_config"]["effort"], "high");
+}
+
+#[test]
+fn test_anthropic_temperature_matches_pi_constraints() {
+    let off_supported = StreamConfigBuilder::anthropic()
+        .model("claude-sonnet-4-5")
+        .model_config(ModelConfig::anthropic("claude-sonnet-4-5", "Sonnet 4.5"))
+        .thinking(ThinkingLevel::Off)
+        .temperature(0.5)
+        .build();
+    let off_body = build_request_body(&off_supported, false);
+    assert_eq!(off_body["temperature"], 0.5);
+
+    let thinking = StreamConfigBuilder::anthropic()
+        .model("claude-sonnet-4-5")
+        .model_config(ModelConfig::anthropic("claude-sonnet-4-5", "Sonnet 4.5"))
+        .thinking(ThinkingLevel::High)
+        .temperature(0.5)
+        .build();
+    let thinking_body = build_request_body(&thinking, false);
+    assert!(thinking_body.get("temperature").is_none());
+
+    let unsupported = StreamConfigBuilder::anthropic()
+        .model("claude-opus-4-8")
+        .model_config(ModelConfig::anthropic("claude-opus-4-8", "Opus 4.8"))
+        .thinking(ThinkingLevel::Off)
+        .temperature(0.5)
+        .build();
+    let unsupported_body = build_request_body(&unsupported, false);
+    assert!(unsupported_body.get("temperature").is_none());
+}
+
+#[test]
+fn test_budget_thinking_for_non_adaptive_anthropic_model() {
+    let config = StreamConfigBuilder::anthropic()
+        .model("claude-sonnet-4-5")
+        .model_config(ModelConfig::anthropic("claude-sonnet-4-5", "Sonnet 4.5"))
+        .thinking(ThinkingLevel::High)
+        .build();
+
+    let body = build_request_body(&config, false);
+    assert_eq!(body["thinking"]["type"], "enabled");
+    assert!(body["thinking"]["budget_tokens"].as_u64().unwrap() >= 1024);
+    assert!(body.get("output_config").is_none());
 }
 
 #[test]
 fn test_non_off_thinking_sent_as_adaptive_for_anthropic() {
     let config = StreamConfigBuilder::anthropic()
+        .model("claude-opus-4-8")
+        .model_config(ModelConfig::anthropic("claude-opus-4-8", "Opus 4.8"))
         .thinking(ThinkingLevel::High)
         .build();
 
@@ -86,10 +134,14 @@ fn test_thinking_effort_levels_map_for_anthropic() {
         (ThinkingLevel::Low, "low"),
         (ThinkingLevel::Medium, "medium"),
         (ThinkingLevel::High, "high"),
-        (ThinkingLevel::Adaptive, "medium"),
+        (ThinkingLevel::Adaptive, "high"),
     ];
     for (level, expected) in cases {
-        let config = StreamConfigBuilder::anthropic().thinking(level).build();
+        let config = StreamConfigBuilder::anthropic()
+            .model("claude-opus-4-8")
+            .model_config(ModelConfig::anthropic("claude-opus-4-8", "Opus 4.8"))
+            .thinking(level)
+            .build();
         let body = build_request_body(&config, false);
         assert_eq!(
             body["output_config"]["effort"], expected,
@@ -100,14 +152,37 @@ fn test_thinking_effort_levels_map_for_anthropic() {
 }
 
 #[test]
-fn test_xhigh_defaults_to_xhigh_effort_without_model_config() {
-    // With no model config, the strongest level falls back to "xhigh".
+fn test_budget_thinking_is_omitted_when_output_cap_cannot_fit_minimum() {
+    // No model metadata and the fixture's 1024-token output cap cannot fit both
+    // Anthropic's minimum thinking budget and visible output.
     let config = StreamConfigBuilder::anthropic()
         .thinking(ThinkingLevel::Xhigh)
         .build();
     let body = build_request_body(&config, false);
-    assert_eq!(body["output_config"]["effort"], "xhigh");
-    assert_eq!(body["thinking"]["type"], "adaptive");
+    assert!(body.get("thinking").is_none());
+    assert!(body.get("output_config").is_none());
+    assert_eq!(body["max_tokens"], 1024);
+}
+
+#[test]
+fn test_budget_thinking_never_reexpands_past_remaining_context() {
+    let mut model_config = ModelConfig::anthropic("claude-sonnet-4-5", "Sonnet 4.5");
+    model_config.context_window = 10_000;
+    let config = StreamConfigBuilder::anthropic()
+        .model("claude-sonnet-4-5")
+        .model_config(model_config)
+        .max_tokens(4096)
+        .messages(vec![Message::user("x".repeat(32_000))])
+        .thinking(ThinkingLevel::High)
+        .build();
+
+    let body = build_request_body(&config, false);
+    let max_tokens = body["max_tokens"].as_u64().unwrap();
+    assert!(
+        max_tokens < 4096,
+        "context clamp must win, got {max_tokens}"
+    );
+    assert!(body.get("thinking").is_none());
 }
 
 #[test]
@@ -198,19 +273,18 @@ fn test_off_thinking_disables_anthropic_thinking() {
 }
 
 #[test]
-fn test_off_thinking_omitted_when_model_cannot_disable() {
-    // A model that maps `off` to None cannot have reasoning turned off, so the
-    // thinking field is omitted entirely instead of sending `disabled`.
-    let mut model_config = ModelConfig::anthropic("claude-fable-5", "Fable 5");
-    model_config.thinking_level_map.insert("off".into(), None);
+fn test_off_thinking_clamps_when_model_cannot_disable() {
+    // Fable maps `off` to unsupported, so the request is clamped upward to its
+    // lowest selectable level rather than silently relying on a service default.
+    let model_config = ModelConfig::anthropic("claude-fable-5", "Fable 5");
     let config = StreamConfigBuilder::anthropic()
         .model_config(model_config)
         .thinking(ThinkingLevel::Off)
         .build();
 
     let body = build_request_body(&config, false);
-    assert!(body.get("thinking").is_none());
-    assert!(body.get("output_config").is_none());
+    assert_eq!(body["thinking"]["type"], "adaptive");
+    assert_eq!(body["output_config"]["effort"], "low");
 }
 
 #[test]

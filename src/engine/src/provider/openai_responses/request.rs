@@ -130,22 +130,21 @@ fn apply_reasoning(body: &mut serde_json::Value, config: &StreamConfig, enabled:
     if !enabled {
         return;
     }
-    let override_effort = config
-        .model_config
-        .as_ref()
-        .and_then(|model| model.thinking_effort_override(config.thinking_level));
-    let effort = override_effort.or(match config.thinking_level {
-        ThinkingLevel::Off => config
-            .model_config
-            .as_ref()
-            .filter(|model| model.can_disable_thinking())
-            .map(|_| "none"),
-        ThinkingLevel::Minimal => Some("minimal"),
-        ThinkingLevel::Low => Some("low"),
-        ThinkingLevel::Medium => Some("medium"),
-        ThinkingLevel::High | ThinkingLevel::Adaptive => Some("high"),
-        ThinkingLevel::Xhigh => Some("xhigh"),
-        ThinkingLevel::Max => Some("max"),
+    let model = config.model_config.as_ref();
+    let level = crate::provider::thinking::effective_thinking_level(config.thinking_level, model);
+    let override_effort = model.and_then(|m| m.thinking_effort_override(level));
+    let effort = override_effort.map(str::to_string).or(match level {
+        // `Off` is only expressible when the model map supplies a wire value
+        // (first-party gpt-5.x map `off` to "none" in the catalog). Endpoints
+        // without a mapping (github-copilot, third-party Responses proxies)
+        // omit the field instead of receiving an unsupported "none".
+        ThinkingLevel::Off => None,
+        ThinkingLevel::Minimal => Some("minimal".into()),
+        ThinkingLevel::Low => Some("low".into()),
+        ThinkingLevel::Medium => Some("medium".into()),
+        ThinkingLevel::High | ThinkingLevel::Adaptive => Some("high".into()),
+        ThinkingLevel::Xhigh => Some("xhigh".into()),
+        ThinkingLevel::Max => Some("max".into()),
     });
     if let Some(effort) = effort {
         if effort == "none" {

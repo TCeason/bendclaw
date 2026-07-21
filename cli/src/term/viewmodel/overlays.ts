@@ -265,7 +265,7 @@ function buildSelectorBlocks(state: SelectorState, _columns: number): ViewBlock[
   if (state.title === 'Prompt queue') {
     lines.push(line(
       colored('enter', 'cyan'), dim(' edit   '),
-      colored('del', 'cyan'), dim(' remove   '),
+      colored('Ctrl+D', 'cyan'), dim(' remove   '),
       colored('esc', 'cyan'), dim(' close'),
     ))
   } else {

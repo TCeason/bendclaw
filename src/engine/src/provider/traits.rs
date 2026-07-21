@@ -68,20 +68,20 @@ pub struct StreamConfig {
 const CONTEXT_SAFETY_TOKENS: usize = 4096;
 
 impl StreamConfig {
-    /// The output-token budget to send this request, clamped to what the
-    /// context window can still hold.
-    ///
-    /// Starts from the caller's explicit `max_tokens`, else the model's default
-    /// cap, else a conservative floor. Then — mirroring pi's
-    /// `clampMaxTokensToContext` — caps it to `context_window - input - safety`
-    /// so a generous model cap never overflows the window (which providers
-    /// reject) or over-reserves credit on metered keys. Never returns 0.
-    pub fn resolved_max_tokens(&self) -> u32 {
-        let requested = self
-            .max_tokens
+    /// Caller output cap before context-window clamping.
+    pub fn requested_max_tokens(&self) -> u32 {
+        self.max_tokens
             .or(self.model_config.as_ref().map(|m| m.max_tokens))
-            .unwrap_or(8192);
+            .unwrap_or(8192)
+            .max(1)
+    }
 
+    /// Clamp an output cap to the context still available for this request.
+    ///
+    /// Keeping this separate lets providers expand an explicit output cap for
+    /// protocol overhead (for example Anthropic budget thinking) before the
+    /// final context clamp, matching pi's ordering.
+    pub fn clamp_max_tokens_to_context(&self, requested: u32) -> u32 {
         let context_window = self
             .model_config
             .as_ref()
@@ -103,6 +103,12 @@ impl StreamConfig {
             .saturating_sub(CONTEXT_SAFETY_TOKENS)
             .max(1);
         (requested as usize).min(available) as u32
+    }
+
+    /// The output-token budget to send this request, clamped to what the
+    /// context window can still hold.
+    pub fn resolved_max_tokens(&self) -> u32 {
+        self.clamp_max_tokens_to_context(self.requested_max_tokens())
     }
 }
 

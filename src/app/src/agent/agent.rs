@@ -351,7 +351,7 @@ impl Agent {
     }
 
     fn supported_thinking_levels_for(llm: &LlmConfig) -> Vec<evot_engine::ThinkingLevel> {
-        super::run::runtime::build_model_config(
+        let model = super::run::runtime::build_model_config(
             llm.protocol.clone(),
             &llm.provider,
             &llm.model,
@@ -360,8 +360,12 @@ impl Agent {
             llm.context_window,
             llm.max_tokens,
             llm.supports_image,
-        )
-        .supported_thinking_levels()
+        );
+        if model.reasoning {
+            model.supported_thinking_levels()
+        } else {
+            Vec::new()
+        }
     }
 
     /// Replace the LLM config while inheriting the session's current thinking

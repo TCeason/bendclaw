@@ -129,10 +129,33 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
         }
     }
 
-    // Clamp the model's output cap to the remaining context window so a
-    // generous default never overflows the window or over-reserves credit on
-    // metered keys (e.g. OpenRouter). Mirrors pi's clampMaxTokensToContext.
-    let max_tokens = config.resolved_max_tokens();
+    let thinking_level = crate::provider::thinking::effective_thinking_level(
+        config.thinking_level,
+        config.model_config.as_ref(),
+    );
+    let adaptive = crate::provider::thinking::force_adaptive_thinking(config.model_config.as_ref());
+    let model_max = config
+        .model_config
+        .as_ref()
+        .map(|m| m.max_tokens)
+        .unwrap_or_else(|| config.requested_max_tokens());
+
+    // Budget thinking expands an explicit visible-output cap first; the final
+    // request is then clamped to remaining context, matching pi's ordering.
+    let (requested_max_tokens, requested_thinking_budget) =
+        if thinking_level != ThinkingLevel::Off && !adaptive {
+            crate::provider::thinking::adjust_max_tokens_for_thinking(
+                config.max_tokens,
+                model_max,
+                thinking_level,
+            )
+        } else {
+            (config.requested_max_tokens(), 0)
+        };
+    let max_tokens = config.clamp_max_tokens_to_context(requested_max_tokens);
+    let thinking_budget = requested_thinking_budget
+        .min(max_tokens.saturating_sub(crate::provider::thinking::MIN_OUTPUT_AFTER_THINKING));
+
     let mut body = serde_json::json!({
         "model": config.model,
         "max_tokens": max_tokens,
@@ -179,73 +202,45 @@ pub fn build_request_body(config: &StreamConfig, is_oauth: bool) -> serde_json::
         body["tools"] = serde_json::json!(tools);
     }
 
-    if config.thinking_level != ThinkingLevel::Off {
-        body["thinking"] = serde_json::json!({
-            "type": "adaptive",
-            "display": "summarized",
-        });
-        // Bound adaptive thinking with an effort level so a single turn can't
-        // run away (e.g. tens of thousands of thinking tokens in one call).
-        // Mirrors pi's behavior, which always sends output_config.effort.
-        if let Some(effort) = thinking_effort(config.thinking_level, config) {
-            body["output_config"] = serde_json::json!({ "effort": effort });
+    if thinking_level != ThinkingLevel::Off {
+        if adaptive {
+            body["thinking"] = serde_json::json!({
+                "type": "adaptive",
+                "display": "summarized",
+            });
+            if let Some(effort) = crate::provider::thinking::anthropic_effort(
+                thinking_level,
+                config.model_config.as_ref(),
+            ) {
+                body["output_config"] = serde_json::json!({ "effort": effort });
+            }
+        } else if thinking_budget >= crate::provider::thinking::MIN_THINKING_BUDGET {
+            // Older Claude models use budget-based thinking. If the remaining
+            // context cannot fit the API's minimum budget plus visible output,
+            // omit thinking rather than send an invalid request.
+            body["thinking"] = serde_json::json!({
+                "type": "enabled",
+                "budget_tokens": thinking_budget,
+            });
         }
-    } else if thinking_off_disables(config) {
+    } else if crate::provider::thinking::thinking_off_disables(config.model_config.as_ref()) {
         // Off explicitly disables thinking rather than omitting the field, so a
         // reasoning model is told not to think this turn instead of falling back
-        // to its API default. Mirrors pi's `{ type: "disabled" }`. Models that
-        // map `off` to `None` in their thinking_level_map cannot be disabled, so
-        // the field is omitted for them.
+        // to its API default. Mirrors pi's `{ type: "disabled" }`.
         body["thinking"] = serde_json::json!({ "type": "disabled" });
     }
 
-    if let Some(temp) = config.temperature {
-        body["temperature"] = serde_json::json!(temp);
+    let supports_temperature = config
+        .model_config
+        .as_ref()
+        .is_none_or(|model| model.supports_temperature);
+    if thinking_level == ThinkingLevel::Off && supports_temperature {
+        if let Some(temp) = config.temperature {
+            body["temperature"] = serde_json::json!(temp);
+        }
     }
 
     body
-}
-
-/// Map a thinking level to an Anthropic adaptive-thinking effort value.
-///
-/// Returns `None` only for `Off` (handled separately by omitting the thinking
-/// block entirely). `Adaptive` maps to `medium` to match pi's default and to
-/// keep a single turn from spending tens of thousands of thinking tokens.
-///
-/// `Xhigh` has no fixed effort string: `"max"` is only valid on Opus 4.6 while
-/// Opus 4.7+/4.8 and Fable use `"xhigh"`. The exact value is resolved per model
-/// via [`ModelConfig::thinking_level_map`] (mirrors pi's `thinkingLevelMap`),
-/// falling back to `"xhigh"` when no model config is present.
-fn thinking_effort(level: ThinkingLevel, config: &StreamConfig) -> Option<&str> {
-    // Per-model override wins (e.g. xhigh -> "max" on Opus 4.6).
-    if let Some(mapped) = config
-        .model_config
-        .as_ref()
-        .and_then(|mc| mc.thinking_effort_override(level))
-    {
-        return Some(mapped);
-    }
-    match level {
-        ThinkingLevel::Off => None,
-        ThinkingLevel::Minimal | ThinkingLevel::Low => Some("low"),
-        ThinkingLevel::Medium | ThinkingLevel::Adaptive => Some("medium"),
-        ThinkingLevel::High => Some("high"),
-        ThinkingLevel::Xhigh => Some("xhigh"),
-        ThinkingLevel::Max => Some("max"),
-    }
-}
-
-/// Whether an `Off` level should emit `{"type": "disabled"}` rather than omit
-/// the thinking field. True unless the model explicitly marks `off` as
-/// unsupported (maps it to `None`), in which case reasoning cannot be turned
-/// off and the field is omitted. With no model config, default to disabling
-/// (mirrors pi, where an absent `thinkingLevelMap.off` still sends `disabled`).
-fn thinking_off_disables(config: &StreamConfig) -> bool {
-    config
-        .model_config
-        .as_ref()
-        .map(|mc| mc.can_disable_thinking())
-        .unwrap_or(true)
 }
 
 fn system_prompt_blocks(prompt: &str, cache_static: bool) -> Vec<serde_json::Value> {
