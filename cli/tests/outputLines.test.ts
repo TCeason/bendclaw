@@ -187,8 +187,119 @@ describe('buildToolResult', () => {
   test('error result status line uses ✗ and stays before output', () => {
     const lines = buildToolResult('bash', { command: 'fail' }, 'error', 'command not found', 10)
     expect(lines[0]!.text).toMatch(/^ {2}✗/)
-    expect(lines[0]!.text).not.toContain('failed')
+    expect(lines[0]!.text).toContain('failed')
+    expect(lines[0]!.text).toContain('10ms')
     expect(lines.slice(1).some((line) => line.kind === 'error')).toBe(true)
+  })
+
+  test('failed edit with missing/dot path surfaces the attempted target', () => {
+    const missing = buildToolCard({
+      id: 'edit-missing',
+      name: 'edit',
+      args: {},
+      status: 'error',
+      result: 'Cannot read : Is a directory (os error 21). Use Write to create new files.',
+      durationMs: 0,
+      details: { bytes: 74 },
+    })
+    expect(missing[0]!.text).toBe('✎ edit  (missing path)')
+    expect(missing[1]!.text).toMatch(/^ {2}✗ · failed/)
+    expect(missing[1]!.text).toContain('invalid path')
+    // Error body is auto-expanded — no "ctrl+o to expand" for failures.
+    const missingBody = missing.map(l => l.text).join('\n')
+    expect(missingBody).toContain('Cannot read')
+    expect(missingBody).not.toContain('ctrl+o to expand')
+    // Byte size is not the primary failure signal.
+    expect(missing[1]!.text).not.toContain('74 B')
+
+    const dot = buildToolCard({
+      id: 'edit-dot',
+      name: 'edit',
+      args: {
+        path: '.',
+        edits: [{ oldText: 'finish();', newText: 'finish()?;' }],
+      },
+      status: 'error',
+      result: 'Cannot read : Is a directory (os error 21). Use Write to create new files.',
+      durationMs: 0,
+      details: { bytes: 74 },
+    })
+    expect(dot[0]!.text).toContain('path="."')
+    expect(dot[0]!.text).toContain('finish()')
+    expect(dot[1]!.text).toMatch(/^ {2}✗ · failed/)
+  })
+
+  test('failed multi-edit lists each replacement under the headline', () => {
+    const lines = buildToolCard({
+      id: 'edit-multi',
+      name: 'edit',
+      args: {
+        path: 'src/a.ts',
+        edits: [
+          { oldText: 'foo', newText: 'bar' },
+          { oldText: 'baz', newText: 'qux' },
+        ],
+      },
+      status: 'error',
+      result: 'oldText not found',
+      durationMs: 3,
+    })
+    const all = lines.map(l => l.text).join('\n')
+    // Multi-edit failures keep the path on the headline and list each
+    // replacement as detail lines under it.
+    expect(lines[0]!.text).toBe('✎ edit  src/a.ts')
+    expect(all).toContain('1/2 replace')
+    expect(all).toContain('2/2 replace')
+    expect(all).toContain('oldText not found')
+  })
+
+  test('failed bash keeps the command on the headline and expands the error', () => {
+    const lines = buildToolCard({
+      id: 'bash-fail',
+      name: 'bash',
+      args: { command: 'cargo test -p db0_runtime planning' },
+      status: 'error',
+      result: 'error: no matching package named `db0_runtime` found\n\nCaused by:\n  ...',
+      durationMs: 2300,
+      details: { exit_code: 101 },
+    })
+    expect(lines[0]!.text).toContain('⌘ bash')
+    expect(lines[0]!.text).toContain('cargo test -p db0_runtime planning')
+    expect(lines[1]!.text).toBe('  ✗ · failed · exit 101 · 2.3s')
+    const all = lines.map(l => l.text).join('\n')
+    expect(all).toContain('no matching package')
+    expect(all).not.toContain('ctrl+o to expand')
+  })
+
+  test('long failed output auto-previews only the tail, expandable via ctrl+o', () => {
+    const body = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`).join('\n')
+    const collapsed = buildToolCard({
+      id: 'bash-long-fail',
+      name: 'bash',
+      args: { command: 'make test' },
+      status: 'error',
+      result: body,
+      details: { exit_code: 2 },
+    })
+    const collapsedText = collapsed.map(l => l.text).join('\n')
+    // Tail preview: last lines visible, earlier lines behind an expand hint.
+    expect(collapsedText).toContain('line 60')
+    expect(collapsedText).toContain('line 41')
+    expect(collapsedText).not.toContain('line 40\n')
+    expect(collapsedText).toContain('(+40 lines, ctrl+o to expand)')
+
+    const expandedCard = buildToolCard({
+      id: 'bash-long-fail',
+      name: 'bash',
+      args: { command: 'make test' },
+      status: 'error',
+      result: body,
+      details: { exit_code: 2 },
+    }, true)
+    const expandedText = expandedCard.map(l => l.text).join('\n')
+    expect(expandedText).toContain('line 1')
+    expect(expandedText).toContain('line 60')
+    expect(expandedText).toContain('ctrl+o to collapse')
   })
 
   test('pretty prints JSON result body without generic shape labels', () => {
@@ -311,7 +422,7 @@ describe('buildToolResult', () => {
       result: 'Exit code: 7',
       details: { exit_code: 7 },
     })
-    expect(bash[1]!.text).toBe('  ✗ · exit 7')
+    expect(bash[1]!.text).toBe('  ✗ · failed · exit 7')
 
     const web = buildToolCard({
       id: 'web-error',
@@ -321,7 +432,7 @@ describe('buildToolResult', () => {
       result: 'HTTP 404 error',
       details: { status: 404, error: true },
     })
-    expect(web[1]!.text).toBe('  ✗ · HTTP 404')
+    expect(web[1]!.text).toBe('  ✗ · failed · HTTP 404')
   })
 
   test('status remains second when reason, diff, and output details exist', () => {

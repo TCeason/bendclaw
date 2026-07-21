@@ -11,7 +11,7 @@
 import { renderMarkdown, renderThinkingMarkdown } from './markdown.js'
 import { colorizeUnifiedDiff } from './diff.js'
 import { highlightCode, highlightCodeLine } from '../markdown/render/ansi.js'
-import { truncate, formatDuration, toolResultLines, formatBashCommandDisplay, expandLinesHint, COLLAPSE_HINT } from './format.js'
+import { truncate, formatDuration, toolResultLines, formatBashCommandDisplay, expandLinesHint, COLLAPSE_HINT, summarizeInline } from './format.js'
 import type { UIMessage, UIToolCall } from '../term/app/types.js'
 
 // ---------------------------------------------------------------------------
@@ -34,12 +34,53 @@ function toolGlyph(name: string): ToolGlyph {
   }
 }
 
+/** Resolve a path-like tool argument, preserving empty/invalid values so failed
+ *  cards still show what was attempted (e.g. path="." or a missing path). */
+function toolPathArg(args: Record<string, unknown>): { raw: string | undefined; display: string } {
+  const raw = args?.path ?? args?.file ?? args?.file_path
+  if (typeof raw !== 'string') return { raw: undefined, display: '' }
+  const trimmed = raw.trim()
+  if (!trimmed) return { raw, display: 'path=""' }
+  // Bare "." / "./" is almost always a model mistake for edit/write/read.
+  if (trimmed === '.' || trimmed === './') return { raw, display: `path="${trimmed}"` }
+  return { raw, display: trimmed }
+}
+
+/** Short one-line summary of edit replacements for the failed/expanded card. */
+function editReplacementHeadline(args: Record<string, unknown>): string {
+  const edits = Array.isArray(args.edits) ? args.edits : []
+  if (edits.length === 0) {
+    const oldText = typeof args.oldText === 'string' ? args.oldText
+      : typeof args.old_string === 'string' ? args.old_string : ''
+    const newText = typeof args.newText === 'string' ? args.newText
+      : typeof args.new_string === 'string' ? args.new_string : ''
+    if (!oldText && !newText) return ''
+    return formatReplacementPair(oldText, newText)
+  }
+  if (edits.length === 1) {
+    const edit = edits[0] as Record<string, unknown>
+    const oldText = typeof edit?.oldText === 'string' ? edit.oldText
+      : typeof edit?.old_string === 'string' ? edit.old_string : ''
+    const newText = typeof edit?.newText === 'string' ? edit.newText
+      : typeof edit?.new_string === 'string' ? edit.new_string : ''
+    return formatReplacementPair(oldText, newText)
+  }
+  return `${edits.length} replacements`
+}
+
+function formatReplacementPair(oldText: string, newText: string): string {
+  const oldPart = oldText ? summarizeInline(oldText, 40) : '∅'
+  const newPart = newText ? summarizeInline(newText, 40) : '∅'
+  return `replace ${JSON.stringify(oldPart)} → ${JSON.stringify(newPart)}`
+}
+
 /** The single most useful argument to show beside the tool name. */
 function toolPrimaryArg(
   name: string,
   args: Record<string, unknown>,
   previewCommand?: string,
   expanded?: boolean,
+  options?: { failed?: boolean },
 ): string {
   const n = name.toLowerCase()
   if (n === 'bash') {
@@ -63,8 +104,27 @@ function toolPrimaryArg(
     if (path) return path
     return skillNameFromPreview(previewCommand)
   }
-  const path = (args?.path ?? args?.file ?? args?.file_path) as string | undefined
-  if (path) return path
+
+  const { display: pathDisplay } = toolPathArg(args)
+  if (n === 'edit' || n === 'file_edit') {
+    const replacement = editReplacementHeadline(args)
+    const edits = Array.isArray(args.edits) ? args.edits : []
+    // Multi-edit failures list each replacement as detail lines; keep the
+    // headline to path only so it doesn't repeat "N replacements".
+    if (pathDisplay && options?.failed && edits.length > 1) return pathDisplay
+    if (pathDisplay && replacement && options?.failed) {
+      return `${pathDisplay} · ${replacement}`
+    }
+    if (pathDisplay) return pathDisplay
+    if (replacement) return replacement
+    return options?.failed ? '(missing path)' : ''
+  }
+  if (n === 'write' || n === 'file_write' || n === 'read' || n === 'read_code') {
+    if (pathDisplay) return pathDisplay
+    return options?.failed ? '(missing path)' : ''
+  }
+  if (pathDisplay) return pathDisplay
+
   const pattern = (args?.pattern ?? args?.query ?? args?.url) as string | undefined
   // Show the full value — the viewmodel wraps the card arg to terminal width,
   // so the tail is never lost. Newlines collapse to a single logical line.
@@ -92,9 +152,10 @@ function toolCallText(
   args: Record<string, unknown>,
   previewCommand?: string,
   expanded?: boolean,
+  options?: { failed?: boolean },
 ): string {
   const glyph = toolGlyph(name).icon
-  const primary = toolPrimaryArg(name, args, previewCommand, expanded)
+  const primary = toolPrimaryArg(name, args, previewCommand, expanded, options)
   return primary ? `${glyph} ${name}  ${primary}` : `${glyph} ${name}`
 }
 
@@ -405,19 +466,28 @@ export function buildToolCall(
   args: Record<string, unknown>,
   previewCommand?: string,
   expanded?: boolean,
+  options?: { failed?: boolean },
 ): OutputLine[] {
   // Keep the operation headline first so every lifecycle state has the same
   // stable card geometry: headline → status → optional reason/output details.
   const lines: OutputLine[] = [{
     id: genId('tool'),
     kind: 'tool',
-    text: toolCallText(name, args, previewCommand, expanded),
+    text: toolCallText(name, args, previewCommand, expanded, options),
   }]
   for (const reason of formatReasonLines(args)) {
     lines.push({ id: genId('tool'), kind: 'tool', text: `  ${reason}` })
   }
+  // Failed edit cards: show each replacement summary under the headline so the
+  // user can see what was attempted without expanding the full result body.
+  if (options?.failed) {
+    for (const detail of failedArgDetailLines(name, args)) {
+      lines.push({ id: genId('tool'), kind: 'tool', text: `  ${detail}` })
+    }
+  }
   // Expanded multi-line bash: keep newlines instead of flattening into a wall.
-  // Collapse hint matches expanded tool results / progress cards.
+  // Collapse hint matches expanded tool results / progress cards — but only
+  // when the user explicitly expanded (not auto-expanded failures).
   if (name.toLowerCase() === 'bash' && expanded) {
     const command = previewCommand ?? (args?.command as string) ?? ''
     const details = formatBashCommandDisplay(command, true).detailLines
@@ -428,9 +498,32 @@ export function buildToolCall(
       lines.push({
         id: genId('tool-hint'),
         kind: 'tool_result',
-        text: `  \x1b[2m${COLLAPSE_HINT}\x1b[0m`,
+        text: `  [2m${COLLAPSE_HINT}[0m`,
       })
     }
+  }
+  return lines
+}
+
+/** Extra indented lines that only appear on failed cards to make the attempt
+ *  obvious (multi-edit replacements, empty path, etc.). */
+function failedArgDetailLines(name: string, args: Record<string, unknown>): string[] {
+  const n = name.toLowerCase()
+  if (n !== 'edit' && n !== 'file_edit') return []
+  const edits = Array.isArray(args.edits) ? args.edits : []
+  if (edits.length <= 1) return []
+  const lines: string[] = []
+  const maxShow = 3
+  for (let i = 0; i < Math.min(edits.length, maxShow); i++) {
+    const edit = edits[i] as Record<string, unknown>
+    const oldText = typeof edit?.oldText === 'string' ? edit.oldText
+      : typeof edit?.old_string === 'string' ? edit.old_string : ''
+    const newText = typeof edit?.newText === 'string' ? edit.newText
+      : typeof edit?.new_string === 'string' ? edit.new_string : ''
+    lines.push(`${i + 1}/${edits.length} ${formatReplacementPair(oldText, newText)}`)
+  }
+  if (edits.length > maxShow) {
+    lines.push(`… +${edits.length - maxShow} more replacements`)
   }
   return lines
 }
@@ -456,7 +549,21 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
         ...(skillPath ? { path: skillPath } : {}),
       }
     : call.args
-  const lines = buildToolCall(call.name, args, call.previewCommand, expanded)
+  // Pre-compute failure so the headline can surface path="." / missing path and
+  // edit replacement summaries before the status line is inserted.
+  const exitCode = call.name.toLowerCase() === 'bash' ? detailNumber(details, 'exit_code') : undefined
+  const settledFailed = call.status === 'error'
+    || details.error === true
+    || (exitCode !== undefined && exitCode !== 0)
+  // Note: failure enriches the headline ({failed}) but does NOT force the
+  // command body open — a huge heredoc stays collapsed; ctrl+o still works.
+  const lines = buildToolCall(
+    call.name,
+    args,
+    call.previewCommand,
+    expanded,
+    { failed: settledFailed },
+  )
 
   if (call.status === 'queued') {
     const summary = call.argsComplete ? 'ready' : toolDraftSummary(call)
@@ -468,6 +575,8 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
   if (call.status !== 'running') {
     // The call has settled; its streaming preview cache is no longer needed.
     writePreviewCache.delete(call.id)
+    // buildToolResult auto-previews failed bodies itself (tail lines), so pass
+    // the raw user toggle: ctrl+o still expands/collapses failed cards.
     const resultLines = buildToolResult(
       call.name,
       args,
@@ -477,7 +586,7 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
       expanded,
       details,
     )
-    insertToolStatus(lines, resultLines.shift() ?? toolStatusLine(call.status === 'error' ? '✗' : '✓', []))
+    insertToolStatus(lines, resultLines.shift() ?? toolStatusLine(settledFailed ? '✗' : '✓', []))
     lines.push(...resultLines)
     return lines
   }
@@ -500,6 +609,9 @@ export function buildToolCard(call: UIToolCall, expanded?: boolean, _now = Date.
   return lines
 }
 
+/** Failed tool bodies auto-preview at most this many tail lines. */
+const ERROR_PREVIEW_LINES = 20
+
 export function buildToolResult(
   name: string,
   args: Record<string, unknown>,
@@ -511,13 +623,19 @@ export function buildToolResult(
 ): OutputLine[] {
   const exitCode = name.toLowerCase() === 'bash' ? detailNumber(details, 'exit_code') : undefined
   const isError = status === 'error' || details.error === true || (exitCode !== undefined && exitCode !== 0)
-  const summary = toolResultSummary(name, args, result, details)
+  const summary = toolResultSummary(name, args, result, details, isError)
   const duration = durationMs !== undefined ? formatDuration(durationMs) : ''
-  const lines: OutputLine[] = [toolStatusLine(isError ? '✗' : '✓', [summary, duration])]
+  // Failed status: lead with "failed" so the line reads as an outcome, not a
+  // size/duration metric ("74 B · 0ms" is meaningless for a missing path).
+  const statusParts = isError
+    ? ['failed', summary, duration].filter(Boolean)
+    : [summary, duration].filter(Boolean)
+  const lines: OutputLine[] = [toolStatusLine(isError ? '✗' : '✓', statusParts)]
 
-  // Diff (for write/edit tools)
+  // Diff (for write/edit tools) — skip on failure; the attempt is already
+  // summarized on the headline and the error body is what matters.
   const diff = args?.diff as string | undefined
-  if (diff && typeof diff === 'string' && diff.length > 0) {
+  if (!isError && diff && typeof diff === 'string' && diff.length > 0) {
     lines.push({
       id: genId('tool-diff'),
       kind: 'tool',
@@ -525,32 +643,43 @@ export function buildToolResult(
     })
   }
 
-  // Tool result content. Collapsed view is a single `... (+N lines, ctrl+o to
-  // expand)` hint; ctrl+o expands to the full body. This applies uniformly to
-  // every tool, including Read: previously successful reads rendered no body
-  // (the status line's size was considered enough), but that left Read as the
-  // only tool whose output couldn't be expanded. Now Read collapses/expands
-  // like the rest.
+  // Tool result content. Collapsed success is a single `... (+N lines, ctrl+o
+  // to expand)` hint. Failures auto-preview the tail of the body (errors live
+  // at the end) capped at ERROR_PREVIEW_LINES; ctrl+o expands the rest and
+  // collapses back to the preview.
   if (result) {
     const formattedResult = formatToolResultContent(result)
-    const resultLines = toolResultLines(formattedResult, isError, name, expanded)
-    for (const rl of resultLines) {
-      lines.push({
-        id: genId('tool-res'),
-        kind: isError ? 'error' : 'tool_result',
-        text: `  ${rl}`,
-      })
-    }
-    // Show a collapse hint under expanded multiline results. The collapsed
-    // view no longer previews content lines: toolResultLines() returns a
-    // single `... (+N lines, ctrl+o to expand)` hint, so no extra expand hint
-    // is appended here.
-    if (expanded && resultLines.length > 1) {
-      lines.push({
-        id: genId('tool-hint'),
-        kind: 'tool_result',
-        text: `  \x1b[2m${COLLAPSE_HINT}\x1b[0m`,
-      })
+    if (isError && !expanded) {
+      const all = toolResultLines(formattedResult, true, name, true)
+      const hidden = all.length - ERROR_PREVIEW_LINES
+      if (hidden > 0) {
+        lines.push({
+          id: genId('tool-hint'),
+          kind: 'tool_result',
+          text: `  [2m... ${expandLinesHint(hidden)}[0m`,
+        })
+      }
+      for (const rl of hidden > 0 ? all.slice(-ERROR_PREVIEW_LINES) : all) {
+        lines.push({ id: genId('tool-res'), kind: 'error', text: `  ${rl}` })
+      }
+    } else {
+      const resultLines = toolResultLines(formattedResult, isError, name, expanded)
+      for (const rl of resultLines) {
+        lines.push({
+          id: genId('tool-res'),
+          kind: isError ? 'error' : 'tool_result',
+          text: `  ${rl}`,
+        })
+      }
+      // Collapse hint under any user-expanded multiline body (success or
+      // failure) — ctrl+o collapses back to the default view.
+      if (expanded && resultLines.length > 1) {
+        lines.push({
+          id: genId('tool-hint'),
+          kind: 'tool_result',
+          text: `  [2m${COLLAPSE_HINT}[0m`,
+        })
+      }
     }
   }
 
@@ -568,14 +697,14 @@ export function buildToolProgress(name: string, text: string, expanded?: boolean
       lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${l}` })
     }
     if (progressLines.length > 1) {
-      lines.push({ id: genId('tool-hint'), kind: 'tool_result', text: `  \x1b[2m${COLLAPSE_HINT}\x1b[0m` })
+      lines.push({ id: genId('tool-hint'), kind: 'tool_result', text: `  [2m${COLLAPSE_HINT}[0m` })
     }
     return lines
   }
   // Collapsed: no content preview — the header already carries the line count,
   // so a multiline body just adds a single expand hint (matching tool results).
   if (total > 1) {
-    lines.push({ id: genId('tool-hint'), kind: 'tool_result', text: `  \x1b[2m... ${expandLinesHint(total)}\x1b[0m` })
+    lines.push({ id: genId('tool-hint'), kind: 'tool_result', text: `  [2m... ${expandLinesHint(total)}[0m` })
   } else {
     lines.push({ id: genId('tool-res'), kind: 'tool_result', text: `  ${progressLines[0] ?? ''}` })
   }
@@ -897,6 +1026,7 @@ function toolResultSummary(
   args: Record<string, unknown>,
   result: string | undefined,
   details: Record<string, unknown>,
+  isError = false,
 ): string {
   const normalizedName = name.toLowerCase()
   const bytes = detailNumber(details, 'bytes')
@@ -905,6 +1035,22 @@ function toolResultSummary(
   if (normalizedName === 'bash') {
     const exitCode = detailNumber(details, 'exit_code')
     if (exitCode !== undefined) return `exit ${exitCode}`
+  }
+
+  // Failures: status line stays short ("failed · exit N · 12ms"). The full
+  // error body is auto-expanded below, so do not echo it again here.
+  if (isError) {
+    if (normalizedName === 'web_fetch' || normalizedName === 'webfetch') {
+      const status = detailNumber(details, 'status')
+      if (status !== undefined) return `HTTP ${status}`
+    }
+    if (normalizedName === 'edit' || normalizedName === 'file_edit'
+      || normalizedName === 'write' || normalizedName === 'file_write'
+      || normalizedName === 'read' || normalizedName === 'read_code') {
+      const { display } = toolPathArg(args)
+      if (!display || display.startsWith('path=')) return 'invalid path'
+    }
+    return ''
   }
 
   if (normalizedName === 'read' || normalizedName === 'read_code') {
