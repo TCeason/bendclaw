@@ -11,6 +11,11 @@ export interface SelectorItem {
   searchText?: string
   /** When false, up/down navigation skips this item. Defaults to true. */
   focusable?: boolean
+  /** Associates an item with a non-focusable group header. Filtering keeps the
+   *  header whenever at least one item in the group matches. */
+  group?: string
+  /** Prefix retained when full-text filtering replaces detail with a snippet. */
+  contextPrefix?: string
 }
 
 export interface SelectorState {
@@ -133,12 +138,22 @@ export function selectorClearQuery(state: SelectorState): SelectorState {
 }
 
 export function selectorRemoveItem(state: SelectorState, index: number): SelectorState {
-  const label = state.items[index]?.label
-  if (!label) return state
-  const items = state.items.filter((_, i) => i !== index)
-  const allItems = state.allItems.filter(i => i.label !== label)
-  const focusIndex = Math.min(state.focusIndex, Math.max(0, items.length - 1))
+  const target = state.items[index]
+  if (!target || target.header) return state
+  const key = target.id ?? target.label
+  const allItems = pruneEmptyGroups(state.allItems.filter(item => (item.id ?? item.label) !== key))
+  if (state.query) return applyFilter({ ...state, allItems }, state.query)
+
+  const items = allItems
+  let focusIndex = Math.min(index, Math.max(0, items.length - 1))
+  while (focusIndex < items.length && items[focusIndex]?.focusable === false) focusIndex++
+  if (focusIndex >= items.length) focusIndex = lastFocusable(items)
   return { ...state, items, allItems, focusIndex, scrollOffset: ensureVisible(state.scrollOffset, focusIndex, items.length) }
+}
+
+function pruneEmptyGroups(items: SelectorItem[]): SelectorItem[] {
+  const populatedGroups = new Set(items.flatMap(item => !item.header && item.group ? [item.group] : []))
+  return items.filter(item => !item.header || !item.group || populatedGroups.has(item.group))
 }
 
 function searchableText(item: SelectorItem): string {
@@ -253,7 +268,6 @@ function applyFilter(state: SelectorState, query: string): SelectorState {
   const exact: SelectorItem[] = []
   const fuzzy: SelectorItem[] = []
   for (const item of state.allItems) {
-    // Group dividers are dropped while filtering: results are ranked flat.
     if (item.header) continue
     const text = searchableText(item)
     if (text.includes(lower)) {
@@ -262,14 +276,27 @@ function applyFilter(state: SelectorState, query: string): SelectorState {
       fuzzy.push(item)
     }
   }
-  const filtered = exact.concat(fuzzy)
+  const matched = exact.concat(fuzzy)
+  const filtered = restoreGroupHeaders(state.allItems, matched)
   const focusIndex = firstFocusable(filtered)
   return { ...state, query, items: filtered, focusIndex, scrollOffset: ensureVisible(0, focusIndex, filtered.length) }
+}
+
+function restoreGroupHeaders(allItems: SelectorItem[], matched: SelectorItem[]): SelectorItem[] {
+  if (!matched.some(item => item.group)) return matched
+
+  const matchedIds = new Set(matched.map(item => item.id ?? item.label))
+  const matchedGroups = new Set(matched.flatMap(item => item.group ? [item.group] : []))
+  return allItems.flatMap(item => {
+    if (item.header) return item.group && matchedGroups.has(item.group) ? [item] : []
+    if (!matchedIds.has(item.id ?? item.label)) return []
+    return [matched.find(candidate => (candidate.id ?? candidate.label) === (item.id ?? item.label)) ?? item]
+  })
 }
 
 function withContext(item: SelectorItem, query: string): SelectorItem {
   if (!item.searchText) return item
   const ctx = extractContext(item.searchText, query, 80)
   if (!ctx) return item
-  return { ...item, detail: ctx }
+  return { ...item, detail: `${item.contextPrefix ?? ''}${ctx}` }
 }

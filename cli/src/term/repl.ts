@@ -103,7 +103,7 @@ import {
   isResumeSelectorTitle,
   isSessionIdPrefix,
   resolveSessionByPrefix,
-  selectSessionPool,
+  shortenSessionCwd,
 } from './app/resume.js'
 import { findPreviousSession, shouldPreloadStartupSessions, selectResumeMessages, resumeElidedLine, resumeModelUnavailableNote } from './app/session-view.js'
 import { handleSelectorControl } from './app/selector-control.js'
@@ -789,12 +789,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       let model = session.model
       let provider = session.provider
       let thinkingLevel = session.thinking_level
-      if (!model || !provider || thinkingLevel === undefined) {
+      let sessionCwd = session.cwd
+      if (!model || !provider || thinkingLevel === undefined || !sessionCwd) {
         const full = await agent.findSession(session.session_id)
         if (full) {
           if (!model) model = full.model
           if (!provider) provider = full.provider
           if (thinkingLevel === undefined) thinkingLevel = full.thinking_level
+          if (!sessionCwd) sessionCwd = full.cwd
         }
       }
 
@@ -852,6 +854,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         { id: 'sys-resumed-gap', kind: 'system', text: '' },
         { id: 'sys-resumed', kind: 'system', text: chalk.dim(`  resumed session ${session.session_id.slice(0, 8)}`) },
       ])
+      if (sessionCwd && sessionCwd !== agent.cwd) {
+        restoreLines([{
+          id: 'sys-resume-cwd',
+          kind: 'system',
+          text: chalk.dim(`  session cwd: ${shortenSessionCwd(sessionCwd)} · working cwd remains: ${shortenSessionCwd(agent.cwd)}`),
+        }])
+      }
       if (modelRestoreNote) {
         restoreLines([{ id: 'sys-resume-model', kind: 'system', text: chalk.dim(modelRestoreNote) }])
       }
@@ -2049,22 +2058,19 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function openResumeSelector(initialQuery?: string) {
     agent.listSessions(0).then(allSessions => {
-      const pool = selectSessionPool(allSessions, agent.cwd)
-      if (pool.length === 0) {
+      if (allSessions.length === 0) {
         commitLines([{ id: 'sys-r', kind: 'system', text: '  No sessions found' }])
         return
       }
-      const metaItems = formatSessionItems(pool.slice(0, 20))
-      const allMetaItems = formatSessionItems(pool)
+      const metaItems = formatSessionItems(allSessions, agent.cwd)
       overlay = {
         kind: 'selector',
-        state: createSelectorState(RESUME_SELECTOR_TITLE, metaItems, allMetaItems, initialQuery),
+        state: createSelectorState(RESUME_SELECTOR_TITLE, metaItems, metaItems, initialQuery),
       }
       renderer.requestRender()
       agent.listSessionsWithText(0).then(allWithText => {
         if (overlay.kind !== 'selector' || !isResumeSelectorTitle(overlay.state.title)) return
-        const fullPool = selectSessionPool(allWithText, agent.cwd)
-        const fullItems = formatSessionWithTextItems(fullPool)
+        const fullItems = formatSessionWithTextItems(allWithText, agent.cwd)
         overlay = {
           kind: 'selector',
           state: selectorExpandItems(overlay.state, fullItems),

@@ -8,6 +8,7 @@ import {
   selectorBackspace,
   selectorExpandItems,
   selectorFocusOn,
+  selectorRemoveItem,
 } from '../src/term/selector.js'
 import { buildOverlayBlocks, buildSelectorRegionLines } from '../src/term/viewmodel/overlays.js'
 import { blocksToLines } from '../src/term/viewmodel/types.js'
@@ -628,7 +629,7 @@ describe('smooth scrolling window', () => {
     expect(state.scrollOffset).toBe(11)
   })
 
-  test('filtering drops group headers from results', () => {
+  test('filtering drops unassociated group headers from results', () => {
     let state = createSelectorState('T', [
       { label: 'anthropic', header: true, focusable: false },
       { label: 'claude-opus' },
@@ -638,5 +639,34 @@ describe('smooth scrolling window', () => {
     state = selectorType(state, 'a')
     expect(state.items.every(i => !i.header)).toBe(true)
     expect(state.items.map(i => i.label)).toContain('claude-opus')
+  })
+
+  test('filtering retains headers for matching associated groups', () => {
+    let state = createSelectorState('T', [
+      { label: 'Current cwd', header: true, focusable: false, group: 'current' },
+      { label: 'aaaaaaaa', searchText: 'current alpha', group: 'current' },
+      { label: 'Other cwd', header: true, focusable: false, group: 'other' },
+      { label: 'bbbbbbbb', searchText: 'other payment timeout', group: 'other', contextPrefix: '/other · ' },
+    ])
+    state = selectorType(state, 'p')
+    state = selectorType(state, 'a')
+    state = selectorType(state, 'y')
+
+    expect(state.items.map(item => item.label)).toEqual(['Other cwd', 'bbbbbbbb'])
+    expect(state.focusIndex).toBe(1)
+    expect(state.items[1]!.detail).toStartWith('/other · ')
+  })
+
+  test('removing the last item in a group also removes its header', () => {
+    let state = createSelectorState('T', [
+      { label: 'Current cwd', header: true, focusable: false, group: 'current' },
+      { label: 'aaaaaaaa', id: 'session-a', group: 'current' },
+      { label: 'Other cwd', header: true, focusable: false, group: 'other' },
+      { label: 'bbbbbbbb', id: 'session-b', group: 'other' },
+    ])
+    state = selectorRemoveItem(state, 1)
+
+    expect(state.items.map(item => item.label)).toEqual(['Other cwd', 'bbbbbbbb'])
+    expect(state.focusIndex).toBe(1)
   })
 })

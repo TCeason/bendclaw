@@ -6,7 +6,6 @@ import {
   isResumeSelectorTitle,
   isSessionIdPrefix,
   resolveSessionByPrefix,
-  selectSessionPool,
 } from '../src/term/app/resume.js'
 import type { SessionMeta, SessionWithText } from '../src/native/index.js'
 
@@ -15,14 +14,6 @@ describe('repl resume helpers', () => {
     { session_id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', title: 'cwd session', cwd: '/work', source: 'local', model: 'm1', turns: 3, updated_at: Date.now() } as any,
     { session_id: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb', title: 'other session', cwd: '/other', model: 'm2', updated_at: Date.now() } as any,
   ]
-
-  test('selectSessionPool returns cwd sessions only', () => {
-    expect(selectSessionPool(sessions, '/work')).toEqual([sessions[0]])
-  })
-
-  test('selectSessionPool returns empty when cwd has no sessions', () => {
-    expect(selectSessionPool(sessions, '/missing')).toEqual([])
-  })
 
   test('isSessionIdPrefix accepts hex prefix only', () => {
     expect(isSessionIdPrefix('abc123')).toBe(true)
@@ -50,20 +41,39 @@ describe('repl resume helpers', () => {
     expect(resolved.kind).toBe('ambiguous')
   })
 
-  test('formatSessionItems builds selector items', () => {
-    const item = formatSessionItems([sessions[0]!])[0]!
-    expect(item.label).toBe('aaaaaaaa')
-    expect(item.id).toBe(sessions[0]!.session_id)
-    expect(item.detail).toContain('local ')
-    expect(item.detail).toContain('cwd session')
-    expect(item.detail).toContain('[3 turns]')
-    expect(item.searchText).toContain('/work')
+  test('formatSessionItems groups current cwd before other cwd', () => {
+    const items = formatSessionItems(sessions, '/work')
+    expect(items.map(item => item.label)).toEqual([
+      'Current cwd · /work',
+      'aaaaaaaa',
+      'Other cwd',
+      'bbbbbbbb',
+    ])
+    expect(items[0]).toMatchObject({ header: true, focusable: false, group: 'current-cwd' })
+    expect(items[1]).toMatchObject({ id: sessions[0]!.session_id, group: 'current-cwd' })
+    expect(items[1]!.detail).toContain('local ')
+    expect(items[1]!.detail).toContain('cwd session')
+    expect(items[1]!.detail).toContain('[3 turns]')
+    expect(items[1]!.searchText).toContain('/work')
+    expect(items[3]).toMatchObject({ id: sessions[1]!.session_id, group: 'other-cwd' })
+    expect(items[3]!.detail).toContain('/other')
   })
 
-  test('formatSessionWithTextItems uses full search text', () => {
-    const withText = [{ ...sessions[0], search_text: 'full text body' }] as SessionWithText[]
-    const item = formatSessionWithTextItems(withText)[0]!
-    expect(item.searchText).toBe('full text body')
+  test('formatSessionItems shows other cwd when current cwd has no sessions', () => {
+    const items = formatSessionItems(sessions, '/missing')
+    expect(items[0]).toMatchObject({ label: 'Other cwd', header: true })
+    expect(items.filter(item => !item.header)).toHaveLength(2)
+  })
+
+  test('formatSessionWithTextItems uses full search text and matching groups', () => {
+    const withText = sessions.map((session, index) => ({
+      ...session,
+      search_text: index === 0 ? 'current full text body' : 'other full text body',
+    })) as SessionWithText[]
+    const items = formatSessionWithTextItems(withText, '/work')
+    expect(items[1]!.searchText).toBe('current full text body')
+    expect(items[3]!.searchText).toBe('other full text body')
+    expect(items[3]!.contextPrefix).toBe('/other · ')
   })
 
   test('isResumeSelectorTitle accepts resume title', () => {

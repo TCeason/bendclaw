@@ -9,8 +9,35 @@ export type SessionPrefixResolution =
   | { kind: 'none' }
   | { kind: 'ambiguous'; matches: SessionMeta[] }
 
-export function selectSessionPool<T extends { cwd?: string }>(sessions: T[], cwd: string): T[] {
-  return sessions.filter(s => s.cwd === cwd)
+export function shortenSessionCwd(cwd: string): string {
+  const home = process.env.HOME || process.env.USERPROFILE || ''
+  if (!home) return cwd
+  if (cwd === home) return '~'
+  return cwd.startsWith(`${home}/`) ? `~${cwd.slice(home.length)}` : cwd
+}
+
+function sessionHeader(label: string, group: string): SelectorItem {
+  return { label, header: true, focusable: false, group }
+}
+
+function groupedSessionItems<T extends SessionMeta>(
+  sessions: T[],
+  currentCwd: string,
+  format: (session: T, otherCwd: boolean) => SelectorItem,
+): SelectorItem[] {
+  const current = sessions.filter(session => session.cwd === currentCwd)
+  const other = sessions.filter(session => session.cwd !== currentCwd)
+  const items: SelectorItem[] = []
+
+  if (current.length > 0) {
+    items.push(sessionHeader(`Current cwd · ${shortenSessionCwd(currentCwd)}`, 'current-cwd'))
+    items.push(...current.map(session => ({ ...format(session, false), group: 'current-cwd' })))
+  }
+  if (other.length > 0) {
+    items.push(sessionHeader('Other cwd', 'other-cwd'))
+    items.push(...other.map(session => ({ ...format(session, true), group: 'other-cwd' })))
+  }
+  return items
 }
 
 export function isSessionIdPrefix(value: string): boolean {
@@ -28,23 +55,33 @@ export function isResumeSelectorTitle(title: string): boolean {
   return title.startsWith('Resume session')
 }
 
-export function formatSessionItems(sessions: SessionMeta[]): SelectorItem[] {
-  return sessions.map(s => {
-    const source = padRight(s.source || '', 6)
-    const title = padRight(s.title || '(untitled)', 65)
-    const turns = padRight(s.turns ? `[${s.turns} turns]` : '', 12)
-    const time = relativeTime(s.updated_at)
-    const searchText = `${s.session_id} ${s.title} ${s.cwd} ${s.source} ${s.provider ?? ''} ${s.model}`
-    return { label: s.session_id.slice(0, 8), id: s.session_id, detail: `${source} ${title} ${turns} ${time}`, searchText }
-  })
+function formatSessionItem(s: SessionMeta, otherCwd: boolean, searchText: string): SelectorItem {
+  const source = padRight(s.source || '', 6)
+  const title = padRight(s.title || '(untitled)', 65)
+  const turns = padRight(s.turns ? `[${s.turns} turns]` : '', 12)
+  const time = relativeTime(s.updated_at)
+  const cwd = otherCwd ? `  ${shortenSessionCwd(s.cwd)}` : ''
+  return {
+    label: s.session_id.slice(0, 8),
+    id: s.session_id,
+    detail: `${source} ${title} ${turns} ${time}${cwd}`,
+    searchText,
+    contextPrefix: otherCwd ? `${shortenSessionCwd(s.cwd)} · ` : undefined,
+  }
 }
 
-export function formatSessionWithTextItems(items: SessionWithText[]): SelectorItem[] {
-  return items.map(s => {
-    const source = padRight(s.source || '', 6)
-    const title = padRight(s.title || '(untitled)', 65)
-    const turns = padRight(s.turns ? `[${s.turns} turns]` : '', 12)
-    const time = relativeTime(s.updated_at)
-    return { label: s.session_id.slice(0, 8), id: s.session_id, detail: `${source} ${title} ${turns} ${time}`, searchText: s.search_text }
-  })
+export function formatSessionItems(sessions: SessionMeta[], currentCwd: string): SelectorItem[] {
+  return groupedSessionItems(sessions, currentCwd, (session, otherCwd) =>
+    formatSessionItem(
+      session,
+      otherCwd,
+      `${session.session_id} ${session.title ?? ''} ${session.cwd} ${session.source} ${session.provider ?? ''} ${session.model}`,
+    ),
+  )
+}
+
+export function formatSessionWithTextItems(items: SessionWithText[], currentCwd: string): SelectorItem[] {
+  return groupedSessionItems(items, currentCwd, (session, otherCwd) =>
+    formatSessionItem(session, otherCwd, session.search_text),
+  )
 }
