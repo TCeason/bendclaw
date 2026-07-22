@@ -22,11 +22,11 @@
 
 ## 📢 News
 
+- **2026-07-22** [Memory] `/mem` — archive session knowledge to markdown; `/mem <terms>` and `/resume <query>` recall semantically.
 - **2026-07-16** [REPL] Prompt queue — queue follow-ups and manage them with `Ctrl+B`.
 - **2026-07-09** [REPL] `/log shot` — export the last assistant markdown turn as an HTML/PNG snapshot matching the TUI.
 - **2026-07-03** [REPL] `/copy` — copy the last agent message's Markdown source to the clipboard.
 - **2026-06-16** [REPL] Shift+Tab cycles reasoning effort; persisted per session.
-- **2026-06-05** [Dashboard] Built-in web dashboard — server metrics, sessions, usage, and tool traces.
 
 ## Benchmark
 
