@@ -43,11 +43,6 @@ impl CompactionController {
         &self.state
     }
 
-    /// Update config (e.g., when model changes and context_window differs).
-    pub fn set_config(&mut self, config: CompactionConfig) {
-        self.config = config;
-    }
-
     /// Access current config.
     pub fn config(&self) -> &CompactionConfig {
         &self.config

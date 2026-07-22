@@ -296,32 +296,6 @@ fn parse_stop_reason(s: &str) -> evot_engine::StopReason {
     }
 }
 
-pub fn transcript_from_assistant_message(message: &evot_engine::Message) -> Option<TranscriptItem> {
-    let evot_engine::Message::Assistant { .. } = message else {
-        return None;
-    };
-    Some(transcript_from_agent_message(
-        &evot_engine::AgentMessage::Llm(message.clone()),
-    ))
-}
-
-/// Build a TranscriptItem::Assistant from AssistantBlock content and stop_reason.
-/// Used by tests and protocol fixtures that do not have the full engine message.
-pub fn transcript_from_assistant_completed(
-    content: &[AssistantBlock],
-    stop_reason: &str,
-) -> TranscriptItem {
-    transcript_from_assistant_completed_with_usage(
-        content,
-        stop_reason,
-        UsageSummary::default(),
-        String::new(),
-        String::new(),
-        evot_engine::now_ms(),
-        None,
-    )
-}
-
 pub fn transcript_from_assistant_completed_with_usage(
     content: &[AssistantBlock],
     stop_reason: &str,

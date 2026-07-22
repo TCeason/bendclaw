@@ -716,7 +716,6 @@ async fn test_retry_on_rate_limit_succeeds() {
         retry_policy: evotengine::RetryPolicy::new(3),
         before_turn: None,
         after_turn: None,
-        input_filters: vec![],
         spill: None,
     };
 
@@ -804,7 +803,6 @@ async fn test_provider_declared_transient_error_retries_then_succeeds() {
         retry_policy: evotengine::RetryPolicy::new(1),
         before_turn: None,
         after_turn: None,
-        input_filters: vec![],
         spill: None,
     };
     let mut context = AgentContext {
@@ -873,7 +871,6 @@ async fn test_retry_exhausted_returns_error() {
         retry_policy: evotengine::RetryPolicy::new(2),
         before_turn: None,
         after_turn: None,
-        input_filters: vec![],
         spill: None,
     };
 
@@ -945,7 +942,6 @@ async fn test_auth_error_not_retried() {
         retry_policy: evotengine::RetryPolicy::new(3),
         before_turn: None,
         after_turn: None,
-        input_filters: vec![],
         spill: None,
     };
 
@@ -1005,7 +1001,6 @@ async fn test_retry_none_disables_retries() {
         retry_policy: evotengine::RetryPolicy::disabled(), // disabled
         before_turn: None,
         after_turn: None,
-        input_filters: vec![],
         spill: None,
     };
 
@@ -1583,244 +1578,6 @@ async fn test_on_update_still_works_after_refactor() {
         .collect();
 
     assert_eq!(updates, vec!["step 1/3", "step 2/3", "step 3/3"]);
-}
-
-// ---------------------------------------------------------------------------
-// InputFilter tests (Addition 2)
-// ---------------------------------------------------------------------------
-
-use std::sync::Arc;
-
-struct PassFilter;
-impl InputFilter for PassFilter {
-    fn filter(&self, _text: &str) -> FilterResult {
-        FilterResult::Pass
-    }
-}
-
-struct WarnFilter {
-    warning: String,
-}
-impl InputFilter for WarnFilter {
-    fn filter(&self, _text: &str) -> FilterResult {
-        FilterResult::Warn(self.warning.clone())
-    }
-}
-
-struct RejectFilter {
-    reason: String,
-}
-impl InputFilter for RejectFilter {
-    fn filter(&self, _text: &str) -> FilterResult {
-        FilterResult::Reject(self.reason.clone())
-    }
-}
-
-#[tokio::test]
-async fn test_filter_pass_message_goes_through() {
-    let output = TestHarness::new()
-        .responses(vec![MockResponse::Text("Hello!".into())])
-        .input_filter(PassFilter)
-        .run("Hi")
-        .await;
-
-    output.assert_message_count(2);
-    output.assert_completed();
-}
-
-#[tokio::test]
-async fn test_filter_warn_injects_warning_message() {
-    let output = TestHarness::new()
-        .responses(vec![MockResponse::Text("Got it.".into())])
-        .input_filter(WarnFilter {
-            warning: "danger".into(),
-        })
-        .run("Hi")
-        .await;
-
-    assert_eq!(output.messages.len(), 2);
-    if let AgentMessage::Llm(Message::User { content, .. }) = &output.messages[0] {
-        assert_eq!(content.len(), 2, "expected original text + warning");
-        let warning = match &content[1] {
-            Content::Text { text } => text.as_str(),
-            _ => panic!("expected text"),
-        };
-        assert!(warning.contains("[Warning: danger]"), "got: {}", warning);
-    } else {
-        panic!("Expected user message at index 0");
-    }
-}
-
-#[tokio::test]
-async fn test_filter_reject_returns_empty() {
-    let output = TestHarness::new()
-        .responses(vec![MockResponse::Text("Should not reach".into())])
-        .input_filter(RejectFilter {
-            reason: "blocked".into(),
-        })
-        .run("Bad input")
-        .await;
-
-    assert!(output.messages.is_empty());
-    assert!(
-        output.context_messages.is_empty(),
-        "Rejected prompts should not leak into context, got {} messages",
-        output.context_messages.len()
-    );
-    assert!(output.events.iter().any(|e| matches!(
-        e,
-        AgentEvent::Error { error } if error.kind == AgentErrorKind::InputRejected && error.message == "blocked"
-    )));
-    assert!(output.has_event("AgentStart"));
-    assert!(output
-        .events
-        .iter()
-        .any(|e| matches!(e, AgentEvent::AgentEnd { messages } if messages.is_empty())));
-}
-
-#[tokio::test]
-async fn test_filter_chain_first_reject_wins() {
-    let provider = MockProvider::text("Should not reach");
-    let call_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-
-    struct CountingRejectFilter {
-        counter: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    }
-    impl InputFilter for CountingRejectFilter {
-        fn filter(&self, _text: &str) -> FilterResult {
-            self.counter
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            FilterResult::Reject("first rejects".into())
-        }
-    }
-
-    struct NeverCalledFilter {
-        counter: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    }
-    impl InputFilter for NeverCalledFilter {
-        fn filter(&self, _text: &str) -> FilterResult {
-            self.counter
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            FilterResult::Pass
-        }
-    }
-
-    let count2 = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-
-    let mut config = make_config(provider);
-    config.input_filters = vec![
-        Arc::new(CountingRejectFilter {
-            counter: call_count.clone(),
-        }),
-        Arc::new(NeverCalledFilter {
-            counter: count2.clone(),
-        }),
-    ];
-
-    let mut context = AgentContext {
-        system_prompt: "test".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-        cwd: std::path::PathBuf::new(),
-        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
-        prompt_cache_key: None,
-    };
-
-    let prompt = AgentMessage::Llm(Message::user("Bad"));
-    let (tx, _rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    let new_messages = agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-
-    assert!(new_messages.is_empty());
-    // First filter was called
-    assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 1);
-    // Second filter was NOT called (first reject short-circuits)
-    assert_eq!(count2.load(std::sync::atomic::Ordering::SeqCst), 0);
-}
-
-#[tokio::test]
-async fn test_filter_multiple_warns_accumulate() {
-    let output = TestHarness::new()
-        .responses(vec![MockResponse::Text("Got warnings.".into())])
-        .input_filter(WarnFilter {
-            warning: "warn1".into(),
-        })
-        .input_filter(WarnFilter {
-            warning: "warn2".into(),
-        })
-        .run("Hi")
-        .await;
-
-    assert_eq!(output.messages.len(), 2);
-    if let AgentMessage::Llm(Message::User { content, .. }) = &output.messages[0] {
-        assert!(content.len() >= 2, "expected original text + warning");
-        let warning = match content.last().unwrap() {
-            Content::Text { text } => text.as_str(),
-            _ => panic!("expected text"),
-        };
-        assert!(warning.contains("[Warning: warn1]"), "got: {}", warning);
-        assert!(warning.contains("[Warning: warn2]"), "got: {}", warning);
-    } else {
-        panic!("Expected user message");
-    }
-}
-
-#[tokio::test]
-async fn test_filter_non_text_content_only_text_extracted() {
-    // User message with Image content — filter should receive only text portions
-    let provider = MockProvider::text("Ok");
-
-    let call_text = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-    let call_text_clone = call_text.clone();
-
-    struct CapturingFilter {
-        captured: std::sync::Arc<std::sync::Mutex<String>>,
-    }
-    impl InputFilter for CapturingFilter {
-        fn filter(&self, text: &str) -> FilterResult {
-            *self.captured.lock().unwrap() = text.to_string();
-            FilterResult::Pass
-        }
-    }
-
-    let mut config = make_config(provider);
-    config.input_filters = vec![Arc::new(CapturingFilter {
-        captured: call_text_clone,
-    })];
-
-    let mut context = AgentContext {
-        system_prompt: "test".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-        cwd: std::path::PathBuf::new(),
-        path_guard: std::sync::Arc::new(evotengine::PathGuard::open()),
-        prompt_cache_key: None,
-    };
-
-    let prompt = AgentMessage::Llm(Message::User {
-        content: vec![
-            Content::Text {
-                text: "Check this image".into(),
-            },
-            Content::Image {
-                mime_type: "image/png".into(),
-                source: evotengine::ImageSource::Base64 {
-                    data: "base64data".into(),
-                    path: None,
-                },
-            },
-        ],
-        timestamp: 0,
-    });
-    let (tx, _rx) = mpsc::unbounded_channel();
-    let cancel = CancellationToken::new();
-
-    agent_loop(vec![prompt], &mut context, &config, tx, cancel).await;
-
-    let captured = call_text.lock().unwrap();
-    // Filter should have received only the text portion
-    assert_eq!(*captured, "Check this image");
 }
 
 // ---------------------------------------------------------------------------
@@ -2918,7 +2675,6 @@ async fn test_empty_response_retried_then_succeeds() {
         retry_policy: evotengine::RetryPolicy::new(3),
         before_turn: None,
         after_turn: None,
-        input_filters: vec![],
         spill: None,
     };
 
@@ -2994,7 +2750,6 @@ async fn test_empty_response_exhausts_retries() {
         retry_policy: evotengine::RetryPolicy::new(2),
         before_turn: None,
         after_turn: None,
-        input_filters: vec![],
         spill: None,
     };
 

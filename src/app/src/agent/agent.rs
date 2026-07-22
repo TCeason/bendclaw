@@ -204,14 +204,6 @@ impl Agent {
         })
     }
 
-    pub fn new_with_storage_for_test(
-        config: &Config,
-        cwd: impl Into<String>,
-        storage: Arc<dyn Storage>,
-    ) -> Result<Arc<Self>> {
-        Ok(Arc::new(Self::new_inner(config, cwd.into(), storage)?))
-    }
-
     pub fn new_with_provider_for_test(
         config: &Config,
         cwd: impl Into<String>,
@@ -277,11 +269,6 @@ impl Agent {
                 }
             }
         }
-        Arc::clone(self)
-    }
-
-    pub fn with_storage(self: &Arc<Self>, storage: Arc<dyn Storage>) -> Arc<Self> {
-        *self.storage.write() = storage;
         Arc::clone(self)
     }
 

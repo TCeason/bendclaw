@@ -122,10 +122,6 @@ pub struct MessageStats {
 }
 
 impl MessageStats {
-    pub fn total_count(&self) -> usize {
-        self.user_count + self.assistant_count + self.tool_result_count
-    }
-
     pub fn total_tokens(&self, system_prompt_tokens: usize) -> usize {
         system_prompt_tokens + self.user_tokens + self.assistant_tokens + self.tool_result_tokens
     }

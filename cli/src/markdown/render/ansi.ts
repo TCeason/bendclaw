@@ -984,13 +984,6 @@ function cachedFormatToken(token: Token, theme: Theme, cacheable: boolean): stri
   return rendered
 }
 
-/** Clear the per-token render cache (for tests). */
-export function clearTokenRenderCache(): void {
-  tokenRenderCache.clear()
-  tokenCacheTheme = null
-  tokenCacheWidth = -1
-}
-
 export interface FormatTokensOptions {
   blockSpacing?: 'normal' | 'compact'
 }

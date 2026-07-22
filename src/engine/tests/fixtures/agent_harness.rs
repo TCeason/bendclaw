@@ -135,7 +135,6 @@ pub struct TestHarness {
     retry_policy: RetryPolicy,
     cache_config: CacheConfig,
     tool_execution: ToolExecutionStrategy,
-    input_filters: Vec<Arc<dyn InputFilter>>,
     model_config: Option<ModelConfig>,
 }
 
@@ -152,7 +151,6 @@ impl TestHarness {
             retry_policy: RetryPolicy::disabled(),
             cache_config: CacheConfig::default(),
             tool_execution: ToolExecutionStrategy::default(),
-            input_filters: vec![],
             model_config: None,
         }
     }
@@ -211,12 +209,6 @@ impl TestHarness {
         self
     }
 
-    /// Add an input filter.
-    pub fn input_filter(mut self, filter: impl InputFilter + 'static) -> Self {
-        self.input_filters.push(Arc::new(filter));
-        self
-    }
-
     /// Set model config.
     pub fn model_config(mut self, model_config: ModelConfig) -> Self {
         self.model_config = Some(model_config);
@@ -257,7 +249,6 @@ impl TestHarness {
             retry_policy: self.retry_policy,
             before_turn: None,
             after_turn: None,
-            input_filters: self.input_filters,
             spill: None,
         };
 
@@ -307,7 +298,6 @@ impl TestHarness {
             retry_policy: self.retry_policy,
             before_turn: None,
             after_turn: None,
-            input_filters: self.input_filters,
             spill: None,
         };
 
@@ -501,7 +491,6 @@ pub fn make_config(provider: MockProvider) -> AgentLoopConfig {
         retry_policy: evotengine::RetryPolicy::default(),
         before_turn: None,
         after_turn: None,
-        input_filters: vec![],
         spill: None,
     }
 }

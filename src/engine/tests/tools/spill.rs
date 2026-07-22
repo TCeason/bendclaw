@@ -281,7 +281,6 @@ async fn test_agent_loop_spill_integration() {
         retry_policy: RetryPolicy::disabled(),
         before_turn: None,
         after_turn: None,
-        input_filters: vec![],
         spill: Some(spill),
     };
 

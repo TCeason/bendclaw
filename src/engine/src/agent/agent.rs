@@ -59,9 +59,6 @@ pub struct Agent {
     pub(super) before_turn: Option<BeforeTurnFn>,
     pub(super) after_turn: Option<AfterTurnFn>,
 
-    // Input filters
-    pub(super) input_filters: Vec<Arc<dyn InputFilter>>,
-
     // Spill: large tool results written to disk
     pub(super) spill: Option<Arc<FsSpill>>,
 
@@ -106,7 +103,6 @@ impl Agent {
             retry_policy: crate::retry::RetryPolicy::default(),
             before_turn: None,
             after_turn: None,
-            input_filters: Vec::new(),
             spill: None,
             cancel: None,
             is_streaming: false,
@@ -185,38 +181,8 @@ impl Agent {
         self
     }
 
-    pub fn with_cache_config(mut self, config: CacheConfig) -> Self {
-        self.cache_config = config;
-        self
-    }
-
-    pub fn with_prompt_cache_key(mut self, key: impl Into<String>) -> Self {
-        self.prompt_cache_key = Some(key.into());
-        self
-    }
-
     pub fn with_prompt_cache_key_opt(mut self, key: Option<String>) -> Self {
         self.prompt_cache_key = key;
-        self
-    }
-
-    pub fn with_tool_execution(mut self, strategy: ToolExecutionStrategy) -> Self {
-        self.tool_execution = strategy;
-        self
-    }
-
-    pub fn with_retry_policy(mut self, policy: crate::retry::RetryPolicy) -> Self {
-        self.retry_policy = policy;
-        self
-    }
-
-    pub fn with_retry_disabled(mut self) -> Self {
-        self.retry_policy = crate::retry::RetryPolicy::disabled();
-        self
-    }
-
-    pub fn with_max_retries(mut self, n: usize) -> Self {
-        self.retry_policy = crate::retry::RetryPolicy::new(n);
         self
     }
 
@@ -240,11 +206,6 @@ impl Agent {
         self
     }
 
-    pub fn with_execution_limits(mut self, limits: ExecutionLimits) -> Self {
-        self.execution_limits = Some(limits);
-        self
-    }
-
     /// Set or clear execution limits. `None` runs the loop with no turn, token,
     /// or duration ceiling — it stops only on error, abort, or when there is no
     /// more work (interactive parity with pi).
@@ -258,30 +219,9 @@ impl Agent {
         self
     }
 
-    /// Add an input filter. Filters run in order on user messages before the LLM call.
-    pub fn with_input_filter(mut self, filter: impl InputFilter + 'static) -> Self {
-        self.input_filters.push(Arc::new(filter));
-        self
-    }
-
-    /// Set spill for large tool results.
-    pub fn with_spill(mut self, spill: Arc<FsSpill>) -> Self {
-        self.spill = Some(spill);
-        self
-    }
-
     /// Set spill from an optional value.
     pub fn with_spill_opt(mut self, spill: Option<Arc<FsSpill>>) -> Self {
         self.spill = spill;
-        self
-    }
-
-    /// Disable automatic context compaction and execution limits.
-    /// This takes precedence over auto-derivation from `ModelConfig.context_window`.
-    pub fn without_context_management(mut self) -> Self {
-        self.context_config = None;
-        self.context_management_disabled = true;
-        self.execution_limits = None;
         self
     }
 
@@ -346,14 +286,6 @@ impl Agent {
     pub fn clear_all_queues(&self) {
         self.clear_steering_queue();
         self.clear_follow_up_queue();
-    }
-
-    pub fn set_steering_mode(&mut self, mode: QueueMode) {
-        self.steering_mode = mode;
-    }
-
-    pub fn set_follow_up_mode(&mut self, mode: QueueMode) {
-        self.follow_up_mode = mode;
     }
 
     /// Get the last run handle (if any).

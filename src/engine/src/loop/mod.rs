@@ -1,7 +1,6 @@
 mod compaction;
 mod config;
 mod driver;
-mod input_filter;
 
 pub(crate) mod assistant_sanitize;
 pub(crate) mod doom_loop;

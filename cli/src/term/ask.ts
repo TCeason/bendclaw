@@ -191,18 +191,6 @@ export function askPrevTab(state: AskState): AskState {
   }
 }
 
-/** Switch to a specific tab — used by left/right arrows */
-export function askSwitchTab(state: AskState, targetTab: number): AskState {
-  if (targetTab < 0 || targetTab >= state.questions.length) return state
-  const ui = getUIState(state, targetTab)
-  return {
-    ...state,
-    currentTab: targetTab,
-    focusIndex: ui.focusIndex,
-    onSubmitTab: false,
-  }
-}
-
 export function askTypeChar(state: AskState, char: string): AskState {
   if (!inOther(state)) return state
   const tab = state.currentTab

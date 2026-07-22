@@ -72,11 +72,6 @@ pub struct AgentLoopConfig {
     /// Called after each LLM turn with the current messages and the turn's usage.
     pub after_turn: Option<AfterTurnFn>,
 
-    /// Input filters applied to user messages before the LLM call.
-    /// Filters run in order; first `Reject` wins and discards any accumulated
-    /// warnings. `Warn` messages accumulate and are appended to the user message.
-    pub input_filters: Vec<Arc<dyn InputFilter>>,
-
     /// Spill: large tool results are written to disk instead of truncated.
     pub spill: Option<Arc<FsSpill>>,
 }

@@ -12,7 +12,6 @@ use super::compaction::post_response_compaction;
 use super::compaction::pre_prompt_compaction;
 use super::config::AgentLoopConfig;
 use super::doom_loop::DoomLoopDetector;
-use super::input_filter::apply_input_filters;
 use super::llm_call::stream_assistant_response;
 use super::thinking_only_guard::ThinkingOnlyGuard;
 use super::tool_exec::execute_tool_calls;
@@ -32,12 +31,6 @@ pub async fn agent_loop(
     cancel: tokio_util::sync::CancellationToken,
 ) -> Vec<AgentMessage> {
     tx.send(AgentEvent::AgentStart).ok();
-
-    // Apply input filters
-    let prompts = match apply_input_filters(prompts, &config.input_filters, &tx) {
-        Some(p) => p,
-        None => return vec![],
-    };
 
     let mut new_messages: Vec<AgentMessage> = prompts.clone();
 

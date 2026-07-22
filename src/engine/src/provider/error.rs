@@ -111,41 +111,6 @@ pub(crate) fn is_transient_provider_error_type(error_type: &str) -> bool {
     )
 }
 
-pub async fn classify_eventsource_error(error: reqwest_eventsource::Error) -> ProviderError {
-    match error {
-        reqwest_eventsource::Error::InvalidStatusCode(status, response) => {
-            let status_code = status.as_u16();
-            let retry_after_ms = super::stream_http::parse_retry_after_header(&response);
-            let body = response.text().await.unwrap_or_default();
-            ProviderError::classify(
-                status_code,
-                &format!(
-                    "HTTP {} {}: {}",
-                    status_code,
-                    status.canonical_reason().unwrap_or(""),
-                    body
-                ),
-                retry_after_ms,
-            )
-        }
-        reqwest_eventsource::Error::InvalidContentType(_content_type, response) => {
-            let body = response.text().await.unwrap_or_default();
-            if body.trim().is_empty() {
-                ProviderError::Api("Server returned non-SSE content type".into())
-            } else {
-                match serde_json::from_str::<serde_json::Value>(&body) {
-                    Ok(value) => super::stream_http::classify_json_error(&value),
-                    Err(_) => ProviderError::classify(200, &body, None),
-                }
-            }
-        }
-        reqwest_eventsource::Error::Transport(e) => {
-            ProviderError::Network(format_transport_detail(&e, e.url().map(|u| u.as_str())))
-        }
-        other => ProviderError::Other(other.to_string()),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Context overflow detection
 // ---------------------------------------------------------------------------

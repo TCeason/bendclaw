@@ -262,20 +262,6 @@ export function truncate(s: string, max: number): string {
   return oneLine.slice(0, max - 1) + '…'
 }
 
-export function truncateResult(s: string, maxChars: number): string {
-  const lines = s.split('\n')
-  let result = ''
-  for (const line of lines) {
-    if (result.length + line.length > maxChars) {
-      result += '…'
-      break
-    }
-    if (result.length > 0) result += '\n'
-    result += line
-  }
-  return result
-}
-
 export function truncateHeadTail(s: string, max: number): string {
   const SEP = ' ... '
   if (s.length <= max || max < SEP.length + 6) return truncate(s, max)

@@ -1,3 +1,11 @@
+//! Rewrite legacy transcript formats into the current JSONL representation.
+//!
+//! REMOVE-BY: v0.4.0. This compatibility path was introduced in v0.1.0.
+//! Before removal, publish a release note asking users with older transcripts
+//! to open them once with evot <= v0.3. The removal includes this file, both
+//! `migrate_if_needed` call sites in `storage.rs`, and the legacy fixtures in
+//! `tests/storage_test.rs`.
+
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;

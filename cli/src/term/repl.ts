@@ -40,6 +40,7 @@ import {
   type ViewBlock,
 } from './viewmodel/index.js'
 import { HistoryRenderCache } from './viewmodel/history-cache.js'
+import { Committer } from './committer.js'
 import {
   createEditorState,
   getEditorText,
@@ -84,8 +85,12 @@ import {
 } from './app/stream.js'
 import { handleSlashCommand } from './app/commands.js'
 import { askStateToResponse } from './app/ask-user.js'
-import { createExtensionHost, type ExtensionHost } from '../ext/index.js'
-import type { AskUserAnswer, AskUserParams } from '../ext/index.js'
+import {
+  dispatchHostToolCall,
+  HOST_TOOL_SPECS_JSON,
+  type AskUserAnswer,
+  type AskUserParams,
+} from './host-tools.js'
 import { extractPlanItems, type PlanModeItem } from './plan-mode.js'
 import { currentModelSpec, formatModelLabel, modelOptions, selectModelOption, sortModelOptionsForSelector } from './app/provider.js'
 import chalk from 'chalk'
@@ -205,19 +210,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     })
   }
 
-  // Extension host: owns ask_user and any future host tools. The engine
-  // advertises their specs and delegates execution back here via
-  // `host_tool_call` events (dispatched in the run loop below).
-  const extensionHost: ExtensionHost = createExtensionHost({
-    collectAnswers: (params: AskUserParams) =>
-      presentAskQuestions(
-        params.questions.map(q => ({
-          header: q.header,
-          question: q.question,
-          options: q.options.map(o => ({ label: o.label, description: o.description })),
-        })),
-      ),
-  })
+  const collectAskUserAnswers = (params: AskUserParams) =>
+    presentAskQuestions(
+      params.questions.map(q => ({
+        header: q.header,
+        question: q.question,
+        options: q.options.map(o => ({ label: o.label, description: o.description })),
+      })),
+    )
 
   // Plan-mode state (pi-style): `/plan` enters read-only planning, the model
   // writes a `Plan:` section, and after the turn the extracted steps drive an
@@ -259,7 +259,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const choice = answers[0]!.answer
     if (choice === 'Execute the plan') {
       planning = false
-      commitLines([{ id: 'sys-plan-exec', kind: 'system', text: '  planning: off · executing plan' }])
+      commitSystem('sys-plan-exec', '  planning: off · executing plan')
       const remaining = planModeItems
         .map(item => `${item.step}. ${item.text}`)
         .join('\n')
@@ -273,14 +273,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
 
     if (choice === 'Stay in plan mode' || choice === 'Skipped') {
-      commitLines([{ id: 'sys-plan-stay', kind: 'system', text: '  planning: on · staying in plan mode' }])
+      commitSystem('sys-plan-stay', '  planning: on · staying in plan mode')
       renderer.requestRender()
       return
     }
 
     if (choice === 'Refine the plan') {
       editor = insertText(clearEditor(editor), 'Refine the plan: ')
-      commitLines([{ id: 'sys-plan-refine', kind: 'system', text: '  planning: on · enter refinement feedback' }])
+      commitSystem('sys-plan-refine', '  planning: on · enter refinement feedback')
       renderer.requestRender()
       return
     }
@@ -331,6 +331,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const expandedLines: OutputLine[] = []
   let fdAbort: AbortController | null = null
   const screenLog = new ScreenLog()
+  const committer = new Committer({
+    compactLines,
+    expandedLines,
+    isExpanded: () => expanded,
+    columns: () => renderer.termCols,
+    logLines: lines => screenLog.logLines(lines),
+    requestRender: () => renderer.requestRender(),
+  })
   let liveContentMaxHeight = 0
   let liveContentWidth = renderer.termCols
 
@@ -385,7 +393,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (match) {
       await resumeSession(match)
     } else {
-      commitLines([{ id: 'sys-continue-err', kind: 'system', text: chalk.red('No conversation found to continue') }])
+      commitSystem('sys-continue-err', chalk.red('No conversation found to continue'))
       cleanup()
       fastExit(1)
     }
@@ -396,7 +404,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (match) {
       await resumeSession(match)
     } else {
-      commitLines([{ id: 'sys-resume-err', kind: 'system', text: chalk.red(`Session not found: ${opts.resumeSessionId}`) }])
+      commitSystem('sys-resume-err', chalk.red(`Session not found: ${opts.resumeSessionId}`))
     }
   }
 
@@ -643,36 +651,19 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   renderer.setRenderCallback(buildFrame)
 
   function outputContextFor(lines: OutputLine[]): { prevKind?: string; columns?: number } {
-    const prev = lines.length > 0 ? lines[lines.length - 1] : undefined
-    return {
-      prevKind: prev?.kind,
-      columns: renderer.termCols,
-    }
+    return committer.contextFor(lines)
   }
 
   function restoreLines(outputLines: OutputLine[]) {
-    if (outputLines.length === 0) return
-    compactLines.push(...outputLines)
-    expandedLines.push(...outputLines)
-    // Resume is a projection of persisted transcript state, not a new terminal
-    // event. Paint it without appending it back into screen/markdown logs.
-    renderer.requestRender()
+    committer.restore(outputLines)
   }
 
   function commitLines(outputLines: OutputLine[]) {
-    if (outputLines.length === 0) return
-    compactLines.push(...outputLines)
-    expandedLines.push(...outputLines)
-    // Pure append: the incremental history cache detects the growth by line
-    // count, so no dirty flag is needed (which would force a full rebuild).
-    // Log for tracing
-    const visible = expanded ? expandedLines.slice(-outputLines.length) : outputLines
-    const context = outputContextFor(compactLines.slice(0, -outputLines.length))
-    const blocks = buildOutputBlocks(visible, context)
-    const rendered = blocksToLines(blocks)
-    screenLog.logLines(rendered)
-    // Trigger re-render — buildFrame will pick up the new lines
-    renderer.requestRender()
+    committer.commit(outputLines)
+  }
+
+  function commitSystem(id: string, text: string, kind: OutputLine['kind'] = 'system') {
+    committer.system(id, text, kind)
   }
 
   /** Commit a transient status line (model / thinking level). Rapid re-toggles
@@ -893,7 +884,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         restoreLines([{ id: 'sys-resume-model', kind: 'system', text: chalk.dim(modelRestoreNote) }])
       }
     } catch (err: any) {
-      commitLines([{ id: 'sys-err', kind: 'error', text: `Failed to resume: ${err?.message ?? err}` }])
+      commitSystem('sys-err', `Failed to resume: ${err?.message ?? err}`, 'error')
     }
   }
 
@@ -965,7 +956,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   async function runManualCompaction(customInstructions: string) {
     if (!sessionId) {
-      commitLines([{ id: 'sys-compact', kind: 'system', text: '  Nothing to compact: no active session.' }])
+      commitSystem('sys-compact', '  Nothing to compact: no active session.')
       return
     }
 
@@ -979,12 +970,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       if (outcome.status === 'compacted') {
         await rebuildAfterManualCompaction(outcome)
       } else if (outcome.status === 'cancelled') {
-        commitLines([{ id: 'sys-compact-cancelled', kind: 'system', text: '  Compaction cancelled.' }])
+        commitSystem('sys-compact-cancelled', '  Compaction cancelled.')
       } else {
-        commitLines([{ id: 'sys-compact-empty', kind: 'system', text: '  Nothing to compact.' }])
+        commitSystem('sys-compact-empty', '  Nothing to compact.')
       }
     } catch (err: any) {
-      commitLines([{ id: 'sys-compact-err', kind: 'error', text: `Compact failed: ${err?.message ?? err}` }])
+      commitSystem('sys-compact-err', `Compact failed: ${err?.message ?? err}`, 'error')
     } finally {
       compactionTask = null
       isLoading = false
@@ -1087,7 +1078,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     let completed = false
     try {
       const stream = prebuiltStream
-        ?? await agent.query(text, sessionId ?? undefined, planning ? 'planning_interactive' : 'interactive', contentJson, extensionHost.specsJson())
+        ?? await agent.query(text, sessionId ?? undefined, planning ? 'planning_interactive' : 'interactive', contentJson, HOST_TOOL_SPECS_JSON)
       streamRef = stream
       sessionId = stream.sessionId ?? sessionId
       appState = { ...appState, sessionId: sessionId }
@@ -1099,20 +1090,19 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         if (!streamMachine) break
 
         if (event.kind === 'host_tool_call') {
-          // The engine delegated a host-owned tool (ask_user). Run it via the
-          // extension host and send the result back. The tool's execute may
-          // drive interactive UI (the ask overlay) and awaits the user.
+          // The engine delegated a host-owned tool (ask_user). Dispatch it and
+          // send a response even when execution fails so the run cannot hang.
           const call = (event.payload ?? {}) as {
             tool_name?: string
             tool_call_id?: string
             arguments?: Record<string, unknown>
           }
           if (call.tool_name && call.tool_call_id) {
-            const response = await extensionHost.dispatch({
+            const response = await dispatchHostToolCall({
               tool_name: call.tool_name,
               tool_call_id: call.tool_call_id,
               arguments: call.arguments ?? {},
-            })
+            }, collectAskUserAnswers)
             if (streamRef) {
               await streamRef.respondHostTool(JSON.stringify(response))
             }
@@ -1188,7 +1178,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         streamMachine = final.state
         commitFlushResult(final)
       }
-      commitLines([{ id: 'sys-err', kind: 'error', text: err?.message ?? String(err) }])
+      commitSystem('sys-err', err?.message ?? String(err), 'error')
       reconcileQueuedUserMessages()
       restoreQueuedUserMessagesToEditor()
     } finally {
@@ -1212,7 +1202,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         return
       }
       if (isQueueManageShortcut(event)) {
-        commitLines([{ id: 'sys-queue-edit-lock', kind: 'system', text: '  Finish or discard the queued prompt edit first.' }])
+        commitSystem('sys-queue-edit-lock', '  Finish or discard the queued prompt edit first.')
         return
       }
     }
@@ -1300,7 +1290,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
       case 'exit-log-mode':
         logMode = null
-        commitLines([{ id: 'sys-log-exit', kind: 'system', text: '  [log mode] exited' }])
+        commitSystem('sys-log-exit', '  [log mode] exited')
         renderer.requestRender()
         return true
       case 'selector-key':
@@ -1396,7 +1386,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const entries = managedQueueEntries()
     if (entries.length === 0) {
       overlay = { kind: 'none' }
-      commitLines([{ id: 'sys-queue-empty', kind: 'system', text: '  No queued prompts.' }])
+      commitSystem('sys-queue-empty', '  No queued prompts.')
       return
     }
     overlay = { kind: 'selector', state: createQueueSelectorState(entries) }
@@ -1410,7 +1400,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     clearAll()
     editor = insertText(editor, entry.text)
     overlay = { kind: 'none' }
-    commitLines([{ id: 'sys-queue-edit', kind: 'system', text: '  Editing queued prompt · Enter save · Esc discard' }])
+    commitSystem('sys-queue-edit', '  Editing queued prompt · Enter save · Esc discard')
     renderer.requestRender()
   }
 
@@ -1424,7 +1414,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   function cancelQueueEdit() {
     finishQueueEdit()
-    commitLines([{ id: 'sys-queue-edit-cancel', kind: 'system', text: '  Queue edit discarded.' }])
+    commitSystem('sys-queue-edit-cancel', '  Queue edit discarded.')
   }
 
   function saveQueueEdit(text: string) {
@@ -1436,12 +1426,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         ? { ...message, version: updated.version, text }
         : message)
       finishQueueEdit()
-      commitLines([{ id: 'sys-queue-edit-save', kind: 'system', text: '  Queued prompt updated.' }])
+      commitSystem('sys-queue-edit-save', '  Queued prompt updated.')
     } catch (err: any) {
       const current = managedQueueEntries().find(candidate => candidate.id === entry.id)
       if (current) editingQueuedPrompt = { ...current, text }
       else finishQueueEdit()
-      commitLines([{ id: 'sys-queue-err', kind: 'system', text: chalk.red(`  Queue edit failed: ${err?.message ?? err}`) }])
+      commitSystem('sys-queue-err', chalk.red(`  Queue edit failed: ${err?.message ?? err}`))
       renderer.requestRender()
     }
   }
@@ -1454,7 +1444,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       openQueueSelector()
     } catch (err: any) {
       reconcileQueuedUserMessages()
-      commitLines([{ id: 'sys-queue-err', kind: 'system', text: chalk.red(`  Queue remove failed: ${err?.message ?? err}`) }])
+      commitSystem('sys-queue-err', chalk.red(`  Queue remove failed: ${err?.message ?? err}`))
       openQueueSelector()
     }
   }
@@ -1513,7 +1503,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       if (commandProbe && isSlashCommand(commandProbe)) {
         // Not silently swallowed: commands cannot run mid-compaction and are
         // not queueable prompts. Keep the draft in the editor for later.
-        commitLines([{ id: 'sys-compact-cmd', kind: 'system', text: "  Commands don't run during compaction. Press Esc to cancel it, or wait for it to finish." }])
+        commitSystem('sys-compact-cmd', "  Commands don't run during compaction. Press Esc to cancel it, or wait for it to finish.")
         renderer.requestRender()
         return
       }
@@ -1540,9 +1530,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const logPath = screenLog.filePath
       if (logPath) {
         const text = formatLogPaths(logPath, rendererTrace.filePath)
-        commitLines([{ id: 'sys-log', kind: 'system', text: text ?? `  Log: ${logPath}` }])
+        commitSystem('sys-log', text ?? `  Log: ${logPath}`)
       }
-      else commitLines([{ id: 'sys-log', kind: 'system', text: '  No active screen log.' }])
+      else commitSystem('sys-log', '  No active screen log.')
       renderer.requestRender()
       return
     }
@@ -1551,7 +1541,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // would send "/compact" to the LLM as conversation. Keep the draft in the
     // editor and tell the user instead.
     if (commandProbe && isSlashCommand(commandProbe) && streamRef) {
-      commitLines([{ id: 'sys-cmd-busy', kind: 'system', text: "  Commands don't queue while a response is running. Press Esc to interrupt, or wait for the turn to finish." }])
+      commitSystem('sys-cmd-busy', "  Commands don't queue while a response is running. Press Esc to interrupt, or wait for the turn to finish.")
       renderer.requestRender()
       return
     }
@@ -1603,7 +1593,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
     if (editingQueuedPrompt && !remainingIds.has(editingQueuedPrompt.id)) {
       finishQueueEdit()
-      commitLines([{ id: 'sys-queue-edit-consumed', kind: 'system', text: '  Queued prompt was already consumed; edit closed.' }])
+      commitSystem('sys-queue-edit-consumed', '  Queued prompt was already consumed; edit closed.')
     }
   }
 
@@ -1940,7 +1930,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       try {
         configInfo = agent.configInfo()
       } catch (err: any) {
-        commitLines([{ id: 'sys-model-config', kind: 'system', text: chalk.red(`  Failed to reload model config: ${err?.message ?? err}`) }])
+        commitSystem('sys-model-config', chalk.red(`  Failed to reload model config: ${err?.message ?? err}`))
         renderer.requestRender()
         return
       }
@@ -1956,7 +1946,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       planning,
     })
     } catch (err: any) {
-      commitLines([{ id: 'sys-command-err', kind: 'system', text: chalk.red(`  Command failed: ${err?.message ?? err}`) }])
+      commitSystem('sys-command-err', chalk.red(`  Command failed: ${err?.message ?? err}`))
       renderer.requestRender()
       return
     }
@@ -2007,7 +1997,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       expandedLines.length = 0
       resetHistoryCache()
       try { preloadedSessions = await agent.listSessions(20) } catch { preloadedSessions = [newSession] }
-      commitLines([{ id: 'sys-new-session', kind: 'system', text: chalk.dim(`  new session ${sessionId.slice(0, 8)}`) }])
+      commitSystem('sys-new-session', chalk.dim(`  new session ${sessionId.slice(0, 8)}`))
     }
     if (result.exit) { cleanup(); fastExit(0) }
     if (result.resumeSession) await resumeSession(result.resumeSession)
@@ -2049,11 +2039,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     } else if (name === '/act' || name === '/done') {
       if (logMode) {
         logMode = null
-        commitLines([{ id: 'sys-log-exit', kind: 'system', text: '  [log mode] exited' }])
+        commitSystem('sys-log-exit', '  [log mode] exited')
       } else {
         planning = false
         planModeItems = []
-        commitLines([{ id: 'sys-act', kind: 'system', text: '  planning: off' }])
+        commitSystem('sys-act', '  planning: off')
       }
     } else if (name === '/_dump') {
       try {
@@ -2071,7 +2061,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           commitLines(lines.length > 0 ? lines : [{ id: 'sys-dump', kind: 'system', text: '  (no dump output)' }])
         }
       } catch (err: any) {
-        commitLines([{ id: 'sys-dump-err', kind: 'system', text: chalk.red(`  /_dump failed: ${err?.message ?? err}`) }])
+        commitSystem('sys-dump-err', chalk.red(`  /_dump failed: ${err?.message ?? err}`))
       }
     } else if (name === '/log') {
       await handleLogCommand(args)
@@ -2089,7 +2079,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           openResumeSelector(args || undefined)
         }
       } catch (err: any) {
-        commitLines([{ id: 'sys-r-err', kind: 'system', text: chalk.red(`  Failed to list sessions: ${err?.message ?? err}`) }])
+        commitSystem('sys-r-err', chalk.red(`  Failed to list sessions: ${err?.message ?? err}`))
       }
     } else if (name === '/model' && !args) {
       const models = modelOptions(configInfo, agent.model)
@@ -2115,7 +2105,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           ),
         }
       } else {
-        commitLines([{ id: 'sys-m', kind: 'system', text: '  Only one model available.' }])
+        commitSystem('sys-m', '  Only one model available.')
       }
     }
 
@@ -2125,7 +2115,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   function openResumeSelector(initialQuery?: string) {
     agent.listSessions(0).then(allSessions => {
       if (allSessions.length === 0) {
-        commitLines([{ id: 'sys-r', kind: 'system', text: '  No sessions found' }])
+        commitSystem('sys-r', '  No sessions found')
         return
       }
       const metaItems = formatSessionItems(allSessions, agent.cwd)
@@ -2144,7 +2134,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         renderer.requestRender()
       }).catch(() => {})
     }).catch((err: any) => {
-      commitLines([{ id: 'sys-r-err', kind: 'system', text: chalk.red(`  Failed to list sessions: ${err?.message ?? err}`) }])
+      commitSystem('sys-r-err', chalk.red(`  Failed to list sessions: ${err?.message ?? err}`))
     })
   }
 
@@ -2153,7 +2143,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (!sub) {
       const vars = agent.listVariables()
       if (vars.length === 0) {
-        commitLines([{ id: 'sys-env', kind: 'system', text: '  No variables set' }])
+        commitSystem('sys-env', '  No variables set')
       } else {
         for (const v of vars) {
           commitLines([{ id: `sys-env-${v.key}`, kind: 'system', text: `  ${v.key}=${v.value}` }])
@@ -2163,19 +2153,19 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const eq = sub.slice(4).trim()
       const eqIdx = eq.indexOf('=')
       if (eqIdx <= 0) {
-        commitLines([{ id: 'sys-env-err', kind: 'system', text: '  Usage: /env set KEY=VALUE' }])
+        commitSystem('sys-env-err', '  Usage: /env set KEY=VALUE')
       } else {
         const key = eq.slice(0, eqIdx)
         const value = eq.slice(eqIdx + 1)
         agent.setVariable(key, value)
-        commitLines([{ id: 'sys-env-set', kind: 'system', text: `  ${key}=${value}` }])
+        commitSystem('sys-env-set', `  ${key}=${value}`)
       }
     } else if (sub.startsWith('del ')) {
       const key = sub.slice(4).trim()
       agent.deleteVariable(key)
-      commitLines([{ id: 'sys-env-del', kind: 'system', text: `  deleted: ${key}` }])
+      commitSystem('sys-env-del', `  deleted: ${key}`)
     } else {
-      commitLines([{ id: 'sys-env-err', kind: 'system', text: '  Usage: /env [set K=V | del K]' }])
+      commitSystem('sys-env-err', '  Usage: /env [set K=V | del K]')
     }
   }
 
@@ -2183,15 +2173,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     // Last assistant raw markdown → clipboard (shared locator with plan / shot).
     const last = findLastAssistantMarkdown(compactLines)
     if (!last) {
-      commitLines([{ id: 'sys-copy', kind: 'system', text: '  No agent messages to copy yet.' }])
+      commitSystem('sys-copy', '  No agent messages to copy yet.')
       return
     }
     try {
       const { copyToClipboard } = await import('../render/clipboard.js')
       await copyToClipboard(last.rawMarkdown)
-      commitLines([{ id: 'sys-copy', kind: 'system', text: '  Copied last agent message (Markdown source) to clipboard' }])
+      commitSystem('sys-copy', '  Copied last agent message (Markdown source) to clipboard')
     } catch (err: any) {
-      commitLines([{ id: 'sys-copy-err', kind: 'system', text: chalk.red(`  Copy failed: ${err?.message ?? err}`) }])
+      commitSystem('sys-copy-err', chalk.red(`  Copy failed: ${err?.message ?? err}`))
     }
   }
 
@@ -2200,16 +2190,16 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (!sub || sub === 'list') {
       try {
         const { skillList } = await import('../commands/skill.js')
-        commitLines([{ id: 'sys-skill', kind: 'system', text: skillList(agent.skillsDirs()) }])
+        commitSystem('sys-skill', skillList(agent.skillsDirs()))
       } catch {
-        commitLines([{ id: 'sys-skill-err', kind: 'system', text: '  skill list unavailable' }])
+        commitSystem('sys-skill-err', '  skill list unavailable')
       }
     } else if (sub.startsWith('install ')) {
       const source = sub.slice(8).trim()
       if (!source) {
-        commitLines([{ id: 'sys-skill-err', kind: 'system', text: '  Usage: /skill install <owner/repo>' }])
+        commitSystem('sys-skill-err', '  Usage: /skill install <owner/repo>')
       } else {
-        commitLines([{ id: 'sys-skill-inst', kind: 'system', text: `  cloning ${source}` }])
+        commitSystem('sys-skill-inst', `  cloning ${source}`)
         renderer.requestRender()
         try {
           const { skillInstall } = await import('../commands/skill.js')
@@ -2218,31 +2208,31 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             commitLines([{ id: `sys-skill-${Date.now()}`, kind: 'system', text: `  ${msg}` }])
             renderer.requestRender()
           })
-          if (result) commitLines([{ id: 'sys-skill-done', kind: 'system', text: `  ${result}` }])
+          if (result) commitSystem('sys-skill-done', `  ${result}`)
         } catch (err: any) {
-          commitLines([{ id: 'sys-skill-err', kind: 'system', text: chalk.red(`  install failed: ${err?.message ?? err}`) }])
+          commitSystem('sys-skill-err', chalk.red(`  install failed: ${err?.message ?? err}`))
         }
       }
     } else if (sub.startsWith('remove ')) {
       const name = sub.slice(7).trim()
       if (!name) {
-        commitLines([{ id: 'sys-skill-err', kind: 'system', text: '  Usage: /skill remove <name>' }])
+        commitSystem('sys-skill-err', '  Usage: /skill remove <name>')
       } else {
         try {
           const { skillRemove } = await import('../commands/skill.js')
-          commitLines([{ id: 'sys-skill-rm', kind: 'system', text: skillRemove(name) }])
+          commitSystem('sys-skill-rm', skillRemove(name))
         } catch {
-          commitLines([{ id: 'sys-skill-err', kind: 'system', text: '  skill remove unavailable' }])
+          commitSystem('sys-skill-err', '  skill remove unavailable')
         }
       }
     } else {
-      commitLines([{ id: 'sys-skill-err', kind: 'system', text: '  Usage: /skill [list | install <source> | remove <name>]' }])
+      commitSystem('sys-skill-err', '  Usage: /skill [list | install <source> | remove <name>]')
     }
     renderer.requestRender()
   }
 
   async function handleUpdateCommand() {
-    commitLines([{ id: 'sys-upd', kind: 'system', text: '  checking for updates...' }])
+    commitSystem('sys-upd', '  checking for updates...')
     renderer.requestRender()
     try {
       const { runUpdate } = await import('../update/index.js')
@@ -2250,7 +2240,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const result = await runUpdate(version())
       switch (result.kind) {
         case 'up_to_date':
-          commitLines([{ id: 'sys-upd-ok', kind: 'system', text: '  ✓ evot is up to date.' }])
+          commitSystem('sys-upd-ok', '  ✓ evot is up to date.')
           break
         case 'updated': {
           const lines: string[] = [`  ✓ updated ${result.from} → ${result.to}. restart evot to apply.`]
@@ -2261,15 +2251,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
               lines.push(`    • ${note}`)
             }
           }
-          commitLines([{ id: 'sys-upd-ok', kind: 'system', text: lines.join('\n') }])
+          commitSystem('sys-upd-ok', lines.join('\n'))
           break
         }
         case 'error':
-          commitLines([{ id: 'sys-upd-err', kind: 'system', text: chalk.red(`  ✗ ${result.message}`) }])
+          commitSystem('sys-upd-err', chalk.red(`  ✗ ${result.message}`))
           break
       }
     } catch (err: any) {
-      commitLines([{ id: 'sys-upd-err', kind: 'system', text: chalk.red(`  ✗ update failed: ${err?.message ?? err}`) }])
+      commitSystem('sys-upd-err', chalk.red(`  ✗ update failed: ${err?.message ?? err}`))
     }
   }
 
@@ -2285,7 +2275,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       // history. This keeps renderer diagnostics off the TUI hot path.
       const unsupportedTarget = query.slice(4).trim()
       if (unsupportedTarget) {
-        commitLines([{ id: 'sys-log-shot-target', kind: 'system', text: '  /log shot exports the latest assistant turn; message ids are no longer supported.' }])
+        commitSystem('sys-log-shot-target', '  /log shot exports the latest assistant turn; message ids are no longer supported.')
         return
       }
       try {
@@ -2308,16 +2298,16 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         ]
         if (result.pngPath) lines.push(`  PNG:  ${result.pngPath}`)
         else lines.push('  PNG:  (Chrome not available — HTML only)')
-        commitLines([{ id: 'sys-log-shot', kind: 'system', text: lines.join('\n') }])
+        commitSystem('sys-log-shot', lines.join('\n'))
       } catch (err: any) {
-        commitLines([{ id: 'sys-log-err', kind: 'system', text: chalk.red(`  Shot failed: ${err?.message ?? err}`) }])
+        commitSystem('sys-log-err', chalk.red(`  Shot failed: ${err?.message ?? err}`))
       }
     } else if (query.startsWith('up')) {
       // /log up [session_id] — upload/share session
       const upArg = query.slice(2).trim()
       let resolvedSid = upArg || sid
       if (!resolvedSid) {
-        commitLines([{ id: 'sys-log-err', kind: 'system', text: '  No active session to upload.' }])
+        commitSystem('sys-log-err', '  No active session to upload.')
         return
       }
       if (upArg && upArg.length < 36) {
@@ -2325,57 +2315,57 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           const sessions = await agent.listSessions(20)
           const matches = sessions.filter(s => s.session_id.startsWith(upArg))
           if (matches.length === 0) {
-            commitLines([{ id: 'sys-log-err', kind: 'system', text: `  Session not found: ${upArg}` }])
+            commitSystem('sys-log-err', `  Session not found: ${upArg}`)
             return
           }
           if (matches.length > 1) {
-            commitLines([{ id: 'sys-log-err', kind: 'system', text: `  Ambiguous session id: ${upArg} (${matches.length} matches)` }])
+            commitSystem('sys-log-err', `  Ambiguous session id: ${upArg} (${matches.length} matches)`)
             return
           }
           resolvedSid = matches[0]!.session_id
         } catch (err: any) {
-          commitLines([{ id: 'sys-log-err', kind: 'system', text: chalk.red(`  Failed to list sessions: ${err?.message ?? err}`) }])
+          commitSystem('sys-log-err', chalk.red(`  Failed to list sessions: ${err?.message ?? err}`))
           return
         }
       }
-      commitLines([{ id: 'sys-log-up', kind: 'system', text: `  packing session ${resolvedSid!.slice(0, 8)}...` }])
+      commitSystem('sys-log-up', `  packing session ${resolvedSid!.slice(0, 8)}...`)
       renderer.requestRender()
       try {
         const { logPut } = await import('../commands/log-share.js')
         const result = await logPut(resolvedSid!)
-        commitLines([{ id: 'sys-log-url', kind: 'system', text: `  uploaded. share this link:\n  ${result.url}\n  ⏳ link expires in 60 minutes` }])
+        commitSystem('sys-log-url', `  uploaded. share this link:\n  ${result.url}\n  ⏳ link expires in 60 minutes`)
       } catch (err: any) {
-        commitLines([{ id: 'sys-log-err', kind: 'system', text: chalk.red(`  Export failed: ${err?.message ?? err}`) }])
+        commitSystem('sys-log-err', chalk.red(`  Export failed: ${err?.message ?? err}`))
       }
     } else if (query.startsWith('dl ')) {
       // /log dl <url#password>
       const dlUrl = query.slice(3).trim()
       if (!dlUrl) {
-        commitLines([{ id: 'sys-log-err', kind: 'system', text: '  Usage: /log dl <url#password>' }])
+        commitSystem('sys-log-err', '  Usage: /log dl <url#password>')
         return
       }
-      commitLines([{ id: 'sys-log-dl', kind: 'system', text: '  downloading and importing...' }])
+      commitSystem('sys-log-dl', '  downloading and importing...')
       renderer.requestRender()
       try {
         const { logGet } = await import('../commands/log-share.js')
         const result = await logGet(dlUrl)
-        commitLines([{ id: 'sys-log-dl-ok', kind: 'system', text: `  imported session: ${result.sessionId}\n  resume with: /resume ${result.sessionId.slice(0, 8)}` }])
+        commitSystem('sys-log-dl-ok', `  imported session: ${result.sessionId}\n  resume with: /resume ${result.sessionId.slice(0, 8)}`)
       } catch (err: any) {
-        commitLines([{ id: 'sys-log-err', kind: 'system', text: chalk.red(`  Import failed: ${err?.message ?? err}`) }])
+        commitSystem('sys-log-err', chalk.red(`  Import failed: ${err?.message ?? err}`))
       }
     } else if (!query) {
       const logPath = screenLog.filePath
       if (logPath) {
         const text = formatLogPaths(logPath, rendererTrace.filePath)
-        commitLines([{ id: 'sys-log', kind: 'system', text: text ?? `  Log: ${logPath}` }])
+        commitSystem('sys-log', text ?? `  Log: ${logPath}`)
       }
       else if (sid) {
         const text = formatLogPaths(join(logDir, `${sid}.screen.log`))
-        commitLines([{ id: 'sys-log', kind: 'system', text: text ?? `  Log: ${join(logDir, `${sid}.screen.log`)}` }])
+        commitSystem('sys-log', text ?? `  Log: ${join(logDir, `${sid}.screen.log`)}`)
       }
-      else commitLines([{ id: 'sys-log', kind: 'system', text: `  Log dir: ${logDir} (no active session)` }])
+      else commitSystem('sys-log', `  Log dir: ${logDir} (no active session)`)
     } else if (!sid) {
-      commitLines([{ id: 'sys-log-err', kind: 'system', text: '  No active session to analyze.' }])
+      commitSystem('sys-log-err', '  No active session to analyze.')
     } else {
       // /log <query> — fork agent to analyze log
       const logPath = join(logDir, `${sid}.screen.log`)
@@ -2394,11 +2384,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       try {
         const forked = agent.fork(systemPrompt)
         logMode = forked
-        commitLines([{ id: 'sys-log-mode', kind: 'system', text: `  [log mode] analyzing: ${logPath}\n  not persisted. press Esc to exit.` }])
+        commitSystem('sys-log-mode', `  [log mode] analyzing: ${logPath}\n  not persisted. press Esc to exit.`)
         renderer.requestRender()
         await runLogQuery(forked, query)
       } catch (err: any) {
-        commitLines([{ id: 'sys-log-err', kind: 'system', text: chalk.red(`  Fork failed: ${err?.message ?? err}`) }])
+        commitSystem('sys-log-err', chalk.red(`  Fork failed: ${err?.message ?? err}`))
       }
     }
     renderer.requestRender()
@@ -2451,7 +2441,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         streamMachine = final.state
         commitFlushResult(final)
       }
-      commitLines([{ id: 'sys-log-err', kind: 'system', text: chalk.red(`  Log query failed: ${err?.message ?? err}`) }])
+      commitSystem('sys-log-err', chalk.red(`  Log query failed: ${err?.message ?? err}`))
       reconcileQueuedUserMessages()
       restoreQueuedUserMessagesToEditor()
     } finally {
@@ -2492,7 +2482,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           appState = { ...appState, model }
           commitStatusLine({ id: 'sys-model', kind: 'system', text: `  Model → ${formatModelLabel(model, provider)}` })
         } catch (err: any) {
-          commitLines([{ id: 'sys-model-err', kind: 'system', text: chalk.red(`  Failed to switch model: ${err?.message ?? err}`) }])
+          commitSystem('sys-model-err', chalk.red(`  Failed to switch model: ${err?.message ?? err}`))
         }
         renderer.requestRender()
         return
@@ -2501,7 +2491,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         overlay = { kind: 'selector', state: action.state }
         agent.deleteSession(action.sessionId).then(ok => {
           if (ok) {
-            commitLines([{ id: 'sys-del', kind: 'system', text: `  Deleted session ${action.label}` }])
+            commitSystem('sys-del', `  Deleted session ${action.label}`)
           }
         })
         renderer.requestRender()
@@ -2539,7 +2529,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         resolvePendingAsk()
         overlay = { kind: 'none' }
         unfreezeTerminalTitle()
-        commitLines([{ id: 'sys-ask-cancel', kind: 'system', text: '  ⏺ Cancelled.' }])
+        commitSystem('sys-ask-cancel', '  ⏺ Cancelled.')
         renderer.requestRender()
         return
       case 'submit':

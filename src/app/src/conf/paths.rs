@@ -34,10 +34,6 @@ pub fn default_env_file_path() -> Result<PathBuf> {
     Ok(state_root_dir()?.join("evot.env"))
 }
 
-pub fn history_file_path() -> Result<PathBuf> {
-    Ok(state_root_dir()?.join("evot_history"))
-}
-
 pub fn skills_dir() -> Result<PathBuf> {
     Ok(state_root_dir()?.join("skills"))
 }
