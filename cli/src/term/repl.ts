@@ -2030,6 +2030,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const subject = buildHardenPrompt(args)
       commitLines(buildUserMessage(text.trim()))
       runQuery(subject)
+    } else if (name === '/mem') {
+      // Bare = archive, with terms = vault search; both expanded server-side
+      // into normal prompts (see gateway command Memorize / MemorySearch).
+      commitLines(buildUserMessage(text.trim()))
+      runQuery(`/mem${args ? ' ' + args : ''}`)
     } else if (name === '/skill') {
       await handleSkillCommand(args)
     } else if (name === '/copy') {
@@ -2075,8 +2080,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           } else {
             openResumeSelector(args)
           }
+        } else if (args) {
+          await handleSemanticResume(args)
         } else {
-          openResumeSelector(args || undefined)
+          openResumeSelector(undefined)
         }
       } catch (err: any) {
         commitSystem('sys-r-err', chalk.red(`  Failed to list sessions: ${err?.message ?? err}`))
@@ -2110,6 +2117,48 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
 
     renderer.requestRender()
+  }
+
+  /**
+   * Semantic session search for `/resume <query>`: the server ranks recent
+   * sessions with a one-shot LLM call (hidden `/_rsearch` command). Shows the
+   * ranked list with reasons, then opens the resume selector on the ranked
+   * sessions. Falls back to the literal-filter selector on failure.
+   */
+  async function handleSemanticResume(query: string) {
+    commitSystem('sys-rsem-busy', chalk.dim('  searching sessions…'))
+    renderer.requestRender()
+    try {
+      const outcome = await agent.submit(`/_rsearch ${query}`, sessionId ?? undefined, 'interactive')
+      if (outcome.kind !== 'command') return
+      const message = outcome.message ?? ''
+      const lines = message.split('\n')
+      commitLines(lines.map((line, i) => ({
+        id: `sys-rsem-${i}`,
+        kind: 'system' as const,
+        text: `  ${line}`,
+      })))
+      const ids: string[] = []
+      for (const line of lines) {
+        const m = /^- (\S+) — /.exec(line)
+        if (m) ids.push(m[1]!)
+      }
+      if (ids.length === 0) return
+      const allSessions: SessionMeta[] = await agent.listSessions(0)
+      const ranked = ids
+        .map(id => allSessions.find(s => s.session_id === id))
+        .filter((s): s is SessionMeta => Boolean(s))
+      if (ranked.length === 0) return
+      const items = formatSessionItems(ranked, agent.cwd)
+      overlay = {
+        kind: 'selector',
+        state: createSelectorState(RESUME_SELECTOR_TITLE, items, items),
+      }
+      renderer.requestRender()
+    } catch (err: any) {
+      commitSystem('sys-rsem-err', chalk.red(`  Semantic search failed: ${err?.message ?? err}`))
+      openResumeSelector(query)
+    }
   }
 
   function openResumeSelector(initialQuery?: string) {

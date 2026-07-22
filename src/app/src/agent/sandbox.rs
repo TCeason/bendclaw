@@ -40,10 +40,11 @@ impl SandboxPolicy {
     /// Build the sandbox runtime: path guard + tool availability flags.
     ///
     /// - `cwd`: working directory (must exist).
-    /// - `skill_dirs`: skill scan directories (system-managed, missing dirs skipped).
+    /// - `system_dirs`: system-managed directories (skill scan dirs, memory
+    ///   vault); missing dirs are skipped.
     ///
     /// User-configured `extra_dirs` that don't exist cause a config error.
-    pub fn build_runtime(&self, cwd: &Path, skill_dirs: &[PathBuf]) -> Result<SandboxRuntime> {
+    pub fn build_runtime(&self, cwd: &Path, system_dirs: &[PathBuf]) -> Result<SandboxRuntime> {
         if !self.enabled {
             return Ok(SandboxRuntime {
                 path_guard: Arc::new(PathGuard::open()),
@@ -64,7 +65,7 @@ impl SandboxPolicy {
         dirs.push(canonical_cwd);
 
         // System dirs — skip missing
-        for d in skill_dirs {
+        for d in system_dirs {
             if let Ok(c) = d.canonicalize() {
                 dirs.push(c);
             }

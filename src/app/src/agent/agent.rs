@@ -121,6 +121,23 @@ impl QueryRequest {
     }
 }
 
+/// Expand prompt-rewriting commands (`/mem`, `/mem <terms>`) into normal
+/// prompts. Non-command input passes through unchanged.
+fn expand_prompt_command(mut request: QueryRequest) -> QueryRequest {
+    use crate::gateway::command::memorize_prompt;
+    use crate::gateway::command::parse_command;
+    use crate::gateway::command::recall_prompt;
+    use crate::gateway::command::Command;
+
+    let text = match parse_command(&request.input_text()) {
+        Some(Command::Memorize) => memorize_prompt(),
+        Some(Command::MemorySearch { query }) => recall_prompt(&query),
+        _ => return request,
+    };
+    request.input = vec![evot_engine::Content::Text { text }];
+    request
+}
+
 // ---------------------------------------------------------------------------
 // SubmitOutcome — result of a submit: either a Run or a handled command
 // ---------------------------------------------------------------------------
@@ -574,6 +591,15 @@ impl Agent {
     // -- query ---------------------------------------------------------------
 
     pub async fn submit(self: &Arc<Self>, request: QueryRequest) -> Result<SubmitOutcome> {
+        // Session-independent commands are handled before resolve_session,
+        // which would otherwise persist an empty session when the caller has
+        // no session yet (e.g. `/resume <query>` from a fresh CLI).
+        if let Some(crate::gateway::command::Command::ResumeSearch { query }) =
+            crate::gateway::command::parse_command(&request.input_text())
+        {
+            let msg = self.handle_resume_search(&query).await?;
+            return Ok(SubmitOutcome::Command(msg));
+        }
         let session = self
             .resolve_session(request.session_id.as_deref(), &request.source)
             .await?;
@@ -591,6 +617,9 @@ impl Agent {
         if let Some(outcome) = self.maybe_handle_command(&request, &session).await? {
             return Ok(outcome);
         }
+        // Prompt-expanding commands (/mem) rewrite the input and continue as a
+        // normal run.
+        let request = expand_prompt_command(request);
 
         let run = self.start_run(request, session).await?;
         Ok(SubmitOutcome::Run(run))
@@ -647,6 +676,14 @@ impl Agent {
                 let msg = self
                     .handle_dump_command(request.mode, session, target.as_deref())
                     .await?;
+                Ok(Some(SubmitOutcome::Command(msg)))
+            }
+            // Expanded into normal prompts by `expand_prompt_command` after
+            // this interception step; nothing to handle here.
+            Command::Memorize | Command::MemorySearch { .. } => Ok(None),
+            // Semantic session search — one-shot LLM ranking, no agent run.
+            Command::ResumeSearch { query } => {
+                let msg = self.handle_resume_search(&query).await?;
                 Ok(Some(SubmitOutcome::Command(msg)))
             }
         }
@@ -707,21 +744,24 @@ impl Agent {
         }
     }
 
-    fn compact_summarizer(&self) -> crate::compact::orchestrator::CompactSummarizer {
+    fn llm_provider(&self, protocol: &Protocol) -> Arc<dyn evot_engine::provider::StreamProvider> {
         use evot_engine::provider::AnthropicProvider;
         use evot_engine::provider::OpenAiCompatProvider;
         use evot_engine::provider::OpenAiResponsesProvider;
 
+        self.provider_override
+            .read()
+            .clone()
+            .unwrap_or_else(|| match protocol {
+                Protocol::Anthropic => Arc::new(AnthropicProvider),
+                Protocol::OpenAiResponses => Arc::new(OpenAiResponsesProvider),
+                Protocol::OpenAi => Arc::new(OpenAiCompatProvider),
+            })
+    }
+
+    fn compact_summarizer(&self) -> crate::compact::orchestrator::CompactSummarizer {
         let llm = self.llm.read().clone();
-        let provider =
-            self.provider_override
-                .read()
-                .clone()
-                .unwrap_or_else(|| match llm.protocol {
-                    Protocol::Anthropic => Arc::new(AnthropicProvider),
-                    Protocol::OpenAiResponses => Arc::new(OpenAiResponsesProvider),
-                    Protocol::OpenAi => Arc::new(OpenAiCompatProvider),
-                });
+        let provider = self.llm_provider(&llm.protocol);
         crate::compact::orchestrator::CompactSummarizer {
             provider,
             llm,
@@ -981,6 +1021,27 @@ impl Agent {
         (text, sections)
     }
 
+    /// Rank recent sessions against `query` with a one-shot LLM call and
+    /// return a human-readable result list (backs the hidden `/_rsearch`
+    /// command used by `/resume <query>`).
+    async fn handle_resume_search(&self, query: &str) -> Result<String> {
+        let storage = self.storage.read().clone();
+        let sessions = storage
+            .list_sessions_with_text(crate::agent::resume_search::SESSION_LIMIT)
+            .await?;
+        let llm = self.llm.read().clone();
+        if llm.provider.is_empty() || llm.api_key.trim().is_empty() {
+            return Err(EvotError::Conf(
+                "Semantic session search needs a configured LLM provider.".to_string(),
+            ));
+        }
+        let ctx = crate::agent::resume_search::RankContext {
+            provider: self.llm_provider(&llm.protocol),
+            llm,
+        };
+        crate::agent::resume_search::rank_sessions(&ctx, query, &sessions).await
+    }
+
     /// Build a structured snapshot of what evot would send to the LLM right
     /// now (system prompt + tool definitions + skill instructions). Persists
     /// to JSON and returns a human-readable status string.
@@ -1123,10 +1184,18 @@ impl Agent {
             .variables()
             .map(|v| v.all_env_pairs())
             .unwrap_or_default();
-        // Build path guard from sandbox policy
+        // Build path guard from sandbox policy. System dirs cover skill scan
+        // directories plus the memory vault used by the builtin memory skill.
         let cwd_path = std::path::Path::new(&self.cwd);
         let skill_dirs = self.skills_dirs.read().clone();
-        let sandbox_rt = self.sandbox.build_runtime(cwd_path, &skill_dirs)?;
+        let mut system_dirs = skill_dirs.clone();
+        if let Ok(memory_dir) = crate::conf::paths::memory_dir() {
+            if let Err(e) = std::fs::create_dir_all(&memory_dir) {
+                tracing::warn!("cannot create memory dir {}: {e}", memory_dir.display());
+            }
+            system_dirs.push(memory_dir);
+        }
+        let sandbox_rt = self.sandbox.build_runtime(cwd_path, &system_dirs)?;
 
         let tools = build_tools(
             mode,

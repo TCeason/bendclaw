@@ -31,6 +31,10 @@ const BUILTINS: &[BuiltinDef] = &[
         name: "humanize",
         content: include_str!("prompts/humanize.md"),
     },
+    BuiltinDef {
+        name: "memory",
+        content: include_str!("prompts/memory.md"),
+    },
 ];
 
 /// Parse builtin skill definitions into `SkillSpec` values.

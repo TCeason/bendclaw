@@ -28,6 +28,8 @@ mod manual_compact_llm_test;
 mod model_metadata_test;
 #[path = "orchestrator_compact_test.rs"]
 mod orchestrator_compact_test;
+#[path = "resume_search_test.rs"]
+mod resume_search_test;
 #[path = "run_ask_channel_test.rs"]
 mod run_ask_channel_test;
 #[path = "run_queue_test.rs"]

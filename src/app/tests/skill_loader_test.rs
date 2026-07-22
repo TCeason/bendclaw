@@ -183,6 +183,22 @@ fn builtin_humanize_skill_loaded() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn builtin_memory_skill_loaded() -> Result<(), Box<dyn std::error::Error>> {
+    let empty: Vec<std::path::PathBuf> = vec![];
+    let specs = load_skills(&empty)?;
+    let memory = match specs.iter().find(|s| s.name == "memory") {
+        Some(skill) => skill,
+        None => return Err("builtin memory skill should be present".into()),
+    };
+    assert!(!memory.description.is_empty());
+    assert!(memory.description.contains("/mem"));
+    assert!(memory.instructions.contains("# Memory"));
+    assert!(memory.instructions.contains(".evotai/memory"));
+    assert!(memory.base_dir.as_os_str().is_empty());
+    Ok(())
+}
+
+#[test]
 fn fs_skill_overrides_builtin() {
     let tmp = TempDir::new().unwrap();
     create_skill(tmp.path(), "review", "Custom review");

@@ -37,3 +37,8 @@ pub fn default_env_file_path() -> Result<PathBuf> {
 pub fn skills_dir() -> Result<PathBuf> {
     Ok(state_root_dir()?.join("skills"))
 }
+
+/// Memory vault used by the builtin `memory` skill.
+pub fn memory_dir() -> Result<PathBuf> {
+    Ok(state_root_dir()?.join("memory"))
+}

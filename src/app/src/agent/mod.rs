@@ -1,5 +1,6 @@
 mod agent;
 pub mod prompt;
+pub mod resume_search;
 pub mod run;
 pub mod run_manager;
 pub mod sandbox;
