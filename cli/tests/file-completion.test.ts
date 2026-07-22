@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { extractAtPrefix, completeAtFile } from '../src/commands/file-completion.js'
+import { extractAtPrefix, completeAtFile, fuzzyScore } from '../src/commands/file-completion.js'
 import { mkdtempSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -72,6 +72,32 @@ describe('completeAtFile', () => {
     // With readdir fallback, abort only affects fd; readdir still works
     // But if fd is found, it should return empty
     expect(result === null || result.items.length >= 0).toBe(true)
+  })
+
+  test('fuzzy matches nested file by name without navigating', async () => {
+    const result = await completeAtFile('@main', tmp)
+    expect(result).not.toBeNull()
+    expect(result!.items.some(i => i.label === 'src/main.ts')).toBe(true)
+  })
+
+  test('fuzzy matches by path subsequence', async () => {
+    const result = await completeAtFile('@srcnst', tmp)
+    expect(result).not.toBeNull()
+    expect(result!.items.some(i => i.label === 'src/nested/' || i.label === 'src/nested')).toBe(true)
+  })
+})
+
+describe('fuzzyScore', () => {
+  test('ranks basename prefix above substring above path match', () => {
+    expect(fuzzyScore('src/main.ts', 'main')).toBe(0)
+    expect(fuzzyScore('src/domain.ts', 'main')).toBe(1)
+    expect(fuzzyScore('main/index.ts', 'main/i')).toBe(2)
+    expect(fuzzyScore('cli/src/term/repl.ts', 'ctrepl')).toBe(3)
+    expect(fuzzyScore('src/utils.ts', 'zzz')).toBeNull()
+  })
+
+  test('is case-insensitive and ignores trailing slash for basename', () => {
+    expect(fuzzyScore('src/Nested/', 'nested')).toBe(0)
   })
 })
 

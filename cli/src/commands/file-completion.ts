@@ -1,11 +1,17 @@
 /**
  * @file completion — async file path completion using fd.
  * Triggered when user types `@` in the input.
+ *
+ * Two modes:
+ * - Browse: `@` or `@dir/` lists the direct children of the target directory.
+ * - Fuzzy:  `@<query>` searches the whole tree recursively and ranks matches
+ *   against the full relative path (codex-style), so `@repl` finds
+ *   `cli/src/term/repl.ts` without navigating directory by directory.
  */
 
 import { spawn } from 'child_process'
 import { readdirSync, statSync } from 'fs'
-import { join, basename, dirname } from 'path'
+import { join, basename } from 'path'
 
 export interface FileCompletionItem {
   /** Display label (relative path, directories end with /) */
@@ -23,6 +29,15 @@ export interface FileCompletionResult {
   /** Start index of the prefix in the line */
   prefixStart: number
 }
+
+/** Max items shown in the completion menu. */
+const MAX_ITEMS = 20
+/** Max candidates fetched from fd before ranking. */
+const FD_FUZZY_FETCH = 400
+/** Bounds for the no-fd recursive fallback walk. */
+const WALK_MAX_ENTRIES = 2000
+const WALK_MAX_DEPTH = 6
+const WALK_SKIP = new Set(['node_modules', 'target', 'dist', '.git'])
 
 /**
  * Extract the @-prefix from text before cursor.
@@ -43,6 +58,48 @@ export function extractAtPrefix(textBeforeCursor: string): { prefix: string; sta
     if (/\s/.test(ch)) return null
   }
   return null
+}
+
+/**
+ * Score a relative path against a fuzzy query. Lower is better; null means no
+ * match. Tiers: basename prefix (0), basename substring (1), path substring
+ * (2), path subsequence (3).
+ */
+export function fuzzyScore(relPath: string, query: string): number | null {
+  const q = query.toLowerCase()
+  const p = relPath.toLowerCase()
+  const base = basename(p.endsWith('/') ? p.slice(0, -1) : p)
+  if (base.startsWith(q)) return 0
+  if (base.includes(q)) return 1
+  if (p.includes(q)) return 2
+  if (isSubsequence(q, p)) return 3
+  return null
+}
+
+function isSubsequence(needle: string, haystack: string): boolean {
+  let i = 0
+  for (const ch of haystack) {
+    if (ch === needle[i]) i++
+    if (i === needle.length) return true
+  }
+  return needle.length === 0
+}
+
+/** Rank candidate relative paths against a query and build completion items. */
+function rankCandidates(paths: string[], query: string): FileCompletionItem[] {
+  const scored: { path: string; score: number }[] = []
+  for (const path of paths) {
+    if (path === '.git' || path.startsWith('.git/')) continue
+    const score = fuzzyScore(path, query)
+    if (score !== null) scored.push({ path, score })
+  }
+  scored.sort((a, b) =>
+    a.score - b.score || a.path.length - b.path.length || a.path.localeCompare(b.path))
+  return scored.slice(0, MAX_ITEMS).map(({ path }) => ({
+    label: path,
+    value: `@${path}`,
+    isDirectory: path.endsWith('/'),
+  }))
 }
 
 /**
@@ -70,8 +127,10 @@ function getFdPath(): string | null {
 }
 
 /**
- * Async file completion using fd.
- * Falls back to readdir if fd is not available.
+ * Async file completion.
+ * - `@` / `@dir/` → browse: direct children of the target directory.
+ * - `@query` → fuzzy: recursive search ranked against the full relative path.
+ * Falls back to readdir / a bounded recursive walk if fd is not available.
  */
 export async function completeAtFile(
   textBeforeCursor: string,
@@ -83,26 +142,21 @@ export async function completeAtFile(
 
   const { prefix, start } = extracted
   const query = prefix.slice(1) // strip leading @
-
-  // Parse query into searchDir and filePrefix
-  // @cli/src/m → searchDir="cli/src", filePrefix="m"
-  // @cli/ → searchDir="cli", filePrefix=""
-  // @c → searchDir="", filePrefix="c"
-  let searchDir = ''
-  let filePrefix = query
-  if (query.includes('/')) {
-    const lastSlash = query.lastIndexOf('/')
-    searchDir = query.slice(0, lastSlash)
-    filePrefix = query.slice(lastSlash + 1)
-  }
+  const browse = query === '' || query.endsWith('/')
 
   const fd = getFdPath()
   let items: FileCompletionItem[]
 
-  if (fd) {
-    items = await searchDirWithFd(fd, searchDir, filePrefix, cwd, signal)
+  if (browse) {
+    const searchDir = query.slice(0, -1) // '' for root
+    items = fd
+      ? await browseDirWithFd(fd, searchDir, cwd, signal)
+      : browseWithReaddir(query, cwd)
   } else {
-    items = searchWithReaddir(query, cwd)
+    const candidates = fd
+      ? await fuzzyCandidatesWithFd(fd, query, cwd, signal)
+      : walkDir(cwd)
+    items = rankCandidates(candidates, query)
   }
 
   if (items.length === 0) return null
@@ -110,29 +164,12 @@ export async function completeAtFile(
   return { items, prefix, prefixStart: start }
 }
 
-/**
- * Search a specific directory with fd, depth 1, then filter by prefix.
- * This gives Pi-like behavior: only direct children of the target dir.
- */
-async function searchDirWithFd(
+/** Run fd and return its output lines (directories carry a trailing slash). */
+function runFd(
   fdPath: string,
-  searchDir: string,
-  filePrefix: string,
-  cwd: string,
+  args: string[],
   signal?: AbortSignal,
-): Promise<FileCompletionItem[]> {
-  const maxResults = 50
-  const searchBase = searchDir ? join(cwd, searchDir) : cwd
-  const args = [
-    '--base-directory', searchBase,
-    '--max-depth', '1',
-    '--max-results', String(maxResults),
-    '--type', 'f',
-    '--type', 'd',
-    '--follow',
-    '--exclude', '.git',
-  ]
-
+): Promise<string[]> {
   return new Promise((resolve) => {
     if (signal?.aborted) {
       resolve([])
@@ -146,7 +183,7 @@ async function searchDirWithFd(
     let stdout = ''
     let resolved = false
 
-    const finish = (results: FileCompletionItem[]) => {
+    const finish = (results: string[]) => {
       if (resolved) return
       resolved = true
       if (onAbort) signal?.removeEventListener('abort', onAbort)
@@ -174,46 +211,69 @@ async function searchDirWithFd(
         finish([])
         return
       }
-
-      const lines = stdout.trim().split('\n').filter(Boolean)
-      const dirPrefix = searchDir ? searchDir + '/' : ''
-      const results: FileCompletionItem[] = []
-
-      for (const line of lines) {
-        const isDir = line.endsWith('/')
-        const name = isDir ? line.slice(0, -1) : line
-        if (name === '.git' || name.startsWith('.git/')) continue
-        // Filter by prefix (case-insensitive)
-        if (filePrefix && !name.toLowerCase().startsWith(filePrefix.toLowerCase())) continue
-        const label = dirPrefix + line
-        results.push({
-          label,
-          value: `@${label}`,
-          isDirectory: isDir,
-        })
-      }
-
-      finish(results.slice(0, 20))
+      finish(stdout.trim().split('\n').filter(Boolean))
     })
   })
 }
 
+/** Browse mode: list the direct children of `searchDir` with fd. */
+async function browseDirWithFd(
+  fdPath: string,
+  searchDir: string,
+  cwd: string,
+  signal?: AbortSignal,
+): Promise<FileCompletionItem[]> {
+  const searchBase = searchDir ? join(cwd, searchDir) : cwd
+  const lines = await runFd(fdPath, [
+    '--base-directory', searchBase,
+    '--max-depth', '1',
+    '--max-results', String(MAX_ITEMS),
+    '--type', 'f',
+    '--type', 'd',
+    '--follow',
+    '--exclude', '.git',
+  ], signal)
+
+  const dirPrefix = searchDir ? searchDir + '/' : ''
+  return lines
+    .filter(line => line !== '.git' && !line.startsWith('.git/'))
+    .map(line => ({
+      label: dirPrefix + line,
+      value: `@${dirPrefix}${line}`,
+      isDirectory: line.endsWith('/'),
+    }))
+}
+
 /**
- * Fallback: search using readdir (no fd available or empty query).
+ * Fuzzy mode: fetch recursive candidates whose full path matches the query as
+ * a subsequence (fd regex `a.*b.*c`); ranking happens in [`rankCandidates`].
  */
-function searchWithReaddir(query: string, cwd: string): FileCompletionItem[] {
-  let dir: string
-  let prefix: string
+async function fuzzyCandidatesWithFd(
+  fdPath: string,
+  query: string,
+  cwd: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const pattern = query
+    .split('')
+    .map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('.*')
+  return runFd(fdPath, [
+    '--base-directory', cwd,
+    '--max-results', String(FD_FUZZY_FETCH),
+    '--type', 'f',
+    '--type', 'd',
+    '--follow',
+    '--exclude', '.git',
+    '--full-path',
+    '--ignore-case',
+    pattern,
+  ], signal)
+}
 
-  if (query.includes('/')) {
-    const lastSlash = query.lastIndexOf('/')
-    dir = join(cwd, query.slice(0, lastSlash + 1))
-    prefix = query.slice(lastSlash + 1)
-  } else {
-    dir = cwd
-    prefix = query
-  }
-
+/** Browse fallback without fd: list one directory level with readdir. */
+function browseWithReaddir(query: string, cwd: string): FileCompletionItem[] {
+  const dir = query ? join(cwd, query) : cwd
   let entries: string[]
   try {
     entries = readdirSync(dir)
@@ -221,21 +281,49 @@ function searchWithReaddir(query: string, cwd: string): FileCompletionItem[] {
     return []
   }
 
-  const filtered = prefix
-    ? entries.filter(e => e.toLowerCase().startsWith(prefix.toLowerCase()))
-    : entries.filter(e => !e.startsWith('.'))
+  return entries
+    .filter(e => !e.startsWith('.'))
+    .slice(0, MAX_ITEMS)
+    .map(entry => {
+      let isDir = false
+      try { isDir = statSync(join(dir, entry)).isDirectory() } catch { /* ignore */ }
+      const label = query + entry + (isDir ? '/' : '')
+      return {
+        label,
+        value: `@${label}`,
+        isDirectory: isDir,
+      }
+    })
+}
 
-  const dirPrefix = query.includes('/') ? query.slice(0, query.lastIndexOf('/') + 1) : ''
-
-  return filtered.slice(0, 20).map(entry => {
-    const fullPath = join(dir, entry)
-    let isDir = false
-    try { isDir = statSync(fullPath).isDirectory() } catch { /* ignore */ }
-    const label = dirPrefix + entry + (isDir ? '/' : '')
-    return {
-      label,
-      value: `@${label}`,
-      isDirectory: isDir,
+/**
+ * Fuzzy fallback without fd: bounded recursive walk collecting relative paths
+ * (directories carry a trailing slash).
+ */
+function walkDir(cwd: string): string[] {
+  const out: string[] = []
+  const walk = (rel: string, depth: number) => {
+    if (out.length >= WALK_MAX_ENTRIES || depth > WALK_MAX_DEPTH) return
+    let entries: string[]
+    try {
+      entries = readdirSync(join(cwd, rel))
+    } catch {
+      return
     }
-  })
+    for (const entry of entries) {
+      if (out.length >= WALK_MAX_ENTRIES) return
+      if (entry.startsWith('.') || WALK_SKIP.has(entry)) continue
+      const relPath = rel ? `${rel}/${entry}` : entry
+      let isDir = false
+      try { isDir = statSync(join(cwd, relPath)).isDirectory() } catch { /* ignore */ }
+      if (isDir) {
+        out.push(relPath + '/')
+        walk(relPath, depth + 1)
+      } else {
+        out.push(relPath)
+      }
+    }
+  }
+  walk('', 0)
+  return out
 }
