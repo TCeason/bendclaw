@@ -76,13 +76,9 @@ pub async fn execute_with_options(
     let before_tokens = total_tokens(&messages);
 
     // Step 1: Reclaim (lossless, runs on all messages)
-    let (messages, reclaim_stats) = transforms::reclaim::run(messages, config);
+    let (messages, current_run_reclaimed) = transforms::reclaim::run(messages);
 
-    // Step 2: Shrink (only on retained tail)
-    let (messages, tool_results_shrunk) =
-        transforms::shrink::run(messages, &plan.retained_tail, config);
-
-    // Step 3: Prepare summarizer input (serialize evicted zone to text)
+    // Step 2: Prepare summarizer input (serialize evicted zone to text)
     let evicted = &messages[plan.evict_zone.clone()];
     let split_prefix = plan
         .split_turn
@@ -91,7 +87,7 @@ pub async fn execute_with_options(
 
     let summarizer_input = serialize::prepare_input(evicted, split_prefix, prev_state);
 
-    // Step 4: Try provider-native remote compaction first (GPT models on the
+    // Step 3: Try provider-native remote compaction first (GPT models on the
     // Responses protocol). Any failure falls back to local text summarization.
     let mut remote_failed = false;
     let remote_outcome = match summarizer_ctx {
@@ -139,12 +135,11 @@ pub async fn execute_with_options(
             summarizer_input,
             before_message_count,
             before_tokens,
-            reclaim_stats,
-            tool_results_shrunk,
+            current_run_reclaimed,
         );
     }
 
-    // Step 5: Generate local text summary
+    // Step 4: Generate local text summary
     let summary_text = if use_llm_fallback {
         if let Some(ctx) = summarizer_ctx {
             // LLM summarization for threshold/manual compaction
@@ -173,7 +168,7 @@ pub async fn execute_with_options(
 
     let summary_text = truncate_summary(&summary_text, config.summary_max_chars);
 
-    // Step 6: Build memory summary message
+    // Step 5: Build memory summary message
     let memory_summary_msg = AgentMessage::Llm(Message::User {
         content: vec![Content::Text {
             text: summary_text.clone(),
@@ -181,7 +176,7 @@ pub async fn execute_with_options(
         timestamp: crate::context::now_ms(),
     });
 
-    // Step 7: Build new state
+    // Step 6: Build new state
     let mut new_state = memory::build_state(evicted, split_prefix, prev_state);
     // Store the same bounded summary used by the context and persistence event.
     // The exact context message lets the next compaction remove this copy before
@@ -189,13 +184,13 @@ pub async fn execute_with_options(
     new_state.last_summary = Some(summary_text.clone());
     new_state.context_summary_message = Some(summary_text.clone());
 
-    // Step 8: Assemble final messages: pinned_head + memory_summary + retained_tail
+    // Step 7: Assemble final messages: pinned_head + memory_summary + retained_tail
     let mut result = Vec::with_capacity(plan.pinned_head.len() + 1 + plan.retained_tail.len());
     result.extend_from_slice(&messages[plan.pinned_head.clone()]);
     result.push(memory_summary_msg);
     result.extend_from_slice(&messages[plan.retained_tail.clone()]);
 
-    // Step 9: Sanitize orphaned tool pairs
+    // Step 8: Sanitize orphaned tool pairs
     let result = sanitize_tool_pairs(result);
 
     let after_message_count = result.len();
@@ -208,9 +203,7 @@ pub async fn execute_with_options(
         before_tokens,
         after_tokens,
         messages_evicted: plan.evict_zone.len(),
-        tool_results_shrunk,
-        images_downgraded: reclaim_stats.images_downgraded,
-        current_run_reclaimed: reclaim_stats.current_run_reclaimed,
+        current_run_reclaimed,
         method: Some(if remote_failed {
             CompactionMethod::RemoteFailedLocal
         } else {
@@ -241,8 +234,7 @@ fn assemble_remote(
     summarizer_input: SummarizerInput,
     before_message_count: usize,
     before_tokens: usize,
-    reclaim_stats: transforms::reclaim::ReclaimStats,
-    tool_results_shrunk: usize,
+    current_run_reclaimed: usize,
 ) -> CompactionOutcome {
     let evicted = &messages[plan.evict_zone.clone()];
     let split_prefix = plan
@@ -295,9 +287,7 @@ fn assemble_remote(
         before_tokens,
         after_tokens,
         messages_evicted: plan.evict_zone.len(),
-        tool_results_shrunk,
-        images_downgraded: reclaim_stats.images_downgraded,
-        current_run_reclaimed: reclaim_stats.current_run_reclaimed,
+        current_run_reclaimed,
         method: Some(CompactionMethod::Remote),
         remote_blob_bytes: Some(encrypted_bytes),
     };

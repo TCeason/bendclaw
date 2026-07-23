@@ -146,8 +146,6 @@ fn stats_context_compaction_completed_round_trip() {
             before_tokens: 50000,
             after_tokens: 20000,
             messages_evicted: 12,
-            tool_results_shrunk: 3,
-            images_downgraded: 0,
             current_run_reclaimed: 0,
             method: Some("remote".into()),
             remote_blob_bytes: Some(1024),
@@ -361,7 +359,6 @@ fn user_content_round_trip_preserves_multimodal_order() {
             mime_type: "image/png".into(),
             source: evot_engine::ImageSource::Base64 {
                 data: "img1".into(),
-                path: None,
             },
         },
         evot_engine::Content::Text {
@@ -371,7 +368,6 @@ fn user_content_round_trip_preserves_multimodal_order() {
             mime_type: "image/jpeg".into(),
             source: evot_engine::ImageSource::Base64 {
                 data: "img2".into(),
-                path: None,
             },
         },
     ]);

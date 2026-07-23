@@ -68,9 +68,7 @@ pub enum ManualCompactionOutcome {
         messages_after: usize,
         context_window: usize,
         messages_evicted: usize,
-        tool_results_shrunk: usize,
         current_run_reclaimed: usize,
-        images_downgraded: usize,
         compaction_level: usize,
         used_fallback: bool,
         #[serde(skip_serializing_if = "Option::is_none")]

@@ -72,9 +72,6 @@ fn config_small() -> CompactionConfig {
         keep_recent_tokens: 1_000,
         keep_recent_min: 2,
         keep_first: 2,
-        max_tool_result_tokens: 500,
-        tool_output_max_lines: 50,
-        keep_recent_images: 1,
         summarizer_mode: SummarizerMode::default(),
         summary_max_chars: 4000,
     }

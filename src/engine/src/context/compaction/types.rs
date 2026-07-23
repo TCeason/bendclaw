@@ -99,7 +99,7 @@ pub struct CompactionPlan {
     pub pinned_head: Range<usize>,
     /// Zone B: messages to evict (replaced by compact memory summary).
     pub evict_zone: Range<usize>,
-    /// Zone C: retained tail (recent work, kept in full or shrunk).
+    /// Zone C: retained tail (recent work, kept in full).
     pub retained_tail: Range<usize>,
     /// If the cut point splits a turn, info about the split.
     pub split_turn: Option<SplitTurn>,
@@ -190,10 +190,6 @@ pub struct CompactionStats {
     pub after_tokens: usize,
     /// Messages evicted.
     pub messages_evicted: usize,
-    /// Tool results shrunk in retained zone.
-    pub tool_results_shrunk: usize,
-    /// Images downgraded.
-    pub images_downgraded: usize,
     /// CurrentRun results reclaimed.
     pub current_run_reclaimed: usize,
     /// How the summary was produced (None for legacy/no-op stats).

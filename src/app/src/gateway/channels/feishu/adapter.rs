@@ -152,7 +152,6 @@ impl FeishuChannel {
                                                 mime_type: img.mime_type,
                                                 source: evot_engine::ImageSource::Base64 {
                                                     data: img.data_base64,
-                                                    path: None,
                                                 },
                                             });
                                         }
@@ -273,7 +272,6 @@ impl FeishuChannel {
                                                     mime_type: img.mime_type,
                                                     source: evot_engine::ImageSource::Base64 {
                                                         data: img.data_base64,
-                                                        path: None,
                                                     },
                                                 });
                                             }

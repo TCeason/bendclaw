@@ -3,10 +3,10 @@
 //! Architecture:
 //! - `trigger` — decides WHEN to compact (usage-based, overflow detection)
 //! - `planner` — decides WHAT to keep/evict (cut point algorithm)
-//! - `executor` — applies the plan (reclaim + shrink + evict + memory summary)
+//! - `executor` — applies the plan (reclaim + evict + memory summary)
 //! - `memory` — extracts compacted memory/state from evicted content
 //! - `controller` — stateful integration point for the agent loop
-//! - `transforms/` — individual message transformations (reclaim, shrink)
+//! - `transforms/` — individual message transformations (reclaim)
 
 pub mod config;
 pub mod controller;
@@ -29,7 +29,6 @@ pub use summarizer::mode::DEFAULT_SUMMARY_RESERVE_TOKENS;
 pub use summarizer::SummarizerContext;
 pub use summarizer::SummarizerInput;
 pub use summarizer::SummarizerMode;
-pub use transforms::shrink::truncate_head_tail;
 pub use types::AfterResponseAction;
 pub use types::CompactionMethod;
 pub use types::CompactionObserver;

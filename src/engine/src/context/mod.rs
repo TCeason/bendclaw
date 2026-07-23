@@ -11,7 +11,6 @@ pub use compaction::session::plan_session_compaction;
 pub use compaction::session::CompactEntry;
 pub use compaction::session::SessionCompactPlan;
 pub use compaction::session::SessionSplitTurn;
-pub use compaction::truncate_head_tail;
 pub use compaction::truncate_summary;
 pub use compaction::types::CompactReason;
 pub use compaction::AfterResponseAction;

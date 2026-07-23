@@ -1601,9 +1601,6 @@ async fn test_compact_messages_reduces_over_budget_context() {
         keep_recent_tokens: 500,
         keep_recent_min: 5,
         keep_first: 2,
-        max_tool_result_tokens: 500,
-        tool_output_max_lines: 20,
-        keep_recent_images: 1,
         summarizer_mode: SummarizerMode::default(),
         summary_max_chars: 4000,
     };
@@ -1740,7 +1737,6 @@ async fn test_compaction_after_tool_use_waits_for_tool_results() {
         system_prompt_tokens: 0,
         keep_recent: 1,
         keep_first: 1,
-        tool_output_max_lines: 50,
     });
 
     let mut prior_messages = Vec::new();
@@ -1903,7 +1899,6 @@ async fn test_non_overflow_error_compacts_on_estimate() {
         system_prompt_tokens: 0,
         keep_recent: 1,
         keep_first: 1,
-        tool_output_max_lines: 50,
     });
 
     // Keep history plus prompt below the ~875 preflight threshold. The terminal
@@ -2025,7 +2020,6 @@ async fn test_overflow_retry_never_completes_abandoned_partial_response() {
         system_prompt_tokens: 0,
         keep_recent: 1,
         keep_first: 1,
-        tool_output_max_lines: 50,
     });
 
     let mut context = AgentContext {
@@ -2159,7 +2153,6 @@ async fn test_model_switch_compacts_before_clamp_can_fall_to_one() {
         system_prompt_tokens: 0,
         keep_recent: 1,
         keep_first: 1,
-        tool_output_max_lines: 50,
     });
 
     let old_assistant = AgentMessage::Llm(Message::Assistant {
@@ -2226,7 +2219,6 @@ async fn test_preflight_does_not_send_request_at_exact_window_limit() {
             system_prompt_tokens: 0,
             keep_recent: 1,
             keep_first: 2,
-            tool_output_max_lines: 50,
         })
         .run("continue")
         .await;
@@ -2284,7 +2276,6 @@ async fn test_preflight_failure_does_not_send_over_window_request() {
         system_prompt_tokens: 0,
         keep_recent: 1,
         keep_first: 1,
-        tool_output_max_lines: 50,
     });
     let mut context = AgentContext {
         system_prompt: "test".into(),
@@ -2341,7 +2332,6 @@ async fn test_preflight_no_progress_defers_to_provider() {
             system_prompt_tokens: 0,
             keep_recent: 10,
             keep_first: 2,
-            tool_output_max_lines: 50,
         })
         .run("continue")
         .await;
@@ -2387,7 +2377,6 @@ async fn test_llm_call_start_carries_budget_and_window() {
             system_prompt_tokens: 10_000,
             keep_recent: 10,
             keep_first: 2,
-            tool_output_max_lines: 50,
         })
         .retry_policy(evotengine::RetryPolicy::disabled())
         .run("hi")
@@ -2545,7 +2534,6 @@ async fn test_llm_call_stats_image_tokens_separate_from_user() {
                     mime_type: "image/png".into(),
                     source: evotengine::ImageSource::Base64 {
                         data: "A".repeat(3000),
-                        path: None,
                     },
                 },
             ],

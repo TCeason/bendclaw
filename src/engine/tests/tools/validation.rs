@@ -499,7 +499,6 @@ fn cap_preserves_non_text_content() {
         mime_type: "image/png".into(),
         source: evotengine::ImageSource::Base64 {
             data: "base64data".into(),
-            path: None,
         },
     };
     let big_text2 = Content::Text {

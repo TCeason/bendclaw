@@ -100,11 +100,8 @@ pub fn agent_message_from_transcript(item: &TranscriptItem) -> evot_engine::Agen
                                 TranscriptImageSource::Path { path } => {
                                     evot_engine::ImageSource::Path { path: path.clone() }
                                 }
-                                TranscriptImageSource::Base64 { data, path } => {
-                                    evot_engine::ImageSource::Base64 {
-                                        data: data.clone(),
-                                        path: path.clone(),
-                                    }
+                                TranscriptImageSource::Base64 { data } => {
+                                    evot_engine::ImageSource::Base64 { data: data.clone() }
                                 }
                             };
                             evot_engine::Content::Image {

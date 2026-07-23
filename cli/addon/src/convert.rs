@@ -20,13 +20,7 @@ pub(crate) enum JsImageSource {
     #[serde(rename = "path")]
     Path { path: String },
     #[serde(rename = "base64")]
-    Base64 {
-        data: String,
-        /// Optional on-disk origin of this image. When present, the engine can
-        /// downgrade the variant to `Path` under memory pressure.
-        #[serde(default)]
-        path: Option<String>,
-    },
+    Base64 { data: String },
 }
 
 /// Convert a JSON string of content blocks into engine Content items.
@@ -53,23 +47,20 @@ pub(crate) fn parse_content_blocks(
                         source: evot_engine::ImageSource::Path { path },
                     })
                 }
-                JsImageSource::Base64 { data, path } => {
+                JsImageSource::Base64 { data } => {
                     if data.is_empty() {
                         return None;
                     }
                     match evot_engine::resize_image(&data, &mime_type) {
                         Ok((resized_data, new_mime)) => Some(evot_engine::Content::Image {
                             mime_type: new_mime,
-                            source: evot_engine::ImageSource::Base64 {
-                                data: resized_data,
-                                path,
-                            },
+                            source: evot_engine::ImageSource::Base64 { data: resized_data },
                         }),
                         Err(e) => {
                             eprintln!("image resize failed, using original: {e}");
                             Some(evot_engine::Content::Image {
                                 mime_type,
-                                source: evot_engine::ImageSource::Base64 { data, path },
+                                source: evot_engine::ImageSource::Base64 { data },
                             })
                         }
                     }

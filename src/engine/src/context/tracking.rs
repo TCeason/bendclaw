@@ -207,8 +207,6 @@ pub struct ContextConfig {
     pub keep_recent: usize,
     /// Minimum first messages to always keep
     pub keep_first: usize,
-    /// Max lines to keep per tool output after truncation
-    pub tool_output_max_lines: usize,
 }
 
 impl Default for ContextConfig {
@@ -218,7 +216,6 @@ impl Default for ContextConfig {
             system_prompt_tokens: 4_000,
             keep_recent: 10,
             keep_first: 2,
-            tool_output_max_lines: 50,
         }
     }
 }

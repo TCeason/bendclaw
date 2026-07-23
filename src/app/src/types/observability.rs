@@ -122,8 +122,6 @@ pub enum CompactionResult {
         before_tokens: usize,
         after_tokens: usize,
         messages_evicted: usize,
-        tool_results_shrunk: usize,
-        images_downgraded: usize,
         current_run_reclaimed: usize,
         /// `remote`, `local`, or `remote_failed_local`.
         #[serde(default, skip_serializing_if = "Option::is_none")]

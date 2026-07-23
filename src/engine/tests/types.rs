@@ -103,7 +103,6 @@ fn test_content_variants_roundtrip() {
         mime_type: "image/png".into(),
         source: ImageSource::Base64 {
             data: "base64data".into(),
-            path: None,
         },
     });
     roundtrip(&Content::Thinking {

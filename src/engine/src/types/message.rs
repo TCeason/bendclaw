@@ -30,18 +30,8 @@ pub enum Retention {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ImageSource {
-    Path {
-        path: String,
-    },
-    Base64 {
-        data: String,
-        /// Optional on-disk origin of this image. When set, compaction can
-        /// downgrade the variant to `Path` under memory pressure instead of
-        /// dropping the image entirely. `None` means the image has no disk
-        /// backing and must be preserved verbatim or stripped.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        path: Option<String>,
-    },
+    Path { path: String },
+    Base64 { data: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -110,7 +100,7 @@ impl Content {
     pub fn resolve_image_data(&self) -> Option<(String, String)> {
         let raw = match self {
             Content::Image { mime_type, source } => match source {
-                ImageSource::Base64 { data, .. } if !data.is_empty() => {
+                ImageSource::Base64 { data } if !data.is_empty() => {
                     Some((data.clone(), mime_type.clone()))
                 }
                 ImageSource::Path { path } => match std::fs::read(path) {

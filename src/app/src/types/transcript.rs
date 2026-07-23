@@ -81,17 +81,8 @@ pub enum TranscriptUserContent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TranscriptImageSource {
-    Base64 {
-        data: String,
-        /// Optional on-disk origin of this image. When set, the engine can
-        /// downgrade to a `Path` representation under memory pressure instead
-        /// of dropping the image entirely.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        path: Option<String>,
-    },
-    Path {
-        path: String,
-    },
+    Base64 { data: String },
+    Path { path: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -236,11 +227,8 @@ impl TranscriptItem {
                 }
                 evot_engine::Content::Image { mime_type, source } => {
                     let source = match source {
-                        evot_engine::ImageSource::Base64 { data, path } => {
-                            TranscriptImageSource::Base64 {
-                                data: data.clone(),
-                                path: path.clone(),
-                            }
+                        evot_engine::ImageSource::Base64 { data } => {
+                            TranscriptImageSource::Base64 { data: data.clone() }
                         }
                         evot_engine::ImageSource::Path { path } => {
                             TranscriptImageSource::Path { path: path.clone() }

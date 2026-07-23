@@ -321,9 +321,7 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
       const saved = before - after
       const savedPct = before > 0 ? ((saved / before) * 100).toFixed(0) : '0'
       const evicted = (result.messages_evicted as number) ?? 0
-      const shrunk = (result.tool_results_shrunk as number) ?? 0
       const reclaimed = (result.current_run_reclaimed as number) ?? 0
-      const imagesDowngraded = (result.images_downgraded as number) ?? 0
       const contextWindow = ((data.context_window as number) ?? 0)
       const method = (result.method as string | undefined) ?? 'local'
       const methodLabel = method === 'remote'
@@ -336,8 +334,8 @@ export function formatCompactionCompleted(data: Record<string, unknown>): string
         ? ` · blob ${remoteBlobBytes >= 1024 ? `${(remoteBlobBytes / 1024).toFixed(1)} KB` : `${remoteBlobBytes} B`}`
         : ''
 
-      const level = (result.compaction_level as number | undefined) ?? (evicted > 0 ? 3 : shrunk > 0 ? 1 : 0)
-      const summary = `evicted ${evicted} msgs · shrunk ${shrunk} results · reclaimed ${reclaimed} · imgs downgraded ${imagesDowngraded}`
+      const level = (result.compaction_level as number | undefined) ?? (evicted > 0 ? 3 : 0)
+      const summary = `evicted ${evicted} msgs · reclaimed ${reclaimed}`
 
       const reason = (data.reason as string | undefined) ?? 'threshold'
       const reasonLabel = reason === 'overflow' ? 'overflow recovery' : reason

@@ -695,8 +695,6 @@ describe('buildVerboseEvent', () => {
         before_tokens: 168000,
         after_tokens: 24000,
         messages_evicted: 36,
-        tool_results_shrunk: 0,
-        images_downgraded: 0,
         current_run_reclaimed: 0,
       },
     })

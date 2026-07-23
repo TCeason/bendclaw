@@ -754,9 +754,7 @@ impl Agent {
                     messages_evicted: messages_before
                         .saturating_sub(messages_after)
                         .saturating_add(1),
-                    tool_results_shrunk: 0,
                     current_run_reclaimed: 0,
-                    images_downgraded: 0,
                     compaction_level: 3,
                     used_fallback: result.used_fallback,
                     method: details.method,

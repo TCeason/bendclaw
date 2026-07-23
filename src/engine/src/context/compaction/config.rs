@@ -52,16 +52,6 @@ pub struct CompactionConfig {
     /// Fixed head messages to always keep (first user + assistant pair).
     pub keep_first: usize,
 
-    // — Shrink —
-    /// Absolute token threshold for a single tool result to be considered oversized.
-    pub max_tool_result_tokens: usize,
-    /// Max lines per tool output after truncation.
-    pub tool_output_max_lines: usize,
-
-    // — Reclaim —
-    /// Keep this many most-recent images at full content; older ones get downgraded.
-    pub keep_recent_images: usize,
-
     // — Summarizer —
     /// Summarization strategy for summary generation.
     pub summarizer_mode: SummarizerMode,
@@ -79,9 +69,6 @@ impl CompactionConfig {
             keep_recent_tokens: context_window / 5,
             keep_recent_min: 6,
             keep_first: 2,
-            max_tool_result_tokens: 6_000,
-            tool_output_max_lines: 200,
-            keep_recent_images: 2,
             summarizer_mode: SummarizerMode::default(),
             // The provider output budget already bounds generated summaries;
             // match pi by retaining that summary without a second byte cap.
@@ -97,7 +84,6 @@ impl CompactionConfig {
         let context_window = ctx.max_context_tokens;
         let mut cfg = Self::from_context_window(context_window);
         cfg.keep_first = ctx.keep_first;
-        cfg.tool_output_max_lines = ctx.tool_output_max_lines;
         cfg.keep_recent_min = ctx.keep_recent;
         cfg
     }

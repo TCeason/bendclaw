@@ -1003,19 +1003,13 @@ fn map_agent_event(
             context_window,
             will_retry,
         } => {
-            let result = if stats.messages_evicted > 0
-                || stats.tool_results_shrunk > 0
-                || stats.images_downgraded > 0
-                || stats.current_run_reclaimed > 0
-            {
+            let result = if stats.messages_evicted > 0 || stats.current_run_reclaimed > 0 {
                 crate::types::CompactionResult::Compacted {
                     before_message_count: stats.before_message_count,
                     after_message_count: stats.after_message_count,
                     before_tokens: stats.before_tokens,
                     after_tokens: stats.after_tokens,
                     messages_evicted: stats.messages_evicted,
-                    tool_results_shrunk: stats.tool_results_shrunk,
-                    images_downgraded: stats.images_downgraded,
                     current_run_reclaimed: stats.current_run_reclaimed,
                     method: stats.method.map(|method| match method {
                         evot_engine::CompactionMethod::Remote => "remote".to_string(),

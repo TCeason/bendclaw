@@ -187,9 +187,7 @@ export type ManualCompactionOutcome =
       messages_after: number
       context_window: number
       messages_evicted: number
-      tool_results_shrunk: number
       current_run_reclaimed: number
-      images_downgraded: number
       compaction_level: number
       used_fallback: boolean
       method?: 'remote' | 'local' | 'remote_failed_local'

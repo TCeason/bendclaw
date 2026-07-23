@@ -308,10 +308,7 @@ fn test_content_to_openai_multipart() {
         },
         Content::Image {
             mime_type: "image/png".into(),
-            source: ImageSource::Base64 {
-                data: "abc".into(),
-                path: None,
-            },
+            source: ImageSource::Base64 { data: "abc".into() },
         },
     ];
     let result = content_to_openai(&content, true);
@@ -328,10 +325,7 @@ fn test_content_to_openai_text_only_model_drops_image() {
         },
         Content::Image {
             mime_type: "image/png".into(),
-            source: ImageSource::Base64 {
-                data: "abc".into(),
-                path: None,
-            },
+            source: ImageSource::Base64 { data: "abc".into() },
         },
     ];
     let result = content_to_openai(&content, false);
@@ -372,7 +366,6 @@ fn test_tool_result_with_image() {
                     mime_type: "image/png".into(),
                     source: ImageSource::Base64 {
                         data: "aW1hZ2VkYXRh".into(),
-                        path: None,
                     },
                 }],
                 is_error: false,
