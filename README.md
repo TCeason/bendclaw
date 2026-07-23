@@ -17,6 +17,7 @@
   <a href="#dashboard">Dashboard</a> &middot;
   <a href="#installation">Install</a> &middot;
   <a href="#quickstart">Quickstart</a> &middot;
+  <a href="#commands">Commands</a> &middot;
   <a href="#development">Dev</a>
 </p>
 
@@ -58,9 +59,10 @@ All agents produce correct, passing code. The difference is how they manage cont
 
 ### Why is evot faster and cheaper?
 
-Give the LLM less context, but higher-quality context. Where other agents call the LLM to summarize when context overflows — burning extra tokens and time — evot uses **zero LLM calls for context management**:
+Give the LLM less context, but higher-quality context. Where other agents burn extra tokens and time managing context, evot leans on cheap, deterministic machinery first:
 
-- **Algorithmic compaction** — a four-pass Rust pipeline (Reclaim → Shrink → Collapse → Evict) runs in microseconds between turns. Images downgrade to path references; old turns collapse to one-line summaries.
+- **Algorithmic compaction** — a Rust pipeline runs in microseconds between turns: spent tool results are reclaimed, and old turns are evicted into a compact structured summary while recent work stays intact.
+- **Provider-native compaction** — on GPT/Codex models (OpenAI Responses API), evot uses server-side compaction automatically: the endpoint returns an opaque item that replays with far higher recall than a text summary. Zero config — any failure falls back to local summarization silently.
 - **Spill to disk** — large tool results write to disk with a short preview. The model re-reads on demand instead of carrying megabytes in context.
 - **Compaction markers** — structured metadata (files modified, conclusions, environment state) survives compaction, so progress is never lost.
 
@@ -119,6 +121,14 @@ EVOT_LLM_ANTHROPIC_MODEL=claude-opus-4.8
 # EVOT_LLM_OPENAI_MODEL=gpt-5.6-sol
 # EVOT_LLM_OPENAI_PROTOCOL=openai
 
+# Or OpenAI Responses API (official OpenAI GPT/Codex models)
+# Using the official endpoint enables provider-native "remote compaction":
+# context is compacted server-side with far higher recall, taking priority
+# over the local algorithmic path (auto — falls back to local on any failure).
+# EVOT_LLM_OPENAI_API_KEY=sk-...
+# EVOT_LLM_OPENAI_MODEL=gpt-5.6-sol
+# EVOT_LLM_OPENAI_PROTOCOL=openai_responses
+
 # Or DeepSeek (Anthropic-compatible)
 # EVOT_LLM_DEEPSEEK_API_KEY=sk-...
 # EVOT_LLM_DEEPSEEK_BASE_URL=https://api.deepseek.com/anthropic
@@ -142,6 +152,21 @@ evot -c              # continue latest session in cwd
 > In the TUI: `/help` lists commands, Shift+Tab cycles the reasoning effort.
 >
 > One-shot: `evot -p "..."` · resume by id: `evot -r <id>` · model override: `--model provider:model`
+
+## Commands
+
+`/help` lists everything. These are the ones unique to evot and worth knowing:
+
+| Command | What it does |
+|---------|--------------|
+| `/mem` | Archive the session's knowledge to the memory vault (`~/.evotai/memory`). `/mem <terms>` searches it. Memory persists across sessions. |
+| `/resume <query>` | Find and resume a past session by meaning, not just id. |
+| `/harden` | Stress-test the previous plan or current changes — hunt edge cases and loopholes before you commit. |
+| `/skill` | Manage skills: `list`, `install <source>`, `remove <name>`. |
+| `/log shot` | Export the last assistant turn as an HTML/PNG snapshot matching the TUI. |
+| `/copy` | Copy the last agent message's Markdown source to the clipboard. |
+
+Context compaction is automatic — evot compacts between turns as context fills, with no setup. On the official OpenAI Responses API, provider-native (remote) compaction takes priority; everything else uses the local algorithmic path. Use `/compact` only when you want to force it early.
 
 ## Development
 
